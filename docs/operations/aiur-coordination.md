@@ -43,3 +43,13 @@ Rechecked locally: no Khala config/state directory, no listener on intended port
 User authorized deep planning and push to research followed by local aiurdev execution. Sent port 4002 intent and observed shared stamp to peer; queue receipt `01a0ab8a-892c-7b32-aed1-403d6812c60e`. Await current shared-release coordination before any automatically rebuilding launch. No Khala daemon started during planning.
 
 Read-only `AIUR_SKIP_BUILD=1 ../aiur/scripts/aiurdev __identity` resolved Khala instance key `95978a6838`, node `aiur-everdred-95978a6838@127.0.0.1`, project root Khala, shared local dev release. This command did not launch or rebuild. The skip-build option is available for a coordinated launch on the already stamped release; revalidate stamp completeness first. Do not set `AIUR_REPO_ROOT` to the source checkout when targeting Khala, since the engine uses it for instance identity.
+
+## Launched Khala — 2026-09-16 19:22 UTC
+
+Planning/reviews pushed at `82002248db1715ec8b122fdd27c024e0f9274353`. Khala daemon launched with `AIUR_SKIP_BUILD=1` on localhost4002, verified key95978a6838 and owner `orangekid-95978a6838`. Listener reports26bindings; current Codex thread `01a0ab55-86a3-73d2-955d-d0e2139d0f53` has a host-local notification relay plus durable Executor consumption. No shared rebuild or peer-config mutation occurred.
+
+GitHub materialization: root1, epics2–9, leaves10–53; native hierarchy/dependencies re-read. Six initial admitted leaves:10,11,12,13,50,51. Remaining38 carry paused overlay until dependency/readiness gates resolve. Session cap6 fits measured capacity; peer dashboard read showed0running at19:15 UTC. Recheck actual fleet before changing capacity.
+
+Local setup fixes: Khala origin now uses HTTPS plus gh credential helper after SSH auth failed; the owned config records existing publishing bot `its-applekid` and App identity `aiur-daemon[bot]`. CI readiness remains unfulfilled in the empty repo, to be established by101 before merge. Safe CODEOWNERS fallback is explicit; no admission gate was disabled.
+
+Aiur defect #2659: root view renders only8 direct epics and omits44 executable grandchildren/dependencies. Filed with agent:todo and required sanitized evidence; immediately notified peer, queue receipt `01a0abaa-c2e5-7911-a02f-bf85d19d0c77`. Full planning-pack dashboard rendering remains incomplete; native per-leaf gates were independently verified.

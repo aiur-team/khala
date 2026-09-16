@@ -5,7 +5,7 @@ This validates proposal structure, not implementation readiness or a materialize
 - 44 unique leaf IDs; eight undispatched epics; each leaf belongs to exactly one epic.
 - 15 requirements have explicit ticket dispositions.
 - All dependency references resolve; no cycles; nine computed antichain levels.
-- All 44 scope cards and canonical detailed plan paths exist and are safe; tracker pointers remain null.
+- All 44 scope cards and canonical detailed plan paths exist and are safe; tracker pointers map to verified GitHub issues.
 - No identical or parent/child overlaps among proposed primary write surfaces.
 - Symmetric conflict invariant holds (no current explicit conflict pairs).
 - Current-document local links resolve; historical recovered artifacts excluded.
@@ -34,3 +34,7 @@ Transport review identified link-to-owner authorization, non-atomic SDK/inbox st
 The widest level is 21, not a fleet allocation. Product gates, shared environment availability, review and host capacity reduce practical concurrency. Complexity 2–3 estimates must be rechecked against detailed plans; split any member that develops multiple independent outcomes. No agreed depth budget exists yet.
 
 The bundled Aiur runtime validator is not applied to this enriched proposal graph: it is not a canonical runtime pack. Do not report this structural audit as complete aiur-build or per-ticket CE execution. The canonical plans now contain interface examples, source/version evidence, implementation units and repeated adversarial review. Commit/push and coordinated runtime rendering are recorded separately; structural checks never establish product behavior.
+
+## Runtime materialization
+
+All44 executable issues,8 epics and one root created; every native subissue and blocked-by set was re-read and matched. Host-local canonical pack and repo-local discovery mirror contain44 leaves. Runtime listener verified26bindings. Root dashboard renders8 direct epic containers rather than44 descendants: Aiur #2659 tracks that limitation. Full runtime-pack rendering is therefore not claimed complete.

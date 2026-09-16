@@ -1,5 +1,5 @@
 {
-  "status": "scope approved; detailed research and peer review complete; product gates remain; not an Aiur runtime pack",
+  "status": "reviewed scope materialized in GitHub and host-local canonical pack; tracker owns lifecycle; nested dashboard rendering limited by Aiur2659",
   "build_order_id": "aiur-team/khala:first-collaboration",
   "plan_version": 4,
   "tickets": [
@@ -23,7 +23,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 10,
       "doc": "tickets/KHA-101.md",
       "epic": "KHA-E02",
       "phase_hint": 1,
@@ -68,7 +68,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-101-workspace-foundation-plan.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/10"
     },
     {
       "id": "KHA-102",
@@ -85,7 +86,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 11,
       "doc": "tickets/KHA-102.md",
       "epic": "KHA-E01",
       "phase_hint": 1,
@@ -133,7 +134,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-102-backend-feasibility-plan.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/11"
     },
     {
       "id": "KHA-103",
@@ -150,7 +152,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 12,
       "doc": "tickets/KHA-103.md",
       "epic": "KHA-E01",
       "phase_hint": 1,
@@ -198,7 +200,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-103-claude-existing-session-proof.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/12"
     },
     {
       "id": "KHA-104",
@@ -215,7 +218,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 13,
       "doc": "tickets/KHA-104.md",
       "epic": "KHA-E01",
       "phase_hint": 1,
@@ -263,7 +266,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-104-codex-existing-session-proof.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/13"
     },
     {
       "id": "KHA-105",
@@ -286,7 +290,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 14,
       "doc": "tickets/KHA-105.md",
       "epic": "KHA-E02",
       "phase_hint": 3,
@@ -341,7 +345,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-105-messaging-identity-ports.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/14"
     },
     {
       "id": "KHA-106",
@@ -362,7 +367,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 15,
       "doc": "tickets/KHA-106.md",
       "epic": "KHA-E02",
       "phase_hint": 2,
@@ -414,7 +419,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-106-delivery-harness-contracts.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/15"
     },
     {
       "id": "KHA-107",
@@ -434,7 +440,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 16,
       "doc": "tickets/KHA-107.md",
       "epic": "KHA-E04",
       "phase_hint": 3,
@@ -483,7 +489,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-107-aiur-dashboard-shell.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/16"
     },
     {
       "id": "KHA-108",
@@ -502,7 +509,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 17,
       "doc": "tickets/KHA-108.md",
       "epic": "KHA-E03",
       "phase_hint": 2,
@@ -551,7 +558,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-108-messaging-deployment-plan.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/17"
     },
     {
       "id": "KHA-109",
@@ -570,7 +578,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 18,
       "doc": "tickets/KHA-109.md",
       "epic": "KHA-E03",
       "phase_hint": 3,
@@ -617,7 +625,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-109-backend-recovery-operations-plan.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/18"
     },
     {
       "id": "KHA-110",
@@ -636,7 +645,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 19,
       "doc": "tickets/KHA-110.md",
       "epic": "KHA-E04",
       "phase_hint": 4,
@@ -689,7 +698,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-110-oauth-identity-mapping.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/19"
     },
     {
       "id": "KHA-111",
@@ -708,7 +718,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 20,
       "doc": "tickets/KHA-111.md",
       "epic": "KHA-E04",
       "phase_hint": 4,
@@ -760,7 +770,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-111-browser-device-lifecycle.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/20"
     },
     {
       "id": "KHA-112",
@@ -779,7 +790,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 21,
       "doc": "tickets/KHA-112.md",
       "epic": "KHA-E04",
       "phase_hint": 4,
@@ -828,7 +839,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-112-room-intro-commands.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/21"
     },
     {
       "id": "KHA-113",
@@ -847,7 +859,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 22,
       "doc": "tickets/KHA-113.md",
       "epic": "KHA-E04",
       "phase_hint": 4,
@@ -898,7 +910,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-113-invitation-admission.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/22"
     },
     {
       "id": "KHA-114",
@@ -919,7 +932,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 23,
       "doc": "tickets/KHA-114.md",
       "epic": "KHA-E05",
       "phase_hint": 4,
@@ -973,7 +986,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-114-agent-link-bootstrap.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/23"
     },
     {
       "id": "KHA-115",
@@ -993,7 +1007,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 24,
       "doc": "tickets/KHA-115.md",
       "epic": "KHA-E05",
       "phase_hint": 4,
@@ -1046,7 +1060,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-115-connector-durable-storage.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/24"
     },
     {
       "id": "KHA-116",
@@ -1066,7 +1081,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 25,
       "doc": "tickets/KHA-116.md",
       "epic": "KHA-E05",
       "phase_hint": 4,
@@ -1117,7 +1132,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-116-encrypted-live-subscription.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/25"
     },
     {
       "id": "KHA-117",
@@ -1136,7 +1152,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 26,
       "doc": "tickets/KHA-117.md",
       "epic": "KHA-E05",
       "phase_hint": 3,
@@ -1186,7 +1202,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-117-claude-harness-adapter.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/26"
     },
     {
       "id": "KHA-118",
@@ -1205,7 +1222,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 27,
       "doc": "tickets/KHA-118.md",
       "epic": "KHA-E05",
       "phase_hint": 3,
@@ -1255,7 +1272,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-118-codex-harness-adapter.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/27"
     },
     {
       "id": "KHA-119",
@@ -1275,7 +1293,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 28,
       "doc": "tickets/KHA-119.md",
       "epic": "KHA-E06",
       "phase_hint": 4,
@@ -1326,7 +1344,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-119-exact-approval-release.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/28"
     },
     {
       "id": "KHA-120",
@@ -1346,7 +1365,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 29,
       "doc": "tickets/KHA-120.md",
       "epic": "KHA-E06",
       "phase_hint": 4,
@@ -1397,7 +1416,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-120-trust-rearm-transitions.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/29"
     },
     {
       "id": "KHA-121",
@@ -1417,7 +1437,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 30,
       "doc": "tickets/KHA-121.md",
       "epic": "KHA-E05",
       "phase_hint": 4,
@@ -1468,7 +1488,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-121-bounded-model-dispatch.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/30"
     },
     {
       "id": "KHA-122",
@@ -1488,7 +1509,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 31,
       "doc": "tickets/KHA-122.md",
       "epic": "KHA-E04",
       "phase_hint": 4,
@@ -1538,7 +1559,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-122-create-chat-composer.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/31"
     },
     {
       "id": "KHA-123",
@@ -1558,7 +1580,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 32,
       "doc": "tickets/KHA-123.md",
       "epic": "KHA-E04",
       "phase_hint": 4,
@@ -1608,7 +1630,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-123-attributed-live-timeline.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/32"
     },
     {
       "id": "KHA-124",
@@ -1628,7 +1651,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 33,
       "doc": "tickets/KHA-124.md",
       "epic": "KHA-E04",
       "phase_hint": 4,
@@ -1677,7 +1700,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-124-oauth-invitation-journey.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/33"
     },
     {
       "id": "KHA-125",
@@ -1698,7 +1722,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 34,
       "doc": "tickets/KHA-125.md",
       "epic": "KHA-E06",
       "phase_hint": 4,
@@ -1749,7 +1773,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-125-recipient-review-ui.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/34"
     },
     {
       "id": "KHA-126",
@@ -1770,7 +1795,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 35,
       "doc": "tickets/KHA-126.md",
       "epic": "KHA-E06",
       "phase_hint": 4,
@@ -1820,7 +1845,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-126-trust-agent-status.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/35"
     },
     {
       "id": "KHA-127",
@@ -1840,7 +1866,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 36,
       "doc": "tickets/KHA-127.md",
       "epic": "KHA-E07",
       "phase_hint": 4,
@@ -1889,7 +1915,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-127-recovery-closure-ui.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/36"
     },
     {
       "id": "KHA-128",
@@ -1908,7 +1935,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 37,
       "doc": "tickets/KHA-128.md",
       "epic": "KHA-E07",
       "phase_hint": 4,
@@ -1960,7 +1987,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-128-device-agent-revocation.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/37"
     },
     {
       "id": "KHA-129",
@@ -1979,7 +2007,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 38,
       "doc": "tickets/KHA-129.md",
       "epic": "KHA-E07",
       "phase_hint": 4,
@@ -2031,7 +2059,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-129-encrypted-recovery.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/38"
     },
     {
       "id": "KHA-130",
@@ -2051,7 +2080,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 39,
       "doc": "tickets/KHA-130.md",
       "epic": "KHA-E07",
       "phase_hint": 4,
@@ -2101,7 +2130,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-130-connector-retention-cleanup.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/39"
     },
     {
       "id": "KHA-131",
@@ -2122,7 +2152,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 40,
       "doc": "tickets/KHA-131.md",
       "epic": "KHA-E03",
       "phase_hint": 4,
@@ -2168,7 +2198,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-131-netlify-deployment-plan.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/40"
     },
     {
       "id": "KHA-132",
@@ -2196,7 +2227,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 41,
       "doc": "tickets/KHA-132.md",
       "epic": "KHA-E04",
       "phase_hint": 5,
@@ -2254,7 +2285,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-132-human-flow-composition.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/41"
     },
     {
       "id": "KHA-133",
@@ -2279,7 +2311,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 42,
       "doc": "tickets/KHA-133.md",
       "epic": "KHA-E05",
       "phase_hint": 5,
@@ -2335,7 +2367,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-133-connector-runtime-composition.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/42"
     },
     {
       "id": "KHA-134",
@@ -2358,7 +2391,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 43,
       "doc": "tickets/KHA-134.md",
       "epic": "KHA-E06",
       "phase_hint": 6,
@@ -2410,7 +2443,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-134-review-delivery-composition.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/43"
     },
     {
       "id": "KHA-135",
@@ -2432,7 +2466,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 44,
       "doc": "tickets/KHA-135.md",
       "epic": "KHA-E06",
       "phase_hint": 7,
@@ -2483,7 +2517,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-135-trust-controls-composition.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/44"
     },
     {
       "id": "KHA-136",
@@ -2508,7 +2543,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 45,
       "doc": "tickets/KHA-136.md",
       "epic": "KHA-E07",
       "phase_hint": 6,
@@ -2561,7 +2596,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-136-recovery-lifecycle-composition.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/45"
     },
     {
       "id": "KHA-137",
@@ -2582,7 +2618,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 46,
       "doc": "tickets/KHA-137.md",
       "epic": "KHA-E08",
       "phase_hint": 4,
@@ -2633,7 +2669,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-137-multi-owner-acceptance-harness.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/46"
     },
     {
       "id": "KHA-138",
@@ -2655,7 +2692,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 47,
       "doc": "tickets/KHA-138.md",
       "epic": "KHA-E08",
       "phase_hint": 8,
@@ -2709,7 +2746,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-138-security-boundary-proof.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/47"
     },
     {
       "id": "KHA-139",
@@ -2732,7 +2770,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 48,
       "doc": "tickets/KHA-139.md",
       "epic": "KHA-E08",
       "phase_hint": 8,
@@ -2792,7 +2830,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-139-collaboration-acceptance.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/48"
     },
     {
       "id": "KHA-140",
@@ -2813,7 +2852,7 @@
       "kind": "capstone",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 49,
       "doc": "tickets/KHA-140.md",
       "epic": "KHA-E08",
       "phase_hint": 9,
@@ -2859,7 +2898,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-140-root-acceptance-plan.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/49"
     },
     {
       "id": "KHA-141",
@@ -2876,7 +2916,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 50,
       "doc": "tickets/KHA-141.md",
       "epic": "KHA-E01",
       "phase_hint": 1,
@@ -2923,7 +2963,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-141-browser-crypto-proof.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/50"
     },
     {
       "id": "KHA-142",
@@ -2940,7 +2981,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 51,
       "doc": "tickets/KHA-142.md",
       "epic": "KHA-E01",
       "phase_hint": 1,
@@ -2987,7 +3028,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-142-headless-crypto-proof.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/51"
     },
     {
       "id": "KHA-143",
@@ -3006,7 +3048,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 52,
       "doc": "tickets/KHA-143.md",
       "epic": "KHA-E01",
       "phase_hint": 2,
@@ -3053,7 +3095,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-143-client-reuse-boundary.md",
-      "plan_readiness": "implementation-ready"
+      "plan_readiness": "implementation-ready",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/52"
     },
     {
       "id": "KHA-144",
@@ -3074,7 +3117,7 @@
       "kind": "executable",
       "provenance": "planned",
       "introduced_in_plan_version": 4,
-      "ticket": null,
+      "ticket": 53,
       "doc": "tickets/KHA-144.md",
       "epic": "KHA-E01",
       "phase_hint": 2,
@@ -3125,7 +3168,8 @@
         ]
       },
       "plan": "../plans/2026-09-16-kha-144-ownership-bootstrap-proof.md",
-      "plan_readiness": "requirements-only"
+      "plan_readiness": "requirements-only",
+      "tracker_url": "https://github.com/aiur-team/khala/issues/53"
     }
   ],
   "root": {
@@ -3144,7 +3188,9 @@
       "KHA-E08"
     ],
     "acceptance_owner": "KHA-140",
-    "completion_condition": "Merged product meets R01\u2013R15, required docs and real security/collaboration evidence; all blocking gates resolved. Closed children alone are insufficient."
+    "completion_condition": "Merged product meets R01\u2013R15, required docs and real security/collaboration evidence; all blocking gates resolved. Closed children alone are insufficient.",
+    "ticket": 1,
+    "tracker_url": "https://github.com/aiur-team/khala/issues/1"
   },
   "epics": [
     {
@@ -3161,7 +3207,9 @@
         "KHA-143",
         "KHA-144"
       ],
-      "acceptance": "Evidence resolves substrate, no-setup ownership and existing-session feasibility gates."
+      "acceptance": "Evidence resolves substrate, no-setup ownership and existing-session feasibility gates.",
+      "ticket": 2,
+      "tracker_url": "https://github.com/aiur-team/khala/issues/2"
     },
     {
       "id": "KHA-E02",
@@ -3173,7 +3221,9 @@
         "KHA-105",
         "KHA-106"
       ],
-      "acceptance": "Independent consumers build against owned, versioned ports and fixtures."
+      "acceptance": "Independent consumers build against owned, versioned ports and fixtures.",
+      "ticket": 3,
+      "tracker_url": "https://github.com/aiur-team/khala/issues/3"
     },
     {
       "id": "KHA-E03",
@@ -3185,7 +3235,9 @@
         "KHA-109",
         "KHA-131"
       ],
-      "acceptance": "Selected services and Netlify deployment have restart, restore and upgrade evidence."
+      "acceptance": "Selected services and Netlify deployment have restart, restore and upgrade evidence.",
+      "ticket": 4,
+      "tracker_url": "https://github.com/aiur-team/khala/issues/4"
     },
     {
       "id": "KHA-E04",
@@ -3203,7 +3255,9 @@
         "KHA-124",
         "KHA-132"
       ],
-      "acceptance": "Two humans complete OAuth/create/share/chat with attribution and queued introductions."
+      "acceptance": "Two humans complete OAuth/create/share/chat with attribution and queued introductions.",
+      "ticket": 5,
+      "tracker_url": "https://github.com/aiur-team/khala/issues/5"
     },
     {
       "id": "KHA-E05",
@@ -3219,7 +3273,9 @@
         "KHA-121",
         "KHA-133"
       ],
-      "acceptance": "Owner runtime attaches and notifies existing sessions without human technical setup."
+      "acceptance": "Owner runtime attaches and notifies existing sessions without human technical setup.",
+      "ticket": 6,
+      "tracker_url": "https://github.com/aiur-team/khala/issues/6"
     },
     {
       "id": "KHA-E06",
@@ -3234,7 +3290,9 @@
         "KHA-134",
         "KHA-135"
       ],
-      "acceptance": "Human authorization governs exact release, trusted delivery, re-arm and pause."
+      "acceptance": "Human authorization governs exact release, trusted delivery, re-arm and pause.",
+      "ticket": 7,
+      "tracker_url": "https://github.com/aiur-team/khala/issues/7"
     },
     {
       "id": "KHA-E07",
@@ -3248,7 +3306,9 @@
         "KHA-130",
         "KHA-136"
       ],
-      "acceptance": "Loss, replacement and closure follow approved history/retention policy."
+      "acceptance": "Loss, replacement and closure follow approved history/retention policy.",
+      "ticket": 8,
+      "tracker_url": "https://github.com/aiur-team/khala/issues/8"
     },
     {
       "id": "KHA-E08",
@@ -3261,7 +3321,9 @@
         "KHA-139",
         "KHA-140"
       ],
-      "acceptance": "Independent security and collaboration evidence passes on merged base; root owner accepts."
+      "acceptance": "Independent security and collaboration evidence passes on merged base; root owner accepts.",
+      "ticket": 9,
+      "tracker_url": "https://github.com/aiur-team/khala/issues/9"
     }
   ],
   "external_gates": [

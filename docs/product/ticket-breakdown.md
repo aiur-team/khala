@@ -1,6 +1,6 @@
 # Khala ticket proposal — revision 4
 
-2026-09-16. **44 proposed tickets, replacing 13; scope approved for detailed planning.** No issues created or implementation started. Detailed `ce-brainstorm` / `ce-plan` artifacts are written and cross-reviewed following user authorization. Old KHA-01–13 IDs are retired; new stable IDs are KHA-101–144. [Previous proposal](archive/ticket-breakdown-v3.md).
+2026-09-16. **44 proposed tickets, replacing 13; scope approved for detailed planning.** Tracker issues are [materialized](tracker-index.md); GitHub and Aiur own current execution state. Detailed `ce-brainstorm` / `ce-plan` artifacts are written and cross-reviewed following user authorization. Old KHA-01–13 IDs are retired; new stable IDs are KHA-101–144. [Previous proposal](archive/ticket-breakdown-v3.md).
 
 ## Product contract carried into this proposal
 
@@ -42,7 +42,7 @@ One undispatched root, **KHA-ROOT**, contains eight undispatched epics. Only the
 | KHA-E07 — Recover and revoke safely | Loss, replacement and closure follow approved history/retention policy. | KHA-127, KHA-128, KHA-129, KHA-130, KHA-136 |
 | KHA-E08 — Prove and accept the product | Independent security and collaboration evidence passes on merged base; root owner accepts. | KHA-137, KHA-138, KHA-139, KHA-140 |
 
-Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linked from the graph’s `doc` fields. The graph records kind/provenance, epic/lane, computed phase, complexity and rationale, separate risk/capabilities, requirements, hard dependencies, symmetric conflict fields, advisory order, external gates, read/write/contract/safety surfaces, and acceptance gates. `ticket: null` explicitly means no tracker issue exists. Exact interface sketches and implementation-time verification commands are in the [44 canonical plans](../plans/README.md).
+Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linked from the graph’s `doc` fields. The graph records kind/provenance, epic/lane, computed phase, complexity and rationale, separate risk/capabilities, requirements, hard dependencies, symmetric conflict fields, advisory order, external gates, read/write/contract/safety surfaces, and acceptance gates. The graph now records promoted issue numbers; the [tracker index](tracker-index.md) links all53 root/epic/leaf issues. Exact interface sketches and implementation-time verification commands are in the [44 canonical plans](../plans/README.md).
 
 `serializes_with` is currently empty because primary write directories are disjoint and shared-file changes have one owner. This is a proposed ownership result, not proof that future implementations cannot conflict; any ownership amendment must update both sides of a conflict edge.
 
