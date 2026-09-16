@@ -1,0 +1,47 @@
+{
+  "harness": "codex",
+  "version": "0.154.0",
+  "originalSessionId": "01a0abaf-b597-7fb3-b459-eeb7035d0693",
+  "observedSessionId": null,
+  "setupActions": [
+    {
+      "actor": "agent",
+      "action": "Read CLI version; connect proxy only to the designated endpoint."
+    }
+  ],
+  "observations": [
+    {
+      "kind": "version_checked",
+      "monotonicMs": 30.976,
+      "evidencePath": "#/observations/0"
+    },
+    {
+      "kind": "transport_exited",
+      "monotonicMs": 64.353,
+      "evidencePath": "#/observations/1"
+    },
+    {
+      "kind": "client_cleaned_up",
+      "monotonicMs": 64.399,
+      "evidencePath": "#/observations/2"
+    }
+  ],
+  "outcome": "inconclusive",
+  "limitations": [
+    "This probe cannot establish executor process identity or permission-state preservation from thread/read metadata.",
+    "Queue acceptance is not context consumption, durable acceptance, or exactly-once execution.",
+    "Idle/busy mode is checked at one metadata snapshot; it is not a controlled long-tool experiment.",
+    "Preflight failed before a nonce request; this is not a harness-wide unsupported verdict."
+  ],
+  "facts": {
+    "mode": "busy",
+    "workdirMatched": null,
+    "modelAvailable": null,
+    "modelUnchanged": null,
+    "inputAttempted": false,
+    "queueAccepted": false,
+    "queueId": null,
+    "operationId": null,
+    "consumptionObserved": false
+  }
+}

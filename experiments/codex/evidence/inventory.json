@@ -1,0 +1,145 @@
+{
+  "capturedAt": "2026-09-16T19:30:01.094011+00:00",
+  "platform": "linux-x64",
+  "node": "v24.18.0",
+  "package": "@openai/codex@0.154.0",
+  "binaryOrigin": "<MISE_NODE>/lib/node_modules/@openai/codex/bin/codex.js",
+  "commands": [
+    {
+      "command": [
+        "codex",
+        "--version"
+      ],
+      "exitCode": 0,
+      "rawSha256": "bb6f0624ffcdfe8aa40dcfaf1eb8cfe01fd7b53f79b2c6e3fc42dff8ddef7d06",
+      "publishedSha256": "bb6f0624ffcdfe8aa40dcfaf1eb8cfe01fd7b53f79b2c6e3fc42dff8ddef7d06",
+      "evidencePath": "inventory-0.txt"
+    },
+    {
+      "command": [
+        "codex",
+        "queue",
+        "--help"
+      ],
+      "exitCode": 0,
+      "rawSha256": "b72e57739908c728da043335d96fd9cfd96b0d1dbce14180719812ea4d6041c7",
+      "publishedSha256": "41b722c040739737f716b3c3cd6189b7e391ef7f563e516b511ae6bd9cfd5d1b",
+      "evidencePath": "inventory-1.txt"
+    },
+    {
+      "command": [
+        "codex",
+        "app-server",
+        "--help"
+      ],
+      "exitCode": 0,
+      "rawSha256": "f900c1b199a5b9a5059f29bf59ea84170b57d65827f93ae2299e562649e89073",
+      "publishedSha256": "0aaf7859d3125b3b11b4cf65dfa83d2315044a26a22dfc0f007e37fb4c696567",
+      "evidencePath": "inventory-2.txt"
+    },
+    {
+      "command": [
+        "codex",
+        "app-server",
+        "proxy",
+        "--help"
+      ],
+      "exitCode": 0,
+      "rawSha256": "863a2ef066360d2ccd3e52e70ec829b795ed169619e7dd7e940c47b9df0c4171",
+      "publishedSha256": "f19f2546841408aef1f31fcaeff8bdee14a1fcbc1952823b2f26373e17c1c88f",
+      "evidencePath": "inventory-3.txt"
+    },
+    {
+      "command": [
+        "codex",
+        "app-server",
+        "proxy"
+      ],
+      "exitCode": 1,
+      "rawSha256": "b799ea01dde0d756862daaedbe32d78c6d369315140c6ccc5e9e6f516a3d4313",
+      "publishedSha256": "49ce37a90f7f6f4eb5d913f4fa0a6d4e9ef775833e32a219d98be3825584ca7d",
+      "evidencePath": "inventory-4.txt"
+    },
+    {
+      "command": [
+        "codex",
+        "app-server",
+        "--stdio"
+      ],
+      "exitCode": 1,
+      "rawSha256": "5d46d2f3d29dea33cfbee8ace3bd39c66a8167585e56b740935529a4f999b402",
+      "publishedSha256": "0ee706f5a25f450cecfd125e979071ae12b70ac131b51cd33b54851b1860b364",
+      "evidencePath": "inventory-5.txt"
+    }
+  ],
+  "schemaGeneration": [
+    "codex",
+    "app-server",
+    "generate-json-schema",
+    "--experimental",
+    "--out",
+    "<TMPDIR>/kha104-schema"
+  ],
+  "schemas": [
+    {
+      "generatedPath": "ClientRequest.json",
+      "path": null,
+      "sha256": "4b1ea47e8a389402556b23451b5a690944e498dc31557b1bca3525631655f1f4"
+    },
+    {
+      "generatedPath": "v2/ThreadReadParams.json",
+      "path": "schema/ThreadReadParams.json",
+      "sha256": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4"
+    },
+    {
+      "generatedPath": "v2/ThreadQueueAddParams.json",
+      "path": "schema/ThreadQueueAddParams.json",
+      "sha256": "39bda9d790b315eea17fc04298afb0135a8b43e7d375b54eaa4a2e88ad0d4aff"
+    },
+    {
+      "generatedPath": "v2/ThreadQueueAddResponse.json",
+      "path": "schema/ThreadQueueAddResponse.json",
+      "sha256": "c42b0adfa32874c341a2012216a5f5b9949b50f840ffc666e606fa65b117bd22"
+    },
+    {
+      "generatedPath": "v2/ThreadQueueListParams.json",
+      "path": "schema/ThreadQueueListParams.json",
+      "sha256": "b4c889089eee8a0f785ff85e0128a4d3f347353870fa848221096a472223773b"
+    },
+    {
+      "generatedPath": "v2/ThreadQueueListResponse.json",
+      "path": "schema/ThreadQueueListResponse.json",
+      "sha256": "fe3251d1d4099a1642ff9df36f92a15cb5d4e8187d7f012a11c73cda16627fbd"
+    },
+    {
+      "generatedPath": "v2/ThreadQueueStartParams.json",
+      "path": "schema/ThreadQueueStartParams.json",
+      "sha256": "d92f1e985c183fa3f261bbfa004416f0f572a225a53e5de1744682e154cce936"
+    },
+    {
+      "generatedPath": "v2/TurnSteerParams.json",
+      "path": "schema/TurnSteerParams.json",
+      "sha256": "2e0cdcea6a90d6c8bc584fdc2ff838e824754b1eef0d2d16aa71bec4276fef44"
+    },
+    {
+      "generatedPath": "v2/ThreadReadResponse.json",
+      "path": "schema/ThreadReadResponse.json",
+      "sha256": "59bf376d403bc3a696047147a1fdbbbaebd72518b3dda37f0e4709b8d61ad854"
+    }
+  ],
+  "preflight": {
+    "command": [
+      "experiments/codex/node_modules/.bin/tsx",
+      "experiments/codex/scenario.ts",
+      "--stdin"
+    ],
+    "target": "current ticket session, read-only metadata preflight only; not a disposable live-send target",
+    "rawStdoutSha256": "f3463b959af632b7daea8bb6e963e7d4df5ea1f0414dd352c675820a50e77a7c",
+    "release": false,
+    "result": "inconclusive"
+  },
+  "publicationTransforms": [
+    "Replace HOME and TMPDIR paths with placeholders",
+    "Strip trailing whitespace on help/error lines; retain raw SHA256 separately"
+  ]
+}
