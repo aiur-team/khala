@@ -1,7 +1,7 @@
 {
-  "status": "reviewed scope materialized in GitHub and host-local canonical pack; tracker owns lifecycle; nested dashboard rendering limited by Aiur2659",
+  "status": "44 executable tickets are direct Build Order members; epic issues are undispatched planning references; GitHub owns lifecycle",
   "build_order_id": "aiur-team/khala:first-collaboration",
-  "plan_version": 4,
+  "plan_version": 5,
   "tickets": [
     {
       "id": "KHA-101",

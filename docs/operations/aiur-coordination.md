@@ -61,3 +61,9 @@ All six initial workers10,11,12,13,50,51 observed actively working. Startup corr
 The real consumer journal is `khala.executor.wakes.ndjson`, whereas the skill recipe hardcodes `aiur.executor.wakes.ndjson`. Local relay now follows the verified existing Khala path with unbuffered reads and queues notifications to the verified current thread; durable `executor-wait --json` remains the sole acknowledgment path. Aiur #2661 records the recipe defect and was immediately sent to the peer. All three Aiur defects2659–2661 were recorded through the findings CLI. Root/epic containers have explicit parked markers and remain undispatched.
 
 Worker-start verification is not product completion. Existing product gates, required CI/review and full descendant dashboard verification remain. Query the live board and tracker for subsequent state.
+
+## Build Order setup correction
+
+The earlier #2659 classification was incorrect: Aiur v1 explicitly reads direct root children. The Executor had inserted eight intermediate epic issues, so the dashboard correctly treated those as members. Corrected membership puts all44 executable tickets directly under root1; epic issues remain parked planning references. Native dependency edges and lifecycle labels are unchanged. Published `docs/product/build-order.json` matches the local runtime pack. Nested expansion is optional enhancement work, not a Khala requirement; peer notified and issue corrected.
+
+Verification after correction: authenticated browser rendered all44 stable ticket IDs. Live `build-orders 1 --json` reports ready,44 members and118 edges; member IDs and every dependency pair exactly match the published JSON. No executable lifecycle labels changed.

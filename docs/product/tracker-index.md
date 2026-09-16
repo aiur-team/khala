@@ -4,6 +4,8 @@ Planning snapshot: [8200224](https://github.com/aiur-team/khala/commit/8200224).
 
 [Root build order #1](https://github.com/aiur-team/khala/issues/1) · [Canonical plans](../plans/README.md)
 
+The 44 executable issues (#10–53) are direct members of root #1. Epic issues #2–9 remain parked planning references, outside runtime membership. Dashboard columns come from `build-lane:*` metadata. The published [Build Order JSON](build-order.json) matches the host pack and workspace mirror.
+
 | Stable ID | Issue | Description |
 |---|---|---|
 | KHA-E01 | [#2](https://github.com/aiur-team/khala/issues/2) | Validate feasibility and ownership |
