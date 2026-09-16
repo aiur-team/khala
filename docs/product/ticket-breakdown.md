@@ -1,6 +1,6 @@
 # Khala ticket proposal — revision 4
 
-2026-09-16. **44 proposed tickets, replacing 13; scope approved for detailed planning.** No issues created or implementation started. Detailed `ce-brainstorm` / `ce-plan` artifacts are now being written following user authorization. Old KHA-01–13 IDs are retired; new stable IDs are KHA-101–144. [Previous proposal](archive/ticket-breakdown-v3.md).
+2026-09-16. **44 proposed tickets, replacing 13; scope approved for detailed planning.** No issues created or implementation started. Detailed `ce-brainstorm` / `ce-plan` artifacts are written and cross-reviewed following user authorization. Old KHA-01–13 IDs are retired; new stable IDs are KHA-101–144. [Previous proposal](archive/ticket-breakdown-v3.md).
 
 ## Product contract carried into this proposal
 
@@ -9,6 +9,8 @@ Khala is an Aiur-branded shared conversation for humans and their existing worki
 Our code is TypeScript. Prefer existing OSS and Netlify for the web app and small functions. A Railway-hosted OSS backend is acceptable if its development savings justify the operation. **Recommended evaluation target: Matrix/Synapse on Railway, Khala web app on Netlify, owner-side TypeScript connectors.** Matrix is not yet selected. [The comparison](../research/11-hosting-tradeoffs.md) records the tradeoff.
 
 The proposal preserves a product usable beyond one named model. Initial real harness proofs should cover Claude Code and Codex as representative integrations; the common adapter contract and documented capability reporting allow others to join. This is not a promise that every current harness exposes a compatible notification API.
+
+Production web origin: **https://khala.aiur.team** (user-selected). Hosting/DNS provisioning is not yet performed.
 
 ## Ordinary user journey
 
@@ -40,7 +42,7 @@ One undispatched root, **KHA-ROOT**, contains eight undispatched epics. Only the
 | KHA-E07 — Recover and revoke safely | Loss, replacement and closure follow approved history/retention policy. | KHA-127, KHA-128, KHA-129, KHA-130, KHA-136 |
 | KHA-E08 — Prove and accept the product | Independent security and collaboration evidence passes on merged base; root owner accepts. | KHA-137, KHA-138, KHA-139, KHA-140 |
 
-Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linked from the graph’s `doc` fields. The graph records kind/provenance, epic/lane, computed phase, complexity and rationale, separate risk/capabilities, requirements, hard dependencies, symmetric conflict fields, advisory order, external gates, read/write/contract/safety surfaces, and acceptance gates. `ticket: null` explicitly means no tracker issue exists. Exact interface sketches and runnable commands belong to the detailed plans after approval.
+Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linked from the graph’s `doc` fields. The graph records kind/provenance, epic/lane, computed phase, complexity and rationale, separate risk/capabilities, requirements, hard dependencies, symmetric conflict fields, advisory order, external gates, read/write/contract/safety surfaces, and acceptance gates. `ticket: null` explicitly means no tracker issue exists. Exact interface sketches and implementation-time verification commands are in the [44 canonical plans](../plans/README.md).
 
 `serializes_with` is currently empty because primary write directories are disjoint and shared-file changes have one owner. This is a proposed ownership result, not proof that future implementations cannot conflict; any ownership amendment must update both sides of a conflict edge.
 
@@ -116,7 +118,7 @@ Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linke
 |---|---|---|---|
 | KHA-108 | Package messaging service deployment | KHA-101, KHA-102 | `infra/messaging/` |
 | KHA-109 | Prove backend restore and upgrades | KHA-108 | `infra/operations/`; `docs/operations/backend.md` |
-| KHA-131 | Package Netlify web and functions | KHA-101 | `netlify.toml`; `infra/netlify/`; `apps/control/src/runtime/` |
+| KHA-131 | Package Netlify web and functions | KHA-101, KHA-105 | `netlify.toml`; `infra/netlify/`; `apps/control/src/runtime/` |
 
 **KHA-108 acceptance:** Reproducible service/config/volume/HTTPS and registration boundary; restart preserves server identity and encrypted data. Selected-substrate gate applies.
 
@@ -243,9 +245,9 @@ These are earliest graph levels under unlimited capacity, not elapsed-time estim
 | Level | Width | Tickets |
 |---|---:|---|
 | 1 | 6 | KHA-101, KHA-102, KHA-103, KHA-104, KHA-141, KHA-142 |
-| 2 | 5 | KHA-106, KHA-108, KHA-131, KHA-143, KHA-144 |
+| 2 | 4 | KHA-106, KHA-108, KHA-143, KHA-144 |
 | 3 | 5 | KHA-105, KHA-107, KHA-109, KHA-117, KHA-118 |
-| 4 | 20 | KHA-110, KHA-111, KHA-112, KHA-113, KHA-114, KHA-115, KHA-116, KHA-119, KHA-120, KHA-121, KHA-122, KHA-123, KHA-124, KHA-125, KHA-126, KHA-127, KHA-128, KHA-129, KHA-130, KHA-137 |
+| 4 | 21 | KHA-110, KHA-111, KHA-112, KHA-113, KHA-114, KHA-115, KHA-116, KHA-119, KHA-120, KHA-121, KHA-122, KHA-123, KHA-124, KHA-125, KHA-126, KHA-127, KHA-128, KHA-129, KHA-130, KHA-131, KHA-137 |
 | 5 | 2 | KHA-132, KHA-133 |
 | 6 | 2 | KHA-134, KHA-136 |
 | 7 | 1 | KHA-135 |

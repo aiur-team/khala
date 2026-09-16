@@ -1,0 +1,90 @@
+{
+  "kind": "planning-document-structure-only",
+  "runtimeTestsRun": false,
+  "plans": [
+    {
+      "ticket": "KHA-107",
+      "path": "docs/plans/2026-09-16-kha-107-aiur-dashboard-shell.md",
+      "units": 4,
+      "readiness": "implementation-ready",
+      "sha256": "69ae9fe3c73baa439bcfc783e5eee343808214f5da0c75a989171db695139729"
+    },
+    {
+      "ticket": "KHA-122",
+      "path": "docs/plans/2026-09-16-kha-122-create-chat-composer.md",
+      "units": 4,
+      "readiness": "implementation-ready",
+      "sha256": "4780a40abfae2eecb4c3aa19a0d6995ab5896238d58ac914026412e061f14942"
+    },
+    {
+      "ticket": "KHA-123",
+      "path": "docs/plans/2026-09-16-kha-123-attributed-live-timeline.md",
+      "units": 4,
+      "readiness": "implementation-ready",
+      "sha256": "0d6f9fa1501aeed65d146ed7c782a587f1cf87b9106f08277cddb1db51e20a36"
+    },
+    {
+      "ticket": "KHA-124",
+      "path": "docs/plans/2026-09-16-kha-124-oauth-invitation-journey.md",
+      "units": 4,
+      "readiness": "implementation-ready",
+      "sha256": "14aded95d04b85150a98406f4a9ef313b1d814c71c2790e1bc6042b3a6824d88"
+    },
+    {
+      "ticket": "KHA-125",
+      "path": "docs/plans/2026-09-16-kha-125-recipient-review-ui.md",
+      "units": 4,
+      "readiness": "implementation-ready",
+      "sha256": "4ffdc6648ff612c8f4171a6304eda5e7d8bed1f041e197e92a26f0125e72cf88"
+    },
+    {
+      "ticket": "KHA-126",
+      "path": "docs/plans/2026-09-16-kha-126-trust-agent-status.md",
+      "units": 4,
+      "readiness": "requirements-only",
+      "sha256": "4284a0e0b4d14fa6be7c28306bff6114574b584353415681fb8ed51539e7dc94"
+    },
+    {
+      "ticket": "KHA-127",
+      "path": "docs/plans/2026-09-16-kha-127-recovery-closure-ui.md",
+      "units": 4,
+      "readiness": "requirements-only",
+      "sha256": "1f984f71f1f76e45bb1e3feaf0a80d6ef320c54f1b9e8edf5ce7225cba64a870"
+    },
+    {
+      "ticket": "KHA-132",
+      "path": "docs/plans/2026-09-16-kha-132-human-flow-composition.md",
+      "units": 4,
+      "readiness": "implementation-ready",
+      "sha256": "d15fffa756fb25b7d48678a59a6b0470d85059ac8bb093ae33566777a89ff051"
+    },
+    {
+      "ticket": "KHA-134",
+      "path": "docs/plans/2026-09-16-kha-134-review-delivery-composition.md",
+      "units": 4,
+      "readiness": "implementation-ready",
+      "sha256": "9a0cbe3a3d4575372d5de0e95dfb8dd7a49df1ef829254a5cd63308e9336a6af"
+    },
+    {
+      "ticket": "KHA-135",
+      "path": "docs/plans/2026-09-16-kha-135-trust-controls-composition.md",
+      "units": 4,
+      "readiness": "requirements-only",
+      "sha256": "7bb35503a012f8b2dfd35c9bd8d80e76bc3c690a5973ff9cae6094287d740d0e"
+    },
+    {
+      "ticket": "KHA-136",
+      "path": "docs/plans/2026-09-16-kha-136-recovery-lifecycle-composition.md",
+      "units": 4,
+      "readiness": "requirements-only",
+      "sha256": "7d9005552179862303340b8bcc280eb2b9f42f0ef317ee980ac4f5809acf2c4a"
+    },
+    {
+      "ticket": "KHA-143",
+      "path": "docs/plans/2026-09-16-kha-143-client-reuse-boundary.md",
+      "units": 4,
+      "readiness": "implementation-ready",
+      "sha256": "2200b46a87f7e1d286b577b350b06aa07746fba8aa92c868feea3558109c986b"
+    }
+  ]
+}

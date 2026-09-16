@@ -41,3 +41,5 @@ Rechecked locally: no Khala config/state directory, no listener on intended port
 ## Planning-to-execution coordination
 
 User authorized deep planning and push to research followed by local aiurdev execution. Sent port 4002 intent and observed shared stamp to peer; queue receipt `01a0ab8a-892c-7b32-aed1-403d6812c60e`. Await current shared-release coordination before any automatically rebuilding launch. No Khala daemon started during planning.
+
+Read-only `AIUR_SKIP_BUILD=1 ../aiur/scripts/aiurdev __identity` resolved Khala instance key `95978a6838`, node `aiur-everdred-95978a6838@127.0.0.1`, project root Khala, shared local dev release. This command did not launch or rebuild. The skip-build option is available for a coordinated launch on the already stamped release; revalidate stamp completeness first. Do not set `AIUR_REPO_ROOT` to the source checkout when targeting Khala, since the engine uses it for instance identity.

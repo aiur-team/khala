@@ -1,0 +1,13 @@
+{
+  "amendments": [
+    {
+      "ticket": "KHA-133",
+      "section": "Product Contract F1",
+      "old": "F1. Bootstrap establishes binding; storage opens under exclusive lock; subscription catches up; dispatch starts only after prerequisites and effective controls are ready.",
+      "new": "F1. Storage opens under exclusive lock; bootstrap establishes binding; subscription catches up; dispatch starts only after prerequisites and effective controls are ready.",
+      "reason": "Security peer found order contradicted mandatory device-state ownership before bootstrap; requirements/IDs unchanged, sequencing correction only. Parent notified.",
+      "old_product_sha256": "b83eaecdf696b4fa744de3933a805e13e5b382d3c5c819fe1d5f83d385afeaeb",
+      "new_product_sha256": "739139e14f0d2d86f34aa152a1c9fb6e051ecfa809199011e1841adec74ca8bc"
+    }
+  ]
+}

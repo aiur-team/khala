@@ -1,0 +1,68 @@
+{
+  "date": "2026-09-16",
+  "repositories": {
+    "khala": "6d4694173eff9b0832f4c3a2cdb90b4281fcccd9",
+    "archon": "c7d3254097acaa02eed1e3be6fd8fbf06c0e8128",
+    "aiur": "1f618cddf601a0b6d79bc1197579746b7584a64c"
+  },
+  "read_only_observations": [
+    {
+      "path": "../archon/netlify/lib/store.mjs",
+      "observation": "Strong reads, per-key conditional writes, bounded retry, safe public error codes; no multi-key transaction guarantee."
+    },
+    {
+      "path": "../archon/netlify/lib/realtime.mjs",
+      "observation": "Provider auth/capability/token boundaries; existing realtime is a hint mechanism, not Khala durable delivery."
+    },
+    {
+      "path": "../aiur/src/lib/aiur/executor_events.ex",
+      "lines": "120-185",
+      "observation": "Subscribe before replay; journal cursor/dedup; not an E2EE crypto transaction or proof of model consumption."
+    },
+    {
+      "path": "../aiur/src/lib/aiur/orchestrator/operator_messages.ex",
+      "lines": "30-55",
+      "observation": "Correlated queue handle and separate status observation; native status words have local meanings, do not copy them into Khala without mapping."
+    },
+    {
+      "command": "claude --version",
+      "result": "2.1.271 (Claude Code)"
+    },
+    {
+      "command": "codex --version",
+      "result": "codex-cli 0.154.0"
+    },
+    {
+      "command": "codex queue --help; codex app-server --help",
+      "result": "Read-only capability surface inspected; no target session notified or daemon launched."
+    }
+  ],
+  "external_primary_sources": [
+    {
+      "url": "https://code.claude.com/docs/en/channels-reference",
+      "checked": "2026-09-16",
+      "use": "Startup/opt-in constraints; notification write not consumption acknowledgement."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/cross-session-messaging",
+      "checked": "2026-09-16",
+      "use": "Native inter-session messaging exists; not proof of arbitrary external ingress."
+    },
+    {
+      "url": "https://developers.openai.com/codex/app-server",
+      "checked": "2026-09-16",
+      "use": "Native thread/turn/transport capability reference, installed schema still needs same-session proof."
+    },
+    {
+      "url": "https://matrix-org.github.io/matrix-js-sdk/",
+      "checked": "2026-09-16",
+      "use": "SDK reuse candidate; persistence and crash recovery remain KHA142 proof, not a selected backend."
+    }
+  ],
+  "not_run": [
+    "live harness message",
+    "daemon/provisioning",
+    "crypto crash experiment",
+    "application unit/integration/E2E tests"
+  ]
+}

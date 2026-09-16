@@ -98,7 +98,7 @@ Each integration ticket owns wiring and its tests, not rewriting sibling impleme
 
 ## Parallelism limits and priorities
 
-The proposal has nine dependency levels. This is a provisional depth, pending user review, not an agreed schedule. The initial feasibility tracks and workspace scaffold can run together; the highest-width level has 20 candidates. No claim is made that 20 agents can run on the current host or under the current fleet ceiling.
+The proposal has nine dependency levels. This is dependency depth, not an agreed schedule. The initial feasibility tracks and workspace scaffold can run together; the highest-width level has 21 candidates. No claim is made that 21 agents can run on the current host or under the current fleet ceiling.
 
 Staff KHA-144 (automatic ownership proof), then 105 (messaging ports), and 106 (delivery ports) promptly: they unlock the broadest fan-out. UI/backend/adapter/policy workers then operate on disjoint paths. Do not wait for deployed UI before starting connector adapters, or for production endpoints before building fixture-driven screens. Within available capacity, prioritize real integration preparation so completed modules do not accumulate without a working path.
 
@@ -108,9 +108,17 @@ Contract review, root dependency updates, shared deployment environments and fin
 
 Read locally on 2026-09-16:
 
-- [Current planning contract](../../../aiur/.claude/skills/aiur-build/references/planning-contract.md): draft/issue authority, member fields, undispatched containers, validation and runtime paths.
-- [Decomposition workflow](../../../aiur/.claude/skills/aiur-build/references/decomposition-workflow.md): contract-first fan-out, antichain phases, exact write surfaces and named reconnection owners.
+- [Current planning contract](https://github.com/aiur-team/aiur/blob/1f618cddf601a0b6d79bc1197579746b7584a64c/.claude/skills/aiur-build/references/planning-contract.md): draft/issue authority, member fields, undispatched containers, validation and runtime paths.
+- [Decomposition workflow](https://github.com/aiur-team/aiur/blob/1f618cddf601a0b6d79bc1197579746b7584a64c/.claude/skills/aiur-build/references/decomposition-workflow.md): contract-first fan-out, antichain phases, exact write surfaces and named reconnection owners.
 - [Build Order concept](../../../aiur/website/docs-app/concepts/build-orders.md): only workspace/state-node packs are discovered; docs-only proposals are inert.
 - [Prior decomposition lessons](../../../aiur/docs/build-order/01-decomposition-patterns.md): one observable outcome, green PR, integration owner and typed conflicts.
 
 Current runtime guidance supersedes older example manifests that require publication/reconciliation machinery. The enriched proposal graph preserves review metadata; it is not a substitute for the runtime member shape. Publication/daemon/dashboard verification remains a later coordinated action, and no completed planning pack is claimed here.
+
+## Detailed planning amendments
+
+KHA-131 depends on KHA-105 because its Netlify Blobs adapter implements the canonical ControlStore CAS/unknown-outcome port. It owns adapter behavior and live isolated conformance; identity/admission consumers do not define competing storage semantics. The resulting widest dependency level has 21 candidates, still subject to product gates and host capacity.
+
+KHA-101 establishes the root Playwright `test:integration` runner and `tests/integration/playwright.config.ts`; it discovers `**/*.spec.ts` below that directory. Missing live prerequisites and zero collected cases cannot count as a passing proof. KHA-137 establishes separate root Vitest `test:e2e` and `test:conformance` commands through the shared dependency owner.
+
+One-time bootstrap exception: KHA-132 creates unavailable browser `register.ts` modules under composition/review, composition/controls and composition/recovery after canonical contracts exist; KHA-133 does the same for its finite connector registrations. Their finite registries compile immediately. KHA-134–136 subsequently replace only their owned registration modules. Unavailable placeholders cannot satisfy root acceptance; no later worker edits the central registry.

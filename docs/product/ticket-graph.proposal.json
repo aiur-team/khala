@@ -1,5 +1,5 @@
 {
-  "status": "scope approved; detailed planning in progress; not an Aiur runtime pack",
+  "status": "scope approved; detailed research and peer review complete; product gates remain; not an Aiur runtime pack",
   "build_order_id": "aiur-team/khala:first-collaboration",
   "plan_version": 4,
   "tickets": [
@@ -16,7 +16,8 @@
         "pnpm-workspace.yaml",
         "tsconfig.base.json",
         ".github/workflows/",
-        "scripts/check-boundaries.mjs"
+        "scripts/check-boundaries.mjs",
+        "tests/integration/playwright.config.ts"
       ],
       "acceptance": "All package shells build; feature imports are checked; root commands discover package tests without per-feature CI edits.",
       "kind": "executable",
@@ -65,7 +66,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-101-workspace-foundation-plan.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-102",
@@ -128,7 +131,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-102-backend-feasibility-plan.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-103",
@@ -191,7 +196,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-103-claude-existing-session-proof.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-104",
@@ -254,7 +261,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-104-codex-existing-session-proof.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-105",
@@ -330,7 +339,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-105-messaging-identity-ports.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-106",
@@ -401,7 +412,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-106-delivery-harness-contracts.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-107",
@@ -468,7 +481,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-107-aiur-dashboard-shell.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-108",
@@ -534,7 +549,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-108-messaging-deployment-plan.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-109",
@@ -598,7 +615,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-109-backend-recovery-operations-plan.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-110",
@@ -668,7 +687,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-110-oauth-identity-mapping.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-111",
@@ -737,7 +758,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-111-browser-device-lifecycle.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-112",
@@ -803,7 +826,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-112-room-intro-commands.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-113",
@@ -871,7 +896,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-113-invitation-admission.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-114",
@@ -944,7 +971,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-114-agent-link-bootstrap.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-115",
@@ -1015,7 +1044,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-115-connector-durable-storage.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-116",
@@ -1084,7 +1115,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-116-encrypted-live-subscription.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-117",
@@ -1151,7 +1184,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-117-claude-harness-adapter.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-118",
@@ -1218,7 +1253,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-118-codex-harness-adapter.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-119",
@@ -1287,7 +1324,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-119-exact-approval-release.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-120",
@@ -1356,7 +1395,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-120-trust-rearm-transitions.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-121",
@@ -1425,7 +1466,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-121-bounded-model-dispatch.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-122",
@@ -1493,7 +1536,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-122-create-chat-composer.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-123",
@@ -1561,7 +1606,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-123-attributed-live-timeline.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-124",
@@ -1628,7 +1675,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-124-oauth-invitation-journey.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-125",
@@ -1698,7 +1747,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-125-recipient-review-ui.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-126",
@@ -1767,7 +1818,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-126-trust-agent-status.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-127",
@@ -1834,7 +1887,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-127-recovery-closure-ui.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-128",
@@ -1903,7 +1958,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-128-device-agent-revocation.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-129",
@@ -1972,7 +2029,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-129-encrypted-recovery.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-130",
@@ -2040,16 +2099,19 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-130-connector-retention-cleanup.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-131",
       "lane": "platform",
       "title": "Package Netlify web and functions",
       "depends_on": [
-        "KHA-101"
+        "KHA-101",
+        "KHA-105"
       ],
-      "phase": 2,
+      "phase": 4,
       "complexity": 2,
       "write_surfaces": [
         "netlify.toml",
@@ -2063,7 +2125,7 @@
       "ticket": null,
       "doc": "tickets/KHA-131.md",
       "epic": "KHA-E03",
-      "phase_hint": 2,
+      "phase_hint": 4,
       "complexity_rationale": "One known component or deployment surface.",
       "risk": "medium",
       "capability_requirements": [
@@ -2104,7 +2166,9 @@
         "human_or_e2e": [
           "Live composition proof is owned by the reconnection ledger ticket."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-131-netlify-deployment-plan.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-132",
@@ -2188,7 +2252,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-132-human-flow-composition.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-133",
@@ -2267,7 +2333,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-133-connector-runtime-composition.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-134",
@@ -2340,7 +2408,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-134-review-delivery-composition.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-135",
@@ -2411,7 +2481,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-135-trust-controls-composition.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-136",
@@ -2487,7 +2559,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-136-recovery-lifecycle-composition.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-137",
@@ -2557,7 +2631,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-137-multi-owner-acceptance-harness.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-138",
@@ -2631,7 +2707,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-138-security-boundary-proof.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-139",
@@ -2712,7 +2790,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-139-collaboration-acceptance.md",
+      "plan_readiness": "requirements-only"
     },
     {
       "id": "KHA-140",
@@ -2777,7 +2857,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-140-root-acceptance-plan.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-141",
@@ -2839,7 +2921,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-141-browser-crypto-proof.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-142",
@@ -2901,7 +2985,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-142-headless-crypto-proof.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-143",
@@ -2965,7 +3051,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-143-client-reuse-boundary.md",
+      "plan_readiness": "implementation-ready"
     },
     {
       "id": "KHA-144",
@@ -3035,7 +3123,9 @@
         "human_or_e2e": [
           "Record real environment/versions and evidence; mocks alone do not establish this outcome."
         ]
-      }
+      },
+      "plan": "../plans/2026-09-16-kha-144-ownership-bootstrap-proof.md",
+      "plan_readiness": "requirements-only"
     }
   ],
   "root": {
@@ -3542,7 +3632,7 @@
     "Approved requirements and contracts",
     "Tracker for promoted issues",
     "Aiur for runtime facts",
-    "This proposal for unapproved intent"
+    "This proposal and canonical plans for approved scope and explicit pending choices"
   ],
   "researched_at_commit": "6d46941",
   "authority": "User authorized 44-ticket deep planning, commit/push research, then primary aiur-run Executor with local aiurdev. Product gates remain."

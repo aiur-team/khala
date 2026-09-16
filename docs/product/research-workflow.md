@@ -1,6 +1,6 @@
 # Research and planning handoff
 
-Current stage: revision 4 scope approved; 44 per-ticket brainstorm/plan workflows running across three background agents plus the primary. Updated 2026-09-16.
+Current stage: all 44 per-ticket brainstorm/plan artifacts written across three background agents plus the primary; independent review complete; publication and Executor handoff. Updated 2026-09-16.
 
 ## Work owners
 
@@ -18,11 +18,11 @@ Requested skills were located at:
 - `/home/everdred/.claude/plugins/marketplaces/compound-engineering-plugin/skills/ce-brainstorm/SKILL.md`
 - `/home/everdred/.claude/plugins/marketplaces/compound-engineering-plugin/skills/ce-plan/SKILL.md`
 
-The paths are local installed workflow sources. Read the applicable skill and its required references at invocation; their availability has been checked, but per-ticket skill execution has not started.
+The paths are local installed workflow sources. Read the applicable skill and its required references at invocation; the planning agents read and applied the workflows and required references. Each ticket retains its Product Contract and enriched candidate/committed implementation units in one canonical artifact.
 
 User-requested sequence: finish research and product choices → propose concrete ticket breakdown → user signs off → run per-ticket `ce-brainstorm` and `ce-plan` → verify completeness for less capable implementation workers.
 
-Do not mistake pending product answers for a blocker to independent research. Do not mistake a draft ticket table for approval. Do not create tracker issues or implement the service as part of this scope without further instruction.
+Do not mistake pending product answers for a blocker to independent research. Do not mistake a draft ticket table for approval. The later user instruction explicitly authorizes transition to local aiurdev execution after the research push; research itself does not execute the service.
 
 ## Completion evidence required
 
@@ -33,4 +33,4 @@ Do not mistake pending product answers for a blocker to independent research. Do
 - User sign-off is recorded against the specific proposal revision.
 - Every approved ticket has a requirements contract and a detailed enriched plan produced through the named workflows, with verification and review evidence.
 
-The active goal remains incomplete until the approved-ticket planning work is finished. Research-only progress is not completion of the whole goal.
+Planning and product implementation are distinct milestones. See the [plan index](../plans/README.md) and [Executor transition](executor-transition.md). Product-gated plans remain requirements-only; no unperformed runtime proof is represented as passed.
