@@ -53,3 +53,11 @@ GitHub materialization: root1, epics2–9, leaves10–53; native hierarchy/depen
 Local setup fixes: Khala origin now uses HTTPS plus gh credential helper after SSH auth failed; the owned config records existing publishing bot `its-applekid` and App identity `aiur-daemon[bot]`. CI readiness remains unfulfilled in the empty repo, to be established by101 before merge. Safe CODEOWNERS fallback is explicit; no admission gate was disabled.
 
 Aiur defect #2659: root view renders only8 direct epics and omits44 executable grandchildren/dependencies. Filed with agent:todo and required sanitized evidence; immediately notified peer, queue receipt `01a0abaa-c2e5-7911-a02f-bf85d19d0c77`. Full planning-pack dashboard rendering remains incomplete; native per-leaf gates were independently verified.
+
+## Worker-start verification — 2026-09-16 19:29 UTC
+
+All six initial workers10,11,12,13,50,51 observed actively working. Startup correction: configure `agent.codex.approval_policy: never` and `agent.codex.thread_sandbox: workspace-write`; the bundled example's root-level codex block was silently ignored. First10/11 retries were cleared through authoritative labels/queue after correction; latest API showed running and no current error. Aiur #2660 records the stale example/schema diagnostic issue and was immediately sent to the peer.
+
+The real consumer journal is `khala.executor.wakes.ndjson`, whereas the skill recipe hardcodes `aiur.executor.wakes.ndjson`. Local relay now follows the verified existing Khala path with unbuffered reads and queues notifications to the verified current thread; durable `executor-wait --json` remains the sole acknowledgment path. Aiur #2661 records the recipe defect and was immediately sent to the peer. All three Aiur defects2659–2661 were recorded through the findings CLI. Root/epic containers have explicit parked markers and remain undispatched.
+
+Worker-start verification is not product completion. Existing product gates, required CI/review and full descendant dashboard verification remain. Query the live board and tracker for subsequent state.
