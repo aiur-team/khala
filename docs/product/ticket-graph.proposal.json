@@ -1,0 +1,3549 @@
+{
+  "status": "scope approved; detailed planning in progress; not an Aiur runtime pack",
+  "build_order_id": "aiur-team/khala:first-collaboration",
+  "plan_version": 4,
+  "tickets": [
+    {
+      "id": "KHA-101",
+      "lane": "foundation",
+      "title": "Scaffold TypeScript workspace and CI",
+      "depends_on": [],
+      "phase": 1,
+      "complexity": 2,
+      "write_surfaces": [
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        ".github/workflows/",
+        "scripts/check-boundaries.mjs"
+      ],
+      "acceptance": "All package shells build; feature imports are checked; root commands discover package tests without per-feature CI edits.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-101.md",
+      "epic": "KHA-E02",
+      "phase_hint": 1,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "foundation"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R10",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "All package shells build; feature imports are checked; root commands discover package tests without per-feature CI edits."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-102",
+      "lane": "research",
+      "title": "Prove OSS backend hosting fit",
+      "depends_on": [],
+      "phase": 1,
+      "complexity": 3,
+      "write_surfaces": [
+        "experiments/backend/",
+        "docs/evidence/backend.md"
+      ],
+      "acceptance": "Pinned Synapse/Postgres starts with durable volumes; record license, service requirements and Netlify comparison. No custom chat backend.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-102.md",
+      "epic": "KHA-E01",
+      "phase_hint": 1,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "research"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R06",
+        "R10",
+        "R11",
+        "R13",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Production implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Pinned Synapse/Postgres starts with durable volumes; record license, service requirements and Netlify comparison. No custom chat backend."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-103",
+      "lane": "research",
+      "title": "Prove Claude existing-session attachment",
+      "depends_on": [],
+      "phase": 1,
+      "complexity": 3,
+      "write_surfaces": [
+        "experiments/claude/",
+        "docs/evidence/claude.md"
+      ],
+      "acceptance": "An existing working session receives an event after agent-performed setup; record required opt-ins, busy behavior, identity and timestamps. Any human setup requirement is a product gap.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-103.md",
+      "epic": "KHA-E01",
+      "phase_hint": 1,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "research"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R07",
+        "R08",
+        "R13",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Production implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "An existing working session receives an event after agent-performed setup; record required opt-ins, busy behavior, identity and timestamps. Any human setup requirement is a product gap."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-104",
+      "lane": "research",
+      "title": "Prove Codex existing-session attachment",
+      "depends_on": [],
+      "phase": 1,
+      "complexity": 3,
+      "write_surfaces": [
+        "experiments/codex/",
+        "docs/evidence/codex.md"
+      ],
+      "acceptance": "Prove same-session enqueue and distinguish it from consumption, including busy and ambiguous acceptance cases; no replacement session.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-104.md",
+      "epic": "KHA-E01",
+      "phase_hint": 1,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "research"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R07",
+        "R08",
+        "R13",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Production implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Prove same-session enqueue and distinguish it from consumption, including busy and ambiguous acceptance cases; no replacement session."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-105",
+      "lane": "foundation",
+      "title": "Define identity, room and messaging ports",
+      "depends_on": [
+        "KHA-101",
+        "KHA-102",
+        "KHA-141",
+        "KHA-142",
+        "KHA-144"
+      ],
+      "phase": 3,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/contracts/src/messaging/",
+        "packages/contracts/fixtures/messaging/"
+      ],
+      "acceptance": "Versioned identities, room admission, immutable event references, SDK mapping and recovery ports have valid/invalid fixtures; provider subject is distinct from email, device and agent session.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-105.md",
+      "epic": "KHA-E02",
+      "phase_hint": 3,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "foundation",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE",
+        "G-ADMISSION",
+        "G-RETENTION"
+      ],
+      "requirement_refs": [
+        "R06",
+        "R09",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-102.md",
+        "tickets/KHA-141.md",
+        "tickets/KHA-142.md",
+        "tickets/KHA-144.md"
+      ],
+      "contract_surfaces": [
+        "Defines messaging ports and fixtures"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Versioned identities, room admission, immutable event references, SDK mapping and recovery ports have valid/invalid fixtures; provider subject is distinct from email, device and agent session."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-106",
+      "lane": "foundation",
+      "title": "Define approval and harness ports",
+      "depends_on": [
+        "KHA-101",
+        "KHA-103",
+        "KHA-104"
+      ],
+      "phase": 2,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/contracts/src/delivery/",
+        "packages/contracts/fixtures/delivery/"
+      ],
+      "acceptance": "Pin exact release references, owner commands, capability reports, receipt states and outcome_unknown; contract tests cover forgery and duplicate semantics without importing messaging implementations.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-106.md",
+      "epic": "KHA-E02",
+      "phase_hint": 2,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "foundation",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-AUTOMATION",
+        "G-HARNESSES"
+      ],
+      "requirement_refs": [
+        "R04",
+        "R09",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-103.md",
+        "tickets/KHA-104.md"
+      ],
+      "contract_surfaces": [
+        "Defines delivery and harness ports and fixtures"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Pin exact release references, owner commands, capability reports, receipt states and outcome_unknown; contract tests cover forgery and duplicate semantics without importing messaging implementations."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-107",
+      "lane": "web",
+      "title": "Build Aiur-branded shell",
+      "depends_on": [
+        "KHA-101",
+        "KHA-143"
+      ],
+      "phase": 3,
+      "complexity": 2,
+      "write_surfaces": [
+        "apps/web/src/shell/",
+        "apps/web/src/brand/"
+      ],
+      "acceptance": "Reuse sourced Aiur/Archon assets and tokens; responsive accessible shell exposes slots and theme. No feature routing or policy logic.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-107.md",
+      "epic": "KHA-E04",
+      "phase_hint": 3,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "web"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-CLIENT"
+      ],
+      "requirement_refs": [
+        "R10",
+        "R12",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-143.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Reuse sourced Aiur/Archon assets and tokens; responsive accessible shell exposes slots and theme. No feature routing or policy logic."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-108",
+      "lane": "platform",
+      "title": "Package messaging service deployment",
+      "depends_on": [
+        "KHA-101",
+        "KHA-102"
+      ],
+      "phase": 2,
+      "complexity": 2,
+      "write_surfaces": [
+        "infra/messaging/"
+      ],
+      "acceptance": "Reproducible service/config/volume/HTTPS and registration boundary; restart preserves server identity and encrypted data. Selected-substrate gate applies.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-108.md",
+      "epic": "KHA-E03",
+      "phase_hint": 2,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "platform"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE"
+      ],
+      "requirement_refs": [
+        "R06",
+        "R11",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-102.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Reproducible service/config/volume/HTTPS and registration boundary; restart preserves server identity and encrypted data. Selected-substrate gate applies."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-109",
+      "lane": "platform",
+      "title": "Prove backend restore and upgrades",
+      "depends_on": [
+        "KHA-108"
+      ],
+      "phase": 3,
+      "complexity": 2,
+      "write_surfaces": [
+        "infra/operations/",
+        "docs/operations/backend.md"
+      ],
+      "acceptance": "Restore a disposable backup and exercise upgrade/rollback against declared versions; sanitized health evidence and resource baseline are recorded.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-109.md",
+      "epic": "KHA-E03",
+      "phase_hint": 3,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "platform"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE"
+      ],
+      "requirement_refs": [
+        "R11",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-108.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Restore a disposable backup and exercise upgrade/rollback against declared versions; sanitized health evidence and resource baseline are recorded."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-110",
+      "lane": "identity",
+      "title": "Implement OAuth identity mapping",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "apps/control/src/auth/"
+      ],
+      "acceptance": "Verified provider subject maps internally to messaging identity; session expiry/logout and unauthorized requests fail correctly; no separate messaging account setup.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-110.md",
+      "epic": "KHA-E04",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "identity",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE",
+        "G-ADMISSION"
+      ],
+      "requirement_refs": [
+        "R02",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Verified provider subject maps internally to messaging identity; session expiry/logout and unauthorized requests fail correctly; no separate messaging account setup."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-111",
+      "lane": "identity",
+      "title": "Implement browser encrypted device lifecycle",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/messaging/src/browser-device/"
+      ],
+      "acceptance": "SDK keys initialize automatically, persist across restart and handle missing/revoked device state; no ordinary-path key ceremony or server plaintext escrow.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-111.md",
+      "epic": "KHA-E04",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "identity",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE"
+      ],
+      "requirement_refs": [
+        "R06",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "SDK keys initialize automatically, persist across restart and handle missing/revoked device state; no ordinary-path key ceremony or server plaintext escrow."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-112",
+      "lane": "messaging",
+      "title": "Implement room and intro commands",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/messaging/src/rooms/"
+      ],
+      "acceptance": "Room creation and named/unnamed chat work; human and delegated-agent multi-message intro batches retain attribution and retry identity. Agent room creation is not assumed.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-112.md",
+      "epic": "KHA-E04",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "messaging"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE"
+      ],
+      "requirement_refs": [
+        "R01",
+        "R03",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Room creation and named/unnamed chat work; human and delegated-agent multi-message intro batches retain attribution and retry identity. Agent room creation is not assumed."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-113",
+      "lane": "identity",
+      "title": "Implement invitation admission",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "apps/control/src/invitations/"
+      ],
+      "acceptance": "Recipient admission and history disclosure follow approved policy; revoked/expired/wrong-owner link fails without content disclosure; retries do not duplicate membership.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-113.md",
+      "epic": "KHA-E04",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "identity",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE",
+        "G-ADMISSION"
+      ],
+      "requirement_refs": [
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Recipient admission and history disclosure follow approved policy; revoked/expired/wrong-owner link fails without content disclosure; retries do not duplicate membership."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-114",
+      "lane": "connector",
+      "title": "Implement agent-operated link bootstrap",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/connector/src/bootstrap/",
+        "apps/control/src/agent-bootstrap/"
+      ],
+      "acceptance": "Machine-readable link instructions yield scoped owner/session authorization without exposing human OAuth credentials to the model; agent performs supported setup, not the human.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-114.md",
+      "epic": "KHA-E05",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "connector",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE",
+        "G-HARNESSES"
+      ],
+      "requirement_refs": [
+        "R07",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Machine-readable link instructions yield scoped owner/session authorization without exposing human OAuth credentials to the model; agent performs supported setup, not the human."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-115",
+      "lane": "connector",
+      "title": "Persist connector keys and inbox",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/connector/src/storage/"
+      ],
+      "acceptance": "Supported crypto storage and local inbox survive crash/restart; explicit reconciliation spans separate stores; no assumption of an atomic crypto-plus-inbox transaction.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-115.md",
+      "epic": "KHA-E05",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "connector",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE"
+      ],
+      "requirement_refs": [
+        "R04",
+        "R06",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Supported crypto storage and local inbox survive crash/restart; explicit reconciliation spans separate stores; no assumption of an atomic crypto-plus-inbox transaction."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-116",
+      "lane": "connector",
+      "title": "Implement live encrypted subscription",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/connector/src/subscription/"
+      ],
+      "acceptance": "Subscribe/catch-up repairs missed events; replay deduplicates inbox input; disconnect and sleep are visible; notification hints contain no pending plaintext.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-116.md",
+      "epic": "KHA-E05",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "connector"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE"
+      ],
+      "requirement_refs": [
+        "R08",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Subscribe/catch-up repairs missed events; replay deduplicates inbox input; disconnect and sleep are visible; notification hints contain no pending plaintext."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-117",
+      "lane": "adapters",
+      "title": "Implement Claude harness adapter",
+      "depends_on": [
+        "KHA-101",
+        "KHA-106"
+      ],
+      "phase": 3,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/harnesses/src/claude/"
+      ],
+      "acceptance": "Implements approved capability contract against tested native mechanism; preserves session/workspace and exposes opt-in/unavailable/queued distinctions.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-117.md",
+      "epic": "KHA-E05",
+      "phase_hint": 3,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "adapters"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-HARNESSES"
+      ],
+      "requirement_refs": [
+        "R07",
+        "R08",
+        "R09",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Implements approved capability contract against tested native mechanism; preserves session/workspace and exposes opt-in/unavailable/queued distinctions."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-118",
+      "lane": "adapters",
+      "title": "Implement Codex harness adapter",
+      "depends_on": [
+        "KHA-101",
+        "KHA-106"
+      ],
+      "phase": 3,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/harnesses/src/codex/"
+      ],
+      "acceptance": "Implements approved enqueue/correlation contract; uncertain submission is not silently resent and no new session is substituted.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-118.md",
+      "epic": "KHA-E05",
+      "phase_hint": 3,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "adapters"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-HARNESSES"
+      ],
+      "requirement_refs": [
+        "R07",
+        "R08",
+        "R09",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Implements approved enqueue/correlation contract; uncertain submission is not silently resent and no new session is substituted."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-119",
+      "lane": "policy",
+      "title": "Implement exact approval release",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/policy/src/release/"
+      ],
+      "acceptance": "Pure policy binds approval to exact recipient and immutable bytes/version; stale, forged and duplicate commands have defined outcomes; new arrivals are excluded from prior selection.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-119.md",
+      "epic": "KHA-E06",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "policy",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R04",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Pure policy binds approval to exact recipient and immutable bytes/version; stale, forged and duplicate commands have defined outcomes; new arrivals are excluded from prior selection."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-120",
+      "lane": "policy",
+      "title": "Implement trust and re-arm transitions",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/policy/src/trust/"
+      ],
+      "acceptance": "Pure transitions cover peer-scoped auto delivery, backlog choice and acknowledged re-arm; offline requests remain pending, not falsely effective.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-120.md",
+      "epic": "KHA-E06",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "policy"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-AUTOMATION"
+      ],
+      "requirement_refs": [
+        "R05",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Pure transitions cover peer-scoped auto delivery, backlog choice and acknowledged re-arm; offline requests remain pending, not falsely effective."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-121",
+      "lane": "connector",
+      "title": "Implement bounded model dispatch",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/connector/src/dispatch/"
+      ],
+      "acceptance": "Only authorized released jobs reach harness port; durable dedup, budgets, pause and ambiguous receipt recovery are proven using injected ports; cancellation never claims rollback.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-121.md",
+      "epic": "KHA-E05",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "connector"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-AUTOMATION"
+      ],
+      "requirement_refs": [
+        "R04",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Only authorized released jobs reach harness port; durable dedup, budgets, pause and ambiguous receipt recovery are proven using injected ports; cancellation never claims rollback."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-122",
+      "lane": "web",
+      "title": "Build create-chat and intro composer",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-107"
+      ],
+      "phase": 4,
+      "complexity": 2,
+      "write_surfaces": [
+        "apps/web/src/features/create-chat/"
+      ],
+      "acceptance": "Fixture-driven named/unnamed creation, multi-message intro preparation and share link states are accessible; no connector terminology/setup steps.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-122.md",
+      "epic": "KHA-E04",
+      "phase_hint": 4,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "web"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R03",
+        "R12",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-107.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Fixture-driven named/unnamed creation, multi-message intro preparation and share link states are accessible; no connector terminology/setup steps."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-123",
+      "lane": "web",
+      "title": "Build attributed live timeline",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-107"
+      ],
+      "phase": 4,
+      "complexity": 2,
+      "write_surfaces": [
+        "apps/web/src/features/timeline/"
+      ],
+      "acceptance": "Typed projection shows human/agent ownership, pagination, send reconciliation and offline state; unsafe markup cannot execute or auto-fetch external content.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-123.md",
+      "epic": "KHA-E04",
+      "phase_hint": 4,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "web"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R01",
+        "R02",
+        "R12",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-107.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Typed projection shows human/agent ownership, pagination, send reconciliation and offline state; unsafe markup cannot execute or auto-fetch external content."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-124",
+      "lane": "web",
+      "title": "Build OAuth entry and invitation journey",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-107"
+      ],
+      "phase": 4,
+      "complexity": 2,
+      "write_surfaces": [
+        "apps/web/src/features/join/"
+      ],
+      "acceptance": "Fixture-driven sign-in/admission/error paths deliver OAuth/create/share flow and correct identity; no homeserver/password/config screens.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-124.md",
+      "epic": "KHA-E04",
+      "phase_hint": 4,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "web"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R12",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-107.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Fixture-driven sign-in/admission/error paths deliver OAuth/create/share flow and correct identity; no homeserver/password/config screens."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-125",
+      "lane": "web",
+      "title": "Build recipient review UI",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106",
+        "KHA-107"
+      ],
+      "phase": 4,
+      "complexity": 2,
+      "write_surfaces": [
+        "apps/web/src/features/review/"
+      ],
+      "acceptance": "Human sees full content and selects exact pending items for release; arrivals do not alter selection; revoked/stale command feedback is explicit.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-125.md",
+      "epic": "KHA-E06",
+      "phase_hint": 4,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "web"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R03",
+        "R04",
+        "R12",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md",
+        "tickets/KHA-107.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Human sees full content and selects exact pending items for release; arrivals do not alter selection; revoked/stale command feedback is explicit."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-126",
+      "lane": "web",
+      "title": "Build trust and agent-status controls",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106",
+        "KHA-107"
+      ],
+      "phase": 4,
+      "complexity": 2,
+      "write_surfaces": [
+        "apps/web/src/features/agent-controls/"
+      ],
+      "acceptance": "Shows subscription, queued versus consumed, pending/effective trust, pause and unknown outcomes accurately; incoming text cannot operate controls.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-126.md",
+      "epic": "KHA-E06",
+      "phase_hint": 4,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "web"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R05",
+        "R12",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md",
+        "tickets/KHA-107.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Shows subscription, queued versus consumed, pending/effective trust, pause and unknown outcomes accurately; incoming text cannot operate controls."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-127",
+      "lane": "web",
+      "title": "Build recovery and closure UI",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-107"
+      ],
+      "phase": 4,
+      "complexity": 2,
+      "write_surfaces": [
+        "apps/web/src/features/recovery/"
+      ],
+      "acceptance": "Missing keys, replacement, revocation and retention consequences are presented from typed fixtures without promising deletion of participant-held copies.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-127.md",
+      "epic": "KHA-E07",
+      "phase_hint": 4,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "web"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-RETENTION"
+      ],
+      "requirement_refs": [
+        "R12",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-107.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Missing keys, replacement, revocation and retention consequences are presented from typed fixtures without promising deletion of participant-held copies."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-128",
+      "lane": "identity",
+      "title": "Implement device and agent revocation",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/messaging/src/revocation/"
+      ],
+      "acceptance": "SDK-backed revocation enforces documented future-access semantics; replacement binding does not inherit agent trust implicitly.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-128.md",
+      "epic": "KHA-E07",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "identity",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE",
+        "G-RETENTION"
+      ],
+      "requirement_refs": [
+        "R06",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "SDK-backed revocation enforces documented future-access semantics; replacement binding does not inherit agent trust implicitly."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-129",
+      "lane": "identity",
+      "title": "Implement encrypted recovery",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/messaging/src/recovery/"
+      ],
+      "acceptance": "Approved SDK recovery restores expected decryptability and makes unrecoverable history explicit; backend never receives plaintext recovery keys.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-129.md",
+      "epic": "KHA-E07",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "identity",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-SUBSTRATE",
+        "G-RETENTION"
+      ],
+      "requirement_refs": [
+        "R06",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Approved SDK recovery restores expected decryptability and makes unrecoverable history explicit; backend never receives plaintext recovery keys."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-130",
+      "lane": "connector",
+      "title": "Implement retention and local cleanup",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "packages/connector/src/retention/"
+      ],
+      "acceptance": "Approved expiry/closure cleans eligible local state while preserving required dedup and unresolved outcomes; no promise of universal remote erasure.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-130.md",
+      "epic": "KHA-E07",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "connector"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-RETENTION"
+      ],
+      "requirement_refs": [
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Approved expiry/closure cleans eligible local state while preserving required dedup and unresolved outcomes; no promise of universal remote erasure."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-131",
+      "lane": "platform",
+      "title": "Package Netlify web and functions",
+      "depends_on": [
+        "KHA-101"
+      ],
+      "phase": 2,
+      "complexity": 2,
+      "write_surfaces": [
+        "netlify.toml",
+        "infra/netlify/",
+        "apps/control/src/runtime/"
+      ],
+      "acceptance": "Static app and small authenticated control handlers deploy through Netlify adapter; environment validation keeps secrets private; no persistent Hono service or duplicate chat event log.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-131.md",
+      "epic": "KHA-E03",
+      "phase_hint": 2,
+      "complexity_rationale": "One known component or deployment surface.",
+      "risk": "medium",
+      "capability_requirements": [
+        "platform"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R11",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Static app and small authenticated control handlers deploy through Netlify adapter; environment validation keeps secrets private; no persistent Hono service or duplicate chat event log."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Live composition proof is owned by the reconnection ledger ticket."
+        ]
+      }
+    },
+    {
+      "id": "KHA-132",
+      "lane": "integration",
+      "title": "Wire real human create/share/chat flow",
+      "depends_on": [
+        "KHA-108",
+        "KHA-110",
+        "KHA-111",
+        "KHA-112",
+        "KHA-113",
+        "KHA-122",
+        "KHA-123",
+        "KHA-124",
+        "KHA-131"
+      ],
+      "phase": 5,
+      "complexity": 3,
+      "write_surfaces": [
+        "apps/web/src/composition/human/",
+        "apps/control/src/composition/human/",
+        "tests/integration/human/"
+      ],
+      "acceptance": "Two OAuth humans create/join and exchange encrypted attributed messages through real ports, including queued intro history; fixtures are unreachable in production wiring.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-132.md",
+      "epic": "KHA-E04",
+      "phase_hint": 5,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "integration"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R01",
+        "R02",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-108.md",
+        "tickets/KHA-110.md",
+        "tickets/KHA-111.md",
+        "tickets/KHA-112.md",
+        "tickets/KHA-113.md",
+        "tickets/KHA-122.md",
+        "tickets/KHA-123.md",
+        "tickets/KHA-124.md",
+        "tickets/KHA-131.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Two OAuth humans create/join and exchange encrypted attributed messages through real ports, including queued intro history; fixtures are unreachable in production wiring."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-133",
+      "lane": "integration",
+      "title": "Wire existing-session agent connection",
+      "depends_on": [
+        "KHA-114",
+        "KHA-115",
+        "KHA-116",
+        "KHA-117",
+        "KHA-118",
+        "KHA-121"
+      ],
+      "phase": 5,
+      "complexity": 3,
+      "write_surfaces": [
+        "apps/connector/src/runtime/",
+        "apps/control/src/composition/agent/",
+        "tests/integration/connector/"
+      ],
+      "acceptance": "Agent bootstrap, persistent crypto/inbox, subscription and harness dispatch work in one owner runtime; model APIs expose only approved projection; supported agent setup is reproducible.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-133.md",
+      "epic": "KHA-E05",
+      "phase_hint": 5,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "integration"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R04",
+        "R07",
+        "R08",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-114.md",
+        "tickets/KHA-115.md",
+        "tickets/KHA-116.md",
+        "tickets/KHA-117.md",
+        "tickets/KHA-118.md",
+        "tickets/KHA-121.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Agent bootstrap, persistent crypto/inbox, subscription and harness dispatch work in one owner runtime; model APIs expose only approved projection; supported agent setup is reproducible."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-134",
+      "lane": "integration",
+      "title": "Wire human approval to model delivery",
+      "depends_on": [
+        "KHA-119",
+        "KHA-125",
+        "KHA-132",
+        "KHA-133"
+      ],
+      "phase": 6,
+      "complexity": 3,
+      "write_surfaces": [
+        "apps/web/src/composition/review/",
+        "apps/connector/src/composition/review/",
+        "tests/integration/review/"
+      ],
+      "acceptance": "Exact human-authorized command reaches connector release/dispatch and a real existing session; human approval cannot be invoked by model tools; restart/replay cannot leak unreleased content.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-134.md",
+      "epic": "KHA-E06",
+      "phase_hint": 6,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "integration"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R03",
+        "R04",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-119.md",
+        "tickets/KHA-125.md",
+        "tickets/KHA-132.md",
+        "tickets/KHA-133.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Exact human-authorized command reaches connector release/dispatch and a real existing session; human approval cannot be invoked by model tools; restart/replay cannot leak unreleased content."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-135",
+      "lane": "integration",
+      "title": "Wire trust, pause and status acknowledgments",
+      "depends_on": [
+        "KHA-120",
+        "KHA-126",
+        "KHA-134"
+      ],
+      "phase": 7,
+      "complexity": 3,
+      "write_surfaces": [
+        "apps/web/src/composition/controls/",
+        "apps/connector/src/composition/controls/",
+        "tests/integration/controls/"
+      ],
+      "acceptance": "Auto-delivery and review re-arm propagate with actual connector acknowledgments; busy/offline/backlog behavior and loop bounds match approved policy.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-135.md",
+      "epic": "KHA-E06",
+      "phase_hint": 7,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "integration"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-AUTOMATION"
+      ],
+      "requirement_refs": [
+        "R05",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-120.md",
+        "tickets/KHA-126.md",
+        "tickets/KHA-134.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Auto-delivery and review re-arm propagate with actual connector acknowledgments; busy/offline/backlog behavior and loop bounds match approved policy."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-136",
+      "lane": "integration",
+      "title": "Wire recovery, revocation and cleanup",
+      "depends_on": [
+        "KHA-127",
+        "KHA-128",
+        "KHA-129",
+        "KHA-130",
+        "KHA-132",
+        "KHA-133"
+      ],
+      "phase": 6,
+      "complexity": 3,
+      "write_surfaces": [
+        "apps/web/src/composition/recovery/",
+        "apps/connector/src/composition/recovery/",
+        "tests/integration/recovery/"
+      ],
+      "acceptance": "Device loss/replacement, membership removal and closure exercise real storage/SDKs; unknown external outcomes survive recovery without silent retry.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-136.md",
+      "epic": "KHA-E07",
+      "phase_hint": 6,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "integration"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-RETENTION"
+      ],
+      "requirement_refs": [
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-127.md",
+        "tickets/KHA-128.md",
+        "tickets/KHA-129.md",
+        "tickets/KHA-130.md",
+        "tickets/KHA-132.md",
+        "tickets/KHA-133.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Device loss/replacement, membership removal and closure exercise real storage/SDKs; unknown external outcomes survive recovery without silent retry."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-137",
+      "lane": "verification",
+      "title": "Build reusable multi-owner acceptance harness",
+      "depends_on": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "phase": 4,
+      "complexity": 3,
+      "write_surfaces": [
+        "tests/e2e/harness/",
+        "tests/conformance/"
+      ],
+      "acceptance": "Isolated owners, clients, adapter double and fault injection are usable through fixed ports; third adapter conformance can be run without a vendor-specific model assumption.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-137.md",
+      "epic": "KHA-E08",
+      "phase_hint": 4,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "verification"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R01",
+        "R09",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-101.md",
+        "tickets/KHA-105.md",
+        "tickets/KHA-106.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Isolated owners, clients, adapter double and fault injection are usable through fixed ports; third adapter conformance can be run without a vendor-specific model assumption."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-138",
+      "lane": "verification",
+      "title": "Prove encryption and approval boundaries",
+      "depends_on": [
+        "KHA-134",
+        "KHA-135",
+        "KHA-136",
+        "KHA-137"
+      ],
+      "phase": 8,
+      "complexity": 3,
+      "write_surfaces": [
+        "tests/e2e/security/",
+        "docs/evidence/security-acceptance.md"
+      ],
+      "acceptance": "Inspect encrypted server state/logs and every model-facing read/history/search/notification/error surface; demonstrate forbidden access, forged commands and restart races fail closed.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-138.md",
+      "epic": "KHA-E08",
+      "phase_hint": 8,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "verification",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R04",
+        "R05",
+        "R06",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-134.md",
+        "tickets/KHA-135.md",
+        "tickets/KHA-136.md",
+        "tickets/KHA-137.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Inspect encrypted server state/logs and every model-facing read/history/search/notification/error surface; demonstrate forbidden access, forged commands and restart races fail closed."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-139",
+      "lane": "verification",
+      "title": "Prove collaborative task across owners",
+      "depends_on": [
+        "KHA-109",
+        "KHA-134",
+        "KHA-135",
+        "KHA-136",
+        "KHA-137"
+      ],
+      "phase": 8,
+      "complexity": 3,
+      "write_surfaces": [
+        "tests/e2e/collaboration/",
+        "docs/evidence/collaboration-acceptance.md"
+      ],
+      "acceptance": "Two humans/two existing agents complete selected task, then third owner/agent joins with independent review; capture measured receipt/enqueue/consumption and supported browser-closed behavior.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-139.md",
+      "epic": "KHA-E08",
+      "phase_hint": 8,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "verification"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-TASK"
+      ],
+      "requirement_refs": [
+        "R01",
+        "R02",
+        "R03",
+        "R07",
+        "R08",
+        "R09",
+        "R12",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-109.md",
+        "tickets/KHA-134.md",
+        "tickets/KHA-135.md",
+        "tickets/KHA-136.md",
+        "tickets/KHA-137.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [
+        "No pending plaintext in model-visible surfaces; authenticated human authority; sanitized evidence"
+      ],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Two humans/two existing agents complete selected task, then third owner/agent joins with independent review; capture measured receipt/enqueue/consumption and supported browser-closed behavior."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-140",
+      "lane": "acceptance",
+      "title": "Close root with merged-product evidence",
+      "depends_on": [
+        "KHA-138",
+        "KHA-139"
+      ],
+      "phase": 9,
+      "complexity": 3,
+      "write_surfaces": [
+        "docs/product/release-acceptance.md",
+        "docs/user-guide.md",
+        "docs/adapter-guide.md"
+      ],
+      "acceptance": "On merged base, confirm complete user journey, support docs and named evidence; no placeholder production wiring or unresolved blocking gate; child completion alone cannot close root.",
+      "kind": "capstone",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-140.md",
+      "epic": "KHA-E08",
+      "phase_hint": 9,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "acceptance"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-138.md",
+        "tickets/KHA-139.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Alternative backend or crypto protocol implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "On merged base, confirm complete user journey, support docs and named evidence; no placeholder production wiring or unresolved blocking gate; child completion alone cannot close root."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-141",
+      "lane": "research",
+      "title": "Prove browser SDK crypto and UI seams",
+      "depends_on": [],
+      "phase": 1,
+      "complexity": 3,
+      "write_surfaces": [
+        "experiments/browser-crypto/",
+        "docs/evidence/browser-crypto.md"
+      ],
+      "acceptance": "Supported SDK demonstrates device persistence, encrypted history and key loss on browser restart; record exact versions and candidate UI constraints.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-141.md",
+      "epic": "KHA-E01",
+      "phase_hint": 1,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "research"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R06",
+        "R10",
+        "R13",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Production implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Supported SDK demonstrates device persistence, encrypted history and key loss on browser restart; record exact versions and candidate UI constraints."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-142",
+      "lane": "research",
+      "title": "Prove TypeScript headless crypto persistence",
+      "depends_on": [],
+      "phase": 1,
+      "complexity": 3,
+      "write_surfaces": [
+        "experiments/headless-crypto/",
+        "docs/evidence/headless-crypto.md"
+      ],
+      "acceptance": "Pinned supported engine/bindings decrypt after process restart with persisted identity; native packaging and verification requirements are explicit.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-142.md",
+      "epic": "KHA-E01",
+      "phase_hint": 1,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "research"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R06",
+        "R10",
+        "R13",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Production implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Pinned supported engine/bindings decrypt after process restart with persisted identity; native packaging and verification requirements are explicit."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-143",
+      "lane": "research",
+      "title": "Choose client reuse boundary",
+      "depends_on": [
+        "KHA-141"
+      ],
+      "phase": 2,
+      "complexity": 3,
+      "write_surfaces": [
+        "docs/evidence/client-reuse.md",
+        "experiments/client-reuse/"
+      ],
+      "acceptance": "Compare reusable client adaptation with thin SDK UI using actual review-control seams; select maintainable boundary before prescribing a framework/component structure.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-143.md",
+      "epic": "KHA-E01",
+      "phase_hint": 2,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "medium",
+      "capability_requirements": [
+        "research"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE"
+      ],
+      "requirement_refs": [
+        "R10",
+        "R13",
+        "R14"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-141.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Production implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Compare reusable client adaptation with thin SDK UI using actual review-control seams; select maintainable boundary before prescribing a framework/component structure."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    },
+    {
+      "id": "KHA-144",
+      "lane": "research",
+      "title": "Prove OAuth-to-agent ownership bootstrap",
+      "depends_on": [
+        "KHA-102",
+        "KHA-141",
+        "KHA-142"
+      ],
+      "phase": 2,
+      "complexity": 3,
+      "write_surfaces": [
+        "experiments/ownership/",
+        "docs/evidence/ownership.md"
+      ],
+      "acceptance": "Demonstrate automatic messaging account/device and scoped existing-agent authorization from link; copied public link alone cannot claim owner. No required human technical setup.",
+      "kind": "executable",
+      "provenance": "planned",
+      "introduced_in_plan_version": 4,
+      "ticket": null,
+      "doc": "tickets/KHA-144.md",
+      "epic": "KHA-E01",
+      "phase_hint": 2,
+      "complexity_rationale": "One bounded integration or uncertain feasibility proof.",
+      "risk": "high",
+      "capability_requirements": [
+        "research",
+        "security"
+      ],
+      "serializes_with": [],
+      "suggested_after": [],
+      "contains": [],
+      "discovered_from": null,
+      "external_gates": [
+        "G-SCOPE",
+        "G-ADMISSION"
+      ],
+      "requirement_refs": [
+        "R13",
+        "R14",
+        "R15"
+      ],
+      "read_surfaces": [
+        "docs/product/decisions.md",
+        "docs/product/repo-layout.md",
+        "tickets/KHA-102.md",
+        "tickets/KHA-141.md",
+        "tickets/KHA-142.md"
+      ],
+      "contract_surfaces": [
+        "Consumes reviewed contract subpaths; defines only its owned module API"
+      ],
+      "safety_surfaces": [],
+      "non_goals": [
+        "Sibling implementation directories, shared contract rewrites, and new product scope",
+        "Production implementation"
+      ],
+      "conflict_exceptions": [],
+      "acceptance_gates": {
+        "agent_gate": [
+          "Demonstrate automatic messaging account/device and scoped existing-agent authorization from link; copied public link alone cannot claim owner. No required human technical setup."
+        ],
+        "at_merge_gate": [
+          "Own tests and affected contract checks pass on current base; owned boundary stays intact."
+        ],
+        "human_or_e2e": [
+          "Record real environment/versions and evidence; mocks alone do not establish this outcome."
+        ]
+      }
+    }
+  ],
+  "root": {
+    "id": "KHA-ROOT",
+    "kind": "root",
+    "title": "Khala first cross-owner collaboration",
+    "dispatch": false,
+    "contains": [
+      "KHA-E01",
+      "KHA-E02",
+      "KHA-E03",
+      "KHA-E04",
+      "KHA-E05",
+      "KHA-E06",
+      "KHA-E07",
+      "KHA-E08"
+    ],
+    "acceptance_owner": "KHA-140",
+    "completion_condition": "Merged product meets R01\u2013R15, required docs and real security/collaboration evidence; all blocking gates resolved. Closed children alone are insufficient."
+  },
+  "epics": [
+    {
+      "id": "KHA-E01",
+      "kind": "epic",
+      "title": "Validate feasibility and ownership",
+      "dispatch": false,
+      "contains": [
+        "KHA-102",
+        "KHA-103",
+        "KHA-104",
+        "KHA-141",
+        "KHA-142",
+        "KHA-143",
+        "KHA-144"
+      ],
+      "acceptance": "Evidence resolves substrate, no-setup ownership and existing-session feasibility gates."
+    },
+    {
+      "id": "KHA-E02",
+      "kind": "epic",
+      "title": "Establish workspace and contracts",
+      "dispatch": false,
+      "contains": [
+        "KHA-101",
+        "KHA-105",
+        "KHA-106"
+      ],
+      "acceptance": "Independent consumers build against owned, versioned ports and fixtures."
+    },
+    {
+      "id": "KHA-E03",
+      "kind": "epic",
+      "title": "Operate reusable hosting",
+      "dispatch": false,
+      "contains": [
+        "KHA-108",
+        "KHA-109",
+        "KHA-131"
+      ],
+      "acceptance": "Selected services and Netlify deployment have restart, restore and upgrade evidence."
+    },
+    {
+      "id": "KHA-E04",
+      "kind": "epic",
+      "title": "Deliver human encrypted chat",
+      "dispatch": false,
+      "contains": [
+        "KHA-107",
+        "KHA-110",
+        "KHA-111",
+        "KHA-112",
+        "KHA-113",
+        "KHA-122",
+        "KHA-123",
+        "KHA-124",
+        "KHA-132"
+      ],
+      "acceptance": "Two humans complete OAuth/create/share/chat with attribution and queued introductions."
+    },
+    {
+      "id": "KHA-E05",
+      "kind": "epic",
+      "title": "Attach existing working agents",
+      "dispatch": false,
+      "contains": [
+        "KHA-114",
+        "KHA-115",
+        "KHA-116",
+        "KHA-117",
+        "KHA-118",
+        "KHA-121",
+        "KHA-133"
+      ],
+      "acceptance": "Owner runtime attaches and notifies existing sessions without human technical setup."
+    },
+    {
+      "id": "KHA-E06",
+      "kind": "epic",
+      "title": "Control peer delivery",
+      "dispatch": false,
+      "contains": [
+        "KHA-119",
+        "KHA-120",
+        "KHA-125",
+        "KHA-126",
+        "KHA-134",
+        "KHA-135"
+      ],
+      "acceptance": "Human authorization governs exact release, trusted delivery, re-arm and pause."
+    },
+    {
+      "id": "KHA-E07",
+      "kind": "epic",
+      "title": "Recover and revoke safely",
+      "dispatch": false,
+      "contains": [
+        "KHA-127",
+        "KHA-128",
+        "KHA-129",
+        "KHA-130",
+        "KHA-136"
+      ],
+      "acceptance": "Loss, replacement and closure follow approved history/retention policy."
+    },
+    {
+      "id": "KHA-E08",
+      "kind": "epic",
+      "title": "Prove and accept the product",
+      "dispatch": false,
+      "contains": [
+        "KHA-137",
+        "KHA-138",
+        "KHA-139",
+        "KHA-140"
+      ],
+      "acceptance": "Independent security and collaboration evidence passes on merged base; root owner accepts."
+    }
+  ],
+  "external_gates": [
+    {
+      "id": "G-SCOPE",
+      "owner": "Kevin",
+      "resolution_criteria": "Approve revision 4 ticket/epic scope and ownership",
+      "ticket_ids": [
+        "KHA-101",
+        "KHA-102",
+        "KHA-103",
+        "KHA-104",
+        "KHA-105",
+        "KHA-106",
+        "KHA-107",
+        "KHA-108",
+        "KHA-109",
+        "KHA-110",
+        "KHA-111",
+        "KHA-112",
+        "KHA-113",
+        "KHA-114",
+        "KHA-115",
+        "KHA-116",
+        "KHA-117",
+        "KHA-118",
+        "KHA-119",
+        "KHA-120",
+        "KHA-121",
+        "KHA-122",
+        "KHA-123",
+        "KHA-124",
+        "KHA-125",
+        "KHA-126",
+        "KHA-127",
+        "KHA-128",
+        "KHA-129",
+        "KHA-130",
+        "KHA-131",
+        "KHA-132",
+        "KHA-133",
+        "KHA-134",
+        "KHA-135",
+        "KHA-136",
+        "KHA-137",
+        "KHA-138",
+        "KHA-139",
+        "KHA-140",
+        "KHA-141",
+        "KHA-142",
+        "KHA-143",
+        "KHA-144"
+      ],
+      "resolution": "Resolved by user 2026-09-16: research all tickets, push research, then aiur-run."
+    },
+    {
+      "id": "G-SUBSTRATE",
+      "owner": "Kevin with feasibility owners",
+      "resolution_criteria": "Accept backend, SDK and deployment choice; otherwise revise affected tickets",
+      "ticket_ids": [
+        "KHA-105",
+        "KHA-108",
+        "KHA-109",
+        "KHA-110",
+        "KHA-111",
+        "KHA-112",
+        "KHA-113",
+        "KHA-114",
+        "KHA-115",
+        "KHA-116",
+        "KHA-128",
+        "KHA-129"
+      ]
+    },
+    {
+      "id": "G-CLIENT",
+      "owner": "Kevin with KHA-143 owner",
+      "resolution_criteria": "Accept UI reuse boundary before production shell layout",
+      "ticket_ids": [
+        "KHA-107"
+      ]
+    },
+    {
+      "id": "G-ADMISSION",
+      "owner": "Kevin",
+      "resolution_criteria": "Resolve OAuth providers, admission authority and initial history disclosure",
+      "ticket_ids": [
+        "KHA-105",
+        "KHA-110",
+        "KHA-113",
+        "KHA-144"
+      ]
+    },
+    {
+      "id": "G-AUTOMATION",
+      "owner": "Kevin",
+      "resolution_criteria": "Resolve busy/unattended/browser-closed, trust backlog and reply-budget policy",
+      "ticket_ids": [
+        "KHA-106",
+        "KHA-120",
+        "KHA-121",
+        "KHA-135"
+      ]
+    },
+    {
+      "id": "G-HARNESSES",
+      "owner": "Executor with feasibility owners",
+      "resolution_criteria": "103/104 prove required existing-session setup or product resolves documented gaps",
+      "ticket_ids": [
+        "KHA-106",
+        "KHA-114",
+        "KHA-117",
+        "KHA-118"
+      ]
+    },
+    {
+      "id": "G-RETENTION",
+      "owner": "Kevin",
+      "resolution_criteria": "Resolve recovery and closure/expiry semantics",
+      "ticket_ids": [
+        "KHA-105",
+        "KHA-127",
+        "KHA-128",
+        "KHA-129",
+        "KHA-130",
+        "KHA-136"
+      ]
+    },
+    {
+      "id": "G-TASK",
+      "owner": "Kevin",
+      "resolution_criteria": "Name first collaborative task and success evidence",
+      "ticket_ids": [
+        "KHA-139"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "id": "R01",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-112",
+        "KHA-123",
+        "KHA-132",
+        "KHA-137",
+        "KHA-139"
+      ]
+    },
+    {
+      "id": "R02",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-110",
+        "KHA-123",
+        "KHA-132",
+        "KHA-139"
+      ]
+    },
+    {
+      "id": "R03",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-112",
+        "KHA-122",
+        "KHA-125",
+        "KHA-134",
+        "KHA-139"
+      ]
+    },
+    {
+      "id": "R04",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-106",
+        "KHA-115",
+        "KHA-119",
+        "KHA-121",
+        "KHA-125",
+        "KHA-133",
+        "KHA-134",
+        "KHA-138"
+      ]
+    },
+    {
+      "id": "R05",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-120",
+        "KHA-126",
+        "KHA-135",
+        "KHA-138"
+      ]
+    },
+    {
+      "id": "R06",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-102",
+        "KHA-105",
+        "KHA-108",
+        "KHA-111",
+        "KHA-115",
+        "KHA-128",
+        "KHA-129",
+        "KHA-138",
+        "KHA-141",
+        "KHA-142"
+      ]
+    },
+    {
+      "id": "R07",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-103",
+        "KHA-104",
+        "KHA-114",
+        "KHA-117",
+        "KHA-118",
+        "KHA-133",
+        "KHA-139"
+      ]
+    },
+    {
+      "id": "R08",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-103",
+        "KHA-104",
+        "KHA-116",
+        "KHA-117",
+        "KHA-118",
+        "KHA-133",
+        "KHA-139"
+      ]
+    },
+    {
+      "id": "R09",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-105",
+        "KHA-106",
+        "KHA-117",
+        "KHA-118",
+        "KHA-137",
+        "KHA-139"
+      ]
+    },
+    {
+      "id": "R10",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-101",
+        "KHA-102",
+        "KHA-107",
+        "KHA-141",
+        "KHA-142",
+        "KHA-143"
+      ]
+    },
+    {
+      "id": "R11",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-102",
+        "KHA-108",
+        "KHA-109",
+        "KHA-131"
+      ]
+    },
+    {
+      "id": "R12",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-107",
+        "KHA-122",
+        "KHA-123",
+        "KHA-124",
+        "KHA-125",
+        "KHA-126",
+        "KHA-127",
+        "KHA-139"
+      ]
+    },
+    {
+      "id": "R13",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-102",
+        "KHA-103",
+        "KHA-104",
+        "KHA-141",
+        "KHA-142",
+        "KHA-143",
+        "KHA-144"
+      ]
+    },
+    {
+      "id": "R14",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-101",
+        "KHA-102",
+        "KHA-103",
+        "KHA-104",
+        "KHA-105",
+        "KHA-106",
+        "KHA-107",
+        "KHA-108",
+        "KHA-109",
+        "KHA-110",
+        "KHA-111",
+        "KHA-112",
+        "KHA-113",
+        "KHA-114",
+        "KHA-115",
+        "KHA-116",
+        "KHA-117",
+        "KHA-118",
+        "KHA-119",
+        "KHA-120",
+        "KHA-121",
+        "KHA-122",
+        "KHA-123",
+        "KHA-124",
+        "KHA-125",
+        "KHA-126",
+        "KHA-127",
+        "KHA-128",
+        "KHA-129",
+        "KHA-130",
+        "KHA-131",
+        "KHA-132",
+        "KHA-133",
+        "KHA-134",
+        "KHA-135",
+        "KHA-136",
+        "KHA-137",
+        "KHA-138",
+        "KHA-139",
+        "KHA-140",
+        "KHA-141",
+        "KHA-142",
+        "KHA-143",
+        "KHA-144"
+      ]
+    },
+    {
+      "id": "R15",
+      "disposition": "ticket",
+      "ticket_ids": [
+        "KHA-103",
+        "KHA-104",
+        "KHA-110",
+        "KHA-111",
+        "KHA-114",
+        "KHA-122",
+        "KHA-124",
+        "KHA-132",
+        "KHA-133",
+        "KHA-139",
+        "KHA-144"
+      ]
+    }
+  ],
+  "source_precedence": [
+    "Explicit user decisions",
+    "Approved requirements and contracts",
+    "Tracker for promoted issues",
+    "Aiur for runtime facts",
+    "This proposal for unapproved intent"
+  ],
+  "researched_at_commit": "6d46941",
+  "authority": "User authorized 44-ticket deep planning, commit/push research, then primary aiur-run Executor with local aiurdev. Product gates remain."
+}
