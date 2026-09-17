@@ -1,0 +1,15 @@
+{
+  "name": "@khala/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./messaging/*": "./src/messaging/*.ts",
+    "./delivery/*": "./src/delivery/*.ts"
+  },
+  "scripts": {
+    "typecheck": "node ../../scripts/package-task.mjs typecheck",
+    "build": "node ../../scripts/package-task.mjs build",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  }
+}

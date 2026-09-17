@@ -1,0 +1,20 @@
+{
+  "name": "@khala/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./brand/*": "./src/brand/*.ts",
+    "./shell/*": "./src/shell/*.ts",
+    "./features/*": "./src/features/*.ts",
+    "./composition/*": "./src/composition/*.ts"
+  },
+  "scripts": {
+    "typecheck": "node ../../scripts/package-task.mjs typecheck",
+    "build": "node ../../scripts/package-task.mjs build",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@khala/contracts": "workspace:*"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@khala/control",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./auth/*": "./src/auth/*.ts",
+    "./invitations/*": "./src/invitations/*.ts",
+    "./agent-bootstrap/*": "./src/agent-bootstrap/*.ts",
+    "./runtime/*": "./src/runtime/*.ts",
+    "./composition/*": "./src/composition/*.ts"
+  },
+  "scripts": {
+    "typecheck": "node ../../scripts/package-task.mjs typecheck",
+    "build": "node ../../scripts/package-task.mjs build",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@khala/contracts": "workspace:*"
+  }
+}
