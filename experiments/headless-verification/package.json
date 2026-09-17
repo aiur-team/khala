@@ -1,0 +1,19 @@
+{
+  "name": "@khala/headless-verification-proof",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@matrix-org/matrix-sdk-crypto-nodejs": "0.6.6",
+    "matrix-js-sdk": "42.4.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "@types/node": "24.10.0",
+    "playwright": "1.55.1",
+    "vite": "7.1.12"
+  },
+  "scripts": {
+    "test": "node --import tsx --test tests/capabilities.test.mjs tests/shutdown.test.mjs",
+    "build": "tsc --noEmit && vite build",
+    "test:live": "node --import tsx --test tests/verified.test.mjs"
+  }
+}
