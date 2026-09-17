@@ -1,0 +1,31 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {TimelineProjection,observeTimeline} from '../src/timeline.ts';
+import {createClient,MatrixEvent,MatrixEventEvent,RoomEvent} from 'matrix-js-sdk';
+test('lost send response reconciles by transaction identity; account switch disposes observer; missing keys explicit',()=>{
+ let snapshots=[];const projection=new TimelineProjection(entries=>snapshots.push(entries));
+ projection.accept({transactionId:'txn'});projection.accept({transactionId:'txn',eventId:'$ack',body:'fixture'});
+ assert.equal(snapshots.at(-1).length,1);assert.equal(snapshots.at(-1)[0].eventId,'$ack');
+ projection.accept({eventId:'$old',undecryptable:true});assert.equal(snapshots.at(-1)[1].undecryptable,true);
+ projection.dispose();projection.accept({eventId:'$late'});assert.equal(snapshots.length,3);
+});
+test('recipient row updates when SDK decrypts asynchronously and disposal removes event listeners',async()=>{
+ const client=createClient({baseUrl:'https://example.invalid'});
+ const room={roomId:'!fixture:example.invalid'};
+ const event=new MatrixEvent({event_id:'$delayed',room_id:room.roomId,type:'m.room.encrypted',content:{algorithm:'m.megolm.v1.aes-sha2'}});
+ let snapshots=[];
+ const observer=observeTimeline(client,room.roomId,entries=>snapshots.push(entries));
+ client.emit(RoomEvent.Timeline,event,room,false,false,{});
+ assert.equal(snapshots.at(-1)[0].body,undefined);
+ let finish;
+ const pending=event.attemptDecryption({decryptEvent:()=>new Promise(resolve=>{finish=resolve;})});
+ await new Promise(resolve=>setImmediate(resolve));
+ finish({clearEvent:{type:'m.room.message',content:{body:'delayed fixture'}}});await pending;
+ assert.equal(snapshots.at(-1)[0].body,'delayed fixture');
+ assert.equal(snapshots.at(-1)[0].undecryptable,false);
+ assert.equal(snapshots.at(-1).length,1);
+ observer.dispose();const count=snapshots.length;
+ assert.equal(event.listenerCount(MatrixEventEvent.Decrypted),0);
+ event.emit(MatrixEventEvent.Decrypted,event);
+ assert.equal(snapshots.length,count);
+});
