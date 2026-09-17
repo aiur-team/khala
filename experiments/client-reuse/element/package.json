@@ -1,0 +1,29 @@
+{
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "test": "node --import tsx --test src/*.test.ts*",
+    "test:browser": "node --import tsx --test tests/*.spec.ts"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "@element-hq/element-web-module-api": "2.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@types/node": "22.20.3",
+    "typescript": "5.9.3",
+    "vite": "7.1.12",
+    "playwright": "1.55.1",
+    "tsx": "4.20.6",
+    "module-api-previous": "npm:@element-hq/element-web-module-api@2.0.0"
+  },
+  "name": "@khala/client-reuse-element"
+}

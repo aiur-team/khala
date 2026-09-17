@@ -1,0 +1,4 @@
+packages: []
+onlyBuiltDependencies:
+  - esbuild
+  - "@matrix-org/matrix-sdk-crypto-nodejs"

@@ -1,0 +1,58 @@
+{
+  "stage": "requirements-first snapshot; product contract only; no runtime tests run",
+  "source_sha": "6d4694173eff9b0832f4c3a2cdb90b4281fcccd9",
+  "tickets": {
+    "103": {
+      "path": "docs/plans/2026-09-16-kha-103-claude-existing-session-proof.md",
+      "product_contract_sha256": "b16ca031c3882b9a9af939bd9b9d3e292e36802557113613df62a1e2275ca91e"
+    },
+    "104": {
+      "path": "docs/plans/2026-09-16-kha-104-codex-existing-session-proof.md",
+      "product_contract_sha256": "6251fe3425e8d0e403a7f51b1a123ac66b787d7be24052015a178410939b9c6a"
+    },
+    "106": {
+      "path": "docs/plans/2026-09-16-kha-106-delivery-harness-contracts.md",
+      "product_contract_sha256": "79e491395950869d5eb93086c58e5c364befa7981a8bfbea85bc33c99d05ad7c"
+    },
+    "114": {
+      "path": "docs/plans/2026-09-16-kha-114-agent-link-bootstrap.md",
+      "product_contract_sha256": "a45d727ed04c48a15d8cc2ec37aa9a758ecbb966ccdb8382148a1b703fcc4c0d"
+    },
+    "115": {
+      "path": "docs/plans/2026-09-16-kha-115-connector-durable-storage.md",
+      "product_contract_sha256": "f594b4a5d1c4f2c378ec0d8ad7e8e1eb19ee458a65b7b29702e83682d9b5f05c"
+    },
+    "116": {
+      "path": "docs/plans/2026-09-16-kha-116-encrypted-live-subscription.md",
+      "product_contract_sha256": "93b3a6c2dd41802ea24ce6648ab940d9461d003c6781043ec97a64ba858500d7"
+    },
+    "117": {
+      "path": "docs/plans/2026-09-16-kha-117-claude-harness-adapter.md",
+      "product_contract_sha256": "36642e43373804796265e118f3966d1fc487ffb8336e3e7aa10198fe0f472e7f"
+    },
+    "118": {
+      "path": "docs/plans/2026-09-16-kha-118-codex-harness-adapter.md",
+      "product_contract_sha256": "263be0d0b80098c503567e28be09263ee07a345a1d75c69a010f1c9b98623cc6"
+    },
+    "121": {
+      "path": "docs/plans/2026-09-16-kha-121-bounded-model-dispatch.md",
+      "product_contract_sha256": "7f213f80302327142564eb710de7dc3f22e09ce7de6ca4bb0a1f58435ee785e1"
+    },
+    "130": {
+      "path": "docs/plans/2026-09-16-kha-130-connector-retention-cleanup.md",
+      "product_contract_sha256": "dd31f729741d3718b1871422f066f1ed3338fe7173ff842aaf06e449232ef71f"
+    },
+    "133": {
+      "path": "docs/plans/2026-09-16-kha-133-connector-runtime-composition.md",
+      "product_contract_sha256": "b83eaecdf696b4fa744de3933a805e13e5b382d3c5c819fe1d5f83d385afeaeb"
+    },
+    "137": {
+      "path": "docs/plans/2026-09-16-kha-137-multi-owner-acceptance-harness.md",
+      "product_contract_sha256": "da8679ed03592bce2410f9be6349dca02e95bc7c1f81f02a383dabfc2d029a74"
+    },
+    "139": {
+      "path": "docs/plans/2026-09-16-kha-139-collaboration-acceptance.md",
+      "product_contract_sha256": "9913d977047ad25c255f7b340ce1d280158d8b8170900b5304c7f952a209a581"
+    }
+  }
+}

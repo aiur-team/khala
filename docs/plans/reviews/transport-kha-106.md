@@ -1,0 +1,39 @@
+# KHA-106 transport planning review
+
+Mode: headless pipeline. Document: `docs/plans/2026-09-16-kha-106-delivery-harness-contracts.md`. Classification: unified-requirements. Origin: `docs/product/tickets/KHA-106.md`.
+
+## Coverage
+
+The skill instructions were applied inline/serially by the owning planner because the parent prohibited further spawning and all four session slots were occupied. This is not fresh-context independent persona review. No cross-model review ran; the delegated task did not authorize external review messages. Parent and sibling cross-contract comments are explicitly attributed below rather than represented as independent model corroboration.
+
+ce-doc-review formally covers Product Contract only under requirements-only metadata. The additional candidate Planning Contract also received technical deepening and consistency checks; those supplemental checks do not change the skill classification or make blocked work dispatchable.
+
+| Lens | Coverage |
+|---|---|
+| Coherence | IDs, preserved requirements, paths, actor separation, dependency/readiness consistency |
+| Feasibility | Requirement-level architecture/environment conflicts; candidate mechanics separately checked |
+| Security | Owner authority, pending plaintext, model-facing boundary, exact target/generation |
+| Adversarial | Technical assumption falsification; settled user choices not relitigated |
+| Product/design | Existing-session/no-human-setup journey checked; no new UI implementation decision |
+| Cross-model | Not run |
+
+## Deepening record
+
+Risk: high external integration/security. Depth: deep. Thin local Khala implementation and load-bearing external harness/SDK evidence required a second pass. Focused sections: owner authority and generation, exact payload provenance, receipt evidence and unknown outcome. Initial confidence was insufficient on these exact failure boundaries; the plan now requires observable negative tests and separates assumptions from measured facts. Checklist score: candidate technical decisions 1 unresolved boundary trigger +1 high-risk +1 critical-section =3; Implementation Units 1 failure-path/verification trigger +1 high-risk +1 critical-section =3; cross-component impact 1 interface/effect-order trigger +1 high-risk +1 critical-section =3. Those three selected areas received the targeted pass. These are gap-priority scores, not runtime confidence or proof.
+
+## Findings and dispositions
+
+- Resolved during authorized technical enrichment: Aligned opaque ID bound to105 at512 UTF8 bytes and control-character rejection.
+- Resolved during authorized technical enrichment: Added expectedBindingGeneration to approval/control commands after parent peer review.
+- Resolved during authorized technical enrichment: Added unknown approval result, expired_content and correlated nullable policy acknowledgement versions.
+
+- Mechanical correction across the batch: normalized required top-level Implementation Units and stable U headings.
+- Parent review supplied stale-generation and contract-bound checks; crypto_identity peer-reviewed106/117/118 and agreed authority/unknown/IPC boundaries. This attribution is not a claim that every document had a separate peer review.
+
+## Readiness and unrun checks
+
+Requirements-only metadata deliberately retained: detailed planning exists but named product/substrate/harness gates are unresolved. Do not dispatch as production implementation until those gates are settled and the plan is re-reviewed.
+
+Product Contract SHA preservation, section presence, sequential unit IDs and Markdown fence balance were checked by a local script. No application test, live harness delivery, deployment or crypto persistence proof ran. Proposed commands are future verification requirements.
+
+Review complete

@@ -1,0 +1,26 @@
+{
+  "read_date": "2026-09-16",
+  "sources": [
+    {
+      "repository": "matrix-js-sdk",
+      "commit": "0e84500cc1f270e07b548b94e4a9991267d76bcb",
+      "path": "src/client.ts",
+      "url": "https://raw.githubusercontent.com/matrix-org/matrix-js-sdk/0e84500cc1f270e07b548b94e4a9991267d76bcb/src/client.ts",
+      "sha256": "cddd04eb05ac8399530f5e2698f8edd50ec264683e956c85ddc5fc7cbc630b5b",
+      "bytes": 361772
+    },
+    {
+      "repository": "matrix-rust-sdk-crypto-nodejs",
+      "commit": "b29219c69b996224d6b8e7c94cb40fb3e4949516",
+      "path": "src/machine.rs",
+      "url": "https://raw.githubusercontent.com/matrix-org/matrix-rust-sdk-crypto-nodejs/b29219c69b996224d6b8e7c94cb40fb3e4949516/src/machine.rs",
+      "sha256": "9f718f9c42657966249e8802d5813884c409d5709d677eb9d000b78fd3350122",
+      "bytes": 29618
+    }
+  ],
+  "local": {
+    "khala": "6d4694173eff9b0832f4c3a2cdb90b4281fcccd9",
+    "archon": "c7d3254097acaa02eed1e3be6fd8fbf06c0e8128",
+    "aiur": "1f618cddf601a0b6d79bc1197579746b7584a64c"
+  }
+}

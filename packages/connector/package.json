@@ -1,0 +1,21 @@
+{
+  "name": "@khala/connector",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./bootstrap/*": "./src/bootstrap/*.ts",
+    "./storage/*": "./src/storage/*.ts",
+    "./subscription/*": "./src/subscription/*.ts",
+    "./dispatch/*": "./src/dispatch/*.ts",
+    "./retention/*": "./src/retention/*.ts"
+  },
+  "scripts": {
+    "typecheck": "node ../../scripts/package-task.mjs typecheck",
+    "build": "node ../../scripts/package-task.mjs build",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@khala/contracts": "workspace:*"
+  }
+}

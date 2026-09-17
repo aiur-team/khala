@@ -1,0 +1,38 @@
+# Official image digests resolved locally 2026-09-17. Experiment only.
+services:
+  postgres:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_DB: synapse
+      POSTGRES_PASSWORD: ${EXPERIMENT_DB_PASSWORD:-validation-only}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U synapse']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [experiment]
+  synapse:
+    image: ghcr.io/element-hq/synapse:v1.161.0@sha256:7155ddc4835e5b8afa4e1598d92aa16ff1d03109f7d1cff61d493237d1210b1d
+    # Root only inside disposable container to initialize its isolated volume.
+    user: '0:0'
+    entrypoint: [python, -m, synapse.app.homeserver]
+    command: [--config-path, /config/homeserver.yaml]
+    volumes:
+      - ${EXPERIMENT_CONFIG_DIR:-/nonexistent/khala-experiment}:/config:ro
+      - synapse:/data
+    ports: ['127.0.0.1::8008']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [experiment, loopback]
+volumes:
+  postgres: {}
+  synapse: {}
+networks:
+  loopback: {}
+  experiment:
+    internal: true

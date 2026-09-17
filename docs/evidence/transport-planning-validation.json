@@ -1,0 +1,124 @@
+{
+  "scope": "documentation checks only",
+  "checks": [
+    {
+      "ticket": "KHA-103",
+      "path": "docs/plans/2026-09-16-kha-103-claude-existing-session-proof.md",
+      "product_contract_preserved": true,
+      "classification": "unified-plan",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "99f1da5aa19b96f6e961f5c6a591a9d83589c45ade1ef16d5c8c68a3120c6c1d"
+    },
+    {
+      "ticket": "KHA-104",
+      "path": "docs/plans/2026-09-16-kha-104-codex-existing-session-proof.md",
+      "product_contract_preserved": true,
+      "classification": "unified-plan",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "12d347e5bfcae29b37f305a797ca3c35444b39f819340ec525938fc99c89eca9"
+    },
+    {
+      "ticket": "KHA-106",
+      "path": "docs/plans/2026-09-16-kha-106-delivery-harness-contracts.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "54f96ff28e87a7fc9d836b513d96cb61f94f77cfd6f58fa4ee509962107fb6ab"
+    },
+    {
+      "ticket": "KHA-114",
+      "path": "docs/plans/2026-09-16-kha-114-agent-link-bootstrap.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "ccc475b29f1c8121ea6b386a440199077ca3ba66dda115bd877cb9ea8391ad87"
+    },
+    {
+      "ticket": "KHA-115",
+      "path": "docs/plans/2026-09-16-kha-115-connector-durable-storage.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "62625d5b195f4f0bf6d735f306438eb9897d3b7dd399f2d1e1f55dc346a4fe0f"
+    },
+    {
+      "ticket": "KHA-116",
+      "path": "docs/plans/2026-09-16-kha-116-encrypted-live-subscription.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "afd10cdbbb1e406c118b54ed5635bd5e90d624ac4c899478fc8090d99f059f86"
+    },
+    {
+      "ticket": "KHA-117",
+      "path": "docs/plans/2026-09-16-kha-117-claude-harness-adapter.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "de5d0878548ff59674cfd87b64a2861bd557c9ad8b8a9a9533a99b2f2b58a3e5"
+    },
+    {
+      "ticket": "KHA-118",
+      "path": "docs/plans/2026-09-16-kha-118-codex-harness-adapter.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "0e44c0f80705fb442eaab47e5ff343f6fd0c7c3340829c461954c538bc5efc0e"
+    },
+    {
+      "ticket": "KHA-121",
+      "path": "docs/plans/2026-09-16-kha-121-bounded-model-dispatch.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "4653a9a2a7a4e28f05a0458c8a640eebf564ed605c8b0f79c879d7845b861d3a"
+    },
+    {
+      "ticket": "KHA-130",
+      "path": "docs/plans/2026-09-16-kha-130-connector-retention-cleanup.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 3,
+      "fences_balanced": true,
+      "sha256": "4f4e80eedd54f1c15340e721d43c5399bb41db4ff371622f2b63dd45821e23d1"
+    },
+    {
+      "ticket": "KHA-133",
+      "path": "docs/plans/2026-09-16-kha-133-connector-runtime-composition.md",
+      "product_contract_preserved": false,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "24e1f09daef50cb6c5097500ee7e2cc551c68b678a32913b251077534659b67d",
+      "product_flow_amendment": "docs/evidence/transport-planning-amendments.json",
+      "requirement_ids_and_text_preserved": true
+    },
+    {
+      "ticket": "KHA-137",
+      "path": "docs/plans/2026-09-16-kha-137-multi-owner-acceptance-harness.md",
+      "product_contract_preserved": true,
+      "classification": "unified-plan",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "c435ed49829762f3ae7a631a3dd0c82415877edf185fe4a1ce9b64d2c3645730"
+    },
+    {
+      "ticket": "KHA-139",
+      "path": "docs/plans/2026-09-16-kha-139-collaboration-acceptance.md",
+      "product_contract_preserved": true,
+      "classification": "unified-requirements",
+      "unit_count": 4,
+      "fences_balanced": true,
+      "sha256": "9645489e7042ddcd4a36faa0e840c6a338fc40f9f39721becbc021938aa50dcc"
+    }
+  ]
+}
