@@ -1,0 +1,479 @@
+[
+  {
+    "name": "@babel/runtime",
+    "version": "8.0.5",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+      }
+    ]
+  },
+  {
+    "name": "@esbuild/linux-x64",
+    "version": "0.25.12",
+    "license": "MIT",
+    "license_files": []
+  },
+  {
+    "name": "@matrix-org/matrix-sdk-crypto-wasm",
+    "version": "18.8.0",
+    "license": "Apache-2.0",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+      }
+    ]
+  },
+  {
+    "name": "@napi-rs/lzma-linux-x64-gnu",
+    "version": "1.5.1",
+    "license": "MIT",
+    "license_files": []
+  },
+  {
+    "name": "@rollup/rollup-linux-x64-gnu",
+    "version": "4.63.3",
+    "license": "MIT",
+    "license_files": []
+  },
+  {
+    "name": "@types/estree",
+    "version": "1.0.9",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/events",
+    "version": "3.0.3",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/node",
+    "version": "22.20.3",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "undici-types",
+    "version": "6.21.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "a6db8096b2707bc0102d256917d4d33f298ba36d8c3f25de067a2b5bb379db27"
+      }
+    ]
+  },
+  {
+    "name": "@types/react",
+    "version": "19.2.14",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/react-dom",
+    "version": "19.2.3",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "csstype",
+    "version": "3.2.3",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "11d55bd4541c75ee7879547ac49089c489163dae49551389713c3d026cab383e"
+      }
+    ]
+  },
+  {
+    "name": "another-json",
+    "version": "0.2.0",
+    "license": "Apache-2.0",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+      }
+    ]
+  },
+  {
+    "name": "base-x",
+    "version": "5.0.1",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE.md",
+        "sha256": "a192bdfbed999ea06e52a3f5a85dd27dfed6ff3ad5a55050b345baba31afb0de"
+      }
+    ]
+  },
+  {
+    "name": "bs58",
+    "version": "6.0.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "57efbd615689807b8341d557af0038fae58da7e2831f29f52d02902f657deb25"
+      }
+    ]
+  },
+  {
+    "name": "content-type",
+    "version": "3.1.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "257aed98914108e91a337912727b6a802eef218248507f74b76faffaff517a38"
+      }
+    ]
+  },
+  {
+    "name": "esbuild",
+    "version": "0.25.12",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE.md",
+        "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681"
+      }
+    ]
+  },
+  {
+    "name": "events",
+    "version": "3.3.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "631987b7616a325a5b97566c232418481ddf7dbb5ecadefb991e791876cc2599"
+      }
+    ]
+  },
+  {
+    "name": "fdir",
+    "version": "6.5.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "9a39f2aadab11a3697edd668ff2d8ad885b649737b7ab4d3bf12b34e5ada0c86"
+      }
+    ]
+  },
+  {
+    "name": "picomatch",
+    "version": "4.0.7",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
+      }
+    ]
+  },
+  {
+    "name": "get-tsconfig",
+    "version": "4.14.3",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "10c904a49af44409b073532e45a53fd4df19bdf26eaf9afc7917258c2b354382"
+      }
+    ]
+  },
+  {
+    "name": "resolve-pkg-maps",
+    "version": "1.0.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "10c904a49af44409b073532e45a53fd4df19bdf26eaf9afc7917258c2b354382"
+      }
+    ]
+  },
+  {
+    "name": "is-network-error",
+    "version": "1.3.2",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "license",
+        "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+      }
+    ]
+  },
+  {
+    "name": "loglevel",
+    "version": "1.9.2",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE-MIT",
+        "sha256": "18e8cf5f0dbaf13d9562e93b9bef79aff2acff18fab698c2d589d2159375a1f9"
+      }
+    ]
+  },
+  {
+    "name": "matrix-events-sdk",
+    "version": "0.0.1",
+    "license": "Apache-2.0",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ]
+  },
+  {
+    "name": "matrix-js-sdk",
+    "version": "42.4.0",
+    "license": "Apache-2.0",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+      }
+    ]
+  },
+  {
+    "name": "matrix-widget-api",
+    "version": "1.19.0",
+    "license": "Apache-2.0",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+      }
+    ]
+  },
+  {
+    "name": "p-retry",
+    "version": "8.0.1",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "license",
+        "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+      }
+    ]
+  },
+  {
+    "name": "sdp-transform",
+    "version": "3.0.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "653b7af11548d1bf4a73d0d9dcca68d709d2b78633088b75332c02d739559afa"
+      }
+    ]
+  },
+  {
+    "name": "unhomoglyph",
+    "version": "1.0.6",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "f99e57781db8360a0469862fdca73a977450c315020b145f5b6c0846670d8a13"
+      }
+    ]
+  },
+  {
+    "name": "nanoid",
+    "version": "3.3.19",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "da4db1480d9beea3483a2eda5c53b22238d0827d57da162b48f122e04d2d9987"
+      }
+    ]
+  },
+  {
+    "name": "picocolors",
+    "version": "1.1.1",
+    "license": "ISC",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "6582629e2979466878f6014313dcc2f3756c9616148682227ce3063dde310750"
+      }
+    ]
+  },
+  {
+    "name": "playwright-core",
+    "version": "1.55.1",
+    "license": "Apache-2.0",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb"
+      },
+      {
+        "file": "NOTICE",
+        "sha256": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d"
+      }
+    ]
+  },
+  {
+    "name": "playwright",
+    "version": "1.55.1",
+    "license": "Apache-2.0",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb"
+      },
+      {
+        "file": "NOTICE",
+        "sha256": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d"
+      }
+    ]
+  },
+  {
+    "name": "postcss",
+    "version": "8.5.28",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "5be1f3465bba68a626777f984878814aaf35e7ef8e9fd314d469bcf887050fb8"
+      }
+    ]
+  },
+  {
+    "name": "source-map-js",
+    "version": "1.2.1",
+    "license": "BSD-3-Clause",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "6cb0631f71c7749763fd3dd1d5bee52dd1070ec17f2edc1710079ad070bd2fbd"
+      }
+    ]
+  },
+  {
+    "name": "react",
+    "version": "19.3.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+      }
+    ]
+  },
+  {
+    "name": "react-dom",
+    "version": "19.3.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+      }
+    ]
+  },
+  {
+    "name": "scheduler",
+    "version": "0.28.0",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+      }
+    ]
+  },
+  {
+    "name": "rollup",
+    "version": "4.63.3",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE.md",
+        "sha256": "fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8"
+      }
+    ]
+  },
+  {
+    "name": "tinyglobby",
+    "version": "0.2.17",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "22c68811e174cbbfb3813d4135918df4f540959c14d872e601d9abe83d3cde8f"
+      }
+    ]
+  },
+  {
+    "name": "tsx",
+    "version": "4.20.6",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE",
+        "sha256": "8dded67841a9261a622c739fb61c81785e93765de852828ceeb9403d20a74581"
+      }
+    ]
+  },
+  {
+    "name": "typescript",
+    "version": "5.9.3",
+    "license": "Apache-2.0",
+    "license_files": [
+      {
+        "file": "LICENSE.txt",
+        "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47"
+      }
+    ]
+  },
+  {
+    "name": "vite",
+    "version": "7.1.12",
+    "license": "MIT",
+    "license_files": [
+      {
+        "file": "LICENSE.md",
+        "sha256": "79502d82e18c8265d2ba0f5d8714eec66bdc124e80546a5d4c51be20059aab80"
+      }
+    ]
+  }
+]

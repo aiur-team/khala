@@ -1,0 +1,40 @@
+{
+  "revision": "f2e247684496637f80e73805442e7d8e99f68548",
+  "recorded_at": "2026-09-17T15:11:02.557Z",
+  "source_checks": "pass",
+  "runtime_host": "not-tested",
+  "files": {
+    "apps/web/src/components/structures/LoggedInView.tsx": {
+      "sha256": "99a33ace896b3c57ecb39edb91eb45c702aa8157b93363f10d9f506a9378935c",
+      "bytes": 31590
+    },
+    "packages/module-api/src/api/navigation.ts": {
+      "sha256": "115c1af0e0760698aa01cd3c5c11b4b2fd9a2f0cabe241cb635819a11640b4ee",
+      "bytes": 1848
+    },
+    "packages/module-api/src/api/builtins.ts": {
+      "sha256": "96ec539dbbcd3abcc8cb798103151ce124d4b8416fb0bee5c71bb8aa97a3fd07",
+      "bytes": 2317
+    },
+    "packages/module-api/README.md": {
+      "sha256": "788cde5c916540c692a017e5723a7fde0e5219af766bed543530baf0ef4a14d4",
+      "bytes": 2663
+    },
+    "README.md": {
+      "sha256": "587769691a569fe64a392fd24c6b205629a0607a60f62223d0801d02d888feb9",
+      "bytes": 6292
+    },
+    "LICENSE-AGPL-3.0": {
+      "sha256": "5132c7f0475b02c8107a2e0f0363e70423c62d2664ab927e76193226e5e05905",
+      "bytes": 34273
+    },
+    "LICENSE-GPL-3.0": {
+      "sha256": "8b1ba204bb69a0ade2bfcf65ef294a920f6bb361b317dba43c7ef29d96332b9b",
+      "bytes": 35148
+    },
+    "LICENSE-COMMERCIAL": {
+      "sha256": "1197de6d29c5037c6d9b5c3607d72eaa90b5045f2d623400e870825fdcf7666e",
+      "bytes": 255
+    }
+  }
+}
