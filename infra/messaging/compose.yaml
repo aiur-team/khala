@@ -1,0 +1,73 @@
+name: ${KHALA_STATE_NAMESPACE:?set KHALA_STATE_NAMESPACE}
+
+services:
+  postgres:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    environment:
+      POSTGRES_DB: ${KHALA_DB_NAME:-synapse}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+      POSTGRES_PASSWORD: ${KHALA_DB_PASSWORD:?set KHALA_DB_PASSWORD}
+      POSTGRES_USER: ${KHALA_DB_USER:-synapse}
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - messaging-private
+
+  synapse-data-init:
+    image: ghcr.io/element-hq/synapse:v1.161.0@sha256:7155ddc4835e5b8afa4e1598d92aa16ff1d03109f7d1cff61d493237d1210b1d
+    user: '0:0'
+    entrypoint: [sh, -c]
+    command: ["chown 991:991 /data"]
+    restart: 'no'
+    network_mode: none
+    volumes:
+      - synapse-data:/data
+
+  synapse:
+    image: ghcr.io/element-hq/synapse:v1.161.0@sha256:7155ddc4835e5b8afa4e1598d92aa16ff1d03109f7d1cff61d493237d1210b1d
+    environment:
+      SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
+    command: [run]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      synapse-data-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # Process liveness only. check.ts probes the client, registration and
+      # admin boundaries; /health does not establish database readiness.
+      test: [CMD-SHELL, "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=2)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    volumes:
+      # Mount the file directly so the non-root image user can read it while
+      # its host parent directory remains private (0700).
+      - ${KHALA_CONFIG_DIR:?set KHALA_CONFIG_DIR}/homeserver.yaml:/config/homeserver.yaml:ro
+      - synapse-data:/data
+    # Local preview traffic is loopback-only. Railway terminates public HTTPS
+    # and targets container port 8008 instead of publishing this host binding.
+    ports:
+      - 127.0.0.1::8008
+    networks:
+      - messaging-private
+      - client-edge
+
+volumes:
+  postgres-data: {}
+  synapse-data: {}
+
+networks:
+  messaging-private:
+    internal: true
+  client-edge: {}

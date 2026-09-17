@@ -1,0 +1,40 @@
+# Rendered by infra/messaging/check.ts. Never commit the rendered file.
+server_name: __KHALA_MATRIX_SERVER_NAME__
+public_baseurl: __KHALA_MATRIX_PUBLIC_ORIGIN__
+report_stats: false
+
+pid_file: /data/homeserver.pid
+signing_key_path: /data/server.signing.key
+media_store_path: /data/media_store
+
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    x_forwarded: true
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client]
+        compress: false
+
+database:
+  name: psycopg2
+  args:
+    host: __KHALA_DB_HOST__
+    port: __KHALA_DB_PORT__
+    user: __KHALA_DB_USER__
+    password: __KHALA_DB_PASSWORD__
+    database: __KHALA_DB_NAME__
+    cp_min: 1
+    cp_max: 10
+
+enable_registration: false
+enable_registration_without_verification: false
+allow_public_rooms_without_auth: false
+allow_public_rooms_over_federation: false
+federation_domain_whitelist: []
+url_preview_enabled: false
+turn_uris: []
+enable_metrics: false
+suppress_key_server_warning: true
+trusted_key_servers: []
