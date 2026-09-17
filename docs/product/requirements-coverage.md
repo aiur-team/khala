@@ -32,13 +32,13 @@ Audited 2026-09-16 against the recovered commissioning conversation and subseque
 
 Current research covers protocols/substrates, peer-content handling, identity, E2EE/custody, backend state/realtime, branding and hosting tradeoffs. The [research index](../research/README.md) links all current reports. Historical material remains preserved, with incomplete or unverified claims labelled. Branding was traced to actual sibling sources. The ticket proposal includes dependencies, acceptance boundaries and conditional features.
 
-These facts establish research and proposal progress, not a working product. No Khala code, E2EE interoperability test, deployed service, measured latency or production cost benchmark exists yet.
+These facts establish research and planning coverage, not a working product. Subsequent implementation and feasibility evidence belongs to the tracker and Executor records; this document does not certify code, interoperability, deployment, latency or cost results.
 
 ## What is not yet approved or complete
 
 - The ticket structure is approved for detailed planning; Matrix/Railway selection remains a separate pending question.
 - Product questions about the first collaboration task, unattended operation, admission, history/attachments, busy-session behaviour and trust/backlog policy remain open.
-- The requested per-ticket `ce-brainstorm` and `ce-plan` work is in progress, preserving the user's ordering.
-- No Khala implementation, external issue creation, paid infrastructure provisioning or Aiur launch is implied by this audit.
+- The requested per-ticket `ce-brainstorm` and `ce-plan` work is complete for all 44 tickets, with independent review dispositions in the [review index](../plans/reviews/README.md). Unanswered product choices remain explicit gates.
+- Tracker materialization and local Executor operation were subsequently authorized and recorded in the [tracker index](tracker-index.md) and [Executor transition](executor-transition.md). This coverage audit does not establish product acceptance or authorize paid provisioning.
 
 Aiur bug reporting and executor coordination are separately authorised and recorded in [operations](../operations/aiur-coordination.md).

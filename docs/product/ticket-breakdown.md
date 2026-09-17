@@ -29,7 +29,7 @@ One undispatched root owns the product outcome; lane headings are organizational
 
 ## Epics and metadata
 
-One undispatched root, **KHA-ROOT**, contains eight undispatched epics. Only their 44 leaf members are potential worker tickets. Epic membership organizes outcomes; it does not add dependency barriers.
+One undispatched root, **KHA-ROOT**, has 44 direct executable members, organized into eight planning epics. The eight epic issues remain undispatched planning references outside the runtime member graph. This follows Aiur v1's direct-child contract; epic membership does not add dependency barriers or require nested traversal. The [runtime pack](build-order.json) and [tracker index](tracker-index.md) record the corrected topology.
 
 | Epic | Outcome | Members |
 |---|---|---|

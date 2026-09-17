@@ -22,7 +22,7 @@ The requested parallel continuation has produced current protocol, substrate, pr
 
 | Document | Purpose |
 |---|---|
-| [Ticket proposal, revision 4](../product/ticket-breakdown.md) | Concrete outcomes, dependencies and acceptance criteria awaiting sign-off |
+| [Ticket scope, revision 4](../product/ticket-breakdown.md) | Approved planning scope, dependencies and acceptance criteria; all 44 detailed plans are written and reviewed |
 | [Hosting comparison](11-hosting-tradeoffs.md) | Matrix on Railway versus Netlify-native pros and cons |
 | [Protocols and agent attachment](01-agent-protocols.md) | Model-independent interface and existing-session notifications |
 | [Substrates](02-substrates.md) | OSS reuse and minimal custom components |

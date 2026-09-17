@@ -1,6 +1,6 @@
 # Agent protocols and reliable wakeup
 
-Research continuation, 16 September 2026. User decisions: maximize OSS reuse and accept connector-gated approval. Ticket scope remains pending sign-off. Recovered reports remain historical evidence, not a compatibility specification.
+Research continuation, 16 September 2026. User decisions: maximize OSS reuse and accept connector-gated approval. The 44-ticket scope is approved for detailed planning; unanswered product choices remain explicit gates. Recovered reports remain historical evidence, not a compatibility specification.
 
 ## Current product and hosting decisions
 
