@@ -1,6 +1,6 @@
 # Khala product decisions
 
-Updated 2026-09-16. Ticket scope is approved for detailed planning; individual readiness and unresolved product gates remain explicit.
+Updated 2026-09-18. Ticket scope is approved for detailed planning; individual readiness and unresolved product gates remain explicit.
 
 ## User requirements
 
@@ -24,8 +24,12 @@ Updated 2026-09-16. Ticket scope is approved for detailed planning; individual r
 | P04 | Airlock trust boundary | Connector may decrypt pending messages but must withhold them from the agent/model until release | **Settled: user chose connector-gated** |
 | P05 | First collaboration scenario and completion | Determines the end-to-end launch proof | Asked: cross-repo coordination, technical Q&A, or open-ended collaboration |
 | P06 | Onboarding/identity expectations | Defines the ordinary human journey | **Settled: Archon-like OAuth sign-in for email; create optionally named chat; copy link to own existing agent and coworker; no manual connector setup** |
-| P07 | History, attachments and retention | Determines disclosure on admission, recovery and content interfaces | Not yet asked |
+| P07 | History, attachments and retention | Determines disclosure on admission, recovery and content interfaces | **Partly settled 2026-09-18 by P12/P13/P14**; attachments still not asked |
 | P08 | Automatic conversation control | Determines who can pause/resume, budget turns and authorise tools | Not yet asked |
+| P12 | Admission policy per link | Determines who an invitation link admits and what the invitee may read | **Settled 2026-09-18: the creator chooses the policy at link creation, per link; default anyone-with-link-and-no-earlier-history** |
+| P13 | Room closure and retention | Determines what closing a room promises and what cleanup means | **Settled 2026-09-18: closure makes no deletion promise; retention is local cleanup only** |
+| P14 | History recovery and escrow | Determines device-loss handling and whether any party holds recoverable keys | **Settled 2026-09-18: no history recovery once every device is lost; no escrow anywhere** |
+| P15 | Native agent surface | Determines how an agent joins a room and how it is notified | **Settled 2026-09-18: agents install a CLI; native harness mechanism first (CLI or MCP); generic Khala skill plus CLI as fallback; humans get a send/receive UI in the same room** |
 
 The order is a working interview agenda. Do not treat unanswered questions or recommended options as user decisions. Preserve concrete free-text answers and their implications here as they arrive.
 
@@ -39,6 +43,14 @@ The order is a working interview agenda. Do not treat unanswered questions or re
 
 
 - **P04 — connector-gated airlock (user-directed).** The owner-controlled connector may decrypt and persist pending messages for human review. Only approved messages enter the agent/model context. Separate human-only encryption groups are not required for this boundary. Protect the connector’s pending store and human approval interface from model tools; do not claim resistance to an agent with unrestricted access to the connector host.
+
+- **P12 - per-link admission policy (user-directed, 2026-09-18).** The creator chooses the admission policy when they create the invitation link, and the choice belongs to that link rather than to the room or the account. The default is anyone-with-link-and-no-earlier-history: following the link admits the follower, and an admitted participant sees only events from their own admission forward. A creator who wants something narrower selects it at creation time. A link's policy is fixed once issued; a different policy means a different link. This does not authorise silent re-admission of a revoked participant, and a structural admission rule is not a claim that the transport enforces history exclusion cryptographically. KHA-113 still owns that proof, and `apps/control/src/agent-bootstrap/handler.ts` must keep requiring an explicit `admissionPolicy` rather than inventing a default.
+
+- **P13 - closure promises no deletion (user-directed, 2026-09-18).** Closing a room ends participation and new delivery. It is not a deletion promise and must not be presented as one. Retention work is local cleanup only: each owner's connector and each browser device remove their own copies on their own schedule. Khala makes no claim about copies held by the transport, by another owner's connector, or by a model provider that already consumed released content. KHA-127 and KHA-130 must say this plainly in the interface rather than implying erasure.
+
+- **P14 - no history recovery, no escrow (user-directed, 2026-09-18).** A participant who loses every device loses their history. Khala holds no escrow, and neither the connector, the control plane, the transport, nor another participant is a recovery path. Recovery is limited to re-admission as a new device with no backfill. KHA-129 and KHA-136 must not add a recovery route that depends on any party holding recoverable key material.
+
+- **P15 - native agent surface, CLI first (user-directed, 2026-09-18).** This supersedes the existing-session attachment framing that KHA-103 tested and that parked KHA-117 on G-HARNESSES. Agents install a CLI. For each harness, use that harness's own native mechanism first, its command line or its MCP server, whichever fits that harness; CLIs are priority one. Where a harness has no native route, the agent installs a Khala skill that sets up a listener for released messages and provides a CLI for sending. Humans need a UI that sends and receives in the same room as the agents. Cloud and official-app support for Claude and Codex is desirable but lower priority than the local CLIs. A route is supported only with evidence from the installed CLI; documentation alone never promotes a route to `support: "tested"`.
 
 ## Recommendations that are not requirements
 
