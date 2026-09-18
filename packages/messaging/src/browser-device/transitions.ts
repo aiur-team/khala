@@ -18,8 +18,6 @@ export type Generation = {
   store: CryptoStore | null;
   engine: DeviceEngine | null;
   readonly disposers: Set<() => void>;
-  /** Resolves once the generation's resources are closed. */
-  closed: Promise<void> | null;
 };
 
 export class Superseded extends Error {
@@ -31,7 +29,7 @@ export class Superseded extends Error {
 export function openGeneration(principal: AuthPrincipal, generation: number, deviceId: DeviceId | null): Generation {
   return {
     ownerId: principal.ownerId, principal, generation, abort: new AbortController(), deviceId,
-    lease: null, store: null, engine: null, disposers: new Set(), closed: null,
+    lease: null, store: null, engine: null, disposers: new Set(),
   };
 }
 
@@ -49,21 +47,20 @@ export function within(promise: Promise<unknown>, ms: number): Promise<boolean> 
 }
 
 /**
- * Ends a generation. Idempotent; resolves after every resource it held is closed,
- * or once `closeWaitMs` passes for an engine that will not close. Close failures
- * are swallowed: the generation is already unreachable, and a failing close must
- * not keep a replacement from starting.
+ * Ends a generation. The service detaches `g` before calling this, so it runs once
+ * per generation. Resolves after every resource it held is closed, or once
+ * `closeWaitMs` passes for an engine that will not close. Close failures are
+ * swallowed: the generation is already unreachable, and a failing close must not
+ * keep a replacement from starting.
  */
 export function endGeneration(g: Generation, closeWaitMs: number): Promise<void> {
-  if (g.closed) return g.closed;
   g.abort.abort();
   const disposers = [...g.disposers];
   g.disposers.clear();
   for (const dispose of disposers) {
     try { dispose(); } catch { /* projection wipe failures cannot resurrect the generation */ }
   }
-  g.closed = closeResources(g, closeWaitMs);
-  return g.closed;
+  return closeResources(g, closeWaitMs);
 }
 
 async function closeResources(g: Generation, closeWaitMs: number): Promise<void> {

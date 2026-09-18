@@ -53,7 +53,9 @@ Rules:
   published, so a sign-out or account switch during the lock wait or during
   initialisation never yields `ready`.
   Every request that changes state carries an epoch. A slower, superseded request
-  (a sign-out, an account switch or `acceptLoss`) never publishes over a newer one.
+  (a sign-out, an account switch or `acceptLoss`) never publishes over a newer one, and
+  one that already ended the old generation leaves `new` rather than a `ready` view with
+  nothing live.
 - The engine opens, then its local identity is checked **before** `start`. A marker that
   names this device with another fingerprint is `lost/storage_cleared`. Local keys that
   differ from the server's published keys are `lost/key_material_missing`. The old device

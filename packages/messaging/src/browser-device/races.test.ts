@@ -1,7 +1,8 @@
 // Interleavings where a slow request must not act on state a newer request owns.
 
 import { describe, expect, it } from 'vitest';
-import { createDisk, owner, rig, session } from './fakes';
+import type { IdentityState } from '@khala/contracts/messaging/index';
+import { createDisk, owner, principal, rig, session } from './fakes';
 import { createBrowserDeviceService } from './service';
 
 const alice = owner('owner_alice');
@@ -15,6 +16,9 @@ function gate() {
 }
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+
+/** Alice again, but authenticated through another provider account. */
+const aliceElsewhere: IdentityState = { kind: 'signed_in', principal: { ...principal('owner_alice'), providerSubject: 'sub-someone-else' } };
 
 describe('use() is bound to its owner and generation', () => {
   it('refuses another owner and never runs a queued operation on the next account', async () => {
@@ -137,6 +141,98 @@ describe('superseded requests publish nothing', () => {
 
     expect(await accepting).toEqual({ kind: 'unavailable', retryable: true });
     expect(service.current()).toMatchObject({ state: 'ready', deviceId: 'DEVICE_B' });
+  });
+});
+
+describe('a request overtaken while it retires the old generation', () => {
+  it('a sign-out overtaken by a request that publishes nothing leaves no ready view behind', async () => {
+    const closing = gate();
+    const tab = rig(createDisk(), { engine: { onClose: () => closing.promise } });
+    const service = createBrowserDeviceService(tab.deps);
+    await service.ensureReady(alice);
+
+    tab.identity.set({ kind: 'signed_out' });
+    const signOut = service.ensureReady(alice);
+    await tick();
+    tab.identity.set({ kind: 'unavailable', retryable: true });
+    expect(await service.ensureReady(bob)).toEqual({ kind: 'unavailable', retryable: true });
+    closing.open();
+
+    expect(await signOut).toEqual({ kind: 'unavailable', retryable: true });
+    expect(service.current()).toEqual({ deviceId: null, state: 'new', generation: 2, reason: null });
+  });
+
+  it('a sign-out overtaken by stop() leaves the stopped view', async () => {
+    const closing = gate();
+    const tab = rig(createDisk(), { engine: { onClose: () => closing.promise } });
+    const service = createBrowserDeviceService(tab.deps);
+    await service.ensureReady(alice);
+
+    tab.identity.set({ kind: 'signed_out' });
+    const signOut = service.ensureReady(alice);
+    await tick();
+    await service.stop();
+    closing.open();
+
+    expect(await signOut).toEqual({ kind: 'unavailable', retryable: true });
+    expect(service.current()).toEqual({ deviceId: null, state: 'new', generation: 2, reason: null });
+  });
+
+  it('a re-initialisation overtaken by stop() opens nothing', async () => {
+    const closing = gate();
+    const tab = rig(createDisk(), { engine: { onClose: () => closing.promise } });
+    const service = createBrowserDeviceService(tab.deps);
+    await service.ensureReady(alice);
+
+    tab.identity.set(aliceElsewhere);
+    const reinit = service.ensureReady(alice);
+    await tick();
+    await service.stop();
+    closing.open();
+
+    expect(await reinit).toEqual({ kind: 'unavailable', retryable: true });
+    expect(service.current()).toEqual({ deviceId: null, state: 'new', generation: 2, reason: null });
+    expect(tab.engines).toHaveLength(1);
+  });
+
+  it('a re-initialisation overtaken by a request that publishes nothing leaves no ready view behind', async () => {
+    const closing = gate();
+    const tab = rig(createDisk(), { engine: { onClose: () => closing.promise } });
+    const service = createBrowserDeviceService(tab.deps);
+    await service.ensureReady(alice);
+
+    tab.identity.set(aliceElsewhere);
+    const reinit = service.ensureReady(alice);
+    await tick();
+    tab.identity.set({ kind: 'unavailable', retryable: true });
+    expect(await service.ensureReady(bob)).toEqual({ kind: 'unavailable', retryable: true });
+    closing.open();
+
+    expect(await reinit).toEqual({ kind: 'unavailable', retryable: true });
+    expect(service.current()).toEqual({ deviceId: null, state: 'new', generation: 2, reason: null });
+    expect(tab.engines).toHaveLength(1);
+  });
+
+  it('a slow loss acceptance does not clear a loss found by a later generation', async () => {
+    const clearing = gate();
+    const tab = rig(createDisk(), { credentials: { owner_alice: session('DEVICE_OLD', 'fp-published-old'), owner_bob: session('DEVICE_B') } });
+    const markers = tab.deps.markers;
+    const service = createBrowserDeviceService({
+      ...tab.deps,
+      markers: { ...markers, clear: async ownerId => { await clearing.promise; await markers.clear(ownerId); } },
+    });
+    await service.ensureReady(alice);
+
+    const accepting = service.acceptLoss(alice);
+    tab.identity.signIn('owner_bob');
+    await service.ensureReady(bob);
+    tab.identity.signIn('owner_alice');
+    const lostAgain = await service.ensureReady(alice);
+    clearing.open();
+
+    expect(lostAgain).toMatchObject({ kind: 'ok', value: { state: 'lost', deviceId: 'DEVICE_OLD' } });
+    expect(await accepting).toEqual({ kind: 'unavailable', retryable: true });
+    expect(service.current()).toEqual(lostAgain.kind === 'ok' ? lostAgain.value : null);
   });
 });
 
