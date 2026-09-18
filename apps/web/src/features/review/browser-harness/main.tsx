@@ -16,18 +16,28 @@ declare global {
   interface Window {
     __reviewHarness: {
       pushLiveArrival: (body: string) => void;
+      pushOutcomeUnknownTarget: () => void;
       editPending: (eventId: string, body: string) => void;
       bumpBindingGeneration: () => void;
       revoke: () => void;
+      goUnavailable: () => void;
+      restoreReady: () => void;
+      goLoading: () => void;
+      finishLoading: () => void;
       getLastCommand: () => ApprovalCommand | null;
     };
   }
 }
 window.__reviewHarness = {
   pushLiveArrival: harness.pushLiveArrival,
+  pushOutcomeUnknownTarget: harness.pushOutcomeUnknownTarget,
   editPending: harness.editPending,
   bumpBindingGeneration: harness.bumpBindingGeneration,
   revoke: harness.revoke,
+  goUnavailable: harness.goUnavailable,
+  restoreReady: harness.restoreReady,
+  goLoading: harness.goLoading,
+  finishLoading: harness.finishLoading,
   getLastCommand: harness.getLastCommand,
 };
 

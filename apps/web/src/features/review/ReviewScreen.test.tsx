@@ -150,8 +150,21 @@ describe('ReviewScreen', () => {
       },
     });
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
-    expect(html).toContain('Your agent');
-    expect(html).toContain('Another person&#x27;s agent');
+    // Scoped per row, not a whole-document substring check: inverting the
+    // ownership comparison (`===` to `!==`) would still make both label
+    // strings appear *somewhere* in the html, just swapped onto the wrong
+    // rows, so a document-wide `toContain` on both strings cannot catch that.
+    const row = (eventId: string): string => {
+      const match = html.match(new RegExp(`data-event-id="${eventId}"[\\s\\S]*?<\\/li>`));
+      expect(match, `expected a rendered row for ${eventId}`).not.toBeNull();
+      return match![0];
+    };
+    const mineRow = row('E1');
+    expect(mineRow).toContain('Your agent');
+    expect(mineRow).not.toContain('Another person&#x27;s agent');
+    const theirsRow = row('E2');
+    expect(theirsRow).toContain('Another person&#x27;s agent');
+    expect(theirsRow).not.toMatch(/>Your agent</);
   });
 
   it('two participants sharing a display name across different owners get a disambiguating suffix', () => {
@@ -173,6 +186,93 @@ describe('ReviewScreen', () => {
     const controller = fakeController();
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
     expect(html).toMatch(/aria-label="Select message from peer[^"]*received[^"]*hello/);
+  });
+
+  it('strips control and bidi characters from the body preview before it reaches the checkbox accessible name', () => {
+    // U+0007 (BEL, a C0 control character) and U+202E (RTL override, a bidi
+    // character) are within the first 60 characters of the body; the body
+    // itself still renders in full and inert with the original bytes (only
+    // the review-owned accessible name is sanitized, never the content
+    // renderContent shows - KTD4), so only the aria-label is asserted here.
+    const body = `Approve\u0007 this \u202enow, not later`;
+    const controller = fakeController({
+      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', body)], receipts: [] },
+    });
+    const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    const ariaLabelMatch = html.match(/aria-label="Select message from peer[^"]*"/);
+    expect(ariaLabelMatch, 'expected a checkbox aria-label').not.toBeNull();
+    expect(ariaLabelMatch![0]).not.toContain('\u0007');
+    expect(ariaLabelMatch![0]).not.toContain('\u202e');
+    expect(ariaLabelMatch![0]).toContain('Approve this now, not later');
+  });
+
+  it('strips every unsafe character class the sanitizer claims to cover, not just BEL and RTL override', () => {
+    // A regex narrowed to only C0/C1/U+061C/U+202E would still pass the test
+    // above. Cover the isolates, the other bidi-embedding controls, the
+    // zero-width characters, the LTR/RTL marks, and the BOM individually so a
+    // narrowed regex is caught here.
+    const unsafeChars = [
+      '\u0001', // C0 control
+      '\u009f', // C1 control
+      '\u061c', // Arabic Letter Mark
+      '\u200b', // zero-width space
+      '\u200e', // left-to-right mark
+      '\u200f', // right-to-left mark
+      '\u202a', // left-to-right embedding
+      '\u202b', // right-to-left embedding
+      '\u202c', // pop directional formatting
+      '\u202d', // left-to-right override
+      '\u202e', // right-to-left override
+      '\u2060', // word joiner
+      '\u2066', // left-to-right isolate
+      '\u2067', // right-to-left isolate
+      '\u2068', // first-strong isolate
+      '\u2069', // pop directional isolate
+      '\ufeff', // byte order mark
+    ];
+    for (const unsafeChar of unsafeChars) {
+      const body = `Approve${unsafeChar}now`;
+      const controller = fakeController({
+        view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', body)], receipts: [] },
+      });
+      const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+      const ariaLabelMatch = html.match(/aria-label="Select message from peer[^"]*"/);
+      expect(ariaLabelMatch, `expected a checkbox aria-label for U+${unsafeChar.codePointAt(0)!.toString(16)}`).not.toBeNull();
+      expect(ariaLabelMatch![0], `U+${unsafeChar.codePointAt(0)!.toString(16)} should be stripped`).not.toContain(unsafeChar);
+      expect(ariaLabelMatch![0]).toContain('Approvenow');
+    }
+  });
+
+  it('takes the body preview by code point, never splitting a surrogate pair the way slice(0, 60) on UTF-16 units could', () => {
+    // 59 ASCII characters put the boundary at index 60 in the middle of the
+    // trailing surrogate pair (U+1F600, 2 UTF-16 code units) if sliced by code
+    // unit rather than code point.
+    const body = `${'a'.repeat(59)}\u{1F600} trailing text past the boundary`;
+    const controller = fakeController({
+      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', body)], receipts: [] },
+    });
+    const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    const ariaLabelMatch = html.match(/aria-label="Select message from peer[^"]*"/);
+    expect(ariaLabelMatch, 'expected a checkbox aria-label').not.toBeNull();
+    // A lone surrogate half serializes to the Unicode replacement character in
+    // HTML text content; asserting its absence catches a split pair directly.
+    expect(ariaLabelMatch![0]).not.toContain('�');
+    expect(ariaLabelMatch![0]).toContain('\u{1F600}');
+  });
+
+  it('U2/KTD4: Hide is disabled while a submission is in flight or unresolved, so a hidden ref can never desync from a submitted selection', () => {
+    const selection = { phase: 'selected' as const, refs: [ref('E1')], captured: { bindingId, bindingGeneration: 0, policyVersion: 3 } };
+    const submitting = fakeController({ selection, submission: { phase: 'submitting', commandId: 'cmd_1' as never, releaseIds: null, error: null } });
+    const submittingHtml = renderToStaticMarkup(<ReviewScreen controller={submitting} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    expect(submittingHtml).toMatch(/review__hide"[^>]*disabled=""/);
+
+    const unknown = fakeController({ selection, submission: { phase: 'unknown', commandId: 'cmd_1' as never, releaseIds: null, error: null } });
+    const unknownHtml = renderToStaticMarkup(<ReviewScreen controller={unknown} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    expect(unknownHtml).toMatch(/review__hide"[^>]*disabled=""/);
+
+    const idle = fakeController({ selection });
+    const idleHtml = renderToStaticMarkup(<ReviewScreen controller={idle} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    expect(idleHtml).not.toMatch(/review__hide"[^>]*disabled=""/);
   });
 
   it('an unavailable item renders as a disabled placeholder with its withheld reason, never dropped silently', () => {
