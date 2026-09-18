@@ -156,6 +156,49 @@ describe('review controller', () => {
     controller.dispose();
   });
 
+  it('a submit response that lands after revocation never resurrects cleared submission/command authority', async () => {
+    const fake = createFakePort(view());
+    let resolveApprove!: (result: ApprovalUiResult) => void;
+    fake.setApprove(() => new Promise<ApprovalUiResult>(resolve => (resolveApprove = resolve)));
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-a'), true);
+    const submitted = controller.submit();
+    expect(controller.getSnapshot().submission.phase).toBe('submitting');
+
+    // Revocation lands while the request is still in flight.
+    fake.setView(view({ access: 'revoked', pending: [] }));
+    expect(controller.getSnapshot().submission.phase).toBe('idle');
+
+    // The original in-flight request finally resolves as accepted — too late to matter.
+    resolveApprove({ kind: 'accepted', releaseIds: ['release_1' as ReleaseId] });
+    await submitted;
+
+    const data = controller.getSnapshot();
+    expect(data.submission.phase).toBe('idle');
+    expect(data.submission.releaseIds).toBeNull();
+    expect(data.view.access).toBe('revoked');
+    controller.dispose();
+  });
+
+  it('toggling selection while a command is submitting/unknown is a no-op, so an unsubmitted edit is never silently discarded on success', async () => {
+    const fake = createFakePort(view({ pending: [item(ref('event-a'), 'a'), item(ref('event-b'), 'b')] }));
+    let resolveApprove!: (result: ApprovalUiResult) => void;
+    fake.setApprove(() => new Promise<ApprovalUiResult>(resolve => (resolveApprove = resolve)));
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-a'), true);
+    const submitted = controller.submit();
+    expect(controller.getSnapshot().submission.phase).toBe('submitting');
+
+    // Attempting to change the selection while the command targeting {event-a} is in flight has no effect.
+    controller.toggleSelect(ref('event-a'), false);
+    controller.toggleSelect(ref('event-b'), true);
+    expect(controller.getSnapshot().selection.refs.map(r => r.eventId)).toEqual(['event-a']);
+
+    resolveApprove({ kind: 'accepted', releaseIds: ['release_1' as ReleaseId] });
+    await submitted;
+    controller.dispose();
+  });
+
   it('rejects a definite error and preserves the closed-vocabulary code', async () => {
     const fake = createFakePort(view());
     fake.setApprove(async () => ({ kind: 'rejected', code: 'stale_content' }));

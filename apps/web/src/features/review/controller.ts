@@ -125,6 +125,11 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
 
   function toggleSelect(ref: EventRef, checked: boolean): void {
     if (disposed || cachedView.access !== 'ready') return;
+    // While a command is in flight or unresolved, the selection it targets
+    // must stay exactly what was submitted — editing it now would silently
+    // discard the edit on success (the submitted refs win) or, worse, look
+    // like it applies to a reconciled `unknown` command it was never part of.
+    if (submission.phase === 'submitting' || submission.phase === 'unknown') return;
     selection = checked ? addRef(selection, ref, bindingContextOf(cachedView)) : removeRef(selection, ref);
     notify();
   }
@@ -145,7 +150,11 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
     } catch {
       result = { kind: 'outcome_unknown', commandId: command.commandId };
     }
-    if (disposed) return;
+    // Revocation may have landed while this request was in flight; it already
+    // cleared submission/command authority (`onPortChange`), and a late
+    // response — however it resolved — must never resurrect either one
+    // (Failure boundaries: revocation wins over a late in-flight response).
+    if (disposed || cachedView.access === 'revoked') return;
     submission = mapResult(command.commandId, result);
     if (submission.phase === 'released') {
       selection = emptySelection();

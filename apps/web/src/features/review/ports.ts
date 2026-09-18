@@ -13,6 +13,14 @@ import type { CommandId, ReleaseId } from '@khala/contracts/delivery/ids';
 import type { ReviewView } from './model';
 
 /**
+ * Definitive rejection codes only — `outcome_unknown` is its own result
+ * `kind` below, never a `code` nested inside `rejected`. Keeping the two
+ * disjoint means a rejected result can never be mistaken for one that still
+ * needs reconciliation (U3).
+ */
+export type DefiniteApprovalErrorCode = Exclude<ApprovalErrorCode, 'outcome_unknown'>;
+
+/**
  * Browser-local approval outcome. `outcome_unknown` covers interrupted
  * waiting for the request itself (e.g. the connection dropped); it carries the
  * same `commandId` the caller already holds so the caller can reconcile it,
@@ -20,7 +28,7 @@ import type { ReviewView } from './model';
  */
 export type ApprovalUiResult =
   | Readonly<{ kind: 'accepted'; releaseIds: readonly ReleaseId[] }>
-  | Readonly<{ kind: 'rejected'; code: ApprovalErrorCode }>
+  | Readonly<{ kind: 'rejected'; code: DefiniteApprovalErrorCode }>
   | Readonly<{ kind: 'outcome_unknown'; commandId: CommandId }>;
 
 export interface ReviewUiPort {

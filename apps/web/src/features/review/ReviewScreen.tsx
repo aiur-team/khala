@@ -10,7 +10,7 @@ import type { MessageContent, TimelineItem } from '@khala/contracts/messaging/in
 import { sameEventRef } from '@khala/contracts/messaging/index';
 import type { ReviewController } from './controller';
 import type { SubmissionState } from './model';
-import { receiptLabel } from './receipt-labels';
+import { latestReceiptFor, receiptLabel } from './receipt-labels';
 import { ReviewItem, type ReadableTimelineItem } from './ReviewItem';
 
 export interface ReviewScreenProps {
@@ -56,8 +56,9 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
   const shown = filter === 'selected' ? visible.filter(item => selection.refs.some(ref => sameEventRef(ref, item.ref))) : visible;
 
   const canAct = view.access === 'ready';
+  const submissionInFlight = submission.phase === 'submitting' || submission.phase === 'unknown';
   const selectedCount = selection.refs.length;
-  const canSubmit = canAct && selection.phase === 'selected' && submission.phase !== 'submitting' && submission.phase !== 'unknown';
+  const canSubmit = canAct && selection.phase === 'selected' && !submissionInFlight;
 
   return (
     <section className="review" aria-label="Pending recipient review">
@@ -113,7 +114,7 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
             key={item.ref.eventId}
             item={item}
             selected={selection.refs.some(ref => sameEventRef(ref, item.ref))}
-            disabled={!canAct || selection.phase === 'stale'}
+            disabled={!canAct || selection.phase === 'stale' || submissionInFlight}
             onToggle={checked => controller.toggleSelect(item.ref, checked)}
             renderContent={renderContent}
             onHide={() => setHidden(current => new Set(current).add(item.ref.eventId))}
@@ -139,8 +140,7 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
         {submission.phase === 'released' && submission.releaseIds ? (
           <ul className="review__receipts" aria-label="Delivery evidence">
             {submission.releaseIds.map(releaseId => {
-              const receiptsForRelease = view.receipts.filter(receipt => receipt.releaseId === releaseId);
-              const latest = receiptsForRelease[receiptsForRelease.length - 1];
+              const latest = latestReceiptFor(releaseId, view.receipts);
               return (
                 <li key={releaseId}>
                   {releaseId}: {latest ? receiptLabel(latest) : 'Awaiting delivery evidence'}
