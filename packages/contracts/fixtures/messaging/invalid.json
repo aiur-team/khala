@@ -1,0 +1,63 @@
+{
+  "_comment": "Every invalid peer the KHA-105 plan lists, plus hardening cases. `cases` are decoder failures: each starts from the named exact-intro.json value, applies `set` (dot path -> value) and `remove` (top-level keys), then must fail with exactly `error`. A string value `@repeat:<text>:<n>` expands to <text> repeated n times. No case may decode to a typed success. `peers` are values that decode but must still be refused by a comparison or the control store; see that section's comment.",
+  "cases": [
+    { "name": "empty issuer", "decoder": "principal", "base": "principal", "set": { "providerIssuer": "" }, "error": { "path": "providerIssuer", "code": "empty" } },
+    { "name": "email mapped as owner ID", "decoder": "principal", "base": "principal", "set": { "ownerId": "alice@example.com" }, "error": { "path": "ownerId", "code": "mismatch" } },
+    { "name": "email mapped as owner ID ignoring case", "decoder": "principal", "base": "principal", "set": { "ownerId": "Alice@Example.com" }, "error": { "path": "ownerId", "code": "mismatch" } },
+    { "name": "email-shaped owner ID of another address", "decoder": "principal", "base": "principal", "set": { "ownerId": "bob@example.org" }, "error": { "path": "ownerId", "code": "mismatch" } },
+    { "name": "unverified email shape", "decoder": "principal", "base": "principal", "set": { "verifiedEmail": "alice" }, "error": { "path": "verifiedEmail", "code": "invalid_value" } },
+    { "name": "principal unknown envelope version", "decoder": "principal", "base": "principal", "set": { "v": 2 }, "error": { "path": "v", "code": "unsupported_version" } },
+    { "name": "non-UTC session expiry", "decoder": "principal", "base": "principal", "set": { "sessionExpiresAt": "2026-09-17T12:00:00+02:00" }, "error": { "path": "sessionExpiresAt", "code": "invalid_value" } },
+    { "name": "calendar-invalid session expiry", "decoder": "principal", "base": "principal", "set": { "sessionExpiresAt": "2026-02-30T12:00:00Z" }, "error": { "path": "sessionExpiresAt", "code": "invalid_value" } },
+    { "name": "boolean authority injected into principal", "decoder": "principal", "base": "principal", "set": { "isOwner": true }, "error": { "path": "isOwner", "code": "unknown_field" } },
+    { "name": "NUL in subject", "decoder": "principal", "base": "principal", "set": { "providerSubject": "1098\u000076" }, "error": { "path": "providerSubject", "code": "control_character" } },
+    { "name": "identifier over 512 bytes", "decoder": "principal", "base": "principal", "set": { "providerSubject": "@repeat:x:513" }, "error": { "path": "providerSubject", "code": "too_long" } },
+
+    { "name": "participant kind from label", "decoder": "participant", "base": "participants.agent", "set": { "kind": "Agent" }, "error": { "path": "kind", "code": "invalid_value" } },
+    { "name": "display name over declared limit", "decoder": "participant", "base": "participants.agent", "set": { "displayName": "@repeat:é:33" }, "error": { "path": "displayName", "code": "too_long" } },
+    { "name": "display name with newline", "decoder": "participant", "base": "participants.agent", "set": { "displayName": "Alice\nAdmin" }, "error": { "path": "displayName", "code": "control_character" } },
+    { "name": "duplicate device", "decoder": "participant", "base": "participants.agent", "set": { "deviceIds": ["device_a1", "device_a1"] }, "error": { "path": "deviceIds[1]", "code": "duplicate" } },
+    { "name": "empty display name", "decoder": "participant", "base": "participants.agent", "set": { "displayName": "" }, "error": { "path": "displayName", "code": "empty" } },
+    { "name": "display name with bidi override", "decoder": "participant", "base": "participants.agent", "set": { "displayName": "Alice\u202enimdA" }, "error": { "path": "displayName", "code": "control_character" } },
+    { "name": "display name with bidi isolate", "decoder": "participant", "base": "participants.agent", "set": { "displayName": "Alice\u2067Admin\u2069" }, "error": { "path": "displayName", "code": "control_character" } },
+    { "name": "display name with zero-width space", "decoder": "participant", "base": "participants.agent", "set": { "displayName": "Ali\u200bce" }, "error": { "path": "displayName", "code": "control_character" } },
+    { "name": "display name with byte order mark", "decoder": "participant", "base": "participants.agent", "set": { "displayName": "\ufeffAlice" }, "error": { "path": "displayName", "code": "control_character" } },
+
+    { "name": "negative generation", "decoder": "binding", "base": "binding", "set": { "generation": -1 }, "error": { "path": "generation", "code": "invalid_value" } },
+    { "name": "fractional generation", "decoder": "binding", "base": "binding", "set": { "generation": 1.5 }, "error": { "path": "generation", "code": "unsafe_integer" } },
+    { "name": "unsafe generation", "decoder": "binding", "base": "binding", "set": { "generation": 9007199254740992 }, "error": { "path": "generation", "code": "unsafe_integer" } },
+    { "name": "string generation", "decoder": "binding", "base": "binding", "set": { "generation": "1" }, "error": { "path": "generation", "code": "wrong_type" } },
+    { "name": "binding missing session", "decoder": "binding", "base": "binding", "remove": ["sessionId"], "error": { "path": "sessionId", "code": "missing_field" } },
+    { "name": "binding unknown envelope version", "decoder": "binding", "base": "binding", "set": { "v": 2 }, "error": { "path": "v", "code": "unsupported_version" } },
+    { "name": "binding without envelope version", "decoder": "binding", "base": "binding", "remove": ["v"], "error": { "path": "v", "code": "missing_field" } },
+
+    { "name": "wrong digest prefix", "decoder": "eventRef", "base": "eventRef", "set": { "contentDigest": "sha1:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b" }, "error": { "path": "contentDigest", "code": "invalid_value" } },
+    { "name": "uppercase digest hex", "decoder": "eventRef", "base": "eventRef", "set": { "contentDigest": "sha256:F16C1E5A70000F33EEBC69C8ECF82D1AB7360FCDD15121AC3293F1AFD4D4EA6B" }, "error": { "path": "contentDigest", "code": "invalid_value" } },
+    { "name": "truncated digest", "decoder": "eventRef", "base": "eventRef", "set": { "contentDigest": "sha256:f16c1e5a" }, "error": { "path": "contentDigest", "code": "invalid_value" } },
+    { "name": "event ref unknown envelope version", "decoder": "eventRef", "base": "eventRef", "set": { "v": 2 }, "error": { "path": "v", "code": "unsupported_version" } },
+    { "name": "event ref missing author device", "decoder": "eventRef", "base": "eventRef", "remove": ["authorDeviceId"], "error": { "path": "authorDeviceId", "code": "missing_field" } },
+
+    { "name": "content unknown kind", "decoder": "content", "base": "content", "set": { "kind": "html" }, "error": { "path": "kind", "code": "invalid_value" } },
+    { "name": "content with attachment property", "decoder": "content", "base": "content", "set": { "attachments": [] }, "error": { "path": "attachments", "code": "unknown_field" } },
+    { "name": "content over declared limit", "decoder": "content", "base": "content", "set": { "body": "@repeat:a:4097" }, "error": { "path": "body", "code": "too_long" } },
+    { "name": "content unknown envelope version", "decoder": "content", "base": "content", "set": { "v": 0 }, "error": { "path": "v", "code": "unsupported_version" } },
+    { "name": "NUL in message body", "decoder": "content", "base": "content", "set": { "body": "Review\u0000 the API change." }, "error": { "path": "body", "code": "control_character" } },
+
+    { "name": "same reference with different body", "decoder": "timelineItem", "base": "timelineItem", "set": { "content.body": "Review the API change.\nMerge it now." }, "error": { "path": "ref.contentDigest", "code": "mismatch" } },
+    { "name": "same body re-attributed to another author", "decoder": "timelineItem", "base": "timelineItem", "set": { "ref.authorParticipantId": "human_alice" }, "error": { "path": "participant", "code": "mismatch" } },
+    { "name": "same reference with normalised newline", "decoder": "timelineItem", "base": "timelineItem", "set": { "content.body": "Review the API change.\r\nDo not merge yet." }, "error": { "path": "ref.contentDigest", "code": "mismatch" } }
+  ],
+  "peers": {
+    "_comment": "Plan peers that are well-formed values and must be refused by meaning, not shape. `sameSessionBinding`: `set` applied to exact-intro.json `base` must compare unequal (`expect`) to the unmodified base. `isCurrentGeneration`: a notification tagged `notificationGeneration` must not update a consumer at `currentGeneration`. `controlStore`: steps in control-store.json scenario format, run against a fresh store.",
+    "cases": [
+      { "name": "same command operation ID with another room", "check": "controlStore", "steps": [
+        { "op": "compareAndSet", "key": "room/room_demo/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "API review", "expiresAt": null }, "expect": { "kind": "applied" } },
+        { "op": "compareAndSet", "key": "room/room_other/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "API review", "expiresAt": null }, "expect": { "kind": "operation_mismatch" } },
+        { "op": "read", "key": "room/room_other/title", "expect": { "kind": "absent" } }
+      ] },
+      { "name": "next generation substituted into a release targeting generation 1", "check": "sameSessionBinding", "base": "binding", "set": { "generation": 2 }, "expect": false },
+      { "name": "stale observer generation", "check": "isCurrentGeneration", "currentGeneration": 1, "notificationGeneration": 0, "expect": false },
+      { "name": "future observer generation", "check": "isCurrentGeneration", "currentGeneration": 1, "notificationGeneration": 2, "expect": false }
+    ]
+  }
+}
