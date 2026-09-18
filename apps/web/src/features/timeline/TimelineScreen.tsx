@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { RoomId } from '@khala/contracts/messaging/ids';
-import type { EventRef, ParticipantView, RoomPort } from '@khala/contracts/messaging/index';
+import type { EventRef, MessageContent, ParticipantView, RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
 import { attributionFor, buildDisplayNameResolver, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent } from './message-renderer';
@@ -46,6 +46,16 @@ function sendStateLabel(phase: PendingSend['phase']): string {
 }
 
 const CAN_COMPOSE: ReadonlySet<string> = new Set(['joining', 'joined']);
+
+/**
+ * Narrows a `TimelineItem` to its decryptable branch. `RoomPort.timeline`/`observe` never
+ * yield an `unavailable` item today (KHA-105 landed the contract shape; KHA-123 renders
+ * text only), but a future producer may, and an `UnavailableEventRef` cannot reach
+ * `renderReviewAction`, which is keyed by `EventRef`.
+ */
+function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { content: MessageContent }> {
+  return item.content.kind === 'text';
+}
 
 export function TimelineScreen({ controller, roomPort, roomId, viewer, renderReviewAction }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -184,8 +194,14 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
                   {item.receivedAt}
                 </time>
               </header>
-              <div className="timeline__body">{renderMessageContent(item.content)}</div>
-              {renderReviewAction ? <div className="timeline__review-slot">{renderReviewAction(item.ref)}</div> : null}
+              {isReadableItem(item) ? (
+                <>
+                  <div className="timeline__body">{renderMessageContent(item.content)}</div>
+                  {renderReviewAction ? <div className="timeline__review-slot">{renderReviewAction(item.ref)}</div> : null}
+                </>
+              ) : (
+                <p className="timeline__body message-content__unavailable">Content unavailable.</p>
+              )}
             </li>
           );
         })}

@@ -4,14 +4,17 @@
 
 import type { RoomId } from '@khala/contracts/messaging/ids';
 import type {
-  OperationResult, ParticipantView, RoomPort, RoomRejection, RoomSnapshot, SendState, TimelineItem,
+  MessageContent, OperationResult, ParticipantView, RoomPort, RoomRejection, RoomSnapshot, SendState, TimelineItem,
 } from '@khala/contracts/messaging/index';
 import { ok, outcomeUnknown } from '@khala/contracts/messaging/outcomes';
 
 const alice: ParticipantView = { participantId: 'alice' as never, kind: 'human', ownerId: 'owner_alice' as never, displayName: 'Alice', deviceIds: [] };
 const agent: ParticipantView = { participantId: 'agent' as never, kind: 'agent', ownerId: 'owner_alice' as never, displayName: 'Release Agent', deviceIds: [] };
 
-function makeItem(eventId: string, author: ParticipantView, body: string, clientTxnId: string | null = null): TimelineItem {
+/** The harness only ever fabricates decryptable items, never an unavailable placeholder. */
+type FakeTimelineItem = Extract<TimelineItem, { content: MessageContent }>;
+
+function makeItem(eventId: string, author: ParticipantView, body: string, clientTxnId: string | null = null): FakeTimelineItem {
   return {
     ref: {
       v: 1,
