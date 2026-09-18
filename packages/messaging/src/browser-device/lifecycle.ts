@@ -1,0 +1,130 @@
+// Injected seams and view helpers for the browser device lifecycle. Nothing here
+// imports a messaging SDK: the substrate adapter (G-SUBSTRATE) supplies the engine
+// factory, and composition supplies the storage, lock and credential adapters.
+
+import type { AuthPrincipal, DeviceId, DeviceReason, DeviceState, DeviceView, IdentityPort, OwnerId } from '@khala/contracts/messaging/index';
+import type { OwnerLockProvider } from './ownership';
+
+/**
+ * Substrate session material for one owner. Opaque to this module; it only moves
+ * from the credential source to the engine and never enters a `DeviceView`.
+ */
+export type SubstrateSession = Readonly<{
+  deviceId: DeviceId;
+  /**
+   * Fingerprint of the identity keys the server already holds for `deviceId`, in
+   * the engine's `LocalIdentity.fingerprint` form, or `null` when it holds none.
+   * Local keys that differ from published ones mean the originals were lost, and
+   * the old device ID must never be reused with a new keyset.
+   */
+  publishedFingerprint: string | null;
+  credentials: unknown;
+}>;
+
+export type CredentialResolution =
+  | Readonly<{ kind: 'ok'; session: SubstrateSession }>
+  | Readonly<{ kind: 'expired' }>
+  | Readonly<{ kind: 'revoked'; deviceId: DeviceId }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+/** Resolves substrate credentials for the principal the `IdentityPort` reports. */
+export interface CredentialSource {
+  resolve(principal: AuthPrincipal, signal: AbortSignal): Promise<CredentialResolution>;
+}
+
+/** A reserved persistent crypto store. Its contents belong to the engine. */
+export type CryptoStore = Readonly<{
+  /** Name or prefix the engine opens, scoped to one owner and device. */
+  name: string;
+  close(): Promise<void>;
+}>;
+
+export interface CryptoStoreFactory {
+  /** Rejects when persistent storage is unavailable; never falls back to memory. */
+  open(ownerId: OwnerId, deviceId: DeviceId, signal: AbortSignal): Promise<CryptoStore>;
+}
+
+/** Signals an engine raises on its own. Delivered only while their generation is current. */
+export type EngineSignal = 'revoked' | 'session_expired' | 'storage_failed';
+
+export type LocalIdentity = Readonly<{
+  /** Stable public fingerprint of the device identity keys. Never private material. */
+  fingerprint: string;
+  /** True when the store held no identity and the engine generated one while opening. */
+  created: boolean;
+}>;
+
+/**
+ * One SDK client over one crypto store. `open` must stay local: no key upload and
+ * no sync until `start`, so a lost identity is refused before it reaches the server.
+ *
+ * This lifecycle does not enforce message-level crypto policy. The substrate adapter
+ * behind this seam owns it: share room keys only with verified devices (Matrix
+ * `OnlyTrustedDevices`), classify withheld and missing keys strictly rather than
+ * as generic decryption failures, and rotate outbound sessions when membership or
+ * device trust changes. `start` and `close` are bounded by `engineTimeoutMs`.
+ */
+export interface DeviceEngine {
+  identity(): Promise<LocalIdentity>;
+  start(signal: AbortSignal): Promise<void>;
+  close(): Promise<void>;
+}
+
+export type EngineOpenInput = Readonly<{
+  ownerId: OwnerId;
+  session: SubstrateSession;
+  store: CryptoStore;
+  signal: AbortSignal;
+  /** Bound to the opening generation; calls from a replaced generation are dropped. */
+  emit: (signal: EngineSignal) => void;
+}>;
+
+export interface DeviceEngineFactory {
+  open(input: EngineOpenInput): Promise<DeviceEngine>;
+}
+
+/** Record of the identity this browser enrolled, kept apart from the crypto store. */
+export type IdentityMarker = Readonly<{ deviceId: DeviceId; fingerprint: string }>;
+
+export interface IdentityMarkerStore {
+  get(ownerId: OwnerId): Promise<IdentityMarker | null>;
+  /** Must reject when the write did not persist, such as on quota exhaustion. */
+  put(ownerId: OwnerId, marker: IdentityMarker): Promise<void>;
+  clear(ownerId: OwnerId): Promise<void>;
+}
+
+export type BrowserDeviceDependencies = Readonly<{
+  identity: IdentityPort;
+  credentials: CredentialSource;
+  stores: CryptoStoreFactory;
+  engines: DeviceEngineFactory;
+  markers: IdentityMarkerStore;
+  locks: OwnerLockProvider;
+  /** Bounded wait for another tab's owner lock. Defaults to 10 seconds. */
+  lockWaitMs?: number;
+  /** Bound on `engine.start()` and `engine.close()`. Defaults to 30 seconds. */
+  engineTimeoutMs?: number;
+}>;
+
+export const DEFAULT_LOCK_WAIT_MS = 10_000;
+export const DEFAULT_ENGINE_TIMEOUT_MS = 30_000;
+
+export function deviceView(state: DeviceState, generation: number, deviceId: DeviceId | null, reason: DeviceReason | null = null): DeviceView {
+  return Object.freeze({ deviceId, state, generation, reason });
+}
+
+/** Identity check run after the engine opens and before it starts. */
+export function checkIdentity(
+  marker: IdentityMarker | null,
+  session: SubstrateSession,
+  local: LocalIdentity,
+): 'enrol' | 'resume' | Readonly<{ lost: DeviceReason }> {
+  const enrolled = marker !== null && marker.deviceId === session.deviceId;
+  if (enrolled && (marker.fingerprint !== local.fingerprint || local.created)) return { lost: 'storage_cleared' };
+  // Also covers a store that kept keys generated by an earlier refused attempt:
+  // only the published identity itself may resume a device the server knows.
+  if (session.publishedFingerprint !== null && session.publishedFingerprint !== local.fingerprint) {
+    return { lost: 'key_material_missing' };
+  }
+  return enrolled ? 'resume' : 'enrol';
+}

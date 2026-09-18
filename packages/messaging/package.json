@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./browser-device/*": "./src/browser-device/*.ts",
+    "./browser-device/index": "./src/browser-device/index.ts",
     "./rooms/*": "./src/rooms/*.ts",
     "./revocation/*": "./src/revocation/*.ts",
     "./recovery/*": "./src/recovery/*.ts"
@@ -12,9 +12,15 @@
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
-    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests",
+    "test:browser": "node --import tsx --test 'src/**/*.browser.spec.ts'"
   },
   "dependencies": {
     "@khala/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "tsx": "4.20.6",
+    "vite": "7.3.6"
   }
 }
