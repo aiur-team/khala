@@ -34,8 +34,17 @@ export type Admission = Readonly<{ outcome: 'joined' | 'already_joined'; room: R
 
 export type AdmissionRejection = 'auth_required' | 'expired' | 'revoked' | 'identity_mismatch' | 'forbidden' | 'operation_mismatch';
 
+/** The creator selects one immutable admission policy for each issued link. */
+export type AdmissionPolicy =
+  | Readonly<{ v: 1; kind: 'link'; history: 'none' }>
+  | Readonly<{ v: 1; kind: 'named_email'; email: string; history: 'none' }>
+  | Readonly<{ v: 1; kind: 'link'; history: 'full' }>;
+
 export interface AdmissionPort {
-  share(input: Readonly<{ operationId: string; roomId: RoomId }>, options?: CallOptions): Promise<OperationResult<ShareGrant, AdmissionRejection>>;
+  share(
+    input: Readonly<{ operationId: string; roomId: RoomId; policy: AdmissionPolicy }>,
+    options?: CallOptions,
+  ): Promise<OperationResult<ShareGrant, AdmissionRejection>>;
   inspect(inviteRef: string, options?: CallOptions): Promise<InviteState>;
   admit(input: Readonly<{ operationId: string; inviteRef: string; deviceId: DeviceId }>, options?: CallOptions): Promise<OperationResult<Admission, AdmissionRejection>>;
 }

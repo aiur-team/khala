@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEVICE_ID, ROOM_ID, harness, principal } from './support.test';
+import { DEVICE_ID, LINK_NO_HISTORY, ROOM_ID, harness, principal } from './support.test';
 
 async function namedInvite() {
   const h = harness();
@@ -34,7 +34,7 @@ describe('inspect', () => {
 
   it('keeps joined no-history invitations terminal', async () => {
     const h = harness();
-    const shared = await h.service.share({ operationId: 'no-history', roomId: ROOM_ID });
+    const shared = await h.service.share({ operationId: 'no-history', roomId: ROOM_ID, policy: LINK_NO_HISTORY });
     if (shared.kind !== 'ok') throw new Error('share failed');
     expect((await h.service.admit({
       operationId: 'admit-no-history', inviteRef: shared.value.inviteRef, deviceId: DEVICE_ID,

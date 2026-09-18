@@ -1,14 +1,6 @@
-import type { AuthPrincipal, JsonValue, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import type { AdmissionPolicy, AuthPrincipal, JsonValue, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 
 export type AdmissionHistory = 'none' | 'full';
-
-/** The creator selects one of these three policies for each link at share time. */
-export type AdmissionPolicy =
-  | Readonly<{ v: 1; kind: 'link'; history: 'none' }>
-  | Readonly<{ v: 1; kind: 'named_email'; email: string; history: 'none' }>
-  | Readonly<{ v: 1; kind: 'link'; history: 'full' }>;
-
-export const DEFAULT_ADMISSION_POLICY: AdmissionPolicy = { v: 1, kind: 'link', history: 'none' };
 
 export type StoredAdmissionPolicy =
   | Readonly<{ v: 1; kind: 'link'; history: AdmissionHistory }>
@@ -37,14 +29,13 @@ export function normalizeEmail(email: string): string | null {
   return EMAIL.test(normalized) ? normalized : null;
 }
 
-export function storePolicy(policy: AdmissionPolicy | undefined, digests: PolicyDigests): StoredAdmissionPolicy | null {
-  const selected = policy ?? DEFAULT_ADMISSION_POLICY;
-  if (selected.v !== 1) return null;
-  if (selected.kind === 'link' && (selected.history === 'none' || selected.history === 'full')) {
-    return { v: 1, kind: 'link', history: selected.history };
+export function storePolicy(policy: AdmissionPolicy, digests: PolicyDigests): StoredAdmissionPolicy | null {
+  if (policy.v !== 1) return null;
+  if (policy.kind === 'link' && (policy.history === 'none' || policy.history === 'full')) {
+    return { v: 1, kind: 'link', history: policy.history };
   }
-  if (selected.kind === 'named_email' && selected.history === 'none') {
-    const email = normalizeEmail(selected.email);
+  if (policy.kind === 'named_email' && policy.history === 'none') {
+    const email = normalizeEmail(policy.email);
     return email ? { v: 1, kind: 'named_email', emailDigest: digests.email(email), history: 'none' } : null;
   }
   return null;

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ControlStore } from '@khala/contracts/messaging/index';
 import type { InviteRecord } from './policy';
-import { ORIGIN, ROOM_ID, T0, fakeStore, harness } from './support.test';
+import { LINK_NO_HISTORY, ORIGIN, ROOM_ID, T0, fakeStore, harness } from './support.test';
 
 describe('share', () => {
-  it('defaults to a reusable link with no earlier history and reconciles repeated issuance', async () => {
+  it('issues a reusable no-history link and reconciles repeated issuance', async () => {
     const h = harness();
-    const first = await h.service.share({ operationId: 'share-1', roomId: ROOM_ID });
-    const retry = await h.service.share({ operationId: 'share-1', roomId: ROOM_ID });
+    const first = await h.service.share({ operationId: 'share-1', roomId: ROOM_ID, policy: LINK_NO_HISTORY });
+    const retry = await h.service.share({ operationId: 'share-1', roomId: ROOM_ID, policy: LINK_NO_HISTORY });
     expect(retry).toEqual(first);
     expect(first.kind).toBe('ok');
     if (first.kind !== 'ok') return;
@@ -17,7 +17,7 @@ describe('share', () => {
 
   it('rejects operation reuse with a different per-link policy', async () => {
     const h = harness();
-    await h.service.share({ operationId: 'share-1', roomId: ROOM_ID });
+    await h.service.share({ operationId: 'share-1', roomId: ROOM_ID, policy: LINK_NO_HISTORY });
     expect(await h.service.share({
       operationId: 'share-1', roomId: ROOM_ID, policy: { v: 1, kind: 'link', history: 'full' },
     })).toEqual({ kind: 'rejected', code: 'operation_mismatch' });
@@ -25,14 +25,14 @@ describe('share', () => {
 
   it('keeps the original expiry when the same share operation is retried later', async () => {
     const h = harness();
-    const first = await h.service.share({ operationId: 'share-1', roomId: ROOM_ID });
+    const first = await h.service.share({ operationId: 'share-1', roomId: ROOM_ID, policy: LINK_NO_HISTORY });
     h.advance(60_000);
-    expect(await h.service.share({ operationId: 'share-1', roomId: ROOM_ID })).toEqual(first);
+    expect(await h.service.share({ operationId: 'share-1', roomId: ROOM_ID, policy: LINK_NO_HISTORY })).toEqual(first);
   });
 
   it('requires room authority and an allowlisted origin', async () => {
     const denied = harness({ authority: { async canShare() { return 'forbidden'; } } });
-    expect(await denied.service.share({ operationId: 'share-1', roomId: ROOM_ID })).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await denied.service.share({ operationId: 'share-1', roomId: ROOM_ID, policy: LINK_NO_HISTORY })).toEqual({ kind: 'rejected', code: 'forbidden' });
     expect(() => harness({ origin: 'https://evil.example.test' })).toThrow(/allowlisted/);
   });
 
@@ -71,7 +71,7 @@ describe('share', () => {
       },
     };
     const h = harness({ store });
-    const shared = await h.service.share({ operationId: 'share-race', roomId: ROOM_ID });
+    const shared = await h.service.share({ operationId: 'share-race', roomId: ROOM_ID, policy: LINK_NO_HISTORY });
     expect(shared.kind).toBe('ok');
     if (shared.kind !== 'ok') return;
 

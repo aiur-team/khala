@@ -2,13 +2,13 @@ import type { ControlRecord, DeviceId } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
 import { createDigests } from './internal';
 import { type AdmissionBinding, type AdmissionJournalRecord, createAdmissionJournal } from './journal';
-import { DEVICE_ID, ROOM_ID, SECRET, T0, fakeStore, harness, principal } from './support.test';
+import { DEVICE_ID, LINK_NO_HISTORY, ROOM_ID, SECRET, T0, fakeStore, harness, principal } from './support.test';
 
 const OTHER_DEVICE_ID = 'device_2' as DeviceId;
 
 async function bearerInvite() {
   const h = harness();
-  const shared = await h.service.share({ operationId: 'share-1', roomId: ROOM_ID });
+  const shared = await h.service.share({ operationId: 'share-1', roomId: ROOM_ID, policy: LINK_NO_HISTORY });
   if (shared.kind !== 'ok') throw new Error('share failed');
   h.setPrincipal(principal('recipient'));
   return { h, inviteRef: shared.value.inviteRef };

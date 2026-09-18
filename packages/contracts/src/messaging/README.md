@@ -124,7 +124,7 @@ which the transport deduplicates.
 | `IdentityPort` | KHA-110 |
 | `DevicePort` | KHA-111 |
 | `RoomPort` | KHA-112 |
-| `AdmissionPort` | KHA-113 |
+| `AdmissionPort` | KHA-113; each `share` call carries its immutable per-link admission policy |
 | `RevocationPort` | KHA-128 |
 | `RecoveryPort` | KHA-129 |
 | `ControlStore` | Specified here, persistence adapter supplied by KHA-131 |

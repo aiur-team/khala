@@ -1,5 +1,6 @@
 import type {
   Admission,
+  AdmissionPolicy,
   AdmissionPort,
   AdmissionRejection,
   AuthPrincipal,
@@ -17,14 +18,13 @@ import type {
 import { admitInvite } from './admit';
 import { inspectInvite } from './inspect';
 import { type Digests, createDigests, validateOrigin } from './internal';
-import type { AdmissionHistory, AdmissionPolicy } from './policy';
+import type { AdmissionHistory } from './policy';
 import { revokeInvite, shareInvite } from './share';
 
 export type ShareInput = Readonly<{
   operationId: string;
   roomId: RoomId;
-  /** Omitted means the product default: anyone with the link, no earlier history. */
-  policy?: AdmissionPolicy;
+  policy: AdmissionPolicy;
 }>;
 
 export interface InvitationAuthority {
@@ -115,7 +115,6 @@ export function createAdmissionService(options: AdmissionServiceOptions): Admiss
 }
 
 export {
-  DEFAULT_ADMISSION_POLICY,
   type AdmissionHistory,
-  type AdmissionPolicy,
 } from './policy';
+export type { AdmissionPolicy } from '@khala/contracts/messaging/index';

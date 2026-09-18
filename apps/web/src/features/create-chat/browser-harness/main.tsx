@@ -72,8 +72,9 @@ const room: RoomPort = {
 };
 
 const admission: AdmissionPort = {
-  share: async () => {
+  share: async input => {
     await delay(200);
+    document.getElementById('policy-log')!.textContent = JSON.stringify(input.policy);
     return ok({ inviteRef: 'invite_harness', shareUrl: 'https://khala.aiur.team/i/harness', expiresAt: null });
   },
   inspect: async () => 'eligible',
@@ -110,6 +111,7 @@ function Harness() {
       <button type="button" onClick={() => setSignedIn(false)}>
         Simulate sign-out
       </button>
+      <output id="policy-log" hidden />
       <CreateChatScreen
         ports={signedIn ? signedInPorts : signedOutPorts}
         onCopyShareLink={async shareUrl => {

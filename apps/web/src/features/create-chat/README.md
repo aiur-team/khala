@@ -1,7 +1,8 @@
 # create-chat
 
 `CreateChatScreen` lets an authenticated human create an optionally named chat,
-draft several introduction messages, and copy the resulting share link. It is a
+draft several introduction messages, choose who the link admits and how much
+history they receive, and copy the resulting share link. It is a
 thin dashboard work panel: it holds no room/admission logic of its own beyond
 the local operation journal in `controller.ts`.
 
@@ -13,13 +14,19 @@ the local operation journal in `controller.ts`.
 - `identity: IdentityPort` — gates the screen on sign-in state.
 - `device: DevicePort` — gates the screen on local device readiness.
 - `room: RoomPort` — `create`, `prepareIntro`.
-- `admission: AdmissionPort` — `share`.
+- `admission: AdmissionPort` — `share`, including the selected per-link policy.
 - `limits: ContentLimits` — the substrate's title/body byte limits, already
   decoded through `decodeContentLimits` by the host before injection. The
   controller validates title and intro bodies against it locally (trimming,
   rejecting empty or oversized content) before ever calling `room.create` or
   `room.prepareIntro`; the server remains authoritative for every rule it
   enforces regardless.
+
+The admission choice is per link and defaults to anyone with the link seeing
+events from their admission forward. The other choices restrict the link to a
+named email or allow anyone with the link to receive earlier history. The
+controller freezes the selected policy with the share operation so retries send
+the same operation ID and policy.
 
 KHA132 supplies the production ports (backed by the selected messaging SDK)
 and mounts `<CreateChatScreen ports={ports} />` directly; no fixture adapter

@@ -6,7 +6,7 @@ does not choose a messaging substrate.
 
 The creator selects one versioned policy on each `share` call:
 
-- `link` + `none` (the default): an authenticated holder may join, without prior history.
+- `link` + `none`: an authenticated holder may join, without prior history.
 - `named_email` + `none`: only the authenticated account with that verified email may join.
 - `link` + `full`: an authenticated holder may join and receive prior history.
 
