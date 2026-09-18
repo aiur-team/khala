@@ -38,6 +38,11 @@
     "./features/review/selection": "./src/features/review/selection.ts",
     "./features/review/receipt-labels": "./src/features/review/receipt-labels.ts",
     "./features/review/review.css": "./src/features/review/review.css",
+    "./features/room/RoomScreen": "./src/features/room/RoomScreen.tsx",
+    "./features/room/AgentPresencePanel": "./src/features/room/AgentPresencePanel.tsx",
+    "./features/room/controller": "./src/features/room/controller.ts",
+    "./features/room/ports": "./src/features/room/ports.ts",
+    "./features/room/room.css": "./src/features/room/room.css",
     "./features/*": "./src/features/*.ts",
     "./composition/*": "./src/composition/*.ts"
   },
