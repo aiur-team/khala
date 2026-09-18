@@ -11,8 +11,9 @@ export, selects a provider, or starts a daemon.
 | `pnpm test:e2e` | `tests/e2e/**/*.test.ts` (harness self-tests plus acceptance entries) |
 | `pnpm test:e2e -- tests/e2e/security/security.test.ts` | one acceptance entry |
 
-Both run Vitest with `tests/e2e/harness/vitest.config.ts`, which maps
-`@khala/contracts/*` onto the package's own `exports` targets. `pnpm typecheck` also
+Both go through `run.mjs`, which drops the `--` that pnpm forwards. It then runs
+Vitest with `tests/e2e/harness/vitest.config.ts`, which maps `@khala/contracts/*`
+onto the package's own `exports` targets. A filter that matches no file fails. `pnpm typecheck` also
 checks `tests/` through `tests/e2e/harness/tsconfig.json`.
 
 Live acceptance needs `KHALA_E2E_LIVE=1` and `KHALA_E2E_DISPOSABLE_ENV` naming a

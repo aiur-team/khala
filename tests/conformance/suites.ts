@@ -3,17 +3,15 @@
 // as a pass, and unsupported capabilities are skipped rather than synthesized.
 
 import {
-  type ApprovalCommand, type DeliveryLimits, type EventRef, type HarnessCapabilities, type HarnessPort,
+  type ApprovalCommand, type ApprovalPort, type DeliveryLimits, type EventRef, type HarnessCapabilities, type HarnessPort,
   type ReceiptKind, type ReleasedJob, RECEIPT_KINDS, type SessionBinding, decodeApprovalCommand,
   releaseFromApproval, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
-import type { EvidenceMode } from '../e2e/harness/evidence';
+import type { EvidenceMode, SourceVersion } from '../e2e/harness/evidence';
 import { type Fault, InjectedDisconnect } from '../e2e/harness/faults';
-import type { OwnerControls, OwnerFixture } from '../e2e/harness/owners';
-import { ownerAuthority } from '../e2e/harness/owners';
+import { type OwnerControls, type OwnerFixture, ownerAuthority } from '../e2e/harness/owners';
 import { type ModelInput, sha256 } from '../e2e/harness/reference';
 import { type ScenarioHarness, assertCleanClose, createScenarioHarness } from '../e2e/harness/scenario';
-import type { SourceVersion } from '../e2e/harness/evidence';
 
 export type CheckOutcome =
   | Readonly<{ status: 'pass' }>
@@ -31,7 +29,7 @@ export type ConformanceReport = Readonly<{
 class CheckFailed extends Error {}
 class CheckSkipped extends Error {}
 
-export function expect(condition: boolean, reason: string): asserts condition {
+export function ensure(condition: boolean, reason: string): asserts condition {
   if (!condition) throw new CheckFailed(reason);
 }
 
@@ -229,7 +227,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
       async run(context) {
         const { owner, subject } = subjectOf(context, 0);
         const inspected = await subject.port.inspect(owner.binding);
-        expect(JSON.stringify(inspected) === JSON.stringify(capabilities), 'inspect() differs from the registered capabilities');
+        ensure(JSON.stringify(inspected) === JSON.stringify(capabilities), 'inspect() differs from the registered capabilities');
       },
     },
     {
@@ -238,10 +236,10 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const { owner, subject } = subjectOf(context, 0);
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'identity');
         const receipt = await subject.port.submit({ job, payload: event.payload });
-        expect(receipt.bindingId === owner.binding.bindingId && receipt.generation === owner.binding.generation,
+        ensure(receipt.bindingId === owner.binding.bindingId && receipt.generation === owner.binding.generation,
           'receipt names a different binding or generation');
         for (const input of await subject.modelInputs()) {
-          expect(input.bindingId === owner.binding.bindingId && input.sessionId === owner.binding.sessionId
+          ensure(input.bindingId === owner.binding.bindingId && input.sessionId === owner.binding.sessionId
             && input.generation === owner.binding.generation, 'model input landed outside the bound existing session');
         }
       },
@@ -254,12 +252,12 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const receipt = await subject.port.submit({ job, payload: event.payload });
         const inputs = (await subject.modelInputs()).filter(input => input.releaseId === job.releaseId);
         if (receipt.kind === 'failed') skip(`submission failed (${receipt.errorCode}); digest not observable`);
-        expect(inputs.every(input => input.payloadDigest === job.payloadDigest), 'model received bytes with another digest');
+        ensure(inputs.every(input => input.payloadDigest === job.payloadDigest), 'model received bytes with another digest');
         const tampered = new Uint8Array([...event.payload, 0x20]);
         const second = firstRelease(owner, subjectOf(context, 1).owner, 'tampered');
         const refused = await subject.port.submit({ job: second.job, payload: tampered });
-        expect(refused.kind === 'failed', 'a payload that does not match the release digest was accepted');
-        expect(!(await subject.modelInputs()).some(input => input.releaseId === second.job.releaseId),
+        ensure(refused.kind === 'failed', 'a payload that does not match the release digest was accepted');
+        ensure(!(await subject.modelInputs()).some(input => input.releaseId === second.job.releaseId),
           'mismatched payload reached the model');
       },
     },
@@ -269,7 +267,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const { owner, subject } = subjectOf(context, 0);
         const { job } = firstRelease(owner, subjectOf(context, 1).owner, 'hint');
         await subject.port.notify(owner.binding, { v: 1, releaseId: job.releaseId });
-        expect((await subject.modelInputs()).length === 0, 'a notification put content into model context');
+        ensure((await subject.modelInputs()).length === 0, 'a notification put content into model context');
       },
     },
     {
@@ -280,11 +278,11 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const bystander = context.scenario.owners[2] ?? other;
         const { job, event } = firstRelease(target, bystander, 'foreign');
         const result = await submitCapturing(subject.port, job, event.payload);
-        expect(!(await subject.modelInputs()).some(input => input.releaseId === job.releaseId),
+        ensure(!(await subject.modelInputs()).some(input => input.releaseId === job.releaseId),
           `${target.seed}'s release reached ${other.seed}'s session`);
-        expect(result.receipt === null || !ACCEPTANCE.includes(result.receipt.kind),
+        ensure(result.receipt === null || !ACCEPTANCE.includes(result.receipt.kind),
           `${other.seed}'s adapter reported acceptance of ${target.seed}'s release`);
-        expect(!sameSessionBinding(job.binding, other.binding), 'fixture error: bindings are not distinct');
+        ensure(!sameSessionBinding(job.binding, other.binding), 'fixture error: bindings are not distinct');
       },
     },
     {
@@ -308,7 +306,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const inputs = await subject.modelInputs();
         for (const { job, receipt } of receipts) {
           if (receipt.kind !== 'context_consumed') continue;
-          expect(inputs.some(input => input.releaseId === job.releaseId),
+          ensure(inputs.some(input => input.releaseId === job.releaseId),
             `context_consumed for ${job.releaseId} without a model-facing input`);
         }
       },
@@ -321,12 +319,12 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         await context.scenario.inject('disconnect_after_write', owner.ownerId);
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'unknown');
         const result = await submitCapturing(subject.port, job, event.payload);
-        expect(result.disconnected || result.receipt?.kind === 'outcome_unknown',
+        ensure(result.disconnected || result.receipt?.kind === 'outcome_unknown',
           'an unconfirmed write was reported as a definite outcome');
         const reconciled = await subject.port.reconcile(job);
-        expect(reconciled === null || reconciled.releaseId === job.releaseId, 'reconcile answered for another release');
+        ensure(reconciled === null || reconciled.releaseId === job.releaseId, 'reconcile answered for another release');
         const count = (await subject.modelInputs()).filter(input => input.releaseId === job.releaseId).length;
-        expect(count <= 1, `model received release ${job.releaseId} ${count} times`);
+        ensure(count <= 1, `model received release ${job.releaseId} ${count} times`);
       },
     },
     {
@@ -337,9 +335,9 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         await context.scenario.inject('session_exit', owner.ownerId);
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'exit');
         const receipt = await subject.port.submit({ job, payload: event.payload });
-        expect(receipt.kind === 'failed' && receipt.errorCode === 'session_unavailable',
+        ensure(receipt.kind === 'failed' && receipt.errorCode === 'session_unavailable',
           `exited session reported ${receipt.kind}`);
-        expect((await subject.modelInputs()).length === 0, 'content reached a model after its session exited');
+        ensure((await subject.modelInputs()).length === 0, 'content reached a model after its session exited');
       },
     },
     {
@@ -353,11 +351,11 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const receipt = await subject.port.submit({ job, payload: event.payload });
         const count = (await subject.modelInputs()).filter(input => input.releaseId === job.releaseId).length;
         if (capabilities.busy === 'reject') {
-          expect(receipt.kind === 'failed' && receipt.errorCode === 'busy_rejected', `busy reject reported ${receipt.kind}`);
-          expect(count === 0, 'a rejected release reached the model');
+          ensure(receipt.kind === 'failed' && receipt.errorCode === 'busy_rejected', `busy reject reported ${receipt.kind}`);
+          ensure(count === 0, 'a rejected release reached the model');
         } else {
-          expect(receipt.kind !== 'context_consumed' || count === 1, 'busy session claimed consumption without input');
-          expect(count <= 1, 'busy session received the release more than once');
+          ensure(receipt.kind !== 'context_consumed' || count === 1, 'busy session claimed consumption without input');
+          ensure(count <= 1, 'busy session received the release more than once');
         }
       },
     },
@@ -388,7 +386,7 @@ export function runHarnessConformance(
 
 /** One owner's trusted connector stack as seen from outside. */
 export type DeliverySubject = Readonly<{
-  approvals: import('@khala/contracts/delivery/index').ApprovalPort;
+  approvals: ApprovalPort;
   deliver(event: EventRef, payload: Uint8Array): Promise<void>;
   pending(): Promise<readonly EventRef[]>;
   undecryptable(): Promise<readonly EventRef[]>;
@@ -429,8 +427,8 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         const { b, c, at, e7 } = await setup(context);
         for (const owner of [b, c]) await at(owner).deliver(e7.ref, e7.payload);
         for (const owner of [b, c]) {
-          expect((await at(owner).pending()).length === 1, `${owner.seed} has no pending copy of E7`);
-          expect(released(await at(owner).modelInputs()) === 0, `${owner.seed}'s model saw pending E7 before approval`);
+          ensure((await at(owner).pending()).length === 1, `${owner.seed} has no pending copy of E7`);
+          ensure(released(await at(owner).modelInputs()) === 0, `${owner.seed}'s model saw pending E7 before approval`);
         }
       },
     },
@@ -440,8 +438,8 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         const { a, b, at, e7 } = await setup(context);
         await at(b).deliver(e7.ref, e7.payload);
         const result = await at(b).approvals.approve(grant(a), approvalFor(b, [e7.ref], 'cross-1', limits));
-        expect(!result.ok && result.code === 'forbidden', `A's authority on B's connector returned ${result.ok ? 'ok' : result.code}`);
-        expect(released(await at(b).modelInputs()) === 0, "A's approval released E7 into B's agent");
+        ensure(!result.ok && result.code === 'forbidden', `A's authority on B's connector returned ${result.ok ? 'ok' : result.code}`);
+        ensure(released(await at(b).modelInputs()) === 0, "A's approval released E7 into B's agent");
       },
     },
     {
@@ -450,11 +448,11 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         const { b, c, at, e7 } = await setup(context);
         for (const owner of [b, c]) await at(owner).deliver(e7.ref, e7.payload);
         const result = await at(b).approvals.approve(grant(b), approvalFor(b, [e7.ref], 'b-approves-e7', limits));
-        expect(result.ok, `B's own approval failed: ${result.ok ? '' : result.code}`);
+        ensure(result.ok, `B's own approval failed: ${result.ok ? '' : result.code}`);
         const inputs = await at(b).modelInputs();
-        expect(inputs.length === 1 && inputs[0]!.bindingId === b.binding.bindingId, "E7 did not reach B's session exactly once");
-        expect(released(await at(c).modelInputs()) === 0, "B's approval released C's copy");
-        expect((await at(c).pending()).length === 1, "B's approval removed C's pending copy");
+        ensure(inputs.length === 1 && inputs[0]!.bindingId === b.binding.bindingId, "E7 did not reach B's session exactly once");
+        ensure(released(await at(c).modelInputs()) === 0, "B's approval released C's copy");
+        ensure((await at(c).pending()).length === 1, "B's approval removed C's pending copy");
       },
     },
     {
@@ -465,10 +463,10 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         await at(b).deliver(e7.ref, e7.payload);
         await context.scenario.inject('disconnect_after_write', b.ownerId);
         const result = await at(b).approvals.approve(grant(b), approvalFor(b, [e7.ref], 'b-unknown', limits));
-        expect(!result.ok && result.code === 'outcome_unknown', `unconfirmed write reported ${result.ok ? 'ok' : result.code}`);
+        ensure(!result.ok && result.code === 'outcome_unknown', `unconfirmed write reported ${result.ok ? 'ok' : result.code}`);
         await at(b).restart();
         const count = released(await at(b).modelInputs());
-        expect(count <= 1, `model received E7 ${count} times after an unknown outcome`);
+        ensure(count <= 1, `model received E7 ${count} times after an unknown outcome`);
       },
     },
     {
@@ -485,10 +483,10 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
           crashed = (error as Error).name === 'InjectedCrash';
           if (!crashed) throw error;
         }
-        expect(crashed, 'crash_after_intent did not interrupt the approval');
+        ensure(crashed, 'crash_after_intent did not interrupt the approval');
         await at(b).restart();
         const inputs = await at(b).modelInputs();
-        expect(inputs.length <= 1, 'restart resubmitted a release with an unknown outcome');
+        ensure(inputs.length <= 1, 'restart resubmitted a release with an unknown outcome');
       },
     },
     {
@@ -498,7 +496,7 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         requireFault(at(b), 'duplicate_event');
         await context.scenario.inject('duplicate_event', b.ownerId);
         await at(b).deliver(e7.ref, e7.payload);
-        expect((await at(b).pending()).length === 1, 'a redelivered event became two pending items');
+        ensure((await at(b).pending()).length === 1, 'a redelivered event became two pending items');
       },
     },
     {
@@ -508,11 +506,11 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         requireFault(at(b), 'keys_delayed');
         await context.scenario.inject('keys_delayed', b.ownerId);
         await at(b).deliver(e7.ref, e7.payload);
-        expect((await at(b).undecryptable()).length === 1, 'an event without keys disappeared');
+        ensure((await at(b).undecryptable()).length === 1, 'an event without keys disappeared');
         const early = await at(b).approvals.approve(grant(b), approvalFor(b, [e7.ref], 'b-early', limits));
-        expect(!early.ok, 'an undecryptable event was released');
+        ensure(!early.ok, 'an undecryptable event was released');
         await at(b).keysArrived();
-        expect((await at(b).pending()).length === 1, 'the event did not become pending once keys arrived');
+        ensure((await at(b).pending()).length === 1, 'the event did not become pending once keys arrived');
       },
     },
     {
@@ -528,7 +526,7 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         await context.scenario.inject('reordered_receipt', b.ownerId);
         await at(b).restart();
         const after = new Set(await at(b).releaseFacts(releaseId));
-        expect([...before].every(kind => after.has(kind)), 'a later receipt erased an earlier fact');
+        ensure([...before].every(kind => after.has(kind)), 'a later receipt erased an earlier fact');
       },
     },
   ];

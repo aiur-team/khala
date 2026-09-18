@@ -12,8 +12,8 @@
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "test": "node --test scripts/*.test.mjs && node --test 'infra/**/*.test.ts' && pnpm -r test && pnpm test:conformance && pnpm test:e2e",
     "test:integration": "playwright test --config tests/integration/playwright.config.ts",
-    "test:conformance": "vitest run --config tests/e2e/harness/vitest.config.ts --project conformance",
-    "test:e2e": "vitest run --config tests/e2e/harness/vitest.config.ts --project e2e",
+    "test:conformance": "node tests/e2e/harness/run.mjs conformance",
+    "test:e2e": "node tests/e2e/harness/run.mjs e2e",
     "build": "pnpm check:boundaries && pnpm -r build",
     "test:browser": "pnpm -r --if-present test:browser"
   },
