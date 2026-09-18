@@ -59,6 +59,11 @@
   [headers.values]
     X-Frame-Options = "DENY"
     Referrer-Policy = "same-origin"
+    # Baseline, SDK-agnostic policy. `wasm-unsafe-eval` and `worker-src blob:`
+    # are here because the messaging SDK's crypto runs as WASM in a worker;
+    # exact allowed origins are finalized once KHA-141/143 pick the SDK build
+    # (see docs/plans/2026-09-16-kha-131-netlify-deployment-plan.md).
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
 
 [context.production]
   [context.production.environment]
