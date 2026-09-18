@@ -7,7 +7,7 @@
 
 import type { BindingId, CommandId, ReleaseId } from '@khala/contracts/delivery/ids';
 import type { ApprovalErrorCode, DeliveryReceipt } from '@khala/contracts/delivery/index';
-import type { EventRef, TimelineItem } from '@khala/contracts/messaging/index';
+import type { EventRef, OwnerId, TimelineItem } from '@khala/contracts/messaging/index';
 
 /**
  * Submission-local outcome for the last submitted command. Lives in the
@@ -66,6 +66,8 @@ export type ReviewView = Readonly<{
   bindingId: BindingId;
   bindingGeneration: number;
   policyVersion: number;
+  /** The signed-in reviewer's own `ownerId`, used to tell "your agent" apart from another owner's (R1). */
+  viewerOwnerId: OwnerId;
   pending: readonly TimelineItem[];
   receipts: readonly DeliveryReceipt[];
 }>;

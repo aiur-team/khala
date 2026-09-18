@@ -113,10 +113,7 @@
 .review-item__author {
   font-weight: 600;
   color: var(--khala-ink);
-  max-width: 20rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   unicode-bidi: isolate;
 }
 
@@ -179,11 +176,29 @@
 }
 
 @media (max-width: 390px) {
-  .review-item__author {
-    max-width: 50vw;
-  }
-
   .review-item__header {
     flex-wrap: wrap;
   }
+}
+
+.review__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.review-item--unavailable {
+  opacity: 0.75;
+}
+
+.review-item__unavailable-reason {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  color: var(--khala-ink-muted);
 }

@@ -25,8 +25,13 @@ export function emptySelection(): SelectionState {
 }
 
 /** True only for an item with recoverable text content; an unavailable placeholder is never selectable. */
-function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { content: MessageContent }> {
+export function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { content: MessageContent }> {
   return item.content.kind === 'text';
+}
+
+/** True only when `ref` identifies a readable item actually present in `pending` right now. */
+function isSelectableRef(ref: EventRef, pending: readonly TimelineItem[]): boolean {
+  return pending.some(item => isReadableItem(item) && sameEventRef(item.ref, ref));
 }
 
 export function isSelected(state: SelectionState, ref: EventRef): boolean {
@@ -37,10 +42,15 @@ export function isSelected(state: SelectionState, ref: EventRef): boolean {
  * Adds one exact reference to the selection. A ref already present (by exact
  * field equality) is rejected as a no-op duplicate, never stored twice. Has no
  * effect once the selection is `stale` — the human must `clearSelection` first.
+ * A ref that is not currently present and readable in `pending` — an
+ * unavailable placeholder, or one no longer in the pending set at all — is
+ * rejected the same way; the model itself never accepts it, regardless of
+ * what the screen shows.
  */
-export function addRef(state: SelectionState, ref: EventRef, binding: BindingContext): SelectionState {
+export function addRef(state: SelectionState, ref: EventRef, binding: BindingContext, pending: readonly TimelineItem[]): SelectionState {
   if (state.phase === 'stale') return state;
   if (isSelected(state, ref)) return state;
+  if (!isSelectableRef(ref, pending)) return state;
   return { phase: 'selected', refs: [...state.refs, ref], captured: binding };
 }
 

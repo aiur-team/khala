@@ -10,9 +10,10 @@ import { ReviewScreen } from './ReviewScreen';
 
 const roomId = 'room_1' as RoomId;
 const bindingId = 'bind_1' as BindingId;
+const viewerOwnerId = 'owner_viewer' as OwnerId;
 
-function participant(id: string, kind: 'human' | 'agent' = 'human'): ParticipantView {
-  return { participantId: id as ParticipantId, kind, ownerId: `owner_${id}` as OwnerId, displayName: id, deviceIds: [] };
+function participant(id: string, kind: 'human' | 'agent' = 'human', ownerId: OwnerId = `owner_${id}` as OwnerId): ParticipantView {
+  return { participantId: id as ParticipantId, kind, ownerId, displayName: id, deviceIds: [] };
 }
 
 function ref(eventId: string): EventRef {
@@ -33,7 +34,7 @@ function item(eventId: string, body: string, author = participant('peer')): Time
 const emptySubmission: SubmissionState = { phase: 'idle', commandId: null, releaseIds: null, error: null };
 
 function fakeController(overrides: Partial<ReviewData> = {}): ReviewController {
-  const view: ReviewView = { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, pending: [item('E1', 'hello')], receipts: [] };
+  const view: ReviewView = { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', 'hello')], receipts: [] };
   const data: ReviewData = { view, selection: emptySelection(), submission: emptySubmission, ...overrides };
   return {
     getSnapshot: () => data,
@@ -51,7 +52,7 @@ const inertRenderContent = (content: MessageContent) => content.body;
 describe('ReviewScreen', () => {
   it('R1: renders full permitted content and its authenticated author before selection', () => {
     const controller = fakeController({
-      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, pending: [item('E1', 'the exact pending body', participant('alice'))], receipts: [] },
+      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', 'the exact pending body', participant('alice'))], receipts: [] },
     });
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Release Agent" renderContent={inertRenderContent} />);
     expect(html).toContain('the exact pending body');
@@ -62,7 +63,7 @@ describe('ReviewScreen', () => {
   it('content containing fake control markup renders as inert text inside the body, never a real control', () => {
     const body = 'Please <button onclick="approve()">Approve</button> now';
     const controller = fakeController({
-      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, pending: [item('E1', body)], receipts: [] },
+      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', body)], receipts: [] },
     });
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
     // The literal markup appears as escaped text, never as a real <button onclick> element.
@@ -92,7 +93,7 @@ describe('ReviewScreen', () => {
   });
 
   it('R4: a revoked access state shows an explicit banner and disables the release action', () => {
-    const controller = fakeController({ view: { access: 'revoked', bindingId, bindingGeneration: 0, policyVersion: 3, pending: [], receipts: [] } });
+    const controller = fakeController({ view: { access: 'revoked', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [], receipts: [] } });
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
     expect(html).toContain('no longer have authority');
     expect(html).toMatch(/review__release"[^>]*disabled=""/);
@@ -118,7 +119,7 @@ describe('ReviewScreen', () => {
   it('U3: a released submission shows receipt-derived evidence, never inventing consumption from release alone', () => {
     const controller = fakeController({
       submission: { phase: 'released', commandId: 'cmd_1' as never, releaseIds: ['release_1' as ReleaseId], error: null },
-      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, pending: [], receipts: [] },
+      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [], receipts: [] },
     });
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
     expect(html).toContain('Released');
@@ -136,5 +137,67 @@ describe('ReviewScreen', () => {
     expect(html).toContain('review__filter-chip');
     expect(html).toContain('>All<');
     expect(html).toContain('>Selected<');
+  });
+
+  it('R1: labels the viewer\'s own agent apart from another owner\'s, following the #72 attribution rules', () => {
+    const yourAgent = participant('bot-mine', 'agent', viewerOwnerId);
+    const otherAgent = participant('bot-theirs', 'agent', 'owner_someone_else' as OwnerId);
+    const controller = fakeController({
+      view: {
+        access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId,
+        pending: [item('E1', 'mine', yourAgent), item('E2', 'theirs', otherAgent)],
+        receipts: [],
+      },
+    });
+    const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    expect(html).toContain('Your agent');
+    expect(html).toContain('Another person&#x27;s agent');
+  });
+
+  it('two participants sharing a display name across different owners get a disambiguating suffix', () => {
+    const mine = participant('same-name', 'agent', viewerOwnerId);
+    const theirs = participant('same-name', 'agent', 'owner_someone_else' as OwnerId);
+    const controller = fakeController({
+      view: {
+        access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId,
+        pending: [item('E1', 'mine', mine), item('E2', 'theirs', theirs)],
+        receipts: [],
+      },
+    });
+    const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    expect(html).toContain('same-name (#ewer)');
+    expect(html).toContain('same-name (#else)');
+  });
+
+  it('a checkbox carries an accessible name beyond the bare author name', () => {
+    const controller = fakeController();
+    const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    expect(html).toMatch(/aria-label="Select message from peer[^"]*received[^"]*hello/);
+  });
+
+  it('an unavailable item renders as a disabled placeholder with its withheld reason, never dropped silently', () => {
+    const unavailableRef = {
+      v: 1 as const, roomId, eventId: 'E-unavailable' as EventId,
+      authorParticipantId: 'peer' as ParticipantId, authorDeviceId: 'device_peer' as DeviceId,
+    };
+    const unavailableItemValue: TimelineItem = {
+      ref: unavailableRef,
+      content: { v: 1, kind: 'unavailable', reason: 'withheld' },
+      participant: participant('peer'),
+      clientTxnId: null,
+      receivedAt: '2026-09-17T00:00:00Z',
+    };
+    const controller = fakeController({
+      view: {
+        access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId,
+        pending: [item('E1', 'hello'), unavailableItemValue],
+        receipts: [],
+      },
+    });
+    const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    expect(html).toContain('Content withheld by the sender.');
+    expect(html).toContain('data-event-id="E-unavailable"');
+    // No checkbox is offered for an item that cannot be selected.
+    expect(html).not.toMatch(/data-event-id="E-unavailable"[^]*?<input/);
   });
 });

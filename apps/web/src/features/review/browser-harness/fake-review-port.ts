@@ -12,8 +12,16 @@ import type { ReviewView } from '../model';
 
 const bindingId = 'bind_harness' as BindingId;
 const roomId = 'room_harness' as RoomId;
-const alice = { participantId: 'alice' as ParticipantId, kind: 'human' as const, ownerId: 'owner_alice' as OwnerId, displayName: 'Alice', deviceIds: [] };
+const viewerOwnerId = 'owner_alice' as OwnerId;
+const alice = { participantId: 'alice' as ParticipantId, kind: 'human' as const, ownerId: viewerOwnerId, displayName: 'Alice', deviceIds: [] };
 const bob = { participantId: 'bob' as ParticipantId, kind: 'human' as const, ownerId: 'owner_bob' as OwnerId, displayName: 'Bob', deviceIds: [] };
+
+/** Synthetic, non-cryptographic digest that actually varies with `body` — real enough for this harness to exercise AE1 (an edited body must change the digest and invalidate a captured selection). */
+function digestFor(body: string): string {
+  let hash = 0;
+  for (let index = 0; index < body.length; index += 1) hash = (Math.imul(hash, 31) + body.charCodeAt(index)) >>> 0;
+  return `sha256:${hash.toString(16).padStart(8, '0').repeat(8)}`;
+}
 
 function makeItem(eventId: string, author: typeof alice, body: string): Extract<TimelineItem, { content: { kind: 'text' } }> {
   return {
@@ -23,7 +31,7 @@ function makeItem(eventId: string, author: typeof alice, body: string): Extract<
       eventId: eventId as never,
       authorParticipantId: author.participantId,
       authorDeviceId: `device_${author.participantId}` as never,
-      contentDigest: `sha256:${'0'.repeat(64)}`,
+      contentDigest: digestFor(body),
     },
     content: { v: 1, kind: 'text', body },
     participant: author,
@@ -45,7 +53,7 @@ export function createFakeReviewPort() {
   let releaseCounter = 0;
 
   function currentView(): ReviewView {
-    return { access, bindingId, bindingGeneration, policyVersion, pending, receipts };
+    return { access, bindingId, bindingGeneration, policyVersion, viewerOwnerId, pending, receipts };
   }
 
   function notify(): void {

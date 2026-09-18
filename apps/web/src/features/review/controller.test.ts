@@ -6,6 +6,7 @@ import type { EventRef, ParticipantView, TimelineItem } from '@khala/contracts/m
 import { createReviewController } from './controller';
 import type { ReviewView } from './model';
 import type { ApprovalUiResult, ReviewUiPort } from './ports';
+import { toSnapshot } from './selection';
 
 const roomId = 'room_1' as RoomId;
 const bindingId = 'bind_1' as BindingId;
@@ -29,12 +30,15 @@ function item(eventRef: EventRef, body: string): TimelineItem {
   return { ref: eventRef, content: { v: 1, kind: 'text', body }, participant: participant('peer'), clientTxnId: null, receivedAt: '2026-09-17T00:00:00Z' };
 }
 
+const viewerOwnerId = 'owner_viewer' as OwnerId;
+
 function view(overrides: Partial<ReviewView> = {}): ReviewView {
   return {
     access: 'ready',
     bindingId,
     bindingGeneration: 0,
     policyVersion: 3,
+    viewerOwnerId,
     pending: [item(ref('event-a'), 'hello')],
     receipts: [],
     ...overrides,
@@ -142,10 +146,14 @@ describe('review controller', () => {
     await controller.submit();
     expect(controller.getSnapshot().submission.phase).toBe('unknown');
 
-    fake.setView(view({ access: 'revoked', pending: [] }));
+    // The fake port here deliberately does NOT empty `pending` on revocation —
+    // the controller itself must clear the protected preview regardless of
+    // what the port snapshot still carries.
+    fake.setView(view({ access: 'revoked', pending: [item(ref('event-a'), 'hello')] }));
 
     const data = controller.getSnapshot();
     expect(data.view.access).toBe('revoked');
+    expect(data.view.pending).toEqual([]);
     expect(data.selection.phase).toBe('viewing');
     expect(data.submission.phase).toBe('idle');
     expect(data.submission.commandId).toBeNull();
@@ -165,9 +173,11 @@ describe('review controller', () => {
     const submitted = controller.submit();
     expect(controller.getSnapshot().submission.phase).toBe('submitting');
 
-    // Revocation lands while the request is still in flight.
-    fake.setView(view({ access: 'revoked', pending: [] }));
+    // Revocation lands while the request is still in flight; the fake port
+    // again does not empty `pending` itself.
+    fake.setView(view({ access: 'revoked', pending: [item(ref('event-a'), 'hello')] }));
     expect(controller.getSnapshot().submission.phase).toBe('idle');
+    expect(controller.getSnapshot().view.pending).toEqual([]);
 
     // The original in-flight request finally resolves as accepted — too late to matter.
     resolveApprove({ kind: 'accepted', releaseIds: ['release_1' as ReleaseId] });
@@ -199,7 +209,20 @@ describe('review controller', () => {
     controller.dispose();
   });
 
-  it('rejects a definite error and preserves the closed-vocabulary code', async () => {
+  it('rejects a definite non-stale error and preserves the closed-vocabulary code, without disturbing the selection', async () => {
+    const fake = createFakePort(view());
+    fake.setApprove(async () => ({ kind: 'rejected', code: 'forbidden' }));
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-a'), true);
+    await controller.submit();
+    const data = controller.getSnapshot();
+    expect(data.submission.phase).toBe('rejected');
+    expect(data.submission.error).toBe('forbidden');
+    expect(data.selection.phase).toBe('selected');
+    controller.dispose();
+  });
+
+  it('a server-observed stale_content/stale_binding/stale_policy rejection shows the same stale/refresh state as a local staleness, with Release disabled', async () => {
     const fake = createFakePort(view());
     fake.setApprove(async () => ({ kind: 'rejected', code: 'stale_content' }));
     const controller = createReviewController(fake.port);
@@ -208,6 +231,77 @@ describe('review controller', () => {
     const data = controller.getSnapshot();
     expect(data.submission.phase).toBe('rejected');
     expect(data.submission.error).toBe('stale_content');
+    // The selection itself moves to `stale`, the same state AE1 uses locally —
+    // Release must be disabled, not left active beside a raw error code.
+    expect(data.selection.phase).toBe('stale');
+    expect(toSnapshot(data.selection)).toBeNull();
+    controller.dispose();
+  });
+
+  it('an outcome_unknown result adopts the commandId of the command actually sent, never a value read back from the result', async () => {
+    const fake = createFakePort(view());
+    // The fake connector deliberately returns a different commandId than the one sent.
+    fake.setApprove(async () => ({ kind: 'outcome_unknown', commandId: 'cmd_from_the_wire_not_ours' as never }));
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-a'), true);
+    await controller.submit();
+    const data = controller.getSnapshot();
+    expect(data.submission.phase).toBe('unknown');
+    expect(data.submission.commandId).not.toBe('cmd_from_the_wire_not_ours');
+    controller.dispose();
+  });
+
+  it('the command selects only the chosen refs, never every pending item', async () => {
+    const fake = createFakePort(view({ pending: [item(ref('event-a'), 'a'), item(ref('event-b'), 'b'), item(ref('event-c'), 'c')] }));
+    let sentSelection: readonly string[] = [];
+    fake.setApprove(async command => {
+      sentSelection = command.selection.map(r => r.eventId);
+      return { kind: 'accepted', releaseIds: ['release_1' as ReleaseId] };
+    });
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-b'), true);
+    await controller.submit();
+    expect(sentSelection).toEqual(['event-b']);
+    controller.dispose();
+  });
+
+  it('the command orders the selection in display (pending) order, never click order', async () => {
+    const fake = createFakePort(view({ pending: [item(ref('event-a'), 'a'), item(ref('event-b'), 'b'), item(ref('event-c'), 'c')] }));
+    let sentSelection: readonly string[] = [];
+    fake.setApprove(async command => {
+      sentSelection = command.selection.map(r => r.eventId);
+      return { kind: 'accepted', releaseIds: ['release_1' as ReleaseId] };
+    });
+    const controller = createReviewController(fake.port);
+    // Click order is c, then a, then b — the reverse-ish of display order.
+    controller.toggleSelect(ref('event-c'), true);
+    controller.toggleSelect(ref('event-a'), true);
+    controller.toggleSelect(ref('event-b'), true);
+    await controller.submit();
+    expect(sentSelection).toEqual(['event-a', 'event-b', 'event-c']);
+    controller.dispose();
+  });
+
+  it('a port change never reconciles an outcome_unknown submission on its own — only an explicit reconcileUnknown does', async () => {
+    const fake = createFakePort(view());
+    fake.setApprove(async command => ({ kind: 'outcome_unknown', commandId: command.commandId }));
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-a'), true);
+    await controller.submit();
+    expect(controller.getSnapshot().submission.phase).toBe('unknown');
+
+    // An unrelated port change (a new arrival) must not silently resolve the pending command.
+    fake.setView(view({ pending: [item(ref('event-a'), 'hello'), item(ref('event-b'), 'new arrival')] }));
+    expect(controller.getSnapshot().submission.phase).toBe('unknown');
+    expect(fake.approveCalls).toBe(1);
+    controller.dispose();
+  });
+
+  it('toggling a ref that is not present and readable in the current pending set is rejected by the controller, not just the screen', () => {
+    const fake = createFakePort(view({ pending: [item(ref('event-a'), 'a')] }));
+    const controller = createReviewController(fake.port);
+    controller.toggleSelect(ref('event-does-not-exist'), true);
+    expect(controller.getSnapshot().selection.phase).toBe('viewing');
     controller.dispose();
   });
 

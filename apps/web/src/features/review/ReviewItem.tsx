@@ -14,6 +14,10 @@ export type ReadableTimelineItem = Extract<TimelineItem, { content: MessageConte
 
 export interface ReviewItemProps {
   item: ReadableTimelineItem;
+  /** Author display name, resolved for same-name collisions across owners (see `attribution.ts`). */
+  resolvedDisplayName: string;
+  /** "Your agent" / "Another person's agent" / "You" / "Human" — relative to the viewer (R1). */
+  ownerLabel: string;
   selected: boolean;
   disabled: boolean;
   onToggle: (checked: boolean) => void;
@@ -26,8 +30,9 @@ export interface ReviewItemProps {
   onHide: () => void;
 }
 
-export function ReviewItem({ item, selected, disabled, onToggle, renderContent, onHide }: ReviewItemProps) {
+export function ReviewItem({ item, resolvedDisplayName, ownerLabel, selected, disabled, onToggle, renderContent, onHide }: ReviewItemProps) {
   const inputId = `review-item-${item.ref.eventId}`;
+  const bodyPreview = item.content.body.slice(0, 60);
   return (
     <li className="review-item" data-event-id={item.ref.eventId}>
       <header className="review-item__header">
@@ -37,12 +42,13 @@ export function ReviewItem({ item, selected, disabled, onToggle, renderContent, 
           className="review-item__checkbox"
           checked={selected}
           disabled={disabled}
+          aria-label={`Select message from ${resolvedDisplayName} (${ownerLabel}), received ${item.receivedAt}: ${bodyPreview}`}
           onChange={(event: ChangeEvent<HTMLInputElement>) => onToggle(event.currentTarget.checked)}
         />
         <label htmlFor={inputId} className="review-item__author" dir="auto">
-          {item.participant.displayName}
+          {resolvedDisplayName}
         </label>
-        <span className="review-item__kind">{item.participant.kind === 'agent' ? 'Agent' : 'Human'}</span>
+        <span className="review-item__kind">{ownerLabel}</span>
         <time className="review-item__timestamp" dateTime={item.receivedAt}>
           {item.receivedAt}
         </time>

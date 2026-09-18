@@ -6,15 +6,24 @@
 // reconciles the exact same command object already sent, never a freshly
 // reconstructed one (U3).
 
-import type { ApprovalCommand } from '@khala/contracts/delivery/index';
+import type { ApprovalCommand, ApprovalErrorCode } from '@khala/contracts/delivery/index';
 import type { CommandId } from '@khala/contracts/delivery/ids';
 import type { EventRef } from '@khala/contracts/messaging/index';
 import type { ReviewView, SubmissionState } from './model';
 import type { ApprovalUiResult, ReviewUiPort } from './ports';
 import {
-  addRef, clearSelection as clearSelectionState, emptySelection, reconcileSelection, removeRef, toSnapshot,
-  type BindingContext, type SelectionState,
+  addRef, clearSelection as clearSelectionState, emptySelection, isReadableItem, reconcileSelection, removeRef,
+  toSnapshot, type BindingContext, type SelectionState,
 } from './selection';
+
+/**
+ * A definitive rejection whose cause is a server-observed staleness (the
+ * policy, binding or content moved under the command). Shown as the same
+ * stale/refresh state as a locally-detected staleness — Release disabled,
+ * explicit Reselect required — never as a raw error code left next to a
+ * still-active selection.
+ */
+const STALE_REJECTION_CODES: ReadonlySet<ApprovalErrorCode> = new Set(['stale_policy', 'stale_binding', 'stale_content']);
 
 export type ReviewData = Readonly<{
   view: ReviewView;
@@ -46,15 +55,31 @@ function bindingContextOf(view: ReviewView): BindingContext {
   return { bindingId: view.bindingId, bindingGeneration: view.bindingGeneration, policyVersion: view.policyVersion };
 }
 
-function buildCommand(commandId: CommandId, snapshot: NonNullable<ReturnType<typeof toSnapshot>>): ApprovalCommand {
+/** Sanitizes a port-supplied view: revocation clears the protected preview immediately, here at the source, not just in whatever happens to render it. */
+function sanitizeView(view: ReviewView): ReviewView {
+  return view.access === 'revoked' ? { ...view, pending: [] } : view;
+}
+
+/**
+ * Reorders a selection's references into current display (pending) order,
+ * never the order the human happened to click them in — the command's
+ * `selection` must reflect what is visibly shown, not click history.
+ */
+function inDisplayOrder(references: readonly EventRef[], pending: ReviewView['pending']): readonly EventRef[] {
+  const wanted = new Set(references.map(ref => ref.eventId));
+  return pending.filter((item): item is Extract<typeof item, { content: { kind: 'text' } }> => isReadableItem(item) && wanted.has(item.ref.eventId)).map(item => item.ref);
+}
+
+function buildCommand(commandId: CommandId, snapshot: NonNullable<ReturnType<typeof toSnapshot>>, pending: ReviewView['pending']): ApprovalCommand {
+  const references = inDisplayOrder(snapshot.references, pending);
   return {
     v: 1,
     commandId,
-    roomId: snapshot.references[0]!.roomId,
+    roomId: references[0]!.roomId,
     bindingId: snapshot.bindingId,
     expectedPolicyVersion: snapshot.expectedPolicyVersion,
     expectedBindingGeneration: snapshot.bindingGeneration,
-    selection: snapshot.references,
+    selection: references,
     issuedAt: new Date().toISOString(),
   };
 }
@@ -66,7 +91,9 @@ function mapResult(fallbackCommandId: CommandId, result: ApprovalUiResult): Subm
     case 'rejected':
       return { phase: 'rejected', commandId: fallbackCommandId, releaseIds: null, error: result.code };
     case 'outcome_unknown':
-      return { phase: 'unknown', commandId: result.commandId, releaseIds: null, error: null };
+      // The command already sent is the identity that matters for reconciliation,
+      // never whatever commandId happened to come back in the result (U3).
+      return { phase: 'unknown', commandId: fallbackCommandId, releaseIds: null, error: null };
   }
 }
 
@@ -79,7 +106,7 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
   let disposed = false;
   const abortController = new AbortController();
 
-  let cachedView: ReviewView = port.snapshot();
+  let cachedView: ReviewView = sanitizeView(port.snapshot());
   let cachedData: ReviewData | null = null;
   let dataDirty = true;
 
@@ -108,7 +135,7 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
 
   function onPortChange(): void {
     if (disposed) return;
-    cachedView = port.snapshot();
+    cachedView = sanitizeView(port.snapshot());
     // Revocation clears protected preview and command authority immediately,
     // even ahead of a late in-flight response (Failure boundaries).
     if (cachedView.access === 'revoked') {
@@ -130,7 +157,7 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
     // discard the edit on success (the submitted refs win) or, worse, look
     // like it applies to a reconciled `unknown` command it was never part of.
     if (submission.phase === 'submitting' || submission.phase === 'unknown') return;
-    selection = checked ? addRef(selection, ref, bindingContextOf(cachedView)) : removeRef(selection, ref);
+    selection = checked ? addRef(selection, ref, bindingContextOf(cachedView), cachedView.pending) : removeRef(selection, ref);
     notify();
   }
 
@@ -159,6 +186,11 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
     if (submission.phase === 'released') {
       selection = emptySelection();
       lastCommand = null;
+    } else if (submission.phase === 'rejected' && submission.error && STALE_REJECTION_CODES.has(submission.error)) {
+      // A server-observed staleness gets the same stale/refresh treatment as a
+      // locally-detected one: Release disabled, explicit Reselect required —
+      // never a raw error code left beside a selection that still looks active.
+      selection = { ...selection, phase: 'stale' };
     }
     notify();
   }
@@ -168,7 +200,7 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
     if (submission.phase === 'submitting' || submission.phase === 'unknown') return;
     const snapshot = toSnapshot(selection);
     if (!snapshot) return;
-    await runApprove(buildCommand(newCommandId(), snapshot));
+    await runApprove(buildCommand(newCommandId(), snapshot, cachedView.pending));
   }
 
   async function reconcileUnknown(): Promise<void> {
