@@ -4,8 +4,9 @@
 import {
   type BindingId, type OwnerId, type PolicyAck, type PolicySetCommand, type RoomId, samePolicySetCommandInput,
 } from '@khala/contracts/delivery/index';
+import { approvedAutomation, isAutomationConfig } from './gate';
 import type {
-  AutomationConfig, JournalEntry, PolicyActor, PolicyChangeOutcome, PolicyChangeRejection, PolicyRevision,
+  BindingStatus, JournalEntry, PolicyActor, PolicyChangeOutcome, PolicyChangeRejection, PolicyRevision,
   PublishPolicyEffect, TrustState, TrustView,
 } from './types';
 
@@ -27,6 +28,10 @@ export type AckOutcome =
   | Readonly<{ applied: false; reason: AckIgnoredReason }>;
 
 export type AckTransition = Readonly<{ state: TrustState; outcome: AckOutcome }>;
+
+export type RebindOutcome =
+  | Readonly<{ ok: true; state: TrustState }>
+  | Readonly<{ ok: false; code: 'stale_binding' | 'binding_revoked' }>;
 
 const baseline = (version: number, generation: number): PolicyRevision => ({
   version, generation, commandId: null, mode: 'review', paused: false, peerParticipantId: null,
@@ -57,40 +62,43 @@ export function initialTrustState(input: Readonly<{
   };
 }
 
-export function isAutomationConfig(value: AutomationConfig | null): value is AutomationConfig {
-  return value !== null && Number.isSafeInteger(value.maxCausalDepth) && value.maxCausalDepth > 0;
-}
-
 /**
  * Evaluates one human policy request against current state. Only an owner actor
- * whose authority matches the binding owner can change policy. The command must
- * name the current binding generation and policy version: a conflict is refused
- * so the owner refreshes and decides again, never last-write-wins. A retried
- * command id returns its first outcome; reusing it with other input is refused.
+ * whose authority matches the binding owner can change policy, and never on a
+ * revoked binding. The command must name the current binding generation and
+ * policy version: a conflict is refused so the owner refreshes and decides again,
+ * never last-write-wins. A retried command id returns its first outcome; reusing
+ * it with other input is refused, and replaying an accepted command after a
+ * rebind is `stale_binding` rather than a success for the old generation.
  *
- * `auto` is refused unless composition supplies an approved `automation` config
- * (G-AUTOMATION). Review and pause requests never need it.
+ * `auto` is refused while G-AUTOMATION is open (see `gate.ts`). The gate applies
+ * only to the `auto` mode: review, pause and resume requests are evaluated as usual.
  */
 export function evaluatePolicyChange(
   state: TrustState,
   actor: PolicyActor,
   command: PolicySetCommand,
-  automation: AutomationConfig | null,
+  bindingStatus: BindingStatus,
 ): PolicyChange {
-  // Refusals to non-owners are not journaled, so they cannot claim a command id.
+  // Refusals to non-owners and on revoked bindings are not journaled, so they
+  // cannot claim a command id.
   if (actor.kind !== 'owner' || actor.authority.ownerId !== state.ownerId) {
     return { state, outcome: { ok: false, code: 'forbidden' }, effects: [] };
   }
+  if (bindingStatus !== 'active') return { state, outcome: { ok: false, code: 'binding_revoked' }, effects: [] };
 
   const prior = state.journal.get(command.commandId);
   if (prior) {
     if (!samePolicySetCommandInput(prior.command, command)) {
       return { state, outcome: { ok: false, code: 'idempotency_conflict' }, effects: [] };
     }
+    if (prior.outcome.ok && prior.outcome.requested.generation !== state.generation) {
+      return { state, outcome: { ok: false, code: 'stale_binding' }, effects: [] };
+    }
     return { state, outcome: prior.outcome, effects: publishIfPending(state, prior) };
   }
 
-  const code = refusal(state, command, automation);
+  const code = refusal(state, command);
   if (code) return settle(state, command, { ok: false, code });
 
   const requested: PolicyRevision = {
@@ -105,15 +113,11 @@ export function evaluatePolicyChange(
   return { ...next, effects: [{ kind: 'publish_policy', bindingId: state.bindingId, revision: requested }] };
 }
 
-function refusal(
-  state: TrustState,
-  command: PolicySetCommand,
-  automation: AutomationConfig | null,
-): PolicyChangeRejection | null {
+function refusal(state: TrustState, command: PolicySetCommand): PolicyChangeRejection | null {
   if (command.bindingId !== state.bindingId || command.roomId !== state.roomId) return 'binding_mismatch';
   if (command.expectedBindingGeneration !== state.generation) return 'stale_binding';
   if (command.expectedPolicyVersion !== state.requested.version) return 'stale_policy';
-  if (command.mode === 'auto' && !isAutomationConfig(automation)) return 'automation_gated';
+  if (command.mode === 'auto' && !isAutomationConfig(approvedAutomation())) return 'automation_gated';
   return null;
 }
 
@@ -165,12 +169,11 @@ export function applyPolicyAck(state: TrustState, ack: PolicyAck): AckTransition
 /**
  * Moves trust state to a new binding generation. Trust is never inherited: the
  * new generation starts from a fresh review baseline with a bumped version, so any
- * request or acknowledgment made for the old generation is stale.
+ * request or acknowledgment made for the old generation is stale. A revoked
+ * binding cannot be rebound into a usable trust state.
  */
-export function applyRebind(
-  state: TrustState,
-  generation: number,
-): Readonly<{ ok: true; state: TrustState }> | Readonly<{ ok: false; code: 'stale_binding' }> {
+export function applyRebind(state: TrustState, generation: number, bindingStatus: BindingStatus): RebindOutcome {
+  if (bindingStatus !== 'active') return { ok: false, code: 'binding_revoked' };
   if (!Number.isSafeInteger(generation) || generation <= state.generation) return { ok: false, code: 'stale_binding' };
   const revision = baseline(state.requested.version + 1, generation);
   return { ok: true, state: { ...state, generation, requested: revision, effective: revision, connector: null } };

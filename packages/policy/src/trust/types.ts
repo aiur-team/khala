@@ -39,7 +39,8 @@ export type PolicyChangeRejection =
   | 'stale_binding'
   | 'stale_policy'
   | 'idempotency_conflict'
-  | 'automation_gated';
+  | 'automation_gated'
+  | 'binding_revoked';
 
 export type PolicyChangeOutcome =
   | Readonly<{ ok: true; requested: PolicyRevision }>
@@ -76,14 +77,20 @@ export type PolicyActor =
   | Readonly<{ kind: 'model'; bindingId: BindingId }>;
 
 /**
- * Limits approved through G-AUTOMATION. There is deliberately no default: until
- * composition supplies an approved value, `auto` cannot be requested and nothing
- * is released automatically.
+ * Limits approved through G-AUTOMATION. There is deliberately no default and no
+ * caller can supply one: the only source is the closed seam in `gate.ts`.
  */
 export type AutomationConfig = Readonly<{
   /** Automatic releases stop once a causal chain reaches this depth. */
   maxCausalDepth: number;
 }>;
+
+/**
+ * The binding's revocation status as the control plane records it, supplied by
+ * trusted composition. Revocation is terminal for trust: no policy change, re-arm
+ * or rebind applies to a revoked binding.
+ */
+export type BindingStatus = 'active' | 'revoked';
 
 /** Instruction for trust-controls composition to deliver to the owner connector. */
 export type PublishPolicyEffect = Readonly<{

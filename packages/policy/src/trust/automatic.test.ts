@@ -1,16 +1,29 @@
-import { describe, expect, it } from 'vitest';
-import type { CommandId } from '@khala/contracts/delivery/index';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { CommandId, RoomId } from '@khala/contracts/delivery/index';
 import { type AutomaticReleaseInput, evaluateAutomaticRelease } from './automatic';
 import {
-  AUTOMATION, BINDING, OTHER_PEER, OWN_AGENT, PEER, ack, binding, causalRoot, command, event, owner, releaseId, start,
-} from './fakes';
+  BINDING, OTHER_PEER, OWN_AGENT, PEER, ack, binding, causalRoot, command, event, owner, releaseId, start,
+} from '../../test/trust/fakes';
 import { applyPolicyAck, evaluatePolicyChange } from './transitions';
 import type { TrustState } from './types';
+
+// These tests exercise release logic as it will behave once G-AUTOMATION opens,
+// using example limits that are not approved values. `gate.test.ts` proves the real
+// seam keeps every event held.
+const gate = vi.hoisted(() => {
+  const example = { maxCausalDepth: 3 };
+  return { example, config: example as { maxCausalDepth: number } | null };
+});
+vi.mock('./gate', async importOriginal => ({
+  ...await importOriginal<typeof import('./gate')>(),
+  approvedAutomation: () => gate.config,
+}));
+afterEach(() => { gate.config = gate.example; });
 
 const id = (value: string) => value as CommandId;
 
 function effectiveAuto(overrides: Parameters<typeof command>[0] = {}): TrustState {
-  const change = evaluatePolicyChange(start(), owner(), command(overrides), AUTOMATION);
+  const change = evaluatePolicyChange(start(), owner(), command(overrides), 'active');
   return applyPolicyAck(change.state, ack()).state;
 }
 
@@ -18,7 +31,7 @@ function input(overrides: Partial<AutomaticReleaseInput> = {}): AutomaticRelease
   return {
     state: effectiveAuto(),
     freshness: { kind: 'confirmed', policyVersion: 2, generation: 1 },
-    automation: AUTOMATION,
+    bindingStatus: 'active',
     binding: binding(),
     event: event(),
     arrivedUnderPolicyVersion: 2,
@@ -50,7 +63,7 @@ describe('automatic release', () => {
 
   it('holds in review mode, while paused, and while auto is only requested', () => {
     const review = applyPolicyAck(
-      evaluatePolicyChange(start(), owner(), command({ mode: 'review' }), AUTOMATION).state,
+      evaluatePolicyChange(start(), owner(), command({ mode: 'review' }), 'active').state,
       ack(),
     ).state;
     expect(evaluateAutomaticRelease(input({ state: review }))).toEqual({ kind: 'held', reason: 'not_auto' });
@@ -60,13 +73,13 @@ describe('automatic release', () => {
     const paused = effectiveAuto({ paused: true });
     expect(evaluateAutomaticRelease(input({ state: paused }))).toEqual({ kind: 'held', reason: 'paused' });
 
-    const requestedOnly = evaluatePolicyChange(start(), owner(), command(), AUTOMATION).state;
+    const requestedOnly = evaluatePolicyChange(start(), owner(), command(), 'active').state;
     expect(evaluateAutomaticRelease(input({ state: requestedOnly }))).toEqual({ kind: 'held', reason: 'policy_pending' });
   });
 
   it('holds once a re-arm is requested, even before the connector acknowledges it', () => {
     const rearm = evaluatePolicyChange(
-      effectiveAuto(), owner(), command({ commandId: id('cmd_rearm'), mode: 'review', expectedPolicyVersion: 2 }), AUTOMATION,
+      effectiveAuto(), owner(), command({ commandId: id('cmd_rearm'), mode: 'review', expectedPolicyVersion: 2 }), 'active',
     ).state;
 
     expect(evaluateAutomaticRelease(input({ state: rearm, freshness: { kind: 'confirmed', policyVersion: 3, generation: 1 } })))
@@ -101,8 +114,25 @@ describe('automatic release', () => {
     expect(evaluateAutomaticRelease(input({ arrivedUnderPolicyVersion: 1 }))).toEqual({ kind: 'held', reason: 'backlog' });
   });
 
-  it('holds when automation limits are not approved', () => {
-    expect(evaluateAutomaticRelease(input({ automation: null }))).toEqual({ kind: 'held', reason: 'automation_gated' });
+  it('holds when the seam yields no limits or malformed limits', () => {
+    for (const config of [null, { maxCausalDepth: 0 }, { maxCausalDepth: 1.5 }, { maxCausalDepth: Number.NaN }]) {
+      gate.config = config;
+      expect(evaluateAutomaticRelease(input())).toEqual({ kind: 'held', reason: 'automation_gated' });
+    }
+  });
+
+  it('holds on a revoked binding', () => {
+    expect(evaluateAutomaticRelease(input({ bindingStatus: 'revoked' }))).toEqual({ kind: 'held', reason: 'binding_revoked' });
+  });
+
+  it('holds an event from another room', () => {
+    const elsewhere = { ...event(), roomId: 'room_2' as RoomId };
+    expect(evaluateAutomaticRelease(input({ event: elsewhere }))).toEqual({ kind: 'held', reason: 'room_mismatch' });
+  });
+
+  it('holds on a hand-built state whose effective policy is unknown, without throwing', () => {
+    const unknown: TrustState = { ...effectiveAuto(), effective: null };
+    expect(evaluateAutomaticRelease(input({ state: unknown }))).toEqual({ kind: 'held', reason: 'policy_unknown' });
   });
 
   it('holds at the causal depth limit and when the budget is exhausted, with a content-free reason', () => {
@@ -115,6 +145,19 @@ describe('automatic release', () => {
     expect(Object.keys(exhausted)).toEqual(['kind', 'reason']);
   });
 
+  it('holds on a NaN, fractional or negative causal depth', () => {
+    for (const depth of [Number.NaN, 0.5, -1]) {
+      expect(evaluateAutomaticRelease(input({ causal: { rootId: causalRoot, depth } })))
+        .toEqual({ kind: 'held', reason: 'loop_limit' });
+    }
+  });
+
+  it('holds on a NaN, fractional or negative budget', () => {
+    for (const budgetRemaining of [Number.NaN, 1.5, -1]) {
+      expect(evaluateAutomaticRelease(input({ budgetRemaining }))).toEqual({ kind: 'held', reason: 'budget_exhausted' });
+    }
+  });
+
   it('returns the existing release identity for a duplicate event instead of minting another', () => {
     const decision = evaluateAutomaticRelease(input({ priorReleaseId: releaseId('release_0'), releaseId: releaseId('release_9') }));
 
@@ -122,7 +165,7 @@ describe('automatic release', () => {
   });
 
   it('gives a model-issued policy command no authority to enable auto', () => {
-    const change = evaluatePolicyChange(start(), { kind: 'model', bindingId: BINDING }, command(), AUTOMATION);
+    const change = evaluatePolicyChange(start(), { kind: 'model', bindingId: BINDING }, command(), 'active');
     const forged = applyPolicyAck(change.state, ack());
 
     expect(change.outcome).toEqual({ ok: false, code: 'forbidden' });

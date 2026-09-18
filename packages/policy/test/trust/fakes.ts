@@ -1,11 +1,12 @@
-// Shared builders for the trust tests. Kept out of production imports.
+// Shared builders for the trust tests. Lives outside `src/` so it is neither built
+// into `dist` nor reachable through the package's `./trust/*` export.
 
 import type {
   BindingId, CausalRootId, CommandId, EventRef, OwnerAuthority, OwnerId, ParticipantId, PolicyAck, PolicySetCommand,
   ReleaseId, RoomId, SessionBinding,
 } from '@khala/contracts/delivery/index';
-import { initialTrustState } from './transitions';
-import type { AutomationConfig, PolicyActor, TrustState } from './types';
+import { initialTrustState } from '../../src/trust/transitions';
+import type { PolicyActor, TrustState } from '../../src/trust/types';
 
 export const ROOM = 'room_1' as RoomId;
 export const BINDING = 'binding_1' as BindingId;
@@ -14,8 +15,6 @@ export const MALLORY = 'owner_mallory' as OwnerId;
 export const PEER = 'participant_bob_agent' as ParticipantId;
 export const OTHER_PEER = 'participant_carol_agent' as ParticipantId;
 export const OWN_AGENT = 'participant_alice_agent' as ParticipantId;
-
-export const AUTOMATION: AutomationConfig = { maxCausalDepth: 3 };
 
 export const authority = (ownerId: OwnerId = ALICE): OwnerAuthority => ({
   ownerId,

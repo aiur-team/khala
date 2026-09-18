@@ -6,8 +6,8 @@
 import type {
   CausalRootId, EventRef, ReleaseApproval, ReleaseId, SessionBinding,
 } from '@khala/contracts/delivery/index';
-import { isAutomationConfig } from './transitions';
-import type { AutomationConfig, TrustState } from './types';
+import { approvedAutomation, isAutomationConfig } from './gate';
+import type { BindingStatus, TrustState } from './types';
 
 /**
  * What the connector proved about policy freshness since it last connected. It
@@ -21,15 +21,17 @@ export type AutomaticReleaseInput = Readonly<{
   /** Null when policy state is missing, for example after a restart before reconciliation. */
   state: TrustState | null;
   freshness: PolicyFreshness;
-  /** G-AUTOMATION limits; null until approved. */
-  automation: AutomationConfig | null;
   /** The recipient binding as it is now. */
   binding: SessionBinding;
+  bindingStatus: BindingStatus;
   event: EventRef;
   /** The effective policy version in force when the connector received `event`. */
   arrivedUnderPolicyVersion: number;
   causal: Readonly<{ rootId: CausalRootId; depth: number }>;
-  /** Automatic releases still allowed by the caller's budget ledger. */
+  /**
+   * Automatic releases still allowed by the caller's budget ledger. Caller-supplied
+   * and unbounded here; who owns and caps the ledger is a G-AUTOMATION decision.
+   */
   budgetRemaining: number;
   /** The release already recorded for this event and generation, if any. */
   priorReleaseId: ReleaseId | null;
@@ -46,6 +48,7 @@ export type HoldReason =
   | 'not_auto'
   | 'paused'
   | 'stale_binding'
+  | 'binding_revoked'
   | 'room_mismatch'
   | 'peer_not_allowed'
   | 'backlog'
@@ -74,17 +77,20 @@ export type AutomaticReleaseDecision =
 const held = (reason: HoldReason): AutomaticReleaseDecision => ({ kind: 'held', reason });
 
 /**
- * Decides whether one event may be released without owner review. Every doubt
- * holds: missing or unconfirmed policy, a newer request not yet enforced, a
- * changed binding, a peer outside scope, an event that predates activation, or an
- * exhausted budget or causal chain. An event that was already released keeps its
- * release identity; delivered content cannot be recalled, so a retry must not
- * mint another release.
+ * Decides whether one event may be released without owner review. While
+ * G-AUTOMATION is open every event holds as `automation_gated` (see `gate.ts`).
+ * Beyond the gate every doubt still holds: missing or unconfirmed policy, a newer
+ * request not yet enforced, a changed or revoked binding, a peer outside scope, an
+ * event that predates activation, or an exhausted budget or causal chain. An event
+ * that was already released keeps its release identity; delivered content cannot
+ * be recalled, so a retry must not mint another release.
  */
 export function evaluateAutomaticRelease(input: AutomaticReleaseInput): AutomaticReleaseDecision {
   const { state, freshness, binding, event } = input;
   if (input.priorReleaseId !== null) return { kind: 'duplicate', releaseId: input.priorReleaseId };
-  if (!isAutomationConfig(input.automation)) return held('automation_gated');
+  const automation = approvedAutomation();
+  if (!isAutomationConfig(automation)) return held('automation_gated');
+  if (input.bindingStatus !== 'active') return held('binding_revoked');
   if (state === null || state.effective === null) return held('policy_unknown');
   if (freshness.kind !== 'confirmed') return held('policy_unconfirmed');
 
@@ -106,7 +112,7 @@ export function evaluateAutomaticRelease(input: AutomaticReleaseInput): Automati
   }
   if (input.arrivedUnderPolicyVersion !== effective.version) return held('backlog');
   if (!Number.isSafeInteger(input.causal.depth) || input.causal.depth < 0
-    || input.causal.depth >= input.automation.maxCausalDepth) {
+    || input.causal.depth >= automation.maxCausalDepth) {
     return held('loop_limit');
   }
   if (!Number.isSafeInteger(input.budgetRemaining) || input.budgetRemaining < 1) return held('budget_exhausted');

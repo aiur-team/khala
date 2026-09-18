@@ -1,13 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   type ApprovalCommand, type CommandId, type EventRef, releaseFromApproval,
 } from '@khala/contracts/delivery/index';
 import { type AutomaticReleaseInput, evaluateAutomaticRelease } from './automatic';
 import {
-  AUTOMATION, ROOM, ack, binding, causalRoot, command, event, owner, releaseId, start,
-} from './fakes';
+  ROOM, ack, binding, causalRoot, command, event, owner, releaseId, start,
+} from '../../test/trust/fakes';
 import { applyPolicyAck, applyRebind, evaluatePolicyChange, trustView } from './transitions';
 import type { TrustState } from './types';
+
+// These tests exercise races as they will behave once G-AUTOMATION opens, using
+// example limits that are not approved values. `gate.test.ts` proves the real seam
+// keeps every `auto` request refused and every event held.
+vi.mock('./gate', async importOriginal => ({
+  ...await importOriginal<typeof import('./gate')>(),
+  approvedAutomation: () => ({ maxCausalDepth: 3 }),
+}));
 
 const id = (value: string) => value as CommandId;
 
@@ -15,7 +23,7 @@ function release(state: TrustState | null, overrides: Partial<AutomaticReleaseIn
   return evaluateAutomaticRelease({
     state,
     freshness: { kind: 'confirmed', policyVersion: state?.requested.version ?? 0, generation: state?.generation ?? 0 },
-    automation: AUTOMATION,
+    bindingStatus: 'active',
     binding: binding(state?.generation ?? 1),
     event: event(),
     arrivedUnderPolicyVersion: state?.effective?.version ?? 0,
@@ -49,8 +57,8 @@ const envelope = {
 
 describe('races', () => {
   it('cannot activate trust for a new generation when a rebind lands between request and ack', () => {
-    const requested = evaluatePolicyChange(start(), owner(), command(), AUTOMATION).state;
-    const rebound = applyRebind(requested, 2);
+    const requested = evaluatePolicyChange(start(), owner(), command(), 'active').state;
+    const rebound = applyRebind(requested, 2, 'active');
     if (!rebound.ok) throw new Error('rebind refused');
 
     // The connector acknowledges the old generation's request, and a forged copy
@@ -65,7 +73,7 @@ describe('races', () => {
   });
 
   it('holds on budget exhaustion without exposing content', () => {
-    const effective = applyPolicyAck(evaluatePolicyChange(start(), owner(), command(), AUTOMATION).state, ack()).state;
+    const effective = applyPolicyAck(evaluatePolicyChange(start(), owner(), command(), 'active').state, ack()).state;
     const first = release(effective, { budgetRemaining: 1 });
     expect(first).toMatchObject({ kind: 'release', budgetRemaining: 0 });
 
@@ -76,7 +84,7 @@ describe('races', () => {
   it('holds after a restart with missing policy until state is reconciled', () => {
     expect(release(null)).toEqual({ kind: 'held', reason: 'policy_unknown' });
     const reconnectedUnconfirmed = applyPolicyAck(
-      evaluatePolicyChange(start(), owner(), command(), AUTOMATION).state, ack(),
+      evaluatePolicyChange(start(), owner(), command(), 'active').state, ack(),
     ).state;
     expect(release(reconnectedUnconfirmed, { freshness: { kind: 'unconfirmed' } }))
       .toEqual({ kind: 'held', reason: 'policy_unconfirmed' });
@@ -84,8 +92,8 @@ describe('races', () => {
 
   it('two owner tabs racing on the same version: one wins, the other must refresh', () => {
     const state = start();
-    const tabA = evaluatePolicyChange(state, owner(), command({ commandId: id('tab_a'), mode: 'review', paused: true }), AUTOMATION);
-    const tabB = evaluatePolicyChange(tabA.state, owner(), command({ commandId: id('tab_b') }), AUTOMATION);
+    const tabA = evaluatePolicyChange(state, owner(), command({ commandId: id('tab_a'), mode: 'review', paused: true }), 'active');
+    const tabB = evaluatePolicyChange(tabA.state, owner(), command({ commandId: id('tab_b') }), 'active');
 
     expect(tabA.outcome.ok).toBe(true);
     expect(tabB.outcome).toEqual({ ok: false, code: 'stale_policy' });
@@ -97,7 +105,7 @@ describe('backlog is a separate explicit choice', () => {
   const backlog = [event('event_old_1'), event('event_old_2')];
 
   it('future-only activation releases nothing that was already pending', () => {
-    const effective = applyPolicyAck(evaluatePolicyChange(start(), owner(), command(), AUTOMATION).state, ack()).state;
+    const effective = applyPolicyAck(evaluatePolicyChange(start(), owner(), command(), 'active').state, ack()).state;
 
     for (const pending of backlog) {
       expect(release(effective, { event: pending, arrivedUnderPolicyVersion: 1 })).toEqual({ kind: 'held', reason: 'backlog' });
@@ -112,7 +120,7 @@ describe('backlog is a separate explicit choice', () => {
     expect(backlogRelease.ok).toBe(true);
     if (backlogRelease.ok) expect(backlogRelease.value.events).toEqual(backlog);
 
-    const activated = applyPolicyAck(evaluatePolicyChange(start(), owner(), command(), AUTOMATION).state, ack()).state;
+    const activated = applyPolicyAck(evaluatePolicyChange(start(), owner(), command(), 'active').state, ack()).state;
     const arriving = release(activated, { event: event('event_new') });
     expect(arriving).toMatchObject({ kind: 'release', spec: { events: [event('event_new')] } });
 
@@ -124,7 +132,7 @@ describe('backlog is a separate explicit choice', () => {
   });
 
   it('reports activation and backlog approval as two outcomes when the second fails', () => {
-    const activation = evaluatePolicyChange(start(), owner(), command(), AUTOMATION);
+    const activation = evaluatePolicyChange(start(), owner(), command(), 'active');
     const effective = applyPolicyAck(activation.state, ack()).state;
 
     // The backlog approval was reviewed against version 1; activation moved it to 2.

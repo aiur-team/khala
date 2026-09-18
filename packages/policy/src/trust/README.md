@@ -32,7 +32,13 @@ recalled.
   a newer one. If the connector really enforced an older request, it becomes effective
   while the newer request stays requested, because hiding it would overstate review.
 - `applyRebind` starts a new generation from a fresh review baseline with a bumped
-  version. Trust is never inherited, and acks for the old generation are ignored.
+  version. Trust is never inherited, and acks for the old generation are ignored. A
+  command accepted before the rebind and replayed after it is `stale_binding`, not a
+  success for the old generation.
+- Composition passes the binding's `BindingStatus` from the control plane. Revocation is
+  terminal: on a `revoked` binding every policy change, re-arm and rebind is refused
+  with `binding_revoked`, and automatic release holds. The control-plane disable
+  (KHA-128) is defense in depth, not the only guard.
 
 ## Automatic release
 
@@ -57,8 +63,15 @@ selection.
 ## G-AUTOMATION
 
 Budget, loop limit, human triggers and offline expectations are unresolved launch
-decisions. `AutomationConfig` has no default. Without an approved value from
-composition, `auto` requests are `automation_gated` and nothing is released
-automatically. The `maxCausalDepth` and budget values in the tests are examples, not
-approved limits. Real connector acknowledgment and reconnect behavior are proven by
-KHA-135 and KHA-138, not by these unit tests.
+decisions. While the gate is open, every `auto` request is refused as
+`automation_gated` and every event is held as `automation_gated`, whatever the caller
+passes. The single seam is `approvedAutomation()` in `gate.ts`, which returns `null`;
+the gate decision fills it in. No caller can supply limits and none have a default.
+
+The automatic-release rules above describe behavior once the gate opens. Their tests
+mock the seam with example limits that are not approved values; `gate.test.ts` checks
+the real seam. `budgetRemaining` is supplied by the caller and not bounded here: who
+owns and caps that ledger is part of the G-AUTOMATION design. Real connector
+acknowledgment and reconnect behavior are proven by KHA-135 and KHA-138, not by these
+unit tests. Test builders live in `packages/policy/test/trust/`, outside the exported
+and built `src/` tree.
