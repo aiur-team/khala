@@ -1,0 +1,82 @@
+# `@khala/messaging/browser-device`
+
+Browser encrypted device lifecycle (KHA-111). `createBrowserDeviceService` implements the
+`DevicePort` contract from `@khala/contracts/messaging` (KHA-105). It owns at most one live
+generation per service: one owner lock, one crypto store and one SDK client for one owner.
+
+Import from `@khala/messaging/browser-device/index`.
+
+## Injected seams
+
+No messaging SDK is imported here. G-SUBSTRATE is open, and Matrix is a candidate, not a
+selection. The substrate adapter plugs in through these seams:
+
+| Seam | Supplies | Browser adapter here |
+|---|---|---|
+| `IdentityPort` | Signed-in principal (KHA-110) | — |
+| `CredentialSource` | Substrate device ID, published key fingerprint, opaque credentials | — |
+| `CryptoStoreFactory` | Reserved persistent store, never an in-memory fallback | `createIndexedDbStoreFactory` |
+| `DeviceEngineFactory` | SDK client over that store; `open` is local-only, `start` goes online | — (substrate adapter) |
+| `IdentityMarkerStore` | Enrolled device ID and fingerprint, kept apart from the crypto store | `createIndexedDbMarkerStore` |
+| `OwnerLockProvider` | Browser-wide exclusive owner lock | `createWebLockProvider` (Web Locks) |
+
+A Matrix adapter maps onto these the same way KHA-141's `experiments/browser-crypto/src/lifecycle.ts`
+does: `initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: store.name })` in `open`,
+`getOwnDeviceKeys()` as the fingerprint source, and `startClient()` in `start`.
+
+## Lifecycle
+
+`new → initializing → ready`, with `failed`, `locked`, `lost` and `revoked` as the other
+outcomes. `ensureReady` returns:
+
+| Result | When |
+|---|---|
+| `ok(view)` | Any lifecycle outcome, including `failed`, `locked`, `lost` and `revoked` views |
+| `rejected('owner_mismatch')` | The signed-in principal is another owner |
+| `rejected('unsupported_environment')` | No exclusive browser lock exists; there is no unsafe fallback |
+| `unavailable()` | Identity unavailable, another tab kept the owner lock for the bounded wait (`lockWaitMs`, default 10 s), or a newer request superseded this one |
+| `outcome_unknown` | The caller aborted its wait; initialisation carries on |
+
+Rules:
+
+- Same-owner calls coalesce into one generation. `use()` queues behind in-flight
+  initialisation and refuses with `not_ready` otherwise. It never opens a client.
+- The engine opens, then its local identity is checked **before** `start`. A marker that
+  names this device with another fingerprint is `lost/storage_cleared`. Local keys that
+  differ from the server's published keys are `lost/key_material_missing`. The old device
+  ID is never reused with a new keyset, so replacement keys never leave the tab.
+- `lost` and `revoked` are sticky. Leaving `lost` takes `acceptLoss(ownerId)`, which the
+  approved recovery or re-enrolment flow (KHA-129/127) calls. It clears only the marker;
+  the next attempt still needs a device whose published keys match, in practice a newly
+  enrolled one.
+- If the marker cannot be written (for example on quota exhaustion), the result is
+  `failed/storage_unavailable`, never `ready`.
+- Expired sessions and sign-out go to `locked/signed_out`. Key material and the marker are
+  not deleted.
+- Ending a generation, whether by account switch, sign-out, expiry, revocation or `stop`,
+  first invalidates it. Then it runs `onEnd` projection wipes, then closes the engine, the
+  store and the lease in that order. Callbacks wrapped with `context.guard` and engine
+  `emit` calls from an ended generation are dropped. Revocation advances `generation`.
+
+A tab that cannot get the lock never reserves the store or opens a client. When the owning
+tab closes, the browser hands the lock to a waiting tab, which reopens the same persisted
+store. State is never cloned.
+
+## Tests
+
+- `pnpm --filter @khala/messaging test`: lifecycle, ownership and transition behaviour
+  against injected fakes. These prove module behaviour only.
+- `pnpm --filter @khala/messaging test:browser`: real Chromium with a persistent profile
+  across full browser-process restarts (distinct `SingletonLock` PIDs). Web Locks, IndexedDB
+  and the service are production code. The engine is a harness stand-in holding
+  non-extractable Web Crypto keys in the reserved store. The test covers restart
+  decryption, two-tab contention and handover, cleared crypto storage, and whole-profile
+  loss against published keys. It does not prove Matrix SDK behaviour; KHA-141 covers that
+  (`docs/evidence/browser-crypto.md`).
+
+## Limits
+
+Local browser storage does not resist malicious same-origin JavaScript. Clearing site
+data, storage eviction under quota pressure and service-worker updates can lose keys, and
+the service reports that as `lost`, never as recovered history. Browsers other than
+Chromium are not tested.
