@@ -14,6 +14,11 @@
     "./shell/theme": "./src/shell/theme.ts",
     "./shell/types": "./src/shell/types.ts",
     "./shell/shell.css": "./src/shell/shell.css",
+    "./features/create-chat/CreateChatScreen": "./src/features/create-chat/CreateChatScreen.tsx",
+    "./features/create-chat/controller": "./src/features/create-chat/controller.ts",
+    "./features/create-chat/model": "./src/features/create-chat/model.ts",
+    "./features/create-chat/ports": "./src/features/create-chat/ports.ts",
+    "./features/create-chat/create-chat.css": "./src/features/create-chat/create-chat.css",
     "./features/*": "./src/features/*.ts",
     "./composition/*": "./src/composition/*.ts"
   },
