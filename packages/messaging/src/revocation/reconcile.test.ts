@@ -87,6 +87,12 @@ describe('reconcileProtocol', () => {
     expect([retried.protocol, retried.protocolRefusal]).toEqual(['confirmed', null]);
   });
 
+  it('never acts on a superseded device', async () => {
+    const superseded: OperationRecord = { ...disabledDevice, protocol: 'superseded' };
+    expect(await reconcileProtocol(superseded, scripted([], []).protocol)).toBe(superseded);
+    expect([operationState(superseded), toStatus(superseded).retryable]).toEqual(['partial', false]);
+  });
+
   it('touches neither a binding nor a device whose disable has not landed', async () => {
     const sdk = scripted([], []);
     expect(await reconcileProtocol(disabledBinding, sdk.protocol)).toBe(disabledBinding);
@@ -99,9 +105,9 @@ describe('reconcileProtocol', () => {
 describe('endpoint acknowledgment', () => {
   const ack = { operationId: 'op_2', targetKind: 'binding' as const, targetId: binding, generation: 2 };
 
-  it('keeps an offline endpoint pending: partial, never complete', () => {
+  it('keeps an offline endpoint pending: partial, never complete, and not fixable by resubmitting', () => {
     const status = toStatus(disabledBinding);
-    expect([status.state, status.control, status.endpoint, status.retryable]).toEqual(['partial', 'disabled', 'pending', true]);
+    expect([status.state, status.control, status.endpoint, status.retryable]).toEqual(['partial', 'disabled', 'pending', false]);
     expect(toProgress(disabledBinding)?.state).toBe('partial');
   });
 
@@ -125,8 +131,9 @@ describe('endpoint acknowledgment', () => {
     expect(applyAcknowledgment(disabledBinding, { ...ack, operationId: 'op_other' }).outcome).toBe('ignored');
   });
 
-  it('ignores an acknowledgment before the disable is recorded', () => {
-    expect(applyAcknowledgment({ ...disabledBinding, control: 'pending' }, ack).outcome).toBe('ignored');
+  it('holds an acknowledgment that arrives before the disable is recorded as early, not ignored', () => {
+    expect(applyAcknowledgment({ ...disabledBinding, control: 'pending' }, ack).outcome).toBe('early');
+    expect(applyAcknowledgment({ ...disabledBinding, control: 'stale' }, ack).outcome).toBe('ignored');
   });
 
   it('needs both a confirmed protocol effect and an acknowledgment for a device', () => {

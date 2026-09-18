@@ -30,7 +30,8 @@ export interface ProtocolRevocationPort {
 }
 
 /**
- * Advances the protocol boundary by at most one removal request. Returns the record unchanged
+ * Advances the protocol boundary by at most one removal request. The caller has already checked
+ * that the target is still at its revoked generation. Returns the record unchanged
  * when nothing can be learned. Only a device whose control disable has landed is touched.
  */
 export async function reconcileProtocol(
@@ -39,7 +40,7 @@ export async function reconcileProtocol(
   options?: CallOptions,
 ): Promise<OperationRecord> {
   if (record.targetKind !== 'device' || record.control !== 'disabled') return record;
-  if (record.protocol === 'confirmed' || record.protocol === 'not_applicable') return record;
+  if (record.protocol === 'confirmed' || record.protocol === 'not_applicable' || record.protocol === 'superseded') return record;
   const deviceId = record.targetId;
   if (record.protocol === 'unknown') {
     const status = await protocol.deviceStatus(deviceId, options);
@@ -77,14 +78,17 @@ export type EndpointAcknowledgment = RevocationSubject & Readonly<{
   generation: number;
 }>;
 
+/** `ignored` is final: that acknowledgment can never apply to the operation. */
 export type AcknowledgmentOutcome = 'recorded' | 'duplicate' | 'ignored';
 
+/** `early`: the acknowledgment matches, but the disable is not journaled yet, so it can apply later. */
 export function applyAcknowledgment(
   record: OperationRecord,
   ack: EndpointAcknowledgment,
-): Readonly<{ outcome: AcknowledgmentOutcome; record: OperationRecord }> {
+): Readonly<{ outcome: AcknowledgmentOutcome | 'early'; record: OperationRecord }> {
   if (ack.operationId !== record.operationId || !sameSubject(record, ack) || ack.generation !== record.revokedGeneration
-    || record.control !== 'disabled') return { outcome: 'ignored', record };
+    || record.control === 'stale') return { outcome: 'ignored', record };
+  if (record.control === 'pending') return { outcome: 'early', record };
   if (record.endpoint === 'acknowledged') return { outcome: 'duplicate', record };
   return { outcome: 'recorded', record: { ...record, endpoint: 'acknowledged' } };
 }

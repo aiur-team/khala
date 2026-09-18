@@ -16,6 +16,7 @@ import {
 const alice = 'owner_alice' as OwnerId;
 const bob = 'owner_bob' as OwnerId;
 const laptop = 'device_laptop' as DeviceId;
+const bobPhone = 'device_bob_phone' as DeviceId;
 const binding = 'binding_claude_1' as BindingId;
 
 /** Faults are consumed one per call, in order. `ok` lets a call through. */
@@ -43,7 +44,9 @@ function memoryJournal() {
       if ((current?.revision ?? null) !== input.expectedRevision) return { kind: 'conflict', current: current as ControlRecord<T> | null };
       if (fault === 'lost_not_applied') return { kind: 'outcome_unknown', operationId: input.operationId };
       if (fault === 'lost_unresolvable') {
+        // Like a per-key provider, the store claims the write ID even though the write never lands.
         unresolvable.add(input.operationId);
+        writes.set(input.operationId, { key: input.key, value: input.next.value });
         return { kind: 'outcome_unknown', operationId: input.operationId };
       }
       revision += 1;
@@ -124,8 +127,9 @@ function world(owner: OwnerId = alice) {
   const control = memoryControl([
     { targetKind: 'device', targetId: laptop, ownerId: alice, generation: 3 },
     { targetKind: 'binding', targetId: binding, ownerId: alice, generation: 1 },
+    { targetKind: 'device', targetId: bobPhone, ownerId: bob, generation: 1 },
   ]);
-  const protocol = memoryProtocol([laptop]);
+  const protocol = memoryProtocol([laptop, bobPhone]);
   const service = (ownerId: OwnerId = owner) => createRevocationService({
     ownerId, journal: journal.store, targets: control.targets, control: control.control, protocol: protocol.protocol,
   });
@@ -183,13 +187,18 @@ describe('revoke idempotency', () => {
     expect(w.control.table.get(`binding:${binding}`)?.generation).toBe(1);
   });
 
-  it("refuses another owner's reuse of an operation ID and hides it from inspection", async () => {
+  it('scopes operation IDs per owner, so another owner can neither see nor occupy them', async () => {
     const w = world();
     await w.service.revoke(revokeLaptop);
     const other = w.serviceFor(bob);
-    expect(await other.revoke(revokeLaptop)).toEqual({ kind: 'rejected', code: 'operation_mismatch' });
+    expect(await other.revoke(revokeLaptop)).toEqual({ kind: 'rejected', code: 'forbidden' });
     expect(await other.inspect('op_1')).toEqual({ kind: 'rejected', code: 'not_found' });
     expect(await other.status('op_1')).toEqual({ kind: 'rejected', code: 'not_found' });
+    // Bob's own operation under the same ID is independent of Alice's.
+    const bobs = await other.revoke({ operationId: 'op_1', targetKind: 'device', targetId: bobPhone, expectedGeneration: 1 });
+    expect(bobs.kind === 'ok' && bobs.value.targetId).toBe(bobPhone);
+    const alices = await w.service.inspect('op_1');
+    expect(alices.kind === 'ok' && alices.value.targetId).toBe(laptop);
   });
 
   it('reports a failed target race the same way on every retry', async () => {
@@ -246,7 +255,8 @@ describe('journal before effect', () => {
     // The intent lands. The disable applies remotely, but its journal write fails.
     w.journal.faults.write.push('ok', 'unavailable');
     const result = await w.service.revoke(revokeLaptop);
-    expect(result.kind === 'ok' && result.value.state).toBe('propagating');
+    // Only the journaled state is reported, so revoke and inspect agree.
+    expect(result.kind === 'ok' && result.value.state).toBe('pending');
     expect(w.protocol.calls.remove).toBe(0);
     const inspected = await w.service.inspect('op_1');
     expect(inspected.kind === 'ok' && inspected.value.state).toBe('pending');
@@ -267,7 +277,8 @@ describe('journal before effect', () => {
 
   it('refuses to act on a journal record it cannot read', async () => {
     const w = world();
-    w.journal.records.set(journalKey('op_1'), { key: journalKey('op_1'), revision: 'rx', operationId: 'foreign', value: { v: 2 }, expiresAt: null });
+    const key = (await journalKey(alice, 'op_1'))!;
+    w.journal.records.set(key, { key, revision: 'rx', operationId: 'foreign', value: { v: 2 }, expiresAt: null });
     expect(await w.service.revoke(revokeLaptop)).toEqual({ kind: 'unavailable', retryable: true });
     expect(w.control.calls).toEqual([]);
   });
@@ -334,6 +345,66 @@ describe('reconciliation through the service', () => {
     expect(await w.service.acknowledge(ack)).toEqual({ kind: 'ok', value: 'duplicate' });
     const status = await w.service.status('op_2');
     expect(status.kind === 'ok' && [status.value.state, status.value.retryable]).toEqual(['completed', false]);
+  });
+
+  it('never reuses a journal write ID for different content after an unresolvable save', async () => {
+    const w = world();
+    // The removal response is lost and status is unreadable. Saving `unknown` is lost too,
+    // and the store keeps its claim on that write ID.
+    w.protocol.faults.remove.push('lost_applied');
+    w.protocol.faults.status.push('unavailable');
+    w.journal.faults.write.push('ok', 'ok', 'lost_unresolvable');
+    const first = await w.service.revoke(revokeLaptop);
+    expect(first.kind === 'ok' && first.value.state).toBe('propagating');
+    // The next pass learns the device is gone and saves different content at the same position.
+    const second = await w.service.revoke(revokeLaptop);
+    expect(second.kind === 'ok' && second.value.state).toBe('partial');
+    const status = await w.service.status('op_1');
+    expect(status.kind === 'ok' && status.value.protocol).toBe('confirmed');
+  });
+
+  it('does not remove a device that a replacement registered again under the same ID', async () => {
+    const w = world();
+    w.protocol.faults.remove.push('reauthentication_required');
+    const refused = await w.service.revoke(revokeLaptop);
+    expect(refused.kind === 'ok' && refused.value.state).toBe('partial');
+    // The laptop re-initialises as a new generation before the owner re-authenticates.
+    w.control.table.get(`device:${laptop}`)!.generation = 5;
+    const retried = await w.service.revoke(revokeLaptop);
+    expect(retried.kind === 'ok' && retried.value.state).toBe('partial');
+    expect(w.protocol.calls.remove).toBe(1);
+    expect(w.protocol.present.has(laptop)).toBe(true);
+    const status = await w.service.status('op_1');
+    expect(status.kind === 'ok' && [status.value.protocol, status.value.protocolRefusal, status.value.retryable])
+      .toEqual(['superseded', null, false]);
+  });
+
+  it('defers the protocol step while the target generation cannot be read', async () => {
+    const w = world();
+    const lookup = w.control.targets.lookup;
+    let calls = 0;
+    w.control.targets.lookup = async (subject, options?: CallOptions) => (++calls === 2 ? { kind: 'unavailable' } : lookup(subject, options));
+    const result = await w.service.revoke(revokeLaptop);
+    expect(result.kind === 'ok' && result.value.state).toBe('propagating');
+    expect(w.protocol.calls.remove).toBe(0);
+    const retried = await w.service.revoke(revokeLaptop);
+    expect(retried.kind === 'ok' && retried.value.state).toBe('partial');
+  });
+
+  it('asks an endpoint to resend an acknowledgment that arrives before the disable is journaled', async () => {
+    const w = world();
+    w.control.faults.push('unavailable');
+    await w.service.revoke(revokeBinding);
+    const ack = { operationId: 'op_2', targetKind: 'binding' as const, targetId: binding, generation: 2 };
+    expect(await w.service.acknowledge(ack)).toEqual({ kind: 'unavailable', retryable: true });
+    await w.service.revoke(revokeBinding);
+    expect(await w.service.acknowledge(ack)).toEqual({ kind: 'ok', value: 'recorded' });
+  });
+
+  it('keeps journal keys bounded for maximum-length identifiers', async () => {
+    const key = await journalKey('o'.repeat(512) as OwnerId, 'x'.repeat(512));
+    expect(key).toMatch(/^revocation\/[0-9a-f]{64}$/);
+    expect(await journalKey(alice, 'op_1')).not.toBe(await journalKey(bob, 'op_1'));
   });
 
   it('asks the endpoint to resend when its acknowledgment cannot be recorded', async () => {

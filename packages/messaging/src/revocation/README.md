@@ -14,10 +14,15 @@ Composition roots bind them (KHA-136).
 
 ## Operation
 
-`revoke` checks ownership and `expectedGeneration`, then records the intent under
-`revocation/<operationId>`. Only after that write is confirmed does it call anything
-remote. Resubmitting the same request resumes the operation. The same operation ID with
-another target, generation or owner returns `operation_mismatch`.
+`revoke` checks ownership and `expectedGeneration`, then records the intent. Only after
+that write is confirmed does it call anything remote. Operation IDs are scoped per owner:
+the journal key is `revocation/` plus the SHA-256 of `[ownerId, operationId]`, so the key
+stays within the identifier limit, and one owner can neither see nor occupy another's
+IDs. Resubmitting the same request resumes the operation. The same operation ID with
+another target or generation returns `operation_mismatch`. Each journal write's store
+operation ID names its position and its boundary values, so a lost write is never
+retried with different bytes. `revoke` reports only the journaled state, so it never
+reports more progress than `inspect` does.
 
 ```
 requested → local_disabled → protocol_pending → completed | partial | failed
@@ -28,16 +33,21 @@ Three boundaries are tracked and reported separately by `status`:
 - **control**: Khala has disabled the target (`pending`, `disabled`, or `stale` when the
   target moved on before the disable).
 - **protocol**: the SDK removed the device (`not_applicable` for a binding, `pending`,
-  `unknown`, `confirmed`, or `refused`). A lost response is resolved by reading status,
-  never by assuming the removal happened.
+  `unknown`, `confirmed`, `refused`, or `superseded`). A lost response is resolved by
+  reading status, never by assuming the removal happened.
 - **endpoint**: the endpoint acknowledged that it stopped. An offline endpoint stays
   `pending`, and the operation stays `partial`, not complete.
 
-The protocol step runs only after the disable is journaled. Acknowledgments must carry
-the revoked generation. Earlier generations, replacement targets and acknowledgments
-that arrive before the disable is journaled are ignored, so endpoints resend them until
-they get `recorded` or `duplicate`. A timeout is never reported as success: a lost write
-or response stays pending or `outcome_unknown`.
+The protocol step runs only after the disable is journaled, and only while the device is
+still at the generation this operation moved it to. If a replacement registered the
+device ID again, the operation becomes `superseded` and never removes the replacement.
+
+Acknowledgments must carry the revoked generation. One that arrives before the disable
+is journaled gets `unavailable`, and the endpoint resends it. `ignored` is final: an
+earlier generation, a replacement target, or an unknown operation. `retryable` is true
+only while resubmitting `revoke` could move a boundary. An operation waiting only on an
+endpoint is `partial` but not retryable. A timeout is never reported as success: a lost
+write or response stays pending or `outcome_unknown`.
 
 Contract mapping for `inspect`: `requested` → `pending`, `local_disabled` and
 `protocol_pending` → `propagating`, `partial` → `partial`, `completed` → `complete`. A

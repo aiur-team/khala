@@ -17,8 +17,11 @@ export type ControlBoundary = 'pending' | 'disabled' | 'stale';
  * - `pending`: not yet requested, or proven not to have landed. Retrying is safe.
  * - `unknown`: requested, but the response was lost and status could not be read.
  * - `refused`: the substrate refused. A human must act, for example by re-authenticating.
+ * - `superseded`: a replacement took the target's ID or generation before removal was confirmed.
+ *   The replacement has its own authority, so this operation never removes it and cannot confirm
+ *   the original device's exclusion.
  */
-export type ProtocolBoundary = 'not_applicable' | 'pending' | 'unknown' | 'confirmed' | 'refused';
+export type ProtocolBoundary = 'not_applicable' | 'pending' | 'unknown' | 'confirmed' | 'refused' | 'superseded';
 
 export type ProtocolRefusal = 'reauthentication_required' | 'forbidden';
 
@@ -64,7 +67,10 @@ export type RevocationStatus = RevocationSubject & Readonly<{
   protocol: ProtocolBoundary;
   protocolRefusal: ProtocolRefusal | null;
   endpoint: EndpointBoundary;
-  /** True while resubmitting the same request could still move a boundary forward. */
+  /**
+   * True while resubmitting the same request could still move a boundary forward. A `partial`
+   * operation that waits only on an endpoint's acknowledgment is not retryable, but it is still pending.
+   */
   retryable: boolean;
   limitations: readonly RevocationLimitation[];
 }>;
@@ -105,8 +111,19 @@ export function operationState(record: OperationRecord): OperationState {
   if (record.control === 'pending') return 'requested';
   if (record.protocol === 'pending') return 'local_disabled';
   if (record.protocol === 'unknown') return 'protocol_pending';
-  if (record.protocol === 'refused' || record.endpoint === 'pending') return 'partial';
+  if (record.protocol === 'refused' || record.protocol === 'superseded' || record.endpoint === 'pending') return 'partial';
   return 'completed';
+}
+
+/** True while resubmitting the request could move a boundary. An endpoint's acknowledgment is not something `revoke` can do. */
+function canRetry(record: OperationRecord): boolean {
+  return record.control === 'pending'
+    || (record.control === 'disabled' && ['pending', 'unknown', 'refused'].includes(record.protocol));
+}
+
+/** Compact, injective code of the boundary fields. It makes each journal write ID name its content. */
+export function boundaryCode(record: OperationRecord): string {
+  return [record.control, record.protocol, record.protocolRefusal ?? 'none', record.endpoint].join('.');
 }
 
 /**
@@ -148,7 +165,7 @@ export function toStatus(record: OperationRecord): RevocationStatus {
     protocol: record.protocol,
     protocolRefusal: record.protocolRefusal,
     endpoint: record.endpoint,
-    retryable: state !== 'completed' && state !== 'failed',
+    retryable: canRetry(record),
     limitations: limitationsOf(record),
   };
 }
@@ -158,7 +175,7 @@ export function encodeOperation(record: OperationRecord): JsonValue {
 }
 
 const CONTROL: readonly ControlBoundary[] = ['pending', 'disabled', 'stale'];
-const PROTOCOL: readonly ProtocolBoundary[] = ['not_applicable', 'pending', 'unknown', 'confirmed', 'refused'];
+const PROTOCOL: readonly ProtocolBoundary[] = ['not_applicable', 'pending', 'unknown', 'confirmed', 'refused', 'superseded'];
 const REFUSALS: readonly ProtocolRefusal[] = ['reauthentication_required', 'forbidden'];
 const ENDPOINT: readonly EndpointBoundary[] = ['pending', 'acknowledged'];
 const FIELDS = [
