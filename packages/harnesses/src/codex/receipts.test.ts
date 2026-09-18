@@ -17,11 +17,14 @@ function tracker() {
 }
 
 describe('receipt ids', () => {
-  it('are stable per release and kind and bounded in size', () => {
-    const long = 'r'.repeat(512);
-    expect(receiptIdFor(job().releaseId, 'completed')).toBe(receiptIdFor(job().releaseId, 'completed'));
-    expect(receiptIdFor(job().releaseId, 'completed')).not.toBe(receiptIdFor(job().releaseId, 'context_consumed'));
-    expect(receiptIdFor(job(long).releaseId, 'completed').length).toBeLessThan(80);
+  it('are stable per release, generation, kind and error code, and bounded in size', () => {
+    const id = (j = job(), kind: 'completed' | 'failed' = 'completed', code: 'timeout' | 'stale_binding' | null = null) =>
+      receiptIdFor(j, kind, code);
+    expect(id()).toBe(id());
+    expect(id()).not.toBe(receiptIdFor(job(), 'context_consumed'));
+    expect(id(job(), 'failed', 'timeout')).not.toBe(id(job(), 'failed', 'stale_binding'));
+    expect(id()).not.toBe(id(job('rel-b-7', binding({ generation: 1 }))));
+    expect(id(job('r'.repeat(512))).length).toBeLessThan(96);
   });
 });
 

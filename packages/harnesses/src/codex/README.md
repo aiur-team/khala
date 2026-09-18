@@ -48,7 +48,8 @@ same listener to receipts. Duplicate and out-of-order events yield each receipt 
 - **A lost reply is `outcome_unknown`.** So is a malformed or uncorrelated reply, or a
   port that throws mid-request. `reconcile` returning `null` means nothing was observed.
   It never authorizes another submit.
-- **Only the released bytes are sent.** They must be valid UTF-8 text within the limits.
+- **Only the released bytes are sent.** They must hash to the job's `payloadDigest`,
+  pass the codec, and be valid UTF-8 text within the limits.
   Nothing is prepended. The payload travels only in the request body: never in process
   arguments, receipts, endpoints, errors or logs.
 - **The durable native queue.** An entry still queued when the host exits is consumed

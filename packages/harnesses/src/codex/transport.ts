@@ -2,6 +2,7 @@
 // The payload travels only inside the `thread/queue/add` request body: never in
 // process arguments, receipts, logs or errors.
 
+import { createHash } from 'node:crypto';
 import {
   type DeliveryLimits, type DeliveryReceipt, type ReceiptErrorCode, type ReleasedJob,
   validatePayloadBytes,
@@ -41,6 +42,8 @@ export async function submitRelease(
 
   const bytes = validatePayloadBytes(payload, deps.limits);
   if (!bytes.ok) return failed(bytes.code === 'limit_exceeded' ? 'limit_exceeded' : 'payload_digest_mismatch');
+  const digest = `sha256:${createHash('sha256').update(bytes.value).digest('hex')}`;
+  if (digest !== job.payloadDigest) return failed('payload_digest_mismatch');
   let verdict: Awaited<ReturnType<ReleaseCodecPort['verify']>> | 'error';
   try {
     verdict = await deps.codec.verify(job, bytes.value);

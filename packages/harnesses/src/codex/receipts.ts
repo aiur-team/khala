@@ -25,15 +25,18 @@ export const EVIDENCE = {
   completed: 'codex:turn/completed',
 } as const;
 
-type Target = Readonly<{ releaseId: ReleaseId; binding: SessionBinding }>;
+export type Target = Readonly<{ releaseId: ReleaseId; binding: SessionBinding }>;
 
 /**
- * Same release and kind give the same ID, so a repeated observation deduplicates
- * downstream. The release ID is hashed to stay within the identifier limit.
+ * The same release, binding generation, kind and error code always give the same ID,
+ * across restarts, so a repeated observation deduplicates downstream. Hashing keeps it
+ * within the identifier limit.
  */
-export function receiptIdFor(releaseId: ReleaseId, kind: ReceiptKind): ReceiptId {
-  const digest = createHash('sha256').update(releaseId).digest('hex').slice(0, 32);
-  return `codex-${kind}-${digest}` as ReceiptId;
+export function receiptIdFor(target: Target, kind: ReceiptKind, errorCode: ReceiptErrorCode | null = null): ReceiptId {
+  const digest = createHash('sha256')
+    .update(JSON.stringify(['codex', target.binding.bindingId, target.binding.generation, target.releaseId, kind, errorCode]))
+    .digest('hex');
+  return `codex-receipt-${digest}` as ReceiptId;
 }
 
 export function makeReceipt(
@@ -44,7 +47,7 @@ export function makeReceipt(
 ): DeliveryReceipt {
   return {
     v: 1,
-    receiptId: receiptIdFor(target.releaseId, kind),
+    receiptId: receiptIdFor(target, kind, detail.errorCode ?? null),
     releaseId: target.releaseId,
     bindingId: target.binding.bindingId,
     generation: target.binding.generation,

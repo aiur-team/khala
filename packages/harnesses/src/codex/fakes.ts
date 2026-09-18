@@ -3,6 +3,7 @@
 // not deduplicate `clientUserMessageId`, and turns whose `userMessage.clientId`
 // carries it once the executor consumes an entry.
 
+import { createHash } from 'node:crypto';
 import {
   type DeliveryLimits, type DeliveryReceipt, type ReleasedJob, type SessionBinding, decodeApprovalCommand,
   decodeDeliveryLimits,
@@ -29,7 +30,12 @@ export function binding(overrides: Partial<Record<keyof SessionBinding, unknown>
   return decoded.value;
 }
 
-export function job(releaseId = 'rel-b-7', target: SessionBinding = binding()): ReleasedJob {
+export const PLAINTEXT = 'released text: the quarterly numbers look fine';
+export const payload = (text = PLAINTEXT) => new TextEncoder().encode(text);
+const payloadDigest = (bytes: Uint8Array) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+
+/** A verified release whose `payloadDigest` covers `bytes`. */
+export function job(releaseId = 'rel-b-7', target: SessionBinding = binding(), bytes = payload()): ReleasedJob {
   const event = {
     v: 1, roomId: 'room-1', eventId: 'event-a-7', authorParticipantId: 'agent-a', authorDeviceId: 'dev-a',
     contentDigest: digest('f'),
@@ -41,14 +47,11 @@ export function job(releaseId = 'rel-b-7', target: SessionBinding = binding()): 
   if (!approval.ok) throw new Error(`fixture approval: ${approval.field}`);
   const released = releaseFromApproval({
     approval: approval.value, items: approval.value.selection, binding: target, policyVersion: 3,
-    release: { releaseId, payloadRef: 'ledger-1', payloadDigest: digest('a'), causalRootId: 'event-a-7' },
+    release: { releaseId, payloadRef: 'ledger-1', payloadDigest: payloadDigest(bytes), causalRootId: 'event-a-7' },
   } as Parameters<typeof releaseFromApproval>[0]);
   if (!released.ok) throw new Error(`fixture release: ${released.code}`);
   return released.value;
 }
-
-export const PLAINTEXT = 'released text: the quarterly numbers look fine';
-export const payload = (text = PLAINTEXT) => new TextEncoder().encode(text);
 
 type Entry = { id: string; clientUserMessageId: string; text: string };
 type Turn = { id: string; status: TurnStatus; clientIds: (string | null)[] };

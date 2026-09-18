@@ -31,7 +31,7 @@ describe('submit: worked lifecycle', () => {
     expectValid(receipt);
     expect(receipt).toMatchObject({
       kind: 'harness_queued', releaseId: 'rel-b-7', bindingId: 'bind-b-1', generation: 0, source: 'harness',
-      errorCode: null, receiptId: receiptIdFor(job().releaseId, 'harness_queued'),
+      errorCode: null, receiptId: receiptIdFor(job(), 'harness_queued'),
     });
     const add = server.calls.filter(call => call.method === 'thread/queue/add');
     expect(add).toEqual([{
@@ -195,8 +195,16 @@ describe('submit: refusals before any send', () => {
 
   it('rejects bytes that are not UTF-8 text', async () => {
     const { harness, server } = setup();
-    expect(await harness.submit({ job: job(), payload: new Uint8Array([0xff, 0xfe]) }))
+    const bytes = new Uint8Array([0xff, 0xfe]);
+    expect(await harness.submit({ job: job('rel-b-7', binding(), bytes), payload: bytes }))
       .toMatchObject({ kind: 'failed', errorCode: 'harness_rejected' });
+    expect(server.opened).toBe(0);
+  });
+
+  it('rejects bytes that differ from the released digest, whatever the codec says', async () => {
+    const { harness, server } = setup();
+    expect(await harness.submit({ job: job(), payload: payload('released text, edited after approval') }))
+      .toMatchObject({ kind: 'failed', errorCode: 'payload_digest_mismatch' });
     expect(server.opened).toBe(0);
   });
 
