@@ -1,71 +1,113 @@
-// Reconciliation of the protocol and endpoint boundaries. Removal of a device and the
-// endpoint's acknowledgment are observed on their own. A lost response is resolved by
-// reading status, never by assuming that the removal happened.
+// Reconciliation of the protocol and endpoint boundaries. Device removal, session rotation
+// and the endpoint's acknowledgment are observed on their own. A lost response is resolved
+// by reading status, never by assuming that the removal happened.
 
 import type { CallOptions, DeviceId, RevocationSubject } from '@khala/contracts/messaging/index';
-import { type OperationRecord, type ProtocolRefusal, sameSubject } from './operation';
+import { type OperationRecord, type ProtocolRefusal, removalSettled, sameSubject } from './operation';
 
 /**
  * - `removed`: the substrate removed the device, or it was already absent.
+ * - `replaced`: a different device key is registered under the device ID. Nothing was removed.
  * - `refused`: the substrate declined, for example because it needs interactive re-authentication.
  * - `outcome_unknown`: the request may have landed. The caller reads status before believing either answer.
  * - `unavailable`: nothing was done.
  */
 export type DeviceRemovalResult =
-  | Readonly<{ kind: 'removed' }>
+  | Readonly<{ kind: 'removed' | 'replaced' }>
   | Readonly<{ kind: 'refused'; reason: ProtocolRefusal }>
   | Readonly<{ kind: 'outcome_unknown' }>
   | Readonly<{ kind: 'unavailable' }>;
 
-export type DeviceStatusResult = Readonly<{ kind: 'removed' | 'present' | 'unavailable' }>;
+/** `present` means the device ID is still registered with the expected key. */
+export type DeviceStatusResult = Readonly<{ kind: 'removed' | 'present' | 'replaced' | 'unavailable' }>;
+
+/** Rotation is idempotent, so a lost response is simply asked again. */
+export type SessionRotationResult = Readonly<{ kind: 'rotated' | 'outcome_unknown' | 'unavailable' }>;
+
+type ProtocolInput = Readonly<{ operationId: string; deviceId: DeviceId; deviceKey: string }>;
 
 /**
- * Messaging substrate operations, supplied by the selected SDK adapter. Removal must be
- * idempotent per operation ID. Removing a device excludes it from future key sharing only
- * as far as the SDK's sharing policy goes. It erases nothing the device already holds.
+ * Messaging substrate operations, supplied by the selected SDK adapter. Each is idempotent per
+ * operation ID. None of them erases anything the device already holds.
+ *
+ * Device identity is the key, not the ID. `removeDevice` removes the device ID only while it is
+ * registered with `deviceKey`, and it answers `replaced` otherwise. A generation or re-initialisation
+ * of the same key is therefore still removed, and a new key under a reused ID never is.
+ *
+ * Removal does not stop a device from decrypting a session it was already given. Only
+ * `rotateSessions` excludes it from future events: it discards every outbound session that the
+ * adapter's senders shared with `deviceKey`, so the next send starts a session shared only with
+ * the devices still allowed.
+ *
+ * Ordering: from the first protocol call for an operation until `rotateSessions` for that
+ * operation returns `rotated`, the adapter sends nothing on an outbound session shared with
+ * `deviceKey`. A send in an affected room waits for the rotation. A `refused` removal changed
+ * nothing, so it lifts the hold until the next attempt.
  */
 export interface ProtocolRevocationPort {
-  removeDevice(input: Readonly<{ operationId: string; deviceId: DeviceId }>, options?: CallOptions): Promise<DeviceRemovalResult>;
-  deviceStatus(deviceId: DeviceId, options?: CallOptions): Promise<DeviceStatusResult>;
+  removeDevice(input: ProtocolInput, options?: CallOptions): Promise<DeviceRemovalResult>;
+  deviceStatus(input: ProtocolInput, options?: CallOptions): Promise<DeviceStatusResult>;
+  rotateSessions(input: ProtocolInput, options?: CallOptions): Promise<SessionRotationResult>;
+}
+
+function protocolInput(record: OperationRecord): ProtocolInput {
+  return { operationId: record.operationId, deviceId: record.deviceId, deviceKey: record.deviceKey };
 }
 
 /**
- * Advances the protocol boundary by at most one removal request. The caller has already checked
- * that the target is still at its revoked generation. Returns the record unchanged
- * when nothing can be learned. Only a device whose control disable has landed is touched.
+ * Advances removal by at most one removal request. Returns the record unchanged when nothing can
+ * be learned. Only an operation whose control disable has landed is touched.
  */
-export async function reconcileProtocol(
+export async function reconcileRemoval(
   record: OperationRecord,
   protocol: ProtocolRevocationPort,
   options?: CallOptions,
 ): Promise<OperationRecord> {
-  if (record.targetKind !== 'device' || record.control !== 'disabled') return record;
-  if (record.protocol === 'confirmed' || record.protocol === 'not_applicable' || record.protocol === 'superseded') return record;
-  const deviceId = record.targetId;
-  if (record.protocol === 'unknown') {
-    const status = await protocol.deviceStatus(deviceId, options);
-    if (status.kind === 'removed') return withProtocol(record, 'confirmed', null);
+  if (record.control !== 'disabled' || removalSettled(record)) return record;
+  const input = protocolInput(record);
+  if (record.removal === 'unknown') {
+    const status = await protocol.deviceStatus(input, options);
+    if (status.kind === 'removed') return withRemoval(record, 'removed', null);
+    if (status.kind === 'replaced') return withRemoval(record, 'superseded', null);
     if (status.kind === 'unavailable') return record;
   }
-  const result = await protocol.removeDevice({ operationId: record.operationId, deviceId }, options);
+  const result = await protocol.removeDevice(input, options);
   switch (result.kind) {
     case 'removed':
-      return withProtocol(record, 'confirmed', null);
+      return withRemoval(record, 'removed', null);
+    case 'replaced':
+      return withRemoval(record, 'superseded', null);
     case 'refused':
-      return withProtocol(record, 'refused', result.reason);
+      return withRemoval(record, 'refused', result.reason);
     case 'unavailable':
       return record;
     case 'outcome_unknown': {
-      const status = await protocol.deviceStatus(deviceId, options);
-      if (status.kind === 'removed') return withProtocol(record, 'confirmed', null);
+      const status = await protocol.deviceStatus(input, options);
+      if (status.kind === 'removed') return withRemoval(record, 'removed', null);
+      if (status.kind === 'replaced') return withRemoval(record, 'superseded', null);
       // A device that is still present has not been removed yet, so asking again is safe.
-      return withProtocol(record, status.kind === 'present' ? 'pending' : 'unknown', null);
+      return withRemoval(record, status.kind === 'present' ? 'pending' : 'unknown', null);
     }
   }
 }
 
-function withProtocol(record: OperationRecord, protocol: 'pending' | 'unknown' | 'confirmed' | 'refused', protocolRefusal: ProtocolRefusal | null): OperationRecord {
-  return { ...record, protocol, protocolRefusal };
+/** Rotates once removal has settled. Returns the record unchanged until the adapter confirms. */
+export async function reconcileRotation(
+  record: OperationRecord,
+  protocol: ProtocolRevocationPort,
+  options?: CallOptions,
+): Promise<OperationRecord> {
+  if (record.control !== 'disabled' || !removalSettled(record) || record.rotation === 'rotated') return record;
+  const result = await protocol.rotateSessions(protocolInput(record), options);
+  return result.kind === 'rotated' ? { ...record, rotation: 'rotated' } : record;
+}
+
+function withRemoval(
+  record: OperationRecord,
+  removal: 'pending' | 'unknown' | 'removed' | 'refused' | 'superseded',
+  removalRefusal: ProtocolRefusal | null,
+): OperationRecord {
+  return { ...record, removal, removalRefusal };
 }
 
 /**

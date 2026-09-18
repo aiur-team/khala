@@ -1,6 +1,7 @@
 // Durable revocation operation record. Each boundary is tracked on its own, so that
-// Khala's control disable, the messaging protocol effect and the endpoint's
-// acknowledgment are never reported as a single "revoked" flag.
+// Khala's control disable, the agent's adapter capability, the messaging device removal,
+// the outbound session rotation and the endpoint's acknowledgment are never reported as a
+// single "revoked" flag.
 
 import type {
   BindingId, DeviceId, JsonValue, OwnerId, RevocationProgress, RevocationRequest, RevocationSubject,
@@ -10,20 +11,31 @@ import type {
 export type ControlBoundary = 'pending' | 'disabled' | 'stale';
 
 /**
- * The protocol effect is the SDK removal of a device, which excludes it from future key
- * sharing. It is `not_applicable` to a binding: revoking a binding changes neither the
- * messaging account nor room membership.
+ * The agent's adapter capability for a binding: every adapter token issued for it. `revoked`
+ * means none of them is accepted any more. A device has no adapter capability.
+ */
+export type CapabilityBoundary = 'not_applicable' | 'pending' | 'revoked';
+
+/**
+ * Removal of the messaging device: the target device, or the agent's own device for a binding.
  *
  * - `pending`: not yet requested, or proven not to have landed. Retrying is safe.
  * - `unknown`: requested, but the response was lost and status could not be read.
+ * - `removed`: the substrate no longer lists the device.
  * - `refused`: the substrate refused. A human must act, for example by re-authenticating.
- * - `superseded`: a replacement took the target's ID or generation before removal was confirmed.
- *   The replacement has its own authority, so this operation never removes it and cannot confirm
- *   the original device's exclusion.
+ * - `superseded`: a different device key now holds the device ID. That replacement has its
+ *   own authority, so this operation never removes it and cannot confirm the removal itself.
  */
-export type ProtocolBoundary = 'not_applicable' | 'pending' | 'unknown' | 'confirmed' | 'refused' | 'superseded';
+export type RemovalBoundary = 'pending' | 'unknown' | 'removed' | 'refused' | 'superseded';
 
 export type ProtocolRefusal = 'reauthentication_required' | 'forbidden';
+
+/**
+ * Rotation of every outbound session shared with the device key. Removal alone does not
+ * exclude a device from a session it already holds, so a device is excluded from future
+ * events only once this is `rotated`.
+ */
+export type RotationBoundary = 'pending' | 'rotated';
 
 /** Only an acknowledgment from the endpoint proves it stopped. An offline endpoint stays `pending`. */
 export type EndpointBoundary = 'pending' | 'acknowledged';
@@ -40,19 +52,23 @@ export type RevocationLimitation =
   | 'disclosed_content_not_recalled'
   | 'retained_keys_not_recalled'
   | 'other_devices_unaffected'
-  | 'device_keys_unchanged'
   | 'account_and_membership_unchanged';
 
 export type OperationRecord = RevocationSubject & Readonly<{
-  v: 1;
+  v: 2;
   operationId: string;
   ownerId: OwnerId;
   expectedGeneration: number;
   /** Generation the target moves to. Callbacks that carry any other generation are ignored. */
   revokedGeneration: number;
+  /** Messaging device this operation excludes, and its identity key, both captured with the intent. */
+  deviceId: DeviceId;
+  deviceKey: string;
   control: ControlBoundary;
-  protocol: ProtocolBoundary;
-  protocolRefusal: ProtocolRefusal | null;
+  capability: CapabilityBoundary;
+  removal: RemovalBoundary;
+  removalRefusal: ProtocolRefusal | null;
+  rotation: RotationBoundary;
   endpoint: EndpointBoundary;
   /** Count of journal writes for this operation. Each write gets its own store operation ID. */
   seq: number;
@@ -63,9 +79,12 @@ export type RevocationStatus = RevocationSubject & Readonly<{
   operationId: string;
   state: OperationState;
   generation: number;
+  deviceId: DeviceId;
   control: ControlBoundary;
-  protocol: ProtocolBoundary;
-  protocolRefusal: ProtocolRefusal | null;
+  capability: CapabilityBoundary;
+  removal: RemovalBoundary;
+  removalRefusal: ProtocolRefusal | null;
+  rotation: RotationBoundary;
   endpoint: EndpointBoundary;
   /**
    * True while resubmitting the same request could still move a boundary forward. A `partial`
@@ -75,17 +94,23 @@ export type RevocationStatus = RevocationSubject & Readonly<{
   limitations: readonly RevocationLimitation[];
 }>;
 
-export function newOperation(ownerId: OwnerId, request: RevocationRequest): OperationRecord {
+export type ExcludedDevice = Readonly<{ deviceId: DeviceId; deviceKey: string }>;
+
+export function newOperation(ownerId: OwnerId, request: RevocationRequest, device: ExcludedDevice): OperationRecord {
   return {
-    v: 1,
+    v: 2,
     operationId: request.operationId,
     ownerId,
     ...subjectOf(request),
     expectedGeneration: request.expectedGeneration,
     revokedGeneration: request.expectedGeneration + 1,
+    deviceId: device.deviceId,
+    deviceKey: device.deviceKey,
     control: 'pending',
-    protocol: request.targetKind === 'device' ? 'pending' : 'not_applicable',
-    protocolRefusal: null,
+    capability: request.targetKind === 'binding' ? 'pending' : 'not_applicable',
+    removal: 'pending',
+    removalRefusal: null,
+    rotation: 'pending',
     endpoint: 'pending',
     seq: 0,
   };
@@ -106,30 +131,39 @@ export function sameIntent(record: OperationRecord, ownerId: OwnerId, request: R
   return record.ownerId === ownerId && sameSubject(record, request) && record.expectedGeneration === request.expectedGeneration;
 }
 
+/** Removal reached an end state from which the sessions can be rotated. */
+export function removalSettled(record: OperationRecord): boolean {
+  return record.removal === 'removed' || record.removal === 'superseded';
+}
+
 export function operationState(record: OperationRecord): OperationState {
   if (record.control === 'stale') return 'failed';
   if (record.control === 'pending') return 'requested';
-  if (record.protocol === 'pending') return 'local_disabled';
-  if (record.protocol === 'unknown') return 'protocol_pending';
-  if (record.protocol === 'refused' || record.protocol === 'superseded' || record.endpoint === 'pending') return 'partial';
+  if (record.capability === 'pending' || record.removal === 'pending') return 'local_disabled';
+  if (record.removal === 'unknown' || (removalSettled(record) && record.rotation === 'pending')) return 'protocol_pending';
+  // Removing the agent from its rooms is a separate capability, so a binding never completes here.
+  if (record.removal !== 'removed' || record.endpoint === 'pending' || record.targetKind === 'binding') return 'partial';
   return 'completed';
 }
 
 /** True while resubmitting the request could move a boundary. An endpoint's acknowledgment is not something `revoke` can do. */
 function canRetry(record: OperationRecord): boolean {
-  return record.control === 'pending'
-    || (record.control === 'disabled' && ['pending', 'unknown', 'refused'].includes(record.protocol));
+  if (record.control === 'pending') return true;
+  if (record.control !== 'disabled') return false;
+  return record.capability === 'pending'
+    || ['pending', 'unknown', 'refused'].includes(record.removal)
+    || (removalSettled(record) && record.rotation === 'pending');
 }
 
 /** Compact, injective code of the boundary fields. It makes each journal write ID name its content. */
 export function boundaryCode(record: OperationRecord): string {
-  return [record.control, record.protocol, record.protocolRefusal ?? 'none', record.endpoint].join('.');
+  return [record.control, record.capability, record.removal, record.removalRefusal ?? 'none', record.rotation, record.endpoint].join('.');
 }
 
 /**
  * Maps onto the contract's coarser states. `partial` means some effects landed and the rest
  * are waiting on something this service cannot do by itself: an offline endpoint's
- * acknowledgment, or a human answering a protocol refusal.
+ * acknowledgment, a human answering a protocol refusal, or room-membership removal.
  *
  * A `failed` operation has no progress: it was refused before any effect, and it never
  * became a revocation.
@@ -151,19 +185,21 @@ export function toProgress(record: OperationRecord): RevocationProgress | null {
 export function limitationsOf(subject: RevocationSubject): readonly RevocationLimitation[] {
   return subject.targetKind === 'device'
     ? ['disclosed_content_not_recalled', 'retained_keys_not_recalled', 'other_devices_unaffected']
-    : ['disclosed_content_not_recalled', 'device_keys_unchanged', 'account_and_membership_unchanged'];
+    : ['disclosed_content_not_recalled', 'retained_keys_not_recalled', 'account_and_membership_unchanged'];
 }
 
 export function toStatus(record: OperationRecord): RevocationStatus {
-  const state = operationState(record);
   return {
     operationId: record.operationId,
     ...subjectOf(record),
-    state,
+    state: operationState(record),
     generation: record.revokedGeneration,
+    deviceId: record.deviceId,
     control: record.control,
-    protocol: record.protocol,
-    protocolRefusal: record.protocolRefusal,
+    capability: record.capability,
+    removal: record.removal,
+    removalRefusal: record.removalRefusal,
+    rotation: record.rotation,
     endpoint: record.endpoint,
     retryable: canRetry(record),
     limitations: limitationsOf(record),
@@ -175,12 +211,14 @@ export function encodeOperation(record: OperationRecord): JsonValue {
 }
 
 const CONTROL: readonly ControlBoundary[] = ['pending', 'disabled', 'stale'];
-const PROTOCOL: readonly ProtocolBoundary[] = ['not_applicable', 'pending', 'unknown', 'confirmed', 'refused', 'superseded'];
+const CAPABILITY: readonly CapabilityBoundary[] = ['not_applicable', 'pending', 'revoked'];
+const REMOVAL: readonly RemovalBoundary[] = ['pending', 'unknown', 'removed', 'refused', 'superseded'];
 const REFUSALS: readonly ProtocolRefusal[] = ['reauthentication_required', 'forbidden'];
+const ROTATION: readonly RotationBoundary[] = ['pending', 'rotated'];
 const ENDPOINT: readonly EndpointBoundary[] = ['pending', 'acknowledged'];
 const FIELDS = [
-  'v', 'operationId', 'ownerId', 'targetKind', 'targetId', 'expectedGeneration', 'revokedGeneration',
-  'control', 'protocol', 'protocolRefusal', 'endpoint', 'seq',
+  'v', 'operationId', 'ownerId', 'targetKind', 'targetId', 'expectedGeneration', 'revokedGeneration', 'deviceId',
+  'deviceKey', 'control', 'capability', 'removal', 'removalRefusal', 'rotation', 'endpoint', 'seq',
 ];
 
 /**
@@ -198,25 +236,31 @@ export function decodeOperation(value: JsonValue): OperationRecord | null {
   const operationId = text('operationId');
   const ownerId = text('ownerId');
   const targetId = text('targetId');
+  const deviceId = text('deviceId');
+  const deviceKey = text('deviceKey');
   const targetKind = oneOf('targetKind', ['device', 'binding'] as const);
   const expectedGeneration = count('expectedGeneration');
   const revokedGeneration = count('revokedGeneration');
   const control = oneOf('control', CONTROL);
-  const protocol = oneOf('protocol', PROTOCOL);
+  const capability = oneOf('capability', CAPABILITY);
+  const removal = oneOf('removal', REMOVAL);
+  const rotation = oneOf('rotation', ROTATION);
   const endpoint = oneOf('endpoint', ENDPOINT);
   const seq = count('seq');
-  const protocolRefusal = r.protocolRefusal === null ? null : oneOf('protocolRefusal', REFUSALS);
-  if (r.v !== 1 || operationId === null || ownerId === null || targetId === null || targetKind === null
+  const removalRefusal = r.removalRefusal === null ? null : oneOf('removalRefusal', REFUSALS);
+  if (r.v !== 2 || operationId === null || ownerId === null || targetId === null || targetKind === null
+    || deviceId === null || deviceKey === null || (targetKind === 'device' && deviceId !== targetId)
     || expectedGeneration === null || revokedGeneration !== expectedGeneration + 1
-    || control === null || protocol === null || endpoint === null || seq === null
-    || (r.protocolRefusal !== null && protocolRefusal === null)
-    || (protocol === 'refused') !== (protocolRefusal !== null)
-    || (targetKind === 'binding') !== (protocol === 'not_applicable')) return null;
+    || control === null || capability === null || removal === null || rotation === null || endpoint === null || seq === null
+    || (r.removalRefusal !== null && removalRefusal === null)
+    || (removal === 'refused') !== (removalRefusal !== null)
+    || (rotation === 'rotated' && removal !== 'removed' && removal !== 'superseded')
+    || (targetKind === 'binding') === (capability === 'not_applicable')) return null;
   const subject: RevocationSubject = targetKind === 'device'
     ? { targetKind, targetId: targetId as DeviceId }
     : { targetKind, targetId: targetId as BindingId };
   return {
-    v: 1, operationId, ownerId: ownerId as OwnerId, ...subject, expectedGeneration, revokedGeneration,
-    control, protocol, protocolRefusal, endpoint, seq,
+    v: 2, operationId, ownerId: ownerId as OwnerId, ...subject, expectedGeneration, revokedGeneration,
+    deviceId: deviceId as DeviceId, deviceKey, control, capability, removal, removalRefusal, rotation, endpoint, seq,
   };
 }
