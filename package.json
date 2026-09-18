@@ -12,7 +12,8 @@
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "test": "node --test scripts/*.test.mjs && node --test 'infra/**/*.test.ts' && pnpm -r test",
     "test:integration": "playwright test --config tests/integration/playwright.config.ts",
-    "build": "pnpm check:boundaries && pnpm -r build"
+    "build": "pnpm check:boundaries && pnpm -r build",
+    "test:browser": "pnpm -r --if-present test:browser"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

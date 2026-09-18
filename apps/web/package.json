@@ -4,17 +4,35 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./brand/*": "./src/brand/*.ts",
-    "./shell/*": "./src/shell/*.ts",
+    "./brand/tokens.css": "./src/brand/tokens.css",
+    "./brand/fonts.css": "./src/brand/fonts.css",
+    "./brand/fonts/*": "./src/brand/fonts/*",
+    "./shell/AiurShell": "./src/shell/AiurShell.tsx",
+    "./shell/KhalaPageFrame": "./src/shell/KhalaPageFrame.tsx",
+    "./shell/Panel": "./src/shell/Panel.tsx",
+    "./shell/StatusBadge": "./src/shell/StatusBadge.tsx",
+    "./shell/theme": "./src/shell/theme.ts",
+    "./shell/types": "./src/shell/types.ts",
+    "./shell/shell.css": "./src/shell/shell.css",
     "./features/*": "./src/features/*.ts",
     "./composition/*": "./src/composition/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
-    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+    "test": "vitest run --config ../../vitest.config.ts",
+    "test:browser": "node --import tsx --test src/shell/shell.browser.spec.ts"
   },
   "dependencies": {
-    "@khala/contracts": "workspace:*"
+    "@khala/contracts": "workspace:*",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tsx": "4.20.6",
+    "vite": "7.3.6"
   }
 }
