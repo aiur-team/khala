@@ -20,9 +20,14 @@ function digestFor(body: string): string {
 
 type ReviewHarness = {
   pushLiveArrival: (body: string) => void;
+  pushOutcomeUnknownTarget: () => void;
   editPending: (eventId: string, body: string) => void;
   bumpBindingGeneration: () => void;
   revoke: () => void;
+  goUnavailable: () => void;
+  restoreReady: () => void;
+  goLoading: () => void;
+  finishLoading: () => void;
   getLastCommand: () => ApprovalCommand | null;
 };
 
@@ -127,6 +132,9 @@ test('Review renders full inert preview, keeps selection exact across arrivals, 
     await page.evaluate(() => window.__reviewHarness.revoke());
     await page.getByText('no longer have authority').waitFor();
     assert.equal(await page.getByRole('button', { name: /^Release/ }).isDisabled(), true, 'submission is disabled once access is revoked');
+    // The protected preview itself is gone, not merely covered by the banner.
+    assert.equal(await page.getByText('a brand new pending message').count(), 0, 'a live-arrived body is gone once access is revoked');
+    assert.equal(await page.getByText('Draft reply queued for your approval.').count(), 0, 'a still-pending body is gone once access is revoked');
   });
 });
 
@@ -146,6 +154,34 @@ test('Hiding a selected item deselects it, so Release can never deliver a row th
     await selectedCount.filter({ hasText: '0 selected' }).waitFor();
     const releaseButton = page.getByRole('button', { name: /^Release$/ });
     assert.equal(await releaseButton.isDisabled(), true, 'nothing remains selected once the only selected row is hidden');
+  });
+});
+
+test('hiding a selected item actually deselects it, isolated from the visible-count guard that would otherwise mask a missing deselection', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    // Select two items, then hide only one. If hiding merely hid the row
+    // without calling through to deselect it (the visibility guard in
+    // `ReviewScreen` — `visibleSelectedRefs.length === selection.refs.length`
+    // — would still zero out the *displayed* count and disable Release for a
+    // single selected+hidden item, masking a missing deselection), Release
+    // would stay stuck disabled here too: the underlying selection would
+    // still carry both refs while only one row remains visible. Only a real
+    // deselection lets the count and Release re-agree on the one item left.
+    const selectedCount = page.locator('.review__count');
+    const firstCheckbox = page.locator('[data-event-id="pending_1"] input[type="checkbox"]');
+    const secondCheckbox = page.locator('[data-event-id="pending_2"] input[type="checkbox"]');
+    await firstCheckbox.check();
+    await secondCheckbox.check();
+    await selectedCount.filter({ hasText: '2 selected' }).waitFor();
+
+    const hideSecond = page.locator('[data-event-id="pending_2"] button.review__hide');
+    await hideSecond.click();
+    await page.getByText('Approve the fix for the review queue bug').waitFor({ state: 'detached' });
+
+    await selectedCount.filter({ hasText: '1 selected' }).waitFor();
+    const releaseButton = page.getByRole('button', { name: /^Release 1 selected$/ });
+    assert.equal(await releaseButton.isDisabled(), false, 'Release re-enables for the one real deselection actually removed the hidden ref from the selection');
+    assert.equal(await firstCheckbox.isChecked(), true, 'the still-visible, still-selected item is untouched by hiding the other one');
   });
 });
 
@@ -182,12 +218,119 @@ test('AE1: a binding generation change marks a captured selection stale end to e
   });
 });
 
+test('R1: an agent-authored row is labeled per-owner, following the #72 attribution rules', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    await page.locator('[data-event-id="pending_3"]').getByText('Your agent', { exact: true }).waitFor();
+    await page.locator('[data-event-id="pending_4"]').getByText("Another person's agent", { exact: true }).waitFor();
+    // Cross-check each row for the *wrong* label too: an inverted ownership
+    // comparison would still make both labels appear somewhere on the page,
+    // just swapped onto the wrong rows.
+    assert.equal(
+      await page.locator('[data-event-id="pending_3"]').getByText("Another person's agent", { exact: true }).count(),
+      0,
+      "the viewer's own agent row never also carries the other-owner label",
+    );
+    assert.equal(
+      await page.locator('[data-event-id="pending_4"]').getByText('Your agent', { exact: true }).count(),
+      0,
+      "another owner's agent row never carries the viewer-owned label",
+    );
+  });
+});
+
+test('U2/KTD4: Hide is disabled on every row while a submission is in flight or unresolved', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    await page.evaluate(() => window.__reviewHarness.pushOutcomeUnknownTarget());
+    const targetCheckbox = page.locator('[data-event-id="outcome_unknown_target"] input[type="checkbox"]');
+    await targetCheckbox.waitFor();
+    await targetCheckbox.check();
+    await page.getByRole('button', { name: /^Release 1 selected$/ }).click();
+    await page.getByText('Release status unknown').waitFor();
+
+    // Hiding the submitted row now would leave its ref selected-but-invisible
+    // with no way back short of a full Reselect — the exact wedge this
+    // guards against — so Hide is disabled here, on every row, not just the
+    // submitted one.
+    const hideOnTarget = page.locator('[data-event-id="outcome_unknown_target"] button.review__hide');
+    const hideOnOther = page.locator('[data-event-id="pending_1"] button.review__hide');
+    assert.equal(await hideOnTarget.isDisabled(), true, 'Hide is disabled on the submitted row while unresolved');
+    assert.equal(await hideOnOther.isDisabled(), true, 'Hide is disabled on other rows too while any submission is unresolved');
+  });
+});
+
+test('a selected row hidden while access is unavailable cannot wedge Release: Reselect appears once access recovers', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    // `toggleSelect` is a no-op whenever access isn't `ready` (`controller.ts`),
+    // not only during a submission — so Hide (only ever disabled during a
+    // submission) can hide a selected row while access is `unavailable`
+    // without the controller ever deselecting it underneath.
+    const firstCheckbox = page.locator('[data-event-id="pending_1"] input[type="checkbox"]');
+    const secondCheckbox = page.locator('[data-event-id="pending_2"] input[type="checkbox"]');
+    await firstCheckbox.check();
+    await secondCheckbox.check();
+    await page.locator('.review__count').filter({ hasText: '2 selected' }).waitFor();
+
+    await page.evaluate(() => window.__reviewHarness.goUnavailable());
+    await page.getByText('Pending messages are unavailable right now.').waitFor();
+
+    const hideSecond = page.locator('[data-event-id="pending_2"] button.review__hide');
+    await hideSecond.click();
+
+    await page.evaluate(() => window.__reviewHarness.restoreReady());
+    await page.getByText('Pending messages are unavailable right now.').waitFor({ state: 'detached' });
+
+    // Without the fix: header reads "1 selected", Release stays disabled at
+    // that count, and no Reselect button ever appears — a wedge with no way
+    // out short of reloading. With the fix, the desync itself is surfaced.
+    await page.getByRole('button', { name: 'Reselect' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: /^Release/ }).isDisabled(), true, 'Release stays disabled while the selection is desynced from what is visible');
+
+    await page.getByRole('button', { name: 'Reselect' }).click();
+    await page.getByText('changed underneath you').waitFor({ state: 'detached' });
+    assert.equal(await firstCheckbox.isChecked(), false, 'Reselect clears the desynced selection entirely, including the still-visible row');
+  });
+});
+
+test('recovering into `ready` never announces its own repopulation as a live arrival', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    await page.evaluate(() => window.__reviewHarness.goLoading());
+    await page.getByText('Loading pending messages…').waitFor();
+    assert.equal(await page.getByText('Please forward the deployment summary').count(), 0, 'pending items are gone while loading');
+
+    await page.evaluate(() => window.__reviewHarness.finishLoading());
+    await page.getByText('Please forward the deployment summary').waitFor();
+
+    // The same transition that must never announce here (recovering into
+    // `ready`) must still announce a later live arrival while `ready` — see
+    // "U4-2: a live arrival into a queue that has drained to empty" below.
+    assert.equal(await page.locator('.review__sr-only').innerText(), '', 'repopulating pending on the loading-to-ready transition is never announced as an arrival');
+  });
+});
+
+test('U4-2: a live arrival into a queue that has drained to empty is still announced', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    // Select and release every initial pending item so the underlying
+    // pending set genuinely reaches zero, not just what's locally hidden —
+    // the announcement effect tracks `view.pending.length` directly.
+    for (const eventId of ['pending_1', 'pending_2', 'pending_3', 'pending_4']) {
+      await page.locator(`[data-event-id="${eventId}"] input[type="checkbox"]`).check();
+    }
+    await page.locator('.review__count').filter({ hasText: '4 selected' }).waitFor();
+    await page.getByRole('button', { name: /^Release 4 selected$/ }).click();
+    await page.getByText('Released', { exact: true }).waitFor();
+    await page.getByText('No pending messages.').waitFor();
+
+    await page.evaluate(body => window.__reviewHarness.pushLiveArrival(body), 'first arrival after the queue drained');
+    await page.getByText('1 new pending message arrived.').waitFor();
+  });
+});
+
 test('U2-3: a long message reads in full and supports keyboard selection', { timeout: 90_000 }, async () => {
   await withHarness(async page => {
     const longBody = 'A '.repeat(400) + 'end-of-message marker';
     await page.evaluate(body => window.__reviewHarness.pushLiveArrival(body), longBody);
     await page.getByText('end-of-message marker').waitFor();
-    const bodyText = await page.locator('[data-event-id="live_2"] .review-item__body').innerText();
+    const bodyText = await page.locator('[data-event-id="live_4"] .review-item__body').innerText();
     assert.ok(bodyText.includes('end-of-message marker'), 'the full long message is present, not truncated');
 
     const checkbox = page.locator('[data-event-id="pending_1"] input[type="checkbox"]');
@@ -197,7 +340,7 @@ test('U2-3: a long message reads in full and supports keyboard selection', { tim
   });
 });
 
-test('U4-1: switching to a 390px pane preserves the exact selection and scroll position', { timeout: 90_000 }, async () => {
+test('U4-1: switching to a 390px pane preserves the exact selection', { timeout: 90_000 }, async () => {
   await withHarness(
     async page => {
       const firstCheckbox = page.locator('[data-event-id="pending_1"] input[type="checkbox"]');
