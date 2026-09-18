@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import intro from '../../fixtures/messaging/exact-intro.json';
 import { type ContentLimits, decodeContentLimits } from './decode';
 import {
-  type EventRef, type MessageContent, decodeEventRef, decodeTimelineItem, digestMessageContent, encodeMessageContent,
-  sameEventRef,
+  type EventRef, type MessageContent, decodeEventRef, decodeTimelineItem, decodeUnavailableContent, digestMessageContent,
+  encodeMessageContent, sameEventRef,
 } from './events';
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
@@ -123,5 +123,34 @@ describe('event references', () => {
 
   it('accepts a timeline item only when the reference digests its exact content', async () => {
     expect(await decodeTimelineItem(intro.timelineItem, limits)).toEqual({ ok: true, value: intro.timelineItem });
+  });
+});
+
+describe('unavailable content', () => {
+  it('decodes a closed reason unchanged', () => {
+    expect(decodeUnavailableContent(intro.unavailableContent)).toEqual({ ok: true, value: intro.unavailableContent });
+  });
+
+  it('refuses a reason outside the closed set, including a plausible SDK-shaped one', () => {
+    expect(decodeUnavailableContent({ ...intro.unavailableContent, reason: 'OlmError: session key corrupted' }))
+      .toEqual({ ok: false, error: { path: 'reason', code: 'invalid_value' } });
+  });
+
+  it('keeps the same EventRef identity and ordering as a decryptable item', async () => {
+    const decoded = await decodeTimelineItem(intro.timelineItemUnavailable, limits);
+    expect(decoded).toEqual({ ok: true, value: intro.timelineItemUnavailable });
+    if (decoded.ok) {
+      expect(decoded.value.ref.roomId).toBe(intro.timelineItem.ref.roomId);
+      expect(decodeEventRef(decoded.value.ref)).toEqual({ ok: true, value: decoded.value.ref });
+    }
+  });
+
+  it('never digests unavailable content, even with no usable Web Crypto', async () => {
+    vi.stubGlobal('crypto', {});
+    try {
+      expect(await decodeTimelineItem(intro.timelineItemUnavailable, limits)).toEqual({ ok: true, value: intro.timelineItemUnavailable });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -62,6 +62,17 @@ for each of these rules.
 example on a non-secure origin). The timeline decoders report that case as
 `digest_unavailable` and never as a success.
 
+## Unavailable content
+
+`TimelineItem.content` is `MessageContent` or `UnavailableContent`: `{ v: 1, kind:
+'unavailable', reason }` for an event whose plaintext cannot be shown. `reason` is a
+closed enum — `missing_keys`, `withheld_unverified` (see the KHA-142 evidence
+categories), `decrypt_failed` or `unsupported` — never a free-text SDK error. The
+`ref` identity and ordering are unaffected: an unavailable item still carries a full
+`EventRef`, and `decodeTimelineItem`/`decodeTimelinePage`/`decodeRoomSnapshot` skip
+digest verification for it, because there is no recovered plaintext to hash. UI
+rendering of the placeholder is out of scope here (KHA-123).
+
 ## Outcomes
 
 `OperationResult` is `ok`, `rejected` (a finite code), `unavailable` (nothing happened, so
@@ -115,7 +126,7 @@ fails with `invalid_limits` rather than allowing unbounded input.
 
 Decoders reject unknown fields. The browser and the connector therefore deploy in
 lockstep for a given contract version. Every envelope with a `v` field (`AuthPrincipal`,
-`SessionBinding`, `EventRef` and `MessageContent`) bumps `v` on any change to its shape,
+`SessionBinding`, `EventRef`, `MessageContent` and `UnavailableContent`) bumps `v` on any change to its shape,
 and a bump is a reviewed change on both producer and consumer. `SessionBinding` carries
 `v` because the delivery domain mirrors it.
 

@@ -7,7 +7,7 @@ import { decodeAdmission, decodeInviteState, decodeShareGrant } from './admissio
 import { decodeControlRecord } from './control-store';
 import { type ContentLimits, type Decoded, decodeContentLimits } from './decode';
 import { decodeDeviceView } from './devices';
-import { decodeEventRef, decodeMessageContent, decodeTimelineItem } from './events';
+import { decodeEventRef, decodeMessageContent, decodeTimelineItem, decodeUnavailableContent } from './events';
 import { type SessionBinding, decodeAuthPrincipal, decodeParticipantView, decodeSessionBinding, sameSessionBinding } from './identity';
 import * as messaging from './index';
 import { decodeRecoveryCapabilities, decodeRecoveryStatus } from './recovery';
@@ -26,6 +26,7 @@ const decoders: Record<string, (input: unknown) => Decoded<unknown> | Promise<De
   binding: decodeSessionBinding,
   eventRef: decodeEventRef,
   content: input => decodeMessageContent(input, limits),
+  unavailableContent: decodeUnavailableContent,
   timelineItem: input => decodeTimelineItem(input, limits),
   roomSummary: input => decodeRoomSummary(input, limits),
   sendState: decodeSendState,
@@ -63,6 +64,7 @@ describe('exact intro fixture', () => {
   it.each([
     ['principal', 'principal'], ['participant', 'participants.human'], ['participant', 'participants.agent'],
     ['binding', 'binding'], ['eventRef', 'eventRef'], ['content', 'content'], ['timelineItem', 'timelineItem'],
+    ['unavailableContent', 'unavailableContent'], ['timelineItem', 'timelineItemUnavailable'],
   ])('%s decodes %s and round-trips byte-stable JSON', async (decoder, path) => {
     const input = lookup(path);
     const decoded = await decoders[decoder]!(input);

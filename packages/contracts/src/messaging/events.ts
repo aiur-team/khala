@@ -26,12 +26,29 @@ export type EventRef = Readonly<{
 export type MessageContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
 
 /**
- * A decrypted timeline entry. Only endpoint ports expose these; control APIs carry
- * `EventRef` metadata alone.
+ * Finite public reasons a timeline event's content cannot be shown. Never a free-text
+ * SDK error: `missing_keys` (no room key reached this device), `withheld_unverified`
+ * (see the KHA-142 evidence categories), `decrypt_failed`, or `unsupported` (an
+ * encoding this client does not understand).
+ */
+export const UNAVAILABLE_REASONS = ['missing_keys', 'withheld_unverified', 'decrypt_failed', 'unsupported'] as const;
+
+export type UnavailableReason = (typeof UNAVAILABLE_REASONS)[number];
+
+/** Placeholder for a timeline event whose content cannot be shown. No free-text reasons. */
+export type UnavailableContent = Readonly<{ v: 1; kind: 'unavailable'; reason: UnavailableReason }>;
+
+/** The two shapes a timeline item's content can take. */
+export type TimelineContent = MessageContent | UnavailableContent;
+
+/**
+ * A timeline entry. Only endpoint ports expose these; control APIs carry `EventRef`
+ * metadata alone. `content` is `unavailable` when the plaintext cannot be shown; the
+ * `ref` identity and ordering are unaffected.
  */
 export type TimelineItem = Readonly<{
   ref: EventRef;
-  content: MessageContent;
+  content: TimelineContent;
   participant: ParticipantView;
   clientTxnId: string | null;
   /** UTC RFC 3339, local receipt time; not an ordering authority. */
@@ -132,6 +149,30 @@ export function readMessageContent(input: unknown, path: string, limits: Content
   };
 }
 
+export function decodeUnavailableContent(input: unknown): Decoded<UnavailableContent> {
+  return decodeWith(() => readUnavailableContent(input, ''));
+}
+
+export function readUnavailableContent(input: unknown, path: string): UnavailableContent {
+  const r = object(input, path, ['v', 'kind', 'reason']);
+  return {
+    v: version(r.field('v'), r.at('v')),
+    kind: literal(r.field('kind'), r.at('kind'), ['unavailable']),
+    reason: literal(r.field('reason'), r.at('reason'), UNAVAILABLE_REASONS),
+  };
+}
+
+export function decodeTimelineContent(input: unknown, limits: ContentLimits): Decoded<TimelineContent> {
+  return decodeWith(() => readTimelineContent(input, '', limits));
+}
+
+/** Dispatches on `kind` before either reader enforces its own exact field set. */
+export function readTimelineContent(input: unknown, path: string, limits: ContentLimits): TimelineContent {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) fail(path, 'not_object');
+  const kind = (input as Record<string, unknown>).kind;
+  return kind === 'unavailable' ? readUnavailableContent(input, path) : readMessageContent(input, path, limits);
+}
+
 /**
  * Decodes a timeline item and proves the reference binds exactly this content and
  * the attributed participant. Structural success alone is not enough: the digest is
@@ -148,9 +189,11 @@ export async function decodeTimelineItem(input: unknown, limits: ContentLimits):
 
 /**
  * Returns a located failure when the item's reference does not digest its content
- * (`mismatch`) or the digest cannot be computed here (`digest_unavailable`).
+ * (`mismatch`) or the digest cannot be computed here (`digest_unavailable`). An
+ * `unavailable` item carries no recoverable plaintext, so there is nothing to digest.
  */
 export async function verifyContentDigest(item: TimelineItem, path: string): Promise<Decoded<never> | null> {
+  if (item.content.kind === 'unavailable') return null;
   const result = await digestMessageContent(item.content);
   if (!result.ok) return { ok: false, error: { path, code: result.reason === 'crypto_unavailable' ? 'digest_unavailable' : 'invalid_value' } };
   return result.digest === item.ref.contentDigest ? null : { ok: false, error: { path, code: 'mismatch' } };
@@ -161,7 +204,7 @@ export function readTimelineItem(input: unknown, path: string, limits: ContentLi
   const r = object(input, path, ['ref', 'content', 'participant', 'clientTxnId', 'receivedAt']);
   const item: TimelineItem = {
     ref: readEventRef(r.field('ref'), r.at('ref')),
-    content: readMessageContent(r.field('content'), r.at('content'), limits),
+    content: readTimelineContent(r.field('content'), r.at('content'), limits),
     participant: readParticipantView(r.field('participant'), r.at('participant'), limits),
     clientTxnId: nullable(r.field('clientTxnId'), value => identifier(value, r.at('clientTxnId'))),
     receivedAt: utcTimestamp(r.field('receivedAt'), r.at('receivedAt')),
