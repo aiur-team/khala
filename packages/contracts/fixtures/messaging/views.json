@@ -1,0 +1,42 @@
+{
+  "_comment": "Port view examples. `valid` entries decode to `expected` (or to `input` when omitted); `invalid` entries fail with exactly `error`. Limits come from exact-intro.json.",
+  "valid": [
+    { "name": "empty room title resolves to null", "decoder": "roomSummary", "input": { "roomId": "!AbC:khala.example", "title": "", "membership": "joined", "revision": "rev_3" }, "expected": { "roomId": "!AbC:khala.example", "title": null, "membership": "joined", "revision": "rev_3" } },
+    { "name": "protocol room ID is preserved byte-for-byte", "decoder": "roomSummary", "input": { "roomId": "!AbC:khala.example", "title": "API review", "membership": "joining", "revision": "rev_1" } },
+    { "name": "accepted send carries its reference", "decoder": "sendState", "input": { "clientTxnId": "txn_intro_1", "state": "accepted", "eventRef": { "v": 1, "roomId": "room_demo", "eventId": "event_intro_1", "authorParticipantId": "agent_alice", "authorDeviceId": "device_a1", "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b" } } },
+    { "name": "unknown send outcome has no reference", "decoder": "sendState", "input": { "clientTxnId": "txn_intro_2", "state": "outcome_unknown", "eventRef": null } },
+    { "name": "new device has no ID yet", "decoder": "deviceView", "input": { "deviceId": null, "state": "new", "generation": 0, "reason": null } },
+    { "name": "locked device carries a public reason", "decoder": "deviceView", "input": { "deviceId": "device_a1", "state": "locked", "generation": 2, "reason": "recovery_required" } },
+    { "name": "share grant without expiry", "decoder": "shareGrant", "input": { "inviteRef": "invite_7", "shareUrl": "https://khala.aiur.team/join/invite_7", "expiresAt": null } },
+    { "name": "loopback share grant for development", "decoder": "shareGrant", "input": { "inviteRef": "invite_8", "shareUrl": "http://localhost:8888/join/invite_8", "expiresAt": "2026-09-18T00:00:00Z" } },
+    { "name": "already joined admission is a success", "decoder": "admission", "input": { "outcome": "already_joined", "room": { "roomId": "room_demo", "title": null, "membership": "joined", "revision": "rev_9" } } },
+    { "name": "identity mismatch is an inspect state", "decoder": "inviteState", "input": "identity_mismatch" },
+    { "name": "binding revocation guarded by generation", "decoder": "revocationRequest", "input": { "operationId": "op_revoke_1", "targetKind": "binding", "targetId": "binding_a1", "expectedGeneration": 1 } },
+    { "name": "partial revocation stays visible", "decoder": "revocationProgress", "input": { "operationId": "op_revoke_1", "targetKind": "binding", "targetId": "binding_a1", "generation": 2, "state": "partial" } },
+    { "name": "recovery unavailable carries reason", "decoder": "recoveryCapabilities", "input": { "modes": [], "unavailableReason": "not_configured" } },
+    { "name": "recovery failure carries only a public code", "decoder": "recoveryStatus", "input": { "operationId": "op_recover_1", "mode": "substrate_backup", "state": "failed", "reason": "secret_rejected" } },
+    { "name": "control record", "decoder": "controlRecord", "input": { "key": "membership/room_demo/owner_alice", "revision": "r1", "operationId": "op_admit_1", "value": { "state": "joined", "roles": ["owner"] }, "expiresAt": null } }
+  ],
+  "invalid": [
+    { "name": "room title with control character", "decoder": "roomSummary", "input": { "roomId": "room_demo", "title": "API\u0007", "membership": "joined", "revision": "rev_1" }, "error": { "path": "title", "code": "control_character" } },
+    { "name": "room membership outside the set", "decoder": "roomSummary", "input": { "roomId": "room_demo", "title": null, "membership": "banned", "revision": "rev_1" }, "error": { "path": "membership", "code": "invalid_value" } },
+    { "name": "accepted send without reference", "decoder": "sendState", "input": { "clientTxnId": "txn_1", "state": "accepted", "eventRef": null }, "error": { "path": "eventRef", "code": "mismatch" } },
+    { "name": "pending send claiming a reference", "decoder": "sendState", "input": { "clientTxnId": "txn_1", "state": "pending", "eventRef": { "v": 1, "roomId": "room_demo", "eventId": "event_intro_1", "authorParticipantId": "agent_alice", "authorDeviceId": "device_a1", "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b" } }, "error": { "path": "eventRef", "code": "mismatch" } },
+    { "name": "processed is not a send state", "decoder": "sendState", "input": { "clientTxnId": "txn_1", "state": "processed", "eventRef": null }, "error": { "path": "state", "code": "invalid_value" } },
+    { "name": "device error as SDK dump", "decoder": "deviceView", "input": { "deviceId": "device_a1", "state": "failed", "generation": 1, "reason": "OlmError: session key abc123 at decrypt()" }, "error": { "path": "reason", "code": "invalid_value" } },
+    { "name": "ready device without ID", "decoder": "deviceView", "input": { "deviceId": null, "state": "ready", "generation": 1, "reason": null }, "error": { "path": "deviceId", "code": "invalid_value" } },
+    { "name": "failed device without reason", "decoder": "deviceView", "input": { "deviceId": null, "state": "failed", "generation": 1, "reason": null }, "error": { "path": "reason", "code": "mismatch" } },
+    { "name": "share URL with javascript scheme", "decoder": "shareGrant", "input": { "inviteRef": "invite_7", "shareUrl": "javascript:alert(1)", "expiresAt": null }, "error": { "path": "shareUrl", "code": "invalid_value" } },
+    { "name": "share URL over plain http", "decoder": "shareGrant", "input": { "inviteRef": "invite_7", "shareUrl": "http://khala.aiur.team/join/invite_7", "expiresAt": null }, "error": { "path": "shareUrl", "code": "invalid_value" } },
+    { "name": "share URL with embedded credentials", "decoder": "shareGrant", "input": { "inviteRef": "invite_7", "shareUrl": "https://user:pass@khala.aiur.team/join/invite_7", "expiresAt": null }, "error": { "path": "shareUrl", "code": "invalid_value" } },
+    { "name": "admission carrying disclosed history", "decoder": "admission", "input": { "outcome": "joined", "room": { "roomId": "room_demo", "title": null, "membership": "joined", "revision": "rev_9" }, "history": [] }, "error": { "path": "history", "code": "unknown_field" } },
+    { "name": "admission that did not join", "decoder": "admission", "input": { "outcome": "joined", "room": { "roomId": "room_demo", "title": null, "membership": "left", "revision": "rev_9" } }, "error": { "path": "room.membership", "code": "mismatch" } },
+    { "name": "unknown invite state", "decoder": "inviteState", "input": "accepted", "error": { "path": "", "code": "invalid_value" } },
+    { "name": "revocation without expected generation", "decoder": "revocationRequest", "input": { "operationId": "op_revoke_1", "targetKind": "binding", "targetId": "binding_a1" }, "error": { "path": "expectedGeneration", "code": "missing_field" } },
+    { "name": "revocation of a human", "decoder": "revocationRequest", "input": { "operationId": "op_revoke_1", "targetKind": "owner", "targetId": "owner_alice", "expectedGeneration": 0 }, "error": { "path": "targetKind", "code": "invalid_value" } },
+    { "name": "private key property at a serialisable recovery boundary", "decoder": "recoveryStatus", "input": { "operationId": "op_recover_1", "mode": "substrate_backup", "state": "restoring", "reason": null, "recoveryKey": "EsTc 1234 abcd" }, "error": { "path": "recoveryKey", "code": "unknown_field" } },
+    { "name": "recovery failure carrying secret text", "decoder": "recoveryStatus", "input": { "operationId": "op_recover_1", "mode": "substrate_backup", "state": "failed", "reason": "bad passphrase hunter2" }, "error": { "path": "reason", "code": "invalid_value" } },
+    { "name": "recovery modes and unavailable reason together", "decoder": "recoveryCapabilities", "input": { "modes": ["substrate_backup"], "unavailableReason": "not_configured" }, "error": { "path": "unavailableReason", "code": "mismatch" } },
+    { "name": "control record with non-UTC expiry", "decoder": "controlRecord", "input": { "key": "k", "revision": "r1", "operationId": "op_1", "value": 1, "expiresAt": "tomorrow" }, "error": { "path": "expiresAt", "code": "invalid_value" } }
+  ]
+}

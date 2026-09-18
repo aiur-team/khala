@@ -1,0 +1,74 @@
+{
+  "_comment": "ControlStore conformance scenarios for any persistence adapter. Steps run in order against a fresh store. `fault` makes the next store call fail: `unavailable` performs nothing; `lose_response` performs the write and then reports `outcome_unknown`. `clock` sets trusted time (epoch ms). `saveRevisionAs` captures an applied record's revision; `$name` in `expectedRevision` substitutes it. Expectations match `kind` plus, when given, the record `value` (`value`) or the conflicting record's value (`currentValue`, `null` for none). Live adapters must satisfy every scenario except those marked `fakeOnly`, where a real provider may return `outcome_unknown` instead of proving the result.",
+  "scenarios": [
+    {
+      "name": "two create-if-absent requests have one winner",
+      "steps": [
+        { "op": "compareAndSet", "key": "room/room_demo/owner", "expectedRevision": null, "operationId": "op_a", "next": { "value": "owner_alice", "expiresAt": null }, "expect": { "kind": "applied", "value": "owner_alice" } },
+        { "op": "compareAndSet", "key": "room/room_demo/owner", "expectedRevision": null, "operationId": "op_b", "next": { "value": "owner_bob", "expiresAt": null }, "expect": { "kind": "conflict", "currentValue": "owner_alice" } },
+        { "op": "read", "key": "room/room_demo/owner", "expect": { "kind": "record", "value": "owner_alice" } }
+      ]
+    },
+    {
+      "name": "two writers on one revision cannot both apply",
+      "steps": [
+        { "op": "compareAndSet", "key": "policy/binding_a1", "expectedRevision": null, "operationId": "op_create", "next": { "value": { "gate": "review" }, "expiresAt": null }, "saveRevisionAs": "r1", "expect": { "kind": "applied" } },
+        { "op": "compareAndSet", "key": "policy/binding_a1", "expectedRevision": "$r1", "operationId": "op_w1", "next": { "value": { "gate": "open" }, "expiresAt": null }, "expect": { "kind": "applied", "value": { "gate": "open" } } },
+        { "op": "compareAndSet", "key": "policy/binding_a1", "expectedRevision": "$r1", "operationId": "op_w2", "next": { "value": { "gate": "closed" }, "expiresAt": null }, "expect": { "kind": "conflict", "currentValue": { "gate": "open" } } }
+      ]
+    },
+    {
+      "name": "lost response resolves to the same write",
+      "steps": [
+        { "op": "fault", "mode": "lose_response" },
+        { "op": "compareAndSet", "key": "invite/invite_7", "expectedRevision": null, "operationId": "op_share", "next": { "value": { "roomId": "room_demo" }, "expiresAt": null }, "expect": { "kind": "outcome_unknown" } },
+        { "op": "resolve", "key": "invite/invite_7", "operationId": "op_share", "expect": { "kind": "applied", "value": { "roomId": "room_demo" } } },
+        { "op": "compareAndSet", "key": "invite/invite_7", "expectedRevision": null, "operationId": "op_share", "next": { "value": { "roomId": "room_demo" }, "expiresAt": null }, "expect": { "kind": "applied", "value": { "roomId": "room_demo" } } }
+      ]
+    },
+    {
+      "name": "identical retry with reordered object keys is the same write",
+      "steps": [
+        { "op": "compareAndSet", "key": "k/reorder", "expectedRevision": null, "operationId": "op_r", "next": { "value": { "a": 1, "b": 2 }, "expiresAt": null }, "expect": { "kind": "applied" } },
+        { "op": "compareAndSet", "key": "k/reorder", "expectedRevision": null, "operationId": "op_r", "next": { "value": { "b": 2, "a": 1 }, "expiresAt": null }, "expect": { "kind": "applied", "value": { "a": 1, "b": 2 } } }
+      ]
+    },
+    {
+      "name": "operation ID cannot be reused with other bytes or another key",
+      "steps": [
+        { "op": "compareAndSet", "key": "room/room_demo/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "API review", "expiresAt": null }, "expect": { "kind": "applied" } },
+        { "op": "compareAndSet", "key": "room/room_demo/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "Merge now", "expiresAt": null }, "expect": { "kind": "operation_mismatch" } },
+        { "op": "compareAndSet", "key": "room/room_other/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "API review", "expiresAt": null }, "expect": { "kind": "operation_mismatch" } },
+        { "op": "read", "key": "room/room_other/title", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "expired record never authorises a read",
+      "steps": [
+        { "op": "clock", "nowMs": 1789560000000 },
+        { "op": "compareAndSet", "key": "invite/invite_8", "expectedRevision": null, "operationId": "op_i8", "next": { "value": { "roomId": "room_demo" }, "expiresAt": "2026-09-16T12:00:01Z" }, "expect": { "kind": "applied" } },
+        { "op": "read", "key": "invite/invite_8", "expect": { "kind": "record", "value": { "roomId": "room_demo" } } },
+        { "op": "clock", "nowMs": 1789560001000 },
+        { "op": "read", "key": "invite/invite_8", "expect": { "kind": "absent" } },
+        { "op": "compareAndSet", "key": "invite/invite_8", "expectedRevision": null, "operationId": "op_i8b", "next": { "value": { "roomId": "room_other" }, "expiresAt": null }, "expect": { "kind": "applied", "value": { "roomId": "room_other" } } }
+      ]
+    },
+    {
+      "name": "storage outage is not absence",
+      "steps": [
+        { "op": "fault", "mode": "unavailable" },
+        { "op": "read", "key": "membership/room_demo/owner_bob", "expect": { "kind": "unavailable" } },
+        { "op": "fault", "mode": "unavailable" },
+        { "op": "compareAndSet", "key": "membership/room_demo/owner_bob", "expectedRevision": null, "operationId": "op_m", "next": { "value": "joined", "expiresAt": null }, "expect": { "kind": "unavailable" } },
+        { "op": "read", "key": "membership/room_demo/owner_bob", "expect": { "kind": "absent" } }
+      ]
+    },
+    {
+      "name": "resolving a write that never landed",
+      "fakeOnly": true,
+      "steps": [
+        { "op": "resolve", "key": "k/never", "operationId": "op_never", "expect": { "kind": "not_applied" } }
+      ]
+    }
+  ]
+}

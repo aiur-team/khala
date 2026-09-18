@@ -1,0 +1,127 @@
+{
+  "_comment": "Worked KHA-105 intro fixture. Bytes and digests were computed with Python json/hashlib, independently of the TypeScript encoder. Compare against these literals; never regenerate them from the code under test.",
+  "limits": {
+    "maxBodyBytes": 4096,
+    "maxDisplayNameBytes": 64,
+    "maxRoomTitleBytes": 128
+  },
+  "content": {
+    "v": 1,
+    "kind": "text",
+    "body": "Review the API change.\nDo not merge yet."
+  },
+  "encoding": {
+    "byteLength": 71,
+    "utf8Hex": "5b226b68616c612e6d6573736167652e7631222c2274657874222c225265766965772074686520415049206368616e67652e5c6e446f206e6f74206d65726765207965742e225d",
+    "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+  },
+  "digestVectors": [
+    {
+      "name": "crlf_newline",
+      "body": "Review the API change.\r\nDo not merge yet.",
+      "utf8Hex": "5b226b68616c612e6d6573736167652e7631222c2274657874222c225265766965772074686520415049206368616e67652e5c725c6e446f206e6f74206d65726765207965742e225d",
+      "contentDigest": "sha256:4cec6f2d6b70c18ec29c809574cff5b66f36eb915843eb9a65af88b2c1681a7c"
+    },
+    {
+      "name": "nfc_e_acute",
+      "body": "café",
+      "utf8Hex": "5b226b68616c612e6d6573736167652e7631222c2274657874222c22636166c3a9225d",
+      "contentDigest": "sha256:09b83106af7cf1ddcfcbd1b429ccc9dd56d31c3932d99af3ca3a38ba9c2bc306"
+    },
+    {
+      "name": "nfd_e_acute",
+      "body": "café",
+      "utf8Hex": "5b226b68616c612e6d6573736167652e7631222c2274657874222c2263616665cc81225d",
+      "contentDigest": "sha256:67c4fe9efdc2b106babcb39d090e468781069f97d349f0f2579689c561abf193"
+    },
+    {
+      "name": "quote_backslash_tab",
+      "body": "say \"hi\" \\ \tnow",
+      "utf8Hex": "5b226b68616c612e6d6573736167652e7631222c2274657874222c22736179205c2268695c22205c5c205c746e6f77225d",
+      "contentDigest": "sha256:d5a85685b4d1926709456270099488613568f5f059a89723e50b21fb33a03da7"
+    },
+    {
+      "name": "empty",
+      "body": "",
+      "utf8Hex": "5b226b68616c612e6d6573736167652e7631222c2274657874222c22225d",
+      "contentDigest": "sha256:c7fdc399db2f5469e4e9bda152d45cc0e457680529a3735c94feced7530e8c6f"
+    },
+    {
+      "name": "astral_emoji",
+      "body": "ok 👍",
+      "utf8Hex": "5b226b68616c612e6d6573736167652e7631222c2274657874222c226f6b20f09f918d225d",
+      "contentDigest": "sha256:1d55b9ace050036dad9037ca36852eeac6dec767ccd8368b4a0d4b107ee89a48"
+    }
+  ],
+  "principal": {
+    "v": 1,
+    "ownerId": "owner_alice",
+    "providerIssuer": "https://accounts.google.com",
+    "providerSubject": "109876543210",
+    "verifiedEmail": "alice@example.com",
+    "sessionExpiresAt": "2026-09-17T12:00:00Z"
+  },
+  "participants": {
+    "human": {
+      "participantId": "human_alice",
+      "kind": "human",
+      "ownerId": "owner_alice",
+      "displayName": "Alice",
+      "deviceIds": [
+        "device_browser_a"
+      ]
+    },
+    "agent": {
+      "participantId": "agent_alice",
+      "kind": "agent",
+      "ownerId": "owner_alice",
+      "displayName": "Alice's agent",
+      "deviceIds": [
+        "device_a1"
+      ]
+    }
+  },
+  "binding": {
+    "bindingId": "binding_a1",
+    "ownerId": "owner_alice",
+    "agentParticipantId": "agent_alice",
+    "deviceId": "device_a1",
+    "harness": "codex",
+    "sessionId": "thread_existing_7",
+    "generation": 1
+  },
+  "eventRef": {
+    "v": 1,
+    "roomId": "room_demo",
+    "eventId": "event_intro_1",
+    "authorParticipantId": "agent_alice",
+    "authorDeviceId": "device_a1",
+    "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+  },
+  "timelineItem": {
+    "ref": {
+      "v": 1,
+      "roomId": "room_demo",
+      "eventId": "event_intro_1",
+      "authorParticipantId": "agent_alice",
+      "authorDeviceId": "device_a1",
+      "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+    },
+    "content": {
+      "v": 1,
+      "kind": "text",
+      "body": "Review the API change.\nDo not merge yet."
+    },
+    "participant": {
+      "participantId": "agent_alice",
+      "kind": "agent",
+      "ownerId": "owner_alice",
+      "displayName": "Alice's agent",
+      "deviceIds": [
+        "device_a1"
+      ]
+    },
+    "clientTxnId": "txn_intro_1",
+    "receivedAt": "2026-09-16T18:30:00.125Z"
+  }
+}
