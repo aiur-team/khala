@@ -34,6 +34,16 @@ const CONTRACT_REJECTIONS: Readonly<Record<ContractRejectionCode, [ReleaseReject
  * output exists. `command.issuedAt` is audit data and is not consulted.
  */
 export async function evaluateApproval(input: EvaluateInput): Promise<Evaluation> {
+  try {
+    return await evaluate(input);
+  } catch {
+    // Malformed trusted input is a composition defect. The thrown error could
+    // quote content, so report only a typed code.
+    return reject('unavailable', 'invalid_input', 'input');
+  }
+}
+
+async function evaluate(input: EvaluateInput): Promise<Evaluation> {
   const { authority, command, binding, policyVersion, room, pending, release } = input;
 
   // Authority and recipient come first, so a refused owner never reaches plaintext.
@@ -77,6 +87,7 @@ export async function evaluateApproval(input: EvaluateInput): Promise<Evaluation
     if (records.length > 1 || !sameEventRef(records[0]!.ref, ref)) return reject('stale_content', 'content_mismatch', field);
     if (!members.has(ref.authorParticipantId)) return reject('forbidden', 'author_not_member', `${field}.authorParticipantId`);
     const { content } = records[0]!;
+    if (content.kind === 'unavailable') return reject('expired_content', 'missing_content', field);
     if (content.v !== 1 || content.kind !== 'text' || !isEncodableBody(content.body)) {
       return reject('stale_content', 'unsupported_content', field);
     }
@@ -112,7 +123,7 @@ export async function evaluateApproval(input: EvaluateInput): Promise<Evaluation
     return reject(code, reason, released.field);
   }
 
-  const fingerprint = await decisionFingerprint(command, binding, policyVersion);
+  const fingerprint = await decisionFingerprint(command);
   if (!fingerprint.ok) return reject('unavailable', 'crypto_unavailable', 'fingerprint');
 
   return {

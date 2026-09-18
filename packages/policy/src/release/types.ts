@@ -12,11 +12,15 @@ import type {
  */
 export type ReleaseContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
 
+/** Placeholder for a pending event whose plaintext cannot be shown (KHA-105 shape). */
+export type UnavailableReleaseContent = Readonly<{ v: 1; kind: 'unavailable'; reason: string }>;
+
 /**
- * One pending event exactly as the owner connector decrypted it. Redacted,
- * undecryptable or deleted events are omitted: there are no bytes to release.
+ * One pending event exactly as the owner connector decrypted it. Deleted events
+ * are omitted; redacted or undecryptable ones are omitted or carry `unavailable`
+ * content. Either way there are no bytes to release.
  */
-export type PendingRecord = Readonly<{ ref: EventRef; content: ReleaseContent }>;
+export type PendingRecord = Readonly<{ ref: EventRef; content: ReleaseContent | UnavailableReleaseContent }>;
 
 /** Current membership of the room the command names, as trusted composition observed it. */
 export type RoomScope = Readonly<{
@@ -64,7 +68,8 @@ export type RejectionReason =
   | 'digest_mismatch'
   | 'unsupported_content'
   | 'invalid_release'
-  | 'crypto_unavailable';
+  | 'crypto_unavailable'
+  | 'invalid_input';
 
 export type ReleaseRejectionCode = Exclude<ApprovalErrorCode, 'idempotency_conflict' | 'outcome_unknown'>;
 
@@ -80,9 +85,8 @@ export type ReleaseDecision = Readonly<{
   commandId: CommandId;
   releaseId: ReleaseId;
   /**
-   * `sha256:` digest of everything the owner authorised: the command input, the
-   * recipient binding and the policy version. The KHA-134 journal stores it with
-   * the committed result; a retry whose fingerprint differs is a conflict.
+   * `decisionFingerprint(command)`. The KHA-134 journal stores it with the
+   * committed result; a retry whose fingerprint differs is a conflict.
    */
   fingerprint: string;
   /** The verified release; `job.payloadDigest` digests `payload`. */

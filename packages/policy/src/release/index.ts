@@ -8,5 +8,5 @@ export { evaluateApproval } from './evaluate';
 export { DECISION_FINGERPRINT_V1, decisionFingerprint } from './handoff';
 export type {
   EvaluateInput, Evaluation, PendingRecord, RejectionReason, ReleaseContent, ReleaseDecision, ReleaseIdentity,
-  ReleaseRejection, ReleaseRejectionCode, RoomScope,
+  ReleaseRejection, ReleaseRejectionCode, RoomScope, UnavailableReleaseContent,
 } from './types';
