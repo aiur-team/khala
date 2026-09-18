@@ -23,8 +23,8 @@ exist only after verified ownership and admission.
    returned as `{ kind: 'connected', reused: true }`.
 2. **Discovery.** The link's origin must be a configured trusted origin, and the link must
    carry no credentials. The descriptor always comes from
-   `<origin>/api/agent/bootstrap/descriptor?link=…`, requested with manual redirects. Each
-   redirect is revalidated against the allowlist (at most 3). The body must be
+   `<origin>/api/agent/bootstrap/descriptor?link=…`, requested with manual redirects. A
+   redirect must stay on the link's own origin, and there can be at most 3. The body must be
    `application/json`, at most 4 KiB and a strict v1 descriptor. Unknown keys fail, and
    endpoints must be the fixed paths on the answering origin. A descriptor cannot name
    an executable, a command or another origin.

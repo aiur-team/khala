@@ -39,8 +39,14 @@ const PROOF_REPLAY_TTL_MS = 120_000;
 /** The G-ADMISSION decision: whether this signed-in human may bind an agent through this invite. */
 export type AdmissionPolicy = (input: Readonly<{ principal: AuthPrincipal; inviteRef: string; session: SessionRef }>) => Promise<'allow' | 'deny'>;
 
-/** Admits the owner's agent participant, with this device, into the invite's room (KHA-113 / G-SUBSTRATE). */
+/**
+ * Admits the owner's agent participant, with this device, into the invite's room
+ * (KHA-113 / G-SUBSTRATE). `room` resolves an invite without side effects, so a
+ * binding conflict is refused before any device joins. `admit` receives an
+ * operation ID already scoped to the owner and device.
+ */
 export interface AgentAdmissionPort {
+  room(inviteRef: string): Promise<OperationResult<RoomId, AdmissionRejection>>;
   admit(input: Readonly<{ ownerId: OwnerId; inviteRef: string; deviceId: string; operationId: string }>): Promise<
     OperationResult<Readonly<{ agentParticipantId: ParticipantId; roomId: RoomId }>, AdmissionRejection>
   >;
@@ -235,11 +241,24 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     }
 
     const ownerId = held.ownerId as OwnerId;
-    const admitted = await safeCall(() => deps.agents.admit({ ownerId, inviteRef: held.invite, deviceId: held.deviceId, operationId }));
+    // Refuse a takeover before the device joins anything.
+    const room = await safeCall(() => deps.agents.room(held.invite));
+    if (room === null || room.kind === 'unavailable' || room.kind === 'outcome_unknown') return json(503, { code: 'unavailable' });
+    if (room.kind === 'rejected') return json(403, { code: 'admission_denied' });
+    const current = await store.read<SessionBinding>(bindingKey(ownerId, room.value));
+    if (current.kind === 'unavailable') return json(503, { code: 'unavailable' });
+    if (current.kind === 'record' && !(current.record.value.deviceId === held.deviceId && sameSession(current.record.value, held))) {
+      return json(409, { code: 'binding_conflict' });
+    }
+
+    // A client-chosen ID never reaches the port unscoped, so owners cannot collide on it.
+    const scopedOperationId = `bootstrap-${createHash('sha256').update(JSON.stringify([ownerId, held.deviceId, operationId])).digest('base64url')}`;
+    const admitted = await safeCall(() => deps.agents.admit({ ownerId, inviteRef: held.invite, deviceId: held.deviceId, operationId: scopedOperationId }));
     if (admitted === null || admitted.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (admitted.kind === 'outcome_unknown') return json(502, { code: 'outcome_unknown' });
     if (admitted.kind === 'rejected') return json(403, { code: 'admission_denied' });
     const { agentParticipantId, roomId } = admitted.value;
+    if (roomId !== room.value) return json(403, { code: 'admission_denied' });
 
     const bound = await bindSession(ownerId, roomId, agentParticipantId, held, operationId);
     if (bound.kind === 'unavailable') return json(503, { code: 'unavailable' });
@@ -258,10 +277,10 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   async function bindSession(
     ownerId: OwnerId, roomId: RoomId, agentParticipantId: ParticipantId, held: GrantRecord, operationId: string,
   ): Promise<Readonly<{ kind: 'bound'; binding: SessionBinding }> | Readonly<{ kind: 'conflict' }> | Readonly<{ kind: 'unavailable' }>> {
-    const bindingKey = key('binding', JSON.stringify([ownerId, roomId]));
+    const storeKey = bindingKey(ownerId, roomId);
     const matches = (binding: SessionBinding) => binding.ownerId === ownerId && binding.agentParticipantId === agentParticipantId
       && binding.deviceId === held.deviceId && sameSession(binding, held);
-    const existing = await store.read<SessionBinding>(bindingKey);
+    const existing = await store.read<SessionBinding>(storeKey);
     if (existing.kind === 'unavailable') return { kind: 'unavailable' };
     if (existing.kind === 'record') return matches(existing.record.value) ? { kind: 'bound', binding: existing.record.value } : { kind: 'conflict' };
     const binding: SessionBinding = {
@@ -269,7 +288,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       deviceId: held.deviceId as SessionBinding['deviceId'], harness: held.harness, sessionId: held.sessionId, generation: held.generation,
     };
     const written = await settleWrite<JsonValue>(store, {
-      key: bindingKey, expectedRevision: null, operationId: `bind-${operationId}-${randomToken(deps.random, 8)}`,
+      key: storeKey, expectedRevision: null, operationId: `bind-${operationId}-${randomToken(deps.random, 8)}`,
       next: { value: binding, expiresAt: null },
     });
     if (written.kind === 'applied') return { kind: 'bound', binding };
@@ -362,12 +381,16 @@ function sameSession(a: SessionRef, b: SessionRef): boolean {
 
 function isText(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= MAX_TEXT_BYTES
-    && !/[ --​‎‏‪-‮⁠⁦-⁩﻿]/u.test(value);
+    && !/[\u0000-\u001f\u007f-\u009f\u061c\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u.test(value);
 }
 
 /** Store keys never contain a raw secret: codes and grants are hashed, other parts digested. */
 function key(kind: 'code' | 'grant' | 'proof' | 'binding', value: string): string {
-  return `agent-bootstrap:${kind}:${createHash('sha256').update(`khala.agent-bootstrap.${kind}.v1 ${value}`).digest('hex')}`;
+  return `agent-bootstrap:${kind}:${createHash('sha256').update(`khala.agent-bootstrap.${kind}.v1\u0000${value}`).digest('hex')}`;
+}
+
+function bindingKey(ownerId: OwnerId, roomId: RoomId): string {
+  return key('binding', JSON.stringify([ownerId, roomId]));
 }
 
 async function readBody(request: Request): Promise<Record<string, unknown> | null> {

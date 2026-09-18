@@ -181,7 +181,7 @@ function validInput(input: BootstrapInput): boolean {
 }
 
 function boundedText(value: unknown, maxBytes: number): value is string {
-  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maxBytes && !/[ -]/.test(value);
+  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maxBytes && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 /** Runs a port call; a throw becomes `fallback`, and its message is dropped. */

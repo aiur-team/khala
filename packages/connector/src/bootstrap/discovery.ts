@@ -102,7 +102,8 @@ export function createDiscovery(options: DiscoveryOptions): DiscoveryPort {
             } catch {
               return { kind: 'rejected', code: 'untrusted_origin' };
             }
-            if (next.username !== '' || next.password !== '' || !trusted.has(next.origin)) {
+            // Same origin only: a redirect cannot move a production link's flow to a preview origin.
+            if (next.username !== '' || next.password !== '' || next.origin !== checked.origin) {
               return { kind: 'rejected', code: 'untrusted_origin' };
             }
             target = next;

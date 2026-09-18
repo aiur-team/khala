@@ -7,7 +7,7 @@ import type { AuthPrincipal, InviteState, OwnerId, ParticipantId, RoomId } from 
 import type { Authentication } from '../auth/index';
 import { T0, fakeStore, secureRandom } from '../auth/support.test';
 import {
-  AUTHORIZE_PATH, type AgentBootstrapDeps, DESCRIPTOR_PATH, REDEEM_PATH, TOKEN_PATH, createAgentBootstrapHandlers,
+  AUTHORIZE_PATH, type AgentAdmissionPort, type AgentBootstrapDeps, DESCRIPTOR_PATH, REDEEM_PATH, TOKEN_PATH, createAgentBootstrapHandlers,
 } from './handler';
 import { thumbprint } from './proof';
 
@@ -37,11 +37,18 @@ function connectorKey(clock: () => number) {
   };
 }
 
-function setup(overrides: Partial<AgentBootstrapDeps> & { signedIn?: () => string | null; invite?: () => InviteState } = {}) {
+type SetupOverrides = Partial<Omit<AgentBootstrapDeps, 'agents'>> & {
+  agents?: Partial<AgentAdmissionPort>;
+  signedIn?: () => string | null;
+  invite?: () => InviteState;
+};
+
+function setup(overrides: SetupOverrides = {}) {
   let now = T0;
   const clock = () => now;
   const store = fakeStore(clock);
   const admits: string[] = [];
+  const admitOperations: string[] = [];
   const deps: AgentBootstrapDeps = {
     origin: ORIGIN,
     store: store.store,
@@ -55,14 +62,16 @@ function setup(overrides: Partial<AgentBootstrapDeps> & { signedIn?: () => strin
     admissionFor: () => ({ inspect: async () => overrides.invite?.() ?? 'eligible' }),
     admissionPolicy: async () => 'allow',
     agents: {
-      async admit({ ownerId, deviceId }) {
+      room: async () => ({ kind: 'ok', value: 'room_1' as RoomId }),
+      async admit({ ownerId, deviceId, operationId }) {
         admits.push(deviceId);
+        admitOperations.push(operationId);
         return { kind: 'ok', value: { agentParticipantId: `agent_${ownerId}` as ParticipantId, roomId: 'room_1' as RoomId } };
       },
     },
     devices: { issue: async () => ({ kind: 'ok', value: { secret: 'device-login-secret', expiresAt: T0 + 60_000 } }) },
-    ...overrides,
   };
+  Object.assign(deps, { ...overrides, agents: { ...deps.agents, ...overrides.agents } });
   const handlers = createAgentBootstrapHandlers(deps);
   const route = (path: string) => [...handlers.agent, ...handlers.human].find(entry => entry.path === path)!;
   const key = connectorKey(clock);
@@ -105,7 +114,7 @@ function setup(overrides: Partial<AgentBootstrapDeps> & { signedIn?: () => strin
     });
   }
 
-  return { route, key, authorize, code, exchange, grant, redeem, store, admits, advance: (ms: number) => { now += ms; } };
+  return { route, key, authorize, code, exchange, grant, redeem, store, admits, admitOperations, advance: (ms: number) => { now += ms; } };
 }
 
 describe('descriptor', () => {
@@ -301,6 +310,7 @@ describe('redeem', () => {
   it('does not let another session or generation of the same owner take over the room binding', async () => {
     const h = setup();
     expect((await h.redeem(await h.grant())).status).toBe(200);
+    const admitted = h.admits.length;
     for (const [change, operationId] of [[{ session_id: 'thread-other' }, 'bootstrap-b-2'], [{ generation: '4' }, 'bootstrap-b-3']] as const) {
       const code = await h.code(change);
       const bodyChange = 'generation' in change ? { generation: 4 } : change;
@@ -309,6 +319,29 @@ describe('redeem', () => {
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual({ code: 'binding_conflict' });
     }
+    // The conflicting sessions' devices never joined the room.
+    expect(h.admits).toHaveLength(admitted);
+  });
+
+  it('scopes the client operation ID to the owner and device before admission', async () => {
+    let owner = 'owner_a';
+    const h = setup({ signedIn: () => owner });
+    await h.redeem(await h.grant(), 'shared-operation');
+    owner = 'owner_b';
+    await h.redeem(await h.grant(), 'shared-operation');
+    expect(h.admitOperations).toHaveLength(2);
+    expect(h.admitOperations[0]).not.toBe(h.admitOperations[1]);
+    expect(h.admitOperations.join()).not.toContain('shared-operation');
+  });
+
+  it('refuses an admission into a room other than the invite resolved to', async () => {
+    const h = setup({
+      agents: {
+        room: async () => ({ kind: 'ok', value: 'room_1' as RoomId }),
+        admit: async () => ({ kind: 'ok', value: { agentParticipantId: 'agent_x' as ParticipantId, roomId: 'room_2' as RoomId } }),
+      },
+    });
+    expect(await (await h.redeem(await h.grant())).json()).toEqual({ code: 'admission_denied' });
   });
 
   it('maps admission refusals and unknown outcomes', async () => {

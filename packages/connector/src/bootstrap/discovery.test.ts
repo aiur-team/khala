@@ -59,7 +59,9 @@ describe('createDiscovery', () => {
     t = transport(redirect(`https://u:p@khala.example${DESCRIPTOR_PATH}`));
     expect(await createDiscovery({ trustedOrigins: [ORIGIN], fetch: t.fetchImpl }).resolve(LINK)).toEqual({ kind: 'rejected', code: 'untrusted_origin' });
     t = transport(redirect(`${OTHER}${DESCRIPTOR_PATH}`), json(descriptorFor(OTHER)));
-    expect(await createDiscovery({ trustedOrigins: [ORIGIN, OTHER], fetch: t.fetchImpl }).resolve(LINK)).toMatchObject({ kind: 'resolved', origin: OTHER });
+    expect(await createDiscovery({ trustedOrigins: [ORIGIN, OTHER], fetch: t.fetchImpl }).resolve(LINK)).toEqual({ kind: 'rejected', code: 'untrusted_origin' });
+    t = transport(redirect(`${DESCRIPTOR_PATH}?link=moved`), json(descriptorFor(ORIGIN)));
+    expect(await createDiscovery({ trustedOrigins: [ORIGIN], fetch: t.fetchImpl }).resolve(LINK)).toMatchObject({ kind: 'resolved', origin: ORIGIN });
     t = transport(...Array.from({ length: 5 }, () => redirect(DESCRIPTOR_PATH)));
     expect(await createDiscovery({ trustedOrigins: [ORIGIN], fetch: t.fetchImpl }).resolve(LINK)).toEqual({ kind: 'rejected', code: 'link_unavailable' });
   });
@@ -110,6 +112,6 @@ describe('decodeDescriptor', () => {
   });
 
   it('refuses invisible characters in the invite reference', () => {
-    expect(decodeDescriptor(descriptorFor(ORIGIN, { invite: 'room‮invite' }), ORIGIN)).toEqual({ kind: 'invalid', code: 'malformed' });
+    expect(decodeDescriptor(descriptorFor(ORIGIN, { invite: 'room\u202einvite' }), ORIGIN)).toEqual({ kind: 'invalid', code: 'malformed' });
   });
 });

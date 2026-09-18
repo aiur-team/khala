@@ -27,8 +27,11 @@ composes `agent`.
   thumbprint must equal the bound `jkt`. It is checked with `node:crypto` for exact `htm`/`htu`,
   `iat` within 60 s (5 s skew) and `ath` on redeem, and each `jti` is recorded once for 120 s.
 - **Binding.** There is one immutable binding per owner and room. The same session, generation and device get the
-  same binding back. Any other session or generation is `409 binding_conflict`; rebinding is
-  an explicit owner flow, not a reconnect.
+  same binding back. Any other session or generation is `409 binding_conflict`. That check runs
+  before admission, so a conflicting device never joins the room. Rebinding is an explicit owner
+  flow, not a reconnect.
+- **Operation IDs.** The connector's `operation_id` only ever reaches `admit` hashed together with the
+  owner and device, so two owners cannot collide on a chosen ID.
 - **Scope.** The grant admits one device for one session. It cannot approve, release or set
   policy, and the redeem route ignores human cookies.
 - **Failures.** Responses are finite codes only. A throwing port becomes `503 unavailable`; an
@@ -45,7 +48,7 @@ composes `agent`.
 | `inviteFromLink(url)` | KHA-132 route codec (the share-link vocabulary is not fixed here) |
 | `admissionFor(request)` | Request-scoped KHA-105 `AdmissionPort` for the signed-in owner (only `inspect` is used) |
 | `admissionPolicy` | **G-ADMISSION.** It is required and has no default. It decides whether a signed-in holder of the link may bind an agent, and whether that happens silently |
-| `agents: AgentAdmissionPort` | Admits the owner's agent participant, with this device, to the invite's room (KHA-113 / G-SUBSTRATE) |
+| `agents: AgentAdmissionPort` | `room(invite)` resolves the room with no side effects. `admit` adds the owner's agent participant, with this device, to that room, idempotently per (scoped) operation ID (KHA-113 / G-SUBSTRATE) |
 | `devices: DeviceCredentialPort` | Short-lived substrate credential for exactly this device (for example a JWT login). Reissuing never creates a second device |
 | `clock`, `random` | Trusted time and a CSPRNG |
 
