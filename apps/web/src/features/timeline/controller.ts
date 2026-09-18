@@ -95,8 +95,24 @@ export function createTimelineController(
 
   const disposeObserve = roomPort.observe(roomId, applySnapshot);
 
-  async function loadOlder(): Promise<OperationResult<TimelinePage, RoomRejection> | null> {
-    if (disposed) return null;
+  // Concurrent callers (the mount-effect load racing a fast second click on
+  // "Load earlier messages") share this in-flight request instead of each
+  // firing their own `roomPort.timeline` call: two independent calls would
+  // both compute their "new" additions against the same pre-fetch `older`
+  // snapshot and each prepend a copy, duplicating rows.
+  let inFlightLoadOlder: Promise<OperationResult<TimelinePage, RoomRejection> | null> | null = null;
+
+  function loadOlder(): Promise<OperationResult<TimelinePage, RoomRejection> | null> {
+    if (disposed) return Promise.resolve(null);
+    if (inFlightLoadOlder) return inFlightLoadOlder;
+    const request = performLoadOlder().finally(() => {
+      inFlightLoadOlder = null;
+    });
+    inFlightLoadOlder = request;
+    return request;
+  }
+
+  async function performLoadOlder(): Promise<OperationResult<TimelinePage, RoomRejection> | null> {
     const result = await roomPort.timeline({ roomId, cursor: nextCursor, limit: pageSize });
     if (disposed) return null;
     if (result.kind !== 'ok') {

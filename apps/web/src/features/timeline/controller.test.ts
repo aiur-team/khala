@@ -99,6 +99,24 @@ describe('createTimelineController', () => {
     expect(controller.getSnapshot().items).toEqual([]);
   });
 
+  it('two concurrent loadOlder calls share one request and never duplicate rows', async () => {
+    let timelineCalls = 0;
+    const port: Pick<RoomPort, 'observe' | 'timeline'> = {
+      observe: (): Disposer => () => {},
+      timeline: async () => {
+        timelineCalls += 1;
+        return ok({ items: [item('E1', 'alice', 'first'), item('E2', 'alice', 'second')], nextCursor: null, snapshotRevision: 'rev_1' });
+      },
+    };
+    const controller = createTimelineController(port as RoomPort, roomId, { generation: 1 });
+
+    const [first, second] = await Promise.all([controller.loadOlder(), controller.loadOlder()]);
+    expect(timelineCalls).toBe(1);
+    expect(first).toBe(second);
+    expect(controller.getSnapshot().items.map(entry => entry.ref.eventId)).toEqual(['E1', 'E2']);
+    controller.dispose();
+  });
+
   it('caches the returned snapshot reference until state actually changes', () => {
     const { port } = fakeRoomPort();
     const controller = createTimelineController(port, roomId, { generation: 1 });

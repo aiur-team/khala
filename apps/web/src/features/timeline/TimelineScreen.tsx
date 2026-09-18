@@ -50,6 +50,7 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState<PendingSend | null>(null);
   const [atLatest, setAtLatest] = useState(true);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const listRef = useRef<HTMLOListElement | null>(null);
   const anchorRef = useRef<ReaderAnchor>({ atLatest: true });
 
@@ -86,7 +87,12 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
       const row = list.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(topItem.ref.eventId)}"]`);
       anchorRef.current = anchorToTopVisible(topItem.ref.eventId, row ? row.getBoundingClientRect().top - list.getBoundingClientRect().top : 0);
     }
-    await controller.loadOlder();
+    setIsLoadingOlder(true);
+    try {
+      await controller.loadOlder();
+    } finally {
+      setIsLoadingOlder(false);
+    }
   }, [controller, data.items]);
 
   async function handleSend(): Promise<void> {
@@ -126,7 +132,7 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
         </p>
       ) : null}
       {data.nextCursor !== null ? (
-        <button type="button" className="timeline__load-older" onClick={() => void handleLoadOlder()}>
+        <button type="button" className="timeline__load-older" disabled={isLoadingOlder} onClick={() => void handleLoadOlder()}>
           Load earlier messages
         </button>
       ) : null}
