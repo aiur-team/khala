@@ -18,16 +18,40 @@ describe('createAuthService', () => {
   });
 });
 
+const FORBIDDEN_FIELD_NAME = /token|password|secret|key|csrf|accountId|@khala_/i;
+const CONTRACT_PRINCIPAL_KEYS = ['v', 'ownerId', 'providerIssuer', 'providerSubject', 'verifiedEmail', 'sessionExpiresAt'].sort();
+
 describe('public principal', () => {
   it('decodes as the contract principal and carries no bearer or key material', async () => {
     const h = harness();
     const { result, cookies } = await signIn(h);
     // Unknown fields would fail the strict contract decoder.
     expect(decodeAuthPrincipal(result.principal).ok).toBe(true);
-    const text = JSON.stringify(result.principal);
     const token = cookies[0]!.split('=')[1]!;
-    expect(text).not.toContain(token);
-    expect(text).not.toMatch(/token|password|secret|key|csrf|accountId|@khala_/i);
+    expect(JSON.stringify(result.principal)).not.toContain(token);
+    // Structural, not textual: a random ownerId may spell a forbidden word by
+    // chance, so only property names are checked, never field values.
+    expect(Object.keys(result.principal).sort()).toEqual(CONTRACT_PRINCIPAL_KEYS);
+    expect(Object.keys(result.principal).some(key => FORBIDDEN_FIELD_NAME.test(key))).toBe(false);
+  });
+
+  it('stays deterministic when a field value spells a forbidden word', async () => {
+    const h = harness();
+    const { result } = await signIn(h);
+    // Injected ownerId containing "key", "Token" and "csrf": the same shape of
+    // value that made this test flaky when it scanned values instead of keys.
+    const planted = { ...result.principal, ownerId: 'own_aKeyTokenCsrf01234567890' as typeof result.principal.ownerId };
+    expect(planted.ownerId).toMatch(FORBIDDEN_FIELD_NAME);
+    expect(decodeAuthPrincipal(planted).ok).toBe(true);
+    expect(Object.keys(planted).sort()).toEqual(CONTRACT_PRINCIPAL_KEYS);
+    expect(Object.keys(planted).some(key => FORBIDDEN_FIELD_NAME.test(key))).toBe(false);
+  });
+
+  it('would catch a principal that actually carries a forbidden field', async () => {
+    const h = harness();
+    const { result } = await signIn(h);
+    const leaky = { ...result.principal, token: 'leaked' };
+    expect(Object.keys(leaky).some(key => FORBIDDEN_FIELD_NAME.test(key))).toBe(true);
   });
 });
 
