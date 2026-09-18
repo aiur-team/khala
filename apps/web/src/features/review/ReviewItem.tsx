@@ -25,6 +25,11 @@ function sanitizeForAccessibleName(value: string): string {
   return value.replace(UNSAFE_ACCESSIBLE_NAME_CHARS, '');
 }
 
+/** Takes the first `count` Unicode code points, never splitting a surrogate pair the way `string.slice` (UTF-16 code units) can. */
+function takeCodePoints(value: string, count: number): string {
+  return Array.from(value).slice(0, count).join('');
+}
+
 export interface ReviewItemProps {
   item: ReadableTimelineItem;
   /** Author display name, resolved for same-name collisions across owners (see `attribution.ts`). */
@@ -52,7 +57,7 @@ export interface ReviewItemProps {
 
 export function ReviewItem({ item, resolvedDisplayName, ownerLabel, selected, disabled, onToggle, renderContent, onHide, hideDisabled }: ReviewItemProps) {
   const inputId = `review-item-${item.ref.eventId}`;
-  const bodyPreview = sanitizeForAccessibleName(item.content.body.slice(0, 60));
+  const bodyPreview = sanitizeForAccessibleName(takeCodePoints(item.content.body, 60));
   return (
     <li className="review-item" data-event-id={item.ref.eventId}>
       <header className="review-item__header">

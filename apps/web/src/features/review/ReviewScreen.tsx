@@ -11,7 +11,7 @@ import type { MessageContent, TimelineItem, UnavailableReason } from '@khala/con
 import { sameEventRef } from '@khala/contracts/messaging/index';
 import { buildDisplayNameResolver, ownershipLabel } from './attribution';
 import type { ReviewController } from './controller';
-import type { SubmissionState } from './model';
+import type { ReviewAccessState, SubmissionState } from './model';
 import { latestReceiptFor, receiptLabel } from './receipt-labels';
 import { ReviewItem, type ReadableTimelineItem } from './ReviewItem';
 
@@ -61,10 +61,12 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [arrivalAnnouncement, setArrivalAnnouncement] = useState('');
   const previousPendingCount = useRef(0);
-  // Distinguishes the very first render (never announce) from a genuine live
-  // arrival into a queue that had already drained to empty (must still
-  // announce) — both start with `previousPendingCount.current === 0`.
-  const hasMounted = useRef(false);
+  // Distinguishes a genuine live arrival while already `ready` (must
+  // announce, even into a queue that had drained to empty) from a population
+  // of `pending` that just accompanied recovering into `ready` — the initial
+  // mount, or any return from `loading`/`unavailable`/`revoked` — which must
+  // never announce however many items arrive with it.
+  const previousAccess = useRef<ReviewAccessState | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
   const releaseStatusRef = useRef<HTMLParagraphElement>(null);
 
@@ -72,13 +74,13 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
 
   useEffect(() => {
     const previous = previousPendingCount.current;
-    if (hasMounted.current && view.pending.length > previous) {
+    if (previousAccess.current === 'ready' && view.access === 'ready' && view.pending.length > previous) {
       const added = view.pending.length - previous;
       setArrivalAnnouncement(`${added} new pending message${added > 1 ? 's' : ''} arrived.`);
     }
-    hasMounted.current = true;
+    previousAccess.current = view.access;
     previousPendingCount.current = view.pending.length;
-  }, [view.pending.length]);
+  }, [view.access, view.pending.length]);
 
   useEffect(() => {
     if (submission.phase === 'released') releaseStatusRef.current?.focus();
@@ -96,7 +98,14 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
   // reaches the submit path (defense in depth alongside Hide deselecting).
   const visibleSelectedRefs = selection.refs.filter(ref => readableVisible.some(item => sameEventRef(item.ref, ref)));
   const selectedCount = visibleSelectedRefs.length;
-  const canSubmit = canAct && selection.phase === 'selected' && !submissionInFlight && visibleSelectedRefs.length === selection.refs.length;
+  // A selected ref can go invisible without being deselected whenever
+  // `toggleSelect` no-ops on Hide — not only while a submission is in flight
+  // (already reflected in `hideDisabled`), but also whenever access is not
+  // `ready` (`controller.ts`'s own guard). Treat that desync exactly like a
+  // stale selection: Release stays disabled and Reselect is offered, rather
+  // than leaving a phantom selected-but-invisible count with no way back.
+  const selectionDesynced = selection.phase === 'selected' && visibleSelectedRefs.length !== selection.refs.length;
+  const canSubmit = canAct && selection.phase === 'selected' && !submissionInFlight && !selectionDesynced;
 
   function hide(eventId: string): void {
     setHidden(current => new Set(current).add(eventId));
@@ -142,7 +151,7 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
         </p>
       ) : null}
 
-      {selection.phase === 'stale' ? (
+      {selection.phase === 'stale' || selectionDesynced ? (
         <p className="review__status review__status--stale" role="alert">
           Your selection changed underneath you and can no longer be released.{' '}
           <button type="button" onClick={handleReselect}>

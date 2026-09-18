@@ -56,6 +56,7 @@ export function createFakeReviewPort() {
   const listeners = new Set<() => void>();
   let releaseCounter = 0;
   let lastCommand: ApprovalCommand | null = null;
+  let stashedPending: TimelineItem[] | null = null;
 
   function currentView(): ReviewView {
     return { access, bindingId, bindingGeneration, policyVersion, viewerOwnerId, pending, receipts };
@@ -122,6 +123,27 @@ export function createFakeReviewPort() {
     },
     revoke() {
       access = 'revoked';
+      notify();
+    },
+    /** Simulates the dependency backing the view becoming unreachable without touching `pending` — unlike `revoke`, the items stay in the model (R4's "not that the room is empty"). */
+    goUnavailable() {
+      access = 'unavailable';
+      notify();
+    },
+    restoreReady() {
+      access = 'ready';
+      notify();
+    },
+    /** Simulates an initial-load transition: `pending` genuinely empties out while `loading`, then repopulates once `ready` — for asserting that recovering into `ready` never announces a live arrival. */
+    goLoading() {
+      stashedPending = pending;
+      pending = [];
+      access = 'loading';
+      notify();
+    },
+    finishLoading() {
+      if (stashedPending) pending = stashedPending;
+      access = 'ready';
       notify();
     },
     /** The last `ApprovalCommand` actually sent to `approve`, for asserting the exact wire selection (KTD1). */

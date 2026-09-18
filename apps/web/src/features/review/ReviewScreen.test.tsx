@@ -189,12 +189,12 @@ describe('ReviewScreen', () => {
   });
 
   it('strips control and bidi characters from the body preview before it reaches the checkbox accessible name', () => {
-    // U+0007 (BEL, a control character) and U+202E (RTL override, a bidi
+    // U+0007 (BEL, a C0 control character) and U+202E (RTL override, a bidi
     // character) are within the first 60 characters of the body; the body
     // itself still renders in full and inert with the original bytes (only
     // the review-owned accessible name is sanitized, never the content
     // renderContent shows - KTD4), so only the aria-label is asserted here.
-    const body = 'Approve this ‮now, not later';
+    const body = `Approve this ‮now, not later`;
     const controller = fakeController({
       view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', body)], receipts: [] },
     });
@@ -204,6 +204,60 @@ describe('ReviewScreen', () => {
     expect(ariaLabelMatch![0]).not.toContain('');
     expect(ariaLabelMatch![0]).not.toContain('‮');
     expect(ariaLabelMatch![0]).toContain('Approve this now, not later');
+  });
+
+  it('strips every unsafe character class the sanitizer claims to cover, not just BEL and RTL override', () => {
+    // A regex narrowed to only C0/C1/U+061C/U+202E would still pass the test
+    // above. Cover the isolates, the other bidi-embedding controls, the
+    // zero-width characters, the LTR/RTL marks, and the BOM individually so a
+    // narrowed regex is caught here.
+    const unsafeChars = [
+      '', // C0 control
+      '', // C1 control
+      '؜', // Arabic Letter Mark
+      '​', // zero-width space
+      '‎', // left-to-right mark
+      '‏', // right-to-left mark
+      '‪', // left-to-right embedding
+      '‫', // right-to-left embedding
+      '‬', // pop directional formatting
+      '‭', // left-to-right override
+      '‮', // right-to-left override
+      '⁠', // word joiner
+      '⁦', // left-to-right isolate
+      '⁧', // right-to-left isolate
+      '⁨', // first-strong isolate
+      '⁩', // pop directional isolate
+      '﻿', // byte order mark
+    ];
+    for (const unsafeChar of unsafeChars) {
+      const body = `Approve${unsafeChar}now`;
+      const controller = fakeController({
+        view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', body)], receipts: [] },
+      });
+      const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+      const ariaLabelMatch = html.match(/aria-label="Select message from peer[^"]*"/);
+      expect(ariaLabelMatch, `expected a checkbox aria-label for U+${unsafeChar.codePointAt(0)!.toString(16)}`).not.toBeNull();
+      expect(ariaLabelMatch![0], `U+${unsafeChar.codePointAt(0)!.toString(16)} should be stripped`).not.toContain(unsafeChar);
+      expect(ariaLabelMatch![0]).toContain('Approvenow');
+    }
+  });
+
+  it('takes the body preview by code point, never splitting a surrogate pair the way slice(0, 60) on UTF-16 units could', () => {
+    // 59 ASCII characters put the boundary at index 60 in the middle of the
+    // trailing surrogate pair (U+1F600, 2 UTF-16 code units) if sliced by code
+    // unit rather than code point.
+    const body = `${'a'.repeat(59)}\u{1F600} trailing text past the boundary`;
+    const controller = fakeController({
+      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', body)], receipts: [] },
+    });
+    const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
+    const ariaLabelMatch = html.match(/aria-label="Select message from peer[^"]*"/);
+    expect(ariaLabelMatch, 'expected a checkbox aria-label').not.toBeNull();
+    // A lone surrogate half serializes to the Unicode replacement character in
+    // HTML text content; asserting its absence catches a split pair directly.
+    expect(ariaLabelMatch![0]).not.toContain('�');
+    expect(ariaLabelMatch![0]).toContain('\u{1F600}');
   });
 
   it('U2/KTD4: Hide is disabled while a submission is in flight or unresolved, so a hidden ref can never desync from a submitted selection', () => {

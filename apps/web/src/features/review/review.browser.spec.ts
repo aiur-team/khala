@@ -24,6 +24,10 @@ type ReviewHarness = {
   editPending: (eventId: string, body: string) => void;
   bumpBindingGeneration: () => void;
   revoke: () => void;
+  goUnavailable: () => void;
+  restoreReady: () => void;
+  goLoading: () => void;
+  finishLoading: () => void;
   getLastCommand: () => ApprovalCommand | null;
 };
 
@@ -251,6 +255,55 @@ test('U2/KTD4: Hide is disabled on every row while a submission is in flight or 
     const hideOnOther = page.locator('[data-event-id="pending_1"] button.review__hide');
     assert.equal(await hideOnTarget.isDisabled(), true, 'Hide is disabled on the submitted row while unresolved');
     assert.equal(await hideOnOther.isDisabled(), true, 'Hide is disabled on other rows too while any submission is unresolved');
+  });
+});
+
+test('a selected row hidden while access is unavailable cannot wedge Release: Reselect appears once access recovers', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    // `toggleSelect` is a no-op whenever access isn't `ready` (`controller.ts`),
+    // not only during a submission — so Hide (only ever disabled during a
+    // submission) can hide a selected row while access is `unavailable`
+    // without the controller ever deselecting it underneath.
+    const firstCheckbox = page.locator('[data-event-id="pending_1"] input[type="checkbox"]');
+    const secondCheckbox = page.locator('[data-event-id="pending_2"] input[type="checkbox"]');
+    await firstCheckbox.check();
+    await secondCheckbox.check();
+    await page.locator('.review__count').filter({ hasText: '2 selected' }).waitFor();
+
+    await page.evaluate(() => window.__reviewHarness.goUnavailable());
+    await page.getByText('Pending messages are unavailable right now.').waitFor();
+
+    const hideSecond = page.locator('[data-event-id="pending_2"] button.review__hide');
+    await hideSecond.click();
+
+    await page.evaluate(() => window.__reviewHarness.restoreReady());
+    await page.getByText('Pending messages are unavailable right now.').waitFor({ state: 'detached' });
+
+    // Without the fix: header reads "1 selected", Release stays disabled at
+    // that count, and no Reselect button ever appears — a wedge with no way
+    // out short of reloading. With the fix, the desync itself is surfaced.
+    await page.getByRole('button', { name: 'Reselect' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: /^Release/ }).isDisabled(), true, 'Release stays disabled while the selection is desynced from what is visible');
+
+    await page.getByRole('button', { name: 'Reselect' }).click();
+    await page.getByText('changed underneath you').waitFor({ state: 'detached' });
+    assert.equal(await firstCheckbox.isChecked(), false, 'Reselect clears the desynced selection entirely, including the still-visible row');
+  });
+});
+
+test('recovering into `ready` never announces its own repopulation as a live arrival', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    await page.evaluate(() => window.__reviewHarness.goLoading());
+    await page.getByText('Loading pending messages…').waitFor();
+    assert.equal(await page.getByText('Please forward the deployment summary').count(), 0, 'pending items are gone while loading');
+
+    await page.evaluate(() => window.__reviewHarness.finishLoading());
+    await page.getByText('Please forward the deployment summary').waitFor();
+
+    // The same transition that must never announce here (recovering into
+    // `ready`) must still announce a later live arrival while `ready` — see
+    // "U4-2: a live arrival into a queue that has drained to empty" below.
+    assert.equal(await page.locator('.review__sr-only').innerText(), '', 'repopulating pending on the loading-to-ready transition is never announced as an arrival');
   });
 });
 

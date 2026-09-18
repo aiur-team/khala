@@ -58,18 +58,27 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`) and KHA-106
   `aria-label` includes a preview of the body, but — unlike `displayName`,
   which is decoder-guaranteed free of control/bidi/invisible characters —
   the body carries no such guarantee, so that preview is stripped of the
-  same character classes before it reaches the accessible name. Hide is
-  disabled while a submission is in flight or unresolved: hiding a selected
-  row then would leave its ref selected-but-invisible, since `toggleSelect`
-  is itself a no-op during that window, with no way back short of a full
-  Reselect.
+  same character classes before it reaches the accessible name. The preview
+  is taken by Unicode code point, not `String.slice`'s UTF-16 code units, so
+  the 60-character cutoff can never split a surrogate pair. Hide is disabled
+  while a submission is in flight or unresolved: hiding a selected row then
+  would leave its ref selected-but-invisible, since `toggleSelect` is itself
+  a no-op during that window, with no way back short of a full Reselect.
 - **`ReviewScreen.tsx`** composes the list, filter chips (All/Selected), a
   stale-selection banner with an explicit Reselect action, a revoked-access
   banner, and the release action bar showing submission status and — once
-  released — per-`releaseId` receipt-derived evidence. The live-arrival
-  announcement fires on any growth of the pending count once mounted,
-  including a first arrival into a queue that had already drained to empty —
-  not just growth after a nonzero previous count.
+  released — per-`releaseId` receipt-derived evidence. `toggleSelect` is also
+  a no-op whenever access isn't `ready`, not only during a submission, so
+  hiding a selected row while access is `unavailable` can desync a selected
+  ref from what remains visible the same way; the stale-selection banner and
+  Reselect action cover that desync too (`selectedRefs.length !==
+  selection.refs.length`), not only an explicit `stale` selection phase. The
+  live-arrival announcement fires on any growth of the pending count while
+  already `ready`, including a first arrival into a queue that had already
+  drained to empty — but never on `pending` repopulating as part of
+  recovering into `ready` itself (the initial load, or a return from
+  `loading`/`unavailable`/`revoked`), which must never be misread as a live
+  arrival however many items come back with it.
 
 ## Why `renderContent` is an injected prop, not a timeline import
 
@@ -169,9 +178,14 @@ ownership comparison from a correct one when both label strings still appear
 somewhere on the page — each checkbox carries an accessible name beyond the
 bare author name, that accessible name strips control and bidi characters out
 of the body preview even though the same characters still render in the
-visible, inert body, Hide is disabled on a row while any submission is in
-flight or unresolved, and an unavailable item renders as a disabled
-placeholder with its withheld reason instead of being dropped silently.
+visible, inert body (individually, for every character class the sanitizer
+claims to cover — the isolates, the other bidi-embedding controls, the
+zero-width characters, the LTR/RTL marks, and the BOM — not just the two
+characters a narrower regex would also pass), that the preview never splits a
+surrogate pair at its 60-character cutoff, Hide is disabled on a row while any
+submission is in flight or unresolved, and an unavailable item renders as a
+disabled placeholder with its withheld reason instead of being dropped
+silently.
 
 `review.browser.spec.ts` (named outside vitest's glob, same convention as
 `timeline.browser.spec.ts`) builds a small harness (`browser-harness/`) that
@@ -182,7 +196,10 @@ harness's default pending set covers the full attribution matrix — a human
 and an agent owned by the viewer, and a human and an agent owned by someone
 else — plus a `pushOutcomeUnknownTarget` helper that parks a submission in
 `unknown` durably (the only reliable way to observe in-flight UI state, since
-the fake port otherwise resolves synchronously). Specs cover: full content
+the fake port otherwise resolves synchronously), `goUnavailable`/`restoreReady`
+to drive an access transition without touching `pending`, and `goLoading`/
+`finishLoading` to simulate `pending` genuinely emptying out while `loading`
+and repopulating once `ready`. Specs cover: full content
 and author are visible before selection; selecting one item updates the
 count without touching the other; a live arrival during selection never
 joins it and does not disturb the existing selection, including under the
@@ -204,10 +221,19 @@ clears it; an agent-authored row is labeled "Your agent" for the viewer's own
 agent and "Another person's agent" for someone else's, cross-checked so
 neither row also carries the other's label; Hide is disabled on every row —
 not just the submitted one — while a submission is in flight or unresolved;
-a live arrival into a queue that has drained to empty (not just its very
-first mount) is still announced; a long message renders in full (not
-truncated) and its checkbox responds to keyboard selection (Space); and
-switching to a 390px viewport preserves the exact selection and its count.
+hiding a selected row while access is `unavailable` — where `toggleSelect`
+no-ops the same way it does during a submission, but Hide itself stays
+enabled — desyncs the selection from what's visible without a full end-to-end
+reproduction being masked by any single guard, and once access recovers to
+`ready` the Reselect banner appears and clears it, rather than leaving
+Release stuck disabled at a phantom count with no way out; recovering into
+`ready` (via the harness's dedicated `goLoading`/`finishLoading`) never
+announces the resulting repopulation of `pending` as a live arrival, even
+though a live arrival into a queue that has drained to empty while already
+`ready` (not just the transition into readiness) is still announced; a long
+message renders in full (not truncated) and its checkbox responds to
+keyboard selection (Space); and switching to a 390px viewport preserves the
+exact selection and its count.
 
 ## What this does not prove
 

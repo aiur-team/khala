@@ -20,6 +20,10 @@ declare global {
       editPending: (eventId: string, body: string) => void;
       bumpBindingGeneration: () => void;
       revoke: () => void;
+      goUnavailable: () => void;
+      restoreReady: () => void;
+      goLoading: () => void;
+      finishLoading: () => void;
       getLastCommand: () => ApprovalCommand | null;
     };
   }
@@ -30,6 +34,10 @@ window.__reviewHarness = {
   editPending: harness.editPending,
   bumpBindingGeneration: harness.bumpBindingGeneration,
   revoke: harness.revoke,
+  goUnavailable: harness.goUnavailable,
+  restoreReady: harness.restoreReady,
+  goLoading: harness.goLoading,
+  finishLoading: harness.finishLoading,
   getLastCommand: harness.getLastCommand,
 };
 
