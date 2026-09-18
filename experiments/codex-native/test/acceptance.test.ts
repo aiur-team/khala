@@ -45,6 +45,21 @@ test('busy acceptance requires queueing before the active turn completes', async
   assert.match(verdict.failures.join('\n'), /busy delivery/);
 });
 
+test('missing process cmdline exposure fails the evidence contract', async () => {
+  const report = await load();
+  report.cmdlineExposure.observedArgv = report.cmdlineExposure.observedArgv.filter((argument) => argument !== report.cmdlineExposure.syntheticMarker);
+  const verdict = assessNativeQueue(report);
+  assert.match(verdict.failures.join('\n'), /process cmdline/);
+});
+
+test('a landed message without a killed-process receipt remains outcome unknown', async () => {
+  const report = await load();
+  report.cases.killed.messageLanded = true;
+  const verdict = assessNativeQueue(report);
+  assert.doesNotMatch(verdict.failures.join('\n'), /killed-process/);
+  assert.deepEqual(verdict.failures, []);
+});
+
 test('unsafe errors and duplicate collapse are rejected', async () => {
   const report = await load();
   report.cases.missingThread.payloadEchoed = true;

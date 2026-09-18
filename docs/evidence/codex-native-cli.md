@@ -25,8 +25,11 @@ remained open throughout the live-owner, stdin, duplicate, and busy cases.
 Raw TUI scrollback and the rollout were inspected during the run but are not
 retained because they contain session instructions outside this proof. The
 sanitized observations are
-[live-run.json](../../experiments/codex-native/evidence/live-run.json). Its
-checker and mutation tests are under
+[live-run.json](../../experiments/codex-native/evidence/live-run.json) (sha256
+`66be13aa20ae297fe4523e905d29fa6783edf944eedd4eb4e537d20561210aaf`, also
+recorded in the adjacent
+[inventory](../../experiments/codex-native/evidence/inventory.json)). Its checker
+and mutation tests are under
 [`experiments/codex-native/`](../../experiments/codex-native/).
 
 The queued text was synthetic. No released payload was put in an argument,
@@ -49,7 +52,13 @@ capability record.
 
 ## Results
 
-### Dormant thread and daemon lifecycle
+### Queue idle
+
+This proof maps both `existingSession: native_cli_queue` and
+`immediateNotification: native_cli_queue`. Notification acceptance is immediate:
+the CLI persists the notification without a running executor or managed daemon.
+Consumption while dormant waits until the thread resumes, so "immediate" applies
+to acceptance rather than the start of a model turn.
 
 The ordinary host check `codex app-server daemon version` failed before the run
 because `~/.codex/app-server-control/app-server-control.sock` did not exist. In
@@ -89,6 +98,13 @@ Route A cannot transport released bytes without exposing them in the process
 argument list. This is the result that requires the notification-only
 recommendation.
 
+A separate synthetic-marker observation sampled `/proc/<child-pid>/cmdline`
+while the queue process was running. Its sanitized argument vector contains
+`--message` followed by `kha146-proc-marker-20260918`. The disposable target was
+intentionally absent from the isolated store and the command later exited 1;
+the command-line observation proves argument exposure independently of whether
+the target is valid. No released payload or machine-local path was retained.
+
 ### Duplicate delivery
 
 Two identical `kha146-duplicate-probe` submissions returned distinct queue IDs:
@@ -120,7 +136,7 @@ the unique synthetic text did not appear in the rollout during the two-second
 observation window. That specific early-kill run failed before the write. It
 does not close the narrower write-before-receipt interval: any killed process
 without a success receipt still has an `outcome_unknown` result and must not be
-retried.
+retried, whether later observation finds that the message landed or not.
 
 A nonexistent UUID exited 1 with native code `-32603` and "no rollout found".
 A UUID present in the host store but absent from the isolated experiment store

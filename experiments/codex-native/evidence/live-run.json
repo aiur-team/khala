@@ -10,6 +10,27 @@
     "priorMarker": "kha146-prior-alpha",
     "owner": "interactive Codex TUI started by this experiment"
   },
+  "cmdlineExposure": {
+    "source": "/proc/<child-pid>/cmdline",
+    "syntheticMarker": "kha146-proc-marker-20260918",
+    "targetThread": "<DISPOSABLE_MISSING_UUID>",
+    "observedArgv": [
+      "<SANDBOX_LAUNCHER>",
+      "node",
+      "<CODEX_ENTRYPOINT>",
+      "queue",
+      "--thread",
+      "<DISPOSABLE_MISSING_UUID>",
+      "--message",
+      "kha146-proc-marker-20260918"
+    ],
+    "messageFlagPresent": true,
+    "syntheticMarkerPresent": true,
+    "exitCode": 1,
+    "signal": null,
+    "stdoutBytes": 0,
+    "stderrContainsMarker": false
+  },
   "cases": {
     "dormant": {
       "socketBefore": "absent",

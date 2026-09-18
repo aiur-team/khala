@@ -2,6 +2,18 @@ export type NativeQueueReport = {
   schemaVersion: 1;
   codexVersion: string;
   target: { disposable: boolean; threadId: string; priorMarker: string };
+  cmdlineExposure: {
+    source: string;
+    syntheticMarker: string;
+    targetThread: string;
+    observedArgv: string[];
+    messageFlagPresent: boolean;
+    syntheticMarkerPresent: boolean;
+    exitCode: number;
+    signal: string | null;
+    stdoutBytes: number;
+    stderrContainsMarker: boolean;
+  };
   cases: {
     dormant: { socketBefore: 'absent' | 'present'; socketAfter: 'absent' | 'present'; exitCode: number; consumedAfterResume: boolean };
     liveOwner: { exitCode: number; queueId: string; consumedByTui: boolean; priorContextRecalled: boolean };
@@ -33,6 +45,14 @@ export function assessNativeQueue(report: NativeQueueReport): NativeQueueVerdict
   if (report.codexVersion !== 'codex-cli 0.154.0') failures.push('unproved Codex version');
   if (!report.target.disposable || !uuid.test(report.target.threadId)) failures.push('target was not a designated disposable thread');
 
+  const markerIndex = report.cmdlineExposure.observedArgv.indexOf(report.cmdlineExposure.syntheticMarker);
+  const cmdlineExposesMessage = report.cmdlineExposure.source === '/proc/<child-pid>/cmdline'
+    && report.cmdlineExposure.messageFlagPresent
+    && report.cmdlineExposure.syntheticMarkerPresent
+    && markerIndex > 0
+    && report.cmdlineExposure.observedArgv[markerIndex - 1] === '--message';
+  if (!cmdlineExposesMessage) failures.push('process cmdline did not expose --message with the synthetic marker');
+
   const existingSession = report.cases.liveOwner.exitCode === 0
     && uuid.test(report.cases.liveOwner.queueId)
     && report.cases.liveOwner.consumedByTui
@@ -59,8 +79,8 @@ export function assessNativeQueue(report: NativeQueueReport): NativeQueueVerdict
     || report.cases.duplicate.consumptionCount !== 2) {
     failures.push('duplicate delivery behavior was not observed twice');
   }
-  if (report.cases.killed.signal !== 'SIGKILL' || report.cases.killed.receiptObserved || report.cases.killed.messageLanded) {
-    failures.push('killed-process boundary was not fail-closed in this run');
+  if (report.cases.killed.signal !== 'SIGKILL' || report.cases.killed.receiptObserved) {
+    failures.push('killed-process boundary did not preserve an unreceipted outcome');
   }
   if (report.cases.missingThread.exitCode === 0 || report.cases.missingThread.payloadEchoed) {
     failures.push('missing-thread error was unsafe');
