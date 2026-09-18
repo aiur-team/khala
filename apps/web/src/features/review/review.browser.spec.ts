@@ -41,9 +41,10 @@ test('Review renders full inert preview, keeps selection exact across arrivals, 
     await page.locator('[data-event-id="pending_2"]').getByText('Bob', { exact: true }).waitFor();
 
     // Selecting one item updates the count and enables Release; the other stays unselected.
+    const selectedCount = page.locator('.review__count');
     const firstCheckbox = page.locator('[data-event-id="pending_1"] input[type="checkbox"]');
     await firstCheckbox.check();
-    await page.getByText('1 selected').waitFor();
+    await selectedCount.filter({ hasText: '1 selected' }).waitFor();
     const secondCheckbox = page.locator('[data-event-id="pending_2"] input[type="checkbox"]');
     assert.equal(await secondCheckbox.isChecked(), false, 'only the exact selected item is checked');
 
@@ -56,24 +57,26 @@ test('Review renders full inert preview, keeps selection exact across arrivals, 
     );
     await page.getByText('a brand new pending message').waitFor();
     assert.equal(await firstCheckbox.isChecked(), true, 'the original selection survives a new arrival');
-    assert.equal(await page.getByText('1 selected').count(), 1, 'the new arrival did not join the selection');
-    await page.getByRole('button', { name: /^Filter pending messages$/ }).count(); // no-op sanity: filter group exists
-    await page.getByRole('button', { name: 'Selected' }).click();
+    assert.equal(await selectedCount.filter({ hasText: '1 selected' }).count(), 1, 'the new arrival did not join the selection');
+    await page.getByRole('button', { name: 'Selected', exact: true }).click();
     assert.equal(await page.getByText('a brand new pending message').count(), 0, 'the Selected filter excludes the unselected new arrival');
-    await page.getByRole('button', { name: 'All' }).click();
+    await page.getByRole('button', { name: 'All', exact: true }).click();
 
     // Hide never authorizes delivery: hiding the unselected item does not change the selection or submit anything.
     const hideSecond = page.locator('[data-event-id="pending_2"] button.review__hide');
     await hideSecond.click();
     await page.getByText('Approve the fix for the review queue bug').waitFor({ state: 'detached' });
-    assert.equal(await page.getByText('1 selected').count(), 1, 'hiding an item never changes the selection count');
+    assert.equal(await selectedCount.filter({ hasText: '1 selected' }).count(), 1, 'hiding an item never changes the selection count');
     assert.equal(await page.getByText('Released').count(), 0, 'hiding an item never triggers a release');
 
     // Release submits the exact selection and shows truthful evidence, not an invented "consumed" state.
     await page.getByRole('button', { name: /^Release 1 selected$/ }).click();
     await page.getByText('Released', { exact: true }).waitFor();
-    await page.getByText('Awaiting delivery evidence').waitFor();
-    assert.equal(await page.getByText(/context_consumed|Read by the agent/).count(), 0, 'no consumption is claimed from a release receipt alone');
+    // The harness's fake connector only ever observes `transport_written` — the
+    // release evidence must reflect exactly that fact, never claim the agent
+    // read/consumed it (only `context_consumed`/`completed` would justify that).
+    await page.getByText('Delivered to connector').waitFor();
+    assert.equal(await page.getByText(/Read by the agent/).count(), 0, 'no consumption is claimed from a transport_written receipt alone');
 
     // A revoked facade clears preview and disables submission, and shows why (R4, AE2).
     await page.evaluate(() => window.__reviewHarness.revoke());

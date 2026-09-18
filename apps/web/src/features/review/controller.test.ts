@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ApprovalCommand } from '@khala/contracts/delivery/index';
 import type { BindingId, ReleaseId } from '@khala/contracts/delivery/ids';
-import type { DeviceId, EventId, EventRef, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
-import type { ParticipantView, TimelineItem } from '@khala/contracts/messaging/index';
+import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
+import type { EventRef, ParticipantView, TimelineItem } from '@khala/contracts/messaging/index';
 import { createReviewController } from './controller';
 import type { ReviewView } from './model';
 import type { ApprovalUiResult, ReviewUiPort } from './ports';

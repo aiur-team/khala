@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { BindingId, ReleaseId } from '@khala/contracts/delivery/ids';
-import type { DeviceId, EventId, EventRef, MessageContent, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
-import type { ParticipantView, TimelineItem } from '@khala/contracts/messaging/index';
+import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
+import type { EventRef, MessageContent, ParticipantView, TimelineItem } from '@khala/contracts/messaging/index';
 import type { ReviewController, ReviewData } from './controller';
 import type { ReviewView, SubmissionState } from './model';
 import { emptySelection } from './selection';
