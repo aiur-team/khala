@@ -76,4 +76,5 @@ The tests use a fixed clock and an in-memory ledger fake whose methods are atomi
 a local transaction. They prove module behaviour against the port contract, including
 approval-vs-delete and claim-vs-delete races, resumption after interruption and lost
 responses, and tombstone replay suppression. They do not prove the KHA-115 ledger, any
-SDK, or secure erasure. G-RETENTION is undecided, so no concrete horizon is claimed.
+SDK, or secure erasure. Retention periods are a later product setting; this module
+selects no concrete horizon.
