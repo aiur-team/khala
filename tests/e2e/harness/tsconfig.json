@@ -1,0 +1,10 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@khala/contracts/*": ["../../../packages/contracts/src/*.ts"]
+    }
+  },
+  "include": ["../**/*.ts", "../../conformance/**/*.ts"]
+}
