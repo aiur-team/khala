@@ -4,9 +4,10 @@
 export {
   type BlockedCode, type BootstrapInput, type BootstrapResult, BLOCKED_CODES, bootstrapAgent, operationFingerprint,
 } from './orchestrator';
+export { type AdapterAction, type AdapterCapability, ADAPTER_CAPABILITIES } from './ports';
 export type {
   AdmissionOutcome, BootstrapAdmissionPort, BootstrapOperationStore, BootstrapPorts, ConnectorDevicePort, DeviceActivation,
-  DeviceCredential, DeviceReservation, DeviceStatus, DiscoveryPort, OperationRead, OperationRecord, OperationWrite, OwnershipGrant,
+  DeviceReservation, DeviceStatus, DiscoveryPort, OperationRead, OperationRecord, OperationWrite, OwnershipGrant,
   OwnershipOutcome, OwnershipPort, SessionClaim, SessionInspection, SessionInspectionPort, VerifiedSession,
 } from './ports';
 export {

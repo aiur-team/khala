@@ -34,17 +34,20 @@ exist only after verified ownership and admission.
 4. **Device reservation.** A device ID is reserved and written to the ledger (`reserved`)
    **before** anything is admitted, so no retry can mint a second device.
 5. **Ownership.** The first method both sides support runs. `loopback-browser-v1` (KHA-144)
-   opens the owner's browser at the authorize page with a loopback redirect, PKCE S256
-   and the connector key thumbprint. It exchanges the one-time code with a key proof for a
-   60-second grant bound to this session generation and device.
-6. **Admission.** The grant is redeemed with a fresh proof. The returned `SessionBinding`
-   must name the reserved device and the exact verified session and generation. The ledger then moves to `admitted`.
-7. **Device.** The device port creates or resumes the reserved device with the short-lived
-   credential. `connected` is returned only when the device is ready. On failure the ledger
+   opens the owner's browser at the consent page with a loopback redirect, PKCE S256
+   and the connector key thumbprint. The owner confirms there. The connector exchanges the
+   one-time code, with the same redirect URI and a key proof, for a 60-second grant bound to
+   this session generation and device.
+6. **Admission.** The grant is redeemed once, with a fresh proof. The returned `SessionBinding`
+   must name the reserved device and the exact verified session and generation. The adapter
+   capability must carry exactly `publish_own`, `receive_released` and `ack_delivery`, name that
+   binding and generation, and not have expired. The ledger then moves to `admitted`.
+7. **Device.** The device port creates or resumes the reserved device and hands the adapter its
+   capability. `connected` is returned only when the device is ready. On failure the ledger
    keeps `repair_required` with the device and binding (never a secret), and the result is
    `device_unavailable`.
 
-Secrets (the grant and device credential) are never written to the ledger, returned or logged. A port
+Secrets (the grant and the adapter capability) are never written to the ledger, returned or logged. A port
 that throws is treated as `unavailable`, and its message is dropped.
 
 ## Results
@@ -61,8 +64,9 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `blocked: harness_session_missing` | The harness cannot identify the current session | Report it; never start a fresh session instead |
 | `blocked: unsupported_harness` | No evidence-backed existing-session support for this harness | Report it honestly; do not ask the human to configure anything |
 | `blocked: ownership_required` | The owner did not finish sign-in, or no browser on this machine | Ask the human to finish in the opened tab, or report that remote agents need the (unbuilt) fallback |
-| `blocked: admission_denied` | The owner declined, or the invite or policy refused | Report it |
+| `blocked: admission_denied` | The owner declined, the invite or policy refused, or the service offered a capability other than the adapter's | Report it |
 | `blocked: binding_conflict` | This room is bound to another session or generation of this owner | Report it; rebinding is an explicit owner flow |
+| `blocked: binding_revoked` | The owner revoked this session's binding | Report it. Only a later session generation can bind again; never retry the revoked one |
 | `blocked: operation_conflict` | This operation ID was used for other input | Use a new operation ID for new input |
 | `blocked: device_unavailable` | Admitted, but the device could not become ready | Retry with the same ID (it resumes the same device), or let the owner revoke it |
 
@@ -75,7 +79,7 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `ownership` | `createLoopbackOwnership({ signer, openBrowser })`. `openBrowser` comes from the harness adapter |
 | `admission` | `createHttpAdmission({ signer })` |
 | `signer` | `createProofSigner(ed25519PrivateKey)`. KHA-115 persists the key owner-only |
-| `devices: ConnectorDevicePort` | Messaging device lifecycle (G-SUBSTRATE). `reserve` must be stable per operation, and re-activating resumes |
+| `devices: ConnectorDevicePort` | Messaging device lifecycle (G-SUBSTRATE). `reserve` must be stable per operation, and re-activating resumes. `activate` receives the adapter capability; each request under it needs a fresh proof from `signer` with `ath` |
 | `operations: BootstrapOperationStore` | KHA-115 durable storage, compare-and-set by revision |
 
 The HTTP clients send `Origin: <service origin>` on POSTs, which the control gateway requires

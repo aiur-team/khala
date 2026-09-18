@@ -30,6 +30,7 @@ export const BLOCKED_CODES = [
   'ownership_required',
   'admission_denied',
   'binding_conflict',
+  'binding_revoked',
   'operation_conflict',
   'device_unavailable',
 ] as const;
@@ -129,6 +130,11 @@ export async function bootstrapAgent(input: BootstrapInput, ports: BootstrapPort
   const binding = decoded.value;
   if (binding.deviceId !== deviceId || !bindsSession(binding, session)) return blocked('admission_denied');
   if (record.binding && !sameSessionBinding(record.binding, binding)) return blocked('binding_conflict');
+  const { capability } = admitted;
+  // The capability must be for exactly this binding generation, and still live.
+  if (capability.bindingId !== binding.bindingId || capability.generation !== binding.generation || !(capability.expiresAt > clock())) {
+    return blocked('admission_denied');
+  }
 
   const persist = async (phase: OperationRecord['phase']): Promise<boolean> => {
     const next: OperationRecord = { ...record!, phase, binding };
@@ -142,7 +148,7 @@ export async function bootstrapAgent(input: BootstrapInput, ports: BootstrapPort
   if (record.phase === 'reserved' && !(await persist('admitted'))) return retry;
 
   const activation = await guard(
-    () => ports.devices.activate({ deviceId, binding, credential: admitted.credential, operationId }),
+    () => ports.devices.activate({ deviceId, binding, capability, operationId }),
     { kind: 'unavailable' } as const,
   );
   if (activation.kind !== 'ready') {

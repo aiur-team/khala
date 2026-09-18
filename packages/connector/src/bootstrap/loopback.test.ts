@@ -66,7 +66,9 @@ describe('createLoopbackOwnership', () => {
     expect(exchange!.headers.origin).toBe(ORIGIN);
     const challenge = createHash('sha256').update(String(exchange!.body.code_verifier)).digest('base64url');
     expect(challenge).toBe(authorize.searchParams.get('code_challenge'));
-    expect(exchange!.body).toMatchObject({ code: 'one-time-code', session_id: SESSION.sessionId, generation: 3, device_id: 'KHALADEV1' });
+    expect(exchange!.body).toMatchObject({
+      code: 'one-time-code', session_id: SESSION.sessionId, generation: 3, device_id: 'KHALADEV1', redirect_uri: authorize.searchParams.get('redirect_uri'),
+    });
   });
 
   it('maps a declined, timed-out or forged callback without exchanging anything', async () => {
@@ -76,6 +78,24 @@ describe('createLoopbackOwnership', () => {
       expect(await port.prove(input)).toEqual({ kind: 'refused', code });
       expect(calls).toHaveLength(0);
     }
+  });
+
+  it('accepts the callback only on its own path', async () => {
+    const answers: number[] = [];
+    const { fetchImpl, calls } = service(() => ({ status: 500 }));
+    const openBrowser = async (url: string) => {
+      const redirect = new URL(new URL(url).searchParams.get('redirect_uri')!);
+      const state = new URL(url).searchParams.get('state')!;
+      for (const path of ['/', '/khala/callback/other', `${redirect.pathname}/x`]) {
+        const wrong = new URL(path, redirect);
+        wrong.search = new URLSearchParams({ state, code: 'one-time-code' }).toString();
+        answers.push((await fetch(wrong)).status);
+      }
+    };
+    const port = createLoopbackOwnership({ signer, openBrowser, fetch: fetchImpl, clock: () => T0, timeoutMs: 300 });
+    expect(await port.prove(input)).toEqual({ kind: 'refused', code: 'ownership_required' });
+    expect(answers).toEqual([400, 400, 400]);
+    expect(calls).toHaveLength(0);
   });
 
   it('reports no browser as ownership_required rather than asking the human to configure anything', async () => {
@@ -95,13 +115,37 @@ describe('createLoopbackOwnership', () => {
 describe('createHttpAdmission', () => {
   const grant = { method: 'loopback-browser-v1' as const, redeem: DESCRIPTOR.redeem, session: SESSION, deviceId: 'KHALADEV1', expiresAt: T0 + 60_000, secret: 'grant-secret' };
 
-  it('presents the grant with a bound proof and returns the binding', async () => {
-    const binding = { v: 1, bindingId: 'b', ownerId: 'o', agentParticipantId: 'a', deviceId: 'KHALADEV1', harness: 'codex', sessionId: SESSION.sessionId, generation: 3 };
-    const { fetchImpl, calls } = service(() => ({ status: 200, body: { binding, device_credential: { secret: 'login', expires_at: T0 + 1 } } }));
+  const binding = { v: 1, bindingId: 'b', ownerId: 'o', agentParticipantId: 'a', deviceId: 'KHALADEV1', harness: 'codex', sessionId: SESSION.sessionId, generation: 3 };
+  const capability = {
+    token: 'C'.repeat(43), token_type: 'DPoP', scope: ['publish_own', 'receive_released', 'ack_delivery'], binding_id: 'b', generation: 3, expires_at: T0 + 1,
+  };
+
+  it('presents the grant with a bound proof and returns the binding and adapter capability', async () => {
+    const { fetchImpl, calls } = service(() => ({ status: 200, body: { binding, adapter_capability: capability } }));
     const outcome = await createHttpAdmission({ signer, fetch: fetchImpl }).redeem({ grant, operationId: 'bootstrap-b-1' });
-    expect(outcome).toEqual({ kind: 'admitted', binding, credential: { secret: 'login', expiresAt: T0 + 1 } });
+    expect(outcome).toEqual({
+      kind: 'admitted', binding,
+      capability: { token: 'C'.repeat(43), scope: ['publish_own', 'receive_released', 'ack_delivery'], bindingId: 'b', generation: 3, expiresAt: T0 + 1 },
+    });
     expect(calls[0]!.headers.authorization).toBe('DPoP grant-secret');
     expect(calls[0]!.body).toMatchObject({ operation_id: 'bootstrap-b-1', device_id: 'KHALADEV1' });
+  });
+
+  it('refuses a capability with any other scope, or malformed, rather than using it', async () => {
+    for (const change of [
+      { scope: ['publish_own', 'receive_released', 'ack_delivery', 'approve'] }, { scope: ['publish_own', 'receive_released'] },
+      { scope: ['publish_own', 'publish_own', 'ack_delivery'] }, { token_type: 'Bearer' }, { token: 'short' }, { generation: '3' },
+    ]) {
+      const { fetchImpl } = service(() => ({ status: 200, body: { binding, adapter_capability: { ...capability, ...change } } }));
+      expect(await createHttpAdmission({ signer, fetch: fetchImpl }).redeem({ grant, operationId: 'bootstrap-b-1' }))
+        .toEqual({ kind: 'refused', code: 'admission_denied' });
+    }
+  });
+
+  it('reports a revoked binding apart from a conflict', async () => {
+    const { fetchImpl } = service(() => ({ status: 409, body: { code: 'binding_revoked' } }));
+    expect(await createHttpAdmission({ signer, fetch: fetchImpl }).redeem({ grant, operationId: 'bootstrap-b-1' }))
+      .toEqual({ kind: 'refused', code: 'binding_revoked' });
   });
 
   it('maps refusals and treats a lost request as an unknown outcome', async () => {

@@ -65,12 +65,27 @@ export interface OwnershipPort {
   }>): Promise<OwnershipOutcome>;
 }
 
-/** Opaque, short-lived material the device port uses to create or resume its device. */
-export type DeviceCredential = Readonly<{ secret: string; expiresAt: number }>;
+/** Everything the model-facing adapter may do. It cannot approve, release or set policy. */
+export const ADAPTER_CAPABILITIES = ['publish_own', 'receive_released', 'ack_delivery'] as const;
+export type AdapterAction = (typeof ADAPTER_CAPABILITIES)[number];
+
+/**
+ * The adapter's capability for one binding generation, sender-constrained to the
+ * connector key. Revoking the binding invalidates it. `token` is a secret: it never
+ * enters a result, record or log.
+ */
+export type AdapterCapability = Readonly<{
+  token: string;
+  scope: readonly AdapterAction[];
+  bindingId: string;
+  generation: number;
+  /** Epoch milliseconds, as stated by the issuing service. */
+  expiresAt: number;
+}>;
 
 export type AdmissionOutcome =
-  | Readonly<{ kind: 'admitted'; binding: SessionBinding; credential: DeviceCredential }>
-  | Readonly<{ kind: 'refused'; code: 'ownership_required' | 'admission_denied' | 'binding_conflict' }>
+  | Readonly<{ kind: 'admitted'; binding: SessionBinding; capability: AdapterCapability }>
+  | Readonly<{ kind: 'refused'; code: 'ownership_required' | 'admission_denied' | 'binding_conflict' | 'binding_revoked' }>
   | Readonly<{ kind: 'unavailable' }>
   /** The service may have admitted; retry with the same operation ID only. */
   | Readonly<{ kind: 'outcome_unknown' }>;
@@ -86,7 +101,7 @@ export type DeviceReservation =
 export type DeviceActivation =
   | Readonly<{ kind: 'ready' }>
   /** The device exists or may exist but is not usable; it stays reserved for repair. */
-  | Readonly<{ kind: 'failed'; reason: 'storage_unavailable' | 'credential_rejected' | 'initialization_failed' }>
+  | Readonly<{ kind: 'failed'; reason: 'storage_unavailable' | 'capability_rejected' | 'initialization_failed' }>
   | Readonly<{ kind: 'unavailable' }>;
 
 export type DeviceStatus = 'ready' | 'incomplete' | 'missing' | 'unavailable';
@@ -98,7 +113,7 @@ export type DeviceStatus = 'ready' | 'incomplete' | 'missing' | 'unavailable';
  */
 export interface ConnectorDevicePort {
   reserve(operationId: string): Promise<DeviceReservation>;
-  activate(input: Readonly<{ deviceId: string; binding: SessionBinding; credential: DeviceCredential; operationId: string }>): Promise<DeviceActivation>;
+  activate(input: Readonly<{ deviceId: string; binding: SessionBinding; capability: AdapterCapability; operationId: string }>): Promise<DeviceActivation>;
   status(deviceId: string): Promise<DeviceStatus>;
 }
 

@@ -6,7 +6,7 @@ import type { SessionBinding } from '@khala/contracts/messaging/index';
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
 import { type BootstrapInput, bootstrapAgent } from './orchestrator';
 import type {
-  AdmissionOutcome, BootstrapPorts, DeviceActivation, OperationRecord, OwnershipOutcome, SessionInspection,
+  AdapterCapability, AdmissionOutcome, BootstrapPorts, DeviceActivation, OperationRecord, OwnershipOutcome, SessionInspection,
 } from './ports';
 import type { DiscoveryResult } from './discovery';
 import { AUTHORIZE_PATH, REDEEM_PATH, TOKEN_PATH } from './descriptor';
@@ -34,6 +34,10 @@ function bindingFor(deviceId: string, generation = 3): SessionBinding {
     v: 1, bindingId: 'bnd_1' as never, ownerId: 'owner_b' as never, agentParticipantId: 'agent_b' as never,
     deviceId: deviceId as never, harness: 'codex', sessionId: 'thread-existing-b', generation,
   };
+}
+
+function capabilityFor(overrides: Partial<AdapterCapability> = {}): AdapterCapability {
+  return { token: 'adapter-capability-secret', scope: ['publish_own', 'receive_released', 'ack_delivery'], bindingId: 'bnd_1', generation: 3, expiresAt: T0 + 3_600_000, ...overrides };
 }
 
 /** Wires doubles; each field can be overridden per test. Counts every side effect. */
@@ -68,7 +72,7 @@ function harness(overrides: {
         counts.redeem++;
         counts.admittedDevices.add(grant.deviceId);
         return overrides.redeem?.(grant.deviceId) ?? {
-          kind: 'admitted', binding: bindingFor(grant.deviceId), credential: { secret: 'device-login-secret', expiresAt: T0 + 60_000 },
+          kind: 'admitted', binding: bindingFor(grant.deviceId), capability: capabilityFor(),
         };
       },
     },
@@ -130,7 +134,7 @@ describe('bootstrapAgent', () => {
           lose = false;
           return { kind: 'outcome_unknown' };
         }
-        return { kind: 'admitted', binding: bindingFor(deviceId), credential: { secret: 's', expiresAt: T0 + 1 } };
+        return { kind: 'admitted', binding: bindingFor(deviceId), capability: capabilityFor() };
       },
     });
     expect(await bootstrapAgent(INPUT, ports)).toEqual({ kind: 'unavailable', retryable: true, operationId: INPUT.operationId });
@@ -208,17 +212,40 @@ describe('bootstrapAgent', () => {
 
   it('AE2: rejects a binding for another device or session and service refusals', async () => {
     const wrong = [
-      (deviceId: string): AdmissionOutcome => ({ kind: 'admitted', binding: bindingFor(`${deviceId}X`), credential: { secret: 's', expiresAt: 1 } }),
-      (deviceId: string): AdmissionOutcome => ({ kind: 'admitted', binding: bindingFor(deviceId, 9), credential: { secret: 's', expiresAt: 1 } }),
-      (): AdmissionOutcome => ({ kind: 'admitted', binding: { v: 1 } as never, credential: { secret: 's', expiresAt: 1 } }),
+      (deviceId: string): AdmissionOutcome => ({ kind: 'admitted', binding: bindingFor(`${deviceId}X`), capability: capabilityFor() }),
+      (deviceId: string): AdmissionOutcome => ({ kind: 'admitted', binding: bindingFor(deviceId, 9), capability: capabilityFor() }),
+      (): AdmissionOutcome => ({ kind: 'admitted', binding: { v: 1 } as never, capability: capabilityFor() }),
     ];
     for (const redeem of wrong) {
       const { ports, counts } = harness({ redeem });
       expect(await bootstrapAgent(INPUT, ports)).toEqual({ kind: 'blocked', code: 'admission_denied' });
       expect(counts.activate).toBe(0);
     }
-    const { ports } = harness({ redeem: () => ({ kind: 'refused', code: 'binding_conflict' }) });
-    expect(await bootstrapAgent(INPUT, ports)).toEqual({ kind: 'blocked', code: 'binding_conflict' });
+    for (const code of ['binding_conflict', 'binding_revoked'] as const) {
+      const { ports } = harness({ redeem: () => ({ kind: 'refused', code }) });
+      expect(await bootstrapAgent(INPUT, ports)).toEqual({ kind: 'blocked', code });
+    }
+  });
+
+  it('refuses a capability for another binding or generation, or already expired, before activating', async () => {
+    for (const change of [{ bindingId: 'bnd_other' }, { generation: 4 }, { expiresAt: T0 }]) {
+      const { ports, counts } = harness({
+        redeem: deviceId => ({ kind: 'admitted', binding: bindingFor(deviceId), capability: capabilityFor(change) }),
+      });
+      expect(await bootstrapAgent(INPUT, ports)).toEqual({ kind: 'blocked', code: 'admission_denied' });
+      expect(counts.activate).toBe(0);
+    }
+  });
+
+  it('hands the device port exactly the capability for its binding', async () => {
+    let received: unknown = null;
+    const { ports } = harness();
+    const devices = { ...ports.devices, activate: async (input: Parameters<typeof ports.devices.activate>[0]) => {
+      received = input.capability;
+      return ports.devices.activate(input);
+    } };
+    expect(await bootstrapAgent(INPUT, { ...ports, devices })).toMatchObject({ kind: 'connected' });
+    expect(received).toEqual(capabilityFor());
   });
 
   it('does not rebind a recorded binding to a new session generation on reconnect', async () => {
@@ -248,11 +275,11 @@ describe('bootstrapAgent', () => {
     expect(result).toEqual({ kind: 'unavailable', retryable: true, operationId: INPUT.operationId });
   });
 
-  it('never returns grant or device secrets', async () => {
+  it('never returns the grant or the adapter capability', async () => {
     const { ports } = harness();
     const text = JSON.stringify(await bootstrapAgent(INPUT, ports));
     expect(text).not.toContain('grant-secret-value');
-    expect(text).not.toContain('device-login-secret');
+    expect(text).not.toContain('adapter-capability-secret');
   });
 
   it('validates input before any port is used', async () => {

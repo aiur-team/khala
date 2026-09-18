@@ -8,7 +8,9 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { BootstrapAdmissionPort, AdmissionOutcome, OwnershipOutcome, OwnershipPort } from './ports';
+import {
+  ADAPTER_CAPABILITIES, type AdapterCapability, type AdmissionOutcome, type BootstrapAdmissionPort, type OwnershipOutcome, type OwnershipPort,
+} from './ports';
 import type { ProofSigner } from './proof';
 import { readBounded } from './discovery';
 
@@ -45,6 +47,7 @@ export function createLoopbackOwnership(options: LoopbackOwnershipOptions): Owne
       const verifier = randomBytes(32).toString('base64url');
       const callbackPath = `/khala/callback/${randomBytes(8).toString('hex')}`;
       const listener = await listenForCallback(callbackPath, state, timeoutMs);
+      const redirectUri = `http://127.0.0.1:${listener.port}${callbackPath}`;
       try {
         const authorize = new URL(descriptor.authorize);
         authorize.search = new URLSearchParams({
@@ -54,7 +57,7 @@ export function createLoopbackOwnership(options: LoopbackOwnershipOptions): Owne
           generation: String(session.generation),
           device_id: deviceId,
           jkt: options.signer.jkt,
-          redirect_uri: `http://127.0.0.1:${listener.port}${callbackPath}`,
+          redirect_uri: redirectUri,
           code_challenge: createHash('sha256').update(verifier).digest('base64url'),
           code_challenge_method: 'S256',
           state,
@@ -77,6 +80,7 @@ export function createLoopbackOwnership(options: LoopbackOwnershipOptions): Owne
           session_id: session.sessionId,
           generation: session.generation,
           device_id: deviceId,
+          redirect_uri: redirectUri,
         }, { dpop: options.signer.proof('POST', descriptor.token) });
         if (response.kind === 'failed') return { kind: 'unavailable' };
         if (response.status === 403) return { kind: 'refused', code: 'admission_denied' };
@@ -118,23 +122,31 @@ export function createHttpAdmission(options: HttpAdmissionOptions): BootstrapAdm
       const { status } = response;
       if (status === 401) return { kind: 'refused', code: 'ownership_required' };
       if (status === 403) return { kind: 'refused', code: 'admission_denied' };
-      if (status === 409) return { kind: 'refused', code: 'binding_conflict' };
+      if (status === 409) {
+        return { kind: 'refused', code: (response.body as { code?: unknown } | null)?.code === 'binding_revoked' ? 'binding_revoked' : 'binding_conflict' };
+      }
       if (status === 429 || status === 503) return { kind: 'unavailable' };
       if (status !== 200) return status >= 500 ? { kind: 'outcome_unknown' } : { kind: 'refused', code: 'admission_denied' };
-      const body = response.body as { binding?: unknown; device_credential?: { secret?: unknown; expires_at?: unknown } } | null;
-      const credential = body?.device_credential;
-      if (!body || typeof body.binding !== 'object' || body.binding === null
-        || typeof credential?.secret !== 'string' || !Number.isSafeInteger(credential.expires_at)) {
-        return { kind: 'outcome_unknown' };
-      }
-      // The orchestrator decodes and checks the binding against what it asked for.
-      return {
-        kind: 'admitted',
-        binding: body.binding as never,
-        credential: { secret: credential.secret, expiresAt: credential.expires_at as number },
-      };
+      const body = response.body as { binding?: unknown; adapter_capability?: unknown } | null;
+      if (!body || typeof body.binding !== 'object' || body.binding === null) return { kind: 'outcome_unknown' };
+      const capability = readCapability(body.adapter_capability);
+      // Anything but exactly the adapter scope is refused, never used.
+      if (capability === null) return { kind: 'refused', code: 'admission_denied' };
+      // The orchestrator decodes and checks the binding, and the capability against it.
+      return { kind: 'admitted', binding: body.binding as never, capability };
     },
   };
+}
+
+/** `adapter_capability` from a redeem response, or `null` unless it is well formed with exactly the adapter scope. */
+function readCapability(value: unknown): AdapterCapability | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { token, token_type: tokenType, scope, binding_id: bindingId, generation, expires_at: expiresAt } = value as Record<string, unknown>;
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token) || tokenType !== 'DPoP' || typeof bindingId !== 'string'
+    || bindingId.length === 0 || !Number.isSafeInteger(generation) || !Number.isSafeInteger(expiresAt)) return null;
+  if (!Array.isArray(scope) || scope.length !== ADAPTER_CAPABILITIES.length
+    || !ADAPTER_CAPABILITIES.every(action => scope.includes(action))) return null;
+  return { token, scope: [...ADAPTER_CAPABILITIES], bindingId, generation: generation as number, expiresAt: expiresAt as number };
 }
 
 type PostResult =
