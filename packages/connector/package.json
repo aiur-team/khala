@@ -6,8 +6,10 @@
   "exports": {
     "./bootstrap/*": "./src/bootstrap/*.ts",
     "./storage/*": "./src/storage/*.ts",
+    "./storage/fixtures/*": null,
     "./subscription/*": "./src/subscription/*.ts",
     "./dispatch/*": "./src/dispatch/*.ts",
+    "./dispatch/fixtures/*": null,
     "./retention/*": "./src/retention/*.ts"
   },
   "scripts": {
