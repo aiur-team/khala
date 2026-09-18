@@ -28,6 +28,7 @@ export type ProbeFailure =
   | 'unreachable'
   | 'malformed_response'
   | 'thread_mismatch'
+  | 'thread_unknown'
   | 'not_loaded'
   | 'system_error';
 
@@ -40,6 +41,7 @@ const FAILURE_CODES: Readonly<Record<ProbeFailure, ReceiptErrorCode>> = {
   stale_binding: 'stale_binding',
   thread_mismatch: 'stale_binding',
   no_host: 'session_unavailable',
+  thread_unknown: 'session_unavailable',
   writer_not_held: 'session_unavailable',
   not_loaded: 'session_unavailable',
   system_error: 'session_unavailable',
@@ -95,6 +97,8 @@ export async function probeBinding(
     return fail(reason);
   };
   const outcome = await connection.request('thread/read', { threadId: binding.sessionId, includeTurns: false });
+  // The listener answered but refused the thread: it does not host this session.
+  if (outcome.status === 'remote_error') return done('thread_unknown');
   if (outcome.status !== 'response') return done('unreachable');
   const thread = readThread(outcome.result);
   if (!thread) return done('malformed_response');
