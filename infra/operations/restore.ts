@@ -5,7 +5,7 @@
 // "Mechanical restore isolation" section for the ordering this enforces.
 
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   OperationsError,
@@ -23,7 +23,6 @@ import type { ArtifactRecord, RecoveryManifest } from './backup.ts';
 export interface RestoreTarget {
   stateNamespace: string;
   environment: 'preview';
-  usesFreshVolumes: boolean;
 }
 
 export interface ExpectedFixture {
@@ -45,11 +44,15 @@ export interface RestoreProof {
 
 export interface RestorePorts {
   verifyArtifactChecksum(artifactPath: string, expectedSha256: string): Promise<boolean>;
+  // Real inspection of the target's own docker state, not a caller-supplied
+  // claim: a target that already has volumes is refused even if the caller
+  // believes (or asserts) they are fresh.
+  targetVolumesExist(target: RestoreTarget): Promise<boolean>;
   denyEgress(target: RestoreTarget): Promise<void>;
   probeEgressDenied(target: RestoreTarget): Promise<boolean>;
-  restoreDatabase(manifest: RecoveryManifest, artifactDir: string, target: RestoreTarget): Promise<void>;
-  restoreMedia(manifest: RecoveryManifest, artifactDir: string, target: RestoreTarget): Promise<void>;
-  restoreIdentity(manifest: RecoveryManifest, secretsDir: string, target: RestoreTarget): Promise<void>;
+  restoreDatabase(databaseDumpPath: string, target: RestoreTarget): Promise<void>;
+  restoreMedia(mediaArchivePath: string, target: RestoreTarget): Promise<void>;
+  restoreIdentity(signingKeyArchivePath: string, configArchivePath: string, targetConfigDir: string, target: RestoreTarget): Promise<void>;
   verifyRestoredData(target: RestoreTarget, expectations: ExpectedFixture): Promise<{ matchedEventIds: string[]; missingEventIds: string[] }>;
   now(): Date;
 }
@@ -57,6 +60,11 @@ export interface RestorePorts {
 export interface RestoreInputs {
   manifest: RecoveryManifest;
   sourceStateNamespace: string;
+  // The production/source config directory the backup's config artifact was
+  // captured from. targetConfigDir must never equal this: restoring config
+  // into the live source directory would overwrite it in place.
+  sourceConfigDir: string;
+  targetConfigDir: string;
   artifactDir: string;
   secretsDir: string;
   target: RestoreTarget;
@@ -69,6 +77,25 @@ function requireArtifactLocator(artifact: ArtifactRecord): { path: string; sha25
   return { path: artifact.path, sha256: artifact.sha256 };
 }
 
+function requireArtifactReference(artifact: ArtifactRecord): { reference: string; sha256: string } {
+  if (!artifact.reference || !artifact.sha256) throw new OperationsError(`missing-artifact-hash:${artifact.kind}`);
+  return { reference: artifact.reference, sha256: artifact.sha256 };
+}
+
+// Resolves a manifest-declared relative path against its owning directory and
+// refuses any result that would escape it (a `../`-laden path, or an absolute
+// path smuggled into the manifest), so a verified checksum can never be
+// silently swapped for a file outside the artifact/secrets directory.
+function resolveWithinDirectory(baseDir: string, relativePath: string, artifactKind: string): string {
+  if (isAbsolute(relativePath)) throw new OperationsError(`artifact-path-escapes-directory:${artifactKind}`);
+  const resolved = resolve(baseDir, relativePath);
+  const relativeToBase = relative(baseDir, resolved);
+  if (relativeToBase === '' || relativeToBase.startsWith('..') || isAbsolute(relativeToBase)) {
+    throw new OperationsError(`artifact-path-escapes-directory:${artifactKind}`);
+  }
+  return resolved;
+}
+
 // Every check in this function must run, and must be able to refuse, before
 // any restore mutation happens: a wrong target or a corrupt artifact is
 // refused here, never discovered mid-restore.
@@ -77,24 +104,39 @@ export async function runRestore(inputs: RestoreInputs, ports: RestorePorts): Pr
 
   if (inputs.target.environment !== 'preview') throw new OperationsError('restore-target-must-be-isolated');
   if (!inputs.allowedTargetIds.includes(inputs.target.stateNamespace)) throw new OperationsError('target-not-allowlisted');
-  if (!inputs.target.usesFreshVolumes || inputs.target.stateNamespace === inputs.sourceStateNamespace) {
+  if (inputs.target.stateNamespace === inputs.sourceStateNamespace) {
     throw new OperationsError('source-volume-reuse-refused');
+  }
+  if (resolve(inputs.targetConfigDir) === resolve(inputs.sourceConfigDir)) {
+    throw new OperationsError('target-config-dir-must-differ-from-source');
+  }
+  if (await ports.targetVolumesExist(inputs.target)) {
+    throw new OperationsError('target-volumes-not-fresh');
   }
 
   const databaseArtifact = requireArtifactLocator(findArtifact(inputs.manifest, 'database'));
   const mediaArtifact = requireArtifactLocator(findArtifact(inputs.manifest, 'media'));
   // AE2: a missing signing-key artifact must fail validation even though the
   // database and media artifacts restore cleanly.
-  findArtifact(inputs.manifest, 'signing-key');
-  findArtifact(inputs.manifest, 'config');
+  const signingKeyArtifact = requireArtifactReference(findArtifact(inputs.manifest, 'signing-key'));
+  const configArtifact = requireArtifactReference(findArtifact(inputs.manifest, 'config'));
 
-  const databasePath = resolve(inputs.artifactDir, databaseArtifact.path);
-  const mediaPath = resolve(inputs.artifactDir, mediaArtifact.path);
+  const databasePath = resolveWithinDirectory(inputs.artifactDir, databaseArtifact.path, 'database');
+  const mediaPath = resolveWithinDirectory(inputs.artifactDir, mediaArtifact.path, 'media');
+  const signingKeyPath = resolveWithinDirectory(inputs.secretsDir, signingKeyArtifact.reference, 'signing-key');
+  const configPath = resolveWithinDirectory(inputs.secretsDir, configArtifact.reference, 'config');
+
   if (!(await ports.verifyArtifactChecksum(databasePath, databaseArtifact.sha256))) {
     throw new OperationsError('artifact-checksum-mismatch:database');
   }
   if (!(await ports.verifyArtifactChecksum(mediaPath, mediaArtifact.sha256))) {
     throw new OperationsError('artifact-checksum-mismatch:media');
+  }
+  if (!(await ports.verifyArtifactChecksum(signingKeyPath, signingKeyArtifact.sha256))) {
+    throw new OperationsError('artifact-checksum-mismatch:signing-key');
+  }
+  if (!(await ports.verifyArtifactChecksum(configPath, configArtifact.sha256))) {
+    throw new OperationsError('artifact-checksum-mismatch:config');
   }
 
   await ports.denyEgress(inputs.target);
@@ -104,11 +146,14 @@ export async function runRestore(inputs: RestoreInputs, ports: RestorePorts): Pr
   }
 
   const restoreStartedAt = ports.now();
-  await ports.restoreDatabase(inputs.manifest, inputs.artifactDir, inputs.target);
-  await ports.restoreMedia(inputs.manifest, inputs.artifactDir, inputs.target);
+  // Each restore step below receives exactly the path that was just
+  // checksum-verified above, so a verified file can never be swapped for a
+  // different one at restore time.
+  await ports.restoreDatabase(databasePath, inputs.target);
+  await ports.restoreMedia(mediaPath, inputs.target);
   // The server signing identity boots only after isolation is verified and
   // the boundary data is already in place.
-  await ports.restoreIdentity(inputs.manifest, inputs.secretsDir, inputs.target);
+  await ports.restoreIdentity(signingKeyPath, configPath, inputs.targetConfigDir, inputs.target);
 
   const { matchedEventIds, missingEventIds } = await ports.verifyRestoredData(inputs.target, inputs.expectations);
   const restoreCompletedAt = ports.now();
@@ -145,6 +190,16 @@ function composeArgs(target: RestoreTarget): string[] {
 
 export const dockerComposePorts: RestorePorts = {
   verifyArtifactChecksum: verifyArtifactChecksumOnDisk,
+  async targetVolumesExist(target) {
+    // Compose labels every volume it creates with the project name
+    // (`com.docker.compose.project`); if any already exist for this
+    // namespace, the target is not fresh regardless of what the caller
+    // believes, and restoring into it would silently mix rehearsal runs.
+    const output = await captureProcess('docker', [
+      'volume', 'ls', '--filter', `label=com.docker.compose.project=${target.stateNamespace}`, '--format', '{{.Name}}',
+    ]);
+    return output.trim().length > 0;
+  },
   async denyEgress(target) {
     // The override's `internal: true` client-edge network makes isolation a
     // property of the compose project itself; bringing the boundary
@@ -166,26 +221,22 @@ export const dockerComposePorts: RestorePorts = {
     const output = await captureProcess('docker', [...composeArgs(target), 'run', '--rm', '--no-deps', '--entrypoint', 'python', 'synapse', '-c', probeScript]);
     return output.trim() === 'UNREACHABLE';
   },
-  async restoreDatabase(_manifest, artifactDir, target) {
-    const databaseDumpPath = resolve(artifactDir, 'database.dump');
+  async restoreDatabase(databaseDumpPath, target) {
     await runProcess('docker', [...composeArgs(target), 'exec', '-T', 'postgres', 'pg_restore', '--clean', '--if-exists', '--no-owner', '--no-privileges', '-U', 'synapse', '-d', 'synapse'], { stdinPath: databaseDumpPath });
   },
-  async restoreMedia(_manifest, artifactDir, target) {
+  async restoreMedia(mediaArchivePath, target) {
     // synapse is not running yet at this point (only postgres and the
     // one-shot volume-owner init are up): use `run` against the same
     // synapse-data volume rather than `exec` against a running service.
-    const mediaTarPath = resolve(artifactDir, 'media.tar.gz');
-    await runProcess('docker', [...composeArgs(target), 'run', '--rm', '--no-deps', '--entrypoint', 'sh', 'synapse', '-c', 'tar xzf - -C /data'], { stdinPath: mediaTarPath });
+    await runProcess('docker', [...composeArgs(target), 'run', '--rm', '--no-deps', '--entrypoint', 'sh', 'synapse', '-c', 'tar xzf - -C /data'], { stdinPath: mediaArchivePath });
   },
-  async restoreIdentity(_manifest, secretsDir, target) {
-    const signingKeyTarPath = resolve(secretsDir, 'signing-key.tar.gz');
-    const configTarPath = resolve(secretsDir, 'config.tar.gz');
-    // The target's own KHALA_CONFIG_DIR (same contract compose.yaml itself
-    // requires) is where the rendered homeserver.yaml bind-mounts from.
-    const targetConfigDir = process.env.KHALA_CONFIG_DIR;
-    if (!targetConfigDir) throw new OperationsError('missing-input', 'Missing KHALA_CONFIG_DIR for the restore target');
-    await runProcess('docker', [...composeArgs(target), 'run', '--rm', '--no-deps', '--entrypoint', 'sh', 'synapse', '-c', 'tar xzf - -C /data'], { stdinPath: signingKeyTarPath });
-    await runProcess('tar', ['xzf', configTarPath, '-C', targetConfigDir]);
+  async restoreIdentity(signingKeyArchivePath, configArchivePath, targetConfigDir, target) {
+    // The target's own config directory (same contract compose.yaml itself
+    // requires) is where the rendered homeserver.yaml bind-mounts from; the
+    // caller (runRestore) has already refused a targetConfigDir equal to the
+    // source's.
+    await runProcess('docker', [...composeArgs(target), 'run', '--rm', '--no-deps', '--entrypoint', 'sh', 'synapse', '-c', 'tar xzf - -C /data'], { stdinPath: signingKeyArchivePath });
+    await runProcess('tar', ['xzf', configArchivePath, '-C', targetConfigDir]);
     await runProcess('docker', [...composeArgs(target), 'up', '-d', '--wait', 'synapse']);
   },
   async verifyRestoredData(target, expectations) {

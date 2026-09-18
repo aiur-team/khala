@@ -31,7 +31,11 @@ services:
       - synapse-data:/data
 
   synapse:
-    image: ghcr.io/element-hq/synapse:v1.161.0@sha256:7155ddc4835e5b8afa4e1598d92aa16ff1d03109f7d1cff61d493237d1210b1d
+    # Overridable only so infra/operations/upgrade-check.ts can boot a target
+    # image against a disposable database copy for one rehearsal invocation;
+    # every other caller relies on the pinned default and never sets
+    # KHALA_SYNAPSE_IMAGE.
+    image: ${KHALA_SYNAPSE_IMAGE:-ghcr.io/element-hq/synapse:v1.161.0@sha256:7155ddc4835e5b8afa4e1598d92aa16ff1d03109f7d1cff61d493237d1210b1d}
     environment:
       SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
     command: [run]

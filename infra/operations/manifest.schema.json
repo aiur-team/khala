@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://khala.aiur.team/schemas/backend-recovery-manifest.json",
   "title": "Khala backend recovery manifest",
   "description": "Describes one backup recovery set: database, server signing identity, configuration and media artifacts, plus the source versions needed to restore or upgrade safely. Secret artifacts are recorded only as opaque references; the manifest never carries a decryption key, database credential or plaintext participant content.",
@@ -78,7 +78,7 @@
             "properties": { "kind": { "enum": ["signing-key", "config"] } }
           },
           "then": {
-            "required": ["reference"]
+            "required": ["reference", "sha256"]
           }
         }
       ]

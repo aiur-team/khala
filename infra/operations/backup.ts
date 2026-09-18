@@ -6,7 +6,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, readFileSync } from 'node:fs';
 import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,13 +45,32 @@ const requiredArtifactKinds: readonly ArtifactKind[] = ['database', 'signing-key
 const digestPattern = /^sha256:[0-9a-f]{64}$/;
 const hashPattern = /^[0-9a-f]{64}$/;
 
-// Validated against infra/operations/manifest.schema.json's structural
-// contract in code, matching this package's existing convention (see
-// infra/messaging/check.ts) of explicit checks over a schema-library
-// dependency the repository does not otherwise carry.
+// The schema file is the single source of truth for which top-level and
+// per-artifact keys are allowed; loading it here (rather than hand-copying
+// its key lists) means an edit to manifest.schema.json's `properties` is
+// enforced automatically instead of silently drifting from hand-written
+// checks below.
+interface ManifestJsonSchema {
+  properties: Record<string, unknown>;
+  $defs: { artifact: { properties: Record<string, unknown> } };
+}
+const manifestSchemaPath = resolve(fileURLToPath(new URL('.', import.meta.url)), 'manifest.schema.json');
+const manifestSchema = JSON.parse(readFileSync(manifestSchemaPath, 'utf8')) as ManifestJsonSchema;
+const allowedManifestKeys = new Set(Object.keys(manifestSchema.properties));
+const allowedArtifactKeys = new Set(Object.keys(manifestSchema.$defs.artifact.properties));
+
+// Validated against infra/operations/manifest.schema.json: the additional-
+// properties check below reads the schema's own key lists directly (see
+// above), and the remaining field-level checks mirror the schema's
+// required/enum/pattern rules in code, matching this package's existing
+// convention (see infra/messaging/check.ts) of explicit checks over a
+// schema-library dependency the repository does not otherwise carry.
 export function validateManifest(candidate: unknown): RecoveryManifest {
   if (typeof candidate !== 'object' || candidate === null) throw new OperationsError('invalid-manifest');
   const manifest = candidate as Record<string, unknown>;
+  for (const key of Object.keys(manifest)) {
+    if (!allowedManifestKeys.has(key)) throw new OperationsError(`invalid-manifest-unknown-key:${key}`);
+  }
   if (manifest.schema_version !== 1) throw new OperationsError('invalid-manifest-schema-version');
   if (manifest.environment !== 'preview' && manifest.environment !== 'production') throw new OperationsError('invalid-manifest-environment');
   if (typeof manifest.created_at !== 'string' || Number.isNaN(Date.parse(manifest.created_at))) throw new OperationsError('invalid-manifest-timestamp');
@@ -66,9 +85,12 @@ export function validateManifest(candidate: unknown): RecoveryManifest {
   for (const entry of manifest.artifacts as unknown[]) {
     if (typeof entry !== 'object' || entry === null) throw new OperationsError('invalid-manifest-artifact');
     const artifact = entry as ArtifactRecord;
+    for (const key of Object.keys(artifact)) {
+      if (!allowedArtifactKeys.has(key)) throw new OperationsError(`invalid-manifest-artifact-unknown-key:${key}`);
+    }
     if (!requiredArtifactKinds.includes(artifact.kind)) throw new OperationsError('invalid-manifest-artifact-kind');
+    if (typeof artifact.sha256 !== 'string' || !hashPattern.test(artifact.sha256)) throw new OperationsError(`missing-artifact-hash:${artifact.kind}`);
     if (artifact.kind === 'database' || artifact.kind === 'media') {
-      if (typeof artifact.sha256 !== 'string' || !hashPattern.test(artifact.sha256)) throw new OperationsError(`missing-artifact-hash:${artifact.kind}`);
       if (typeof artifact.path !== 'string' || artifact.path.length === 0) throw new OperationsError(`missing-artifact-path:${artifact.kind}`);
     } else {
       if (typeof artifact.reference !== 'string' || artifact.reference.length === 0) throw new OperationsError(`missing-artifact-reference:${artifact.kind}`);
@@ -116,6 +138,12 @@ export interface BackupInputs {
 export interface BackupPorts {
   inspectDatabaseVersion(inputs: BackupInputs): Promise<string>;
   inspectSynapseImageDigest(inputs: BackupInputs): Promise<string>;
+  // Quiesce/resume bracket the dump+archive steps below so the database and
+  // media are captured from the same still point rather than at different
+  // moments from a running server; see docs/operations/backend.md's
+  // "consistency boundary" note. resumeWrites always runs, even on failure.
+  quiesceWrites(inputs: BackupInputs): Promise<void>;
+  resumeWrites(inputs: BackupInputs): Promise<void>;
   dumpDatabase(inputs: BackupInputs, targetPath: string): Promise<void>;
   archiveMedia(inputs: BackupInputs, targetPath: string): Promise<void>;
   archiveSigningKey(inputs: BackupInputs, targetPath: string): Promise<void>;
@@ -180,13 +208,21 @@ export async function runBackup(inputs: BackupInputs, ports: BackupPorts): Promi
 
   const databaseVersion = await ports.inspectDatabaseVersion(inputs);
   const synapseImageDigest = await ports.inspectSynapseImageDigest(inputs);
-  await ports.dumpDatabase(inputs, databasePath);
-  await ports.archiveMedia(inputs, mediaPath);
+
+  await ports.quiesceWrites(inputs);
+  try {
+    await ports.dumpDatabase(inputs, databasePath);
+    await ports.archiveMedia(inputs, mediaPath);
+  } finally {
+    await ports.resumeWrites(inputs);
+  }
   await ports.archiveSigningKey(inputs, signingKeyPath);
   await ports.archiveConfig(inputs, configPath);
 
   const databaseHash = await sha256File(databasePath);
   const mediaHash = await sha256File(mediaPath);
+  const signingKeyHash = await sha256File(signingKeyPath);
+  const configHash = await sha256File(configPath);
 
   const manifest: RecoveryManifest = {
     schema_version: 1,
@@ -196,8 +232,8 @@ export async function runBackup(inputs: BackupInputs, ports: BackupPorts): Promi
     synapse_image_digest: synapseImageDigest,
     artifacts: [
       { kind: 'database', sha256: databaseHash, path: 'database.dump' },
-      { kind: 'signing-key', reference: 'signing-key.tar.gz' },
-      { kind: 'config', reference: 'config.tar.gz' },
+      { kind: 'signing-key', sha256: signingKeyHash, reference: 'signing-key.tar.gz' },
+      { kind: 'config', sha256: configHash, reference: 'config.tar.gz' },
       { kind: 'media', sha256: mediaHash, path: 'media.tar.gz' },
     ],
     restore_proof: 'not-run',
@@ -281,16 +317,28 @@ export const dockerComposePorts: BackupPorts = {
     if (!digestPattern.test(images[0].ID)) throw new OperationsError('synapse-digest-unavailable');
     return images[0].ID;
   },
+  async quiesceWrites(inputs) {
+    // Stops the writer (Synapse) so the database and media capture below are
+    // taken from the same still point instead of two moments from a running
+    // server. Postgres itself stays up: pg_dump still needs it.
+    await runProcess('docker', ['compose', '-p', inputs.stateNamespace, '-f', messagingComposeFile, 'stop', 'synapse']);
+  },
+  async resumeWrites(inputs) {
+    await runProcess('docker', ['compose', '-p', inputs.stateNamespace, '-f', messagingComposeFile, 'up', '-d', '--wait', 'synapse']);
+  },
   async dumpDatabase(inputs, targetPath) {
     await runProcess('docker', [
       'compose', '-p', inputs.stateNamespace, '-f', messagingComposeFile, 'exec', '-T', 'postgres',
       'pg_dump', '--format=custom', '--no-owner', '--no-privileges', '-U', inputs.dbUser, '-d', inputs.dbName,
-    ], { stdoutPath: targetPath });
+    ], { stdoutPath: targetPath, env: { ...process.env, PGPASSWORD: inputs.dbPassword } });
   },
   async archiveMedia(inputs, targetPath) {
+    // Synapse is stopped for quiescence at this point, so this reads the
+    // media_store volume via a one-off container (same pattern restore.ts
+    // uses before Synapse boots) rather than `exec` into a running service.
     await runProcess('docker', [
-      'compose', '-p', inputs.stateNamespace, '-f', messagingComposeFile, 'exec', '-T', 'synapse',
-      'tar', 'czf', '-', '-C', '/data', 'media_store',
+      'compose', '-p', inputs.stateNamespace, '-f', messagingComposeFile, 'run', '--rm', '--no-deps', '--entrypoint', 'sh', 'synapse',
+      '-c', 'tar czf - -C /data media_store',
     ], { stdoutPath: targetPath });
   },
   async archiveSigningKey(inputs, targetPath) {
