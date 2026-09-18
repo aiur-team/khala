@@ -86,7 +86,9 @@ export async function digestMessageContent(content: MessageContent): Promise<Dig
   let digest: Uint8Array;
   try {
     // A missing `crypto` or `crypto.subtle` throws here too, and is reported the same way.
-    digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', bytes));
+    // Copy into an ArrayBuffer-backed view: DOM's BufferSource rejects
+    // Uint8Array<ArrayBufferLike> (TS 5.9 lib.dom), which broke web typecheck.
+    digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array(bytes)));
   } catch {
     return { ok: false, reason: 'crypto_unavailable' };
   }
