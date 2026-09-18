@@ -4,6 +4,9 @@
 
 import { afterAll, describe, it } from 'vitest';
 
+/** Prefix on every live case name; the run-level gate in `live-reporter.ts` counts by it. */
+export const LIVE_CASE_PREFIX = 'live: ';
+
 export type LiveEnvironment =
   | Readonly<{ enabled: true; disposableEnv: string }>
   | Readonly<{ enabled: false; reason: string }>;
@@ -53,7 +56,7 @@ export function describeLive(
 ): void {
   if (!environment.enabled) {
     describe.skip(`${entry} (live skipped: ${environment.reason})`, () => {
-      register(name => it.skip(name, () => undefined));
+      register(name => it.skip(`${LIVE_CASE_PREFIX}${name}`, () => undefined));
     });
     return;
   }
@@ -61,7 +64,7 @@ export function describeLive(
   describe(entry, () => {
     // Counted only after the body completes, so a case that skips itself midway
     // does not satisfy the tally.
-    register((name, body) => it(name, async () => {
+    register((name, body) => it(`${LIVE_CASE_PREFIX}${name}`, async () => {
       await body({ disposableEnv: environment.disposableEnv });
       tally.ran(name);
     }));

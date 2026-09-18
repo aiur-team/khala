@@ -3,7 +3,7 @@
 // as a pass, and unsupported capabilities are skipped rather than synthesized.
 
 import {
-  type ApprovalCommand, type ApprovalPort, type DeliveryLimits, type EventRef, type HarnessCapabilities, type HarnessPort,
+  type ApprovalCommand, type ApprovalPort, type DeliveryLimits, type DeliveryReceipt, type EventRef, type HarnessCapabilities, type HarnessPort,
   type ReceiptKind, type ReleasedJob, RECEIPT_KINDS, type SessionBinding, decodeApprovalCommand,
   releaseFromApproval, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
@@ -11,7 +11,7 @@ import type { EvidenceMode, SourceVersion } from '../e2e/harness/evidence';
 import { type Fault, InjectedDisconnect } from '../e2e/harness/faults';
 import { type OwnerControls, type OwnerFixture, ownerAuthority } from '../e2e/harness/owners';
 import { type ModelInput, sha256 } from '../e2e/harness/reference';
-import { type ScenarioHarness, assertCleanClose, createScenarioHarness } from '../e2e/harness/scenario';
+import { type ScenarioDriver, type ScenarioHarness, assertCleanClose, createScenarioHarness } from '../e2e/harness/scenario';
 
 export type CheckOutcome =
   | Readonly<{ status: 'pass' }>
@@ -44,6 +44,11 @@ export type SuiteEnvironment = Readonly<{
   /** Owners in the scenario. The first owner is the subject; the others are bystanders. */
   owners: readonly Readonly<{ seed: string; controls: OwnerControls }>[];
   limits: DeliveryLimits;
+  /**
+   * Fresh drivers for each check. Required in live modes: live evidence and live
+   * faults come from registered drivers, never from in-process fakes.
+   */
+  drivers?: () => readonly ScenarioDriver[];
 }>;
 
 type Check<Subject> = Readonly<{
@@ -51,7 +56,7 @@ type Check<Subject> = Readonly<{
   run: (context: Readonly<{ scenario: ScenarioHarness; subjects: ReadonlyMap<string, Subject> }>) => Promise<void>;
 }>;
 
-async function runChecks<Subject extends { close(): Promise<void> }>(
+async function runChecks<Subject extends { mode: EvidenceMode; close(): Promise<void> }>(
   suite: string,
   environment: SuiteEnvironment,
   checks: readonly Check<Subject>[],
@@ -64,6 +69,7 @@ async function runChecks<Subject extends { close(): Promise<void> }>(
       mode: environment.mode,
       owners: environment.owners,
       sources: environment.sources,
+      ...(environment.drivers ? { drivers: environment.drivers() } : {}),
     });
     let outcome: CheckOutcome;
     try {
@@ -72,6 +78,8 @@ async function runChecks<Subject extends { close(): Promise<void> }>(
         const subject = await factory(scenario, owner);
         subjects.set(owner.ownerId, subject);
         scenario.defer(`subject:${owner.seed}`, owner.ownerId, () => subject.close());
+        // The subject declares what its evidence is; the suite never relabels it.
+        ensure(subject.mode === environment.mode, `subject produces ${subject.mode} evidence in a ${environment.mode} suite`);
       }
       await check.run({ scenario, subjects });
       outcome = { status: 'pass' };
@@ -186,6 +194,8 @@ export function releaseFor(
 
 /** One owner's harness adapter plus the model-facing observation of its session. */
 export type HarnessSubject = Readonly<{
+  /** The evidence this subject produces: a fake adapter is `fake-contract`, whatever it claims. */
+  mode: EvidenceMode;
   port: HarnessPort;
   /** What the existing model session actually received. */
   modelInputs(): Promise<readonly ModelInput[]>;
@@ -238,7 +248,9 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const receipt = await subject.port.submit({ job, payload: event.payload });
         ensure(receipt.bindingId === owner.binding.bindingId && receipt.generation === owner.binding.generation,
           'receipt names a different binding or generation');
-        for (const input of await subject.modelInputs()) {
+        const inputs = await subject.modelInputs();
+        if (receipt.kind === 'context_consumed') ensure(inputs.length > 0, 'consumption reported but no model input observed');
+        for (const input of inputs) {
           ensure(input.bindingId === owner.binding.bindingId && input.sessionId === owner.binding.sessionId
             && input.generation === owner.binding.generation, 'model input landed outside the bound existing session');
         }
@@ -288,9 +300,8 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
     {
       name: 'receipt.consumption_is_observed',
       async run(context) {
-        if (!capabilities.receiptEvidence.includes('context_consumed')) {
-          skip('capabilities do not claim context_consumed receipts');
-        }
+        // Submissions run even when consumption is unclaimed, so an adapter that emits
+        // unclaimed context_consumed receipts fails instead of skipping.
         const { owner, subject } = subjectOf(context, 0);
         const peer = subjectOf(context, 1).owner;
         const receipts = [];
@@ -303,9 +314,13 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
           const { job, event } = firstRelease(owner, peer, 'consume-exit');
           receipts.push({ job, receipt: await subject.port.submit({ job, payload: event.payload }) });
         }
+        if (!capabilities.receiptEvidence.includes('context_consumed')) {
+          skip('capabilities do not claim context_consumed receipts');
+        }
         const inputs = await subject.modelInputs();
-        for (const { job, receipt } of receipts) {
-          if (receipt.kind !== 'context_consumed') continue;
+        const consumed = receipts.filter(({ receipt }) => receipt.kind === 'context_consumed');
+        ensure(consumed.length > 0, 'capabilities claim context_consumed but no submission produced one');
+        for (const { job } of consumed) {
           ensure(inputs.some(input => input.releaseId === job.releaseId),
             `context_consumed for ${job.releaseId} without a model-facing input`);
         }
@@ -354,8 +369,10 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
           ensure(receipt.kind === 'failed' && receipt.errorCode === 'busy_rejected', `busy reject reported ${receipt.kind}`);
           ensure(count === 0, 'a rejected release reached the model');
         } else {
-          ensure(receipt.kind !== 'context_consumed' || count === 1, 'busy session claimed consumption without input');
-          ensure(count <= 1, 'busy session received the release more than once');
+          // A queue route must hold the release while the session is busy; writing it
+          // straight through means the busy fault was ignored.
+          ensure(receipt.kind === 'harness_queued', `busy queue reported ${receipt.kind}`);
+          ensure(count === 0, 'a busy session received the release before its turn ended');
         }
       },
     },
@@ -378,7 +395,33 @@ export function runHarnessConformance(
 ): Promise<ConformanceReport> {
   if (environment.owners.length < 2) throw new Error('harness conformance needs a subject owner and a peer owner');
   return runChecks(`harness:${capabilities.harness}@${capabilities.version}`, environment,
-    harnessChecks(capabilities, environment.limits), factory);
+    harnessChecks(capabilities, environment.limits), claimedReceiptsOnly(factory, capabilities));
+}
+
+/**
+ * Fails any check in which the adapter emits a receipt kind its capability record
+ * does not claim, so an unclaimed kind cannot hide behind a capability skip.
+ */
+function claimedReceiptsOnly(factory: HarnessSubjectFactory, capabilities: HarnessCapabilities): HarnessSubjectFactory {
+  const claimed = <T extends DeliveryReceipt | null>(receipt: T): T => {
+    ensure(receipt === null || capabilities.receiptEvidence.includes(receipt.kind),
+      `adapter emitted ${receipt?.kind} receipts its capabilities do not claim`);
+    return receipt;
+  };
+  return async (scenario, owner) => {
+    const subject = await factory(scenario, owner);
+    const { port } = subject;
+    return {
+      ...subject,
+      port: {
+        inspect: binding => port.inspect(binding),
+        notify: (binding, hint) => port.notify(binding, hint),
+        submit: async input => claimed(await port.submit(input)),
+        reconcile: async job => claimed(await port.reconcile(job)),
+        close: () => port.close(),
+      },
+    };
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +429,7 @@ export function runHarnessConformance(
 
 /** One owner's trusted connector stack as seen from outside. */
 export type DeliverySubject = Readonly<{
+  mode: EvidenceMode;
   approvals: ApprovalPort;
   deliver(event: EventRef, payload: Uint8Array): Promise<void>;
   pending(): Promise<readonly EventRef[]>;
@@ -496,7 +540,13 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         requireFault(at(b), 'duplicate_event');
         await context.scenario.inject('duplicate_event', b.ownerId);
         await at(b).deliver(e7.ref, e7.payload);
+        // A plain redelivery as well, so dedupe is exercised even if the fault is ignored.
+        await at(b).deliver(e7.ref, e7.payload);
         ensure((await at(b).pending()).length === 1, 'a redelivered event became two pending items');
+        const result = await at(b).approvals.approve(grant(b), approvalFor(b, [e7.ref], 'b-duplicate', limits));
+        ensure(result.ok, `approval of the deduplicated event failed: ${result.ok ? '' : result.code}`);
+        const count = released(await at(b).modelInputs());
+        ensure(count === 1, `a redelivered event reached the model ${count} times`);
       },
     },
     {
@@ -518,11 +568,19 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
       async run(context) {
         const { b, at, e7 } = await setup(context);
         requireFault(at(b), 'reordered_receipt');
+        requireFault(at(b), 'disconnect_after_write');
         await at(b).deliver(e7.ref, e7.payload);
+        // An unconfirmed write followed by reconciliation yields two distinct facts
+        // (outcome_unknown, then context_consumed), so reversing them is observable.
+        await context.scenario.inject('disconnect_after_write', b.ownerId);
         const result = await at(b).approvals.approve(grant(b), approvalFor(b, [e7.ref], 'b-receipts', limits));
-        if (!result.ok) throw new CheckFailed(`approval failed: ${result.code}`);
-        const releaseId = result.releaseIds[0]!;
+        ensure(!result.ok && result.code === 'outcome_unknown', `unconfirmed write reported ${result.ok ? 'ok' : result.code}`);
+        await at(b).restart();
+        const [written] = await at(b).modelInputs();
+        ensure(written !== undefined, 'the unconfirmed write never reached the model');
+        const { releaseId } = written;
         const before = new Set(await at(b).releaseFacts(releaseId));
+        ensure(before.size >= 2, `needs two distinct receipt facts to reorder, saw ${[...before].join(', ') || 'none'}`);
         await context.scenario.inject('reordered_receipt', b.ownerId);
         await at(b).restart();
         const after = new Set(await at(b).releaseFacts(releaseId));

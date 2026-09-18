@@ -68,6 +68,7 @@ export function fakeHarnessSubject(capabilities: HarnessCapabilities, defect?: A
   return async (scenario, owner) => {
     const adapter = createFakeHarnessAdapter({ scenario, owner, capabilities, ...(defect ? { defect } : {}) });
     return {
+      mode: 'fake-contract',
       port: adapter,
       modelInputs: async () => adapter.modelInputs(),
       faults: FAULTS,
@@ -89,6 +90,7 @@ export function referenceDeliverySubject(
       ...(options.connectorDefect ? { defect: options.connectorDefect } : {}),
     });
     return {
+      mode: 'fake-contract',
       approvals: connector,
       deliver: (event, payload) => connector.deliver(event, payload),
       pending: async () => connector.pending(),

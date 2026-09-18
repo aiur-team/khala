@@ -114,6 +114,11 @@ describe('scenario harness', () => {
       .rejects.toThrow(/produces live-sdk evidence in a fake-contract scenario/);
   });
 
+  it('refuses a live scenario with no registered live driver', async () => {
+    await expect(createScenarioHarness({ runId: 'bare', mode: 'live-harness', owners: owners(['a']), sources: [{ component: 'codex', version: '0.154.0' }] }))
+      .rejects.toThrow(/needs at least one registered live-harness driver/);
+  });
+
   it('refuses a live fault that no registered driver can enact', async () => {
     const harness = await createScenarioHarness({
       runId: 'live', mode: 'live-harness', owners: owners(['a']), sources: [],

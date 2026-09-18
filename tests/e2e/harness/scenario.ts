@@ -72,6 +72,10 @@ export async function createScenarioHarness(config: ScenarioConfig): Promise<Sce
   assertIndependentOwners(owners);
 
   const drivers = config.drivers ?? [];
+  // Live evidence comes from a registered live driver, never from in-process fakes.
+  if (isLiveMode(config.mode) && drivers.length === 0) {
+    throw new Error(`a ${config.mode} scenario needs at least one registered ${config.mode} driver`);
+  }
   for (const driver of drivers) {
     if (driver.mode !== config.mode) {
       throw new Error(`driver ${driver.name} produces ${driver.mode} evidence in a ${config.mode} scenario`);

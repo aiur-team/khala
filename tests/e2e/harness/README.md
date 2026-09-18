@@ -19,8 +19,10 @@ checks `tests/` through `tests/e2e/harness/tsconfig.json`.
 Live acceptance needs `KHALA_E2E_LIVE=1` and `KHALA_E2E_DISPOSABLE_ENV` naming a
 disposable environment. Without them, `describeLive` entries are skipped and the
 reason is shown in the name. `KHALA_E2E_LIVE=1` without an environment fails. In live
-mode an entry fails unless at least one live case ran to completion. Never pass
-tokens as script arguments.
+mode an entry fails unless at least one live case ran to completion. `pnpm test:e2e`
+also loads `live-reporter.ts`, which fails the whole live run unless at least one live
+case passed. That covers name filters, file selections and runs with no live entries.
+Never pass tokens as script arguments.
 
 ## Modules
 
@@ -43,8 +45,8 @@ tokens as script arguments.
   satisfy a live query. `combineManifests` refuses to mix modes or versions.
 - `scenario.ts`: `createScenarioHarness(config)` checks that owners are independent,
   gives each owner a private state directory and clock, and registers `ScenarioDriver`s.
-  A driver must use the scenario's mode, and live faults need a driver that can enact
-  them. `close()` disposes resources in reverse order and reports leftovers and
+  A driver must use the scenario's mode. A live scenario needs at least one live
+  driver, and live faults need a driver that can enact them. `close()` disposes resources in reverse order and reports leftovers and
   unfired faults.
 - `live.ts`: `describeLive(entry, liveCase => ...)` for KHA-138/139 entries.
 - `reference.ts`: the fake owner connector and harness adapter used by self-tests and
@@ -59,8 +61,12 @@ and return a report with `pass`, `fail` or `skip` plus a reason for each check.
 Receipt kinds that the capabilities do not claim, and faults that the subject
 cannot inject, are skipped with a reason. They are never counted as passes.
 `acceptLiveHarness(report, required)` refuses a fake report, any failed check, and
-any required check that was skipped.
+any required check that was skipped. An adapter that emits a receipt kind its
+capabilities do not claim fails the check in which it did so.
 
 A live driver for a real adapter or connector implements `HarnessSubject` or
-`DeliverySubject`. It reports what the model session actually received
-(`modelInputs`) and lists the faults it can inject.
+`DeliverySubject`. The subject declares its own evidence `mode`, and a check fails
+when that differs from the suite's, so a fake cannot be relabelled as live. It
+reports what the model session actually received (`modelInputs`) and lists the
+faults it can inject. Live suites pass `drivers` in the environment so that live
+faults are enacted by a registered driver.

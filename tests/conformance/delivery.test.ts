@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { EvidenceError, requireEvidence } from '../e2e/harness/evidence';
+import { FAULTS } from '../e2e/harness/faults';
 import { createFakeHarnessAdapter } from '../e2e/harness/reference';
-import { createScenarioHarness } from '../e2e/harness/scenario';
+import { type ScenarioDriver, createScenarioHarness } from '../e2e/harness/scenario';
 import { fakeCapabilities, fakeEnvironment, fakeHarnessSubject, fixtureLimits, referenceDeliverySubject } from './subjects';
-import { type ConformanceReport, acceptLiveHarness, authoredEvent, outcomeOf, releaseFor, runDeliveryConformance, runHarnessConformance } from './suites';
+import {
+  type ConformanceReport, type DeliverySubjectFactory, type HarnessSubjectFactory, acceptLiveHarness, authoredEvent, outcomeOf, releaseFor,
+  runDeliveryConformance, runHarnessConformance,
+} from './suites';
 
 const failures = (report: ConformanceReport) => report.results.filter(result => result.outcome.status === 'fail');
 
@@ -35,6 +39,37 @@ describe('harness conformance', () => {
     expect(outcomeOf(report, 'receipt.consumption_is_observed')).toMatchObject({ status: 'fail' });
   });
 
+  it('fails an adapter that emits receipt kinds its capabilities do not claim', async () => {
+    const claimed = fakeCapabilities('reject');
+    const unclaimed = { ...claimed, receiptEvidence: claimed.receiptEvidence.filter(kind => kind !== 'context_consumed') };
+    const report = await runHarnessConformance(fakeHarnessSubject(unclaimed), unclaimed, fakeEnvironment(['b', 'c']));
+    expect(outcomeOf(report, 'receipt.consumption_is_observed')).toEqual({
+      status: 'fail', reason: 'adapter emitted context_consumed receipts its capabilities do not claim',
+    });
+  });
+
+  it('fails a queue adapter that reaches the busy boundary but writes straight through', async () => {
+    const capabilities = fakeCapabilities('queue');
+    const honest = fakeHarnessSubject(capabilities);
+    const ignoresBusy: HarnessSubjectFactory = async (scenario, owner) => {
+      const subject = await honest(scenario, owner);
+      return {
+        ...subject,
+        port: {
+          ...subject.port,
+          submit: input => {
+            if (scenario.faults.checkpoint('harness.accept', owner.ownerId, input.job.releaseId) === 'session_busy') {
+              scenario.faults.clear('session_busy', owner.ownerId);
+            }
+            return subject.port.submit(input);
+          },
+        },
+      };
+    };
+    const report = await runHarnessConformance(ignoresBusy, capabilities, fakeEnvironment(['b', 'c']));
+    expect(outcomeOf(report, 'fault.session_busy')).toEqual({ status: 'fail', reason: 'busy queue reported context_consumed' });
+  });
+
   it('refuses a registered capability record that differs from inspect()', async () => {
     const report = await runHarnessConformance(fakeHarnessSubject(fakeCapabilities('queue')), fakeCapabilities('reject'), fakeEnvironment(['b', 'c']));
     expect(outcomeOf(report, 'capabilities.declared')).toMatchObject({ status: 'fail' });
@@ -55,6 +90,15 @@ describe('delivery conformance', () => {
     );
     expect(outcomeOf(report, 'unknown.no_repeat_submit')).toMatchObject({ status: 'fail' });
   });
+
+  it('fails the receipt ordering oracle when a connector keeps no receipt facts', async () => {
+    const honest = referenceDeliverySubject({ capabilities: fakeCapabilities('reject') });
+    const forgetful: DeliverySubjectFactory = async (scenario, owner) => ({ ...(await honest(scenario, owner)), releaseFacts: async () => [] });
+    const report = await runDeliveryConformance(forgetful, fakeEnvironment(['a', 'b', 'c']));
+    expect(outcomeOf(report, 'reordered_receipt.facts_not_progress')).toEqual({
+      status: 'fail', reason: 'needs two distinct receipt facts to reorder, saw none',
+    });
+  });
 });
 
 describe('fake evidence cannot satisfy live acceptance (AE2)', () => {
@@ -63,6 +107,26 @@ describe('fake evidence cannot satisfy live acceptance (AE2)', () => {
     const report = await runHarnessConformance(fakeHarnessSubject(capabilities), capabilities, fakeEnvironment(['b', 'c']));
     expect(failures(report)).toEqual([]);
     expect(() => acceptLiveHarness(report, ['receipt.consumption_is_observed'])).toThrow(/fake-contract evidence/);
+  });
+
+  it('a fake adapter run under a live-harness label fails every check', async () => {
+    const capabilities = fakeCapabilities('reject');
+    const liveDriver: ScenarioDriver = {
+      name: 'stub-live', mode: 'live-harness', source: { component: 'codex', version: '0.154.0' }, faults: FAULTS, close: async () => undefined,
+    };
+    const environment = { ...fakeEnvironment(['b', 'c']), mode: 'live-harness' as const, sources: [liveDriver.source], drivers: () => [liveDriver] };
+    const report = await runHarnessConformance(fakeHarnessSubject(capabilities), capabilities, environment);
+    for (const result of report.results) {
+      expect(result.outcome).toEqual({ status: 'fail', reason: 'subject produces fake-contract evidence in a live-harness suite' });
+    }
+    expect(() => acceptLiveHarness(report, ['receipt.consumption_is_observed'])).toThrow(/failed/);
+  });
+
+  it('refuses a live suite without a registered live driver', async () => {
+    const capabilities = fakeCapabilities('reject');
+    const environment = { ...fakeEnvironment(['b', 'c']), mode: 'live-harness' as const, sources: [{ component: 'codex', version: '0.154.0' }] };
+    await expect(runHarnessConformance(fakeHarnessSubject(capabilities), capabilities, environment))
+      .rejects.toThrow(/needs at least one registered live-harness driver/);
   });
 
   it('refuses a live report whose required check was skipped', () => {
