@@ -19,6 +19,11 @@
     "./features/create-chat/model": "./src/features/create-chat/model.ts",
     "./features/create-chat/ports": "./src/features/create-chat/ports.ts",
     "./features/create-chat/create-chat.css": "./src/features/create-chat/create-chat.css",
+    "./features/timeline/TimelineScreen": "./src/features/timeline/TimelineScreen.tsx",
+    "./features/timeline/controller": "./src/features/timeline/controller.ts",
+    "./features/timeline/model": "./src/features/timeline/model.ts",
+    "./features/timeline/message-renderer": "./src/features/timeline/message-renderer.tsx",
+    "./features/timeline/timeline.css": "./src/features/timeline/timeline.css",
     "./features/*": "./src/features/*.ts",
     "./composition/*": "./src/composition/*.ts"
   },
