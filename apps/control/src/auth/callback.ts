@@ -12,7 +12,8 @@ import {
 import { type ClaimRejection, checkClaims, resolveOwner } from './principal';
 import type { OidcClient } from './provider';
 import { type MessagingAccountDirectory, ensureMessagingAccount } from './provisioning';
-import { LOGIN_COOKIE, clearCookie, createSession, readCookie, sessionCookie } from './sessions';
+import { safeEqual } from './csrf';
+import { LOGIN_COOKIE, SESSION_COOKIE, clearCookie, createSession, readCookie, revokeSession, sessionCookie } from './sessions';
 import { type Random, TOKEN, derive, orUnavailable, randomToken, settleWrite } from './store';
 
 export const LOGIN_PATH = '/api/human/auth/login';
@@ -101,8 +102,9 @@ export async function completeSignIn(deps: SignInDeps, request: Pick<Request, 'u
   const login = read.record.value;
   if (login.status !== 'pending') return reject('login_replayed');
   const callback = new URL(request.url);
+  const state = callback.searchParams.get('state');
   // A forged callback keeps the login cookie, so it cannot cancel a sign-in in progress.
-  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || callback.searchParams.get('state') !== login.state) {
+  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || state === null || !safeEqual(state, login.state)) {
     return { kind: 'rejected', code: 'state_mismatch', cookies: [] };
   }
 
@@ -127,7 +129,7 @@ export async function completeSignIn(deps: SignInDeps, request: Pick<Request, 'u
   if (exchanged.kind !== 'ok') return { kind: 'unavailable', cookies: clear };
 
   const nowMs = deps.clock();
-  const claims = checkClaims(exchanged.value, { issuer: deps.oidc.issuer, clientId: deps.oidc.clientId, nowMs });
+  const claims = checkClaims(exchanged.value, { issuer: deps.oidc.issuer, clientId: deps.oidc.clientId, nonce: login.nonce, nowMs });
   if (!claims.ok) return reject(claims.code);
   const owner = await resolveOwner(deps.store, deps.random, claims.identity);
   if (owner.kind !== 'owner') return { kind: 'unavailable', cookies: clear };
@@ -139,6 +141,11 @@ export async function completeSignIn(deps: SignInDeps, request: Pick<Request, 'u
     ownerId: owner.ownerId, identity: claims.identity, expiresAtMs: nowMs + deps.sessionTtlMs,
   });
   if (session.kind !== 'created') return { kind: 'unavailable', cookies: clear };
+  // A new sign-in replaces this browser's previous session rather than leaving it
+  // live. Best effort: the new session stands even if the old one cannot be revoked
+  // now, and the old one still expires on its own.
+  const previous = readCookie(request.headers.get('cookie'), SESSION_COOKIE);
+  if (previous !== null && TOKEN.test(previous)) await revokeSession(deps.store, previous, `sign-in.${derive('session', session.token)}`);
   return {
     kind: 'signed_in',
     location: login.returnPath,

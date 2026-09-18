@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { decodeOwnerId } from '@khala/contracts/messaging/index';
 import { checkClaims, ownerKey, resolveOwner } from './principal';
 import { CLIENT_ID, ISSUER, T0, fakeStore, harness, request, secureRandom, signIn } from './support.test';
 
-const valid = { iss: ISSUER, aud: CLIENT_ID, sub: 'user-1', email: 'ada@example.test', email_verified: true, exp: T0 / 1000 + 60 };
-const expected = { issuer: ISSUER, clientId: CLIENT_ID, nowMs: T0 };
+const NONCE = 'n'.repeat(43);
+const valid = { iss: ISSUER, aud: CLIENT_ID, sub: 'user-1', email: 'ada@example.test', email_verified: true, exp: T0 / 1000 + 60, nonce: NONCE };
+const expected = { issuer: ISSUER, clientId: CLIENT_ID, nonce: NONCE, nowMs: T0 };
 
 describe('checkClaims', () => {
   it('accepts a verified identity and keeps identifiers byte-exact', () => {
@@ -27,6 +29,9 @@ describe('checkClaims', () => {
     ['expired', { exp: T0 / 1000 }, 'expired'],
     ['missing exp', { exp: undefined }, 'expired'],
     ['string exp', { exp: String(T0 / 1000 + 60) }, 'expired'],
+    ['another login\'s nonce', { nonce: 'm'.repeat(43) }, 'nonce_mismatch'],
+    ['missing nonce', { nonce: undefined }, 'nonce_mismatch'],
+    ['nonce prefix', { nonce: NONCE.slice(1) }, 'nonce_mismatch'],
     ['non-email email', { email: 'not-an-email' }, 'invalid_email'],
     ['missing email', { email: undefined }, 'invalid_email'],
   ])('rejects %s', (_name, override, code) => {
@@ -91,6 +96,19 @@ describe('owner mapping', () => {
     const again = await resolveOwner(fake.store, secureRandom, identity);
     expect(first).toEqual(again);
     expect(fake.keys('auth.owner.')).toHaveLength(1);
+  });
+
+  it.each([
+    ['another issuer', { issuer: 'https://other.example.test' }],
+    ['another subject', { subject: 'user-2' }],
+    ['an empty owner ID', { ownerId: '' }],
+  ])('treats an owner record naming %s as corrupt, never as that owner', async (_name, change) => {
+    const fake = fakeStore(() => T0);
+    const identity = { issuer: ISSUER, subject: 'user-1', verifiedEmail: 'ada@example.test' };
+    const value = { v: 1, ownerId: 'own_planted', issuer: ISSUER, subject: 'user-1', ...change };
+    expect(decodeOwnerId('own_planted').ok).toBe(true);
+    await fake.store.compareAndSet({ key: ownerKey(identity), expectedRevision: null, operationId: 'plant', next: { value, expiresAt: null } });
+    expect(await resolveOwner(fake.store, secureRandom, identity)).toEqual({ kind: 'unavailable' });
   });
 
   it('fails a bad claim without creating a session', async () => {

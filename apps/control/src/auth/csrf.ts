@@ -19,9 +19,13 @@ export function checkMutationOrigin(request: Pick<Request, 'method' | 'headers'>
   return 'ok';
 }
 
-export function csrfMatches(presented: string | null, expected: string): boolean {
-  if (presented === null) return false;
+/** Constant-time comparison of a presented secret against the expected one. */
+export function safeEqual(presented: string, expected: string): boolean {
   const a = Buffer.from(presented);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function csrfMatches(presented: string | null, expected: string): boolean {
+  return presented !== null && safeEqual(presented, expected);
 }

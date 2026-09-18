@@ -2,13 +2,13 @@
 // keep the contract semantics the module relies on. Doubles prove module
 // behaviour only, never a provider or store capability.
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   type CompareAndSetInput, type ControlRecord, type ControlStore, type JsonValue, type OwnerId, isRecordLive, sameJsonValue,
 } from '@khala/contracts/messaging/index';
 import { type AuthService, type AuthServiceOptions, createAuthService } from './index';
-import type { OidcClient, ProviderResult } from './provider';
+import type { AuthorizationRequest, CodeExchange, OidcClient, ProviderResult } from './provider';
 import type { MessagingAccountDirectory } from './provisioning';
 
 export const ORIGIN = 'https://khala.aiur.team';
@@ -80,16 +80,24 @@ export function fakeStore(clock: () => number) {
 
 export type Claims = Record<string, unknown>;
 
-/** OIDC client double. It stands in for the maintained library: tests set the claims it would return. */
+/**
+ * OIDC client double. It stands in for the maintained library and enforces the
+ * same bindings: S256 PKCE only, and a code redeemed only with the state,
+ * redirect URI, verifier and nonce of the request that issued it. Tests set the
+ * claims it returns; the ID token carries the issued nonce unless a test
+ * overrides it to model an adapter that skipped its nonce check.
+ */
 export function fakeOidc() {
-  const issued: { state: string; nonce: string; codeChallenge: string; redirectUri: string }[] = [];
+  const issued: AuthorizationRequest[] = [];
   let claims: Claims | null = null;
   let next: ProviderResult<Claims> | 'throw' | null = null;
-  const exchanges: { expectedState: string; nonce: string; codeVerifier: string; callbackUrl: string }[] = [];
+  const exchanges: CodeExchange[] = [];
+  const invalid = { kind: 'rejected', code: 'invalid_response' } as const;
   const client: OidcClient = {
     issuer: ISSUER,
     clientId: CLIENT_ID,
     async authorizationUrl(request) {
+      if (request.codeChallengeMethod !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(request.codeChallenge)) return invalid;
       issued.push(request);
       const url = new URL(`${ISSUER}/authorize`);
       url.search = new URLSearchParams({
@@ -104,8 +112,13 @@ export function fakeOidc() {
       next = null;
       if (result === 'throw') throw new Error('provider exploded: id_token=eyJsecret');
       if (result) return result;
-      if (new URL(exchange.callbackUrl).searchParams.get('state') !== exchange.expectedState) return { kind: 'rejected', code: 'invalid_response' };
-      return { kind: 'ok', value: claims ?? {} };
+      const state = new URL(exchange.callbackUrl).searchParams.get('state');
+      const grant = issued.find(request => request.state === state);
+      if (!grant || exchange.expectedState !== grant.state) return invalid;
+      if (exchange.redirectUri !== grant.redirectUri) return invalid;
+      if (createHash('sha256').update(exchange.codeVerifier).digest('base64url') !== grant.codeChallenge) return invalid;
+      if (exchange.nonce !== grant.nonce) return invalid;
+      return { kind: 'ok', value: { nonce: grant.nonce, ...claims } };
     },
   };
   return {
@@ -227,6 +240,34 @@ describe('test doubles', () => {
     expect((await store.compareAndSet(input)).kind).toBe('applied');
     expect((await store.compareAndSet({ ...input, next: { value: 2, expiresAt: null } })).kind).toBe('operation_mismatch');
     expect((await store.compareAndSet({ ...input, operationId: 'op2' })).kind).toBe('conflict');
+  });
+
+  it.each([
+    ['another state', { expectedState: 'x'.repeat(43) }],
+    ['another redirect URI', { redirectUri: `${ORIGIN}/elsewhere` }],
+    ['another code verifier', { codeVerifier: 'v'.repeat(43) }],
+    ['another nonce', { nonce: 'n'.repeat(43) }],
+  ])('provider double refuses a code redeemed with %s', async (_name, change) => {
+    const oidc = fakeOidc();
+    oidc.signInAs('user-1', 'ada@example.test');
+    const verifier = 'c'.repeat(43);
+    const grant = {
+      redirectUri: `${ORIGIN}/api/human/auth/callback`, state: 's'.repeat(43), nonce: 'o'.repeat(43),
+      codeChallenge: createHash('sha256').update(verifier).digest('base64url'), codeChallengeMethod: 'S256' as const,
+    };
+    expect((await oidc.client.authorizationUrl(grant)).kind).toBe('ok');
+    const exchange = {
+      callbackUrl: `${grant.redirectUri}?code=c&state=${grant.state}`, redirectUri: grant.redirectUri,
+      expectedState: grant.state, nonce: grant.nonce, codeVerifier: verifier,
+    };
+    expect(await oidc.client.exchangeCode(exchange)).toMatchObject({ kind: 'ok', value: { nonce: grant.nonce } });
+    expect(await oidc.client.exchangeCode({ ...exchange, ...change })).toEqual({ kind: 'rejected', code: 'invalid_response' });
+  });
+
+  it('provider double refuses plain PKCE', async () => {
+    const request = { redirectUri: ORIGIN, state: 's', nonce: 'n', codeChallenge: 'c'.repeat(43), codeChallengeMethod: 'plain' };
+    expect(await fakeOidc().client.authorizationUrl(request as unknown as AuthorizationRequest))
+      .toEqual({ kind: 'rejected', code: 'invalid_response' });
   });
 
   it('store double hides expired records', async () => {

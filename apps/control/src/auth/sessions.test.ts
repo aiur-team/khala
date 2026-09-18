@@ -34,6 +34,28 @@ describe('authenticateRequest', () => {
     expect(await h.service.authenticateRequest(request('/', { cookies }))).toEqual({ kind: 'signed_out' });
   });
 
+  // Expiry is enforced twice, and each layer must hold when the other does not.
+  it('expires the session in the store even when the record value claims it is still valid', async () => {
+    const { h, cookies, principal } = await signedIn();
+    const key = h.store.keys('auth.session.')[0]!;
+    const record = h.store.records.get(key)!;
+    expect(record.expiresAt).toBe(principal.sessionExpiresAt);
+    h.store.records.set(key, { ...record, value: { ...(record.value as object), expiresAt: '2099-01-01T00:00:00.000Z' } });
+    h.advance(8 * 3600_000);
+    expect(await h.service.authenticateRequest(request('/', { cookies }))).toEqual({ kind: 'signed_out' });
+  });
+
+  it('expires the session in the module even when the store still serves the record', async () => {
+    const { h, cookies } = await signedIn();
+    const key = h.store.keys('auth.session.')[0]!;
+    // A store whose clock lags keeps the record live past the session's expiry.
+    h.store.records.set(key, { ...h.store.records.get(key)!, expiresAt: '2099-01-01T00:00:00.000Z' });
+    h.advance(8 * 3600_000 - 1);
+    expect((await h.service.authenticateRequest(request('/', { cookies }))).kind).toBe('authenticated');
+    h.advance(1);
+    expect(await h.service.authenticateRequest(request('/', { cookies }))).toEqual({ kind: 'signed_out' });
+  });
+
   it('reports a store timeout as unavailable, not signed out', async () => {
     const { h, cookies } = await signedIn();
     h.store.inject('read', 'unavailable');
@@ -84,12 +106,13 @@ describe('requireHumanMutation', () => {
     ['another origin', { origin: 'https://evil.example' }],
     ['a preview origin', { origin: 'https://preview.khala.aiur.team' }],
     ['the http origin', { origin: 'http://khala.aiur.team' }],
-    ['cross-site fetch metadata', { 'sec-fetch-site': 'cross-site' }],
-    ['same-site fetch metadata', { 'sec-fetch-site': 'same-site' }],
-  ])('rejects %s', async (_name, headers) => {
+    // These two keep a valid Origin, so only the fetch metadata check can refuse them.
+    ['cross-site fetch metadata', { origin: ORIGIN, 'sec-fetch-site': 'cross-site' }],
+    ['same-site fetch metadata', { origin: ORIGIN, 'sec-fetch-site': 'same-site' }],
+  ])('rejects %s', async (name, headers) => {
     const { h, cookies, csrf } = await signedIn();
     const init = { method: 'POST', cookies, headers: { origin: ORIGIN, [CSRF_HEADER]: csrf, ...headers } };
-    if (!('origin' in headers)) delete (init.headers as Record<string, string>).origin;
+    if (name === 'missing Origin') delete (init.headers as Record<string, string>).origin;
     expect(await h.service.requireHumanMutation(request('/api/human/chats', init))).toEqual({ kind: 'rejected', code: 'forbidden_origin' });
   });
 

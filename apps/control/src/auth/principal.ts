@@ -6,12 +6,13 @@ import { createHash } from 'node:crypto';
 import {
   type ControlStore, type OwnerId, MAX_IDENTIFIER_BYTES, decodeAuthPrincipal, decodeOwnerId,
 } from '@khala/contracts/messaging/index';
+import { safeEqual } from './csrf';
 import { type Random, randomToken, settleWrite } from './store';
 
 export type ProviderIdentity = Readonly<{ issuer: string; subject: string; verifiedEmail: string }>;
 
 export type ClaimRejection =
-  | 'wrong_issuer' | 'wrong_audience' | 'expired' | 'invalid_subject' | 'email_unverified' | 'invalid_email';
+  | 'wrong_issuer' | 'wrong_audience' | 'expired' | 'nonce_mismatch' | 'invalid_subject' | 'email_unverified' | 'invalid_email';
 
 export type ClaimCheck =
   | Readonly<{ ok: true; identity: ProviderIdentity }>
@@ -27,10 +28,12 @@ const isIdentifier = (value: unknown): value is string =>
 /**
  * Re-checks the claims Khala relies on, after the maintained client has validated
  * the token. `email_verified` must be the boolean `true`; the string "true" fails.
+ * The nonce is checked again here as defence in depth, so an adapter that skips
+ * its own nonce check still cannot complete another browser's sign-in.
  */
 export function checkClaims(
   claims: Readonly<Record<string, unknown>>,
-  expected: Readonly<{ issuer: string; clientId: string; nowMs: number }>,
+  expected: Readonly<{ issuer: string; clientId: string; nonce: string; nowMs: number }>,
 ): ClaimCheck {
   if (claims.iss !== expected.issuer) return { ok: false, code: 'wrong_issuer' };
   const audience = claims.aud;
@@ -41,6 +44,7 @@ export function checkClaims(
   if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp) || claims.exp * 1000 <= expected.nowMs) {
     return { ok: false, code: 'expired' };
   }
+  if (typeof claims.nonce !== 'string' || !safeEqual(claims.nonce, expected.nonce)) return { ok: false, code: 'nonce_mismatch' };
   if (!isIdentifier(claims.sub)) return { ok: false, code: 'invalid_subject' };
   if (claims.email_verified !== true) return { ok: false, code: 'email_unverified' };
   if (!isIdentifier(claims.email) || !EMAIL.test(claims.email)) return { ok: false, code: 'invalid_email' };

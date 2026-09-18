@@ -41,9 +41,12 @@ export interface OidcClient {
   readonly clientId: string;
   authorizationUrl(request: AuthorizationRequest, options?: CallOptions): Promise<ProviderResult<string>>;
   /**
-   * Exchanges the code with PKCE and returns the validated ID token claims merged
-   * with userinfo `email`/`email_verified` when the provider supplies them there.
-   * Never returns tokens.
+   * Validates the callback against `expectedState`, exchanges the code with the
+   * PKCE `codeVerifier` and `redirectUri`, validates the ID token (signature,
+   * issuer, audience, expiry and `nonce`), and returns its claims. When the ID
+   * token lacks `email`/`email_verified`, both are taken from userinfo, and only
+   * after checking that the userinfo `sub` equals the ID token `sub`. Never
+   * returns tokens.
    */
   exchangeCode(exchange: CodeExchange, options?: CallOptions): Promise<ProviderResult<Readonly<Record<string, unknown>>>>;
 }

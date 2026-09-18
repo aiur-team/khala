@@ -185,4 +185,36 @@ describe('completeSignIn', () => {
     expect(cookiePairs(result.cookies)).toHaveLength(1);
     expect(new URL(result.kind === 'signed_in' ? result.location : '/', ORIGIN).origin).toBe(ORIGIN);
   });
+
+  it('refuses an ID token carrying another login\'s nonce even if the adapter let it through', async () => {
+    const h = harness();
+    h.oidc.signInAs('user-1', 'ada@example.test', { nonce: 'n'.repeat(43) });
+    const result = await h.service.completeSignIn(await beginAndReturn(h));
+    expect(result).toMatchObject({ kind: 'rejected', code: 'nonce_mismatch' });
+    expect(h.store.keys('auth.session.')).toHaveLength(0);
+  });
+
+  it('refuses a callback whose state differs only in its last character', async () => {
+    const h = harness();
+    h.oidc.signInAs('user-1', 'ada@example.test');
+    const callback = await beginAndReturn(h);
+    const url = new URL(callback.url);
+    const state = url.searchParams.get('state')!;
+    url.searchParams.set('state', state.slice(0, -1) + (state.endsWith('A') ? 'B' : 'A'));
+    const result = await h.service.completeSignIn(new Request(url, { headers: callback.headers }));
+    expect(result).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
+    expect(h.oidc.exchanges).toHaveLength(0);
+  });
+
+  it('revokes the browser\'s previous session when it signs in again', async () => {
+    const h = harness();
+    const first = await signIn(h);
+    h.oidc.signInAs('user-1', 'ada@example.test');
+    const callback = await beginAndReturn(h);
+    const again = new Request(callback.url, { headers: { cookie: [callback.headers.get('cookie'), ...first.cookies].join('; ') } });
+    const second = await h.service.completeSignIn(again);
+    expect(second.kind).toBe('signed_in');
+    expect(await h.service.authenticateRequest(request('/', { cookies: first.cookies }))).toEqual({ kind: 'signed_out' });
+    expect((await h.service.authenticateRequest(request('/', { cookies: cookiePairs(second.cookies) }))).kind).toBe('authenticated');
+  });
 });
