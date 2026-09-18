@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.18.0" },
+  "engines": { "node": ">=22.18.0" },
   "scripts": {
     "probe": "node probe.ts",
     "test": "node --test test/*.test.ts",

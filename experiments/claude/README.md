@@ -16,7 +16,8 @@ npm --prefix experiments/claude run probe -- --inventory   # only `claude --vers
 
 ## Live cases
 
-Only run against a disposable session you are explicitly authorized to test. The probe never scans or
+Only the designated disposable session and workdir in `DESIGNATED_TARGETS` (`probe.ts`) are accepted, by both
+the probe and `--seed`; add a pair there only with the owner's explicit consent. The probe never scans or
 opens other sessions; it reads only `~/.claude/projects/<workdir>/<session-id>.jsonl` for the named ID.
 
 ```sh

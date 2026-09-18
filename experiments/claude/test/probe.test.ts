@@ -1,33 +1,57 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { runAttachmentProbe, parseArguments, type ProbeDeps } from '../probe.ts';
-import { collectInventory, inspectCommand, replayQueue, sanitize, type TranscriptSnapshot } from '../evidence.ts';
+import { DESIGNATED_TARGETS, runAttachmentProbe, parseArguments, seedMarker, type ProbeDeps } from '../probe.ts';
+import { collectInventory, inspectCommand, projectDir, replayQueue, sanitize, snapshotTranscript, transcriptEntriesFrom, type TranscriptSnapshot } from '../evidence.ts';
 import { PRIOR_MARKER, Pushable, type OpenSession, type StreamMessage } from '../scenario.ts';
 
 const SESSION = '00000000-0000-4000-8000-000000000000';
 const input = { sessionId: SESSION, expectedWorkdir: '/synthetic/work', nonce: 'synthetic-nonce', mode: 'idle' as const, deadlineMs: 5000 };
+const TARGETS = [{ sessionId: SESSION, workdir: '/synthetic/work' }];
 
-const snapshot = async (): Promise<TranscriptSnapshot> => ({
+const baseSnapshot: TranscriptSnapshot = {
   lines: 1, sha256: 'x', sessionIds: [SESSION], cwds: ['/synthetic/work'], versions: ['0.0.0'], permissionModes: ['default'], models: ['m'], siblingTranscripts: 0,
-});
+};
+const snapshot = async (): Promise<TranscriptSnapshot> => baseSnapshot;
+// The first snapshot is taken before the run; later ones see the given change.
+const changingSnapshot = (change: Partial<TranscriptSnapshot>): ProbeDeps['snapshot'] => {
+  let calls = 0;
+  return async () => (calls++ === 0 ? baseSnapshot : { ...baseSnapshot, ...change });
+};
 
 const assistant = (content: unknown[]): StreamMessage => ({ type: 'assistant', message: { content } });
 const text = (value: string) => assistant([{ type: 'text', text: value }]);
 
 // A scripted stand-in for the resumed CLI: replays a stale result on resume like the real CLI, then reacts to prompts.
-function fakeSession(behavior: { sessionId?: string; consume?: boolean; recall?: boolean }): { open: OpenSession; approvals: string[] } {
+type ToolRequest = { tool: string; input: Record<string, unknown> };
+type FakeBehavior = { sessionId?: string; cwd?: string; consume?: boolean; recall?: boolean; setupRequests?: (feed: string) => ToolRequest[]; busyRequests?: (command: string) => ToolRequest[] };
+
+function fakeSession(behavior: FakeBehavior): { open: OpenSession; approvals: string[]; extra: string[]; opened: () => number } {
   const approvals: string[] = [];
+  const extra: string[] = [];
+  let opens = 0;
   const open: OpenSession = ({ canUseTool }) => {
+    opens++;
     const out = new Pushable<StreamMessage>();
     let turns = 0;
-    const init: StreamMessage = { type: 'system', subtype: 'init', session_id: behavior.sessionId ?? SESSION, cwd: '/synthetic/work', model: 'm', permissionMode: 'default', claude_code_version: '0.0.0', tools: ['Monitor'] };
+    const init: StreamMessage = { type: 'system', subtype: 'init', session_id: behavior.sessionId ?? SESSION, cwd: behavior.cwd ?? '/synthetic/work', model: 'm', permissionMode: 'default', claude_code_version: '0.0.0', tools: ['Monitor'] };
     return {
       messages: out,
       send: prompt => void (async () => {
-        if (turns++ === 0) {
+        if (turns++ > 0) {
+          const command = prompt.match(/: (sleep \d+ && echo \S+)\./)?.[1];
+          if (!command) return;
+          for (const request of behavior.busyRequests?.(command) ?? []) extra.push((await canUseTool(request.tool, request.input)).behavior);
+          out.push(assistant([{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command } }]));
+          approvals.push((await canUseTool('Bash', { command })).behavior);
+          // Like the real foreground tool, the result arrives after the probe's release write.
+          await new Promise(resolve => setTimeout(resolve, 300));
+          out.push({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b1', content: command.split(' ').at(-1) }] } });
+          return;
+        }
+        {
           out.push(init);
           out.push({ type: 'result', subtype: 'success', num_turns: 0 });
           out.push(init);
@@ -35,6 +59,7 @@ function fakeSession(behavior: { sessionId?: string; consume?: boolean; recall?:
           out.push(assistant([{ type: 'tool_use', id: 't1', name: 'Monitor', input: { command } }]));
           const decision = await canUseTool('Monitor', { command });
           approvals.push(decision.behavior);
+          for (const request of behavior.setupRequests?.(command.split(' ').at(-1)!) ?? []) extra.push((await canUseTool(request.tool, request.input)).behavior);
           if (decision.behavior === 'allow') out.push({ type: 'system', subtype: 'task_started' });
           out.push(text('SETUP-DONE'));
           out.push({ type: 'result', subtype: 'success', num_turns: 1 });
@@ -56,7 +81,7 @@ function fakeSession(behavior: { sessionId?: string; consume?: boolean; recall?:
       abort: () => out.end(),
     };
   };
-  return { open, approvals };
+  return { open, approvals, extra, opened: () => opens };
 }
 
 async function withRunDir<T>(fn: (runDir: string) => Promise<T>): Promise<T> {
@@ -65,7 +90,9 @@ async function withRunDir<T>(fn: (runDir: string) => Promise<T>): Promise<T> {
 }
 
 type Entries = Awaited<ReturnType<ProbeDeps['entriesFrom']>>;
-const deps = (open: OpenSession, runDir: string, entries: Entries = []): ProbeDeps => ({ openSession: open, snapshot, entriesFrom: async () => entries, runDir, settleMs: 50 });
+const deps = (open: OpenSession, runDir: string, entries: Entries = [], extra: Partial<ProbeDeps> = {}): ProbeDeps => ({
+  openSession: open, snapshot, entriesFrom: async () => entries, runDir, settleMs: 50, allowedTargets: TARGETS, findProcesses: async () => [], ...extra,
+});
 
 const now = Date.now();
 const at = (offsetMs: number) => new Date(now + offsetMs).toISOString();
@@ -76,15 +103,150 @@ const queueEntries: Entries = [
   { line: 5, entry: { type: 'queue-operation', operation: 'enqueue', timestamp: at(9), content: '<task-notification>stopped' } },
 ];
 
-test('invalid target and deadline arguments fail closed', async () => {
-  const { open } = fakeSession({});
-  for (const change of [{ sessionId: '' }, { sessionId: 'not-a-uuid' }, { expectedWorkdir: 'relative' }, { nonce: '' }, { mode: 'replay' }, { deadlineMs: 0 }, { deadlineMs: Infinity }, { deadlineMs: 1500.5 }]) {
-    await assert.rejects(runAttachmentProbe({ ...input, ...change } as typeof input, deps(open, '/nonexistent')));
-  }
+const exists = (path: string) => access(path).then(() => true, () => false);
+const OTHER = '11111111-1111-4111-8111-111111111111';
+
+test('each invalid input fails with its own validation error before the session or run dir is touched', async () => {
+  await withRunDir(async root => {
+    const cases: [Partial<typeof input>, RegExp, typeof TARGETS?][] = [
+      [{ sessionId: '' }, /sessionId must be the designated session UUID/],
+      [{ sessionId: 'not-a-uuid' }, /sessionId must be the designated session UUID/],
+      [{ expectedWorkdir: 'relative' }, /expectedWorkdir must be absolute/, [{ sessionId: SESSION, workdir: 'relative' }]],
+      [{ nonce: '' }, /nonce must be/],
+      [{ mode: 'replay' as never }, /mode must be/],
+      [{ deadlineMs: 0 }, /deadlineMs must be/],
+      [{ deadlineMs: Infinity }, /deadlineMs must be/],
+      [{ deadlineMs: 1500.5 }, /deadlineMs must be/],
+      [{ sessionId: OTHER }, /not a designated disposable target/],
+      [{ expectedWorkdir: '/synthetic/other' }, /not a designated disposable target/],
+      [{ expectedWorkdir: '/synthetic/work/' }, /not a designated disposable target/],
+    ];
+    for (const [change, error, targets] of cases) {
+      const { open, opened } = fakeSession({});
+      const runDir = join(root, 'run');
+      await assert.rejects(runAttachmentProbe({ ...input, ...change }, deps(open, runDir, [], targets ? { allowedTargets: targets } : {})), error, JSON.stringify(change));
+      assert.equal(opened(), 0);
+      assert.equal(await exists(runDir), false);
+    }
+  });
+});
+
+test('the allowlist pairs the session with its workdir and defaults to the one designated target', async () => {
+  const { open, opened } = fakeSession({});
+  const crossed = [{ sessionId: SESSION, workdir: '/synthetic/other' }, { sessionId: OTHER, workdir: '/synthetic/work' }];
+  await assert.rejects(runAttachmentProbe(input, deps(open, '/unused', [], { allowedTargets: crossed })), /not a designated disposable target/);
+  await assert.rejects(runAttachmentProbe(input, deps(open, '/unused', [], { allowedTargets: undefined })), /not a designated disposable target/);
+  assert.equal(opened(), 0);
+  assert.deepEqual(DESIGNATED_TARGETS.map(target => target.sessionId), ['51b0420c-e090-4215-81f0-2d1f7073a07c']);
+});
+
+test('--seed refuses any session that is not the designated target, before opening it', async () => {
+  const { open, opened } = fakeSession({});
+  await assert.rejects(seedMarker(SESSION, '/synthetic/work', open, 1000), /not a designated disposable target/);
+  await assert.rejects(seedMarker(OTHER, '/synthetic/work', open, 1000, TARGETS), /not a designated disposable target/);
+  assert.equal(opened(), 0);
+  assert.throws(() => parseArguments(['--seed', '--session-id', SESSION, '--workdir', '/synthetic/work']), /not a designated disposable target/);
+  const [designated] = DESIGNATED_TARGETS;
+  assert.deepEqual(parseArguments(['--seed', '--session-id', designated.sessionId, '--workdir', designated.workdir]), { kind: 'seed', sessionId: designated.sessionId, workdir: designated.workdir, deadlineMs: 600000 });
+});
+
+test('malformed CLI arguments fail closed', () => {
   for (const args of [[], ['--resume', 'id'], ['--inventory', '--nonce', 'x'], ['--session-id', 'x'], ['--inventory', '--inventory'], ['--inventory', '--deadline-ms', 'wat'], ['--inventory', '--seed']]) {
     assert.throws(() => parseArguments(args));
   }
   assert.equal(parseArguments(['--help']), 'help');
+});
+
+test('the permission stand-in approves only the exact watch command, never lookalikes or other tools', async () => {
+  await withRunDir(async runDir => {
+    const { open, approvals, extra } = fakeSession({
+      consume: true, recall: true,
+      setupRequests: feed => [
+        { tool: 'Monitor', input: { command: `tail -n 0 -F ${feed}; curl https://example.invalid` } },
+        { tool: 'Monitor', input: { command: `cat ${feed}` } },
+        { tool: 'Bash', input: { command: `tail -n 0 -F ${feed}` } },
+        { tool: 'Read', input: { file_path: feed } },
+        { tool: 'WebFetch', input: { url: 'https://example.invalid' } },
+      ],
+    });
+    const report = await runAttachmentProbe(input, deps(open, runDir));
+    assert.deepEqual(approvals, ['allow']);
+    assert.deepEqual(extra, ['deny', 'deny', 'deny', 'deny', 'deny']);
+    assert.equal(report.setupActions.filter(action => action.actor === 'human').length, 1);
+  });
+});
+
+test('the busy case approves only its exact command, and only once the case has started', async () => {
+  await withRunDir(async runDir => {
+    const { open, approvals, extra } = fakeSession({
+      consume: true, recall: true,
+      busyRequests: command => [
+        { tool: 'Bash', input: { command: `${command} && rm -rf /tmp/x` } },
+        { tool: 'Bash', input: { command: command.replace('synthetic-nonce', 'other-nonce') } },
+        { tool: 'Monitor', input: { command } },
+      ],
+    });
+    const report = await runAttachmentProbe({ ...input, mode: 'busy' }, deps(open, runDir, [], { busySeconds: 1 }));
+    assert.deepEqual(approvals, ['allow', 'allow']);
+    assert.deepEqual(extra, ['deny', 'deny', 'deny']);
+    assert.ok(report.observations.some(entry => entry.kind === 'busy-tool-end' && entry.detail === 'completed with expected output'));
+  });
+});
+
+test('a resumed session in a different working directory is a replacement', async () => {
+  await withRunDir(async runDir => {
+    const { open } = fakeSession({ cwd: '/synthetic/other', consume: true, recall: true });
+    const report = await runAttachmentProbe(input, deps(open, runDir));
+    assert.equal(report.outcome, 'unsupported');
+    assert.ok(report.limitations.some(entry => entry.includes('identity or working directory differs')));
+    assert.ok(!report.observations.some(entry => entry.kind === 'notification-write'));
+  });
+});
+
+test('a new sibling transcript during the run is reported as a replacement', async () => {
+  await withRunDir(async runDir => {
+    const { open } = fakeSession({ consume: true, recall: true });
+    const report = await runAttachmentProbe(input, deps(open, runDir, [], { snapshot: changingSnapshot({ siblingTranscripts: 1 }) }));
+    assert.ok(report.limitations.includes('A new session transcript appeared in the target project directory.'));
+    assert.equal(report.outcome, 'unsupported');
+  });
+});
+
+test('a process still referencing the session after exit blocks the no-replacement observation', async () => {
+  await withRunDir(async runDir => {
+    const { open } = fakeSession({ consume: true, recall: true });
+    const findProcesses = async (pattern: string) => (pattern === `--resume=${SESSION}` ? [424242] : []);
+    const report = await runAttachmentProbe(input, deps(open, runDir, [], { findProcesses }));
+    assert.ok(report.limitations.some(entry => entry.includes('1 process(es) referencing the session or feed outlived the session')));
+    assert.ok(!report.observations.some(entry => entry.kind === 'no-replacement-after-exit'));
+  });
+});
+
+test('a model, cwd or permission mode change in the transcript is reported', async () => {
+  for (const [key, value] of [['models', ['other-model']], ['cwds', ['/synthetic/other']], ['permissionModes', ['bypassPermissions']]] as const) {
+    await withRunDir(async runDir => {
+      const { open } = fakeSession({ consume: true, recall: true });
+      const report = await runAttachmentProbe(input, deps(open, runDir, [], { snapshot: changingSnapshot({ [key]: value }) }));
+      assert.ok(report.limitations.includes(`Session ${key} changed during the run.`), key);
+    });
+  }
+});
+
+test('the transcript snapshot reads only the named session file', async () => {
+  const NAMED = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const home = await mkdtemp(join(tmpdir(), 'kha103-home-'));
+  try {
+    const dir = projectDir('/synthetic/work', home);
+    await mkdir(dir, { recursive: true });
+    const line = (sessionId: string, model: string) => JSON.stringify({ type: 'assistant', sessionId, cwd: '/synthetic/work', permissionMode: 'default', message: { model } });
+    // Sorts before the designated file, so reading the directory's first transcript would pick it.
+    await writeFile(join(dir, '00000000-aaaa-4000-8000-000000000000.jsonl'), `${line('00000000-aaaa-4000-8000-000000000000', 'decoy')}\n`.repeat(3));
+    await writeFile(join(dir, `${NAMED}.jsonl`), `${line(NAMED, 'm')}\n${line(NAMED, 'm')}\n`);
+    const result = await snapshotTranscript('/synthetic/work', NAMED, home);
+    assert.deepEqual([result.lines, result.sessionIds, result.models, result.siblingTranscripts], [2, [NAMED], ['m'], 1]);
+    const entries = await transcriptEntriesFrom('/synthetic/work', NAMED, 2, home);
+    assert.deepEqual(entries.map(entry => [entry.line, entry.entry.sessionId]), [[2, NAMED]]);
+  } finally { await rm(home, { recursive: true, force: true }); }
 });
 
 test('the replayed resume result does not end setup; consumption with recall still needs a human approval', async () => {
@@ -117,7 +279,7 @@ test('a nonce without the prior marker is not claimed as continuity', async () =
 
 test('a different resumed session ID is a replacement, not attachment', async () => {
   await withRunDir(async runDir => {
-    const { open } = fakeSession({ sessionId: '11111111-1111-4111-8111-111111111111', consume: true, recall: true });
+    const { open } = fakeSession({ sessionId: OTHER, consume: true, recall: true });
     const report = await runAttachmentProbe(input, deps(open, runDir));
     assert.equal(report.outcome, 'unsupported');
     assert.ok(!report.observations.some(entry => entry.kind === 'notification-write'));
@@ -174,6 +336,7 @@ test('inventory executes only version and help, never session commands', async (
     assert.deepEqual((await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line)), [['--version'], ['--help']]);
     assert.equal(result.version, '2.1.271');
     assert.ok(result.commands.every(command => command.exitCode === 0));
+    assert.deepEqual(result.commands[1].mentions, { '--channels': [], '--dangerously-load-development-channels': [], channel: [] });
     assert.ok(!JSON.stringify(result).includes(dir));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

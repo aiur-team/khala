@@ -1,10 +1,11 @@
 import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { collectInventory, sanitize, sha256, replayQueue, snapshotTranscript, transcriptEntriesFrom, type TranscriptEntry, type TranscriptSnapshot } from './evidence.ts';
 import {
-  PRIOR_MARKER, Pushable, Recorder, assistantText, busyPrompt, findProcesses, releasedLine, seedPrompt, setupPrompt,
+  PRIOR_MARKER, Pushable, Recorder, assistantText, busyPrompt, findProcesses as findLiveProcesses, releasedLine, seedPrompt, setupPrompt,
   toolResultFor, toolUses, writeFeedLine,
   type Mode, type Observation, type OpenSession, type PermissionDecision, type SetupAction, type StreamMessage,
 } from './scenario.ts';
@@ -32,14 +33,30 @@ export type ProbeDeps = {
   runDir: string;
   busySeconds?: number;
   settleMs?: number;
+  allowedTargets?: readonly Target[];
+  findProcesses?: (pattern: string) => Promise<number[]>;
 };
+
+export type Target = { sessionId: string; workdir: string };
+
+// The only session the owner designated for this experiment on #12. Every other target is refused.
+export const DESIGNATED_TARGETS: readonly Target[] = [
+  { sessionId: '51b0420c-e090-4215-81f0-2d1f7073a07c', workdir: join(homedir(), '.cache', 'khala-disposable', 'claude-target') },
+];
 
 const DISCONNECT_WINDOW_MS = 15_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export function validateInput(input: ProbeInput): void {
-  if (!UUID.test(input.sessionId)) throw new Error('sessionId must be the designated session UUID');
-  if (!isAbsolute(input.expectedWorkdir)) throw new Error('expectedWorkdir must be absolute');
+export function assertDesignatedTarget(sessionId: string, workdir: string, allowed: readonly Target[] = DESIGNATED_TARGETS): void {
+  if (!UUID.test(sessionId)) throw new Error('sessionId must be the designated session UUID');
+  if (!isAbsolute(workdir)) throw new Error('expectedWorkdir must be absolute');
+  if (!allowed.some(target => target.sessionId === sessionId && target.workdir === workdir)) {
+    throw new Error('Refusing a session and workdir pair that is not a designated disposable target');
+  }
+}
+
+export function validateInput(input: ProbeInput, allowed: readonly Target[] = DESIGNATED_TARGETS): void {
+  assertDesignatedTarget(input.sessionId, input.expectedWorkdir, allowed);
   if (!/^[A-Za-z0-9-]{4,64}$/.test(input.nonce)) throw new Error('nonce must be 4-64 letters, digits or dashes');
   if (!['idle', 'busy', 'disconnect'].includes(input.mode)) throw new Error('mode must be idle, busy or disconnect');
   if (!Number.isSafeInteger(input.deadlineMs) || input.deadlineMs < 1000 || input.deadlineMs > 900_000) throw new Error('deadlineMs must be an integer between 1000 and 900000');
@@ -47,7 +64,8 @@ export function validateInput(input: ProbeInput): void {
 
 // Drives one case against the designated session: resume, agent-performed setup, the case, exit, identity checks.
 export async function runAttachmentProbe(input: ProbeInput, deps: ProbeDeps): Promise<ProbeReport> {
-  validateInput(input);
+  validateInput(input, deps.allowedTargets);
+  const findProcesses = deps.findProcesses ?? findLiveProcesses;
   const started = performance.now();
   const wallAtStart = Date.now();
   const clock = () => performance.now() - started;
@@ -63,16 +81,21 @@ export async function runAttachmentProbe(input: ProbeInput, deps: ProbeDeps): Pr
   const setupActions: SetupAction[] = [];
   const limitations: string[] = [];
   let phase: 'setup' | 'case' | 'closing' = 'setup';
+  const busySeconds = Math.round(deps.busySeconds ?? 20);
+  const busyTag = `busy-done-${input.nonce}`;
+  const watchCommand = `tail -n 0 -F ${feedPath}`;
+  const busyCommand = `sleep ${busySeconds} && echo ${busyTag}`;
 
   const before = await deps.snapshot(input.expectedWorkdir, input.sessionId).catch(() => null);
   if (!before) limitations.push('Designated transcript was unreadable before the run.');
 
-  // Stand-in for the owner's permission dialog: every prompt is recorded as a human confirmation.
+  // Stand-in for the owner's permission dialog: it approves only the exact commands the prompts ask for,
+  // each in its own phase, and records every approval as a human confirmation.
   const canUseTool = async (tool: string, toolInput: Record<string, unknown>): Promise<PermissionDecision> => {
-    const command = String(toolInput.command ?? toolInput.url ?? JSON.stringify(toolInput));
+    const command = typeof toolInput.command === 'string' ? toolInput.command : JSON.stringify(toolInput);
     recorder.observe('permission-request', null, `${tool}: ${command}`);
-    const watchesFeed = tool === 'Monitor' && command.includes(feedPath) && phase === 'setup';
-    const isBusyCommand = tool === 'Bash' && /^sleep \d+ && echo busy-done-[A-Za-z0-9-]+$/.test(command.trim()) && phase === 'case';
+    const watchesFeed = tool === 'Monitor' && command.trim() === watchCommand && phase === 'setup';
+    const isBusyCommand = tool === 'Bash' && command.trim() === busyCommand && phase === 'case';
     if (watchesFeed || isBusyCommand) {
       setupActions.push({ actor: 'human', action: sanitize(`approve ${tool} permission prompt: ${command}`) });
       return { behavior: 'allow' };
@@ -123,7 +146,7 @@ export async function runAttachmentProbe(input: ProbeInput, deps: ProbeDeps): Pr
 
     let busyToolId: string | null = null;
     if (input.mode === 'busy') {
-      session.send(busyPrompt(Math.round((deps.busySeconds ?? 20)), `busy-done-${input.nonce}`));
+      session.send(busyPrompt(busySeconds, busyTag));
       const busyIndex = await recorder.waitFor(message => toolUses(message).some(use => use.name === 'Bash'), remaining(), setupDone + 1);
       if (busyIndex < 0) throw new Error('The busy tool call never started.');
       busyToolId = toolUses(recorder.log[busyIndex].message).find(use => use.name === 'Bash')!.id;
@@ -145,7 +168,7 @@ export async function runAttachmentProbe(input: ProbeInput, deps: ProbeDeps): Pr
       const toolEnd = await recorder.waitFor(message => toolResultFor(message, busyToolId!) !== null, remaining(), writeFrom);
       if (toolEnd >= 0) {
         const output = toolResultFor(recorder.log[toolEnd].message, busyToolId)!;
-        recorder.observe('busy-tool-end', toolEnd, output.includes(`busy-done-${input.nonce}`) ? 'completed with expected output' : 'output missing: possibly interrupted');
+        recorder.observe('busy-tool-end', toolEnd, output.includes(busyTag) ? 'completed with expected output' : 'output missing: possibly interrupted');
       }
     }
     const consumption = await recorder.waitFor(message => assistantText(message).includes(input.nonce), remaining(), writeFrom);
@@ -217,7 +240,7 @@ export async function runAttachmentProbe(input: ProbeInput, deps: ProbeDeps): Pr
     replaced = true;
     limitations.push('A new session transcript appeared in the target project directory.');
   }
-  for (const key of ['cwds', 'permissionModes'] as const) {
+  for (const key of ['cwds', 'permissionModes', 'models'] as const) {
     if (before && after && after[key].some(value => !before[key].includes(value))) limitations.push(`Session ${key} changed during the run.`);
   }
 
@@ -260,7 +283,8 @@ export async function liveOpenSession(claudeBinary: string): Promise<OpenSession
 }
 
 // Seeds the prior context marker in its own earlier run, so later probes test recall across a process boundary.
-export async function seedMarker(sessionId: string, workdir: string, open: OpenSession, deadlineMs: number): Promise<{ sessionId: string | null; acknowledged: boolean }> {
+export async function seedMarker(sessionId: string, workdir: string, open: OpenSession, deadlineMs: number, allowed: readonly Target[] = DESIGNATED_TARGETS): Promise<{ sessionId: string | null; acknowledged: boolean }> {
+  assertDesignatedTarget(sessionId, workdir, allowed);
   const recorder = new Recorder(() => performance.now(), 'seed');
   const session = open({ sessionId, workdir, canUseTool: async () => ({ behavior: 'deny', message: 'No tools while seeding.' }) });
   const pump = (async () => { try { for await (const message of session.messages) recorder.record(message); } finally { recorder.close(); } })();
@@ -285,7 +309,7 @@ const USAGE = `Usage:
   npm run probe -- --seed --session-id <uuid> --workdir <abs-path> [--deadline-ms N]
   npm run probe -- --session-id <uuid> --workdir <abs-path> --nonce <nonce> --mode idle|busy|disconnect [--deadline-ms N] [--out dir]
 
-Only ever pass a session you were explicitly authorized to test. --inventory runs just \`claude --version\` and \`claude --help\`.`;
+Only the designated disposable session and workdir in DESIGNATED_TARGETS (probe.ts) are accepted. --inventory runs just \`claude --version\` and \`claude --help\`.`;
 
 export function parseArguments(args: readonly string[]): CliCommand | 'help' {
   const values = new Map<string, string>();
@@ -314,6 +338,7 @@ export function parseArguments(args: readonly string[]): CliCommand | 'help' {
   const sessionId = values.get('--session-id');
   const workdir = values.get('--workdir');
   if (!sessionId || !workdir) throw new Error('--session-id and --workdir are required');
+  assertDesignatedTarget(sessionId, workdir);
   if (flags.has('--seed')) return { kind: 'seed', sessionId, workdir, deadlineMs };
   const input: ProbeInput = { sessionId, expectedWorkdir: workdir, nonce: values.get('--nonce') ?? '', mode: values.get('--mode') as Mode, deadlineMs };
   validateInput(input);

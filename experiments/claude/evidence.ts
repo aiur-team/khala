@@ -23,11 +23,16 @@ export type CommandReport = {
   exitCode: number | null;
   stdoutSha256: string;
   stdoutHead: string;
+  // For each watched term, every stdout line containing it, so absence claims can be checked from the report.
+  mentions: Record<string, string[]>;
   durationMs: number;
 };
 
+// `claude --help` terms that the channels route row depends on.
+export const HELP_TERMS = ['--channels', '--dangerously-load-development-channels', 'channel'] as const;
+
 // Runs one read-only inspection command with a hard deadline; the child is killed, not abandoned.
-export function inspectCommand(binary: string, arg: string, deadlineMs: number): Promise<CommandReport> {
+export function inspectCommand(binary: string, arg: string, deadlineMs: number, watch: readonly string[] = []): Promise<CommandReport> {
   const started = performance.now();
   return new Promise(resolve => {
     const child = spawn(binary, [arg], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -44,6 +49,7 @@ export function inspectCommand(binary: string, arg: string, deadlineMs: number):
         exitCode,
         stdoutSha256: sha256(stdout),
         stdoutHead: sanitize(stdout.split('\n').slice(0, 3).join('\n')).slice(0, 400),
+        mentions: Object.fromEntries(watch.map(term => [term, stdout.split('\n').filter(line => line.includes(term)).map(line => sanitize(line.trim()))])),
         durationMs: Math.round(performance.now() - started),
       });
     };
@@ -61,7 +67,7 @@ export type Inventory = { platform: string; node: string; commands: CommandRepor
 
 // U1 inventory: only `--version` and `--help`; never a command that touches a session.
 export async function collectInventory(deadlineMs: number, binary = 'claude'): Promise<Inventory> {
-  const commands = [await inspectCommand(binary, '--version', deadlineMs), await inspectCommand(binary, '--help', deadlineMs)];
+  const commands = [await inspectCommand(binary, '--version', deadlineMs), await inspectCommand(binary, '--help', deadlineMs, HELP_TERMS)];
   const version = commands[0].status === 'exit' ? commands[0].stdoutHead.trim().split(/\s/)[0] ?? 'unobserved' : 'unobserved';
   return { platform: `${process.platform}-${process.arch}`, node: process.version, commands, version };
 }

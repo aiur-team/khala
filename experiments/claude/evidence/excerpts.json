@@ -1,0 +1,83 @@
+{
+  "note": "Verbatim lines from the unpublished raw stream logs, home paths redacted. rawLogSha256 is the hash of the whole unredacted log, matching the case report.",
+  "excerpts": [
+    {
+      "case": "busy",
+      "rawLogSha256": "c384bde735889877fa04b40a34352a0b845985fae1e9edf0cab3f5180526e4d1",
+      "evidencePath": "events.jsonl#L1",
+      "monotonicMs": 666,
+      "message": {
+        "type": "system",
+        "subtype": "task_notification",
+        "task_id": "bhivn24no",
+        "status": "stopped",
+        "summary": "Background shell command didn't finish before the previous session ended"
+      }
+    },
+    {
+      "case": "busy",
+      "rawLogSha256": "c384bde735889877fa04b40a34352a0b845985fae1e9edf0cab3f5180526e4d1",
+      "evidencePath": "events.jsonl#L14",
+      "monotonicMs": 8516,
+      "message": {
+        "type": "system",
+        "subtype": "task_started",
+        "task_id": "bcupoen0g",
+        "description": "Wait 20 seconds then print marker",
+        "is_backgrounded": false,
+        "task_type": "local_bash"
+      }
+    },
+    {
+      "case": "busy",
+      "rawLogSha256": "c384bde735889877fa04b40a34352a0b845985fae1e9edf0cab3f5180526e4d1",
+      "evidencePath": "events.jsonl#L15",
+      "monotonicMs": 25521,
+      "message": {
+        "type": "system",
+        "subtype": "task_notification",
+        "task_id": "bcupoen0g",
+        "status": "completed",
+        "summary": "Wait 20 seconds then print marker"
+      }
+    },
+    {
+      "case": "disconnect",
+      "rawLogSha256": "186d4c7b54320e5635a506630aa92bdb3588e95fd6ed7f81817825c0544fb7b8",
+      "evidencePath": "events.jsonl#L1",
+      "monotonicMs": 555,
+      "message": {
+        "type": "system",
+        "subtype": "task_notification",
+        "task_id": "bk1t5n5ba",
+        "status": "stopped",
+        "summary": "Background shell command didn't finish before the previous session ended"
+      }
+    },
+    {
+      "case": "disconnect",
+      "rawLogSha256": "186d4c7b54320e5635a506630aa92bdb3588e95fd6ed7f81817825c0544fb7b8",
+      "evidencePath": "events.jsonl#L14",
+      "monotonicMs": 6844,
+      "message": {
+        "type": "system",
+        "subtype": "task_notification",
+        "task_id": "bkovafyn2",
+        "status": "failed",
+        "summary": "Monitor \"Khala released-feed messages from owner\" script failed (exit 1)"
+      }
+    },
+    {
+      "case": "disconnect",
+      "rawLogSha256": "186d4c7b54320e5635a506630aa92bdb3588e95fd6ed7f81817825c0544fb7b8",
+      "evidencePath": "events.jsonl#L16",
+      "monotonicMs": 8643,
+      "message": {
+        "type": "assistant",
+        "text": [
+          "release-nonce-7-disconnect prior-marker-claude-alpha\n\nThe watch on the `2026-09-18T03-25-08-237Z-disconnect` feed has stopped. The monitor exited with code 1 right after it delivered m-disconnect, so later messages on that feed won't reach me unless you ask me to start it again."
+        ]
+      }
+    }
+  ]
+}

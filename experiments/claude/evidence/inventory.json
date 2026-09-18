@@ -8,7 +8,8 @@
       "exitCode": 0,
       "stdoutSha256": "e8c1f7980c28d97dbe4fc40da741cf8536751f8c8636a29e31c5626429846a66",
       "stdoutHead": "2.1.276 (Claude Code)\n",
-      "durationMs": 9
+      "mentions": {},
+      "durationMs": 12
     },
     {
       "command": "claude --help",
@@ -16,7 +17,12 @@
       "exitCode": 0,
       "stdoutSha256": "ae85d661e9c086f05637ebcd868f5702b477ff6e55e2e65b8ada7807cd51a4b6",
       "stdoutHead": "Usage: claude [options] [command] [prompt]\n\nClaude Code - starts an interactive session by default, use -p/--print for",
-      "durationMs": 89
+      "mentions": {
+        "--channels": [],
+        "--dangerously-load-development-channels": [],
+        "channel": []
+      },
+      "durationMs": 84
     }
   ],
   "version": "2.1.276"
