@@ -1,0 +1,151 @@
+/*
+ * Shell chrome layout. Depends on ../brand/tokens.css custom properties
+ * being in scope; composition roots must import both.
+ */
+
+.aiur-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--khala-nav-width) minmax(0, 1fr);
+  grid-template-rows: 4rem 1fr;
+}
+
+.aiur-shell--collapsed {
+  grid-template-columns: var(--khala-nav-width-collapsed) minmax(0, 1fr);
+}
+
+.aiur-shell__topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--khala-line);
+  font-family: var(--khala-font-heading);
+  letter-spacing: 0.05em;
+}
+
+.aiur-shell__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.aiur-shell__nav {
+  min-width: 0;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  border-right: 1px solid var(--khala-line);
+}
+
+.aiur-shell__nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.aiur-shell__nav-list a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: inherit;
+  text-decoration: none;
+  background: var(--khala-fill-control);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+.aiur-shell__nav-list a[aria-current='page'] {
+  outline: 1px solid var(--khala-accent);
+}
+
+.aiur-shell--collapsed .aiur-shell__nav {
+  padding: 0.35rem;
+}
+
+.aiur-shell--collapsed .aiur-shell__nav-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.aiur-shell__content {
+  min-width: 0;
+  padding: 1.5rem;
+}
+
+.khala-page-frame {
+  max-width: var(--khala-content-measure);
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.khala-page-frame__header h1 {
+  font-family: var(--khala-font-heading);
+  font-size: 2rem;
+  margin: 0.4rem 0;
+}
+
+.panel {
+  background: var(--khala-fill-raised);
+  border: 1px solid var(--khala-line);
+  border-radius: var(--khala-panel-radius);
+  padding: 1.25rem;
+  margin-top: 1rem;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-family: var(--khala-font-mono);
+  font-size: 0.8rem;
+}
+
+.status-badge--positive {
+  border-color: var(--khala-status-positive);
+}
+
+.status-badge--caution {
+  border-color: var(--khala-status-caution);
+}
+
+.status-badge--critical {
+  border-color: var(--khala-status-critical);
+}
+
+@media (max-width: 959px) {
+  .aiur-shell,
+  .aiur-shell--collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 4rem auto 1fr;
+  }
+
+  .aiur-shell__nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--khala-line);
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+  }
+
+  .aiur-shell__content {
+    padding: 0.75rem;
+  }
+}
