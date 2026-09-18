@@ -1,657 +1,784 @@
 {
-  "schema_version": 1,
-  "build_order_id": "aiur-team/khala:first-collaboration",
-  "title": "Khala first collaboration",
-  "subtitle": "44 work tickets; epic grouping uses workstream lanes",
-  "repository": "aiur-team/khala",
-  "root_number": 1,
-  "plan_version": 5,
-  "workstreams": [
-    {
-      "id": "acceptance",
-      "title": "Acceptance"
-    },
-    {
-      "id": "adapters",
-      "title": "Adapters"
-    },
-    {
-      "id": "connector",
-      "title": "Connector"
-    },
-    {
-      "id": "foundation",
-      "title": "Foundation"
-    },
-    {
-      "id": "identity",
-      "title": "Identity"
-    },
-    {
-      "id": "integration",
-      "title": "Integration"
-    },
-    {
-      "id": "messaging",
-      "title": "Messaging"
-    },
-    {
-      "id": "platform",
-      "title": "Platform"
-    },
-    {
-      "id": "policy",
-      "title": "Policy"
-    },
-    {
-      "id": "research",
-      "title": "Research"
-    },
-    {
-      "id": "verification",
-      "title": "Verification"
-    },
-    {
-      "id": "web",
-      "title": "Web"
-    }
-  ],
-  "tickets": [
-    {
-      "id": "KHA-101",
-      "title": "Scaffold TypeScript workspace and CI",
-      "lane": "foundation",
-      "phase": 1,
-      "complexity": 2,
-      "depends_on": [],
-      "doc": "tickets/KHA-101.md",
-      "ticket": 10
-    },
-    {
-      "id": "KHA-102",
-      "title": "Prove OSS backend hosting fit",
-      "lane": "research",
-      "phase": 1,
-      "complexity": 3,
-      "depends_on": [],
-      "doc": "tickets/KHA-102.md",
-      "ticket": 11
-    },
-    {
-      "id": "KHA-103",
-      "title": "Prove Claude existing-session attachment",
-      "lane": "research",
-      "phase": 1,
-      "complexity": 3,
-      "depends_on": [],
-      "doc": "tickets/KHA-103.md",
-      "ticket": 12
-    },
-    {
-      "id": "KHA-104",
-      "title": "Prove Codex existing-session attachment",
-      "lane": "research",
-      "phase": 1,
-      "complexity": 3,
-      "depends_on": [],
-      "doc": "tickets/KHA-104.md",
-      "ticket": 13
-    },
-    {
-      "id": "KHA-105",
-      "title": "Define identity, room and messaging ports",
-      "lane": "foundation",
-      "phase": 3,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-102",
-        "KHA-141",
-        "KHA-142",
-        "KHA-144"
-      ],
-      "doc": "tickets/KHA-105.md",
-      "ticket": 14
-    },
-    {
-      "id": "KHA-106",
-      "title": "Define approval and harness ports",
-      "lane": "foundation",
-      "phase": 2,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-103",
-        "KHA-104"
-      ],
-      "doc": "tickets/KHA-106.md",
-      "ticket": 15
-    },
-    {
-      "id": "KHA-107",
-      "title": "Build Aiur-branded shell",
-      "lane": "web",
-      "phase": 3,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-143"
-      ],
-      "doc": "tickets/KHA-107.md",
-      "ticket": 16
-    },
-    {
-      "id": "KHA-108",
-      "title": "Package messaging service deployment",
-      "lane": "platform",
-      "phase": 2,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-102"
-      ],
-      "doc": "tickets/KHA-108.md",
-      "ticket": 17
-    },
-    {
-      "id": "KHA-109",
-      "title": "Prove backend restore and upgrades",
-      "lane": "platform",
-      "phase": 3,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-108"
-      ],
-      "doc": "tickets/KHA-109.md",
-      "ticket": 18
-    },
-    {
-      "id": "KHA-110",
-      "title": "Implement OAuth identity mapping",
-      "lane": "identity",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105"
-      ],
-      "doc": "tickets/KHA-110.md",
-      "ticket": 19
-    },
-    {
-      "id": "KHA-111",
-      "title": "Implement browser encrypted device lifecycle",
-      "lane": "identity",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105"
-      ],
-      "doc": "tickets/KHA-111.md",
-      "ticket": 20
-    },
-    {
-      "id": "KHA-112",
-      "title": "Implement room and intro commands",
-      "lane": "messaging",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105"
-      ],
-      "doc": "tickets/KHA-112.md",
-      "ticket": 21
-    },
-    {
-      "id": "KHA-113",
-      "title": "Implement invitation admission",
-      "lane": "identity",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105"
-      ],
-      "doc": "tickets/KHA-113.md",
-      "ticket": 22
-    },
-    {
-      "id": "KHA-114",
-      "title": "Implement agent-operated link bootstrap",
-      "lane": "connector",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-114.md",
-      "ticket": 23
-    },
-    {
-      "id": "KHA-115",
-      "title": "Persist connector keys and inbox",
-      "lane": "connector",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-115.md",
-      "ticket": 24
-    },
-    {
-      "id": "KHA-116",
-      "title": "Implement live encrypted subscription",
-      "lane": "connector",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-116.md",
-      "ticket": 25
-    },
-    {
-      "id": "KHA-117",
-      "title": "Implement Claude harness adapter",
-      "lane": "adapters",
-      "phase": 3,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-117.md",
-      "ticket": 26
-    },
-    {
-      "id": "KHA-118",
-      "title": "Implement Codex harness adapter",
-      "lane": "adapters",
-      "phase": 3,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-118.md",
-      "ticket": 27
-    },
-    {
-      "id": "KHA-119",
-      "title": "Implement exact approval release",
-      "lane": "policy",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-119.md",
-      "ticket": 28
-    },
-    {
-      "id": "KHA-120",
-      "title": "Implement trust and re-arm transitions",
-      "lane": "policy",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-120.md",
-      "ticket": 29
-    },
-    {
-      "id": "KHA-121",
-      "title": "Implement bounded model dispatch",
-      "lane": "connector",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-121.md",
-      "ticket": 30
-    },
-    {
-      "id": "KHA-122",
-      "title": "Build create-chat and intro composer",
-      "lane": "web",
-      "phase": 4,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-107"
-      ],
-      "doc": "tickets/KHA-122.md",
-      "ticket": 31
-    },
-    {
-      "id": "KHA-123",
-      "title": "Build attributed live timeline",
-      "lane": "web",
-      "phase": 4,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-107"
-      ],
-      "doc": "tickets/KHA-123.md",
-      "ticket": 32
-    },
-    {
-      "id": "KHA-124",
-      "title": "Build OAuth entry and invitation journey",
-      "lane": "web",
-      "phase": 4,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-107"
-      ],
-      "doc": "tickets/KHA-124.md",
-      "ticket": 33
-    },
-    {
-      "id": "KHA-125",
-      "title": "Build recipient review UI",
-      "lane": "web",
-      "phase": 4,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106",
-        "KHA-107"
-      ],
-      "doc": "tickets/KHA-125.md",
-      "ticket": 34
-    },
-    {
-      "id": "KHA-126",
-      "title": "Build trust and agent-status controls",
-      "lane": "web",
-      "phase": 4,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106",
-        "KHA-107"
-      ],
-      "doc": "tickets/KHA-126.md",
-      "ticket": 35
-    },
-    {
-      "id": "KHA-127",
-      "title": "Build recovery and closure UI",
-      "lane": "web",
-      "phase": 4,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-107"
-      ],
-      "doc": "tickets/KHA-127.md",
-      "ticket": 36
-    },
-    {
-      "id": "KHA-128",
-      "title": "Implement device and agent revocation",
-      "lane": "identity",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105"
-      ],
-      "doc": "tickets/KHA-128.md",
-      "ticket": 37
-    },
-    {
-      "id": "KHA-129",
-      "title": "Implement encrypted recovery",
-      "lane": "identity",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105"
-      ],
-      "doc": "tickets/KHA-129.md",
-      "ticket": 38
-    },
-    {
-      "id": "KHA-130",
-      "title": "Implement retention and local cleanup",
-      "lane": "connector",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-130.md",
-      "ticket": 39
-    },
-    {
-      "id": "KHA-131",
-      "title": "Package Netlify web and functions",
-      "lane": "platform",
-      "phase": 4,
-      "complexity": 2,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105"
-      ],
-      "doc": "tickets/KHA-131.md",
-      "ticket": 40
-    },
-    {
-      "id": "KHA-132",
-      "title": "Wire real human create/share/chat flow",
-      "lane": "integration",
-      "phase": 5,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-108",
-        "KHA-110",
-        "KHA-111",
-        "KHA-112",
-        "KHA-113",
-        "KHA-122",
-        "KHA-123",
-        "KHA-124",
-        "KHA-131"
-      ],
-      "doc": "tickets/KHA-132.md",
-      "ticket": 41
-    },
-    {
-      "id": "KHA-133",
-      "title": "Wire existing-session agent connection",
-      "lane": "integration",
-      "phase": 5,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-114",
-        "KHA-115",
-        "KHA-116",
-        "KHA-117",
-        "KHA-118",
-        "KHA-121"
-      ],
-      "doc": "tickets/KHA-133.md",
-      "ticket": 42
-    },
-    {
-      "id": "KHA-134",
-      "title": "Wire human approval to model delivery",
-      "lane": "integration",
-      "phase": 6,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-119",
-        "KHA-125",
-        "KHA-132",
-        "KHA-133"
-      ],
-      "doc": "tickets/KHA-134.md",
-      "ticket": 43
-    },
-    {
-      "id": "KHA-135",
-      "title": "Wire trust, pause and status acknowledgments",
-      "lane": "integration",
-      "phase": 7,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-120",
-        "KHA-126",
-        "KHA-134"
-      ],
-      "doc": "tickets/KHA-135.md",
-      "ticket": 44
-    },
-    {
-      "id": "KHA-136",
-      "title": "Wire recovery, revocation and cleanup",
-      "lane": "integration",
-      "phase": 6,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-127",
-        "KHA-128",
-        "KHA-129",
-        "KHA-130",
-        "KHA-132",
-        "KHA-133"
-      ],
-      "doc": "tickets/KHA-136.md",
-      "ticket": 45
-    },
-    {
-      "id": "KHA-137",
-      "title": "Build reusable multi-owner acceptance harness",
-      "lane": "verification",
-      "phase": 4,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-101",
-        "KHA-105",
-        "KHA-106"
-      ],
-      "doc": "tickets/KHA-137.md",
-      "ticket": 46
-    },
-    {
-      "id": "KHA-138",
-      "title": "Prove encryption and approval boundaries",
-      "lane": "verification",
-      "phase": 8,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-134",
-        "KHA-135",
-        "KHA-136",
-        "KHA-137"
-      ],
-      "doc": "tickets/KHA-138.md",
-      "ticket": 47
-    },
-    {
-      "id": "KHA-139",
-      "title": "Prove collaborative task across owners",
-      "lane": "verification",
-      "phase": 8,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-109",
-        "KHA-134",
-        "KHA-135",
-        "KHA-136",
-        "KHA-137"
-      ],
-      "doc": "tickets/KHA-139.md",
-      "ticket": 48
-    },
-    {
-      "id": "KHA-140",
-      "title": "Close root with merged-product evidence",
-      "lane": "acceptance",
-      "phase": 9,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-138",
-        "KHA-139"
-      ],
-      "doc": "tickets/KHA-140.md",
-      "ticket": 49
-    },
-    {
-      "id": "KHA-141",
-      "title": "Prove browser SDK crypto and UI seams",
-      "lane": "research",
-      "phase": 1,
-      "complexity": 3,
-      "depends_on": [],
-      "doc": "tickets/KHA-141.md",
-      "ticket": 50
-    },
-    {
-      "id": "KHA-142",
-      "title": "Prove TypeScript headless crypto persistence",
-      "lane": "research",
-      "phase": 1,
-      "complexity": 3,
-      "depends_on": [],
-      "doc": "tickets/KHA-142.md",
-      "ticket": 51
-    },
-    {
-      "id": "KHA-143",
-      "title": "Choose client reuse boundary",
-      "lane": "research",
-      "phase": 2,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-141"
-      ],
-      "doc": "tickets/KHA-143.md",
-      "ticket": 52
-    },
-    {
-      "id": "KHA-144",
-      "title": "Prove OAuth-to-agent ownership bootstrap",
-      "lane": "research",
-      "phase": 2,
-      "complexity": 3,
-      "depends_on": [
-        "KHA-102",
-        "KHA-141",
-        "KHA-142"
-      ],
-      "doc": "tickets/KHA-144.md",
-      "ticket": 53
-    }
-  ]
+ "schema_version": 1,
+ "build_order_id": "aiur-team/khala:first-collaboration",
+ "title": "Khala first collaboration",
+ "subtitle": "53 work tickets; epic grouping uses workstream lanes",
+ "repository": "aiur-team/khala",
+ "root_number": 1,
+ "plan_version": 6,
+ "workstreams": [
+  {
+   "id": "acceptance",
+   "title": "Acceptance"
+  },
+  {
+   "id": "adapters",
+   "title": "Adapters"
+  },
+  {
+   "id": "connector",
+   "title": "Connector"
+  },
+  {
+   "id": "foundation",
+   "title": "Foundation"
+  },
+  {
+   "id": "identity",
+   "title": "Identity"
+  },
+  {
+   "id": "integration",
+   "title": "Integration"
+  },
+  {
+   "id": "messaging",
+   "title": "Messaging"
+  },
+  {
+   "id": "platform",
+   "title": "Platform"
+  },
+  {
+   "id": "policy",
+   "title": "Policy"
+  },
+  {
+   "id": "research",
+   "title": "Research"
+  },
+  {
+   "id": "verification",
+   "title": "Verification"
+  },
+  {
+   "id": "web",
+   "title": "Web"
+  }
+ ],
+ "tickets": [
+  {
+   "id": "KHA-101",
+   "title": "Scaffold TypeScript workspace and CI",
+   "lane": "foundation",
+   "phase": 1,
+   "complexity": 2,
+   "depends_on": [],
+   "doc": "tickets/KHA-101.md",
+   "ticket": 10
+  },
+  {
+   "id": "KHA-102",
+   "title": "Prove OSS backend hosting fit",
+   "lane": "research",
+   "phase": 1,
+   "complexity": 3,
+   "depends_on": [],
+   "doc": "tickets/KHA-102.md",
+   "ticket": 11
+  },
+  {
+   "id": "KHA-103",
+   "title": "Prove Claude existing-session attachment",
+   "lane": "research",
+   "phase": 1,
+   "complexity": 3,
+   "depends_on": [],
+   "doc": "tickets/KHA-103.md",
+   "ticket": 12
+  },
+  {
+   "id": "KHA-104",
+   "title": "Prove Codex existing-session attachment",
+   "lane": "research",
+   "phase": 1,
+   "complexity": 3,
+   "depends_on": [],
+   "doc": "tickets/KHA-104.md",
+   "ticket": 13
+  },
+  {
+   "id": "KHA-105",
+   "title": "Define identity, room and messaging ports",
+   "lane": "foundation",
+   "phase": 3,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-102",
+    "KHA-141",
+    "KHA-142",
+    "KHA-144"
+   ],
+   "doc": "tickets/KHA-105.md",
+   "ticket": 14
+  },
+  {
+   "id": "KHA-106",
+   "title": "Define approval and harness ports",
+   "lane": "foundation",
+   "phase": 2,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-103",
+    "KHA-104"
+   ],
+   "doc": "tickets/KHA-106.md",
+   "ticket": 15
+  },
+  {
+   "id": "KHA-107",
+   "title": "Build Aiur-branded shell",
+   "lane": "web",
+   "phase": 3,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-143"
+   ],
+   "doc": "tickets/KHA-107.md",
+   "ticket": 16
+  },
+  {
+   "id": "KHA-108",
+   "title": "Package messaging service deployment",
+   "lane": "platform",
+   "phase": 2,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-102"
+   ],
+   "doc": "tickets/KHA-108.md",
+   "ticket": 17
+  },
+  {
+   "id": "KHA-109",
+   "title": "Prove backend restore and upgrades",
+   "lane": "platform",
+   "phase": 3,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-108"
+   ],
+   "doc": "tickets/KHA-109.md",
+   "ticket": 18
+  },
+  {
+   "id": "KHA-110",
+   "title": "Implement OAuth identity mapping",
+   "lane": "identity",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105"
+   ],
+   "doc": "tickets/KHA-110.md",
+   "ticket": 19
+  },
+  {
+   "id": "KHA-111",
+   "title": "Implement browser encrypted device lifecycle",
+   "lane": "identity",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105"
+   ],
+   "doc": "tickets/KHA-111.md",
+   "ticket": 20
+  },
+  {
+   "id": "KHA-112",
+   "title": "Implement room and intro commands",
+   "lane": "messaging",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105"
+   ],
+   "doc": "tickets/KHA-112.md",
+   "ticket": 21
+  },
+  {
+   "id": "KHA-113",
+   "title": "Implement invitation admission",
+   "lane": "identity",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105"
+   ],
+   "doc": "tickets/KHA-113.md",
+   "ticket": 22
+  },
+  {
+   "id": "KHA-114",
+   "title": "Implement agent-operated link bootstrap",
+   "lane": "connector",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-114.md",
+   "ticket": 23
+  },
+  {
+   "id": "KHA-115",
+   "title": "Persist connector keys and inbox",
+   "lane": "connector",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-115.md",
+   "ticket": 24
+  },
+  {
+   "id": "KHA-116",
+   "title": "Implement live encrypted subscription",
+   "lane": "connector",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-116.md",
+   "ticket": 25
+  },
+  {
+   "id": "KHA-117",
+   "title": "Implement Claude harness adapter",
+   "lane": "adapters",
+   "phase": 3,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-117.md",
+   "ticket": 26
+  },
+  {
+   "id": "KHA-118",
+   "title": "Implement Codex harness adapter",
+   "lane": "adapters",
+   "phase": 3,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-118.md",
+   "ticket": 27
+  },
+  {
+   "id": "KHA-119",
+   "title": "Implement exact approval release",
+   "lane": "policy",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-119.md",
+   "ticket": 28
+  },
+  {
+   "id": "KHA-120",
+   "title": "Implement trust and re-arm transitions",
+   "lane": "policy",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-120.md",
+   "ticket": 29
+  },
+  {
+   "id": "KHA-121",
+   "title": "Implement bounded model dispatch",
+   "lane": "connector",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-121.md",
+   "ticket": 30
+  },
+  {
+   "id": "KHA-122",
+   "title": "Build create-chat and intro composer",
+   "lane": "web",
+   "phase": 4,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-107"
+   ],
+   "doc": "tickets/KHA-122.md",
+   "ticket": 31
+  },
+  {
+   "id": "KHA-123",
+   "title": "Build attributed live timeline",
+   "lane": "web",
+   "phase": 4,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-107"
+   ],
+   "doc": "tickets/KHA-123.md",
+   "ticket": 32
+  },
+  {
+   "id": "KHA-124",
+   "title": "Build OAuth entry and invitation journey",
+   "lane": "web",
+   "phase": 4,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-107"
+   ],
+   "doc": "tickets/KHA-124.md",
+   "ticket": 33
+  },
+  {
+   "id": "KHA-125",
+   "title": "Build recipient review UI",
+   "lane": "web",
+   "phase": 4,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106",
+    "KHA-107"
+   ],
+   "doc": "tickets/KHA-125.md",
+   "ticket": 34
+  },
+  {
+   "id": "KHA-126",
+   "title": "Build trust and agent-status controls",
+   "lane": "web",
+   "phase": 4,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106",
+    "KHA-107"
+   ],
+   "doc": "tickets/KHA-126.md",
+   "ticket": 35
+  },
+  {
+   "id": "KHA-127",
+   "title": "Build recovery and closure UI",
+   "lane": "web",
+   "phase": 4,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-107"
+   ],
+   "doc": "tickets/KHA-127.md",
+   "ticket": 36
+  },
+  {
+   "id": "KHA-128",
+   "title": "Implement device and agent revocation",
+   "lane": "identity",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105"
+   ],
+   "doc": "tickets/KHA-128.md",
+   "ticket": 37
+  },
+  {
+   "id": "KHA-129",
+   "title": "Implement encrypted recovery",
+   "lane": "identity",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105"
+   ],
+   "doc": "tickets/KHA-129.md",
+   "ticket": 38
+  },
+  {
+   "id": "KHA-130",
+   "title": "Implement retention and local cleanup",
+   "lane": "connector",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-130.md",
+   "ticket": 39
+  },
+  {
+   "id": "KHA-131",
+   "title": "Package Netlify web and functions",
+   "lane": "platform",
+   "phase": 4,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105"
+   ],
+   "doc": "tickets/KHA-131.md",
+   "ticket": 40
+  },
+  {
+   "id": "KHA-132",
+   "title": "Wire real human create/share/chat flow",
+   "lane": "integration",
+   "phase": 5,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-108",
+    "KHA-110",
+    "KHA-111",
+    "KHA-112",
+    "KHA-113",
+    "KHA-122",
+    "KHA-123",
+    "KHA-124",
+    "KHA-131"
+   ],
+   "doc": "tickets/KHA-132.md",
+   "ticket": 41
+  },
+  {
+   "id": "KHA-133",
+   "title": "Wire existing-session agent connection",
+   "lane": "integration",
+   "phase": 5,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-114",
+    "KHA-115",
+    "KHA-116",
+    "KHA-117",
+    "KHA-118",
+    "KHA-121"
+   ],
+   "doc": "tickets/KHA-133.md",
+   "ticket": 42
+  },
+  {
+   "id": "KHA-134",
+   "title": "Wire human approval to model delivery",
+   "lane": "integration",
+   "phase": 6,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-119",
+    "KHA-125",
+    "KHA-132",
+    "KHA-133"
+   ],
+   "doc": "tickets/KHA-134.md",
+   "ticket": 43
+  },
+  {
+   "id": "KHA-135",
+   "title": "Wire trust, pause and status acknowledgments",
+   "lane": "integration",
+   "phase": 7,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-120",
+    "KHA-126",
+    "KHA-134"
+   ],
+   "doc": "tickets/KHA-135.md",
+   "ticket": 44
+  },
+  {
+   "id": "KHA-136",
+   "title": "Wire recovery, revocation and cleanup",
+   "lane": "integration",
+   "phase": 6,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-127",
+    "KHA-128",
+    "KHA-129",
+    "KHA-130",
+    "KHA-132",
+    "KHA-133"
+   ],
+   "doc": "tickets/KHA-136.md",
+   "ticket": 45
+  },
+  {
+   "id": "KHA-137",
+   "title": "Build reusable multi-owner acceptance harness",
+   "lane": "verification",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-105",
+    "KHA-106"
+   ],
+   "doc": "tickets/KHA-137.md",
+   "ticket": 46
+  },
+  {
+   "id": "KHA-138",
+   "title": "Prove encryption and approval boundaries",
+   "lane": "verification",
+   "phase": 8,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-134",
+    "KHA-135",
+    "KHA-136",
+    "KHA-137"
+   ],
+   "doc": "tickets/KHA-138.md",
+   "ticket": 47
+  },
+  {
+   "id": "KHA-139",
+   "title": "Prove collaborative task across owners",
+   "lane": "verification",
+   "phase": 8,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-109",
+    "KHA-134",
+    "KHA-135",
+    "KHA-136",
+    "KHA-137"
+   ],
+   "doc": "tickets/KHA-139.md",
+   "ticket": 48
+  },
+  {
+   "id": "KHA-140",
+   "title": "Close root with merged-product evidence",
+   "lane": "acceptance",
+   "phase": 9,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-138",
+    "KHA-139"
+   ],
+   "doc": "tickets/KHA-140.md",
+   "ticket": 49
+  },
+  {
+   "id": "KHA-141",
+   "title": "Prove browser SDK crypto and UI seams",
+   "lane": "research",
+   "phase": 1,
+   "complexity": 3,
+   "depends_on": [],
+   "doc": "tickets/KHA-141.md",
+   "ticket": 50
+  },
+  {
+   "id": "KHA-142",
+   "title": "Prove TypeScript headless crypto persistence",
+   "lane": "research",
+   "phase": 1,
+   "complexity": 3,
+   "depends_on": [],
+   "doc": "tickets/KHA-142.md",
+   "ticket": 51
+  },
+  {
+   "id": "KHA-143",
+   "title": "Choose client reuse boundary",
+   "lane": "research",
+   "phase": 2,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-141"
+   ],
+   "doc": "tickets/KHA-143.md",
+   "ticket": 52
+  },
+  {
+   "id": "KHA-144",
+   "title": "Prove OAuth-to-agent ownership bootstrap",
+   "lane": "research",
+   "phase": 2,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-102",
+    "KHA-141",
+    "KHA-142"
+   ],
+   "doc": "tickets/KHA-144.md",
+   "ticket": 53
+  },
+  {
+   "id": "KHA-145",
+   "title": "Prove the Claude native agent route",
+   "lane": "research",
+   "phase": 2,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-103"
+   ],
+   "ticket": 101,
+   "doc": "tickets/KHA-145.md"
+  },
+  {
+   "id": "KHA-146",
+   "title": "Prove the Codex native CLI queue route",
+   "lane": "research",
+   "phase": 2,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-104"
+   ],
+   "ticket": 102,
+   "doc": "tickets/KHA-146.md"
+  },
+  {
+   "id": "KHA-147",
+   "title": "Widen delivery contracts for native routes",
+   "lane": "foundation",
+   "phase": 3,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-106",
+    "KHA-145",
+    "KHA-146"
+   ],
+   "ticket": 104,
+   "doc": "tickets/KHA-147.md"
+  },
+  {
+   "id": "KHA-148",
+   "title": "Build the Khala agent CLI",
+   "lane": "connector",
+   "phase": 4,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-147"
+   ],
+   "ticket": 105,
+   "doc": "tickets/KHA-148.md"
+  },
+  {
+   "id": "KHA-149",
+   "title": "Implement the Claude native route",
+   "lane": "adapters",
+   "phase": 5,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-101",
+    "KHA-117",
+    "KHA-145",
+    "KHA-147",
+    "KHA-148"
+   ],
+   "ticket": 106,
+   "doc": "tickets/KHA-149.md"
+  },
+  {
+   "id": "KHA-150",
+   "title": "Implement the Codex native CLI route",
+   "lane": "adapters",
+   "phase": 5,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-101",
+    "KHA-118",
+    "KHA-146",
+    "KHA-147",
+    "KHA-148"
+   ],
+   "ticket": 107,
+   "doc": "tickets/KHA-150.md"
+  },
+  {
+   "id": "KHA-151",
+   "title": "Build the Khala fallback skill",
+   "lane": "connector",
+   "phase": 5,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-147",
+    "KHA-148"
+   ],
+   "ticket": 108,
+   "doc": "tickets/KHA-151.md"
+  },
+  {
+   "id": "KHA-152",
+   "title": "Build the room page and agent presence panel",
+   "lane": "web",
+   "phase": 5,
+   "complexity": 2,
+   "depends_on": [
+    "KHA-107",
+    "KHA-122",
+    "KHA-123",
+    "KHA-125"
+   ],
+   "ticket": 103,
+   "doc": "tickets/KHA-152.md"
+  },
+  {
+   "id": "KHA-153",
+   "title": "Compose the native agent surface",
+   "lane": "integration",
+   "phase": 6,
+   "complexity": 3,
+   "depends_on": [
+    "KHA-133",
+    "KHA-149",
+    "KHA-150",
+    "KHA-151",
+    "KHA-152"
+   ],
+   "ticket": 109,
+   "doc": "tickets/KHA-153.md"
+  }
+ ]
 }

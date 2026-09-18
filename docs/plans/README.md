@@ -1,6 +1,6 @@
 # Khala detailed plans
 
-44 tickets across eight epics. These ce-brainstorm product contracts and ce-plan implementation plans describe work to execute; they do not claim implemented or tested product behavior.
+53 tickets across nine epics. KHA-E09, the native agent surface, was added 2026-09-18 under decision P15 and is planned as one scope across `2026-09-18-kha-145-native-agent-surface-requirements.md` and `-plan.md`. These ce-brainstorm product contracts and ce-plan implementation plans describe work to execute; they do not claim implemented or tested product behavior.
 
 `implementation-ready` means the plan is actionable once its dependencies and listed gates pass. `requirements-only` means a genuine product decision or prerequisite contract still prevents final commitment; candidate units remain documented.
 
@@ -52,3 +52,12 @@
 | [KHA-142](2026-09-16-kha-142-headless-crypto-proof.md) | KHA-E01 | Prove TypeScript headless crypto persistence | implementation-ready |
 | [KHA-143](2026-09-16-kha-143-client-reuse-boundary.md) | KHA-E01 | Choose client reuse boundary | implementation-ready |
 | [KHA-144](2026-09-16-kha-144-ownership-bootstrap-proof.md) | KHA-E01 | Prove OAuth-to-agent ownership bootstrap | requirements-only |
+| [KHA-145](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Prove the Claude native agent route | requirements-only |
+| [KHA-146](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Prove the Codex native CLI queue route | requirements-only |
+| [KHA-147](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Widen delivery contracts for native routes | requirements-only |
+| [KHA-148](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Build the Khala agent CLI | requirements-only |
+| [KHA-149](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Implement the Claude native route | requirements-only |
+| [KHA-150](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Implement the Codex native CLI route | requirements-only |
+| [KHA-151](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Build the Khala fallback skill | requirements-only |
+| [KHA-152](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Build the room page and agent presence panel | requirements-only |
+| [KHA-153](2026-09-18-kha-145-native-agent-surface-plan.md) | KHA-E09 | Compose the native agent surface | requirements-only |
