@@ -6,11 +6,11 @@
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { sameSessionAcceptance, type Acceptance, type Settings } from './acceptance.js';
+import { sameSessionAcceptance, withConditions, type Acceptance, type CaseConditions, type Settings } from './acceptance.js';
 import { WsRpcClient, type Message } from './ws-rpc.js';
 
 type Target = { threadId: string; workdir: string; rollout: string; priorMarker: string; scratchDir: string; outFile: string };
@@ -67,6 +67,22 @@ function lockHolder(threadId: string): number | null {
   for (const line of readFileSync('/proc/locks', 'utf8').split('\n')) {
     const f = line.trim().split(/\s+/);
     if (f[1] === 'FLOCK' && f[3] === 'WRITE' && f[5]?.split(':')[2] === String(inode)) return Number(f[4]);
+  }
+  return null;
+}
+/** PID owning the listening Unix socket at `path`, via /proc/net/unix and /proc/<pid>/fd. */
+function socketListenerPid(path: string): number | null {
+  const inode = readFileSync('/proc/net/unix', 'utf8').split('\n')
+    .map(line => line.trim().split(/\s+/))
+    .find(f => f[7] === path && f[3] === '00010000')?.[6];
+  if (!inode) return null;
+  for (const entry of readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      for (const fd of readdirSync(`/proc/${entry}/fd`)) {
+        if (readlinkSync(`/proc/${entry}/fd/${fd}`) === `socket:[${inode}]`) return Number(entry);
+      }
+    } catch { /* exited or not ours */ }
   }
   return null;
 }
@@ -175,19 +191,29 @@ async function main(target: Target): Promise<void> {
   }
   async function observeConsumption(cid: string, nonce: string, from: number, timeoutMs = 180_000) {
     const consumed = await waitFor(e => e.itemType === 'userMessage' && e.clientId === cid, timeoutMs, from);
-    if (!consumed) return { consumedAt: null, turnId: null, reply: null, turnCompletedAt: null, consumedCount: 0, observedThreadId: null };
+    if (!consumed) return { consumedAt: null, turnId: null, reply: null, turnCompletedAt: null, consumedCount: 0, observedThreadId: null,
+      executorPidAtConsumption: null, lockHolderAtConsumption: null };
+    // Sampled as soon as the consumption is observed: the process serving the socket
+    // that carried the event, and the writer-lock holder.
+    const executorPidAtConsumption = socketListenerPid(sockA);
+    const lockHolderAtConsumption = lockHolder(threadId);
     const done = await waitFor(e => e.method === 'turn/completed' && e.turnId === consumed.turnId, timeoutMs, from);
     const reply = [...events].reverse().find(e => e.itemType === 'agentMessage' && e.turnId === consumed.turnId && e.text) ?? null;
     await sleep(1500);
     const consumedCount = new Set(events.filter(e => e.itemType === 'userMessage' && e.clientId === cid && e.method === 'item/completed').map(e => e.turnId)).size
       || events.filter(e => e.itemType === 'userMessage' && e.clientId === cid && e.method === 'item/started').length;
     return { consumedAt: consumed.t, turnId: consumed.turnId, reply: reply?.text ?? null, replyAt: reply?.t ?? null,
-      turnCompletedAt: done?.t ?? null, turnStatus: done?.status ?? null, consumedCount, observedThreadId: consumed.threadId ?? null, nonceSeen: Boolean(reply?.text?.includes(nonce)) };
+      turnCompletedAt: done?.t ?? null, turnStatus: done?.status ?? null, consumedCount, observedThreadId: consumed.threadId ?? null, nonceSeen: Boolean(reply?.text?.includes(nonce)),
+      executorPidAtConsumption, lockHolderAtConsumption };
   }
-  const accept = (d: { cid: string; nonce: string }, c: any, before: Settings, after: Settings): Acceptance => sameSessionAcceptance({
-    originalThreadId: threadId, originalExecutorPid: nativeA, lockHolderPid: lockHolder(threadId), observedExecutorPid: nativeA,
+  const accept = (d: { cid: string; nonce: string }, c: any, before: Settings, after: Settings, conditions: CaseConditions): Acceptance => withConditions(sameSessionAcceptance({
+    originalThreadId: threadId, originalExecutorPid: nativeA, lockHolderPid: c.lockHolderAtConsumption, observedExecutorPid: c.executorPidAtConsumption ?? -1,
     observedThreadId: c.observedThreadId, clientUserMessageId: d.cid, consumedMessageCount: c.consumedCount,
-    replyText: c.reply, nonce: d.nonce, priorMarker, deliveredText: deliveryText(d.nonce), settingsBefore: before, settingsAfter: after });
+    replyText: c.reply, nonce: d.nonce, priorMarker, deliveredText: deliveryText(d.nonce), settingsBefore: before, settingsAfter: after }), conditions);
+  const busyConditions = (b: { commandStartedAt: number | null }, o: { commandCompletedAt: number | null; exitCode: number | null },
+    deliveredAt: number | null, consumedInBusyTurn: boolean, statusAtDelivery?: string | null): CaseConditions => ({
+    kind: 'busy', statusAtDelivery, commandStartedAt: b.commandStartedAt, commandCompletedAt: o.commandCompletedAt,
+    commandExitCode: o.exitCode, deliveredAt, consumedInBusyTurn });
   async function busyTurn(seconds: number) {
     const from = events.length;
     const r: any = await owner.request('turn/start', { threadId, input: text(`Run exactly this shell command once and wait for it: sleep ${seconds}. Then reply BUSY-DONE.`) });
@@ -208,21 +234,24 @@ async function main(target: Target): Promise<void> {
     const drainStart = now();
     let queueAtLoad: number | null = null;
     let status: any;
+    let queueDrained = false;
     for (let i = 0; i < 240; i++) {
       const list: any = await owner.request('thread/queue/list', { threadId });
       queueAtLoad ??= (list?.data ?? []).length;
       status = await owner.request('thread/read', { threadId, includeTurns: false });
-      if ((list?.data ?? []).length === 0 && status?.thread?.status?.type === 'idle') break;
+      if ((list?.data ?? []).length === 0 && status?.thread?.status?.type === 'idle') { queueDrained = true; break; }
       await sleep(500);
     }
-    cases.drainBeforeIdle = { queueAtLoad, waitedMs: Math.round(now() - drainStart),
+    cases.drainBeforeIdle = { queueAtLoad, queueDrained, waitedMs: Math.round(now() - drainStart),
       turnsDrained: new Set(events.filter(e => e.method === 'turn/completed').map(e => e.turnId)).size };
     const before = await reread();
     const from = events.length;
     const d = await deliver('idle', 'notifier-idle');
     const c = await observeConsumption(d.cid, d.nonce, from);
     const after = await reread();
-    cases.idle = { statusAtDelivery: status?.thread?.status?.type, delivery: d, consumption: c, acceptance: accept(d, c, before, after) };
+    const statusAtDelivery = status?.thread?.status?.type ?? null;
+    cases.idle = { statusAtDelivery, delivery: d, consumption: c,
+      acceptance: accept(d, c, before, after, { kind: 'idle', queueDrained, statusAtDelivery }) };
   }
   // Busy: queued during a controlled long tool call.
   {
@@ -233,8 +262,10 @@ async function main(target: Target): Promise<void> {
     const o = await busyOutcome(b.busyTurnId, b.from);
     const c = await observeConsumption(d.cid, d.nonce, b.from, 240_000);
     const after = await reread();
-    cases.busy = { statusAtDelivery: status?.thread?.status?.type, busy: { ...b, ...o, from: undefined }, delivery: d,
-      consumption: c, consumedInBusyTurn: c.turnId === b.busyTurnId, acceptance: accept(d, c, before, after) };
+    const statusAtDelivery = status?.thread?.status?.type ?? null;
+    const consumedInBusyTurn = c.turnId === b.busyTurnId;
+    cases.busy = { statusAtDelivery, busy: { ...b, ...o, from: undefined }, delivery: d, consumption: c, consumedInBusyTurn,
+      acceptance: accept(d, c, before, after, busyConditions(b, o, d.ack, consumedInBusyTurn, statusAtDelivery)) };
   }
   // Disconnect after write, before response; reconcile; test same-id replay semantics.
   {
@@ -269,7 +300,7 @@ async function main(target: Target): Promise<void> {
       reconcile: { pendingAfterDisconnect, replayAccepted: Boolean(replay?.queuedSubmission), replayError,
         sameIdEntriesAfterReplay: matches.length, duplicateDeleted,
         sameIdEntriesAfterCleanup: (list3?.data ?? []).filter((q: any) => q.clientUserMessageId === cid).length },
-      consumption: c, acceptance: accept({ cid, nonce }, c, before, after) };
+      consumption: c, acceptance: accept({ cid, nonce }, c, before, after, busyConditions(b, o, writeFlushedAt, c.turnId === b.busyTurnId)) };
   }
   // AE2 negative control: a second native executor resuming the same thread.
   {

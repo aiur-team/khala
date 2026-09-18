@@ -47,3 +47,35 @@ export function sameSessionAcceptance(i: AcceptanceInput): Acceptance {
   }
   return { accepted: failures.length === 0, failures };
 }
+
+/** Observed conditions a case needs before its delivery counts as idle or busy evidence. */
+export type CaseConditions =
+  | { kind: 'idle'; queueDrained: boolean; statusAtDelivery: string | null }
+  | { kind: 'busy'; statusAtDelivery?: string | null; commandStartedAt: number | null; commandCompletedAt: number | null;
+      commandExitCode: number | null; deliveredAt: number | null; consumedInBusyTurn: boolean };
+
+/**
+ * Same-session acceptance says nothing about whether the case exercised the state it
+ * names. An idle case whose drain never converged, or a busy case whose controlled
+ * command never ran, must not be reported as idle or busy evidence.
+ */
+export function caseConditionFailures(c: CaseConditions): string[] {
+  const failures: string[] = [];
+  if (c.kind === 'idle') {
+    if (!c.queueDrained) failures.push('queue_not_drained_before_idle');
+    if (c.statusAtDelivery !== 'idle') failures.push('not_idle_at_delivery');
+    return failures;
+  }
+  if (c.statusAtDelivery !== undefined && c.statusAtDelivery !== 'active') failures.push('not_active_at_delivery');
+  if (c.commandStartedAt === null) failures.push('controlled_command_not_started');
+  if (c.commandCompletedAt === null || c.commandExitCode !== 0) failures.push('controlled_command_not_completed');
+  if (c.deliveredAt === null || c.commandStartedAt === null || c.commandCompletedAt === null ||
+      c.deliveredAt < c.commandStartedAt || c.deliveredAt > c.commandCompletedAt) failures.push('delivery_not_during_command');
+  if (c.consumedInBusyTurn) failures.push('consumed_in_busy_turn');
+  return failures;
+}
+
+export function withConditions(a: Acceptance, c: CaseConditions): Acceptance {
+  const failures = [...a.failures, ...caseConditionFailures(c)];
+  return { accepted: failures.length === 0, failures };
+}

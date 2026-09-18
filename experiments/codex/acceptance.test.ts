@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sameSessionAcceptance, type AcceptanceInput } from './acceptance.js';
+import { readFileSync } from 'node:fs';
+import { caseConditionFailures, sameSessionAcceptance, withConditions, type AcceptanceInput } from './acceptance.js';
 
 const thread = '11111111-1111-4111-8111-111111111111';
 const settings = { model: 'm', cwd: '/w', approvalPolicy: 'never', sandbox: { type: 'readOnly' }, reasoningEffort: 'medium' };
@@ -44,4 +45,61 @@ test('duplicate or missing consumption and setting drift are failures', () => {
   assert.ok(sameSessionAcceptance({ ...ok, consumedMessageCount: 0, replyText: null }).failures.includes('not_consumed'));
   const drift = sameSessionAcceptance({ ...ok, settingsAfter: { ...settings, sandbox: { type: 'dangerFullAccess' }, approvalPolicy: 'onRequest' } });
   assert.deepEqual(drift.failures, ['setting_changed:approvalPolicy', 'setting_changed:sandbox']);
+});
+
+const busy = { kind: 'busy', statusAtDelivery: 'active', commandStartedAt: 10, commandCompletedAt: 40, commandExitCode: 0, deliveredAt: 12, consumedInBusyTurn: false } as const;
+
+test('an idle case needs a drained queue and idle status at delivery', () => {
+  assert.deepEqual(caseConditionFailures({ kind: 'idle', queueDrained: true, statusAtDelivery: 'idle' }), []);
+  assert.deepEqual(caseConditionFailures({ kind: 'idle', queueDrained: false, statusAtDelivery: 'active' }),
+    ['queue_not_drained_before_idle', 'not_idle_at_delivery']);
+});
+
+test('a busy case needs delivery during a completed controlled command, consumed in a later turn', () => {
+  assert.deepEqual(caseConditionFailures(busy), []);
+  assert.deepEqual(caseConditionFailures({ ...busy, commandStartedAt: null, commandCompletedAt: null, commandExitCode: null, statusAtDelivery: 'idle' }),
+    ['not_active_at_delivery', 'controlled_command_not_started', 'controlled_command_not_completed', 'delivery_not_during_command']);
+  assert.deepEqual(caseConditionFailures({ ...busy, deliveredAt: 41 }), ['delivery_not_during_command']);
+  assert.deepEqual(caseConditionFailures({ ...busy, consumedInBusyTurn: true }), ['consumed_in_busy_turn']);
+});
+
+test('a failed condition turns an otherwise accepted delivery into a rejection', () => {
+  assert.deepEqual(withConditions(sameSessionAcceptance(ok), { ...busy, consumedInBusyTurn: true }),
+    { accepted: false, failures: ['consumed_in_busy_turn'] });
+});
+
+// The committed reports predate these checks, so re-derive them from recorded facts.
+function recordedConditions(file: string): Record<string, string[]> {
+  const cases = JSON.parse(readFileSync(new URL(`./evidence/${file}`, import.meta.url), 'utf8')).cases;
+  const busyOf = (c: any, deliveredAt: number | null, statusAtDelivery?: string) => caseConditionFailures({
+    kind: 'busy', statusAtDelivery, commandStartedAt: c.busy.commandStartedAt, commandCompletedAt: c.busy.commandCompletedAt,
+    commandExitCode: c.busy.exitCode, deliveredAt, consumedInBusyTurn: c.consumption.turnId === c.busy.busyTurnId });
+  return {
+    idle: caseConditionFailures({ kind: 'idle', queueDrained: (cases.drainBeforeIdle?.queueAtLoad ?? 1) === 0 || cases.drainBeforeIdle?.queueDrained === true,
+      statusAtDelivery: cases.idle.statusAtDelivery }),
+    busy: busyOf(cases.busy, cases.busy.delivery.ack, cases.busy.statusAtDelivery),
+    disconnect: busyOf(cases.disconnect, cases.disconnect.writeFlushedAt),
+  };
+}
+
+test('the clean run bff6ff3b meets every case condition', () => {
+  assert.deepEqual(recordedConditions('live-run.json'), { idle: [], busy: [], disconnect: [] });
+});
+
+test('the drain run is correctly excluded as idle evidence', () => {
+  const r = recordedConditions('live-run-drain.json');
+  assert.deepEqual(r.idle, ['queue_not_drained_before_idle', 'not_idle_at_delivery']);
+  assert.deepEqual([r.busy, r.disconnect], [[], []]);
+});
+
+test('run d2eaf702 accepts every case with the executor sampled at consumption', () => {
+  const report = JSON.parse(readFileSync(new URL('./evidence/live-run-v2.json', import.meta.url), 'utf8'));
+  assert.deepEqual(recordedConditions('live-run-v2.json'), { idle: [], busy: [], disconnect: [] });
+  for (const name of ['idle', 'busy', 'disconnect']) {
+    const c = report.cases[name];
+    assert.deepEqual(c.acceptance, { accepted: true, failures: [] }, name);
+    assert.equal(c.consumption.executorPidAtConsumption, report.executor.lockHolderAfterLoad, name);
+    assert.equal(c.consumption.lockHolderAtConsumption, report.executor.lockHolderAfterLoad, name);
+  }
+  assert.equal(report.cases.duplicateExecutor.acceptanceIfDuplicateConsumed.accepted, false);
 });

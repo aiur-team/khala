@@ -110,9 +110,12 @@ thread, on one monotonic clock:
    and with `codex queue --remote`. Verify the writer lock is released, no
    replacement process exists and the rollout is unchanged.
 
-Every consumption is judged by `sameSessionAcceptance` in `acceptance.ts`, which
-uses native thread IDs, executor PIDs and `userMessage.clientId`, never reply text
-alone. On failure, the driver stops every executor it spawned.
+Every consumption is judged by `sameSessionAcceptance` in `acceptance.ts`. It uses
+native thread IDs, the executor PIDs sampled at consumption (the socket listener and
+the writer-lock holder) and `userMessage.clientId`, never reply text alone.
+`caseConditionFailures` then rejects a case that did not exercise its state: an
+undrained or non-idle idle case, or a busy delivery outside a completed controlled
+command. On failure, the driver stops every executor it spawned.
 
 Write the target to a private file (the socket path must stay under 108 bytes):
 

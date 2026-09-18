@@ -6,8 +6,9 @@ executor. A separate client connection can use `thread/queue/add` to deliver a
 released nonce into that existing thread. The nonce is consumed under the original
 thread ID, by the same native executor, with settings unchanged, and the reply
 recalls the prior context marker. Idle, busy, disconnect, duplicate-executor and
-exit cases all ran against the designated disposable fixture. AE1 passes; AE2 is
-exercised and holds.
+exit cases all ran against the designated disposable fixture, in two clean runs
+(`bff6ff3b`, then `d2eaf702` with the executor sampled at consumption). AE1 passes;
+AE2 is exercised and holds.
 
 This is **not** a claim that an interactive `codex` TUI started by a human can be
 attached to. See [Limits](#limits-that-bind-kha-106-and-kha-118).
@@ -63,7 +64,34 @@ Acceptance (`experiments/codex/acceptance.ts`) requires all of these: same nativ
 thread ID; the same native executor PID before delivery, at consumption and as
 lock holder; exactly one consumed `userMessage` for the client ID; nonce and prior
 marker in the reply; the marker absent from the delivered text; and model, cwd,
-approval, sandbox and reasoning effort unchanged.
+approval, sandbox and reasoning effort unchanged. Each case must also have actually
+exercised its state. For idle, the queue drained and the status was `idle` at
+delivery. For busy and disconnect, delivery landed while the controlled command was
+running, the command completed with exit 0, and the nonce was consumed in a later
+turn rather than injected into the busy one.
+
+In run `bff6ff3b`, the executor at consumption was not sampled on its own. It holds
+by construction, since only the original executor listens on the socket that carried
+the event, but that is not the same as observing it. The writer-lock holder was
+sampled after each case, not at consumption. The case conditions were checked
+afterwards from the recorded facts (`acceptance.test.ts`). The driver was then
+tightened and re-run.
+
+## Re-run with the tightened driver — run `d2eaf702`
+
+Report: [live-run-v2.json](../../experiments/codex/evidence/live-run-v2.json)
+(sha256 `b68ce55f7c59e539e5db81281ca9bb05f7c51aa3e24d4142cb33e0cb63f8233b`).
+At each consumption, the driver now reads which process listens on the executor
+socket (`/proc/net/unix`) and which process holds the writer lock (`/proc/locks`).
+Case conditions are part of the verdict. Every case passed.
+
+| Case | Delivery | Consumption | Executor at consumption |
+|---|---|---|---|
+| Idle | Queue drained and `idle`. Ack at 348.6. | 1620.1, one entry | listener = lock holder = original |
+| Busy | Ack at 11536.5 while `active`, during `sleep 25` (11519.7–36398.2, exit 0) | 38314.3, in a new turn | listener = lock holder = original |
+| Disconnect | Write flushed at 48734.4 during `sleep 30` (48719.2–78588.2, exit 0). The same-ID replay created a second entry, which was deleted. | 80772.3, once, in a new turn | listener = lock holder = original |
+| Duplicate executor | `thread/resume` got `-32600 … already has an active writer`, and the rollout was unchanged | none | rejected, as AE2 requires |
+| Exit | Process group emptied and lock released. `codex queue --remote` exited 1 and no replacement process appeared. | none | delivery fails closed |
 
 ## Findings from the earlier, interrupted runs
 
