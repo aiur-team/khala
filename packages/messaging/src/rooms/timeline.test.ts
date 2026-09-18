@@ -1,8 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type EventId, type EventRef, type MessageContent, type RoomSnapshot, digestMessageContent } from '@khala/contracts/messaging/index';
 import type { RoomEntriesView } from './index';
 import type { SubstrateEvent } from './substrate';
 import { deviceId, harness, human, settle, text } from './fixtures/fakes';
+
+// `digestMessageContent` awaits the platform's real `crypto.subtle.digest`, which Node
+// backs with the libuv threadpool. Its completion depends on thread-pool contention, not
+// just microtask ordering, so it can outlast the single `settle()` tick these tests budget
+// on a busy shared runner. Replace only `digest` on the real `SubtleCrypto` instance for the
+// duration of this file (same SHA-256 bytes, resolved on the microtask queue instead) and
+// restore it after every test, so other suites keep the genuine threadpool-backed digest.
+let digestSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  const nativeDigest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+  digestSpy = vi.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
+    if (algorithm !== 'SHA-256') return nativeDigest(algorithm, data);
+    const hash = createHash('sha256').update(data as Uint8Array).digest();
+    return hash.buffer.slice(hash.byteOffset, hash.byteOffset + hash.byteLength) as ArrayBuffer;
+  });
+});
+
+afterEach(() => {
+  digestSpy.mockRestore();
+});
 
 const message = (eventId: string, body: string, clientTxnId: string | null = null): SubstrateEvent => ({
   kind: 'message', eventId: eventId as EventId, authorDeviceId: deviceId, participant: human, content: text(body), clientTxnId,
