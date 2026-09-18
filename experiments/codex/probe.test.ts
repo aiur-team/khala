@@ -12,6 +12,8 @@ async function fixture(overrides: object, run: (calls: () => Promise<any[]>) => 
   const dir = await mkdtemp(join(tmpdir(), 'kha104-probe-test-'));
   const oldPath = process.env.PATH;
   const log = join(dir, 'calls.jsonl');
+  // The fake is extensionless; pin CommonJS in case tmpdir sits under an ESM package.
+  await writeFile(join(dir, 'package.json'), '{"type":"commonjs"}');
   await writeFile(join(dir, 'codex'), `#!${process.execPath}
 const fs=require('node:fs');
 const o=${JSON.stringify(overrides)};

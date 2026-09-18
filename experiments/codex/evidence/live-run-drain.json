@@ -1,0 +1,937 @@
+{
+  "harness": "codex",
+  "version": "codex-cli 0.154.0",
+  "runId": "028dd119",
+  "originalThreadId": "01a0b261-639c-7cf1-a6b0-f485ee08dfac",
+  "workdir": "<HOME>/.cache/khala-disposable/codex-target",
+  "executor": {
+    "pid": 1184144,
+    "lockHolderAfterLoad": 1184153,
+    "preLoadStatus": "notLoaded",
+    "resumedThreadId": "01a0b261-639c-7cf1-a6b0-f485ee08dfac"
+  },
+  "settingsAtLoad": {
+    "model": "gpt-6-astra",
+    "cwd": "<HOME>/.cache/khala-disposable/codex-target",
+    "approvalPolicy": "never",
+    "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+    },
+    "reasoningEffort": "medium"
+  },
+  "settingsFinal": {
+    "model": "gpt-6-astra",
+    "cwd": "<HOME>/.cache/khala-disposable/codex-target",
+    "approvalPolicy": "never",
+    "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+    },
+    "reasoningEffort": "medium"
+  },
+  "settingsPreserved": true,
+  "setupActions": [
+    {
+      "actor": "agent",
+      "action": "Start `codex app-server --listen unix://<scratch>/exec.sock` in the fixture workdir.",
+      "t": 235.7
+    },
+    {
+      "actor": "agent",
+      "action": "Owner connection: thread/resume {threadId, excludeTurns:true}; no model/cwd/approval/sandbox overrides.",
+      "t": 326.2
+    }
+  ],
+  "cases": {
+    "idle": {
+      "statusAtDelivery": "active",
+      "delivery": {
+        "cid": "e784c9ce-eb26-4e58-b812-85ca19d62a09",
+        "nonce": "release-nonce-028dd119-idle",
+        "attempt": 369,
+        "ack": 370.4,
+        "queueIdSha256": "4db23b90e15e6755",
+        "error": null
+      },
+      "consumption": {
+        "consumedAt": 5956.7,
+        "turnId": "01a0b283-b419-7552-911a-050ebbc1043e",
+        "reply": "release-nonce-028dd119-idle prior-marker-codex-alpha",
+        "replyAt": 11073.6,
+        "turnCompletedAt": 11123.1,
+        "turnStatus": "completed",
+        "consumedCount": 1,
+        "observedThreadId": "01a0b261-639c-7cf1-a6b0-f485ee08dfac",
+        "nonceSeen": true
+      },
+      "acceptance": {
+        "accepted": true,
+        "failures": []
+      }
+    },
+    "busy": {
+      "statusAtDelivery": "active",
+      "busy": {
+        "busyTurnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+        "commandStartedAt": 16528.8,
+        "commandCompletedAt": 41397.8,
+        "commandStatus": "completed",
+        "exitCode": 0,
+        "durationMs": 24867,
+        "busyTurnCompletedAt": 43389.9,
+        "busyTurnStatus": "completed"
+      },
+      "delivery": {
+        "cid": "f21f67f4-8a0f-4fca-808d-fc5626218359",
+        "nonce": "release-nonce-028dd119-busy",
+        "attempt": 16543.1,
+        "ack": 16543.7,
+        "queueIdSha256": "ea9879192af77ad5",
+        "error": null
+      },
+      "consumption": {
+        "consumedAt": 43409.7,
+        "turnId": "01a0b284-4671-7852-a2aa-e5f2187420e2",
+        "reply": "release-nonce-028dd119-busy prior-marker-codex-alpha",
+        "replyAt": 49539.5,
+        "turnCompletedAt": 49597.5,
+        "turnStatus": "completed",
+        "consumedCount": 1,
+        "observedThreadId": "01a0b261-639c-7cf1-a6b0-f485ee08dfac",
+        "nonceSeen": true
+      },
+      "consumedInBusyTurn": false,
+      "acceptance": {
+        "accepted": true,
+        "failures": []
+      }
+    },
+    "disconnect": {
+      "busy": {
+        "busyTurnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+        "commandStartedAt": 55656.4,
+        "commandCompletedAt": 85526.2,
+        "commandStatus": "completed",
+        "exitCode": 0,
+        "durationMs": 29868,
+        "busyTurnCompletedAt": 87548.7,
+        "busyTurnStatus": "completed"
+      },
+      "attempt": 55672.3,
+      "writeFlushedAt": 55672.6,
+      "ackSeenBySender": false,
+      "reconcile": {
+        "pendingAfterDisconnect": 1,
+        "replayAccepted": true,
+        "replayError": null,
+        "sameIdEntriesAfterReplay": 2,
+        "duplicateDeleted": true,
+        "sameIdEntriesAfterCleanup": 1
+      },
+      "consumption": {
+        "consumedAt": 87590.1,
+        "turnId": "01a0b284-f2ef-7843-846a-5c64024455b6",
+        "reply": "release-nonce-028dd119-disconnect prior-marker-codex-alpha",
+        "replyAt": 89576.3,
+        "turnCompletedAt": 89620.1,
+        "turnStatus": "completed",
+        "consumedCount": 1,
+        "observedThreadId": "01a0b261-639c-7cf1-a6b0-f485ee08dfac",
+        "nonceSeen": true
+      },
+      "acceptance": {
+        "accepted": true,
+        "failures": []
+      }
+    },
+    "duplicateExecutor": {
+      "duplicatePid": 1201047,
+      "statusSeenByDuplicate": "notLoaded",
+      "resumeSucceeded": false,
+      "resumedThreadId": null,
+      "resumeError": {
+        "code": -32600,
+        "message": "thread 01a0b261-639c-7cf1-a6b0-f485ee08dfac already has an active writer"
+      },
+      "lockHolderDuringDuplicate": 1184153,
+      "originalExecutorPid": 1184153,
+      "duplicateStopped": {
+        "code": 0,
+        "signal": null,
+        "t": 91474.3,
+        "groupEmpty": true
+      },
+      "ownerStatusAfter": "idle",
+      "rolloutUnchangedByDuplicate": true,
+      "acceptanceIfDuplicateConsumed": {
+        "accepted": false,
+        "failures": [
+          "thread_id_changed",
+          "executor_process_changed"
+        ]
+      },
+      "inputSentToDuplicate": false
+    },
+    "exit": {
+      "executorStopped": {
+        "code": 0,
+        "signal": null,
+        "t": 91535.5,
+        "groupEmpty": true
+      },
+      "lockHolderAfterExit": null,
+      "connectError": "spawn",
+      "cliRemoteQueue": {
+        "code": 1,
+        "stderrHead": "Error: failed to connect to remote app server: failed to connect to remote app server at `unix://<HOME>/.aiur/workspaces/aiur-team/khala/13/.aiur-runtime/tmp/kha104-live/exec-028dd119.sock`: No such file or directory (os error 2) | ",
+        "t": 164.09999999999127
+      },
+      "replacementProcesses": 0,
+      "rolloutUnchangedAfterExitAttempts": true,
+      "nonceInRollout": false
+    }
+  },
+  "rolloutBefore": {
+    "bytes": 197333,
+    "sha256": "a88608c67789a5d7434ceb61ee67064aaf543954d5436a231787d6764ad14337"
+  },
+  "rolloutAfter": {
+    "bytes": 263320,
+    "sha256": "8aa7234857ec9633834c40d91f6d9534f8826b8fee781a8462a10d2e4fcbebe8"
+  },
+  "statusBefore": {
+    "lockHolder": null
+  },
+  "events": [
+    {
+      "t": 257.1,
+      "conn": "owner",
+      "method": "remoteControl/status/changed"
+    },
+    {
+      "t": 322.9,
+      "conn": "owner",
+      "method": "mcpServer/startupStatus/updated",
+      "threadIdMatches": true
+    },
+    {
+      "t": 323.8,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "idle",
+      "threadIdMatches": true
+    },
+    {
+      "t": 344.1,
+      "conn": "owner",
+      "method": "thread/goal/cleared",
+      "threadIdMatches": true
+    },
+    {
+      "t": 344.1,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 344.1,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "active",
+      "threadIdMatches": true
+    },
+    {
+      "t": 344.2,
+      "conn": "owner",
+      "method": "turn/started",
+      "turnId": "01a0b283-9e3d-7dd3-a5ff-170d23f73e81",
+      "status": "inProgress",
+      "threadIdMatches": true
+    },
+    {
+      "t": 348.3,
+      "conn": "owner",
+      "method": "thread/goal/cleared",
+      "threadIdMatches": true
+    },
+    {
+      "t": 368.8,
+      "conn": "notifier-idle",
+      "method": "remoteControl/status/changed"
+    },
+    {
+      "t": 370.9,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 784.2,
+      "conn": "owner",
+      "method": "mcpServer/startupStatus/updated",
+      "threadIdMatches": true
+    },
+    {
+      "t": 1392.7,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-9e3d-7dd3-a5ff-170d23f73e81",
+      "itemType": "userMessage",
+      "clientId": "42c1b274-97f1-455e-ad1d-b1ec72fe1987",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-093e1307-disconnect followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 1395.1,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-9e3d-7dd3-a5ff-170d23f73e81",
+      "itemType": "userMessage",
+      "clientId": "42c1b274-97f1-455e-ad1d-b1ec72fe1987",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-093e1307-disconnect followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 2877.7,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-9e3d-7dd3-a5ff-170d23f73e81",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 3504.9,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-9e3d-7dd3-a5ff-170d23f73e81",
+      "itemType": "agentMessage",
+      "text": "release-nonce-093e1307-disconnect prior-marker-codex-alpha",
+      "threadIdMatches": true
+    },
+    {
+      "t": 3518.7,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "idle",
+      "threadIdMatches": true
+    },
+    {
+      "t": 3518.8,
+      "conn": "owner",
+      "method": "turn/completed",
+      "turnId": "01a0b283-9e3d-7dd3-a5ff-170d23f73e81",
+      "status": "completed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 3525.1,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 3533.9,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "active",
+      "threadIdMatches": true
+    },
+    {
+      "t": 3533.9,
+      "conn": "owner",
+      "method": "turn/started",
+      "turnId": "01a0b283-aab1-79e3-b1e5-390ffb1cd067",
+      "status": "inProgress",
+      "threadIdMatches": true
+    },
+    {
+      "t": 3554.5,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-aab1-79e3-b1e5-390ffb1cd067",
+      "itemType": "userMessage",
+      "clientId": "42c1b274-97f1-455e-ad1d-b1ec72fe1987",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-093e1307-disconnect followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 3567.1,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-aab1-79e3-b1e5-390ffb1cd067",
+      "itemType": "userMessage",
+      "clientId": "42c1b274-97f1-455e-ad1d-b1ec72fe1987",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-093e1307-disconnect followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5289.1,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-aab1-79e3-b1e5-390ffb1cd067",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5890.4,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-aab1-79e3-b1e5-390ffb1cd067",
+      "itemType": "agentMessage",
+      "text": "release-nonce-093e1307-disconnect prior-marker-codex-alpha",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5926.1,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "idle",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5926.2,
+      "conn": "owner",
+      "method": "turn/completed",
+      "turnId": "01a0b283-aab1-79e3-b1e5-390ffb1cd067",
+      "status": "completed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5931.9,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5935.2,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "active",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5935.2,
+      "conn": "owner",
+      "method": "turn/started",
+      "turnId": "01a0b283-b419-7552-911a-050ebbc1043e",
+      "status": "inProgress",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5956.7,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-b419-7552-911a-050ebbc1043e",
+      "itemType": "userMessage",
+      "clientId": "e784c9ce-eb26-4e58-b812-85ca19d62a09",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-028dd119-idle followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 5958.3,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-b419-7552-911a-050ebbc1043e",
+      "itemType": "userMessage",
+      "clientId": "e784c9ce-eb26-4e58-b812-85ca19d62a09",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-028dd119-idle followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 10211.4,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 10526.6,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-b419-7552-911a-050ebbc1043e",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 11073.6,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-b419-7552-911a-050ebbc1043e",
+      "itemType": "agentMessage",
+      "text": "release-nonce-028dd119-idle prior-marker-codex-alpha",
+      "threadIdMatches": true
+    },
+    {
+      "t": 11123.1,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "idle",
+      "threadIdMatches": true
+    },
+    {
+      "t": 11123.1,
+      "conn": "owner",
+      "method": "turn/completed",
+      "turnId": "01a0b283-b419-7552-911a-050ebbc1043e",
+      "status": "completed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 12661.6,
+      "conn": "owner",
+      "method": "thread/goal/cleared",
+      "threadIdMatches": true
+    },
+    {
+      "t": 12671.7,
+      "conn": "owner",
+      "method": "thread/goal/cleared",
+      "threadIdMatches": true
+    },
+    {
+      "t": 12688.5,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "active",
+      "threadIdMatches": true
+    },
+    {
+      "t": 12688.6,
+      "conn": "owner",
+      "method": "turn/started",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "status": "inProgress",
+      "threadIdMatches": true
+    },
+    {
+      "t": 12726,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "itemType": "userMessage",
+      "clientId": null,
+      "text": "Run exactly this shell command once and wait for it: sleep 25. Then reply BUSY-DONE.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 12727.4,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "itemType": "userMessage",
+      "clientId": null,
+      "text": "Run exactly this shell command once and wait for it: sleep 25. Then reply BUSY-DONE.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 14898.8,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 15707.9,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "itemType": "agentMessage",
+      "text": "I’ll run `sleep 25` once and wait for it to finish.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 16528.8,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "itemType": "commandExecution",
+      "status": "inProgress",
+      "exitCode": null,
+      "durationMs": null,
+      "threadIdMatches": true
+    },
+    {
+      "t": 16543.2,
+      "conn": "notifier-busy",
+      "method": "remoteControl/status/changed"
+    },
+    {
+      "t": 16543.8,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 20204.4,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 41397.8,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "itemType": "commandExecution",
+      "status": "completed",
+      "exitCode": 0,
+      "durationMs": 24867,
+      "threadIdMatches": true
+    },
+    {
+      "t": 42846.5,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 43344.5,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "itemType": "agentMessage",
+      "text": "BUSY-DONE",
+      "threadIdMatches": true
+    },
+    {
+      "t": 43389.8,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "idle",
+      "threadIdMatches": true
+    },
+    {
+      "t": 43389.9,
+      "conn": "owner",
+      "method": "turn/completed",
+      "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
+      "status": "completed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 43393,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 43394.2,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "active",
+      "threadIdMatches": true
+    },
+    {
+      "t": 43394.2,
+      "conn": "owner",
+      "method": "turn/started",
+      "turnId": "01a0b284-4671-7852-a2aa-e5f2187420e2",
+      "status": "inProgress",
+      "threadIdMatches": true
+    },
+    {
+      "t": 43409.7,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b284-4671-7852-a2aa-e5f2187420e2",
+      "itemType": "userMessage",
+      "clientId": "f21f67f4-8a0f-4fca-808d-fc5626218359",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-028dd119-busy followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 43410.5,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b284-4671-7852-a2aa-e5f2187420e2",
+      "itemType": "userMessage",
+      "clientId": "f21f67f4-8a0f-4fca-808d-fc5626218359",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-028dd119-busy followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 48933.9,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b284-4671-7852-a2aa-e5f2187420e2",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 49539.5,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b284-4671-7852-a2aa-e5f2187420e2",
+      "itemType": "agentMessage",
+      "text": "release-nonce-028dd119-busy prior-marker-codex-alpha",
+      "threadIdMatches": true
+    },
+    {
+      "t": 49597.4,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "idle",
+      "threadIdMatches": true
+    },
+    {
+      "t": 49597.5,
+      "conn": "owner",
+      "method": "turn/completed",
+      "turnId": "01a0b284-4671-7852-a2aa-e5f2187420e2",
+      "status": "completed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 50204.5,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 51119.9,
+      "conn": "owner",
+      "method": "thread/goal/cleared",
+      "threadIdMatches": true
+    },
+    {
+      "t": 51124,
+      "conn": "owner",
+      "method": "thread/goal/cleared",
+      "threadIdMatches": true
+    },
+    {
+      "t": 51129.5,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "active",
+      "threadIdMatches": true
+    },
+    {
+      "t": 51129.6,
+      "conn": "owner",
+      "method": "turn/started",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "status": "inProgress",
+      "threadIdMatches": true
+    },
+    {
+      "t": 51146.5,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "itemType": "userMessage",
+      "clientId": null,
+      "text": "Run exactly this shell command once and wait for it: sleep 30. Then reply BUSY-DONE.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 51147.4,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "itemType": "userMessage",
+      "clientId": null,
+      "text": "Run exactly this shell command once and wait for it: sleep 30. Then reply BUSY-DONE.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 53384.3,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 54221.2,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "itemType": "agentMessage",
+      "text": "I’ll run `sleep 30` once and wait for it to finish.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 55656.4,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "itemType": "commandExecution",
+      "status": "inProgress",
+      "exitCode": null,
+      "durationMs": null,
+      "threadIdMatches": true
+    },
+    {
+      "t": 55673.4,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 55689,
+      "conn": "notifier-reconcile",
+      "method": "remoteControl/status/changed"
+    },
+    {
+      "t": 55689.9,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 55690.5,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 60204.4,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 85526.2,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "itemType": "commandExecution",
+      "status": "completed",
+      "exitCode": 0,
+      "durationMs": 29868,
+      "threadIdMatches": true
+    },
+    {
+      "t": 87280.7,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 87495.6,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "itemType": "agentMessage",
+      "text": "BUSY-DONE",
+      "threadIdMatches": true
+    },
+    {
+      "t": 87548.7,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "idle",
+      "threadIdMatches": true
+    },
+    {
+      "t": 87548.7,
+      "conn": "owner",
+      "method": "turn/completed",
+      "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
+      "status": "completed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 87551.8,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 87569.3,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "active",
+      "threadIdMatches": true
+    },
+    {
+      "t": 87569.3,
+      "conn": "owner",
+      "method": "turn/started",
+      "turnId": "01a0b284-f2ef-7843-846a-5c64024455b6",
+      "status": "inProgress",
+      "threadIdMatches": true
+    },
+    {
+      "t": 87590.1,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b284-f2ef-7843-846a-5c64024455b6",
+      "itemType": "userMessage",
+      "clientId": "c7970be7-62fb-48f3-babf-79d117222278",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-028dd119-disconnect followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 87590.9,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b284-f2ef-7843-846a-5c64024455b6",
+      "itemType": "userMessage",
+      "clientId": "c7970be7-62fb-48f3-babf-79d117222278",
+      "text": "Synthetic approved attachment probe: reply with one line containing exactly release-nonce-028dd119-disconnect followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.",
+      "threadIdMatches": true
+    },
+    {
+      "t": 89000.1,
+      "conn": "owner",
+      "method": "item/started",
+      "turnId": "01a0b284-f2ef-7843-846a-5c64024455b6",
+      "itemType": "agentMessage",
+      "threadIdMatches": true
+    },
+    {
+      "t": 89576.3,
+      "conn": "owner",
+      "method": "item/completed",
+      "turnId": "01a0b284-f2ef-7843-846a-5c64024455b6",
+      "itemType": "agentMessage",
+      "text": "release-nonce-028dd119-disconnect prior-marker-codex-alpha",
+      "threadIdMatches": true
+    },
+    {
+      "t": 89620,
+      "conn": "owner",
+      "method": "thread/status/changed",
+      "status": "idle",
+      "threadIdMatches": true
+    },
+    {
+      "t": 89620.1,
+      "conn": "owner",
+      "method": "turn/completed",
+      "turnId": "01a0b284-f2ef-7843-846a-5c64024455b6",
+      "status": "completed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 90204.2,
+      "conn": "owner",
+      "method": "thread/queue/changed",
+      "threadIdMatches": true
+    },
+    {
+      "t": 91140.4,
+      "conn": "owner",
+      "method": "thread/goal/cleared",
+      "threadIdMatches": true
+    },
+    {
+      "t": 91373.4,
+      "conn": "duplicate",
+      "method": "remoteControl/status/changed"
+    },
+    {
+      "t": 91494,
+      "conn": "owner",
+      "method": "thread/goal/cleared",
+      "threadIdMatches": true
+    }
+  ]
+}

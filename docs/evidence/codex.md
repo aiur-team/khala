@@ -1,84 +1,137 @@
-# Codex existing-session attachment: blocked proof
+# Codex existing-session attachment
 
-**2026-09-16 — inconclusive; KHA-104 remains incomplete.** No live nonce was sent.
-The installed CLI exposes promising queue/proxy primitives, but this agent cannot
-reach a designated disposable existing session. Neither AE1 nor AE2 has passed.
-This is an environment-specific observation, not a claim that Codex cannot attach.
+**2026-09-17 — supported for one tested pair, with limits.** The pair is codex-cli
+**0.154.0** and a thread hosted by a native `codex app-server --listen unix://…`
+executor. A separate client connection can use `thread/queue/add` to deliver a
+released nonce into that existing thread. The nonce is consumed under the original
+thread ID, by the same native executor, with settings unchanged, and the reply
+recalls the prior context marker. Idle, busy, disconnect, duplicate-executor and
+exit cases all ran against the designated disposable fixture. AE1 passes; AE2 is
+exercised and holds.
 
-## Reproducible evidence
+This is **not** a claim that an interactive `codex` TUI started by a human can be
+attached to. See [Limits](#limits-that-bind-kha-106-and-kha-118).
 
-- [Inventory and raw/sanitized hashes](../../experiments/codex/evidence/inventory.json):
-  `@openai/codex` / `codex-cli` **0.154.0**, Node **24.18.0**, Linux x64.
-  Binary entrypoint came from the mise-managed npm installation.
-- [Actual read-only preflight report](../../experiments/codex/evidence/preflight.json):
-  current ticket session UUID supplied explicitly, `release:false`, proxy exited
-  before initialization. No native observed UUID, queue receipt or consumption.
-  Its `busy` field is requested mode, not observed busy-delivery evidence.
-- [Proxy failure](../../experiments/codex/evidence/inventory-4.txt): default control
-  socket `<HOME>/.codex/app-server-control/app-server-control.sock` did not exist.
-- [Fixture startup failure](../../experiments/codex/evidence/inventory-5.txt):
-  `codex app-server --stdio` could not initialize SQLite under read-only Codex home.
-  A Unix-listener startup also failed with read-only filesystem before any target
-  existed. No home/config rewrite, credential copy or permission change was tried.
-- [Isolated runner and instructions](../../experiments/codex/README.md).
+## Fixture and consent
 
-Official reference checked 2026-09-16:
+Executor designation (issue #13, 2026-09-18T02:38Z): disposable thread
+`01a0b261-639c-7cf1-a6b0-f485ee08dfac`, created with `codex exec` for this test.
+Its workdir is an empty scratch directory. The operator authorized live cases
+against this thread only; no other thread was read or touched. Before the runs,
+the thread held `prior-marker-codex-alpha` from an earlier owner turn
+([exploration notes](../../experiments/codex/evidence/exploration-notes.md)).
+Delivered text asks for "the prior context marker you were asked to remember" and
+never contains the marker, so a correct reply shows recalled context.
+
+Settings at load, unchanged through every case (`settingsPreserved: true`): approval
+`never`, sandbox `readOnly` with network access off, reasoning effort `medium`, the
+fixture workdir, and the fixture's original model.
+
+## Route
+
+1. **Setup (agent, recorded).** Start `codex app-server --listen unix://<scratch>/exec.sock`
+   in the fixture workdir. An owner connection calls `thread/resume {threadId,
+   excludeTurns:true}` with no model, cwd, approval or sandbox overrides. The
+   app-server's native binary then holds the thread-writer flock
+   `~/.codex/thread-writer-locks/<threadId>.lock`. That PID is the executor identity.
+2. **Notify.** A separate WebSocket client on the same Unix listener calls
+   `thread/queue/add {threadId, clientUserMessageId, input}`. The listener speaks
+   WebSocket; `app-server proxy` only forwards raw bytes, so a plain JSONL client
+   hangs at `initialize`.
+3. **Consumption.** The executor starts a turn itself. The native `userMessage` item
+   carries `clientId == clientUserMessageId`, which correlates the consumption with
+   the delivery from native events rather than from generated text.
+
+No human setup was needed. No human connector, credential copy, config change or
+permission change was involved.
+
+## Results — clean run `bff6ff3b`
+
+Report: [live-run.json](../../experiments/codex/evidence/live-run.json)
+(sha256 `9ce94baacc90cd71a17e16df51b55953db7aaa471a54d8f108c532c418b9c830`).
+Times are milliseconds on one monotonic clock in the driver process.
+
+| Case | What happened | Same-session acceptance |
+|---|---|---|
+| Idle | Status `idle`, empty queue. Queue ack at 366.9, `userMessage` consumed at 1408.1, turn completed at 5739.2. Reply: `release-nonce-bff6ff3b-idle prior-marker-codex-alpha`. | accepted, no failures |
+| Busy | The owner started a controlled `sleep 25` tool call (started 12947.2). Queue ack at 12968.6 while `active`. The tool ran to completion (exit 0, 24871 ms), and the busy turn completed at 40987.9. The nonce was consumed in a **new** turn at 41009.6, 22 ms later. The tool was not interrupted and the nonce was not injected into the busy turn. | accepted, no failures |
+| Disconnect | During a `sleep 30` tool call, the notifier wrote `queue/add` (flushed at 50953.0) and dropped the socket with no close handshake. It never saw a response. A reconcile client found **1** pending entry with that `clientUserMessageId`. Replaying the same request with the same ID was **accepted as a second entry** (2 pending). The driver deleted the duplicate by `queuedSubmissionId`, leaving 1. That entry was consumed once after the tool finished (82807.9). | accepted, no failures |
+| Duplicate executor | A second `codex app-server` on another socket tried `thread/resume` on the same thread and got `-32600 thread … already has an active writer`. The writer lock stayed with the original native PID and the rollout was byte-identical. No input was sent. Had a duplicate consumed with copied history, acceptance would fail on `thread_id_changed` and `executor_process_changed`. | rejected, as AE2 requires |
+| Exit | Stopping the executor emptied its process group and released the writer lock. A WebSocket connect then failed, `codex queue --remote unix://<sock> --thread …` exited 1 with "No such file or directory", no replacement process appeared, and the rollout was unchanged. | delivery fails closed |
+
+Acceptance (`experiments/codex/acceptance.ts`) requires all of these: same native
+thread ID; the same native executor PID before delivery, at consumption and as
+lock holder; exactly one consumed `userMessage` for the client ID; nonce and prior
+marker in the reply; the marker absent from the delivered text; and model, cwd,
+approval, sandbox and reasoning effort unchanged.
+
+## Findings from the earlier, interrupted runs
+
+Three earlier runs are kept because they surfaced two delivery-safety facts.
+
+- **`clientUserMessageId` does not deduplicate.** In run `a629e936`, the replayed
+  same-ID entry was not deleted (a wrong delete parameter, since fixed), and the
+  executor consumed **both** entries: two turns replied with
+  `release-nonce-a629e936-disconnect`. That run's executor became an orphan, and I
+  stopped it after seeing this. Run `093e1307` stopped at the same step, and its
+  two same-ID entries were later consumed twice as well.
+- **The queue survives executor exit and drains on the next load.** Run `093e1307`
+  left two entries queued when its executor was stopped. In run `028dd119`,
+  resuming the thread in a new executor drained both before any new delivery. That
+  run's "idle" delivery was therefore actually made while `active`, so it is
+  treated as a drain observation, not idle evidence:
+  [live-run-drain.json](../../experiments/codex/evidence/live-run-drain.json)
+  (sha256 `5716ab18e7a366a9195f9b8ec437e2bc359806cdf15ebd8a0915a961a54f7e41`).
+  The driver now waits for an empty queue and `idle` before the idle case.
+- Run `a1ea05d6` confirmed idle consumption and then stopped mid-busy when its
+  agent session ended. Its orphaned executor later consumed the queued busy nonce.
+
+## Limits that bind KHA-106 and KHA-118
+
+- **Tested host, not an interactive TUI.** The existing thread was hosted by an
+  app-server that the agent started (a recorded setup step). A human-started
+  `codex` TUI exposed no reachable control socket in the 2026-09-16 preflight
+  (`<HOME>/.codex/app-server-control/app-server-control.sock` absent;
+  [preflight.json](../../experiments/codex/evidence/preflight.json)). Attaching to
+  a TUI session remains **unproven**. KHA-118 must host sessions behind an
+  app-server listener or get equivalent evidence for the TUI.
+- **Replay is unsafe.** A queue receipt is not consumption, and a missing receipt
+  is ambiguous. Reconcile with `thread/queue/list` filtered on
+  `clientUserMessageId`, and never re-add blindly: a replay creates a duplicate
+  that is executed. After a turn has started, dedup must come from the connector
+  (for example, checking consumed `userMessage.clientId` in `thread/read` turns),
+  not from Codex.
+- **Durable queue.** An entry queued when the host exits is consumed by whichever
+  executor loads the thread next, including a resumed process. An adapter that
+  requires same-executor delivery must drain or delete its own pending entries
+  before releasing the executor. It must also treat a writer-lock PID change as
+  a new executor.
+- **Busy semantics.** Busy delivery waits for the running turn to finish and then
+  runs as a new turn. `turn/steer` was not used and is not proven here.
+- **Version pin.** Only codex-cli 0.154.0 on Linux x64 with Node 24.18.0 was
+  tested. Wire shapes come from the installed experimental schema
+  ([schema/](../../experiments/codex/evidence/schema/), including
+  `ThreadQueueDeleteParams.json`). No minimum-version claim is made.
+- **Delivered text** is synthetic and non-secret. Real released content must not
+  go in command arguments; the `codex queue --message` CLI route exposes text to
+  process listings and was used here only for the fail-closed exit check.
+
+## Reproduce
+
+Local validation (no model), from the repository root with Node 24.18.0:
+
+```sh
+npm --prefix experiments/codex ci
+npm --prefix experiments/codex run probe -- --help
+npm --prefix experiments/codex run typecheck
+npm --prefix experiments/codex test
+```
+
+The live driver and its input are described in
+[experiments/codex/README.md](../../experiments/codex/README.md). It runs only
+against an explicitly designated disposable thread that no other process holds.
+
+Discovery evidence from 2026-09-16 stays valid:
+[inventory.json](../../experiments/codex/evidence/inventory.json) (commands, schema
+and output hashes) and the official
 [Codex app-server documentation](https://learn.chatgpt.com/docs/app-server).
-Installed experimental schema is the authority for this experiment's wire shapes;
-documentation or a schema field's presence alone does not prove live attachment.
-No open-ended minimum version support claim is made.
-
-## Route inventory
-
-| Route | Installed evidence | Unproven assumption / decision |
-|---|---|---|
-| `codex queue --thread … --message …` | 0.154.0 help exposes explicit thread and remote transport | Not invoked for live send. Help does not prove executor preservation; message arguments also expose text to process listings. |
-| `codex app-server proxy` + `thread/queue/add` | Generated params require `threadId`, `clientUserMessageId`, `input`; response includes `queuedSubmission` | Preferred **candidate**, not recommendation. No reachable default socket here; client ID is not proof of deduplication. |
-| `thread/read` metadata | Generated protocol supports `includeTurns:false` and reports native ID/model/cwd/runtime input capability | Metadata alone cannot prove executor identity, permission state or consumption. Probe withholds history. |
-| `turn/steer` | Installed params include `threadId`, `expectedTurnId`, `input` | Not demonstrated on an arbitrary existing CLI session; busy input must not interrupt tools. |
-| New app-server + resume/start | CLI can launch an app server, but local startup failed | A new/resumed executor is never a qualifying replacement for the existing working session. AE2 live negative control remains blocked. |
-
-## Receipt interpretation and scenario matrix
-
-The runner can observe proxy initialization, a metadata read, a queue request attempt,
-a native queue response and post-queue metadata. Its monotonic timestamps share one
-probe process clock. No transport service or connector is involved, so published,
-connector-received and durable-accepted timestamps are absent, not fabricated.
-Request-attempt time precedes the local write; it must not be labeled notification
-write or native acceptance. No native response means delivery uncertainty once an
-attempt has begun; never turn that into a rejection or retry automatically.
-
-| Required scenario | Actual result | Remaining gate |
-|---|---|---|
-| Idle nonce + prior marker under original executor | Not run | Reachable designated fixture, native identity/settings and consumption observers |
-| Busy controlled tool | Not run | Tool/queue/consumption timeline without interruption |
-| Client disconnect after write | Fake-process test only | Native acceptance reconciliation; no blind replay |
-| Duplicate/resume negative control | Guarded against invoking these routes; live case not run | Demonstrate rejection using actual executor identity, even for copied history |
-| Target exit | Not run | Exit designated fixture and verify attachment creates no replacement |
-
-## Local implementation validation
-
-`npm --prefix experiments/codex ci`, help, strict TypeScript typecheck and the
-experiment's tests validate the runner independently. Tests collect real assertions
-against fake subprocesses: request correlation, UTF-8 fragmentation, malformed and
-oversized responses, process exit, deadline/SIGKILL cleanup, input/identity/workdir
-refusal, no history reads, conservative receipt classification, no automatic retries,
-and omission of private metadata/errors from reports. These are not model proof.
-
-## Handoff to KHA-106 and KHA-118
-
-No production support claim is released. KHA-106 may use only the distinction between
-request attempt, queue receipt and unobserved consumption. KHA-118 may inspect the
-pinned queue schema and explicit failure behavior, but must not enable attachment
-based on this result. Proxy exit is a preflight failure here; after an input attempt,
-transport exit/deadline is ambiguous. Structured raw server errors are withheld from
-published reports. A future adapter still needs safe error-code classification,
-permission/process binding, consumption observations and reconciliation proof.
-
-Smallest remaining operational requirement: a reachable, explicitly designated
-**disposable existing session** under the permitted runtime, preserving native ID,
-workdir, model and effective permissions. Fixture access must not require human
-connector installation, credential switching or broader sandbox permissions. If
-this cannot be supplied, an explicit acceptance decision is needed before treating
-this partial evidence as a completed negative research result. Until then U2–U4 and
-human-review readiness remain blocked; repository Write access is separately pending.

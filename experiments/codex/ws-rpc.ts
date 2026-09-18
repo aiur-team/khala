@@ -40,7 +40,7 @@ export class WsRpcClient {
     if (this.failure) return Promise.reject(this.failure);
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: v => resolve(v as T), reject });
+      this.pending.set(id, { resolve: v => resolve(v as T), reject: e => { (e as Error & { method?: string }).method ??= method; reject(e); } });
       this.send({ id, method, ...(params === undefined ? {} : { params }) });
     });
   }

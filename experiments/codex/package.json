@@ -9,7 +9,8 @@
   "scripts": {
     "probe": "tsx scenario.ts",
     "test": "tsx --test *.test.ts",
-    "typecheck": "tsc --noEmit --strict --target es2023 --module nodenext --types node *.ts"
+    "typecheck": "tsc --noEmit --strict --target es2023 --module nodenext --types node *.ts",
+    "live": "tsx live.ts"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

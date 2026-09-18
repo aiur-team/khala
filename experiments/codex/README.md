@@ -1,8 +1,10 @@
 # Existing-session attachment experiment
 
-**Status: partial implementation; live proof blocked, no supported route claimed.**
-This isolated package inventories Codex 0.154.0 and provides a bounded, explicit-target
-proxy probe. It is not a production adapter. See [the evidence report](../../docs/evidence/codex.md).
+**Status: live proof run on the designated disposable fixture. `thread/queue/add`
+through an app-server Unix listener is supported for codex-cli 0.154.0, with limits.**
+This isolated package inventories Codex 0.154.0 and contains a read-only preflight
+probe (`probe.ts`) and the live fixture driver (`live.ts`). It is not a production
+adapter. See [the evidence report](../../docs/evidence/codex.md).
 
 ## Reproduce local validation
 
@@ -78,31 +80,62 @@ permissions, executor generation or prior-context consumption. It never returns
 establish permission preservation or consumed context. The retained operation ID
 can help investigation, but there is no reconciliation implementation yet.
 
-## Remaining live-fixture protocol
+The live runs showed that `--listen unix://PATH` speaks WebSocket and `app-server
+proxy` only forwards those bytes, so this JSONL-over-proxy probe hangs at
+`initialize` against a real listener. It remains a guarded preflight. The live
+driver below uses `ws-rpc.ts` instead.
 
-These are acceptance gates, **not completed scenarios**:
+## Live fixture driver
 
-1. The agent creates or is given an authorized disposable working session with
-   `prior-marker-codex-alpha` already in context. Record its native UUID, executor
-   process generation, workdir, model and effective permissions independently.
-   Fixture creation happens before attachment; never count a resumed/new executor
-   as preservation of the original working session.
-2. Idle: release `release-nonce-7`, observe native queue receipt, then the model's
-   response containing nonce and prior marker. Correlate native events, not merely
-   generated text. Capture settings before/after.
-3. Busy: repeat with a controllable long tool and record tool start/end, notification
-   write, queue acceptance and first consumption using one monotonic clock or
-   explicitly separate per-process clocks. Do not interrupt tools.
-4. Disconnect after write/before response. Observe acceptance separately; do not
-   replay until dedup/reconcile semantics have independent evidence.
-5. Duplicate/new-executor negative control: reject copied history under another
-   executor, including reuse of the same stored UUID. Exit the original fixture;
-   attempt attachment and verify no replacement process is created.
+`live.ts` runs every acceptance case against one explicitly designated disposable
+thread, on one monotonic clock:
 
-The remaining consumption/permission/process observers and fault-injection driver
-must be implemented against that real fixture. Fake transport tests are not these
-runtime scenarios. No human connector installation or permission broadening is an
-acceptable way to turn a failed gate into a pass.
+1. Start a native `codex app-server --listen unix://<scratch>/exec-<run>.sock` in
+   the fixture workdir, in its own process group. Refuse if any process already
+   holds the thread's writer lock.
+2. The owner connection calls `thread/resume` with no overrides. The native PID
+   holding `~/.codex/thread-writer-locks/<thread>.lock` is recorded as the executor
+   identity.
+3. **Idle:** wait for an empty queue and `idle`, then deliver from a separate
+   notifier connection with `thread/queue/add`.
+4. **Busy:** the owner starts a `sleep 25` tool turn, and the notifier delivers
+   while it runs. Tools are never interrupted.
+5. **Disconnect:** during a `sleep 30` turn, write `queue/add` and drop the socket
+   with no close handshake. Reconcile with `thread/queue/list`, replay the same
+   `clientUserMessageId` once to observe dedup semantics, and delete any duplicate
+   by `queuedSubmissionId`.
+6. **Duplicate executor:** a second app-server attempts `thread/resume`. No input is
+   sent to it.
+7. **Exit:** stop the executor's process group, then attempt delivery over WebSocket
+   and with `codex queue --remote`. Verify the writer lock is released, no
+   replacement process exists and the rollout is unchanged.
+
+Every consumption is judged by `sameSessionAcceptance` in `acceptance.ts`, which
+uses native thread IDs, executor PIDs and `userMessage.clientId`, never reply text
+alone. On failure, the driver stops every executor it spawned.
+
+Write the target to a private file (the socket path must stay under 108 bytes):
+
+```json
+{
+  "threadId": "<designated thread UUID>",
+  "workdir": "/absolute/fixture/workdir",
+  "rollout": "/absolute/path/rollout-…-<designated thread UUID>.jsonl",
+  "priorMarker": "prior-marker-codex-alpha",
+  "scratchDir": "/absolute/private/scratch",
+  "outFile": "/absolute/path/live-run.json"
+}
+```
+
+```sh
+npm --prefix experiments/codex run live < "$TMPDIR/kha104-live-target.json"
+```
+
+The run calls the model and takes about 90 seconds. Detach it (for example with
+`setsid`) if the invoking session might end first. An interrupted run can leave
+queued entries, and the native queue is durable: they are consumed the next time
+the thread loads. Results and findings are in
+[the evidence report](../../docs/evidence/codex.md).
 
 ## Schema reproduction
 
