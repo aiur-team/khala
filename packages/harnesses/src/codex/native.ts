@@ -83,7 +83,7 @@ export function guardConnection(connection: CodexConnection): CodexConnection {
   };
 }
 
-export type ThreadStatus ='notLoaded' | 'idle' | 'active' | 'systemError';
+export type ThreadStatus = 'notLoaded' | 'idle' | 'active' | 'systemError';
 export type TurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress';
 
 export type NativeThread = Readonly<{
