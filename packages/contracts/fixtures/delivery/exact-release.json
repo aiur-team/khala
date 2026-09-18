@@ -1,0 +1,150 @@
+{
+  "_comment": "Worked KHA-106 release. It mirrors KHA-105 scalar fields without a production subtree import; `eventRef.contentDigest` repeats the messaging exact-intro digest literally. Limits are configuration examples, never protocol defaults. KHA-119 owns the future canonical payload codec, so `release.payloadDigest` is a well-formed fixture value, not a claim about an envelope implemented here. `releasedJob` is exactly what releaseFromApproval must produce from `approvalCommand`, `approvalCommand.selection`, `binding`, `approvalCommand.expectedPolicyVersion` and `release`. `capabilities` is the Codex route KHA-104 proved; other routes are in views.json.",
+  "limits": {
+    "maxSelectionEvents": 2,
+    "maxPayloadBytes": 4096
+  },
+  "eventRef": {
+    "v": 1,
+    "roomId": "room-1",
+    "eventId": "event-a-7",
+    "authorParticipantId": "agent-a",
+    "authorDeviceId": "dev-a",
+    "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+  },
+  "binding": {
+    "v": 1,
+    "bindingId": "bind-b-1",
+    "ownerId": "owner-b",
+    "agentParticipantId": "agent-b",
+    "deviceId": "dev-b",
+    "harness": "codex",
+    "sessionId": "thread-existing-b",
+    "generation": 0
+  },
+  "approvalCommand": {
+    "v": 1,
+    "commandId": "approve-1",
+    "roomId": "room-1",
+    "bindingId": "bind-b-1",
+    "expectedPolicyVersion": 3,
+    "expectedBindingGeneration": 0,
+    "selection": [
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-7",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+      },
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-8",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "issuedAt": "2026-09-18T00:00:00Z"
+  },
+  "policySetCommand": {
+    "v": 1,
+    "commandId": "policy-1",
+    "roomId": "room-1",
+    "bindingId": "bind-b-1",
+    "peerParticipantId": "agent-a",
+    "expectedPolicyVersion": 3,
+    "expectedBindingGeneration": 0,
+    "mode": "review",
+    "paused": false,
+    "issuedAt": "2026-09-18T00:00:00Z"
+  },
+  "policyAck": {
+    "v": 1,
+    "commandId": "policy-1",
+    "bindingId": "bind-b-1",
+    "generation": 0,
+    "requestedVersion": 4,
+    "effectiveVersion": 4,
+    "connectorState": "effective",
+    "errorCode": null
+  },
+  "release": {
+    "releaseId": "release-1",
+    "payloadRef": "ledger-release-1",
+    "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "causalRootId": "event-a-7"
+  },
+  "releasedJob": {
+    "v": 1,
+    "releaseId": "release-1",
+    "approval": {
+      "commandId": "approve-1",
+      "policyVersion": 3,
+      "bindingGeneration": 0
+    },
+    "binding": {
+      "v": 1,
+      "bindingId": "bind-b-1",
+      "ownerId": "owner-b",
+      "agentParticipantId": "agent-b",
+      "deviceId": "dev-b",
+      "harness": "codex",
+      "sessionId": "thread-existing-b",
+      "generation": 0
+    },
+    "policyVersion": 3,
+    "events": [
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-7",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+      },
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-8",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "payloadRef": "ledger-release-1",
+    "payloadDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "causalRootId": "event-a-7"
+  },
+  "receipt": {
+    "v": 1,
+    "receiptId": "receipt-release-1-queued",
+    "releaseId": "release-1",
+    "bindingId": "bind-b-1",
+    "generation": 0,
+    "kind": "harness_queued",
+    "observedAt": "2026-09-18T02:38:00.125Z",
+    "source": "harness",
+    "evidenceRef": "codex:userMessage:release-1",
+    "errorCode": null
+  },
+  "capabilities": {
+    "v": 1,
+    "harness": "codex",
+    "version": "0.154.0",
+    "adapterVersion": "probe-driver@9a28af84",
+    "support": "tested",
+    "existingSession": "khala_hosted_resume",
+    "immediateNotification": "khala_hosted_idle",
+    "busy": "queue",
+    "receiptEvidence": ["harness_queued", "context_consumed", "completed", "outcome_unknown", "failed"],
+    "reconcileByReleaseId": "while_queued",
+    "limits": {
+      "maxSelectionEvents": 50,
+      "maxPayloadBytes": 1048576
+    },
+    "evidenceRef": "docs/evidence/codex.md"
+  }
+}
