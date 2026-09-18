@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import '../../../brand/fonts.css';
@@ -47,9 +48,32 @@ function connectScout(): void {
     }],
   };
   for (const listener of listeners) listener(snapshot);
+  setTimeout(() => {
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map(agent => ({ ...agent, connection: 'stale' as const })),
+    };
+    for (const listener of listeners) listener(snapshot);
+  }, 1_000);
 }
 
 function Harness() {
+  const [draft, setDraft] = useState('');
+  const [messages, setMessages] = useState<readonly Readonly<{ body: string; pending: boolean }>[]>([
+    { body: 'Can you check the deployment?', pending: false },
+  ]);
+
+  function sendMessage(): void {
+    const body = draft.trim();
+    if (!body) return;
+    setMessages(current => [...current, { body, pending: true }]);
+    setDraft('');
+    setTimeout(() => setMessages(current => [
+      ...current.map(message => message.body === body ? { ...message, pending: false } : message),
+      { body: 'Deployment is healthy.', pending: false },
+    ]), 50);
+  }
+
   return (
     <RoomScreen
       title="Release room"
@@ -59,9 +83,11 @@ function Harness() {
         <section aria-label="Live timeline">
           <h2>Conversation</h2>
           <p><strong>Mira</strong> Human</p>
-          <p>Can you check the deployment?</p>
-          <label>Message <textarea defaultValue="" /></label>
-          <button type="button">Send message</button>
+          {messages.map((message, index) => (
+            <p key={`${index}-${message.body}`}>{message.body} {message.pending ? <span>Sending…</span> : null}</p>
+          ))}
+          <label>Message <textarea value={draft} onChange={event => setDraft(event.currentTarget.value)} /></label>
+          <button type="button" onClick={sendMessage}>Send message</button>
         </section>
       )}
       renderReview={() => (

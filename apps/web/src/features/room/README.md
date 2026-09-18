@@ -2,7 +2,7 @@
 
 This feature composes the existing timeline, recipient review, and agent controls into one responsive room page. Those sibling features arrive through `renderTimeline`, `renderReview`, and `renderControls`; the room feature does not import their implementations.
 
-`RoomUiPort` is the only presence dependency. It returns generation-tagged agent snapshots, publishes live changes, and provides the one-command onboarding string for agents that have not connected. `createRoomController` subscribes before its initial read, ignores snapshots from another generation, and prevents a late initial read from rolling a live update back.
+`RoomUiPort` is the only presence dependency. It returns generation-tagged agent snapshots, publishes live changes, and provides the one-command onboarding string for agents that have not connected. Its live implementation owns the connection state by combining subscription liveness with receipt evidence and must publish `stale` after its bounded liveness interval; the room controller does not invent a second liveness clock. `createRoomController` subscribes before its initial read, ignores snapshots from another generation, and prevents a late initial read from rolling a live update back.
 
 `AgentPresencePanel` shows each agent's display name, owner, connection state, route label, and latest delivery fact. Route labels are presentation data supplied by composition, so values such as `Unsupported` remain visible instead of being inferred from the existence of a binding. Receipt labels also preserve the evidence boundary: a queued receipt never claims the model read the message.
 

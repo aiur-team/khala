@@ -21,6 +21,14 @@ describe('AgentPresencePanel', () => {
     expect(html).not.toContain('No agents have joined');
   });
 
+  it('distinguishes a failed presence read from an empty ready room', () => {
+    const html = renderToStaticMarkup(
+      <AgentPresencePanel controller={controller({ phase: 'unavailable', agents: [] })} />,
+    );
+    expect(html).toContain('Agent presence is unavailable right now.');
+    expect(html).not.toContain('No agents have joined');
+  });
+
   it('puts onboarding first when no agent is connected and shows owner, route, and receipt truthfully', () => {
     const html = renderToStaticMarkup(
       <AgentPresencePanel controller={controller({
@@ -65,5 +73,45 @@ describe('AgentPresencePanel', () => {
     expect(html).toContain('Connected');
     expect(html).toContain('Unsupported');
     expect(html).not.toContain('Copy install command');
+  });
+
+  it('offers fallback onboarding while the native route is unsupported', () => {
+    const html = renderToStaticMarkup(
+      <AgentPresencePanel controller={controller({
+        phase: 'ready',
+        agents: [{
+          participantId: 'agent_3' as ParticipantId,
+          displayName: 'Scout',
+          ownerDisplayName: 'Mira',
+          connection: 'offline',
+          routeLabel: 'Khala skill (native route unsupported)',
+          lastReceipt: null,
+          installCommand: 'khala connect https://khala.example/r/one',
+          installCommandError: false,
+        }],
+      })} />,
+    );
+    expect(html).toContain('native route unsupported');
+    expect(html).toContain('Copy install command');
+  });
+
+  it('renders expired liveness as stale instead of connected', () => {
+    const html = renderToStaticMarkup(
+      <AgentPresencePanel controller={controller({
+        phase: 'ready',
+        agents: [{
+          participantId: 'agent_4' as ParticipantId,
+          displayName: 'Scout',
+          ownerDisplayName: 'Mira',
+          connection: 'stale',
+          routeLabel: 'Codex CLI',
+          lastReceipt: null,
+          installCommand: 'khala connect https://khala.example/r/one',
+          installCommandError: false,
+        }],
+      })} />,
+    );
+    expect(html).toContain('Connection stale');
+    expect(html).not.toMatch(/>Connected</);
   });
 });

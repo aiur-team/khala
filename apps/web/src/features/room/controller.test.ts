@@ -95,4 +95,16 @@ describe('createRoomController', () => {
     expect(controller.getSnapshot().agents[0]?.displayName).toBe('Scout');
     controller.dispose();
   });
+
+  it('reports presence as unavailable when the initial read fails before any live snapshot', async () => {
+    const port: RoomUiPort = {
+      agents: async () => { throw new Error('presence offline'); },
+      subscribeAgents: () => () => {},
+      installCommand: async () => 'unused',
+    };
+    const controller = createRoomController(port, { roomId, generation: 1 });
+
+    await vi.waitFor(() => expect(controller.getSnapshot()).toEqual({ phase: 'unavailable', agents: [] }));
+    controller.dispose();
+  });
 });

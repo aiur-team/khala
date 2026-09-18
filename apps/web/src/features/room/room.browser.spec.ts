@@ -56,6 +56,22 @@ test('AE1/AE3/AE5: onboarding, live presence, and every room surface work at des
     );
     assert.equal(await page.getByRole('button', { name: 'Send message' }).isVisible(), true, 'composer remains reachable');
     assert.equal(await page.getByText('Can you check the deployment?').isVisible(), true, 'agent/human replies remain visible');
+    await page.getByLabel('Message').fill('Please verify the release.');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await page.getByText('Please verify the release.').waitFor();
+    await page.getByText('Sending…').waitFor();
+    await page.getByText('Sending…').waitFor({ state: 'detached' });
+    await page.getByText('Deployment is healthy.').waitFor();
+    await page.getByText('Connection stale', { exact: true }).waitFor();
+
+    // Reload to restore the disconnected fixture, then force clipboard denial
+    // and verify the failure is visible and announced.
+    await page.reload();
+    await page.getByRole('button', { name: 'Copy install command' }).waitFor();
+    await page.evaluate("Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: function () { return Promise.reject(new Error('clipboard denied')); } })");
+    await page.getByRole('button', { name: 'Copy install command' }).click();
+    await page.getByRole('button', { name: 'Copy failed' }).waitFor();
+    await page.getByText('Install command could not be copied.').waitFor();
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

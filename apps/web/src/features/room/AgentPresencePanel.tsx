@@ -13,12 +13,14 @@ export interface AgentPresencePanelProps {
 
 const CONNECTION_LABEL: Record<AgentConnectionState, string> = {
   connected: 'Connected',
+  stale: 'Connection stale',
   offline: 'Not connected',
   unknown: 'Connection unknown',
 };
 
 const CONNECTION_TONE: Record<AgentConnectionState, StatusTone> = {
   connected: 'positive',
+  stale: 'caution',
   offline: 'caution',
   unknown: 'neutral',
 };
