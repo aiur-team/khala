@@ -155,6 +155,11 @@ through the ordinary client API, not hand-inserted rows):
   entirely, not just outbound).
 - Every container, volume and network created by the rehearsal was removed
   afterward; no `khala-*`-prefixed volume was left behind.
+- Re-run against a second fresh source/target pair after hardening the
+  restore/media/identity artifact transfer to pipe file contents directly to
+  each subprocess's stdin (`spawn`, no shell string interpolation) instead of
+  building a `sh -c` command that embedded the target namespace and artifact
+  paths: same result, `ready: true`, both real event IDs matched.
 
 This record demonstrates the backup/restore/isolation mechanics against the
 local disposable stack. It does not repeat the Railway-hosted proof (not yet

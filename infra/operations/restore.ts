@@ -168,14 +168,14 @@ export const dockerComposePorts: RestorePorts = {
   },
   async restoreDatabase(_manifest, artifactDir, target) {
     const databaseDumpPath = resolve(artifactDir, 'database.dump');
-    await runProcess('sh', ['-c', `docker compose -p ${target.stateNamespace} -f ${messagingComposeFile} -f ${isolationOverrideFile} exec -T postgres pg_restore --clean --if-exists --no-owner --no-privileges -U synapse -d synapse < ${databaseDumpPath}`]);
+    await runProcess('docker', [...composeArgs(target), 'exec', '-T', 'postgres', 'pg_restore', '--clean', '--if-exists', '--no-owner', '--no-privileges', '-U', 'synapse', '-d', 'synapse'], { stdinPath: databaseDumpPath });
   },
   async restoreMedia(_manifest, artifactDir, target) {
     // synapse is not running yet at this point (only postgres and the
     // one-shot volume-owner init are up): use `run` against the same
     // synapse-data volume rather than `exec` against a running service.
     const mediaTarPath = resolve(artifactDir, 'media.tar.gz');
-    await runProcess('sh', ['-c', `docker compose -p ${target.stateNamespace} -f ${messagingComposeFile} -f ${isolationOverrideFile} run --rm --no-deps --entrypoint sh synapse -c "tar xzf - -C /data" < ${mediaTarPath}`]);
+    await runProcess('docker', [...composeArgs(target), 'run', '--rm', '--no-deps', '--entrypoint', 'sh', 'synapse', '-c', 'tar xzf - -C /data'], { stdinPath: mediaTarPath });
   },
   async restoreIdentity(_manifest, secretsDir, target) {
     const signingKeyTarPath = resolve(secretsDir, 'signing-key.tar.gz');
@@ -184,7 +184,7 @@ export const dockerComposePorts: RestorePorts = {
     // requires) is where the rendered homeserver.yaml bind-mounts from.
     const targetConfigDir = process.env.KHALA_CONFIG_DIR;
     if (!targetConfigDir) throw new OperationsError('missing-input', 'Missing KHALA_CONFIG_DIR for the restore target');
-    await runProcess('sh', ['-c', `docker compose -p ${target.stateNamespace} -f ${messagingComposeFile} -f ${isolationOverrideFile} run --rm --no-deps --entrypoint sh synapse -c "tar xzf - -C /data" < ${signingKeyTarPath}`]);
+    await runProcess('docker', [...composeArgs(target), 'run', '--rm', '--no-deps', '--entrypoint', 'sh', 'synapse', '-c', 'tar xzf - -C /data'], { stdinPath: signingKeyTarPath });
     await runProcess('tar', ['xzf', configTarPath, '-C', targetConfigDir]);
     await runProcess('docker', [...composeArgs(target), 'up', '-d', '--wait', 'synapse']);
   },

@@ -212,13 +212,24 @@ export async function runBackup(inputs: BackupInputs, ports: BackupPorts): Promi
   return { manifestPath, manifest };
 }
 
-export function runProcess(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; stdoutPath?: string } = {}): Promise<void> {
+export function runProcess(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; stdoutPath?: string; stdinPath?: string } = {}): Promise<void> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { env: options.env ?? process.env, stdio: ['ignore', options.stdoutPath ? 'pipe' : 'ignore', 'pipe'] });
+    const child = spawn(command, args, {
+      env: options.env ?? process.env,
+      stdio: [options.stdinPath ? 'pipe' : 'ignore', options.stdoutPath ? 'pipe' : 'ignore', 'pipe'],
+    });
     let stderr = '';
     if (options.stdoutPath) {
       const out = createWriteStream(options.stdoutPath, { mode: 0o600 });
       child.stdout?.pipe(out);
+    }
+    if (options.stdinPath) {
+      // A file path piped in directly, never a shell string: the caller
+      // supplies namespaces and artifact paths that must not be interpreted
+      // by a shell, however operator-controlled they currently are.
+      const source = createReadStream(options.stdinPath);
+      source.on('error', (error) => reject(new OperationsError('subprocess-unavailable', `${command}: ${error.message}`)));
+      source.pipe(child.stdin!);
     }
     child.stderr?.on('data', (chunk) => {
       stderr += chunk.toString();
