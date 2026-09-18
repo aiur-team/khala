@@ -8,6 +8,7 @@
     "./storage/*": "./src/storage/*.ts",
     "./subscription/*": "./src/subscription/*.ts",
     "./dispatch/*": "./src/dispatch/*.ts",
+    "./dispatch/fixtures/*": null,
     "./retention/*": "./src/retention/*.ts"
   },
   "scripts": {
