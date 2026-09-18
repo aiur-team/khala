@@ -21,7 +21,7 @@
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
     "test": "vitest run --config ../../vitest.config.ts",
-    "test:browser": "node --import tsx --test src/shell/shell.browser.spec.ts"
+    "test:browser": "node --import tsx --test 'src/**/*.browser.spec.ts'"
   },
   "dependencies": {
     "@khala/contracts": "workspace:*",
