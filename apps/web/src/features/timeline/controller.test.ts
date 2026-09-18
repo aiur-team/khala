@@ -195,6 +195,52 @@ describe('createTimelineController', () => {
     controller.dispose();
   });
 
+  it('a forbidden first page reported before any snapshot arrives stays "unavailable" once an empty snapshot arrives — arrival order does not change the outcome', async () => {
+    const listeners = new Set<(snapshot: RoomSnapshot) => void>();
+    const port: Pick<RoomPort, 'observe' | 'timeline'> = {
+      observe: (_roomId, listener): Disposer => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      timeline: async () => rejected('forbidden'),
+    };
+    const controller = createTimelineController(port as RoomPort, roomId, { generation: 1 });
+    await controller.loadOlder();
+    expect(controller.getSnapshot().phase).toBe('unavailable');
+
+    // A later, otherwise-unremarkable empty snapshot must not overwrite the
+    // known history gap with a false-empty "ready".
+    listeners.forEach(listener => listener({ room, items: [], snapshotRevision: 'rev_1', generation: 1 }));
+    expect(controller.getSnapshot().phase).toBe('unavailable');
+    controller.dispose();
+  });
+
+  it('"partial" does not revert to "ready" on the next live message; it clears only once a history read succeeds', async () => {
+    const listeners = new Set<(snapshot: RoomSnapshot) => void>();
+    let timelineResult: 'forbidden' | 'ok' = 'forbidden';
+    const port: Pick<RoomPort, 'observe' | 'timeline'> = {
+      observe: (_roomId, listener): Disposer => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      timeline: async () => (timelineResult === 'forbidden' ? rejected('forbidden') : ok({ items: [], nextCursor: null, snapshotRevision: 'rev_2' })),
+    };
+    const controller = createTimelineController(port as RoomPort, roomId, { generation: 1 });
+    listeners.forEach(listener => listener({ room, items: [item('E1', 'alice', 'live')], snapshotRevision: 'rev_1', generation: 1 }));
+    await controller.loadOlder();
+    expect(controller.getSnapshot().phase).toBe('partial');
+
+    // A later live snapshot with a new item is still a gapped transcript.
+    listeners.forEach(listener => listener({ room, items: [item('E1', 'alice', 'live'), item('E2', 'alice', 'newer')], snapshotRevision: 'rev_2', generation: 1 }));
+    expect(controller.getSnapshot().phase).toBe('partial');
+
+    // Only a successful history read clears the degraded phase.
+    timelineResult = 'ok';
+    await controller.loadOlder();
+    expect(controller.getSnapshot().phase).toBe('ready');
+    controller.dispose();
+  });
+
   it('carries the room membership from the snapshot, including revoked/left', () => {
     const { port, emit } = fakeRoomPort();
     const controller = createTimelineController(port, roomId, { generation: 1 });

@@ -48,6 +48,11 @@ export function createTimelineController(
   let readerAtLatest = true;
   let disposed = false;
   let membership: RoomMembership | null = null;
+  // Set on a failed history read, cleared only by a *successful* one — a live
+  // snapshot arriving in between must not paper over a known history gap by
+  // reporting `ready` (order-independent: forbidden-then-snapshot and
+  // snapshot-then-forbidden both end up here, not just one of them).
+  let historyDegraded: 'unavailable' | 'partial' | null = null;
 
   let cachedItems: readonly TimelineItem[] | null = null;
   let itemsDirty = true;
@@ -85,6 +90,10 @@ export function createTimelineController(
     };
   }
 
+  function degradedPhase(): 'unavailable' | 'partial' {
+    return older.length > 0 || recent.length > 0 ? 'partial' : 'unavailable';
+  }
+
   function applySnapshot(snapshot: RoomSnapshot): void {
     if (disposed || !isCurrentGeneration(generation, snapshot)) return;
     const previouslyKnown = new Set([...older, ...recent].map(item => item.ref.eventId));
@@ -92,7 +101,10 @@ export function createTimelineController(
     recent = snapshot.items;
     itemsDirty = true;
     membership = snapshot.room.membership;
-    phase = 'ready';
+    // A known history gap outlives a fresher live snapshot: recompute the
+    // degraded phase against the now-larger item set instead of clearing it,
+    // since only a successful history read (`performLoadOlder`) may clear it.
+    phase = historyDegraded ? degradedPhase() : 'ready';
     if (!readerAtLatest) newMessageCount += arrivedCount;
     notify();
   }
@@ -124,7 +136,9 @@ export function createTimelineController(
       // empty room: with no items at all it's `unavailable`; with some items
       // already known (from a live snapshot or an earlier page) it's
       // `partial`, since the transcript is known-incomplete rather than done.
-      phase = older.length > 0 || recent.length > 0 ? 'partial' : 'unavailable';
+      // This sticks until a history read succeeds, even across live snapshots.
+      historyDegraded = degradedPhase();
+      phase = historyDegraded;
       notify();
       return result;
     }
@@ -132,6 +146,7 @@ export function createTimelineController(
     const additions = result.value.items.filter(item => !knownIds.has(item.ref.eventId));
     older = [...additions, ...older];
     nextCursor = result.value.nextCursor;
+    historyDegraded = null;
     phase = 'ready';
     itemsDirty = true;
     notify();

@@ -73,10 +73,29 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.getByText('a fresh reply from the browser test').waitFor();
     assert.equal(await page.getByText('a fresh reply from the browser test').count(), 1, 'exactly one row for the reconciled send');
 
+    // A draft is sent trimmed, but its acceptance is recognized against the
+    // reader's untrimmed text too: trailing whitespace alone must not leave a
+    // stale draft behind once that exact send has reconciled.
+    await composer.fill('a padded reply   ');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByText('a padded reply').waitFor();
+    assert.strictEqual(await composer.inputValue(), '', 'trailing whitespace does not block the draft from clearing on reconciliation');
+
     // outcome_unknown resolves through the same transaction, not a fresh send.
+    // The draft is kept (not cleared) until the send is durably accepted, and
+    // the row is labeled "Delivery unknown" — its own label, not just the
+    // count of subsequent rows, is asserted here.
     await composer.fill('__outcome_unknown please confirm');
     await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByText('Delivery unknown').waitFor();
+    assert.strictEqual(await composer.inputValue(), '__outcome_unknown please confirm', 'the draft is kept while the send is unresolved');
     await page.getByRole('button', { name: 'Check delivery' }).waitFor();
+    // While the send is unresolved, Send stays disabled — the reader cannot
+    // submit a fresh, differently-identified send of the same or new text
+    // underneath an outcome that may already have landed (AE2).
+    await composer.fill('a different message typed while unresolved');
+    assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), true, 'Send is disabled while a send is outcome_unknown');
+    await composer.fill('');
     await page.getByRole('button', { name: 'Check delivery' }).click();
     await page.getByText('__outcome_unknown please confirm').waitFor();
     assert.equal(await page.getByText('__outcome_unknown please confirm').count(), 1, 'resolving outcome_unknown does not duplicate the message');
@@ -87,10 +106,15 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await composer.fill('__fail_once please retry');
     await page.getByRole('button', { name: 'Send' }).click();
     await page.getByText('Not delivered').waitFor();
+    // Send stays disabled for the same reason: only Retry (same clientTxnId)
+    // may resolve a definite failure, never a fresh Send with new bytes.
+    assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), true, 'Send is disabled while a send has failed');
     await page.getByRole('button', { name: 'Retry' }).click();
     await page.getByText('__fail_once please retry').waitFor();
     assert.equal(await page.getByText('__fail_once please retry').count(), 1, 'retrying a failed send does not duplicate the message');
     assert.equal(await page.getByText('Not delivered').count(), 0, 'the failed row clears once the retry is accepted');
+    await composer.fill('a new message once everything is resolved');
+    assert.equal(await page.getByRole('button', { name: 'Send' }).isDisabled(), false, 'Send re-enables once every send is resolved');
 
     // Pagination preserves the reader's anchored event *within the scrollable
     // list* after prepending 20+ older rows. Measured relative to the list's

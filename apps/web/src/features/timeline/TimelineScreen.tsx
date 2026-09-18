@@ -77,7 +77,7 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
       // The draft is kept until a send is durably accepted (KTD3/AE2); once
       // it reconciles, clear it — but only if the reader hasn't already
       // started composing something new on top of it.
-      setDraft(current => (reconciled.some(entry => entry.content.body === current) ? '' : current));
+      setDraft(current => (reconciled.some(entry => entry.content.body === current.trim()) ? '' : current));
       return list.filter(entry => !isReconciled(entry, data.items));
     });
   }, [data.items]);
@@ -127,7 +127,12 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
   }
 
   const resolveDisplayName = buildDisplayNameResolver([...data.items.map(item => item.participant), viewer]);
-  const anySendPending = pendingList.some(entry => entry.phase === 'pending');
+  // A `failed` or `outcome_unknown` send keeps its draft text on screen, but
+  // Send must stay disabled while it's unresolved: otherwise the reader could
+  // submit the same text again under a fresh `clientTxnId`, duplicating a
+  // send that may already have gone through (AE2). Only Retry — which reuses
+  // the original `clientTxnId` — may resolve it.
+  const anySendUnresolved = pendingList.some(entry => entry.phase !== 'accepted');
 
   return (
     <section className="timeline" aria-label="Conversation">
@@ -237,7 +242,7 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
           onChange={event => setDraft(event.currentTarget.value)}
           disabled={!canCompose}
         />
-        <button type="submit" disabled={!canCompose || !draft.trim() || anySendPending}>
+        <button type="submit" disabled={!canCompose || !draft.trim() || anySendUnresolved}>
           Send
         </button>
       </form>
