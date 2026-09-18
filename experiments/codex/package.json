@@ -1,0 +1,22 @@
+{
+  "name": "khala-codex-attachment-proof",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": "22.23.2 || 24.18.0"
+  },
+  "scripts": {
+    "probe": "tsx scenario.ts",
+    "test": "tsx --test *.test.ts",
+    "typecheck": "tsc --noEmit --strict --target es2023 --module nodenext --types node *.ts",
+    "live": "tsx live.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "@types/ws": "8.18.1",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "ws": "8.18.3"
+  }
+}
