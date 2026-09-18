@@ -114,4 +114,64 @@ describe('AgentPresencePanel', () => {
     expect(html).toContain('Connection stale');
     expect(html).not.toMatch(/>Connected</);
   });
+
+  it('renders an unknown connection as unknown instead of connected', () => {
+    const html = renderToStaticMarkup(
+      <AgentPresencePanel controller={controller({
+        phase: 'ready',
+        agents: [{
+          participantId: 'agent_5' as ParticipantId,
+          displayName: 'Scout',
+          ownerDisplayName: 'Mira',
+          connection: 'unknown',
+          routeLabel: 'Khala skill',
+          lastReceipt: null,
+          installCommand: null,
+          installCommandError: true,
+        }],
+      })} />,
+    );
+    expect(html).toContain('Connection unknown');
+    expect(html).not.toMatch(/>Connected</);
+  });
+
+  it('renders an unknown connection with a neutral tone', () => {
+    const html = renderToStaticMarkup(
+      <AgentPresencePanel controller={controller({
+        phase: 'ready',
+        agents: [{
+          participantId: 'agent_6' as ParticipantId,
+          displayName: 'Scout',
+          ownerDisplayName: 'Mira',
+          connection: 'unknown',
+          routeLabel: 'Khala skill',
+          lastReceipt: null,
+          installCommand: null,
+          installCommandError: true,
+        }],
+      })} />,
+    );
+    expect(html).toContain('status-badge--neutral');
+    expect(html).not.toContain('status-badge--positive');
+  });
+
+  it('renders a queued receipt as queued rather than read', () => {
+    const html = renderToStaticMarkup(
+      <AgentPresencePanel controller={controller({
+        phase: 'ready',
+        agents: [{
+          participantId: 'agent_7' as ParticipantId,
+          displayName: 'Scout',
+          ownerDisplayName: 'Mira',
+          connection: 'offline',
+          routeLabel: 'Khala skill',
+          lastReceipt: { kind: 'queued', observedAt: '2026-09-18T14:31:02.402Z' },
+          installCommand: 'khala connect https://khala.example/r/one',
+          installCommandError: false,
+        }],
+      })} />,
+    );
+    expect(html).toContain('Queued for delivery');
+    expect(html).not.toContain('Read by the agent');
+  });
 });

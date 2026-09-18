@@ -1,4 +1,5 @@
 import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
+import { isCurrentGeneration } from '@khala/contracts/messaging/outcomes';
 import type { AgentPresence, AgentPresenceSnapshot, RoomUiPort } from './ports';
 
 export type RoomAgentView = AgentPresence & Readonly<{
@@ -82,24 +83,32 @@ export function createRoomController(port: RoomUiPort, config: RoomControllerCon
     }
   }
 
-  function applySnapshot(snapshot: AgentPresenceSnapshot): void {
-    if (disposed || snapshot.generation !== config.generation) return;
+  function applySnapshot(snapshot: AgentPresenceSnapshot): boolean {
+    if (disposed || !isCurrentGeneration(config.generation, snapshot)) return false;
+    for (const agent of snapshot.agents) {
+      if (installByParticipant.get(agent.participantId)?.error) {
+        installByParticipant.delete(agent.participantId);
+      }
+    }
     view = { phase: 'ready', agents: projectAgents(snapshot.agents) };
     notify();
     loadInstallCommands(snapshot.agents);
+    return true;
   }
 
   // Subscribe before the initial read. A live snapshot received during that
   // read owns the state, so the older read result cannot roll presence back.
   const unsubscribe = port.subscribeAgents(config.roomId, snapshot => {
-    if (snapshot.generation !== config.generation || disposed) return;
-    liveSnapshotSeen = true;
-    applySnapshot(snapshot);
+    if (applySnapshot(snapshot)) liveSnapshotSeen = true;
   });
 
   void port.agents(config.roomId, abortController.signal).then(
     snapshot => {
-      if (!liveSnapshotSeen) applySnapshot(snapshot);
+      if (disposed || liveSnapshotSeen) return;
+      if (!applySnapshot(snapshot)) {
+        view = { phase: 'unavailable', agents: [] };
+        notify();
+      }
     },
     () => {
       if (disposed || liveSnapshotSeen) return;

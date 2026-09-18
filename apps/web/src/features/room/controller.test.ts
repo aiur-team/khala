@@ -96,6 +96,42 @@ describe('createRoomController', () => {
     controller.dispose();
   });
 
+  it('retries a transient install command failure on the next presence snapshot', async () => {
+    let listener: ((value: AgentPresenceSnapshot) => void) | null = null;
+    const installCommand = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValueOnce('khala connect recovered-link');
+    const port: RoomUiPort = {
+      agents: async () => snapshot(1, 'offline'),
+      subscribeAgents: (_roomId, next) => {
+        listener = next;
+        return () => { listener = null; };
+      },
+      installCommand,
+    };
+    const controller = createRoomController(port, { roomId, generation: 1 });
+    await vi.waitFor(() => expect(controller.getSnapshot().agents[0]?.installCommandError).toBe(true));
+
+    listener!(snapshot(1, 'offline'));
+
+    await vi.waitFor(() => expect(controller.getSnapshot().agents[0]?.installCommand).toBe('khala connect recovered-link'));
+    expect(controller.getSnapshot().agents[0]?.installCommandError).toBe(false);
+    expect(installCommand).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
+
+  it('reports presence as unavailable when the initial read has another generation', async () => {
+    const port: RoomUiPort = {
+      agents: async () => snapshot(9, 'connected'),
+      subscribeAgents: () => () => {},
+      installCommand: async () => 'unused',
+    };
+    const controller = createRoomController(port, { roomId, generation: 1 });
+
+    await vi.waitFor(() => expect(controller.getSnapshot()).toEqual({ phase: 'unavailable', agents: [] }));
+    controller.dispose();
+  });
+
   it('reports presence as unavailable when the initial read fails before any live snapshot', async () => {
     const port: RoomUiPort = {
       agents: async () => { throw new Error('presence offline'); },

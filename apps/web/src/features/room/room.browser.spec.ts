@@ -10,7 +10,7 @@ import { build, preview, type PreviewServer } from 'vite';
 const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = join(here, 'browser-harness');
 
-test('AE1/AE3/AE5: onboarding, live presence, and every room surface work at desktop and phone width', { timeout: 90_000 }, async () => {
+test('AE1/AE3/AE5: onboarding, live presence, and injected room-slot stubs work at desktop and phone width', { timeout: 90_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-room-dist-'));
   // Chromium's singleton socket has a strict path-length cap; the workspace's
   // private TMPDIR is too deep, while mkdtemp keeps this shared /tmp path unique.
@@ -54,8 +54,8 @@ test('AE1/AE3/AE5: onboarding, live presence, and every room surface work at des
       true,
       'phone layout has no horizontal overflow',
     );
-    assert.equal(await page.getByRole('button', { name: 'Send message' }).isVisible(), true, 'composer remains reachable');
-    assert.equal(await page.getByText('Can you check the deployment?').isVisible(), true, 'agent/human replies remain visible');
+    assert.equal(await page.getByRole('button', { name: 'Send message' }).isVisible(), true, 'injected composer stub remains reachable');
+    assert.equal(await page.getByText('Can you check the deployment?').isVisible(), true, 'injected timeline stub remains visible');
     await page.getByLabel('Message').fill('Please verify the release.');
     await page.getByRole('button', { name: 'Send message' }).click();
     await page.getByText('Please verify the release.').waitFor();
