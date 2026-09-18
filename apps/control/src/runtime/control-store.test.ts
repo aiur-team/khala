@@ -15,6 +15,7 @@ class FakeBlobsStore implements BlobsStoreLike {
   private revision = 0;
   private nextRejection: 'definite' | 'ambiguous' | null = null;
   private lostResponseOnNextSet = false;
+  private beforeNextSet: (() => void) | null = null;
 
   failNext(mode: 'definite' | 'ambiguous'): void {
     this.nextRejection = mode;
@@ -23,6 +24,17 @@ class FakeBlobsStore implements BlobsStoreLike {
   /** Simulates a write that lands server-side but whose response never reaches this caller. */
   loseResponseOnNextSet(): void {
     this.lostResponseOnNextSet = true;
+  }
+
+  /** Runs `fn` immediately before the next `setJSON` evaluates its precondition, simulating a concurrent writer that lands in the gap between a `read` and a `write`. */
+  raceBeforeNextSet(fn: () => void): void {
+    this.beforeNextSet = fn;
+  }
+
+  /** Writes directly, bypassing CAS — only for simulating a concurrent writer via `raceBeforeNextSet`. */
+  rawWrite(key: string, data: unknown): void {
+    this.revision += 1;
+    this.entries.set(key, { data, etag: `r${this.revision}` });
   }
 
   private throwRejection(mode: 'definite' | 'ambiguous'): never {
@@ -49,6 +61,11 @@ class FakeBlobsStore implements BlobsStoreLike {
 
   async setJSON(key: string, data: unknown, options: { onlyIfMatch?: string; onlyIfNew?: boolean } = {}): Promise<{ modified: boolean; etag?: string }> {
     this.consumePreflightFailure();
+    if (this.beforeNextSet) {
+      const fn = this.beforeNextSet;
+      this.beforeNextSet = null;
+      fn();
+    }
     const current = this.entries.get(key);
     const preconditionOk = options.onlyIfNew ? !current : options.onlyIfMatch !== undefined ? current?.etag === options.onlyIfMatch : true;
     if (!preconditionOk) return { modified: false };
@@ -179,6 +196,30 @@ describe('createControlStore', () => {
     records.failNext('ambiguous');
     const result = await store.compareAndSet({ key: 'membership/carol', expectedRevision: null, operationId: 'op_c2', next: { value: 'joined', expiresAt: null } });
     expect(result).toEqual({ kind: 'outcome_unknown', operationId: 'op_c2' });
+  });
+
+  it('an ambiguous failure claiming the operation ledger is also outcome_unknown', async () => {
+    const { store, operations } = makeStore();
+    operations.failNext('ambiguous');
+    const result = await store.compareAndSet({ key: 'membership/dave', expectedRevision: null, operationId: 'op_d1', next: { value: 'joined', expiresAt: null } });
+    expect(result).toEqual({ kind: 'outcome_unknown', operationId: 'op_d1' });
+  });
+
+  it('a concurrent writer landing between our read and our write, using our own operation ID and content, is discovered as applied via readback', async () => {
+    const { store, records } = makeStore();
+    const key = 'race/same-write';
+    const operationId = 'op_race';
+    records.raceBeforeNextSet(() => records.rawWrite(key, { operationId, value: 'x', expiresAt: null }));
+    const result = await store.compareAndSet({ key, expectedRevision: null, operationId, next: { value: 'x', expiresAt: null } });
+    expect(result).toMatchObject({ kind: 'applied', record: { value: 'x', operationId } });
+  });
+
+  it('a concurrent writer landing between our read and our write, using a different operation ID, is reported as a conflict rather than applied', async () => {
+    const { store, records } = makeStore();
+    const key = 'race/different-write';
+    records.raceBeforeNextSet(() => records.rawWrite(key, { operationId: 'op_other', value: 'other', expiresAt: null }));
+    const result = await store.compareAndSet({ key, expectedRevision: null, operationId: 'op_mine', next: { value: 'mine', expiresAt: null } });
+    expect(result).toMatchObject({ kind: 'conflict', current: { value: 'other', operationId: 'op_other' } });
   });
 
   describe('resolve', () => {

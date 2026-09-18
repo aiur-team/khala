@@ -52,6 +52,21 @@ test('the functions directory points at the generated (gitignored) input directo
   assert.match(config, /directory = "infra\/netlify\/functions-generated"/);
 });
 
+test('static content-hashed assets are cached immutably', async () => {
+  const config = await readConfig();
+  const assetsBlock = config.slice(config.indexOf('for = "/assets/*"'), config.indexOf('for = "/assets/*"') + 200);
+  assert.match(assetsBlock, /Cache-Control = "public, max-age=31536000, immutable"/);
+});
+
+test('every response carries a baseline security header set, including a CSP', async () => {
+  const config = await readConfig();
+  const catchAllStart = config.lastIndexOf('for = "/*"');
+  const catchAllBlock = config.slice(catchAllStart, catchAllStart + 800);
+  assert.match(catchAllBlock, /X-Frame-Options = "DENY"/);
+  assert.match(catchAllBlock, /Referrer-Policy = "same-origin"/);
+  assert.match(catchAllBlock, /Content-Security-Policy = "default-src 'self'/);
+});
+
 test('env.schema.json keeps public and server variables in disjoint, non-overlapping groups', async () => {
   const schema = JSON.parse(await readFile(schemaPath, 'utf8')) as {
     properties: { public: { properties: Record<string, unknown> }; server: { properties: Record<string, unknown> } };
