@@ -93,6 +93,22 @@ const ports: AgentControlsPorts = {
     },
     submitPolicy: async command => {
       await delay(150);
+      // This panel only ever requests `review` (KTD3): a harness that silently
+      // accepted `auto` would let a controller regression pass this browser
+      // test unnoticed, so a non-review mode is rejected the way a real
+      // connector would reject an unsupported request.
+      if (command.mode !== 'review') {
+        return {
+          v: 1,
+          commandId: command.commandId,
+          bindingId: command.bindingId,
+          generation,
+          requestedVersion: command.expectedPolicyVersion + 1,
+          effectiveVersion,
+          connectorState: 'rejected',
+          errorCode: 'forbidden',
+        };
+      }
       // The connector has accepted the request but has not yet applied it, so
       // `connectorState` is honestly `pending` here — `decodePolicyAck`
       // requires `effectiveVersion === requestedVersion` whenever a command

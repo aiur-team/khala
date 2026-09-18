@@ -28,10 +28,15 @@ for build:
   reads "Resume review delivery", never "Resume automatic review delivery".
 - `controlsAvailable` is only ever `true` when the binding is active, the
   viewer is its owner, and both the approved policy and the adapter's
-  inspected `HarnessCapabilities` (`support` and `existingSession`) are known
-  to permit it — it is never simulated for a capability that was not
-  observed. A binding the viewer does not own, or one marked `revoked`, never
-  gets an enabled control regardless of capability state.
+  inspected `HarnessCapabilities` permit it — it is never simulated for a
+  capability that was not observed. `support` must not be `'unsupported'`,
+  and `existingSession` must be exactly the one evidence-backed route,
+  `'khala_hosted_resume'` — `'unknown'` (not investigated) is treated the same
+  as `'unsupported'`, never assumed safe by default. The panel always renders
+  the exact inspected `support`/`existingSession` states (`capabilityDetail`),
+  even when they are what disabled the control, so a human never has to guess
+  why. A binding the viewer does not own, or one marked `revoked`, never gets
+  an enabled control regardless of capability state.
 
 Extending this surface to cover the gated behavior is out of scope until a
 product owner resolves P02/P08/G-AUTOMATION.
@@ -90,6 +95,17 @@ silently inherits a permissive policy from the superseded binding. A snapshot
 reporting an effective version older than the one already displayed is
 ignored outright, so out-of-order delivery cannot roll the display backward.
 
+A values-only snapshot match (no command identity in the snapshot) is a
+*tentative* "effective" — it is how a request whose own ack never resolved
+decisively (`offline`/`pending`) is eventually reconciled once the connector
+reconnects, but it is not proof this exact command produced the match. The
+command's identity is kept alive through it rather than retired: if this
+command's own ack later arrives `rejected`, `applyAck` still overrides the
+tentative "effective" instead of the ack being dropped as stale. The match
+also requires `effectiveMode === 'review'`, since this panel never requests
+`'auto'` and a snapshot can otherwise coincidentally agree on version/
+generation/`paused` while reporting the unrelated mode.
+
 ## Failure handling
 
 A rejected ack or a submit-time network failure never erases the request: the
@@ -99,9 +115,20 @@ operation identity (AE2). A rejected ack surfaces its closed `errorCode`
 alongside a "request failed, refresh" notice; a network failure that never
 reached the connector renders as acknowledgment `'unknown'` — genuinely
 "outcome unknown" — never as `'offline'`, which is reserved for an ack the
-connector actually returned. `controller.refresh()` (wired to the panel's
-"Refresh" button, shown whenever a notice is present) re-reads the
-authoritative snapshot.
+connector actually returned.
+
+Either failure disables the pause/resume control (`controlsAvailable`) until
+a fresh authoritative snapshot arrives, rather than letting a second request
+race the unresolved first one; `unavailableReason` names this explicitly.
+`controller.refresh()` (wired to the panel's "Refresh" button, shown whenever
+a notice is present) re-reads the authoritative snapshot and dismisses a
+failure notice on arrival. A genuinely unknown-outcome (network) failure also
+offers a distinct `controller.retry()` (the panel's "Retry" button): unlike
+`refresh`, it resends the *exact same* `commandId` and `expectedPolicyVersion`
+rather than starting a new command — appropriate because the outcome is
+unknown, not because the server already decided. A `rejected` ack (a
+connector decision, e.g. `stale_policy`) offers only Refresh, never Retry,
+since resending the identical stale version would just fail again.
 
 ## Setup and disposal
 
@@ -127,15 +154,21 @@ reason paragraph so its id is exposed by name, not just adjacent text.
   `outcome_unknown` stays distinct, and a malformed/undecodable receipt shows
   a generic unavailable detail without leaking the raw payload.
 - `controller.test.ts` — the versioned policy-intent state machine against a
-  fake `AgentControlsUiPort` (unit): null-version and null/unsupported-
-  capability handling, ownership and revocation gating, offline/rejected/
-  network-failure handling (AE1/AE2), stale-ack and stale-snapshot rejection,
-  the paused-value identity check against a competing tab, binding-generation
-  resets, and the exact wire command sent (`mode` is always `'review'`).
+  fake `AgentControlsUiPort` (unit): null-version and null/unsupported/
+  unknown-capability handling, ownership and revocation gating, offline/
+  rejected/network-failure handling (AE1/AE2), stale-ack and stale-snapshot
+  rejection, a rejected ack overriding a coincidentally matching snapshot
+  instead of being dropped, an `auto`-mode or wrong-version snapshot never
+  confirming a review request, `retry()` reusing the failed command's exact
+  identity, the paused-value identity check against a competing tab,
+  binding-generation resets, and the exact wire command sent (`mode` is
+  always `'review'`).
 - `AgentControlsPanel.test.tsx` — static markup assertions
   (`react-dom/server`) for scope visibility, disabled-control wording,
-  pause-vs-resume request labelling, the rejected/notice/refresh affordance,
-  ownership/revocation gating, and that the pause affordance never claims
+  pause-vs-resume request labelling (including once paused), the rejected/
+  notice/refresh/retry affordances, capability-detail rendering, ownership/
+  revocation gating, that an injected controller is never rebuilt or leaked
+  into touching real ports, and that the pause affordance never claims
   delivery stopped, was cancelled, or that automatic delivery is live.
 - `agent-controls.browser.spec.ts` — a real Chromium run (via
   `browser-harness/`) against fabricated, in-memory ports: a full pause

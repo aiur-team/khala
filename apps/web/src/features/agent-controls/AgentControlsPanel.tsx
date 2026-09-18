@@ -66,7 +66,7 @@ function requestedPolicyLabel(view: AgentControlsView): string | null {
   if (view.policy.requestedVersion === null || view.policy.requestedPaused === null) return null;
   const action = view.policy.requestedPaused ? 'pause requested' : 'resume requested';
   const suffix = ACKNOWLEDGMENT_SUFFIX[view.policy.acknowledgment]
-    + (view.policy.acknowledgment === 'rejected' && view.policy.errorCode ? ` (${view.policy.errorCode})` : '');
+    + (view.policy.errorCode ? ` (${view.policy.errorCode})` : '');
   return `Requested: review, ${action} (v${view.policy.requestedVersion})${suffix}`;
 }
 
@@ -115,6 +115,10 @@ export function AgentControlsPanel({ ports, config, controller: injectedControll
         <span className="agent-controls__effective">{effectivePolicyLabel(view)}</span>
       </div>
 
+      {view.capabilityDetail ? (
+        <p className="agent-controls__capability">{view.capabilityDetail}</p>
+      ) : null}
+
       {/* Permanently mounted so a later confirmation is announced by assistive
           tech even though this element was empty when the page first rendered. */}
       <p className="agent-controls__requested" role="status">
@@ -136,6 +140,11 @@ export function AgentControlsPanel({ ports, config, controller: injectedControll
         {view.notice ? (
           <button type="button" className="agent-controls__refresh-button" onClick={() => controller.refresh()}>
             Refresh
+          </button>
+        ) : null}
+        {view.retryAvailable ? (
+          <button type="button" className="agent-controls__retry-button" onClick={() => controller.retry()}>
+            Retry
           </button>
         ) : null}
       </div>

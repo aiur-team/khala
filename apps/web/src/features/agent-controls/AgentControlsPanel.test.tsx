@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type {
   BindingId, OwnerId, ParticipantId, RoomId,
@@ -36,6 +36,7 @@ function fakeController(view: AgentControlsView, overrides: Partial<AgentControl
     subscribe: () => () => {},
     requestPause: () => {},
     refresh: () => {},
+    retry: () => {},
     dispose: () => {},
     ...overrides,
   };
@@ -62,6 +63,8 @@ function view(overrides: Partial<AgentControlsView> = {}): AgentControlsView {
     connection: 'connected',
     controlsAvailable: true,
     unavailableReason: null,
+    capabilityDetail: null,
+    retryAvailable: false,
     notice: null,
     receiptDetail: null,
     ...overrides,
@@ -91,6 +94,19 @@ describe('AgentControlsPanel initial render', () => {
     const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} />);
     expect(html).not.toContain('Resume automatic review delivery');
     expect(html).not.toContain('>Automatic delivery<');
+  });
+
+  it('never claims automatic delivery in the button copy once paused, either (regression guard for the initial-render-only check above)', () => {
+    const controller = fakeController(view({
+      policy: {
+        effectiveMode: 'review', effectiveVersion: 3, paused: true,
+        requestedMode: null, requestedVersion: null, requestedPaused: null,
+        acknowledgment: 'pending', errorCode: null,
+      },
+    }));
+    const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} controller={controller} />);
+    expect(html).toContain('>Resume review delivery<');
+    expect(html).not.toContain('Resume automatic review delivery');
   });
 
   it('keeps the requested-status live region mounted even when there is nothing to announce yet', () => {
@@ -137,13 +153,15 @@ describe('AgentControlsPanel with an authoritative snapshot', () => {
     expect(html).not.toContain('pause requested');
   });
 
-  it('shows the rejected error code and a notice with a refresh action, without erasing the request', () => {
+  it('shows the rejected error code and a notice with a refresh action, without erasing the request, and disables the control until refreshed', () => {
     const controller = fakeController(view({
       policy: {
         effectiveMode: 'review', effectiveVersion: 3, paused: false,
         requestedMode: 'review', requestedVersion: 4, requestedPaused: true,
         acknowledgment: 'rejected', errorCode: 'stale_policy',
       },
+      controlsAvailable: false,
+      unavailableReason: 'The last request could not be confirmed. Refresh to see the current policy before retrying.',
       notice: { kind: 'request-failed', message: 'The request was rejected. Refresh to see the current policy.' },
     }));
     const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} controller={controller} />);
@@ -151,6 +169,8 @@ describe('AgentControlsPanel with an authoritative snapshot', () => {
     expect(html).toContain('stale_policy');
     expect(html).toContain('Refresh');
     expect(html).toContain('The request was rejected');
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('The last request could not be confirmed.');
   });
 });
 
@@ -176,6 +196,63 @@ describe('AgentControlsPanel ownership and revocation', () => {
     const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} controller={controller} />);
     expect(html).toContain('disabled=""');
     expect(html).toContain('Revoked');
+  });
+});
+
+describe('AgentControlsPanel capability honesty and retry', () => {
+  it('shows the exact inspected support/existing-session states, even when they gate the controls', () => {
+    const controller = fakeController(view({
+      controlsAvailable: false,
+      unavailableReason: 'This connector does not support the existing session for this binding.',
+      capabilityDetail: 'Harness support: tested · Existing session: unknown',
+    }));
+    const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} controller={controller} />);
+    expect(html).toContain('Harness support: tested · Existing session: unknown');
+  });
+
+  it('offers a distinct Retry action after a genuinely unknown-outcome failure, calling controller.retry()', () => {
+    const retry = vi.fn();
+    const controller = fakeController(view({
+      policy: {
+        effectiveMode: 'review', effectiveVersion: 3, paused: false,
+        requestedMode: 'review', requestedVersion: 4, requestedPaused: true,
+        acknowledgment: 'unknown', errorCode: null,
+      },
+      controlsAvailable: false,
+      retryAvailable: true,
+      notice: { kind: 'request-failed', message: 'Could not reach the connector. Refresh to see the current policy, or try again.' },
+    }), { retry });
+    const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} controller={controller} />);
+    expect(html).toContain('Retry');
+  });
+
+  it('does not offer Retry for a rejected (server-decided) request, only Refresh', () => {
+    const controller = fakeController(view({
+      policy: {
+        effectiveMode: 'review', effectiveVersion: 3, paused: false,
+        requestedMode: 'review', requestedVersion: 4, requestedPaused: true,
+        acknowledgment: 'rejected', errorCode: 'stale_policy',
+      },
+      controlsAvailable: false,
+      retryAvailable: false,
+      notice: { kind: 'request-failed', message: 'The request was rejected. Refresh to see the current policy.' },
+    }));
+    const html = renderToStaticMarkup(<AgentControlsPanel ports={fakePorts()} config={CONFIG} controller={controller} />);
+    expect(html).toContain('Refresh');
+    expect(html).not.toContain('>Retry<');
+  });
+});
+
+describe('AgentControlsPanel injected controller', () => {
+  it('never builds or leaks a real controller when one is injected, and never touches the ports it was given', () => {
+    const readSnapshot = vi.fn(() => new Promise<AgentControlsSnapshot>(() => {}));
+    const subscribe = vi.fn((): Disposer => () => {});
+    const submitPolicy = vi.fn(() => new Promise<never>(() => {}));
+    const ports: AgentControlsPorts = { agentControls: { readSnapshot, subscribe, submitPolicy } };
+    const controller = fakeController(view());
+    renderToStaticMarkup(<AgentControlsPanel ports={ports} config={CONFIG} controller={controller} />);
+    expect(readSnapshot).not.toHaveBeenCalled();
+    expect(subscribe).not.toHaveBeenCalled();
   });
 });
 

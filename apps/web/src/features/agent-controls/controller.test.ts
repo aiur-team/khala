@@ -182,6 +182,22 @@ describe('createAgentControlsController — initial state', () => {
     controller.dispose();
   });
 
+  it('never enables controls when existingSession is merely "unknown" (not investigated), only for the evidenced khala_hosted_resume route', () => {
+    const { ports, emit } = fakePorts();
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot({
+      capabilities: {
+        v: 1, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
+        existingSession: 'unknown', immediateNotification: 'unknown', busy: 'unknown', receiptEvidence: [],
+        reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: 'evidence-1',
+      },
+    }));
+    const view = controller.getView();
+    expect(view.controlsAvailable).toBe(false);
+    expect(view.capabilityDetail).toBe('Harness support: tested · Existing session: unknown');
+    controller.dispose();
+  });
+
   it('shows "Your agent" for a binding the viewer owns, and enables controls', () => {
     const { ports, emit } = fakePorts();
     const controller = createAgentControlsController(ports, CONFIG);
@@ -198,7 +214,7 @@ describe('createAgentControlsController — initial state', () => {
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot({ binding: { ...BINDING, ownerId: OTHER_OWNER_ID } }));
     const view = controller.getView();
-    expect(view.ownerLabel).toBe("Another person's agent (#er-z)");
+    expect(view.ownerLabel).toBe("Another person's agent (#owner-z)");
     expect(view.isViewerOwned).toBe(false);
     expect(view.controlsAvailable).toBe(false);
     controller.dispose();
@@ -337,6 +353,35 @@ describe('createAgentControlsController — requestPause', () => {
     });
   });
 
+  it('disables controls after a rejected ack, and a refreshed snapshot re-enables them for retry', () => {
+    const { ports, emit } = fakePorts({ readSnapshot: () => Promise.resolve(snapshot()) });
+    (ports.agentControls as { submitPolicy: unknown }).submitPolicy = (command: { commandId: CommandId }) =>
+      Promise.resolve<PolicyAck>({
+        v: 1, commandId: command.commandId, bindingId: BINDING_ID, generation: 0,
+        requestedVersion: 4, effectiveVersion: 3, connectorState: 'rejected', errorCode: 'stale_policy',
+      });
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot());
+    controller.requestPause(true);
+    return new Promise<void>(resolve => {
+      setTimeout(() => {
+        const rejectedView = controller.getView();
+        expect(rejectedView.controlsAvailable).toBe(false);
+        expect(rejectedView.unavailableReason).toMatch(/refresh/i);
+        // The rejected request's identity must survive being disabled (AE2).
+        expect(rejectedView.policy.requestedVersion).toBe(4);
+
+        controller.refresh();
+        setTimeout(() => {
+          const refreshedView = controller.getView();
+          expect(refreshedView.controlsAvailable).toBe(true);
+          controller.dispose();
+          resolve();
+        }, 0);
+      }, 0);
+    });
+  });
+
   it('AE2: a network failure shows outcome unknown, never "offline", and keeps operation identity for retry', () => {
     const { ports, emit } = fakePorts({ submitPolicy: () => Promise.reject(new Error('network down')) });
     const controller = createAgentControlsController(ports, CONFIG);
@@ -350,6 +395,23 @@ describe('createAgentControlsController — requestPause', () => {
         expect(view.policy.requestedVersion).toBe(4);
         expect(view.policy.requestedPaused).toBe(true);
         expect(view.notice).not.toBeNull();
+        expect(view.controlsAvailable).toBe(false);
+        controller.dispose();
+        resolve();
+      }, 0);
+    });
+  });
+
+  it('surfaces a readSnapshot failure as a dismissable notice instead of leaving the view silently stuck', () => {
+    const { ports } = fakePorts({ readSnapshot: () => Promise.reject(new Error('network down')) });
+    const controller = createAgentControlsController(ports, CONFIG);
+    return new Promise<void>(resolve => {
+      setTimeout(() => {
+        const view = controller.getView();
+        expect(view.notice).toEqual({
+          kind: 'snapshot-error',
+          message: 'Could not load the current policy. Refresh to try again.',
+        });
         controller.dispose();
         resolve();
       }, 0);
@@ -381,7 +443,7 @@ describe('createAgentControlsController — requestPause', () => {
     // second request has already been issued — it must not win.
     resolveFirst!({
       v: 1, commandId: 'first-command' as CommandId, bindingId: BINDING_ID, generation: 0,
-      requestedVersion: 4, effectiveVersion: 3, connectorState: 'effective', errorCode: null,
+      requestedVersion: 4, effectiveVersion: 4, connectorState: 'effective', errorCode: null,
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -435,12 +497,137 @@ describe('createAgentControlsController — requestPause', () => {
     controller.dispose();
   });
 
+  it('a snapshot matching version/generation/paused but reporting "auto" mode does not confirm a review request', () => {
+    const { ports, emit } = fakePorts();
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot());
+    controller.requestPause(true);
+    emit(snapshot({ policy: policy({ effectiveVersion: 4, paused: true, effectiveMode: 'auto' }) }));
+    const view = controller.getView();
+    expect(view.policy.acknowledgment).not.toBe('effective');
+    controller.dispose();
+  });
+
+  it('a snapshot matching paused but at the wrong version does not confirm the request', () => {
+    const { ports, emit } = fakePorts();
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot());
+    controller.requestPause(true);
+    emit(snapshot({ policy: policy({ effectiveVersion: 5, paused: true }) }));
+    const view = controller.getView();
+    expect(view.policy.acknowledgment).not.toBe('effective');
+    controller.dispose();
+  });
+
+  it('a rejected ack overrides a coincidentally matching snapshot instead of being dropped as stale (blocker 4)', async () => {
+    let resolveAck: ((ack: PolicyAck) => void) | null = null;
+    let capturedCommandId: CommandId | null = null;
+    const { ports, emit } = fakePorts();
+    (ports.agentControls as { submitPolicy: unknown }).submitPolicy = (command: { commandId: CommandId }) => {
+      capturedCommandId = command.commandId;
+      return new Promise<PolicyAck>(resolve => {
+        resolveAck = resolve;
+      });
+    };
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot());
+    controller.requestPause(true);
+
+    // Another actor's command reaches the exact same next version/mode/paused
+    // before this command's own ack resolves — shown as a tentative
+    // "effective" (the offline/pending reconciliation path), not a proven one.
+    emit(snapshot({ policy: policy({ effectiveVersion: 4, paused: true }) }));
+    expect(controller.getView().policy.acknowledgment).toBe('effective');
+
+    // This command's own outcome was actually a rejection. It must still be
+    // applied and override the tentative "effective" — not get dropped as
+    // superseded merely because the values-only match already looked settled.
+    resolveAck!({
+      v: 1, commandId: capturedCommandId!, bindingId: BINDING_ID, generation: 0,
+      requestedVersion: 4, effectiveVersion: 3, connectorState: 'rejected', errorCode: 'stale_policy',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const view = controller.getView();
+    expect(view.policy.acknowledgment).toBe('rejected');
+    expect(view.policy.errorCode).toBe('stale_policy');
+    controller.dispose();
+  });
+
+  it('a snapshot matching an already-rejected request\'s values does not flip it back to "effective"', () => {
+    const { ports, emit } = fakePorts();
+    (ports.agentControls as { submitPolicy: unknown }).submitPolicy = (command: { commandId: CommandId }) =>
+      Promise.resolve<PolicyAck>({
+        v: 1, commandId: command.commandId, bindingId: BINDING_ID, generation: 0,
+        requestedVersion: 4, effectiveVersion: 3, connectorState: 'rejected', errorCode: 'stale_policy',
+      });
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot());
+    controller.requestPause(true);
+    return new Promise<void>(resolve => {
+      setTimeout(() => {
+        expect(controller.getView().policy.acknowledgment).toBe('rejected');
+        // A later snapshot happens to match this request's original target
+        // values (e.g. another actor made the same change independently) — it
+        // must not resurrect this already-settled rejection as "effective".
+        emit(snapshot({ policy: policy({ effectiveVersion: 4, paused: true }) }));
+        expect(controller.getView().policy.acknowledgment).toBe('rejected');
+        controller.dispose();
+        resolve();
+      }, 0);
+    });
+  });
+
+  it('retry() resends the failed request\'s exact commandId and expectedPolicyVersion, not a new command', () => {
+    const submitPolicy = vi.fn()
+      .mockImplementationOnce(() => Promise.reject(new Error('network down')))
+      .mockImplementationOnce((command: { commandId: CommandId }) => Promise.resolve<PolicyAck>({
+        v: 1, commandId: command.commandId, bindingId: BINDING_ID, generation: 0,
+        requestedVersion: 4, effectiveVersion: 4, connectorState: 'effective', errorCode: null,
+      }));
+    const { ports, emit } = fakePorts();
+    (ports.agentControls as { submitPolicy: unknown }).submitPolicy = submitPolicy;
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot());
+    controller.requestPause(true);
+    return new Promise<void>(resolve => {
+      setTimeout(() => {
+        expect(controller.getView().retryAvailable).toBe(true);
+        expect(controller.getView().policy.acknowledgment).toBe('unknown');
+        controller.retry();
+        setTimeout(() => {
+          expect(submitPolicy).toHaveBeenCalledTimes(2);
+          const [[firstCommand], [secondCommand]] = submitPolicy.mock.calls as [
+            [{ commandId: CommandId; expectedPolicyVersion: number }],
+            [{ commandId: CommandId; expectedPolicyVersion: number }],
+          ];
+          expect(secondCommand.commandId).toBe(firstCommand.commandId);
+          expect(secondCommand.expectedPolicyVersion).toBe(firstCommand.expectedPolicyVersion);
+          expect(controller.getView().policy.acknowledgment).toBe('effective');
+          expect(controller.getView().retryAvailable).toBe(false);
+          controller.dispose();
+          resolve();
+        }, 0);
+      }, 0);
+    });
+  });
+
+  it('retry() is a no-op when there is no failed request to resend', () => {
+    const { ports, emit, submitPolicy } = fakePorts();
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot());
+    controller.retry();
+    expect(submitPolicy).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
   it('discards an ack whose generation does not match the current binding generation', () => {
     const { ports, emit } = fakePorts();
     (ports.agentControls as { submitPolicy: unknown }).submitPolicy = (command: { commandId: CommandId }) =>
       Promise.resolve<PolicyAck>({
         v: 1, commandId: command.commandId, bindingId: BINDING_ID, generation: 99,
-        requestedVersion: 4, effectiveVersion: 3, connectorState: 'effective', errorCode: null,
+        requestedVersion: 4, effectiveVersion: 4, connectorState: 'effective', errorCode: null,
       });
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot());

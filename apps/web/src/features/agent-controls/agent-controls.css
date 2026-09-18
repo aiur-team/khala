@@ -53,8 +53,15 @@
   color: var(--khala-critical, #b3261e);
 }
 
-.agent-controls__refresh-button {
+.agent-controls__refresh-button,
+.agent-controls__retry-button {
   font-size: 0.85rem;
+}
+
+.agent-controls__capability {
+  color: var(--khala-ink-muted);
+  font-size: 0.8rem;
+  margin: 0 0 0.5rem;
 }
 
 .agent-controls__receipt {

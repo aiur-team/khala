@@ -10,7 +10,7 @@ export interface AgentControlsController {
   getView(): AgentControlsView;
   subscribe(listener: (view: AgentControlsView) => void): Disposer;
   /**
-   * Requests a pause on future automatic delivery under the current review
+   * Requests a pause (or resume) of future review delivery under the current
    * policy. This is a delivery-policy request, never cancellation of a model
    * turn already in flight — the receipt vocabulary's `cancel_requested`/
    * `cancelled` kinds describe delivery, not the harness turn (KTD3).
@@ -18,6 +18,8 @@ export interface AgentControlsController {
   requestPause(paused: boolean): void;
   /** Re-reads the authoritative snapshot; used to recover from a failed request or a stale/replaced binding. */
   refresh(): void;
+  /** Resends the last request that failed with a genuinely unknown outcome, reusing its commandId and expected version rather than starting a new one. */
+  retry(): void;
   dispose(): void;
 }
 
@@ -43,16 +45,28 @@ type PendingCommand = Readonly<{
   requestedPaused: boolean;
 }>;
 
-function unavailableReason(snapshot: AgentControlsSnapshot | null, viewerOwnerId: OwnerId): string | null {
+function unavailableReason(
+  snapshot: AgentControlsSnapshot | null,
+  viewerOwnerId: OwnerId,
+  hasActionFailure: boolean,
+): string | null {
   if (snapshot === null) return 'Waiting for an authoritative snapshot.';
   if (snapshot.bindingStatus === 'revoked') return 'This binding has been revoked.';
   if (snapshot.binding.ownerId !== viewerOwnerId) return "This binding belongs to another person's agent connection.";
   if (snapshot.capabilities === null) return 'Waiting for harness capabilities.';
   if (snapshot.capabilities.support === 'unsupported') return 'This harness is not supported for delivery controls.';
-  if (snapshot.capabilities.existingSession === 'unsupported') {
+  // Enable delivery controls only for the one evidence-backed existing-session
+  // route (KTD3): `unknown` is "not investigated", not "safe to assume", so it
+  // is treated the same as `unsupported` rather than left enabled by default.
+  if (snapshot.capabilities.existingSession !== 'khala_hosted_resume') {
     return 'This connector does not support the existing session for this binding.';
   }
   if (snapshot.policy.effectiveVersion === null) return 'Waiting for an authoritative policy snapshot.';
+  // A rejected request or an unreachable connector leaves the displayed policy
+  // stale relative to what was asked for; the control stays disabled until a
+  // fresh authoritative snapshot arrives (via push or an explicit refresh),
+  // rather than allowing a second request to race the unresolved first one.
+  if (hasActionFailure) return 'The last request could not be confirmed. Refresh to see the current policy before retrying.';
   return null;
 }
 
@@ -61,6 +75,12 @@ function connectionFrom(snapshot: AgentControlsSnapshot): AgentControlsView['con
   if (snapshot.capabilities === null) return 'unknown';
   if (snapshot.capabilities.support === 'unsupported') return 'unknown';
   return snapshot.connection;
+}
+
+/** Surfaces the exact inspected capability states driving `unavailableReason`, so a disabled control is explained rather than merely asserted. */
+function capabilityDetailFor(snapshot: AgentControlsSnapshot): string | null {
+  if (snapshot.capabilities === null) return null;
+  return `Harness support: ${snapshot.capabilities.support} · Existing session: ${snapshot.capabilities.existingSession}`;
 }
 
 export function createAgentControlsController(
@@ -76,6 +96,8 @@ export function createAgentControlsController(
   let latestSnapshot: AgentControlsSnapshot | null = null;
   let pendingCommand: PendingCommand | null = null;
   let latestCommandId: string | null = null;
+  let hasActionFailure = false;
+  let lastFailedCommand: PendingCommand | null = null;
   const listeners = new Set<(view: AgentControlsView) => void>();
   let portDisposer: Disposer | null = null;
 
@@ -107,6 +129,11 @@ export function createAgentControlsController(
     }
 
     latestSnapshot = snapshot;
+    // A fresh authoritative snapshot — whether pushed or fetched by an
+    // explicit refresh — is the human's cue to retry, so it always clears a
+    // prior unconfirmed-request disable rather than leaving it stuck forever.
+    hasActionFailure = false;
+    lastFailedCommand = null;
     const hadPending = pendingCommand !== null;
     const pendingClearedByGeneration = hadPending
       && pendingCommand!.expectedGeneration !== snapshot.policy.generation;
@@ -116,7 +143,18 @@ export function createAgentControlsController(
       latestCommandId = null;
     }
 
+    // Values-only agreement (no command identity in the snapshot) is the
+    // reconciliation path for a request whose own ack never resolved
+    // decisively (offline/pending) — required for the offline-reconnect case
+    // (plan state diagram). It is not proof that *this* command produced the
+    // match, so the command's identity is kept alive rather than retired here:
+    // if this command's own ack later arrives rejected, `applyAck` can still
+    // override this tentative "effective" instead of the ack being dropped as
+    // stale (blocker 4). `effectiveMode` is checked because a snapshot can
+    // otherwise coincidentally match version/generation/paused while reporting
+    // the unrelated `auto` mode this panel never requests.
     const reachedRequested = pendingCommand !== null
+      && snapshot.policy.effectiveMode === 'review'
       && snapshot.policy.effectiveVersion === pendingCommand.expectedNextVersion
       && snapshot.policy.generation === pendingCommand.expectedGeneration
       && snapshot.policy.paused === pendingCommand.requestedPaused;
@@ -127,12 +165,7 @@ export function createAgentControlsController(
         ? 'effective'
         : view.policy.acknowledgment;
 
-    if (reachedRequested) {
-      pendingCommand = null;
-      latestCommandId = null;
-    }
-
-    const reason = unavailableReason(snapshot, config.viewerOwnerId);
+    const reason = unavailableReason(snapshot, config.viewerOwnerId, hasActionFailure);
     const isViewerOwned = snapshot.binding.ownerId === config.viewerOwnerId;
 
     view = {
@@ -143,10 +176,17 @@ export function createAgentControlsController(
       connection: connectionFrom(snapshot),
       controlsAvailable: reason === null,
       unavailableReason: reason,
+      capabilityDetail: capabilityDetailFor(snapshot),
+      retryAvailable: false,
       notice: pendingClearedByGeneration
         ? { kind: 'binding-replaced', message: 'This agent connection was replaced. Refresh to see the current policy.' }
-        : generationChanged ? null : view.notice,
-      receiptDetail: snapshot.latestReceipt ? receiptLabel(snapshot.latestReceipt) : view.receiptDetail,
+        // A new authoritative snapshot is the dismissal path for a request-failed
+        // notice (model.ts: "dismiss-by-refresh") — the human asked to see the
+        // current truth, so a stale failure notice does not linger past it.
+        : generationChanged || view.notice?.kind === 'request-failed' ? null : view.notice,
+      receiptDetail: generationChanged
+        ? null
+        : snapshot.latestReceipt ? receiptLabel(snapshot.latestReceipt) : view.receiptDetail,
       policy: {
         ...view.policy,
         effectiveMode: snapshot.policy.effectiveMode,
@@ -167,15 +207,36 @@ export function createAgentControlsController(
     notify();
   }
 
-  /** A resolved ack for a superseded request — a newer command was issued while this one was in flight — must never overwrite the winning state. */
+  /**
+   * A resolved ack for a superseded request — a newer command was issued while
+   * this one was in flight — must never overwrite the winning state.
+   * `effective`/`rejected` are the two connector-decided terminal outcomes for
+   * this exact command (KTD1/blocker 4): once either arrives, this command's
+   * identity is retired here — never earlier by a coincidental values-only
+   * snapshot match — so a late-arriving rejection can still override a
+   * tentative "effective" shown from `applySnapshot`, rather than being
+   * dropped as stale (blocker 4). `pending`/`offline` are not decided by this
+   * ack alone and leave the command's identity live for that reconciliation.
+   */
   function applyAck(command: PendingCommand, ack: PolicyAck): void {
     if (latestCommandId !== command.commandId) return;
     if (ack.commandId !== command.commandId) return;
     if (latestSnapshot !== null && ack.bindingId !== latestSnapshot.binding.bindingId) return;
     if (latestSnapshot !== null && ack.generation !== latestSnapshot.policy.generation) return;
 
+    const isTerminal = ack.connectorState === 'effective' || ack.connectorState === 'rejected';
+    if (ack.connectorState === 'rejected') hasActionFailure = true;
+    if (isTerminal) {
+      pendingCommand = null;
+      latestCommandId = null;
+    }
+    const reason = unavailableReason(latestSnapshot, config.viewerOwnerId, hasActionFailure);
+
     view = {
       ...view,
+      controlsAvailable: reason === null,
+      unavailableReason: reason,
+      retryAvailable: false,
       policy: {
         ...view.policy,
         requestedMode: 'review',
@@ -183,6 +244,16 @@ export function createAgentControlsController(
         requestedPaused: command.requestedPaused,
         acknowledgment: ack.connectorState,
         errorCode: ack.errorCode,
+        // `decodePolicyAck` guarantees `effectiveVersion === requestedVersion`
+        // whenever `connectorState` is `effective` (packages/contracts), so an
+        // effective ack for this exact command is authoritative for the
+        // version/mode/paused it just set — the display need not wait for a
+        // separate snapshot to catch up (KTD2: an ack alone never carries mode,
+        // but this command's own requested mode is known context, not inferred
+        // from the ack).
+        ...(ack.connectorState === 'effective'
+          ? { effectiveVersion: ack.effectiveVersion, effectiveMode: 'review' as const, paused: command.requestedPaused }
+          : {}),
       },
       notice: ack.connectorState === 'rejected'
         ? { kind: 'request-failed', message: 'The request was rejected. Refresh to see the current policy.' }
@@ -195,8 +266,15 @@ export function createAgentControlsController(
   function applySubmitFailure(command: PendingCommand): void {
     if (latestCommandId !== command.commandId) return;
 
+    hasActionFailure = true;
+    lastFailedCommand = command;
+    const reason = unavailableReason(latestSnapshot, config.viewerOwnerId, hasActionFailure);
+
     view = {
       ...view,
+      controlsAvailable: reason === null,
+      unavailableReason: reason,
+      retryAvailable: true,
       policy: {
         ...view.policy,
         requestedMode: 'review',
@@ -210,31 +288,20 @@ export function createAgentControlsController(
     notify();
   }
 
-  function requestPause(paused: boolean): void {
-    if (disposed) return;
-    if (!view.controlsAvailable) return;
-    const expectedPolicyVersion = view.policy.effectiveVersion;
-    if (expectedPolicyVersion === null) return;
-
-    const commandId = createId() as CommandId;
-    const command: PendingCommand = {
-      commandId,
-      expectedPolicyVersion,
-      expectedNextVersion: expectedPolicyVersion + 1,
-      expectedGeneration: latestSnapshot?.policy.generation ?? 0,
-      requestedPaused: paused,
-    };
+  /** Shared by a fresh request and a retry of a failed one — a retry reuses the same commandId/expectedPolicyVersion rather than starting a new command (AE2). */
+  function submitCommand(command: PendingCommand): void {
     pendingCommand = command;
-    latestCommandId = commandId;
+    latestCommandId = command.commandId;
 
     view = {
       ...view,
       notice: null,
+      retryAvailable: false,
       policy: {
         ...view.policy,
         requestedMode: 'review',
         requestedVersion: command.expectedNextVersion,
-        requestedPaused: paused,
+        requestedPaused: command.requestedPaused,
         acknowledgment: 'pending',
         errorCode: null,
       },
@@ -243,20 +310,48 @@ export function createAgentControlsController(
 
     const wireCommand: PolicySetCommand = {
       v: 1,
-      commandId,
+      commandId: command.commandId,
       roomId: config.roomId,
       bindingId: config.bindingId,
       peerParticipantId: config.peerParticipantId,
       expectedPolicyVersion: command.expectedPolicyVersion,
       expectedBindingGeneration: command.expectedGeneration,
       mode: 'review',
-      paused,
+      paused: command.requestedPaused,
       issuedAt: new Date().toISOString(),
     };
 
     port.submitPolicy(wireCommand)
       .then(ack => applyAck(command, ack))
       .catch(() => applySubmitFailure(command));
+  }
+
+  function requestPause(paused: boolean): void {
+    if (disposed) return;
+    if (!view.controlsAvailable) return;
+    const expectedPolicyVersion = view.policy.effectiveVersion;
+    if (expectedPolicyVersion === null) return;
+
+    lastFailedCommand = null;
+    submitCommand({
+      commandId: createId() as CommandId,
+      expectedPolicyVersion,
+      expectedNextVersion: expectedPolicyVersion + 1,
+      expectedGeneration: latestSnapshot?.policy.generation ?? 0,
+      requestedPaused: paused,
+    });
+  }
+
+  function retry(): void {
+    if (disposed) return;
+    if (lastFailedCommand === null) return;
+    // Retry bypasses only the action-failure disable it caused, never a
+    // structural block (revoked, wrong owner, unsupported capability) that
+    // may have appeared since — that still requires a refresh, not a retry.
+    if (unavailableReason(latestSnapshot, config.viewerOwnerId, false) !== null) return;
+    const command = lastFailedCommand;
+    lastFailedCommand = null;
+    submitCommand(command);
   }
 
   function readSnapshot(): void {
@@ -282,6 +377,7 @@ export function createAgentControlsController(
     },
     requestPause,
     refresh: readSnapshot,
+    retry,
     dispose() {
       if (disposed) return;
       disposed = true;
