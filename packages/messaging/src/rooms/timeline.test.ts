@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type EventId, type RoomSnapshot, digestMessageContent } from '@khala/contracts/messaging/index';
+import { type EventId, type EventRef, type MessageContent, type RoomSnapshot, digestMessageContent } from '@khala/contracts/messaging/index';
 import type { RoomEntriesView } from './index';
 import type { SubstrateEvent } from './substrate';
 import { deviceId, harness, human, settle, text } from './fixtures/fakes';
@@ -68,7 +68,7 @@ describe('timeline projection', () => {
     t.emit([message('$a', 'Hi\u2028there')]);
     await settle();
     const digest = await digestMessageContent(text('Hi\u2028there'));
-    expect(t.last()?.items[0]?.ref.contentDigest).toBe(digest.ok ? digest.digest : 'unreachable');
+    expect((t.last()?.items[0]?.ref as EventRef | undefined)?.contentDigest).toBe(digest.ok ? digest.digest : 'unreachable');
   });
 
   it('shows an explicit placeholder for an undecryptable event and replaces it once decrypted', async () => {
@@ -81,7 +81,7 @@ describe('timeline projection', () => {
     ]);
     t.emit([message('$x', 'now readable')]);
     await settle();
-    expect(t.last()?.items.map(item => item.content.body)).toEqual(['now readable']);
+    expect(t.last()?.items.map(item => (item.content as MessageContent).body)).toEqual(['now readable']);
   });
 
   it('never downgrades a decrypted event when a replay cannot decrypt it', async () => {
@@ -173,7 +173,7 @@ describe('timeline page', () => {
       },
     };
     const page = await service.timeline({ roomId: room.roomId, cursor: null, limit: 20 });
-    expect(page.kind === 'ok' && page.value.items.map(item => item.content.body)).toEqual(['readable']);
+    expect(page.kind === 'ok' && page.value.items.map(item => (item.content as MessageContent).body)).toEqual(['readable']);
   });
 
   it('rejects invalid page requests and maps substrate failures', async () => {

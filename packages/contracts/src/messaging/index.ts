@@ -18,9 +18,10 @@ export {
   sameSessionBinding,
 } from './identity';
 export {
-  type DigestResult, type EventRef, type MessageContent, type TimelineItem, MESSAGE_ENCODING_V1,
-  decodeEventRef, decodeMessageContent, decodeTimelineItem, digestMessageContent, encodeMessageContent,
-  isContentDigest, sameEventRef, verifyContentDigest,
+  type DigestResult, type EventRef, type MessageContent, type TimelineContent, type TimelineItem,
+  type UnavailableContent, type UnavailableEventRef, type UnavailableReason, MESSAGE_ENCODING_V1, UNAVAILABLE_REASONS,
+  decodeEventRef, decodeMessageContent, decodeTimelineContent, decodeTimelineItem, decodeUnavailableContent,
+  decodeUnavailableEventRef, digestMessageContent, encodeMessageContent, isContentDigest, sameEventRef, verifyContentDigest,
 } from './events';
 export {
   type IntroBatch, type RoomMembership, type RoomPort, type RoomRejection, type RoomSnapshot, type RoomSummary,

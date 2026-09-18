@@ -43,7 +43,8 @@ encrypted blob. An edit produces a new event with a new reference. `decodeTimeli
 `decodeTimelinePage` and `decodeRoomSnapshot` recompute every digest, so a reference paired
 with any other body is rejected. The author device is not checked against the participant's
 current devices, because devices rotate. To approve a specific event, compare the whole
-reference with `sameEventRef`.
+reference with `sameEventRef` — an approval or release API only ever takes an `EventRef`,
+so an `UnavailableEventRef` (see below) can never reach one.
 
 The worked fixture `fixtures/messaging/exact-intro.json` pins 71 bytes and
 `sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b`, computed
@@ -61,6 +62,50 @@ for each of these rules.
 `invalid_content`, or with `crypto_unavailable` when Web Crypto is missing or fails (for
 example on a non-secure origin). The timeline decoders report that case as
 `digest_unavailable` and never as a success.
+
+## Unavailable content
+
+`TimelineItem.content` is `MessageContent` or `UnavailableContent`: `{ v: 1, kind:
+'unavailable', reason }` for an event whose plaintext cannot be shown. `reason` is a
+closed enum of exactly five values, never a free-text SDK error. It maps from
+matrix-js-sdk `DecryptionFailureCode` (see the KHA-142 evidence categories):
+
+| `DecryptionFailureCode` | `reason` |
+|---|---|
+| `MEGOLM_UNKNOWN_INBOUND_SESSION_ID` | `missing_keys` (no room key reached this device) |
+| `MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE` | `withheld_unverified` |
+| `MEGOLM_KEY_WITHHELD` | `withheld` |
+| any other decryption failure | `decrypt_failed` |
+| an unrecognized content kind or version | `unsupported` |
+
+A transport error or timeout is never mapped to one of these reasons: it is a page or
+snapshot failure outcome (`OperationResult`), never a withheld placeholder.
+
+`readTimelineContent` dispatches on `content.kind` alone, never on whether a `reason`
+field is present, and each reader still enforces its own exact field set: a `text`
+content carrying `reason`, or an `unavailable` content carrying `body`, is rejected as
+an unknown field.
+
+Unlike a decryptable item, an `unavailable` `TimelineItem.ref` is an
+`UnavailableEventRef`, not an `EventRef`: it carries the same `roomId`, `eventId`,
+`authorParticipantId` and `authorDeviceId`, but no `contentDigest`, because there is no
+recovered plaintext to hash. `decodeTimelineItem`, `decodeTimelinePage` and
+`decodeRoomSnapshot` therefore skip digest verification for it, and reject a
+`contentDigest` field on its reference outright. `UnavailableEventRef` is missing a
+field `EventRef` requires, so it is not assignable to `EventRef` and cannot reach
+`sameEventRef` or any approval or release API — approvals only ever apply to decrypted
+items. Ordering, per-page dedup and the snapshot room check are unaffected: they key on
+`eventId`, which both reference shapes carry, so a producer may later deliver a
+decrypted item with the same `eventId` as an earlier placeholder; a consumer's store
+replaces the placeholder with that item. UI rendering of the placeholder is out of
+scope here (KHA-123).
+
+Widening `TimelineItem.content` to accept `kind: 'unavailable'` needs the same
+synchronized-deploy discipline as a `v` bump, even though neither `MessageContent`
+nor `TimelineItem` carries a changed version number: a producer that emits an
+unavailable item before every consumer has this contract version will fail that
+consumer's whole page or snapshot decode (`readItems` decodes eagerly, so one
+unrecognized item fails the batch), not just drop the one item.
 
 ## Outcomes
 
@@ -115,9 +160,11 @@ fails with `invalid_limits` rather than allowing unbounded input.
 
 Decoders reject unknown fields. The browser and the connector therefore deploy in
 lockstep for a given contract version. Every envelope with a `v` field (`AuthPrincipal`,
-`SessionBinding`, `EventRef` and `MessageContent`) bumps `v` on any change to its shape,
-and a bump is a reviewed change on both producer and consumer. `SessionBinding` carries
-`v` because the delivery domain mirrors it.
+`SessionBinding`, `EventRef`, `UnavailableEventRef`, `MessageContent` and
+`UnavailableContent`) bumps `v` on any change to its shape, and a bump is a reviewed
+change on both producer and consumer. `SessionBinding` carries `v` because the delivery
+domain mirrors it. `UnavailableEventRef` is a new type, not a change to `EventRef`'s
+shape, so `EventRef` keeps `v: 1`.
 
 ## Open product gates
 
