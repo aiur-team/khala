@@ -1,6 +1,8 @@
 node_modules/
 dist/
 coverage/
+infra/netlify/functions-generated/
+.netlify/
 playwright-report/
 test-results/
 *.tsbuildinfo

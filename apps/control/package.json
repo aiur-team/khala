@@ -13,10 +13,14 @@
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
+    "build:functions": "node --import tsx src/runtime/discover.ts",
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
   },
   "dependencies": {
     "@khala/contracts": "workspace:*",
     "oauth4webapi": "3.8.8"
+  },
+  "devDependencies": {
+    "tsx": "4.20.6"
   }
 }
