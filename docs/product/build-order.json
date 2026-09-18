@@ -662,7 +662,7 @@
    "depends_on": [
     "KHA-103"
    ],
-   "ticket": null,
+   "ticket": 101,
    "doc": "tickets/KHA-145.md"
   },
   {
@@ -674,7 +674,7 @@
    "depends_on": [
     "KHA-104"
    ],
-   "ticket": null,
+   "ticket": 102,
    "doc": "tickets/KHA-146.md"
   },
   {
@@ -688,7 +688,7 @@
     "KHA-145",
     "KHA-146"
    ],
-   "ticket": null,
+   "ticket": 104,
    "doc": "tickets/KHA-147.md"
   },
   {
@@ -701,7 +701,7 @@
     "KHA-101",
     "KHA-147"
    ],
-   "ticket": null,
+   "ticket": 105,
    "doc": "tickets/KHA-148.md"
   },
   {
@@ -717,7 +717,7 @@
     "KHA-147",
     "KHA-148"
    ],
-   "ticket": null,
+   "ticket": 106,
    "doc": "tickets/KHA-149.md"
   },
   {
@@ -733,7 +733,7 @@
     "KHA-147",
     "KHA-148"
    ],
-   "ticket": null,
+   "ticket": 107,
    "doc": "tickets/KHA-150.md"
   },
   {
@@ -746,7 +746,7 @@
     "KHA-147",
     "KHA-148"
    ],
-   "ticket": null,
+   "ticket": 108,
    "doc": "tickets/KHA-151.md"
   },
   {
@@ -761,7 +761,7 @@
     "KHA-123",
     "KHA-125"
    ],
-   "ticket": null,
+   "ticket": 103,
    "doc": "tickets/KHA-152.md"
   },
   {
@@ -777,7 +777,7 @@
     "KHA-151",
     "KHA-152"
    ],
-   "ticket": null,
+   "ticket": 109,
    "doc": "tickets/KHA-153.md"
   }
  ]
