@@ -1,25 +1,47 @@
 # Codex existing-session attachment
 
-**2026-09-17 — supported for one tested pair, with limits.** The pair is codex-cli
-**0.154.0** and a thread hosted by a native `codex app-server --listen unix://…`
-executor. A separate client connection can use `thread/queue/add` to deliver a
-released nonce into that existing thread. The nonce is consumed under the original
-thread ID, by the same native executor, with settings unchanged, and the reply
-recalls the prior context marker. Idle, busy, disconnect, duplicate-executor and
-exit cases all ran against the designated disposable fixture, in two clean runs
-(`bff6ff3b`, then `d2eaf702` with the executor sampled at consumption). AE1 passes;
-AE2 is exercised and holds.
+**2026-09-18: attaching to an existing executor is unproven.** What was proven is
+narrower. It holds for codex-cli **0.154.0** only.
 
-This is **not** a claim that an interactive `codex` TUI started by a human can be
-attached to. See [Limits](#limits-that-bind-kha-106-and-kha-118).
+- **Proven.** Khala starts its own `codex app-server --listen unix://…` and resumes a
+  dormant thread in it with `thread/resume`. A second client connection on that
+  listener can then use `thread/queue/add` to deliver a released nonce. The nonce is
+  consumed under the original thread ID, by the executor Khala started, with
+  settings unchanged, and the reply recalls the prior context marker. Idle and busy
+  delivery, one disconnect case, a duplicate-executor control and exit all ran
+  against the designated disposable fixture.
+- **Not proven: attaching to an executor Khala did not start.** In every run the
+  target was `notLoaded` until the driver's own app-server resumed it, and "same
+  executor" means that host. Delivering into a thread that a human's `codex` TUI,
+  `codex exec`, an IDE or another app-server already hosts was never exercised. Plan
+  R2 warns against inferring that from resume APIs.
+- **A thread that another writer already holds cannot be reached this way.** A
+  second executor's `thread/resume` is refused with `already has an active writer`
+  (the duplicate-executor case).
+
+AE1 passes only in that reframed sense: the session is existing and dormant, and
+Khala hosts it. AE2 is exercised and holds. See
+[Limits](#limits-that-bind-kha-106-and-kha-118).
 
 ## Fixture and consent
 
 Executor designation (issue #13, 2026-09-18T02:38Z): disposable thread
 `01a0b261-639c-7cf1-a6b0-f485ee08dfac`, created with `codex exec` for this test.
-Its workdir is an empty scratch directory. The operator authorized live cases
-against this thread only; no other thread was read or touched. Before the runs,
-the thread held `prior-marker-codex-alpha` from an earlier owner turn
+Its workdir is an empty scratch directory under `~/.cache/khala-disposable/`. The
+operator authorized live cases against this thread only. The live driver now
+refuses any other thread ID, any workdir outside that root, a thread whose native
+`cwd` differs from the workdir, and a thread another process holds
+(`guards.ts`, tested in `guards.test.ts`).
+
+**Before consent, one other session was contacted.** On 2026-09-16, before any
+target had been designated, the read-only preflight (`probe.ts`) tried a
+metadata-only `thread/read` against a real, non-disposable session (this ticket's
+own agent session). It failed at transport, before initialization, so nothing was
+read or written. Its ID has been redacted from
+[preflight.json](../../experiments/codex/evidence/preflight.json); it remains in
+this branch's earlier commits. The live runs touched no thread except the fixture.
+
+Before the runs, the fixture thread held `prior-marker-codex-alpha` from an earlier owner turn
 ([exploration notes](../../experiments/codex/evidence/exploration-notes.md)).
 Delivered text asks for "the prior context marker you were asked to remember" and
 never contains the marker, so a correct reply shows recalled context.
@@ -49,8 +71,14 @@ permission change was involved.
 ## Results — clean run `bff6ff3b`
 
 Report: [live-run.json](../../experiments/codex/evidence/live-run.json)
-(sha256 `9ce94baacc90cd71a17e16df51b55953db7aaa471a54d8f108c532c418b9c830`).
-Times are milliseconds on one monotonic clock in the driver process.
+(sha256 `7cc07e17871b68b37288d31e2c474efbb627e22d9566b561c9ae9fa380618ad6`).
+Times are milliseconds on one monotonic clock in the driver process. This report
+was written by the driver before e7562f0. Its `acceptance` fields came from code that
+compared the original executor PID with itself, so the file now carries an
+`annotation` marking them stale. The verdicts in the table below are re-derived from
+the recorded facts (`acceptance.test.ts`). Every published report has since had the
+model name and the agent scratch path replaced with placeholders, which changed the
+hashes.
 
 | Case | What happened | Same-session acceptance |
 |---|---|---|
@@ -80,7 +108,7 @@ tightened and re-run.
 ## Re-run with the tightened driver — run `d2eaf702`
 
 Report: [live-run-v2.json](../../experiments/codex/evidence/live-run-v2.json)
-(sha256 `b68ce55f7c59e539e5db81281ca9bb05f7c51aa3e24d4142cb33e0cb63f8233b`).
+(sha256 `f3c5143724ffb2146f3a0e10bf42fb208dd1741661be5c0b600c850a64153fcc`).
 At each consumption, the driver now reads which process listens on the executor
 socket (`/proc/net/unix`) and which process holds the writer lock (`/proc/locks`).
 Case conditions are part of the verdict. Every case passed.
@@ -92,6 +120,24 @@ Case conditions are part of the verdict. Every case passed.
 | Disconnect | Write flushed at 48734.4 during `sleep 30` (48719.2–78588.2, exit 0). The same-ID replay created a second entry, which was deleted. | 80772.3, once, in a new turn | listener = lock holder = original |
 | Duplicate executor | `thread/resume` got `-32600 … already has an active writer`, and the rollout was unchanged | none | rejected, as AE2 requires |
 | Exit | Process group emptied and lock released. `codex queue --remote` exited 1 and no replacement process appeared. | none | delivery fails closed |
+
+## Re-run with the guarded driver — run `9a28af84`
+
+Report: [live-run-v3.json](../../experiments/codex/evidence/live-run-v3.json)
+(sha256 `df1771959671a6839033b9b000c9546ad72f3b94dad5063614c2527d211dfd1a`),
+2026-09-18. Before resuming, the driver checked the target allowlist, confirmed that
+no process held the lock, and confirmed that the thread's native `cwd` was the
+fixture workdir. The thread was `notLoaded`, so this run too covers a dormant thread
+that the driver hosted, not attachment to a running one. The disconnect replay was
+off (`replayProbe: false`).
+
+| Case | Delivery | Consumption | Executor at consumption |
+|---|---|---|---|
+| Idle | Queue empty at load and `idle`. Ack at 1096.0. | 2109.8, one entry | listener = lock holder = original |
+| Busy | Ack at 11614.0 while `active`, during `sleep 25` (11593.8–36465.6, exit 0) | 40060.0, in a new turn | listener = lock holder = original |
+| Disconnect | Write flushed at 46949.2 during `sleep 30` (46935.4–76805.2, exit 0), then the socket was dropped. Reconcile found 1 pending entry. There was no replay and nothing was deleted. | 82056.8, once, in a new turn | listener = lock holder = original |
+| Duplicate executor | `thread/resume` got `-32600 … already has an active writer`, and the rollout was unchanged | none | rejected, as AE2 requires |
+| Exit | Process group emptied. After the WebSocket and `codex queue --remote` attempts, no process held the writer lock, and no replacement or new `app-server` process appeared. The rollout was unchanged. | none | delivery fails closed |
 
 ## Findings from the earlier, interrupted runs
 
@@ -109,22 +155,31 @@ Three earlier runs are kept because they surfaced two delivery-safety facts.
   run's "idle" delivery was therefore actually made while `active`, so it is
   treated as a drain observation, not idle evidence:
   [live-run-drain.json](../../experiments/codex/evidence/live-run-drain.json)
-  (sha256 `5716ab18e7a366a9195f9b8ec437e2bc359806cdf15ebd8a0915a961a54f7e41`).
+  (sha256 `18d623c81f766e57766bf660ae8155dc5e1e2d863bc0f67a674a0ccfd0a89e4a`;
+  its `acceptance` fields are annotated as stale, like `live-run.json`'s).
   The driver now waits for an empty queue and `idle` before the idle case.
 - Run `a1ea05d6` confirmed idle consumption and then stopped mid-busy when its
   agent session ended. Its orphaned executor later consumed the queued busy nonce.
 
 ## Limits that bind KHA-106 and KHA-118
 
-- **Tested host, not an interactive TUI.** The existing thread was hosted by an
-  app-server that the agent started (a recorded setup step). A human-started
-  `codex` TUI exposed no reachable control socket in the 2026-09-16 preflight
-  (`<HOME>/.codex/app-server-control/app-server-control.sock` absent;
-  [preflight.json](../../experiments/codex/evidence/preflight.json)). Attaching to
-  a TUI session remains **unproven**. KHA-118 must host sessions behind an
-  app-server listener or get equivalent evidence for the TUI.
+- **Khala-hosted, dormant threads only.** The thread was `notLoaded` until the
+  agent-started app-server resumed it (a recorded setup step), and the delivery went
+  through that app-server's listener. Nothing here shows delivery into a thread that
+  is already running in a TUI, `codex exec`, an IDE or another app-server. A
+  human-started TUI exposed no reachable control socket in the 2026-09-16 preflight
+  (`<HOME>/.codex/app-server-control/app-server-control.sock` absent), and a thread
+  that another writer holds refuses a second `thread/resume`. KHA-118 must either
+  host sessions behind its own app-server listener from the start, or get new
+  evidence for attaching to another executor.
+- **Disconnect coverage is narrow.** Only one disconnect shape was tested: while
+  busy, the full `queue/add` frame was flushed and then the socket was dropped
+  before the response arrived. The entry was durably queued and consumed once. An
+  idle-time drop and a write lost before it reached the listener were not tested.
 - **Replay is unsafe.** A queue receipt is not consumption, and a missing receipt
-  is ambiguous. Reconcile with `thread/queue/list` filtered on
+  is ambiguous. Runs `bff6ff3b` and `d2eaf702` replayed the same
+  `clientUserMessageId` once to observe this, which plan U3 only allows once dedup is
+  established. That replay is now opt-in (`replayProbe`) and off by default. Reconcile with `thread/queue/list` filtered on
   `clientUserMessageId`, and never re-add blindly: a replay creates a duplicate
   that is executed. After a turn has started, dedup must come from the connector
   (for example, checking consumed `userMessage.clientId` in `thread/read` turns),
@@ -136,8 +191,9 @@ Three earlier runs are kept because they surfaced two delivery-safety facts.
   a new executor.
 - **Busy semantics.** Busy delivery waits for the running turn to finish and then
   runs as a new turn. `turn/steer` was not used and is not proven here.
-- **Version pin.** Only codex-cli 0.154.0 on Linux x64 with Node 24.18.0 was
-  tested. Wire shapes come from the installed experimental schema
+- **Version pin.** Only codex-cli 0.154.0 on Linux x64 was tested. The live runs
+  used Node 24.18.0. The offline tests pass on both 24.18.0 and the repository's
+  pinned 22.23.2, and `engines` accepts exactly those two. Wire shapes come from the installed experimental schema
   ([schema/](../../experiments/codex/evidence/schema/), including
   `ThreadQueueDeleteParams.json`). No minimum-version claim is made.
 - **Delivered text** is synthetic and non-secret. Real released content must not
@@ -146,7 +202,8 @@ Three earlier runs are kept because they surfaced two delivery-safety facts.
 
 ## Reproduce
 
-Local validation (no model), from the repository root with Node 24.18.0:
+Local validation (no model), from the repository root with Node 22.23.2 (the
+repository pin) or 24.18.0:
 
 ```sh
 npm --prefix experiments/codex ci

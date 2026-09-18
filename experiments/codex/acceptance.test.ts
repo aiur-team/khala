@@ -60,6 +60,7 @@ test('a busy case needs delivery during a completed controlled command, consumed
   assert.deepEqual(caseConditionFailures({ ...busy, commandStartedAt: null, commandCompletedAt: null, commandExitCode: null, statusAtDelivery: 'idle' }),
     ['not_active_at_delivery', 'controlled_command_not_started', 'controlled_command_not_completed', 'delivery_not_during_command']);
   assert.deepEqual(caseConditionFailures({ ...busy, deliveredAt: 41 }), ['delivery_not_during_command']);
+  assert.deepEqual(caseConditionFailures({ ...busy, deliveredAt: 9 }), ['delivery_not_during_command']);
   assert.deepEqual(caseConditionFailures({ ...busy, consumedInBusyTurn: true }), ['consumed_in_busy_turn']);
 });
 
@@ -102,4 +103,28 @@ test('run d2eaf702 accepts every case with the executor sampled at consumption',
     assert.equal(c.consumption.lockHolderAtConsumption, report.executor.lockHolderAfterLoad, name);
   }
   assert.equal(report.cases.duplicateExecutor.acceptanceIfDuplicateConsumed.accepted, false);
+});
+
+test('run 9a28af84 (guarded driver, no replay) accepts every case and exit leaves no writer', () => {
+  const report = JSON.parse(readFileSync(new URL('./evidence/live-run-v3.json', import.meta.url), 'utf8'));
+  assert.deepEqual(recordedConditions('live-run-v3.json'), { idle: [], busy: [], disconnect: [] });
+  for (const name of ['idle', 'busy', 'disconnect']) {
+    const c = report.cases[name];
+    assert.deepEqual(c.acceptance, { accepted: true, failures: [] }, name);
+    assert.equal(c.consumption.executorPidAtConsumption, report.executor.lockHolderAfterLoad, name);
+    assert.equal(c.consumption.lockHolderAtConsumption, report.executor.lockHolderAfterLoad, name);
+    assert.equal(c.consumption.consumedCount, 1, name);
+  }
+  assert.equal(report.executor.preLoadStatus, 'notLoaded', 'the driver hosted a dormant thread; it did not attach to a running one');
+  assert.deepEqual([report.cases.disconnect.reconcile.replayProbe, report.cases.disconnect.reconcile.sameIdEntriesAfterReplay], [false, 1]);
+  assert.equal(report.cases.duplicateExecutor.resumeSucceeded, false);
+  assert.equal(report.cases.exit.lockHolderAfterAttempts, null);
+  assert.equal(report.cases.exit.replacementProcesses, 0);
+});
+
+test('reports written before the acceptance fix are annotated as stale', () => {
+  for (const file of ['live-run.json', 'live-run-drain.json']) {
+    const report = JSON.parse(readFileSync(new URL(`./evidence/${file}`, import.meta.url), 'utf8'));
+    assert.deepEqual(report.annotation.staleFields, ['cases.idle.acceptance', 'cases.busy.acceptance', 'cases.disconnect.acceptance'], file);
+  }
 });

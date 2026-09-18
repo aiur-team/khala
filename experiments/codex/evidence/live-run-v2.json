@@ -1,4 +1,7 @@
 {
+  "annotation": {
+    "redactedAfterRun": "2026-09-18: model name replaced with <MODEL> and the agent scratch path with <SCRATCH>."
+  },
   "harness": "codex",
   "version": "codex-cli 0.154.0",
   "runId": "d2eaf702",
@@ -11,7 +14,7 @@
     "resumedThreadId": "01a0b261-639c-7cf1-a6b0-f485ee08dfac"
   },
   "settingsAtLoad": {
-    "model": "gpt-6-astra",
+    "model": "<MODEL>",
     "cwd": "<HOME>/.cache/khala-disposable/codex-target",
     "approvalPolicy": "never",
     "sandbox": {
@@ -21,7 +24,7 @@
     "reasoningEffort": "medium"
   },
   "settingsFinal": {
-    "model": "gpt-6-astra",
+    "model": "<MODEL>",
     "cwd": "<HOME>/.cache/khala-disposable/codex-target",
     "approvalPolicy": "never",
     "sandbox": {
@@ -196,7 +199,7 @@
       "connectError": "spawn",
       "cliRemoteQueue": {
         "code": 1,
-        "stderrHead": "Error: failed to connect to remote app server: failed to connect to remote app server at `unix://<HOME>/.aiur/workspaces/aiur-team/khala/13/.aiur-runtime/tmp/kha104-live/exec-d2eaf702.sock`: No such file or directory (os error 2) | ",
+        "stderrHead": "Error: failed to connect to remote app server: failed to connect to remote app server at `unix://<SCRATCH>/exec-d2eaf702.sock`: No such file or directory (os error 2) | ",
         "t": 104.80000000000291
       },
       "replacementProcesses": 0,
@@ -403,7 +406,7 @@
       "method": "item/completed",
       "turnId": "01a0b2a2-115a-7a03-8d43-ae8a7942a7d5",
       "itemType": "agentMessage",
-      "text": "I’ll run `sleep 25` once and wait for it to finish.",
+      "text": "I\u2019ll run `sleep 25` once and wait for it to finish.",
       "threadIdMatches": true
     },
     {
@@ -617,7 +620,7 @@
       "method": "item/completed",
       "turnId": "01a0b2a2-a38a-7433-8a07-df12f977f785",
       "itemType": "agentMessage",
-      "text": "I’ll run `sleep 30` once and wait for it to finish.",
+      "text": "I\u2019ll run `sleep 30` once and wait for it to finish.",
       "threadIdMatches": true
     },
     {

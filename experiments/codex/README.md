@@ -1,14 +1,16 @@
 # Existing-session attachment experiment
 
-**Status: live proof run on the designated disposable fixture. `thread/queue/add`
-through an app-server Unix listener is supported for codex-cli 0.154.0, with limits.**
-This isolated package inventories Codex 0.154.0 and contains a read-only preflight
+**Status: attaching to an executor Khala did not start is unproven.** The live runs
+on the designated disposable fixture prove something narrower for codex-cli 0.154.0.
+When the driver's own `codex app-server` resumes a dormant thread, a second client
+on its Unix listener can deliver into that thread with `thread/queue/add`.
+This isolated package inventories Codex 0.154.0 and contains a retired preflight
 probe (`probe.ts`) and the live fixture driver (`live.ts`). It is not a production
 adapter. See [the evidence report](../../docs/evidence/codex.md).
 
 ## Reproduce local validation
 
-From the repository root, using Node **24.18.0**:
+From the repository root, using Node **22.23.2** (the repository pin) or **24.18.0**:
 
 ```sh
 npm --prefix experiments/codex ci
@@ -19,12 +21,17 @@ npm --prefix experiments/codex test
 
 The test runner is Node's built-in `node:test`, pinned by the Node version; tsx,
 TypeScript, Node types and transitive packages are pinned in this package's lockfile.
-No root install is needed. Tests use fake JSONL subprocesses, never live models.
+No root install is needed. Tests use fake subprocesses, never live models.
 There is no lint configuration in this isolated package.
 
 ## Explicit target
 
-The callable experiment API is `runAttachmentProbe(input)` in `probe.ts`.
+**`probe.ts` is retired.** The plan named `runAttachmentProbe(input)` in `probe.ts` as
+the experiment API. It speaks JSONL through `app-server proxy`, and the live runs
+showed that a real listener speaks WebSocket, so it hangs at `initialize` (see
+below). It is kept, with its tests, only as the record of the 2026-09-16 preflight.
+All live evidence comes from `live.ts`, which has no exported API; KHA-118 should
+consume the route and limits in the evidence report, not this function.
 `ProbeInput` retains the plan's fields and adds optional `release` (default false)
 and `socketPath`. Reports include allowlisted `facts`; no conversation, raw remote
 error, model name, workdir, socket path, or nonce is published. Native thread UUIDs
@@ -88,7 +95,13 @@ driver below uses `ws-rpc.ts` instead.
 ## Live fixture driver
 
 `live.ts` runs every acceptance case against one explicitly designated disposable
-thread, on one monotonic clock:
+thread, on one monotonic clock. Before anything else it refuses (`guards.ts`):
+
+- any thread other than the pinned disposable `01a0b261-639c-7cf1-a6b0-f485ee08dfac`;
+- a workdir, or its symlink target, outside `~/.cache/khala-disposable/`;
+- a rollout that is not that thread's own file under `~/.codex/sessions/`;
+- a thread whose native `cwd` (read before and after resume) differs from the workdir;
+- a thread whose writer lock another process holds.
 
 1. Start a native `codex app-server --listen unix://<scratch>/exec-<run>.sock` in
    the fixture workdir, in its own process group. Refuse if any process already
@@ -101,21 +114,26 @@ thread, on one monotonic clock:
 4. **Busy:** the owner starts a `sleep 25` tool turn, and the notifier delivers
    while it runs. Tools are never interrupted.
 5. **Disconnect:** during a `sleep 30` turn, write `queue/add` and drop the socket
-   with no close handshake. Reconcile with `thread/queue/list`, replay the same
-   `clientUserMessageId` once to observe dedup semantics, and delete any duplicate
-   by `queuedSubmissionId`.
+   with no close handshake. Reconcile with `thread/queue/list`. Only with
+   `"replayProbe": true` does it replay the same `clientUserMessageId` once, to
+   observe dedup semantics. Earlier runs showed that the replay creates a second
+   entry that gets executed, so it is off by default. Any entry that was not pending
+   before the replay is deleted by `queuedSubmissionId`.
 6. **Duplicate executor:** a second app-server attempts `thread/resume`. No input is
    sent to it.
 7. **Exit:** stop the executor's process group, then attempt delivery over WebSocket
-   and with `codex queue --remote`. Verify the writer lock is released, no
-   replacement process exists and the rollout is unchanged.
+   and with `codex queue --remote`. After those attempts, verify that no process
+   holds the writer lock, that no replacement process names the thread or socket,
+   that no new `app-server` process appeared, and that the rollout is unchanged.
 
 Every consumption is judged by `sameSessionAcceptance` in `acceptance.ts`. It uses
 native thread IDs, the executor PIDs sampled at consumption (the socket listener and
 the writer-lock holder) and `userMessage.clientId`, never reply text alone.
 `caseConditionFailures` then rejects a case that did not exercise its state: an
 undrained or non-idle idle case, or a busy delivery outside a completed controlled
-command. On failure, the driver stops every executor it spawned.
+command. On failure, the driver stops every executor it spawned. Published reports
+replace the home directory, the scratch directory and the model name with
+placeholders.
 
 Write the target to a private file (the socket path must stay under 108 bytes):
 

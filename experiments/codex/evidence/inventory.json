@@ -133,12 +133,13 @@
       "experiments/codex/scenario.ts",
       "--stdin"
     ],
-    "target": "current ticket session, read-only metadata preflight only; not a disposable live-send target",
+    "target": "a real non-disposable session (ID redacted), attempted 2026-09-16 before any live target was designated; metadata-only thread/read that failed at transport, so nothing was read. Not a disposable live-send target",
     "rawStdoutSha256": "f3463b959af632b7daea8bb6e963e7d4df5ea1f0414dd352c675820a50e77a7c",
     "release": false,
     "result": "inconclusive"
   },
   "publicationTransforms": [
+    "Redact the non-disposable session ID from preflight.json (2026-09-18 review); the raw stdout hash predates that redaction",
     "Replace HOME and TMPDIR paths with placeholders",
     "Strip trailing whitespace on help/error lines; retain raw SHA256 separately"
   ]

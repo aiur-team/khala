@@ -1,4 +1,13 @@
 {
+  "annotation": {
+    "staleFields": [
+      "cases.idle.acceptance",
+      "cases.busy.acceptance",
+      "cases.disconnect.acceptance"
+    ],
+    "reason": "Written by the pre-e7562f0 driver, whose acceptance compared the original executor PID with itself and did not check case conditions. These 'accepted' values are not a verdict. acceptance.test.ts re-derives the case conditions from the recorded facts; live-run-v2.json and live-run-v3.json carry the current verdicts.",
+    "redactedAfterRun": "2026-09-18: model name replaced with <MODEL> and the agent scratch path with <SCRATCH>."
+  },
   "harness": "codex",
   "version": "codex-cli 0.154.0",
   "runId": "028dd119",
@@ -11,7 +20,7 @@
     "resumedThreadId": "01a0b261-639c-7cf1-a6b0-f485ee08dfac"
   },
   "settingsAtLoad": {
-    "model": "gpt-6-astra",
+    "model": "<MODEL>",
     "cwd": "<HOME>/.cache/khala-disposable/codex-target",
     "approvalPolicy": "never",
     "sandbox": {
@@ -21,7 +30,7 @@
     "reasoningEffort": "medium"
   },
   "settingsFinal": {
-    "model": "gpt-6-astra",
+    "model": "<MODEL>",
     "cwd": "<HOME>/.cache/khala-disposable/codex-target",
     "approvalPolicy": "never",
     "sandbox": {
@@ -184,7 +193,7 @@
       "connectError": "spawn",
       "cliRemoteQueue": {
         "code": 1,
-        "stderrHead": "Error: failed to connect to remote app server: failed to connect to remote app server at `unix://<HOME>/.aiur/workspaces/aiur-team/khala/13/.aiur-runtime/tmp/kha104-live/exec-028dd119.sock`: No such file or directory (os error 2) | ",
+        "stderrHead": "Error: failed to connect to remote app server: failed to connect to remote app server at `unix://<SCRATCH>/exec-028dd119.sock`: No such file or directory (os error 2) | ",
         "t": 164.09999999999127
       },
       "replacementProcesses": 0,
@@ -537,7 +546,7 @@
       "method": "item/completed",
       "turnId": "01a0b283-ce74-7d21-85af-6a6efcb88e6b",
       "itemType": "agentMessage",
-      "text": "I’ll run `sleep 25` once and wait for it to finish.",
+      "text": "I\u2019ll run `sleep 25` once and wait for it to finish.",
       "threadIdMatches": true
     },
     {
@@ -751,7 +760,7 @@
       "method": "item/completed",
       "turnId": "01a0b284-64a8-71c0-a33b-0033e12c4b01",
       "itemType": "agentMessage",
-      "text": "I’ll run `sleep 30` once and wait for it to finish.",
+      "text": "I\u2019ll run `sleep 30` once and wait for it to finish.",
       "threadIdMatches": true
     },
     {

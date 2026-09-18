@@ -6,14 +6,15 @@
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { sameSessionAcceptance, withConditions, type Acceptance, type CaseConditions, type Settings } from './acceptance.js';
+import { assertThreadMatches, refuseIfHeld, runWithCleanup, spawnedLockHolder, validateTarget, type Target } from './guards.js';
+import { groupPids, lockHolder, pidsMatching, socketListenerPid, stopProcess as stopGroup } from './proc.js';
 import { WsRpcClient, type Message } from './ws-rpc.js';
 
-type Target = { threadId: string; workdir: string; rollout: string; priorMarker: string; scratchDir: string; outFile: string };
 type Event = { t: number; conn: string; method: string; threadId?: string; turnId?: string;
   itemType?: string; clientId?: string | null; status?: string; text?: string; exitCode?: number | null; durationMs?: number | null };
 
@@ -21,7 +22,10 @@ const t0 = performance.now();
 const now = () => Math.round((performance.now() - t0) * 10) / 10;
 const events: Event[] = [];
 const waiters = new Set<() => void>();
-const redact = (s: string) => s.split(homedir()).join('<HOME>');
+/** Literal replacements applied to everything published; the scratch dir and model are added once known. */
+const redactions: [string, string][] = [];
+const redact = (s: string) => [...redactions, [homedir(), '<HOME>'] as [string, string]]
+  .reduce((out, [from, to]) => from ? out.split(from).join(to) : out, s);
 
 function record(conn: string, m: Message): void {
   const p = (m.params ?? {}) as Record<string, any>;
@@ -59,33 +63,6 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** Executors this driver started; a failed run must not leave one holding the thread. */
 const spawned: ChildProcess[] = [];
 
-/** PID holding the native thread-writer flock, read from /proc/locks. */
-function lockHolder(threadId: string): number | null {
-  const lock = join(homedir(), '.codex', 'thread-writer-locks', `${threadId}.lock`);
-  if (!existsSync(lock)) return null;
-  const inode = statSync(lock).ino;
-  for (const line of readFileSync('/proc/locks', 'utf8').split('\n')) {
-    const f = line.trim().split(/\s+/);
-    if (f[1] === 'FLOCK' && f[3] === 'WRITE' && f[5]?.split(':')[2] === String(inode)) return Number(f[4]);
-  }
-  return null;
-}
-/** PID owning the listening Unix socket at `path`, via /proc/net/unix and /proc/<pid>/fd. */
-function socketListenerPid(path: string): number | null {
-  const inode = readFileSync('/proc/net/unix', 'utf8').split('\n')
-    .map(line => line.trim().split(/\s+/))
-    .find(f => f[7] === path && f[3] === '00010000')?.[6];
-  if (!inode) return null;
-  for (const entry of readdirSync('/proc')) {
-    if (!/^\d+$/.test(entry)) continue;
-    try {
-      for (const fd of readdirSync(`/proc/${entry}/fd`)) {
-        if (readlinkSync(`/proc/${entry}/fd/${fd}`) === `socket:[${inode}]`) return Number(entry);
-      }
-    } catch { /* exited or not ours */ }
-  }
-  return null;
-}
 let rolloutPath = '';
 function rolloutDigest(): { bytes: number; sha256: string } | null {
   if (!existsSync(rolloutPath)) return null;
@@ -105,30 +82,8 @@ async function startExecutor(sock: string, workdir: string, log: string): Promis
   if (!existsSync(sock)) throw new Error('executor socket did not appear');
   return child;
 }
-/** Live PIDs whose process group is `pgid`, from /proc/<pid>/stat. */
-function groupPids(pgid: number): number[] {
-  const pids: number[] = [];
-  for (const entry of readdirSync('/proc')) {
-    if (!/^\d+$/.test(entry)) continue;
-    try {
-      const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
-      if (Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[2]) === pgid) pids.push(Number(entry));
-    } catch { /* exited while scanning */ }
-  }
-  return pids;
-}
-async function stopProcess(child: ChildProcess): Promise<{ code: number | null; signal: string | null; t: number; groupEmpty: boolean }> {
-  const pgid = child.pid!;
-  const signalGroup = (s: NodeJS.Signals) => { try { process.kill(-pgid, s); } catch { /* group already gone */ } };
-  const exited = child.exitCode !== null || child.signalCode !== null ? Promise.resolve()
-    : new Promise<void>(r => child.once('exit', () => r()));
-  signalGroup('SIGTERM');
-  const timer = setTimeout(() => signalGroup('SIGKILL'), 10_000);
-  await exited;
-  for (let i = 0; i < 100 && groupPids(pgid).length; i++) await sleep(100);
-  clearTimeout(timer);
-  if (groupPids(pgid).length) { signalGroup('SIGKILL'); await sleep(500); }
-  return { code: child.exitCode, signal: child.signalCode, t: now(), groupEmpty: groupPids(pgid).length === 0 };
+async function stopProcess(child: ChildProcess) {
+  return { ...await stopGroup(child), t: now() };
 }
 async function connect(name: string, sock: string, deadlineMs = 300_000): Promise<WsRpcClient> {
   const c = await WsRpcClient.connect(sock, deadlineMs, m => record(name, m));
@@ -142,15 +97,12 @@ const text = (t: string) => [{ type: 'text', text: t, text_elements: [] }];
 function deliveryText(nonce: string): string {
   return `Synthetic approved attachment probe: reply with one line containing exactly ${nonce} followed by the prior context marker you were asked to remember earlier in this conversation. Do not run tools or change settings.`;
 }
-function codexPids(needle: string): Promise<number[]> {
-  return new Promise(r => execFile('pgrep', ['-f', needle], (_e, out) => r(String(out ?? '').split('\n').filter(Boolean).map(Number))));
-}
 
 async function main(target: Target): Promise<void> {
   const { threadId, workdir, priorMarker, scratchDir } = target;
-  if (!/^[0-9a-f-]{36}$/.test(threadId) || !isAbsolute(workdir) || !isAbsolute(scratchDir) ||
-      !target.rollout.endsWith(`-${threadId}.jsonl`)) throw new Error('invalid target');
+  validateTarget(target, homedir(), realpathSync(workdir));
   rolloutPath = target.rollout;
+  redactions.push([scratchDir, '<SCRATCH>']);
   mkdirSync(scratchDir, { recursive: true });
   const runId = randomUUID().slice(0, 8);
   const sockA = join(scratchDir, `exec-${runId}.sock`);
@@ -159,20 +111,22 @@ async function main(target: Target): Promise<void> {
   const version = await new Promise<string>(r => execFile('codex', ['--version'], (_e, o) => r(String(o).trim())));
   const rolloutBefore = rolloutDigest();
   const statusBefore = { lockHolder: lockHolder(threadId) };
-  if (statusBefore.lockHolder !== null) throw new Error('target already held by another executor; refusing');
+  refuseIfHeld(statusBefore.lockHolder);
 
   // Setup: host the designated thread in one native executor. Rejoin without overrides.
   const A = await startExecutor(sockA, workdir, join(scratchDir, `exec-${runId}.stderr`));
   setupActions.push({ actor: 'agent', action: 'Start `codex app-server --listen unix://<scratch>/exec.sock` in the fixture workdir.', t: now() });
   const owner = await connect('owner', sockA);
   const preRead: any = await owner.request('thread/read', { threadId, includeTurns: false });
+  assertThreadMatches(preRead?.thread, target);
   const resumed: any = await owner.request('thread/resume', { threadId, excludeTurns: true });
   setupActions.push({ actor: 'agent', action: 'Owner connection: thread/resume {threadId, excludeTurns:true}; no model/cwd/approval/sandbox overrides.', t: now() });
+  assertThreadMatches({ id: resumed?.thread?.id, cwd: resumed?.cwd }, target);
   const s0 = settingsOf(resumed);
+  if (s0.model) redactions.unshift([s0.model, '<MODEL>']);
   const executor = { pid: A.pid!, lockHolderAfterLoad: lockHolder(threadId), preLoadStatus: preRead?.thread?.status?.type ?? null, resumedThreadId: resumed.thread?.id };
   // The launcher execs a native binary; that binary holds the writer lock and is the executor identity.
-  const nativeA = executor.lockHolderAfterLoad;
-  if (nativeA === null || !groupPids(A.pid!).includes(nativeA)) throw new Error('writer lock is not held by the spawned executor');
+  const nativeA = spawnedLockHolder(executor.lockHolderAfterLoad, groupPids(A.pid!));
   const reread = async (): Promise<Settings> => settingsOf(await owner.request('thread/resume', { threadId, excludeTurns: true }));
 
   async function deliver(label: string, conn: string, opts: { cid?: string; nonce?: string } = {}) {
@@ -267,7 +221,8 @@ async function main(target: Target): Promise<void> {
     cases.busy = { statusAtDelivery, busy: { ...b, ...o, from: undefined }, delivery: d, consumption: c, consumedInBusyTurn,
       acceptance: accept(d, c, before, after, busyConditions(b, o, d.ack, consumedInBusyTurn, statusAtDelivery)) };
   }
-  // Disconnect after write, before response; reconcile; test same-id replay semantics.
+  // Disconnect after write, before response; reconcile. The same-ID replay is an opt-in
+  // semantics probe: earlier runs showed it creates a second, executed entry.
   {
     const before = await reread();
     const b = await busyTurn(30);
@@ -280,15 +235,19 @@ async function main(target: Target): Promise<void> {
     const ackSeenBySender = events.some(e => e.conn === 'notifier-lost' && e.t >= attempt && e.method === 'thread/queue/changed');
     const rec = await connect('notifier-reconcile', sockA);
     const list1: any = await rec.request('thread/queue/list', { threadId });
-    const pendingAfterDisconnect = (list1?.data ?? []).filter((q: any) => q.clientUserMessageId === cid).length;
+    const original = new Set((list1?.data ?? []).filter((q: any) => q.clientUserMessageId === cid).map((q: any) => q.id));
+    const pendingAfterDisconnect = original.size;
     let replay: any = null; let replayError: unknown = null;
-    try { replay = await rec.request('thread/queue/add', { threadId, clientUserMessageId: cid, input: text(deliveryText(nonce)) }); }
-    catch (e: any) { replayError = e?.remote ?? e?.code ?? 'unknown'; }
+    if (target.replayProbe) {
+      try { replay = await rec.request('thread/queue/add', { threadId, clientUserMessageId: cid, input: text(deliveryText(nonce)) }); }
+      catch (e: any) { replayError = e?.remote ?? e?.code ?? 'unknown'; }
+    }
     const list2: any = await rec.request('thread/queue/list', { threadId });
     const matches = (list2?.data ?? []).filter((q: any) => q.clientUserMessageId === cid);
+    // Delete only entries that were not pending before the replay, whatever order list returns.
     let duplicateDeleted = false;
-    if (matches.length > 1) {
-      await rec.request('thread/queue/delete', { threadId, queuedSubmissionId: matches[matches.length - 1].id });
+    for (const q of matches.filter((q: any) => !original.has(q.id))) {
+      await rec.request('thread/queue/delete', { threadId, queuedSubmissionId: q.id });
       duplicateDeleted = true;
     }
     const list3: any = await rec.request('thread/queue/list', { threadId });
@@ -297,7 +256,7 @@ async function main(target: Target): Promise<void> {
     const c = await observeConsumption(cid, nonce, b.from, 240_000);
     const after = await reread();
     cases.disconnect = { busy: { ...b, ...o, from: undefined }, attempt, writeFlushedAt, ackSeenBySender,
-      reconcile: { pendingAfterDisconnect, replayAccepted: Boolean(replay?.queuedSubmission), replayError,
+      reconcile: { pendingAfterDisconnect, replayProbe: Boolean(target.replayProbe), replayAccepted: Boolean(replay?.queuedSubmission), replayError,
         sameIdEntriesAfterReplay: matches.length, duplicateDeleted,
         sameIdEntriesAfterCleanup: (list3?.data ?? []).filter((q: any) => q.clientUserMessageId === cid).length },
       consumption: c, acceptance: accept({ cid, nonce }, c, before, after, busyConditions(b, o, writeFlushedAt, c.turnId === b.busyTurnId)) };
@@ -329,6 +288,7 @@ async function main(target: Target): Promise<void> {
   const sFinal = await reread();
   // Exit: stop the target; delivery must fail closed with no replacement executor.
   {
+    const appServersBefore = new Set(pidsMatching('app-server'));
     await owner.close();
     const stopped = await stopProcess(A);
     const digest = rolloutDigest();
@@ -342,9 +302,12 @@ async function main(target: Target): Promise<void> {
         { timeout: 30_000, killSignal: 'SIGKILL' }, (e: any, _o, err) => r({ code: e ? (e.code ?? null) : 0, stderrHead: redact(String(err).split('\n').filter(l => !l.startsWith('WARNING')).slice(0, 2).join(' | ')), t: now() - started }));
     });
     await sleep(3000);
-    const replacements = [...await codexPids(threadId), ...await codexPids(sockA)];
-    cases.exit = { executorStopped: stopped, lockHolderAfterExit: lockAfterExit, connectError, cliRemoteQueue: cli,
-      replacementProcesses: replacements.length, rolloutUnchangedAfterExitAttempts: JSON.stringify(digest) === JSON.stringify(rolloutDigest()),
+    // Sampled after the delivery attempts: any executor that loaded the thread holds its writer lock.
+    const lockHolderAfterAttempts = lockHolder(threadId);
+    const replacements = [...pidsMatching(threadId), ...pidsMatching(sockA)];
+    const newAppServers = pidsMatching('app-server').filter(p => !appServersBefore.has(p)).length;
+    cases.exit = { executorStopped: stopped, lockHolderAfterExit: lockAfterExit, lockHolderAfterAttempts, connectError, cliRemoteQueue: cli,
+      replacementProcesses: replacements.length, newAppServerProcesses: newAppServers, rolloutUnchangedAfterExitAttempts: JSON.stringify(digest) === JSON.stringify(rolloutDigest()),
       nonceInRollout: readFileSync(rolloutPath, 'utf8').includes(nonce) };
   }
 
@@ -359,8 +322,7 @@ async function main(target: Target): Promise<void> {
 }
 
 const input = JSON.parse(readFileSync(0, 'utf8')) as Target;
-main(input).then(() => process.exit(0), async e => {
+runWithCleanup(() => main(input), spawned, stopGroup).then(() => process.exit(0), e => {
   console.error('live run failed:', redact(String(e?.message ?? e)), e?.method ?? '', e?.remote ? redact(JSON.stringify(e.remote)) : '', e?.stack ? redact(e.stack.split('\n').slice(1, 4).join(' | ')) : '');
-  await Promise.all(spawned.map(stopProcess));
   process.exit(1);
 });
