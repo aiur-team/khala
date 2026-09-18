@@ -51,6 +51,7 @@ export function createFakeReviewPort() {
   let receipts: DeliveryReceipt[] = [];
   const listeners = new Set<() => void>();
   let releaseCounter = 0;
+  let lastCommand: ApprovalCommand | null = null;
 
   function currentView(): ReviewView {
     return { access, bindingId, bindingGeneration, policyVersion, viewerOwnerId, pending, receipts };
@@ -69,6 +70,7 @@ export function createFakeReviewPort() {
       return remove;
     },
     approve: async (command: ApprovalCommand): Promise<ApprovalUiResult> => {
+      lastCommand = command;
       if (access !== 'ready') return { kind: 'rejected', code: 'forbidden' };
       if (command.expectedBindingGeneration !== bindingGeneration) return { kind: 'rejected', code: 'stale_binding' };
       if (command.selection.some(ref => ref.roomId === roomId && ref.eventId === ('outcome_unknown_target' as never))) {
@@ -112,6 +114,10 @@ export function createFakeReviewPort() {
     revoke() {
       access = 'revoked';
       notify();
+    },
+    /** The last `ApprovalCommand` actually sent to `approve`, for asserting the exact wire selection (KTD1). */
+    getLastCommand(): ApprovalCommand | null {
+      return lastCommand;
     },
   };
 }

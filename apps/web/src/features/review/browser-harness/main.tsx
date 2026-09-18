@@ -1,4 +1,5 @@
 import { createRoot } from 'react-dom/client';
+import type { ApprovalCommand } from '@khala/contracts/delivery/index';
 import { AiurShell } from '../../../shell/AiurShell';
 import { KhalaPageFrame } from '../../../shell/KhalaPageFrame';
 import type { NavigationItem } from '../../../shell/types';
@@ -18,6 +19,7 @@ declare global {
       editPending: (eventId: string, body: string) => void;
       bumpBindingGeneration: () => void;
       revoke: () => void;
+      getLastCommand: () => ApprovalCommand | null;
     };
   }
 }
@@ -26,6 +28,7 @@ window.__reviewHarness = {
   editPending: harness.editPending,
   bumpBindingGeneration: harness.bumpBindingGeneration,
   revoke: harness.revoke,
+  getLastCommand: harness.getLastCommand,
 };
 
 // A plain-text render function stands in for the real inert renderer

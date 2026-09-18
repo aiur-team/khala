@@ -253,23 +253,25 @@ describe('review controller', () => {
 
   it('the command selects only the chosen refs, never every pending item', async () => {
     const fake = createFakePort(view({ pending: [item(ref('event-a'), 'a'), item(ref('event-b'), 'b'), item(ref('event-c'), 'c')] }));
-    let sentSelection: readonly string[] = [];
+    let sentSelection: readonly EventRef[] = [];
     fake.setApprove(async command => {
-      sentSelection = command.selection.map(r => r.eventId);
+      sentSelection = command.selection;
       return { kind: 'accepted', releaseIds: ['release_1' as ReleaseId] };
     });
     const controller = createReviewController(fake.port);
     controller.toggleSelect(ref('event-b'), true);
     await controller.submit();
-    expect(sentSelection).toEqual(['event-b']);
+    // Full EventRef equality, digest included — not just the eventId — so the
+    // command's pinned `contentDigest` is provably the captured one (KTD1).
+    expect(sentSelection).toEqual([ref('event-b')]);
     controller.dispose();
   });
 
   it('the command orders the selection in display (pending) order, never click order', async () => {
     const fake = createFakePort(view({ pending: [item(ref('event-a'), 'a'), item(ref('event-b'), 'b'), item(ref('event-c'), 'c')] }));
-    let sentSelection: readonly string[] = [];
+    let sentSelection: readonly EventRef[] = [];
     fake.setApprove(async command => {
-      sentSelection = command.selection.map(r => r.eventId);
+      sentSelection = command.selection;
       return { kind: 'accepted', releaseIds: ['release_1' as ReleaseId] };
     });
     const controller = createReviewController(fake.port);
@@ -278,7 +280,7 @@ describe('review controller', () => {
     controller.toggleSelect(ref('event-a'), true);
     controller.toggleSelect(ref('event-b'), true);
     await controller.submit();
-    expect(sentSelection).toEqual(['event-a', 'event-b', 'event-c']);
+    expect(sentSelection).toEqual([ref('event-a'), ref('event-b'), ref('event-c')]);
     controller.dispose();
   });
 

@@ -61,13 +61,21 @@ function sanitizeView(view: ReviewView): ReviewView {
 }
 
 /**
- * Reorders a selection's references into current display (pending) order,
- * never the order the human happened to click them in — the command's
- * `selection` must reflect what is visibly shown, not click history.
+ * Reorders a selection's captured references into current display (pending)
+ * order, never the order the human happened to click them in. Returns the
+ * exact captured `EventRef`s themselves — never a ref re-derived from the
+ * current `pending` item — so the command's pinned `contentDigest` is always
+ * what was captured at selection time (KTD1), not whatever happens to be in
+ * `pending` at submit time.
  */
 function inDisplayOrder(references: readonly EventRef[], pending: ReviewView['pending']): readonly EventRef[] {
-  const wanted = new Set(references.map(ref => ref.eventId));
-  return pending.filter((item): item is Extract<typeof item, { content: { kind: 'text' } }> => isReadableItem(item) && wanted.has(item.ref.eventId)).map(item => item.ref);
+  const indexByEventId = new Map<string, number>();
+  pending.forEach((item, index) => {
+    if (isReadableItem(item)) indexByEventId.set(item.ref.eventId, index);
+  });
+  return references
+    .filter(ref => indexByEventId.has(ref.eventId))
+    .sort((a, b) => indexByEventId.get(a.eventId)! - indexByEventId.get(b.eventId)!);
 }
 
 function buildCommand(commandId: CommandId, snapshot: NonNullable<ReturnType<typeof toSnapshot>>, pending: ReviewView['pending']): ApprovalCommand {

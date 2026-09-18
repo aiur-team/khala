@@ -6,15 +6,24 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser, type Page } from '@playwright/test';
+import type { ApprovalCommand } from '@khala/contracts/delivery/index';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = join(here, 'browser-harness');
+
+/** Mirrors `browser-harness/fake-review-port.ts`'s `digestFor`, to assert the exact wire digest without reaching into harness internals. */
+function digestFor(body: string): string {
+  let hash = 0;
+  for (let index = 0; index < body.length; index += 1) hash = (Math.imul(hash, 31) + body.charCodeAt(index)) >>> 0;
+  return `sha256:${hash.toString(16).padStart(8, '0').repeat(8)}`;
+}
 
 type ReviewHarness = {
   pushLiveArrival: (body: string) => void;
   editPending: (eventId: string, body: string) => void;
   bumpBindingGeneration: () => void;
   revoke: () => void;
+  getLastCommand: () => ApprovalCommand | null;
 };
 
 declare global {
@@ -95,6 +104,17 @@ test('Review renders full inert preview, keeps selection exact across arrivals, 
     // Release submits the exact selection and shows truthful evidence, not an invented "consumed" state.
     await page.getByRole('button', { name: /^Release 1 selected$/ }).click();
     await page.getByText('Released', { exact: true }).waitFor();
+
+    // The command actually sent on the wire carries the exact selected ref,
+    // digest included (KTD1) — never every pending item, never a ref
+    // re-derived at submit time with a different digest than what was
+    // captured at selection time.
+    const lastCommand = await page.evaluate(() => window.__reviewHarness.getLastCommand());
+    assert.ok(lastCommand, 'a command was sent');
+    assert.deepEqual(
+      lastCommand!.selection.map(sentRef => ({ eventId: sentRef.eventId, contentDigest: sentRef.contentDigest })),
+      [{ eventId: 'pending_1', contentDigest: digestFor('Please forward the deployment summary to the release channel.') }],
+    );
     // The harness's fake connector only ever observes `transport_written` — the
     // release evidence must reflect exactly that fact, never claim the agent
     // read/consumed it (only `context_consumed`/`completed` would justify that).
