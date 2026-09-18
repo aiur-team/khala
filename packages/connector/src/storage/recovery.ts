@@ -15,7 +15,7 @@ export type RecoveryBlocker =
   | 'integrity_failed'
   /** Stored bytes no longer match their recorded digest. */
   | 'payload_damaged'
-  /** An event conflict is quarantined; cursors cannot advance until it is resolved. */
+  /** An unresolved event conflict is quarantined; cursors cannot advance until it is resolved. */
   | 'quarantine_unresolved';
 
 export type RecoveryReport = Readonly<{
@@ -26,6 +26,7 @@ export type RecoveryReport = Readonly<{
   pending: number;
   /** Pending records for a generation older than their binding's current one. */
   staleGenerationPending: number;
+  /** Unresolved quarantine entries. */
   quarantined: number;
   /** Releases with no terminal receipt; their harness outcome may be unknown. */
   unresolvedReleases: readonly ReleaseId[];
@@ -56,7 +57,7 @@ export async function recoverConnectorStorage(storage: ConnectorStorage): Promis
     }
   }
 
-  const quarantined = count(db.prepare('SELECT count(*) AS n FROM quarantine').get());
+  const quarantined = count(db.prepare('SELECT count(*) AS n FROM quarantine WHERE resolved_at IS NULL').get());
   if (quarantined > 0) blocked.push('quarantine_unresolved');
 
   const terminal = TERMINAL_RECEIPTS.map(kind => `'${kind}'`).join(', ');

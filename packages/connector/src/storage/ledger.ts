@@ -11,8 +11,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import {
   type ApprovalResult, type BindingId, type CommandId, type DeliveryLimits, type DeliveryReceipt, type EventId,
   type EventRef, type OwnerId, type ReleaseId, type ReleasedJob, type RoomId, type SessionBinding,
-  type UnverifiedReleasedJob, decodeDeliveryReceipt, decodeEventRef, decodeReleasedJob, decodeSessionBinding,
-  sameEventRef, sameSessionBinding,
+  type UnverifiedReleasedJob, decodeApprovalResult, decodeDeliveryReceipt, decodeEventRef, decodeReleasedJob,
+  decodeSessionBinding, sameEventRef, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
 import { StorageError, toStorageError } from './errors';
 import { assertEpoch } from './leases';
@@ -70,11 +70,15 @@ export type BindingResult =
 
 export type ReleaseConflictCode =
   | 'idempotency_conflict'
+  /** The command record is not the approval, or not the owner, the job names. */
+  | 'command_mismatch'
   | 'stale_ledger'
   | 'invalid_command_result'
   | 'stale_binding'
   | 'pending_missing'
   | 'stale_content'
+  /** A selected pending item already belongs to another release. */
+  | 'already_released'
   | 'payload_digest_mismatch'
   | 'limit_exceeded'
   | 'release_conflict';
@@ -158,6 +162,9 @@ export function runTransaction<T>(ctx: LedgerContext, run: () => T): T {
     assertEpoch(db, ctx.epoch);
     const result = run();
     if (typeof (result as { then?: unknown } | null)?.then === 'function') throw new StorageError('async_transaction');
+    // SQLite rolls some failures (for example SQLITE_FULL) back on its own. If the
+    // callback caught that error and carried on, nothing it did may commit.
+    if (!db.isTransaction) throw new StorageError('transaction_aborted');
     db.exec('COMMIT');
     return result;
   } catch (error) {
@@ -190,6 +197,13 @@ function parseOrCorrupt<T>(json: string, decode: (input: unknown) => { ok: boole
   }
   const decoded = decode(value);
   if (!decoded.ok) throw new StorageError('corrupt');
+  return decoded.value as T;
+}
+
+/** Stores only contract-valid values, in the decoder's canonical field order. */
+function canonical<T>(value: unknown, decode: (input: unknown) => { ok: boolean; value?: T }): T {
+  const decoded = decode(value);
+  if (!decoded.ok) throw new StorageError('invalid_input');
   return decoded.value as T;
 }
 
@@ -238,8 +252,12 @@ export function persistPending(
   input: { key: PendingKey; event: EventRef; plaintext: Uint8Array; receivedAt: string },
   newPayloadRef: () => string,
 ): PersistResult {
-  const { key, event, plaintext, receivedAt } = input;
-  if (key.roomId !== event.roomId || key.eventId !== event.eventId) throw new TypeError('pending key does not name its event');
+  const { key, plaintext, receivedAt } = input;
+  const event = canonical(input.event, decodeEventRef);
+  const validKey = key.roomId === event.roomId && key.eventId === event.eventId
+    && typeof key.recipientBindingId === 'string' && key.recipientBindingId.length > 0
+    && Number.isSafeInteger(key.recipientGeneration) && key.recipientGeneration >= 0;
+  if (!validKey || typeof receivedAt !== 'string' || !(plaintext instanceof Uint8Array)) throw new StorageError('invalid_input');
   const { db } = ctx;
   return runTransaction(ctx, () => {
     const observed = sha256Digest(plaintext);
@@ -278,6 +296,57 @@ export function persistPending(
   });
 }
 
+/** A quarantined conflict. It carries identities and digests only, never content. */
+export type QuarantineEntry = Readonly<{
+  id: number;
+  key: PendingKey;
+  code: PersistConflictCode;
+  observedDigest: string;
+  observedAt: string;
+  resolvedAt: string | null;
+}>;
+
+export function readQuarantine(db: DatabaseSync): readonly QuarantineEntry[] {
+  const rows = db.prepare('SELECT * FROM quarantine ORDER BY id').all() as {
+    id: number; room_id: string; event_id: string; binding_id: string; generation: number; code: string;
+    observed_digest: string; observed_at: string; resolved_at: string | null;
+  }[];
+  return rows.map(row => ({
+    id: row.id,
+    key: {
+      roomId: row.room_id as RoomId,
+      eventId: row.event_id as EventId,
+      recipientBindingId: row.binding_id as BindingId,
+      recipientGeneration: row.generation,
+    },
+    code: row.code as PersistConflictCode,
+    observedDigest: row.observed_digest,
+    observedAt: row.observed_at,
+    resolvedAt: row.resolved_at,
+  }));
+}
+
+/**
+ * The owner acknowledges a conflict. The originally stored record always stays as it
+ * is; resolving never adopts the conflicting content, it only lets replay move on.
+ */
+export function resolveQuarantine(
+  ctx: LedgerContext,
+  input: { id: number; resolvedAt: string },
+): Readonly<{ kind: 'resolved' | 'already_resolved' }> | Readonly<{ kind: 'conflict'; code: 'unknown_entry' }> {
+  const { db } = ctx;
+  return runTransaction(ctx, () => {
+    const row = db.prepare('SELECT resolved_at FROM quarantine WHERE id = ?').get(input.id) as
+      | { resolved_at: string | null }
+      | undefined;
+    if (row === undefined) return { kind: 'conflict', code: 'unknown_entry' } as const;
+    if (row.resolved_at !== null) return { kind: 'already_resolved' } as const;
+    db.prepare('UPDATE quarantine SET resolved_at = ? WHERE id = ?').run(input.resolvedAt, input.id);
+    bumpRevision(db);
+    return { kind: 'resolved' } as const;
+  });
+}
+
 export function readCursor(db: DatabaseSync, streamId: string): { revision: number; opaqueCursor: string } | null {
   const row = db.prepare('SELECT revision, opaque_cursor FROM cursors WHERE stream_id = ?').get(streamId) as
     | { revision: number; opaque_cursor: string }
@@ -292,7 +361,7 @@ export function commitCursor(
 ): CursorResult {
   const { db } = ctx;
   return runTransaction(ctx, () => {
-    const unresolved = db.prepare('SELECT 1 FROM quarantine LIMIT 1').get();
+    const unresolved = db.prepare('SELECT 1 FROM quarantine WHERE resolved_at IS NULL LIMIT 1').get();
     if (unresolved !== undefined) return { kind: 'blocked', code: 'quarantine_unresolved' } as const;
     const current = readCursor(db, input.streamId)?.revision ?? 0;
     if (current !== input.expectedRevision) return { kind: 'conflict', code: 'stale_revision', revision: current } as const;
@@ -320,6 +389,7 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): Ledge
   const { db, limits } = ctx;
   const live = () => {
     if (!isLive()) throw new StorageError('closed');
+    if (!db.isTransaction) throw new StorageError('transaction_aborted');
   };
 
   const readBinding = (bindingId: BindingId): SessionBinding | null => {
@@ -337,7 +407,8 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): Ledge
     const row = db.prepare('SELECT input_digest, result FROM commands WHERE owner_id = ? AND command_id = ?')
       .get(ownerId, commandId) as { input_digest: string; result: string } | undefined;
     if (!row) return null;
-    return { ownerId, commandId, inputDigest: row.input_digest, result: JSON.parse(row.result) as ApprovalResult };
+    const result = parseOrCorrupt<ApprovalResult>(row.result, input => decodeApprovalResult(input, limits));
+    return { ownerId, commandId, inputDigest: row.input_digest, result };
   };
 
   const readRelease = (releaseId: ReleaseId): StoredRelease | null => {
@@ -369,8 +440,9 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): Ledge
       return readBinding(bindingId);
     },
 
-    putBinding(binding) {
+    putBinding(input) {
       live();
+      const binding = canonical(input, decodeSessionBinding);
       const stored = readBinding(binding.bindingId);
       if (stored !== null) {
         if (sameSessionBinding(stored, binding)) return { kind: 'duplicate' };
@@ -394,20 +466,24 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): Ledge
       return readCommand(ownerId, commandId);
     },
 
-    putRelease({ command, job, payload, expectedLedgerRevision }) {
+    putRelease({ command, job: input, payload, expectedLedgerRevision }) {
       live();
+      const job = canonical(input, value => decodeReleasedJob(value, limits));
+      const result = canonical(command.result, value => decodeApprovalResult(value, limits));
+      if (!/^sha256:[0-9a-f]{64}$/.test(command.inputDigest) || !(payload instanceof Uint8Array)) {
+        throw new StorageError('invalid_input');
+      }
+      // A retry of the same command replays its committed outcome, whatever release ID
+      // the retry minted; the same command ID with different input is refused.
       const existing = readCommand(command.ownerId, command.commandId);
       if (existing !== null) {
-        const stored = readRelease(job.releaseId);
-        const same = existing.inputDigest === command.inputDigest
-          && stored !== null
-          && stored.commandId === command.commandId
-          && stored.job.payloadDigest === job.payloadDigest;
-        return same ? { kind: 'duplicate' } : { kind: 'conflict', code: 'idempotency_conflict' };
+        return existing.inputDigest === command.inputDigest ? { kind: 'duplicate' } : { kind: 'conflict', code: 'idempotency_conflict' };
+      }
+      if (command.commandId !== job.approval.commandId || command.ownerId !== job.binding.ownerId) {
+        return { kind: 'conflict', code: 'command_mismatch' };
       }
       if (readRevision(db) !== expectedLedgerRevision) return { kind: 'conflict', code: 'stale_ledger' };
 
-      const { result } = command;
       if (!result.ok || result.releaseIds.length !== 1 || result.releaseIds[0] !== job.releaseId) {
         return { kind: 'conflict', code: 'invalid_command_result' };
       }
@@ -417,6 +493,9 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): Ledge
         const record = readPendingAt(event, binding);
         if (record === null) return { kind: 'conflict', code: 'pending_missing' };
         if (!sameEventRef(record.event, event)) return { kind: 'conflict', code: 'stale_content' };
+        const taken = db.prepare(`SELECT 1 FROM release_items WHERE room_id = ? AND event_id = ? AND binding_id = ?
+          AND generation = ?`).get(event.roomId, event.eventId, binding.bindingId, binding.generation);
+        if (taken !== undefined) return { kind: 'conflict', code: 'already_released' };
       }
       if (payload.byteLength > limits.maxPayloadBytes) return { kind: 'conflict', code: 'limit_exceeded' };
       if (sha256Digest(payload) !== job.payloadDigest) return { kind: 'conflict', code: 'payload_digest_mismatch' };
@@ -430,6 +509,9 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): Ledge
       insertPayload(db, job.payloadRef, payload);
       db.prepare(`INSERT INTO releases (release_id, owner_id, command_id, payload_ref, job, ledger_revision)
         VALUES (?, ?, ?, ?, ?, ?)`).run(job.releaseId, command.ownerId, command.commandId, job.payloadRef, JSON.stringify(job), revision);
+      const claim = db.prepare(`INSERT INTO release_items (room_id, event_id, binding_id, generation, release_id)
+        VALUES (?, ?, ?, ?, ?)`);
+      for (const event of job.events) claim.run(event.roomId, event.eventId, binding.bindingId, binding.generation, job.releaseId);
       return { kind: 'committed' };
     },
 
@@ -438,8 +520,9 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): Ledge
       return readRelease(releaseId);
     },
 
-    appendReceipt({ receipt }) {
+    appendReceipt({ receipt: input }) {
       live();
+      const receipt = canonical(input, decodeDeliveryReceipt);
       const stored = db.prepare('SELECT receipt FROM receipts WHERE receipt_id = ?').get(receipt.receiptId) as
         | { receipt: string }
         | undefined;

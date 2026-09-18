@@ -68,6 +68,14 @@ export function prepareStatePath(directory: string, mode: OpenMode): string {
     stats = lstatOrNull(dir);
   }
   if (stats === null || !stats.isDirectory() || !ownerOnly(stats)) throw new StorageError('unsafe_path');
+  // No symlinked ancestor either: the state must live exactly where it was configured.
+  let real: string;
+  try {
+    real = fs.realpathSync(dir);
+  } catch {
+    throw new StorageError('io_failed');
+  }
+  if (real !== dir) throw new StorageError('unsafe_path');
 
   const ledger = path.join(dir, LEDGER_FILE);
   checkFile(ledger);
@@ -85,6 +93,21 @@ export function prepareStatePath(directory: string, mode: OpenMode): string {
     }
   }
   return ledger;
+}
+
+export type FileIdentity = Readonly<{ dev: number; ino: number }>;
+
+export function fileIdentity(target: string): FileIdentity {
+  const stats = lstatOrNull(target);
+  if (stats === null || !stats.isFile()) throw new StorageError('unsafe_path');
+  return { dev: stats.dev, ino: stats.ino };
+}
+
+/** After open: the file SQLite opened must still be the one that was validated. */
+export function assertSameFile(target: string, expected: FileIdentity): void {
+  checkFile(target);
+  const now = fileIdentity(target);
+  if (now.dev !== expected.dev || now.ino !== expected.ino) throw new StorageError('unsafe_path');
 }
 
 /**

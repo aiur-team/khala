@@ -3,6 +3,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { StorageError } from './errors';
+import type { OpenMode } from './leases';
 
 /** `PRAGMA application_id`: ASCII "KHLA", so a foreign SQLite file is refused. */
 export const APPLICATION_ID = 0x4b484c41;
@@ -42,7 +43,8 @@ CREATE TABLE quarantine (
   generation INTEGER NOT NULL,
   code TEXT NOT NULL,
   observed_digest TEXT NOT NULL,
-  observed_at TEXT NOT NULL
+  observed_at TEXT NOT NULL,
+  resolved_at TEXT
 ) STRICT;
 
 CREATE TABLE cursors (
@@ -75,6 +77,16 @@ CREATE TABLE releases (
   FOREIGN KEY (owner_id, command_id) REFERENCES commands (owner_id, command_id)
 ) STRICT;
 
+-- Each pending item (event + recipient generation) is released at most once.
+CREATE TABLE release_items (
+  room_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  release_id TEXT NOT NULL REFERENCES releases (release_id),
+  PRIMARY KEY (room_id, event_id, binding_id, generation)
+) STRICT;
+
 CREATE TABLE receipts (
   receipt_id TEXT PRIMARY KEY,
   release_id TEXT NOT NULL,
@@ -96,12 +108,14 @@ function pragmaNumber(db: DatabaseSync, name: string): number {
  * caller's open transaction. A newer schema is never downgraded, and a file that is
  * SQLite but not this ledger is `corrupt`, never adopted.
  */
-export function prepareSchema(db: DatabaseSync): void {
+export function prepareSchema(db: DatabaseSync, mode: OpenMode): void {
   const applicationId = pragmaNumber(db, 'application_id');
   const version = pragmaNumber(db, 'user_version');
   const tables = (db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table'").get() as { n: number }).n;
 
   if (applicationId === 0 && version === 0 && tables === 0) {
+    // An empty ledger where state should exist was lost or truncated, not new.
+    if (mode === 'existing') throw new StorageError('corrupt');
     db.exec(SCHEMA_V1);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);

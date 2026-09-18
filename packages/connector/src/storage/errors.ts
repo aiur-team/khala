@@ -14,6 +14,8 @@ export const STORAGE_ERROR_CODES = [
   'fenced',
   'identity_mismatch',
   'payload_unavailable',
+  'invalid_input',
+  'transaction_aborted',
   'async_transaction',
   'nested_transaction',
 ] as const;

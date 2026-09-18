@@ -6,10 +6,11 @@ import { DatabaseSync } from 'node:sqlite';
 import type { DeliveryLimits, DeviceId, EventRef } from '@khala/contracts/delivery/index';
 import { StorageError, toStorageError } from './errors';
 import {
-  type ConnectorLedger, type CursorResult, type LedgerContext, type PendingKey, type PersistResult,
-  commitCursor, createLedgerTx, persistPending, readCursor, readReleasedPayload, runTransaction,
+  type ConnectorLedger, type CursorResult, type LedgerContext, type PendingKey, type PersistResult, type QuarantineEntry,
+  commitCursor, createLedgerTx, persistPending, readCursor, readQuarantine, readReleasedPayload, resolveQuarantine,
+  runTransaction,
 } from './ledger';
-import { type OpenMode, acquireExclusiveLock, claimEpoch, prepareStatePath } from './leases';
+import { type OpenMode, acquireExclusiveLock, assertSameFile, claimEpoch, fileIdentity, prepareStatePath } from './leases';
 import { newPayloadRef } from './payloads';
 import { prepareSchema } from './schema';
 
@@ -42,6 +43,9 @@ export interface ConnectorStorage {
   }): Promise<PersistResult>;
   readCursor(streamId: string): Promise<Readonly<{ revision: number; opaqueCursor: string }> | null>;
   commitCursor(input: { streamId: string; expectedRevision: number; opaqueCursor: string }): Promise<CursorResult>;
+  /** Conflicts that keep cursors blocked until the owner resolves them. */
+  readQuarantine(): Promise<readonly QuarantineEntry[]>;
+  resolveQuarantine(input: { id: number; resolvedAt: string }): Promise<ReturnType<typeof resolveQuarantine>>;
   /** Resolves an opaque handle only while a release references it. */
   readReleasedPayload(payloadRef: string): Promise<Uint8Array>;
   /**
@@ -60,6 +64,7 @@ export const storageInternals = new WeakMap<ConnectorStorage, { ctx: LedgerConte
 
 export async function openConnectorStorage(options: ConnectorStorageOptions): Promise<ConnectorStorage> {
   const file = prepareStatePath(options.directory, options.mode);
+  const identity = fileIdentity(file);
 
   let db: DatabaseSync;
   try {
@@ -71,6 +76,7 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
   let epoch: number;
   try {
     acquireExclusiveLock(db);
+    assertSameFile(file, identity);
     db.exec('PRAGMA foreign_keys = ON');
     if (options.maxBytes !== undefined) {
       const pageSize = (db.prepare('PRAGMA page_size').get() as { page_size: number }).page_size;
@@ -78,7 +84,7 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
     }
     db.exec('BEGIN IMMEDIATE');
     try {
-      prepareSchema(db);
+      prepareSchema(db, options.mode);
       epoch = claimEpoch(db);
       db.exec('COMMIT');
     } catch (error) {
@@ -113,6 +119,16 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
     async commitCursor(input) {
       guard();
       return commitCursor(ctx, input);
+    },
+
+    async readQuarantine() {
+      guard();
+      return readQuarantine(db);
+    },
+
+    async resolveQuarantine(input) {
+      guard();
+      return resolveQuarantine(ctx, input);
     },
 
     async readReleasedPayload(payloadRef) {
