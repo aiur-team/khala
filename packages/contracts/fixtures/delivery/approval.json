@@ -1,0 +1,189 @@
+{
+  "_comment": "KHA-106 approval examples. Authority is trusted composition input, never browser JSON accepted by a decoder. Results describe downstream policy/composition outcomes; this pure contract fixture does not claim storage or harness execution.",
+  "limits": {
+    "maxSelectionEvents": 2,
+    "maxPayloadBytes": 4096
+  },
+  "authority": {
+    "ownerId": "owner-b",
+    "issuer": "https://identity.example.test",
+    "subject": "owner-b-subject",
+    "authenticatedAt": "2026-09-18T00:00:00Z",
+    "authorizationId": "authorization-b-1"
+  },
+  "otherOwnerAuthority": {
+    "ownerId": "owner-c",
+    "issuer": "https://identity.example.test",
+    "subject": "owner-c-subject",
+    "authenticatedAt": "2026-09-18T00:00:00Z",
+    "authorizationId": "authorization-c-1"
+  },
+  "approvalCommand": {
+    "v": 1,
+    "commandId": "approve-1",
+    "roomId": "room-1",
+    "bindingId": "bind-b-1",
+    "expectedPolicyVersion": 3,
+    "expectedBindingGeneration": 0,
+    "selection": [
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-7",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+      },
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-8",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "issuedAt": "2026-09-18T00:00:00Z"
+  },
+  "sameIdSameInput": {
+    "v": 1,
+    "commandId": "approve-1",
+    "roomId": "room-1",
+    "bindingId": "bind-b-1",
+    "expectedPolicyVersion": 3,
+    "expectedBindingGeneration": 0,
+    "selection": [
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-7",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+      },
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-8",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "issuedAt": "2026-09-18T00:00:00Z"
+  },
+  "sameIdChangedInput": {
+    "v": 1,
+    "commandId": "approve-1",
+    "roomId": "room-1",
+    "bindingId": "bind-b-1",
+    "expectedPolicyVersion": 3,
+    "expectedBindingGeneration": 0,
+    "selection": [
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-8",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-7",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+      }
+    ],
+    "issuedAt": "2026-09-18T00:00:00Z"
+  },
+  "staleContentCommand": {
+    "v": 1,
+    "commandId": "approve-stale-content-1",
+    "roomId": "room-1",
+    "bindingId": "bind-b-1",
+    "expectedPolicyVersion": 3,
+    "expectedBindingGeneration": 0,
+    "selection": [
+      {
+        "v": 1,
+        "roomId": "room-1",
+        "eventId": "event-a-7",
+        "authorParticipantId": "agent-a",
+        "authorDeviceId": "dev-a",
+        "contentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "issuedAt": "2026-09-18T00:00:00Z"
+  },
+  "policySetCommand": {
+    "v": 1,
+    "commandId": "policy-1",
+    "roomId": "room-1",
+    "bindingId": "bind-b-1",
+    "peerParticipantId": "agent-a",
+    "expectedPolicyVersion": 3,
+    "expectedBindingGeneration": 0,
+    "mode": "review",
+    "paused": false,
+    "issuedAt": "2026-09-18T00:00:00Z"
+  },
+  "policyAcks": {
+    "effective": {
+      "commandId": "policy-1",
+      "bindingId": "bind-b-1",
+      "generation": 0,
+      "requestedVersion": 4,
+      "effectiveVersion": 4,
+      "connectorState": "effective",
+      "errorCode": null
+    },
+    "stalePolicy": {
+      "commandId": "policy-1",
+      "bindingId": "bind-b-1",
+      "generation": 0,
+      "requestedVersion": 4,
+      "effectiveVersion": 3,
+      "connectorState": "rejected",
+      "errorCode": "stale_policy"
+    },
+    "outcomeUnknown": {
+      "commandId": "policy-1",
+      "bindingId": "bind-b-1",
+      "generation": 0,
+      "requestedVersion": null,
+      "effectiveVersion": null,
+      "connectorState": "offline",
+      "errorCode": "outcome_unknown"
+    }
+  },
+  "approvalResults": {
+    "approved": {
+      "ok": true,
+      "releaseIds": ["release-1"]
+    },
+    "sameIdChangedInput": {
+      "ok": false,
+      "code": "idempotency_conflict"
+    },
+    "stalePolicy": {
+      "ok": false,
+      "code": "stale_policy"
+    },
+    "crossOwnerBinding": {
+      "ok": false,
+      "code": "forbidden"
+    },
+    "invalidContent": {
+      "ok": false,
+      "code": "stale_content"
+    },
+    "outcomeUnknown": {
+      "ok": false,
+      "code": "outcome_unknown",
+      "operationId": "approval-operation-1"
+    }
+  }
+}
