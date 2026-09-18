@@ -8,12 +8,14 @@ export const STORAGE_ERROR_CODES = [
   'corrupt',
   'schema_unsupported',
   'storage_full',
+  'limit_exceeded',
   'io_failed',
   'closed',
   'fenced',
   'identity_mismatch',
   'payload_unavailable',
   'async_transaction',
+  'nested_transaction',
 ] as const;
 
 export type StorageErrorCode = (typeof STORAGE_ERROR_CODES)[number];
