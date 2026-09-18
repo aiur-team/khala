@@ -95,16 +95,30 @@ silently inherits a permissive policy from the superseded binding. A snapshot
 reporting an effective version older than the one already displayed is
 ignored outright, so out-of-order delivery cannot roll the display backward.
 
-A values-only snapshot match (no command identity in the snapshot) is a
-*tentative* "effective" — it is how a request whose own ack never resolved
-decisively (`offline`/`pending`) is eventually reconciled once the connector
-reconnects, but it is not proof this exact command produced the match. The
-command's identity is kept alive through it rather than retired: if this
-command's own ack later arrives `rejected`, `applyAck` still overrides the
-tentative "effective" instead of the ack being dropped as stale. The match
-also requires `effectiveMode === 'review'`, since this panel never requests
-`'auto'` and a snapshot can otherwise coincidentally agree on version/
-generation/`paused` while reporting the unrelated mode.
+A values-only snapshot match (no command identity in the snapshot) is the
+distinct, *tentative* `'matches'` state — never `'effective'`/"confirmed",
+which is reserved for this exact command's own terminal ack. It is how a
+request whose own ack never resolved decisively (`offline`/`pending`) is
+eventually reconciled once the connector reconnects, but it is not proof this
+exact command produced the match, so the panel renders it as "current policy
+matches your request" rather than claiming confirmation. The command's
+identity is kept alive through it rather than retired: if this command's own
+ack later arrives `rejected`, `applyAck` still overrides the tentative
+`'matches'` instead of the ack being dropped as stale; conversely, a
+late-arriving non-terminal ack (`pending`/`offline`) for the same command never
+downgrades an already-`'matches'` display, since the snapshot is more current
+than that stale in-flight ack. The match also requires
+`effectiveMode === 'review'`, since this panel never requests `'auto'` and a
+snapshot can otherwise coincidentally agree on version/generation/`paused`
+while reporting the unrelated mode.
+
+An `'effective'` ack for this exact command is normally authoritative for the
+version/mode/paused it just set without waiting for a separate snapshot to
+catch up — except when a newer authoritative snapshot already arrived while
+the ack was in flight, in which case the ack's older values are dropped
+rather than rolling the display backward (and, symmetrically, a subsequent
+request always targets `latestSnapshot`'s version, never the view's, so it
+can never build on a version an in-flight ack tried to write).
 
 ## Failure handling
 
@@ -159,10 +173,14 @@ reason paragraph so its id is exposed by name, not just adjacent text.
   rejected/network-failure handling (AE1/AE2), stale-ack and stale-snapshot
   rejection, a rejected ack overriding a coincidentally matching snapshot
   instead of being dropped, an `auto`-mode or wrong-version snapshot never
-  confirming a review request, `retry()` reusing the failed command's exact
-  identity, the paused-value identity check against a competing tab,
-  binding-generation resets, and the exact wire command sent (`mode` is
-  always `'review'`).
+  reaching `'matches'`/`'effective'`, `retry()` reusing the failed command's
+  exact identity, the paused-value identity check against a competing tab,
+  binding-generation resets, a late `'effective'` ack never rolling the
+  display backward past a newer snapshot (and the next request targeting the
+  snapshot's version, not the stale ack's), a late non-terminal ack never
+  downgrading an already-`'matches'` display, `errorCode` on a non-rejected
+  ack, the receipt clearing on generation change, and the exact wire command
+  sent (`mode` is always `'review'`).
 - `AgentControlsPanel.test.tsx` — static markup assertions
   (`react-dom/server`) for scope visibility, disabled-control wording,
   pause-vs-resume request labelling (including once paused), the rejected/

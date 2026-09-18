@@ -2,7 +2,13 @@ import type { BindingId, OwnerId, PolicyAckErrorCode } from '@khala/contracts/de
 
 export type PolicyMode = 'review' | 'auto';
 
-export type PolicyAcknowledgment = 'pending' | 'effective' | 'offline' | 'rejected' | 'unknown';
+/**
+ * `'effective'` is reserved for this exact command's own terminal ack from
+ * the connector — never for a values-only snapshot coincidence, which is
+ * `'matches'` instead (a request that could have been satisfied by anyone,
+ * not proof this command produced it).
+ */
+export type PolicyAcknowledgment = 'pending' | 'effective' | 'matches' | 'offline' | 'rejected' | 'unknown';
 
 /**
  * Requested and effective state are tracked independently: an ack echoing the

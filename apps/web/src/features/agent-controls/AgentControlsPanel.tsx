@@ -27,6 +27,7 @@ const CONNECTION_LABEL: Record<AgentControlsView['connection'], string> = {
 const ACKNOWLEDGMENT_TONE: Record<AgentControlsView['policy']['acknowledgment'], StatusTone> = {
   pending: 'caution',
   effective: 'positive',
+  matches: 'positive',
   offline: 'critical',
   rejected: 'critical',
   unknown: 'critical',
@@ -50,6 +51,10 @@ function effectivePolicyLabel(view: AgentControlsView): string {
 const ACKNOWLEDGMENT_SUFFIX: Record<AgentControlsView['policy']['acknowledgment'], string> = {
   pending: ' — request pending',
   effective: ' — confirmed',
+  // A values-only snapshot match is not proof this command's own ack settled
+  // — it is worded as agreement with current state, never "confirmed", which
+  // is reserved for this exact command's own terminal ack.
+  matches: ' — current policy matches your request',
   offline: ' — connector offline, request pending',
   rejected: ' — request rejected',
   unknown: ' — outcome unknown, connector unreachable',

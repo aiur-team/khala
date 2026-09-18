@@ -14,7 +14,7 @@ const harnessRoot = join(here, 'browser-harness');
 // fabricated ports (see browser-harness/main.tsx) — no real harness sessions,
 // network calls or connector credentials. Narrow viewports per
 // docs/evidence/ui-planning-grounding.md.
-test('AgentControlsPanel requests a pause, confirms it effective via role="status", and keyboard focus survives the round trip', { timeout: 90_000 }, async () => {
+test('AgentControlsPanel requests a pause, reconciles it via a values-only snapshot match through role="status", and keyboard focus survives the round trip', { timeout: 90_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-agent-controls-dist-'));
   const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-agent-controls-profile-'));
   let server: PreviewServer | undefined;
@@ -66,10 +66,13 @@ test('AgentControlsPanel requests a pause, confirms it effective via role="statu
     const bodyText = await page.locator('body').innerText();
     assert.equal(/stopped|cancelled/i.test(bodyText), false, 'pending pause never claims the model stopped or was cancelled');
 
-    // The harness resolves the command as effective; the live region's text
-    // updates to the confirmed wording — this is what actually announces to
-    // assistive tech, not just a static label appearing on the page.
-    await statusRegion.getByText(/confirmed/).waitFor({ timeout: 5_000 });
+    // The harness's own ack for this command never resolves "effective" (it
+    // stays honestly "pending" until applied); the harness then pushes a
+    // snapshot that values-only matches the request. The live region's text
+    // updates to the tentative "matches" wording, never "confirmed" — this is
+    // what actually announces to assistive tech, not just a static label
+    // appearing on the page.
+    await statusRegion.getByText(/current policy matches your request/).waitFor({ timeout: 5_000 });
     await page.getByText(/Review required, paused/).waitFor({ timeout: 5_000 });
     assert.equal(
       await pauseButton.evaluate(node => node === document.activeElement),

@@ -147,10 +147,13 @@ export function createAgentControlsController(
     // reconciliation path for a request whose own ack never resolved
     // decisively (offline/pending) — required for the offline-reconnect case
     // (plan state diagram). It is not proof that *this* command produced the
-    // match, so the command's identity is kept alive rather than retired here:
-    // if this command's own ack later arrives rejected, `applyAck` can still
-    // override this tentative "effective" instead of the ack being dropped as
-    // stale (blocker 4). `effectiveMode` is checked because a snapshot can
+    // match, so it is rendered as the distinct `'matches'` state, never
+    // `'effective'`/"confirmed" — that wording is reserved for this exact
+    // command's own terminal ack (blocker: false "confirmed"). The command's
+    // identity is kept alive rather than retired here: if this command's own
+    // ack later arrives rejected, `applyAck` can still override this
+    // tentative "matches" instead of the ack being dropped as stale
+    // (blocker 4). `effectiveMode` is checked because a snapshot can
     // otherwise coincidentally match version/generation/paused while reporting
     // the unrelated `auto` mode this panel never requests.
     const reachedRequested = pendingCommand !== null
@@ -162,7 +165,7 @@ export function createAgentControlsController(
     const nextAcknowledgment: AgentControlsView['policy']['acknowledgment'] = pendingClearedByGeneration
       ? 'pending'
       : reachedRequested
-        ? 'effective'
+        ? 'matches'
         : view.policy.acknowledgment;
 
     const reason = unavailableReason(snapshot, config.viewerOwnerId, hasActionFailure);
@@ -225,12 +228,35 @@ export function createAgentControlsController(
     if (latestSnapshot !== null && ack.generation !== latestSnapshot.policy.generation) return;
 
     const isTerminal = ack.connectorState === 'effective' || ack.connectorState === 'rejected';
+    // A values-only snapshot match already showed this command's request as
+    // satisfied (`applySnapshot`'s tentative `'matches'`). A late-arriving
+    // non-terminal ack (pending/offline) for the same command is stale
+    // information relative to that authoritative snapshot and must not
+    // downgrade the display back to "pending"/"offline" (P2).
+    if (!isTerminal && view.policy.acknowledgment === 'matches') return;
     if (ack.connectorState === 'rejected') hasActionFailure = true;
     if (isTerminal) {
       pendingCommand = null;
       latestCommandId = null;
     }
     const reason = unavailableReason(latestSnapshot, config.viewerOwnerId, hasActionFailure);
+
+    // `decodePolicyAck` guarantees `effectiveVersion === requestedVersion`
+    // whenever `connectorState` is `effective` (packages/contracts), so an
+    // effective ack for this exact command is normally authoritative for the
+    // version/mode/paused it just set without waiting for a separate snapshot
+    // to catch up (KTD2: an ack alone never carries mode, but this command's
+    // own requested mode is known context, not inferred from the ack).
+    // *Except* when a newer authoritative snapshot has already arrived while
+    // this ack was in flight: writing the ack's older values then would roll
+    // the display backward and poison the next request's `expectedPolicyVersion`
+    // with a version the connector has already superseded. So the write is
+    // skipped whenever it would move the effective version backward relative
+    // to the latest snapshot already seen.
+    const ackEffectiveVersionIsCurrent = latestSnapshot === null
+      || latestSnapshot.policy.effectiveVersion === null
+      || ack.effectiveVersion === null
+      || ack.effectiveVersion >= latestSnapshot.policy.effectiveVersion;
 
     view = {
       ...view,
@@ -244,14 +270,7 @@ export function createAgentControlsController(
         requestedPaused: command.requestedPaused,
         acknowledgment: ack.connectorState,
         errorCode: ack.errorCode,
-        // `decodePolicyAck` guarantees `effectiveVersion === requestedVersion`
-        // whenever `connectorState` is `effective` (packages/contracts), so an
-        // effective ack for this exact command is authoritative for the
-        // version/mode/paused it just set — the display need not wait for a
-        // separate snapshot to catch up (KTD2: an ack alone never carries mode,
-        // but this command's own requested mode is known context, not inferred
-        // from the ack).
-        ...(ack.connectorState === 'effective'
+        ...(ack.connectorState === 'effective' && ackEffectiveVersionIsCurrent
           ? { effectiveVersion: ack.effectiveVersion, effectiveMode: 'review' as const, paused: command.requestedPaused }
           : {}),
       },
@@ -329,7 +348,12 @@ export function createAgentControlsController(
   function requestPause(paused: boolean): void {
     if (disposed) return;
     if (!view.controlsAvailable) return;
-    const expectedPolicyVersion = view.policy.effectiveVersion;
+    // Sourced from `latestSnapshot`, never the displayed `view`, so a request
+    // always targets the version the connector actually last confirmed — the
+    // view can otherwise show a request-derived (not snapshot-confirmed)
+    // effective version transiently, and that must never be what the next
+    // command's `expectedPolicyVersion` is built from.
+    const expectedPolicyVersion = latestSnapshot?.policy.effectiveVersion ?? null;
     if (expectedPolicyVersion === null) return;
 
     lastFailedCommand = null;
