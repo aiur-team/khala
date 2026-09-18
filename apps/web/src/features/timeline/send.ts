@@ -1,8 +1,10 @@
-// Send + reconcile: keeps one local pending echo bound to its `clientTxnId`
-// until a durable event carrying that same transaction arrives through the
-// controller's merged items. An `outcome_unknown` result is resolved by
-// re-sending the *same* transaction identity, never a fresh send with new
-// bytes (R3; AE2).
+// Send + reconcile: keeps every local pending echo bound to its own
+// `clientTxnId` until a durable event carrying that same transaction arrives
+// through the controller's merged items. A `failed` or `outcome_unknown`
+// result is resolved by re-sending the *same* transaction identity, never a
+// fresh send with new bytes (R3; AE2) — the transport dedups on
+// `clientTxnId`, so retrying a definite failure is as safe as resolving an
+// ambiguous one.
 
 import type { RoomId } from '@khala/contracts/messaging/ids';
 import type { MessageContent, RoomPort } from '@khala/contracts/messaging/index';
@@ -34,8 +36,8 @@ export async function sendDraft(roomPort: RoomPort, roomId: RoomId, clientTxnId:
   return { clientTxnId, content, phase: phaseFor(result) };
 }
 
-/** Re-resolves an `outcome_unknown` transaction by re-sending the identical transaction/content. */
-export async function resolveOutcomeUnknown(roomPort: RoomPort, roomId: RoomId, pending: PendingSend): Promise<PendingSend> {
+/** Retries a `failed` or `outcome_unknown` pending send by re-sending the identical transaction/content. */
+export async function retrySend(roomPort: RoomPort, roomId: RoomId, pending: PendingSend): Promise<PendingSend> {
   const result = await roomPort.send({ roomId, clientTxnId: pending.clientTxnId, content: pending.content });
   return { ...pending, phase: phaseFor(result) };
 }

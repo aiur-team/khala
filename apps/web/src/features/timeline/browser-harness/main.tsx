@@ -16,10 +16,15 @@ declare global {
     __timelineHarness: {
       pushLiveMessage: (body: string) => void;
       bumpGeneration: () => void;
+      revokeMembership: () => void;
     };
   }
 }
-window.__timelineHarness = { pushLiveMessage: harness.pushLiveMessage, bumpGeneration: harness.bumpGeneration };
+window.__timelineHarness = {
+  pushLiveMessage: harness.pushLiveMessage,
+  bumpGeneration: harness.bumpGeneration,
+  revokeMembership: harness.revokeMembership,
+};
 
 function Harness() {
   return (

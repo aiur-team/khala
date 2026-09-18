@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EventId, RoomId } from '@khala/contracts/messaging/ids';
 import type { MessageContent, RoomPort } from '@khala/contracts/messaging/index';
 import { ok, outcomeUnknown, rejected, unavailable } from '@khala/contracts/messaging/outcomes';
-import { isReconciled, resolveOutcomeUnknown, sendDraft } from './send';
+import { isReconciled, retrySend, sendDraft } from './send';
 
 const roomId = 'room_demo' as RoomId;
 const content: MessageContent = { v: 1, kind: 'text', body: 'hello' };
@@ -45,12 +45,21 @@ describe('sendDraft', () => {
   });
 });
 
-describe('resolveOutcomeUnknown', () => {
-  it('AE2: resolves the same transaction identity — never a fresh retry with new bytes', async () => {
+describe('retrySend', () => {
+  it('AE2: resolves an outcome_unknown transaction by the same transaction identity — never a fresh retry with new bytes', async () => {
     const { port, calls } = portWithResults([outcomeUnknown('txn_1'), ok({ clientTxnId: 'txn_1', state: 'accepted', eventRef: null })]);
     const first = await sendDraft(port as RoomPort, roomId, 'txn_1', content);
     expect(first.phase).toBe('outcome_unknown');
-    const resolved = await resolveOutcomeUnknown(port as RoomPort, roomId, first);
+    const resolved = await retrySend(port as RoomPort, roomId, first);
+    expect(resolved).toEqual({ clientTxnId: 'txn_1', content, phase: 'accepted' });
+    expect(calls).toEqual(['txn_1:hello', 'txn_1:hello']);
+  });
+
+  it('retries a definite failure through the same transaction identity, so the transport dedups instead of double-sending', async () => {
+    const { port, calls } = portWithResults([rejected('too_large'), ok({ clientTxnId: 'txn_1', state: 'accepted', eventRef: null })]);
+    const first = await sendDraft(port as RoomPort, roomId, 'txn_1', content);
+    expect(first.phase).toBe('failed');
+    const resolved = await retrySend(port as RoomPort, roomId, first);
     expect(resolved).toEqual({ clientTxnId: 'txn_1', content, phase: 'accepted' });
     expect(calls).toEqual(['txn_1:hello', 'txn_1:hello']);
   });
@@ -61,12 +70,5 @@ describe('isReconciled', () => {
     const pending = { clientTxnId: 'txn_1', content, phase: 'accepted' as const };
     expect(isReconciled(pending, [{ clientTxnId: null }, { clientTxnId: 'txn_1' }])).toBe(true);
     expect(isReconciled(pending, [{ clientTxnId: null }])).toBe(false);
-  });
-
-  it('a replay of the same event does not add a second row (dedupe is the caller item list, already deduped by eventId)', () => {
-    const pending = { clientTxnId: 'txn_alice_4', content, phase: 'accepted' as const };
-    const items = [{ clientTxnId: 'txn_alice_4' }];
-    expect(isReconciled(pending, items)).toBe(true);
-    expect(items).toHaveLength(1);
   });
 });

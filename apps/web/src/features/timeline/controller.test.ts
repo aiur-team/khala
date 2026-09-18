@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import type { RoomPort, RoomSnapshot, TimelineItem } from '@khala/contracts/messaging/index';
-import { ok, unavailable, type Disposer } from '@khala/contracts/messaging/outcomes';
+import { ok, rejected, unavailable, type Disposer } from '@khala/contracts/messaging/outcomes';
 import { createTimelineController } from './controller';
 
 const roomId = 'room_demo' as RoomId;
@@ -150,6 +150,82 @@ describe('createTimelineController', () => {
 
     controller.setReaderAtLatest(true);
     expect(controller.getSnapshot().newMessageCount).toBe(0);
+    controller.dispose();
+  });
+
+  it('never counts arrivals while the reader is already at latest (the default before any setReaderAtLatest call)', () => {
+    const { port, emit } = fakeRoomPort();
+    const controller = createTimelineController(port, roomId, { generation: 1 });
+
+    emit({ room, items: [item('E1', 'alice', 'one')], snapshotRevision: 'rev_1', generation: 1 });
+    expect(controller.getSnapshot().newMessageCount).toBe(0);
+    controller.dispose();
+  });
+
+  it('a forbidden first page with no items loaded leaves the room unavailable, never a false-empty "ready"', async () => {
+    const port: Pick<RoomPort, 'observe' | 'timeline'> = {
+      observe: (): Disposer => () => {},
+      timeline: async () => rejected('forbidden'),
+    };
+    const controller = createTimelineController(port as RoomPort, roomId, { generation: 1 });
+    await controller.loadOlder();
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.phase).toBe('unavailable');
+    expect(snapshot.items).toEqual([]);
+    controller.dispose();
+  });
+
+  it('a forbidden first page arriving after a live snapshot already showed items reports "partial", not "ready" with the gap hidden', async () => {
+    const listeners = new Set<(snapshot: RoomSnapshot) => void>();
+    const port: Pick<RoomPort, 'observe' | 'timeline'> = {
+      observe: (_roomId, listener): Disposer => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      timeline: async () => rejected('forbidden'),
+    };
+    const controller = createTimelineController(port as RoomPort, roomId, { generation: 1 });
+    listeners.forEach(listener => listener({ room, items: [item('E1', 'alice', 'live')], snapshotRevision: 'rev_1', generation: 1 }));
+    expect(controller.getSnapshot().phase).toBe('ready');
+
+    await controller.loadOlder();
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.phase).toBe('partial');
+    expect(snapshot.items.map(entry => entry.ref.eventId)).toEqual(['E1']);
+    controller.dispose();
+  });
+
+  it('carries the room membership from the snapshot, including revoked/left', () => {
+    const { port, emit } = fakeRoomPort();
+    const controller = createTimelineController(port, roomId, { generation: 1 });
+    expect(controller.getSnapshot().membership).toBeNull();
+
+    emit({ room: { ...room, membership: 'revoked' }, items: [], snapshotRevision: 'rev_1', generation: 1 });
+    expect(controller.getSnapshot().membership).toBe('revoked');
+    controller.dispose();
+  });
+
+  it('deduplicates an older page against rows already known from an earlier page, never rendering a duplicate row', async () => {
+    let call = 0;
+    const port: Pick<RoomPort, 'observe' | 'timeline'> = {
+      observe: (): Disposer => () => {},
+      timeline: async () => {
+        call += 1;
+        // The second page overlaps the first by event E4 (a flaky backend
+        // returning an already-seen boundary row), which must not duplicate.
+        if (call === 1) return ok({ items: [item('E5', 'alice', 'five'), item('E4', 'alice', 'four')], nextCursor: 'c1', snapshotRevision: 'rev_1' });
+        return ok({ items: [item('E4', 'alice', 'four'), item('E3', 'alice', 'three')], nextCursor: null, snapshotRevision: 'rev_2' });
+      },
+    };
+    const controller = createTimelineController(port as RoomPort, roomId, { generation: 1 });
+    await controller.loadOlder();
+    await controller.loadOlder();
+    const ids = controller.getSnapshot().items.map(entry => entry.ref.eventId);
+    // The overlapping E4 from the second page is dropped, not duplicated; the
+    // second page's surviving additions prepend ahead of the first page.
+    expect(ids).toEqual(['E3', 'E5', 'E4']);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.filter(id => id === 'E4')).toHaveLength(1);
     controller.dispose();
   });
 });

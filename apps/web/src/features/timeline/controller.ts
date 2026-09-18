@@ -5,7 +5,7 @@
 // ID and caches an immutable snapshot for the store contract.
 
 import type { RoomId } from '@khala/contracts/messaging/ids';
-import type { RoomPort, RoomRejection, RoomSnapshot, TimelineItem, TimelinePage } from '@khala/contracts/messaging/index';
+import type { RoomMembership, RoomPort, RoomRejection, RoomSnapshot, TimelineItem, TimelinePage } from '@khala/contracts/messaging/index';
 import { isCurrentGeneration, type OperationResult } from '@khala/contracts/messaging/outcomes';
 import type { TimelinePhase } from './model';
 
@@ -16,6 +16,8 @@ export type TimelineData = Readonly<{
   items: readonly TimelineItem[];
   nextCursor: string | null;
   newMessageCount: number;
+  /** `null` until the first room snapshot arrives. `revoked`/`left` means the viewer can no longer read or send live. */
+  membership: RoomMembership | null;
 }>;
 
 export interface TimelineController {
@@ -45,6 +47,7 @@ export function createTimelineController(
   let newMessageCount = 0;
   let readerAtLatest = true;
   let disposed = false;
+  let membership: RoomMembership | null = null;
 
   let cachedItems: readonly TimelineItem[] | null = null;
   let itemsDirty = true;
@@ -63,7 +66,7 @@ export function createTimelineController(
 
   function getSnapshot(): TimelineData {
     if (!dataDirty && cachedData) return cachedData;
-    cachedData = { phase, items: mergedItems(), nextCursor, newMessageCount };
+    cachedData = { phase, items: mergedItems(), nextCursor, newMessageCount, membership };
     dataDirty = false;
     return cachedData;
   }
@@ -88,6 +91,7 @@ export function createTimelineController(
     const arrivedCount = snapshot.items.filter(item => !previouslyKnown.has(item.ref.eventId)).length;
     recent = snapshot.items;
     itemsDirty = true;
+    membership = snapshot.room.membership;
     phase = 'ready';
     if (!readerAtLatest) newMessageCount += arrivedCount;
     notify();
@@ -116,7 +120,11 @@ export function createTimelineController(
     const result = await roomPort.timeline({ roomId, cursor: nextCursor, limit: pageSize });
     if (disposed) return null;
     if (result.kind !== 'ok') {
-      if (phase === 'loading' && older.length === 0 && recent.length === 0) phase = 'unavailable';
+      // Any history failure is reported, never silently swallowed as a full,
+      // empty room: with no items at all it's `unavailable`; with some items
+      // already known (from a live snapshot or an earlier page) it's
+      // `partial`, since the transcript is known-incomplete rather than done.
+      phase = older.length > 0 || recent.length > 0 ? 'partial' : 'unavailable';
       notify();
       return result;
     }
@@ -124,7 +132,7 @@ export function createTimelineController(
     const additions = result.value.items.filter(item => !knownIds.has(item.ref.eventId));
     older = [...additions, ...older];
     nextCursor = result.value.nextCursor;
-    if (phase === 'loading') phase = 'ready';
+    phase = 'ready';
     itemsDirty = true;
     notify();
     return result;

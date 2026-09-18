@@ -42,12 +42,14 @@ export function createFakeRoomPort() {
     makeItem('recent_3', alice, 'A fenced snippet:\n```ts\nconst risky = "<script>alert(1)</script>";\n```'),
   ];
   let generation = 1;
+  let membership: RoomSnapshot['room']['membership'] = 'joined';
   const listeners = new Set<(snapshot: RoomSnapshot) => void>();
   const outcomeUnknownTxns = new Set<string>();
+  const failOnceTxns = new Set<string>();
 
   function currentSnapshot(): RoomSnapshot {
     return {
-      room: { roomId, title: 'Harness room', membership: 'joined', revision: 'rev_1' },
+      room: { roomId, title: 'Harness room', membership, revision: 'rev_1' },
       items: recent,
       snapshotRevision: `rev_${recent.length}`,
       generation,
@@ -69,6 +71,17 @@ export function createFakeRoomPort() {
       if (content.body.startsWith('__outcome_unknown')) {
         outcomeUnknownTxns.add(clientTxnId);
         return outcomeUnknown(clientTxnId);
+      }
+      if (failOnceTxns.has(clientTxnId)) {
+        failOnceTxns.delete(clientTxnId);
+        const item = makeItem(clientTxnId, alice, content.body, clientTxnId);
+        recent = [...recent, item];
+        listeners.forEach(listener => listener(currentSnapshot()));
+        return ok({ clientTxnId, state: 'accepted', eventRef: item.ref });
+      }
+      if (content.body.startsWith('__fail_once')) {
+        failOnceTxns.add(clientTxnId);
+        return { kind: 'rejected', code: 'invalid_request' };
       }
       const item = makeItem(clientTxnId, alice, content.body, clientTxnId);
       recent = [...recent, item];
@@ -99,6 +112,10 @@ export function createFakeRoomPort() {
     },
     bumpGeneration() {
       generation += 1;
+    },
+    revokeMembership() {
+      membership = 'revoked';
+      listeners.forEach(listener => listener(currentSnapshot()));
     },
   };
 }

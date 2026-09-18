@@ -55,10 +55,15 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     assert.equal(await page.locator('pre code', { hasText: '<script>alert(1)</script>' }).count(), 1);
 
     // Attribution: the review action slot is present per exact EventRef, and
-    // both a human and an agent author are visibly distinguished.
+    // each row is labeled by its own author's kind and ownership — Alice's
+    // row (a human, not owned by the harness viewer... the harness viewer
+    // *is* Alice, so her own rows read "You") and the release agent's row
+    // (owned by Alice, the viewer) read "Your agent", scoped to that row.
     await page.getByTestId('review-recent_1').waitFor();
-    assert.equal(await page.getByText('Human', { exact: true }).count() > 0, true);
-    assert.equal(await page.getByText('Agent', { exact: true }).count() > 0, true);
+    const welcomeRow = page.locator('[data-event-id="recent_1"]');
+    await welcomeRow.getByText('You', { exact: true }).waitFor();
+    const agentRow = page.locator('[data-event-id="recent_2"]');
+    await agentRow.getByText('Your agent', { exact: true }).waitFor();
 
     // Send + reconcile: composing and sending a human message shows exactly
     // one row for it once accepted (no duplicate local-echo row survives).
@@ -75,6 +80,17 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.getByRole('button', { name: 'Check delivery' }).click();
     await page.getByText('__outcome_unknown please confirm').waitFor();
     assert.equal(await page.getByText('__outcome_unknown please confirm').count(), 1, 'resolving outcome_unknown does not duplicate the message');
+
+    // A definite failure shows "Not delivered" with a Retry action that
+    // resolves through the same transaction; the draft is not lost and a
+    // second, independently pending send is not silently dropped by it.
+    await composer.fill('__fail_once please retry');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByText('Not delivered').waitFor();
+    await page.getByRole('button', { name: 'Retry' }).click();
+    await page.getByText('__fail_once please retry').waitFor();
+    assert.equal(await page.getByText('__fail_once please retry').count(), 1, 'retrying a failed send does not duplicate the message');
+    assert.equal(await page.getByText('Not delivered').count(), 0, 'the failed row clears once the retry is accepted');
 
     // Pagination preserves the reader's anchored event *within the scrollable
     // list* after prepending 20+ older rows. Measured relative to the list's
@@ -115,6 +131,12 @@ test('Timeline renders attributed history, stays inert, reconciles sends and pre
     await page.getByRole('button', { name: /new message/ }).click();
     assert.equal(await page.getByRole('button', { name: /new message/ }).count(), 0, 'jump-to-latest clears the new-message count');
     assert.equal(await page.getByText('a live arrival while scrolled away').count(), 1);
+
+    // A revoked membership shows an explicit state and disables the composer;
+    // it never leaves the reader typing into a room they can no longer reach.
+    await page.evaluate(() => (window as unknown as { __timelineHarness: { revokeMembership: () => void } }).__timelineHarness.revokeMembership());
+    await page.getByText('no longer have access').waitFor();
+    assert.equal(await composer.isDisabled(), true, 'the composer is disabled once membership is revoked');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

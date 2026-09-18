@@ -1,5 +1,5 @@
 // The route panel: attributed rows, pagination that preserves the reader's
-// anchor, a jump-to-latest affordance, and a composer that reconciles one
+// anchor, a jump-to-latest affordance, and a composer that reconciles each
 // local send against its durable event. App-owned controls (the optional
 // review-action slot) render outside the message-content renderer, so
 // message syntax can never create them (KTD4).
@@ -7,11 +7,11 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { RoomId } from '@khala/contracts/messaging/ids';
 import type { EventRef, ParticipantView, RoomPort } from '@khala/contracts/messaging/index';
-import { attributionFor, ATTRIBUTION_KIND_LABEL } from './attribution';
+import { attributionFor, buildDisplayNameResolver, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent } from './message-renderer';
 import { anchorToTopVisible, restoreScrollTop } from './scroll-anchor';
-import { isReconciled, resolveOutcomeUnknown, sendDraft, type PendingSend } from './send';
+import { isReconciled, retrySend, sendDraft, type PendingSend } from './send';
 import type { ReaderAnchor } from './model';
 
 export interface TimelineScreenProps {
@@ -45,14 +45,20 @@ function sendStateLabel(phase: PendingSend['phase']): string {
   }
 }
 
+const CAN_COMPOSE: ReadonlySet<string> = new Set(['joining', 'joined']);
+
 export function TimelineScreen({ controller, roomPort, roomId, viewer, renderReviewAction }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [draft, setDraft] = useState('');
-  const [pending, setPending] = useState<PendingSend | null>(null);
+  // Every send keeps its own row by `clientTxnId` until reconciled: a later
+  // send never silently replaces an earlier failed/outcome_unknown one (R3).
+  const [pendingList, setPendingList] = useState<readonly PendingSend[]>([]);
   const [atLatest, setAtLatest] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const listRef = useRef<HTMLOListElement | null>(null);
   const anchorRef = useRef<ReaderAnchor>({ atLatest: true });
+
+  const canCompose = data.membership === null || CAN_COMPOSE.has(data.membership);
 
   useEffect(() => {
     controller.setReaderAtLatest(atLatest);
@@ -65,8 +71,16 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
   }, [controller]);
 
   useEffect(() => {
-    if (pending && isReconciled(pending, data.items)) setPending(null);
-  }, [pending, data.items]);
+    setPendingList(list => {
+      const reconciled = list.filter(entry => isReconciled(entry, data.items));
+      if (reconciled.length === 0) return list;
+      // The draft is kept until a send is durably accepted (KTD3/AE2); once
+      // it reconciles, clear it — but only if the reader hasn't already
+      // started composing something new on top of it.
+      setDraft(current => (reconciled.some(entry => entry.content.body === current) ? '' : current));
+      return list.filter(entry => !isReconciled(entry, data.items));
+    });
+  }, [data.items]);
 
   useEffect(() => {
     const list = listRef.current;
@@ -97,22 +111,23 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
 
   async function handleSend(): Promise<void> {
     const body = draft.trim();
-    if (!body || (pending && pending.phase === 'pending')) return;
-    const content = { v: 1 as const, kind: 'text' as const, body: draft };
+    if (!body || !canCompose) return;
+    const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
-    setDraft('');
-    setPending({ clientTxnId, content, phase: 'pending' });
+    setPendingList(list => [...list, { clientTxnId, content, phase: 'pending' }]);
     const result = await sendDraft(roomPort as RoomPort, roomId, clientTxnId, content);
-    setPending(result);
+    setPendingList(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
   }
 
-  async function handleRetryUnknown(): Promise<void> {
-    if (!pending || pending.phase !== 'outcome_unknown') return;
-    const result = await resolveOutcomeUnknown(roomPort as RoomPort, roomId, pending);
-    setPending(result);
+  async function handleRetry(entry: PendingSend): Promise<void> {
+    if (entry.phase !== 'failed' && entry.phase !== 'outcome_unknown') return;
+    setPendingList(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? { ...item, phase: 'pending' } : item)));
+    const result = await retrySend(roomPort as RoomPort, roomId, entry);
+    setPendingList(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? result : item)));
   }
 
-  const showPendingRow = pending !== null && !isReconciled(pending, data.items);
+  const resolveDisplayName = buildDisplayNameResolver([...data.items.map(item => item.participant), viewer]);
+  const anySendPending = pendingList.some(entry => entry.phase === 'pending');
 
   return (
     <section className="timeline" aria-label="Conversation">
@@ -128,7 +143,12 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
       ) : null}
       {data.phase === 'partial' ? (
         <p className="timeline__status" role="status">
-          Showing part of the conversation.
+          Showing part of the conversation. Some history could not be loaded.
+        </p>
+      ) : null}
+      {data.membership === 'revoked' || data.membership === 'left' ? (
+        <p className="timeline__status timeline__status--membership" role="alert">
+          You no longer have access to this conversation.
         </p>
       ) : null}
       {data.nextCursor !== null ? (
@@ -147,14 +167,14 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
       >
         {data.items.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">No messages yet.</li> : null}
         {data.items.map(item => {
-          const attribution = attributionFor(item.participant);
+          const attribution = attributionFor(item.participant, viewer.ownerId);
           return (
             <li key={item.ref.eventId} data-event-id={item.ref.eventId} className="timeline__row">
               <header className="timeline__row-header">
                 <span className="timeline__author" dir="auto">
-                  {attribution.displayName}
+                  {resolveDisplayName(item.participant)}
                 </span>
-                <span className="timeline__kind">{ATTRIBUTION_KIND_LABEL[attribution.kind]}</span>
+                <span className="timeline__kind">{ownershipLabel(attribution)}</span>
                 <time className="timeline__timestamp" dateTime={item.receivedAt}>
                   {item.receivedAt}
                 </time>
@@ -164,22 +184,28 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
             </li>
           );
         })}
-        {showPendingRow ? (
-          <li className="timeline__row timeline__row--pending" aria-live="polite">
+        {pendingList.map(entry => (
+          <li key={entry.clientTxnId} className="timeline__row timeline__row--pending" aria-live="polite">
             <header className="timeline__row-header">
               <span className="timeline__author" dir="auto">
-                {viewer.displayName}
+                {resolveDisplayName(viewer)}
               </span>
-              <span className="timeline__send-state">{sendStateLabel(pending!.phase)}</span>
+              <span className="timeline__kind">{ownershipLabel(attributionFor(viewer, viewer.ownerId, { isLocalEcho: true }))}</span>
+              <span className="timeline__send-state">{sendStateLabel(entry.phase)}</span>
             </header>
-            <div className="timeline__body">{renderMessageContent(pending!.content)}</div>
-            {pending!.phase === 'outcome_unknown' ? (
-              <button type="button" onClick={() => void handleRetryUnknown()}>
+            <div className="timeline__body">{renderMessageContent(entry.content)}</div>
+            {entry.phase === 'outcome_unknown' ? (
+              <button type="button" onClick={() => void handleRetry(entry)}>
                 Check delivery
               </button>
             ) : null}
+            {entry.phase === 'failed' ? (
+              <button type="button" onClick={() => void handleRetry(entry)}>
+                Retry
+              </button>
+            ) : null}
           </li>
-        ) : null}
+        ))}
       </ol>
       {!atLatest && data.newMessageCount > 0 ? (
         <button
@@ -209,9 +235,9 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
           className="timeline__composer-input"
           value={draft}
           onChange={event => setDraft(event.currentTarget.value)}
-          disabled={pending !== null && pending.phase === 'pending'}
+          disabled={!canCompose}
         />
-        <button type="submit" disabled={!draft.trim() || (pending !== null && pending.phase === 'pending')}>
+        <button type="submit" disabled={!canCompose || !draft.trim() || anySendPending}>
           Send
         </button>
       </form>

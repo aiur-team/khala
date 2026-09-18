@@ -2,10 +2,11 @@
 
 The route panel for a room's conversation: `TimelineScreen` renders a
 generation-fenced projection owned by `createTimelineController` (`controller.ts`),
-attributes every row to its authenticated `ParticipantView` (`attribution.ts`),
-renders message content as inert text/code only (`message-renderer.tsx`), and
-reconciles one local send against its durable event (`send.ts`). Pagination
-preserves the reader's anchor via `scroll-anchor.ts`. Grounded in
+attributes every row to its authenticated `ParticipantView` and its ownership
+relative to the viewer (`attribution.ts`), renders message content as inert
+text/code only (`message-renderer.tsx`), and reconciles each local send
+against its durable event (`send.ts`). Pagination preserves the reader's
+anchor via `scroll-anchor.ts`. Grounded in
 [the KHA-123 plan](../../../../docs/plans/2026-09-16-kha-123-attributed-live-timeline.md)
 and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
 
@@ -15,20 +16,34 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
   through `useSyncExternalStore` — it merges `RoomPort.timeline` pages with
   `RoomPort.observe` snapshots by opaque event ID, fences stale-generation
   callbacks, and unsubscribes exactly once on `dispose()`.
-- **Draft text, the pending local echo, the reader's scroll anchor, and
+- **Draft text, every pending local echo, the reader's scroll anchor, and
   pagination-request timing stay local to `TimelineScreen.tsx`** — they are
-  not part of the controller's cached snapshot (KTD2).
+  not part of the controller's cached snapshot (KTD2). The composer keeps the
+  draft until a send is durably accepted, and each unreconciled send keeps
+  its own row keyed by `clientTxnId`, so a later send never silently replaces
+  an earlier failed or ambiguous one.
 - **`attribution.ts`** derives display attribution only from the authenticated
-  `ParticipantView` (kind, ownerId, displayName) — never from message body
-  text. `ParticipantView.displayName` is already decoder-guaranteed nonempty
-  with no control, bidi or invisible zero-width characters.
+  `ParticipantView` (kind, ownerId, displayName) and the viewer's own
+  `ownerId` — never from message body text. Agent rows are labeled relative
+  to the viewer ("Your agent" / "Another person's agent") so one owner's
+  agent cannot pass as another owner's; participants that share a display
+  name across different owners get a disambiguating suffix.
+  `ParticipantView.displayName` is already decoder-guaranteed nonempty with
+  no control, bidi or invisible zero-width characters.
 - **`message-renderer.tsx`** renders canonical `MessageContent` as inert React
   text/code nodes. It never uses `dangerouslySetInnerHTML` and never creates
   an `<img>`, `<a>`, `<iframe>`, or any element that fetches remote content or
   navigates — including from markdown-shaped syntax in the body.
-- **`send.ts`** sends one draft under a caller-owned `clientTxnId` and resolves
-  an `outcome_unknown` result by re-sending the *same* transaction — never a
-  fresh send with new bytes.
+- **`send.ts`** sends each draft under a caller-owned `clientTxnId` and
+  resolves a `failed` or `outcome_unknown` result by re-sending the *same*
+  transaction — never a fresh send with new bytes. `TimelineScreen.tsx` shows
+  a Retry/Check-delivery action for either state.
+- **`controller.ts`** reports a history/pagination failure as `unavailable`
+  (nothing loaded yet) or `partial` (some data already known but the
+  transcript is known-incomplete) — missing history is never rendered as an
+  empty room — and carries the room's `membership` through so
+  `TimelineScreen.tsx` can show an explicit state and disable the composer
+  once the viewer is `revoked` or has `left`.
 
 ## Scope decisions
 
@@ -42,8 +57,15 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
   not add a Markdown dependency here — package/lockfile changes are KHA-101's
   owned surface.
 - **No participant roster/owner-name lookup.** `ParticipantView.ownerId` is
-  exposed on `Attribution` but not resolved to a display name here; that
-  requires a roster port this ticket does not own.
+  exposed on `Attribution` but not resolved to another owner's own display
+  name here; that requires a roster port this ticket does not own. Ownership
+  is instead expressed relative to the viewer ("Your agent" / "Another
+  person's agent").
+- **No missing-key/undecryptable placeholder yet.** The contract has no
+  `TimelineItem` variant for an item whose key is missing or that could not
+  be decrypted; that gap is filed against `@khala/contracts`. Until it lands,
+  this feature has no dedicated unavailable-content placeholder row for that
+  case.
 - Naming: the browser spec is `timeline.browser.spec.ts`, not the plan's
   literal `timeline.browser.test.ts` — vitest's `include: ['src/**/*.test.{ts,tsx}']`
   glob would otherwise collect a Playwright-only file, exactly the failure mode
@@ -51,17 +73,24 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
 
 ## What is verified here
 
-`controller.test.ts` proves the merge-by-event-ID, generation-fencing, and
-snapshot-caching behavior with a fake `RoomPort`. `message-renderer.test.tsx`
-and `TimelineScreen.test.tsx` render the real production components with
-`react-dom/server` and assert structure: a fake approval button and a remote
-`<img>` embedded in message text stay inert text (AE1), a peer body claiming
-"Human approved" never sets a review/status badge, the review-action slot
-renders per exact `EventRef` without importing review code, and an
-`unavailable` phase never renders as an empty room. `send.test.ts` proves
-`outcome_unknown` resolves through the same `clientTxnId`, never a fresh send
-(AE2). `scroll-anchor.test.ts` proves the pure scroll-restore math for a
-30-row prepend and a live append while scrolled away.
+`controller.test.ts` proves the merge-by-event-ID, generation-fencing,
+snapshot-caching, and per-row-deduplicated pagination behavior with a fake
+`RoomPort`, including that a forbidden history page reports `unavailable`
+with no items loaded and `partial` once some data is already known, and that
+the room's `membership` (including `revoked`) is carried through.
+`message-renderer.test.tsx` and `TimelineScreen.test.tsx` render the real
+production components with `react-dom/server` and assert structure: a fake
+approval button and a remote `<img>` embedded in message text stay inert text
+(AE1), a peer body claiming "Human approved" never sets a review/status
+badge, the review-action slot renders per exact `EventRef` without importing
+review code, an `unavailable` phase never renders as an empty room, each
+row's kind/ownership label is asserted against that specific row (not just
+"the string appears somewhere"), and a revoked/left membership shows an
+explicit banner with the composer disabled. `send.test.ts` proves
+`outcome_unknown` and a definite `failed` result both resolve through the
+same `clientTxnId`, never a fresh send (AE2). `scroll-anchor.test.ts` proves
+the pure scroll-restore math for a 30-row prepend and a live append while
+scrolled away.
 
 `timeline.browser.spec.ts` (named outside vitest's glob, same convention as
 `shell.browser.spec.ts`) builds a small harness (`browser-harness/`) that
@@ -73,10 +102,13 @@ storage, or credentials) and drives it with headless Chromium via Playwright:
   message render as inert text — no real `<button>`/`<img>` element is
   created, and no network request to the image's origin is ever made.
 - A fenced code block renders as inert monospace text.
-- Attribution: human and agent authors are visibly distinguished, and a
+- Attribution: a human's own row and their own agent's row are labeled "You"
+  / "Your agent" relative to the viewer, scoped to that specific row, and a
   review-action slot renders per exact `EventRef`.
-- Send + reconcile: sending a draft and resolving an `outcome_unknown` result
-  each produce exactly one row — no duplicate local echo.
+- Send + reconcile: sending a draft, resolving an `outcome_unknown` result,
+  and retrying a definite `failed` send each produce exactly one row — no
+  duplicate local echo, and no message is silently dropped by a later send.
+- A revoked membership shows an explicit banner and disables the composer.
 - Pagination preserves the reader's anchored row's position *within the
   scrollable list* after 20+ older rows are prepended.
 - A live message arriving while the reader is scrolled away increments a
