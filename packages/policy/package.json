@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./release/*": "./src/release/*.ts",
+    "./release/fixtures/sample": null,
     "./trust/*": "./src/trust/*.ts"
   },
   "scripts": {
