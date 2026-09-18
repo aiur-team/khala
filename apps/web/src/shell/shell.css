@@ -71,7 +71,15 @@
 }
 
 .aiur-shell--collapsed .aiur-shell__nav-label {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .aiur-shell__content {
@@ -111,18 +119,18 @@
 }
 
 .status-badge--positive {
-  border-color: #3fae5c;
+  border-color: var(--khala-status-positive);
 }
 
 .status-badge--caution {
-  border-color: #c98a1f;
+  border-color: var(--khala-status-caution);
 }
 
 .status-badge--critical {
-  border-color: #c9432f;
+  border-color: var(--khala-status-critical);
 }
 
-@media (max-width: 960px) {
+@media (max-width: 959px) {
   .aiur-shell,
   .aiur-shell--collapsed {
     grid-template-columns: minmax(0, 1fr);

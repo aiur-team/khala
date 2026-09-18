@@ -28,6 +28,51 @@ describe('AiurShell standalone', () => {
     expect((html.match(/class="aiur-shell__topbar"/g) ?? []).length).toBe(1);
     expect((html.match(/<nav/g) ?? []).length).toBe(1);
     expect((html.match(/<main/g) ?? []).length).toBe(1);
+    expect(html).toContain('<main class="aiur-shell__content" aria-label="Khala"');
+  });
+
+  test('the current navigation item carries aria-current="page"', () => {
+    const html = renderStandalone();
+    expect(html).toContain('aria-current="page"');
+
+    const notCurrent = renderStandalone({ navigation: [{ ...navigation[0]!, current: false }] });
+    expect(notCurrent).not.toContain('aria-current');
+  });
+
+  test('the nav toggle reports aria-expanded matching the collapsed state', () => {
+    const expanded = renderStandalone({ collapsed: false });
+    expect(expanded).toContain('aria-expanded="true"');
+
+    const collapsed = renderStandalone({ collapsed: true });
+    expect(collapsed).toContain('aria-expanded="false"');
+  });
+
+  test('the nav label keeps an accessible name when the rail is collapsed', () => {
+    const html = renderStandalone({ collapsed: true });
+    expect(html).toContain('class="aiur-shell__nav-label">Conversations<');
+  });
+
+  test('a banner is announced with role="status"', () => {
+    const html = renderToStaticMarkup(
+      <AiurShell mode="standalone" navigation={navigation} theme={theme} collapsed={false} onCollapsedChange={() => {}}>
+        <KhalaPageFrame model={{ title: 'Khala', labelledBy: 'khala-heading' }} banner="Blocked preference storage">
+          content
+        </KhalaPageFrame>
+      </AiurShell>,
+    );
+    expect(html).toContain('role="status"');
+    expect(html).toContain('Blocked preference storage');
+  });
+
+  test('the page description renders when provided', () => {
+    const html = renderToStaticMarkup(
+      <AiurShell mode="standalone" navigation={navigation} theme={theme} collapsed={false} onCollapsedChange={() => {}}>
+        <KhalaPageFrame model={{ title: 'Khala', description: 'One shared plan.', labelledBy: 'khala-heading' }}>
+          content
+        </KhalaPageFrame>
+      </AiurShell>,
+    );
+    expect(html).toContain('One shared plan.');
   });
 
   test('an unknown or zero count never renders as a backlog count', () => {

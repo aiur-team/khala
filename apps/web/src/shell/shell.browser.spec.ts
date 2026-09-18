@@ -1,13 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
-import { chromium, type Browser } from 'playwright';
+import { chromium, type Browser } from '@playwright/test';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = join(here, 'browser-harness');
+
+async function isMobileLayout(page: import('@playwright/test').Page): Promise<boolean> {
+  return page.evaluate(() => getComputedStyle(document.querySelector('.aiur-shell__nav')!).flexDirection === 'row');
+}
 
 // Real desktop and phone viewports plus the source-derived 960px breakpoint,
 // browser-verified per docs/evidence/ui-planning-grounding.md. This harness
@@ -15,8 +20,12 @@ const harnessRoot = join(here, 'browser-harness');
 // components with synthetic content; it is not a full-page or full-product
 // integration test.
 test('AiurShell layout survives desktop, phone and breakpoint viewports', { timeout: 90_000 }, async () => {
-  const outDir = await mkdtemp('/tmp/khala-shell-dist-');
-  const chromiumProfileRoot = await mkdtemp('/tmp/khala-shell-profile-');
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-shell-dist-'));
+  // Chromium's process-singleton lock is a unix-domain socket, capped at
+  // ~104 bytes of path; a workspace-scoped TMPDIR can exceed that, so the
+  // browser profile alone uses the system tmp root (uniquely suffixed by
+  // mkdtemp, so concurrent runs cannot collide).
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-shell-profile-'));
   let server: PreviewServer | undefined;
   let browser: Browser | undefined;
   try {
@@ -38,16 +47,27 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
     assert.equal(await page.getByRole('navigation').count(), 1);
     assert.equal(await page.getByRole('main').count(), 1);
     assert.equal(await page.getByText('2', { exact: true }).count(), 1);
+    assert.equal(await page.getByRole('link', { name: /Conversations/ }).count(), 1);
 
-    // Collapse: focus does not move to a hidden element. Locator is a stable
-    // class selector because the accessible name flips with collapsed state.
+    // Collapse: focus does not move to a hidden element, and every nav link
+    // keeps an accessible name (the visible label text is hidden, not removed
+    // from the accessibility tree).
     const collapseToggle = page.locator('.aiur-shell__nav-toggle');
+    const navWidthBefore = await page.locator('.aiur-shell__nav').evaluate(node => node.getBoundingClientRect().width);
     await collapseToggle.focus();
     assert.equal(await collapseToggle.innerText(), 'Collapse navigation');
     await collapseToggle.click();
     assert.equal(await collapseToggle.innerText(), 'Expand navigation');
     assert.equal(await collapseToggle.evaluate(node => node === document.activeElement), true);
     assert.equal(await collapseToggle.isVisible(), true);
+    const navWidthAfter = await page.locator('.aiur-shell__nav').evaluate(node => node.getBoundingClientRect().width);
+    assert.ok(navWidthAfter < navWidthBefore, `collapsed rail (${navWidthAfter}px) should be narrower than expanded (${navWidthBefore}px)`);
+    assert.equal(await page.getByRole('link', { name: /Conversations/ }).count(), 1, 'nav link keeps its accessible name while collapsed');
+    assert.equal(
+      await page.getByRole('link', { name: /A rather long navigation destination name/ }).count(),
+      1,
+      'long nav link keeps its accessible name while collapsed',
+    );
     await collapseToggle.click();
 
     // Theme swap changes tokens without breaking legibility or focus.
@@ -64,6 +84,12 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
     await review.focus();
     assert.equal(await review.evaluate(node => node === document.activeElement), true);
     assert.equal(await review.isVisible(), true);
+
+    // The source breakpoint is min-width: 960px desktop; 959px is mobile.
+    await page.setViewportSize({ width: 960, height: 900 });
+    assert.equal(await isMobileLayout(page), false, '960px is the desktop side of the breakpoint');
+    await page.setViewportSize({ width: 959, height: 900 });
+    assert.equal(await isMobileLayout(page), true, '959px is the mobile side of the breakpoint');
 
     for (const [label, width, height] of [
       ['960px breakpoint (desktop side)', 960, 900],
@@ -86,6 +112,20 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
     await page.setViewportSize({ width: 720, height: 500 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, '200% zoom equivalent viewport: no overflow');
     assert.equal(await review.isVisible(), true, '200% zoom equivalent viewport: review control remains visible');
+
+    // Hosted-content mode: no shell chrome is rendered, and the brand tokens
+    // still resolve on the content root the host mounted, not just .aiur-shell.
+    const hostedPage = await browser.newPage({ viewport: { width: 1024, height: 800 } });
+    await hostedPage.goto(`${url}?mode=hosted`);
+    await hostedPage.locator('.panel').first().waitFor();
+    assert.equal(await hostedPage.getByRole('navigation').count(), 0, 'hosted mode renders no shell navigation landmark');
+    assert.equal(await hostedPage.locator('.aiur-shell__topbar').count(), 0, 'hosted mode renders no shell topbar');
+    const resolvedFill = await hostedPage
+      .locator('.panel')
+      .first()
+      .evaluate(node => getComputedStyle(node).backgroundColor);
+    assert.notEqual(resolvedFill, 'rgba(0, 0, 0, 0)', 'panel background resolves to a real color under hosted-content mode');
+    await hostedPage.close();
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

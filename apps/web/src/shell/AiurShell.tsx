@@ -1,7 +1,13 @@
 import type { AiurShellProps } from './types';
 
 export function AiurShell({ mode, navigation, actions, theme, collapsed, onCollapsedChange, children }: AiurShellProps) {
-  if (mode === 'hosted-content') return children;
+  if (mode === 'hosted-content') {
+    return (
+      <div className="khala-content-root" data-theme={theme.theme}>
+        {children}
+      </div>
+    );
+  }
 
   return (
     <div className={`aiur-shell${collapsed ? ' aiur-shell--collapsed' : ''}`} data-theme={theme.theme}>

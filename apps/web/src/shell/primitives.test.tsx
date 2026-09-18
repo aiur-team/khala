@@ -8,16 +8,28 @@ describe('Panel', () => {
   test('idle status renders children; busy/empty/error render their slot instead', () => {
     const idle = renderToStaticMarkup(<Panel heading="Rooms">the body</Panel>);
     expect(idle).toContain('the body');
+    expect(idle).toContain('aria-busy="false"');
 
     const busy = renderToStaticMarkup(<Panel heading="Rooms" status="busy">the body</Panel>);
     expect(busy).not.toContain('the body');
     expect(busy).toContain('Loading');
+    expect(busy).toContain('aria-busy="true"');
 
     const empty = renderToStaticMarkup(<Panel heading="Rooms" status="empty">the body</Panel>);
     expect(empty).toContain('Nothing here yet');
 
     const error = renderToStaticMarkup(<Panel heading="Rooms" status="error">the body</Panel>);
     expect(error).toContain('role="alert"');
+  });
+
+  test('a custom statusMessage overrides the default copy', () => {
+    const html = renderToStaticMarkup(
+      <Panel heading="Rooms" status="error" statusMessage="Delivery could not be confirmed.">
+        the body
+      </Panel>,
+    );
+    expect(html).toContain('Delivery could not be confirmed.');
+    expect(html).not.toContain('Something went wrong.');
   });
 
   test('renders identically across repeated calls (no incidental state)', () => {
@@ -87,6 +99,20 @@ describe('resolveInitialTheme', () => {
 
   test('resolveInitialTheme with no options at all returns the default', () => {
     expect(resolveInitialTheme()).toBe('dark');
+  });
+});
+
+describe('persistTheme + resolveInitialTheme round trip', () => {
+  test('a theme persisted through the storage port is the theme resolved back from it', () => {
+    let saved: string | null = null;
+    const storage: ThemeStorage = {
+      getItem: () => saved,
+      setItem: (_key, value) => {
+        saved = value;
+      },
+    };
+    persistTheme('light', storage);
+    expect(resolveInitialTheme({ storage })).toBe('light');
   });
 });
 

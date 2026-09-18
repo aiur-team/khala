@@ -19,11 +19,37 @@ describe('brand tokens', () => {
     expect(tokens).toMatch(/--khala-line:\s*#[0-9a-f]{6}/);
   });
 
+  function lightBlock(): string {
+    const start = tokens.indexOf("[data-theme='light']");
+    const openBrace = tokens.indexOf('{', start);
+    const closeBrace = tokens.indexOf('\n}', openBrace);
+    return tokens.slice(start, closeBrace);
+  }
+
   test('light token set overrides every dark semantic pair', () => {
-    const lightBlock = tokens.slice(tokens.indexOf("[data-theme='light']"));
+    const block = lightBlock();
     for (const variable of ['--khala-ink', '--khala-fill', '--khala-fill-raised', '--khala-line', '--khala-accent']) {
-      expect(lightBlock).toContain(variable);
+      expect(block).toContain(variable);
     }
+  });
+
+  test('light-theme ink and fill are not the same colour', () => {
+    const block = lightBlock();
+    const ink = block.match(/--khala-ink:\s*(#[0-9a-f]{6})/)?.[1];
+    const fill = block.match(/--khala-fill:\s*(#[0-9a-f]{6})/)?.[1];
+    expect(ink).toBeTruthy();
+    expect(fill).toBeTruthy();
+    expect(ink).not.toBe(fill);
+  });
+
+  test('tokens are scoped to the shell/content-root selectors, not the global document', () => {
+    expect(tokens).not.toContain(':root {');
+    expect(tokens).not.toMatch(/^\s*body\s*{/m);
+    expect(tokens.indexOf('.aiur-shell')).toBeLessThan(tokens.indexOf('--khala-ink:'));
+  });
+
+  test('focus-visible keeps a visible outline', () => {
+    expect(tokens).toMatch(/:focus-visible\s*{\s*outline:\s*3px solid var\(--khala-accent\)/);
   });
 
   test('layout tokens match the source-derived measurements', () => {

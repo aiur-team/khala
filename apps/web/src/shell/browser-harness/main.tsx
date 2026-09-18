@@ -11,12 +11,14 @@ const navigation: NavigationItem[] = [
   { id: 'long', label: 'A rather long navigation destination name that could wrap', href: '#long', current: false },
 ];
 
+const hostedMode = new URLSearchParams(window.location.search).get('mode') === 'hosted';
+
 function Harness() {
   const [theme, setTheme] = useState<ThemeChoice>('dark');
   const [collapsed, setCollapsed] = useState(false);
   return (
     <AiurShell
-      mode="standalone"
+      mode={hostedMode ? 'hosted-content' : 'standalone'}
       navigation={navigation}
       theme={{ theme, onThemeChange: setTheme }}
       collapsed={collapsed}

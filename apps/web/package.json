@@ -20,8 +20,8 @@
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
-    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests",
-    "test:browser": "node --import tsx --test src/shell/shell.browser.test.ts"
+    "test": "vitest run --config ../../vitest.config.ts",
+    "test:browser": "node --import tsx --test src/shell/shell.browser.spec.ts"
   },
   "dependencies": {
     "@khala/contracts": "workspace:*",
@@ -29,10 +29,10 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "@types/react": "^19.3.0",
+    "@playwright/test": "1.63.0",
+    "@types/react": "19.3.0",
     "@types/react-dom": "^19.3.0",
-    "playwright": "1.63.0",
     "tsx": "4.20.6",
-    "vite": "7.1.12"
+    "vite": "7.3.6"
   }
 }
