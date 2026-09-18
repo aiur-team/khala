@@ -17,7 +17,8 @@
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
   },
   "dependencies": {
-    "@khala/contracts": "workspace:*"
+    "@khala/contracts": "workspace:*",
+    "oauth4webapi": "3.8.8"
   },
   "devDependencies": {
     "tsx": "4.20.6"
