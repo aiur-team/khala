@@ -1,0 +1,48 @@
+/*
+ * Aiur application tokens, scoped under .aiur-shell so a future embedding
+ * host is never globally restyled. Values are grounded in
+ * ../aiur/src/priv/static/dashboard.css per docs/evidence/ui-planning-grounding.md
+ * and the browser-tested fixture in docs/evidence/client-reuse.md
+ * (experiments/client-reuse/sdk/src/style.css). See SOURCES.md.
+ */
+
+.aiur-shell {
+  --khala-font-heading: 'Khala Bungee', 'Segoe UI', system-ui, sans-serif;
+  --khala-font-body: 'Khala Space Grotesk', system-ui, -apple-system, sans-serif;
+  --khala-font-mono: 'Khala JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  --khala-nav-width: 15rem;
+  --khala-nav-width-collapsed: 2.6rem;
+  --khala-content-measure: 75rem;
+  --khala-panel-radius: 16px;
+  --khala-dialog-radius: 24px;
+  --khala-breakpoint: 960px;
+
+  --khala-ink: #edeef0;
+  --khala-ink-muted: #b7bac1;
+  --khala-fill: #16171a;
+  --khala-fill-raised: #1e2025;
+  --khala-fill-control: #23262c;
+  --khala-line: #515763;
+  --khala-accent: #2f86ff;
+
+  color: var(--khala-ink);
+  background: var(--khala-fill);
+  font-family: var(--khala-font-body);
+}
+
+.aiur-shell[data-theme='light'] {
+  color-scheme: light;
+  --khala-ink: #2a2520;
+  --khala-ink-muted: #5a5142;
+  --khala-fill: #e7d6b2;
+  --khala-fill-raised: #f4ecd9;
+  --khala-fill-control: #f4ecd9;
+  --khala-line: #887c67;
+  --khala-accent: #1f5fbf;
+}
+
+.aiur-shell :focus-visible {
+  outline: 3px solid var(--khala-accent);
+  outline-offset: 3px;
+}
