@@ -1,0 +1,21 @@
+{
+  "name": "@khala/ownership-proof",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.18.0" },
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "node --test tests/identity.test.ts tests/binding.test.ts",
+    "test:live": "node --test tests/journey.test.ts"
+  },
+  "dependencies": {
+    "jose": "6.2.12",
+    "oauth4webapi": "3.8.8",
+    "oidc-provider": "9.12.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}
