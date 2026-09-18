@@ -586,6 +586,41 @@ describe('createAgentControlsController — requestPause', () => {
     });
   });
 
+  it('a subsequent request targets this command\'s own confirmed effective version when it is newer than the latest snapshot, not the stale snapshot version', async () => {
+    let resolveAck: ((ack: PolicyAck) => void) | null = null;
+    let capturedCommandId: CommandId | null = null;
+    const submitPolicy = vi.fn((command: { commandId: CommandId }) => {
+      capturedCommandId = command.commandId;
+      return new Promise<PolicyAck>(resolve => {
+        resolveAck = resolve;
+      });
+    });
+    const { ports, emit } = fakePorts();
+    (ports.agentControls as { submitPolicy: unknown }).submitPolicy = submitPolicy;
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot()); // effectiveVersion: 3
+    controller.requestPause(true);
+
+    // This command's own ack resolves "effective" for v4 before the v4
+    // snapshot push arrives — `latestSnapshot` is still stuck at v3.
+    resolveAck!({
+      v: 1, commandId: capturedCommandId!, bindingId: BINDING_ID, generation: 0,
+      requestedVersion: 4, effectiveVersion: 4, connectorState: 'effective', errorCode: null,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(controller.getView().policy.acknowledgment).toBe('effective');
+
+    // The next request must target v4 (this command's own confirmed version),
+    // not v3 from the stale snapshot — a v3-based request is guaranteed a
+    // stale_policy rejection.
+    controller.requestPause(false);
+    expect(submitPolicy).toHaveBeenCalledTimes(2);
+    const secondCommand = submitPolicy.mock.calls[1]![0] as unknown as { expectedPolicyVersion: number };
+    expect(secondCommand.expectedPolicyVersion).toBe(4);
+    controller.dispose();
+  });
+
   it('retry() resends the failed request\'s exact commandId and expectedPolicyVersion, not a new command', () => {
     const submitPolicy = vi.fn()
       .mockImplementationOnce(() => Promise.reject(new Error('network down')))
@@ -669,6 +704,44 @@ describe('createAgentControlsController — requestPause', () => {
     expect(submitPolicy).toHaveBeenCalledTimes(2);
     const secondCommand = submitPolicy.mock.calls[1]![0] as unknown as { expectedPolicyVersion: number };
     expect(secondCommand.expectedPolicyVersion).toBe(5);
+    controller.dispose();
+  });
+
+  it('clears a confirmed request\'s fields once a newer snapshot supersedes it, instead of showing a stale "confirmed" label next to the newer effective version', async () => {
+    let resolveAck: ((ack: PolicyAck) => void) | null = null;
+    let capturedCommandId: CommandId | null = null;
+    const { ports, emit } = fakePorts();
+    (ports.agentControls as { submitPolicy: unknown }).submitPolicy = (command: { commandId: CommandId }) => {
+      capturedCommandId = command.commandId;
+      return new Promise<PolicyAck>(resolve => {
+        resolveAck = resolve;
+      });
+    };
+    const controller = createAgentControlsController(ports, CONFIG);
+    emit(snapshot());
+    controller.requestPause(true);
+
+    // This command's own ack resolves "effective" for v4 before the v4/v5
+    // snapshot catches up.
+    resolveAck!({
+      v: 1, commandId: capturedCommandId!, bindingId: BINDING_ID, generation: 0,
+      requestedVersion: 4, effectiveVersion: 4, connectorState: 'effective', errorCode: null,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(controller.getView().policy.acknowledgment).toBe('effective');
+    expect(controller.getView().policy.requestedVersion).toBe(4);
+
+    // A newer snapshot (v5) arrives from elsewhere — this command's "confirmed"
+    // v4 request is now stale relative to the current effective version.
+    emit(snapshot({ policy: policy({ effectiveVersion: 5, paused: true }) }));
+
+    const view = controller.getView();
+    expect(view.policy.effectiveVersion).toBe(5);
+    expect(view.policy.requestedVersion).toBeNull();
+    expect(view.policy.requestedMode).toBeNull();
+    expect(view.policy.requestedPaused).toBeNull();
+    expect(view.policy.errorCode).toBeNull();
     controller.dispose();
   });
 

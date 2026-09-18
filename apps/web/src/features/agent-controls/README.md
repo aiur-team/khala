@@ -116,9 +116,19 @@ An `'effective'` ack for this exact command is normally authoritative for the
 version/mode/paused it just set without waiting for a separate snapshot to
 catch up — except when a newer authoritative snapshot already arrived while
 the ack was in flight, in which case the ack's older values are dropped
-rather than rolling the display backward (and, symmetrically, a subsequent
-request always targets `latestSnapshot`'s version, never the view's, so it
-can never build on a version an in-flight ack tried to write).
+rather than rolling the display backward. A subsequent request's
+`expectedPolicyVersion` is sourced from the *higher* of `latestSnapshot`'s
+effective version and this command's own confirmed `'effective'` ack version
+— never `latestSnapshot` alone — since a snapshot push can lag behind our own
+ack; building the next request from a stale snapshot version would guarantee
+a `stale_policy` rejection.
+
+If a later snapshot for the same generation reports an effective version
+newer than what this command's own `'effective'` ack confirmed, that ack is
+superseded — someone else's request won the race after ours landed. The
+panel clears the superseded request's `requestedMode`/`requestedVersion`/
+`requestedPaused`/`errorCode` on that snapshot rather than continuing to show
+a "confirmed" badge for a version that is no longer current.
 
 ## Failure handling
 
