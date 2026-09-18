@@ -49,9 +49,17 @@ export type CodexHost = Readonly<{
   endpoint: CodexEndpoint;
   /** The listener lives in an owner-only directory and is not reachable off-host. */
   endpointPrivate: boolean;
+  /**
+   * The absolute working directory the host started the executor in. KHA-104 proved the
+   * route only for a thread whose native `cwd` is this directory, with no cwd override.
+   */
+  workdir: string;
   /** `codex --version` of the binary the host launched. */
   cliVersion: string;
-  /** The native writer lock for the thread is held by this host's executor right now. */
+  /**
+   * The host's report that its executor holds the thread's native writer lock now. The
+   * adapter cannot see the lock; the only native signal it checks is `notLoaded`.
+   */
   holdsWriter: boolean;
 }>;
 
@@ -60,22 +68,48 @@ export interface CodexHostPort {
 }
 
 /**
- * Holds a connection to its no-throw contract: a thrown request becomes a possibly
- * written loss, and a failed close is ignored, so no port defect can turn an
- * uncertain send into an exception a caller might retry.
+ * Deadlines in milliseconds. `callMs` bounds each port call: host lookup, connect,
+ * every request, the codec, the evidence sink and a connection close. `closeMs` bounds
+ * how long `close()` waits for in-flight work. There is no default.
  */
-export function guardConnection(connection: CodexConnection): CodexConnection {
+export type CodexDeadlines = Readonly<{ callMs: number; closeMs: number }>;
+
+/**
+ * Settles with `work`, or with `fallback` once `ms` pass first. A late result is
+ * dropped and a late rejection is swallowed.
+ */
+export async function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  work.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<T>(resolve => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Holds a connection to a no-throw, bounded contract. A request that throws or overruns
+ * its deadline is a loss whose write was not seen to flush. A failed or overdue close is
+ * ignored. No port defect can turn an uncertain send into an exception a caller might
+ * retry, or claim a write nobody observed.
+ */
+export function guardConnection(connection: CodexConnection, deadlines: CodexDeadlines): CodexConnection {
+  const overdue: CodexRequestOutcome = { status: 'lost', written: false, cause: 'timeout' };
   return {
     async request(method, params) {
       try {
-        return await connection.request(method, params);
+        return await withDeadline(connection.request(method, params), deadlines.callMs, overdue);
       } catch {
-        return { status: 'lost', written: true, cause: 'disconnected' };
+        return { status: 'lost', written: false, cause: 'disconnected' };
       }
     },
     async close() {
       try {
-        await connection.close();
+        await withDeadline(connection.close(), deadlines.callMs, undefined);
       } catch {
         // Closing is best effort; the outcome was already decided.
       }
@@ -84,25 +118,13 @@ export function guardConnection(connection: CodexConnection): CodexConnection {
 }
 
 export type ThreadStatus = 'notLoaded' | 'idle' | 'active' | 'systemError';
-export type TurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress';
 
-export type NativeThread = Readonly<{
-  id: string;
-  status: ThreadStatus;
-  turns: readonly NativeTurn[];
-}>;
-
-export type NativeTurn = Readonly<{
-  id: string;
-  status: TurnStatus;
-  /** `clientId` of each `userMessage` item in the turn; null when the item has none. */
-  userMessageClientIds: readonly (string | null)[];
-}>;
+/** What `thread/read {includeTurns:false}` returns. The adapter never reads history. */
+export type NativeThread = Readonly<{ id: string; status: ThreadStatus; cwd: string }>;
 
 export type QueuedSubmission = Readonly<{ id: string; clientUserMessageId: string }>;
 
 const THREAD_STATUSES: readonly ThreadStatus[] = ['notLoaded', 'idle', 'active', 'systemError'];
-const TURN_STATUSES: readonly TurnStatus[] = ['completed', 'interrupted', 'failed', 'inProgress'];
 
 type Json = Record<string, unknown>;
 
@@ -115,24 +137,10 @@ const isString = (value: unknown): value is string => typeof value === 'string' 
 /** `ThreadReadResponse.thread`; null when malformed. */
 export function readThread(result: unknown): NativeThread | null {
   if (!isRecord(result) || !isRecord(result.thread)) return null;
-  const { id, status, turns } = result.thread;
-  if (!isString(id) || !isRecord(status) || !THREAD_STATUSES.includes(status.type as ThreadStatus)) return null;
-  if (!Array.isArray(turns)) return null;
-  const read: NativeTurn[] = [];
-  for (const turn of turns) {
-    if (!isRecord(turn) || !isString(turn.id) || !TURN_STATUSES.includes(turn.status as TurnStatus)) return null;
-    if (!Array.isArray(turn.items)) return null;
-    const clientIds: (string | null)[] = [];
-    for (const item of turn.items) {
-      if (!isRecord(item) || typeof item.type !== 'string') return null;
-      if (item.type !== 'userMessage') continue;
-      const clientId = item.clientId ?? null;
-      if (clientId !== null && typeof clientId !== 'string') return null;
-      clientIds.push(clientId);
-    }
-    read.push({ id: turn.id, status: turn.status as TurnStatus, userMessageClientIds: clientIds });
-  }
-  return { id, status: status.type as ThreadStatus, turns: read };
+  const { id, status, cwd } = result.thread;
+  if (!isString(id) || !isString(cwd)) return null;
+  if (!isRecord(status) || !THREAD_STATUSES.includes(status.type as ThreadStatus)) return null;
+  return { id, status: status.type as ThreadStatus, cwd };
 }
 
 export function readQueuedSubmission(value: unknown): QueuedSubmission | null {

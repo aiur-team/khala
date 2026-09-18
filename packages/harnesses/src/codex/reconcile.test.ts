@@ -1,19 +1,11 @@
 import { decodeDeliveryReceipt } from '@khala/contracts/delivery/index';
 import { describe, expect, it } from 'vitest';
-import { FakeAppServer, FakeCodec, FakeHosts, RecordingSink, clock, job, limits, payload } from './fakes';
-import { createCodexHarness } from './index';
+import { type FakeHarness, fakeHarness, job, payload } from './fakes';
 import { MAX_QUEUE_PAGES } from './reconcile';
 
-function setup() {
-  const server = new FakeAppServer();
-  const hosts = new FakeHosts();
-  const harness = createCodexHarness({
-    client: server, hosts, codec: new FakeCodec(), clock, evidence: new RecordingSink(), limits,
-  });
-  return { server, hosts, harness };
-}
+const setup = fakeHarness;
 
-describe('reconcile', () => {
+describe('reconcile (while_queued)', () => {
   it('resolves a lost response by the queued entry carrying the release ID', async () => {
     const { harness, server } = setup();
     server.override('thread/queue/add', params => {
@@ -23,24 +15,22 @@ describe('reconcile', () => {
     });
     expect((await harness.submit({ job: job(), payload: payload() })).kind).toBe('outcome_unknown');
     const receipt = await harness.reconcile(job());
-    expect(receipt).toMatchObject({ kind: 'harness_queued', source: 'harness', releaseId: 'rel-b-7' });
+    expect(receipt).toMatchObject({
+      kind: 'harness_queued', source: 'harness', releaseId: 'rel-b-7',
+      evidenceRef: 'codex:thread/queue/list.clientUserMessageId',
+    });
     expect(decodeDeliveryReceipt(receipt).ok).toBe(true);
   });
 
-  it('follows the entry into history: consumed, then completed', async () => {
+  it('claims nothing once the entry leaves the queue, and never reads history', async () => {
     const { harness, server } = setup();
     await harness.submit({ job: job(), payload: payload() });
-    server.consumeNext('inProgress');
-    expect(await harness.reconcile(job())).toMatchObject({ kind: 'context_consumed', evidenceRef: 'codex:userMessage.clientId' });
-    server.turns[0]!.status = 'completed';
-    expect(await harness.reconcile(job())).toMatchObject({ kind: 'completed' });
-  });
-
-  it('does not treat an interrupted or failed turn as completed', async () => {
-    const { harness, server } = setup();
-    await harness.submit({ job: job(), payload: payload() });
-    server.consumeNext('interrupted');
-    expect(await harness.reconcile(job())).toMatchObject({ kind: 'context_consumed' });
+    server.consumeNext('completed');
+    // History holds the consumed turn, but the proof never read history: no claim.
+    expect(await harness.reconcile(job())).toBeNull();
+    expect(server.calls.filter(call => call.method === 'thread/read').map(call => call.params.includeTurns))
+      .toEqual([false, false]);
+    expect(server.adds()).toBe(1);
   });
 
   it('finds an entry beyond the first queue page', async () => {
@@ -51,37 +41,34 @@ describe('reconcile', () => {
     expect(await harness.reconcile(job())).toMatchObject({ kind: 'harness_queued' });
   });
 
-  it('catches an entry consumed between the history and queue reads', async () => {
-    const { harness, server } = setup();
-    server.queue.push({ id: 'q-1', clientUserMessageId: 'rel-b-7', text: 'x' });
-    server.override('thread/read', () => undefined).override('thread/read', () => undefined);
-    server.override('thread/queue/list', () => {
-      server.consumeNext();
-      return undefined;
-    });
-    expect(await harness.reconcile(job())).toMatchObject({ kind: 'completed' });
-  });
-
   it('returns null when nothing is found; that is not permission to resend', async () => {
     const { harness, server } = setup();
     expect(await harness.reconcile(job())).toBeNull();
     expect(server.adds()).toBe(0);
   });
 
-  it.each([
-    ['session exited', (s: ReturnType<typeof setup>) => { s.server.reachable = false; }],
-    ['history unreadable', (s: ReturnType<typeof setup>) => {
-      s.server.override('thread/read', () => undefined).override('thread/read', () => ({ status: 'response', result: { thread: null } }));
-    }],
-    ['queue unreadable', (s: ReturnType<typeof setup>) => {
+  it.each<[string, (s: FakeHarness) => void]>([
+    ['session exited', s => { s.server.reachable = false; }],
+    ['queue unreadable', s => {
       s.server.override('thread/queue/list', () => ({ status: 'lost', written: true, cause: 'disconnected' }));
     }],
-    ['queue longer than the page bound', (s: ReturnType<typeof setup>) => {
-      s.server.pageSize = 1;
-      for (let i = 0; i <= MAX_QUEUE_PAGES; i++) s.server.queue.push({ id: `q-${i}`, clientUserMessageId: `other-${i}`, text: 'x' });
+    ['queue page malformed', s => {
+      s.server.override('thread/queue/list', () => ({ status: 'response', result: { data: [{ id: 'q-1' }] } }));
     }],
-    ['binding no longer hosted', (s: ReturnType<typeof setup>) => { s.hosts.host = null; }],
-  ])('returns null when native state is unobservable: %s', async (_name, arrange) => {
+    ['queue longer than the page bound', s => {
+      s.server.pageSize = 1;
+      for (let i = 0; i < MAX_QUEUE_PAGES; i++) s.server.queue.push({ id: `q-${i}`, clientUserMessageId: `other-${i}`, text: 'x' });
+      s.server.queue.push({ id: 'q-mine', clientUserMessageId: 'rel-b-7', text: 'x' });
+    }],
+    ['binding no longer hosted', s => { s.hosts.host = null; }],
+    ['listener hosts another thread', s => { s.server.threadId = 'session-replacement'; }],
+    ['native thread id differs', s => {
+      s.server.queue.push({ id: 'q-1', clientUserMessageId: 'rel-b-7', text: 'x' });
+      s.server.override('thread/read', () => ({
+        status: 'response', result: { thread: { id: 'session-other', cwd: '/scratch', status: { type: 'idle' } } },
+      }));
+    }],
+  ])('returns null when the queue is unobservable: %s', async (_name, arrange) => {
     const s = setup();
     arrange(s);
     expect(await s.harness.reconcile(job())).toBeNull();
@@ -89,10 +76,10 @@ describe('reconcile', () => {
     expect(s.server.closed).toBe(s.server.opened);
   });
 
-  it('reports consumption when a duplicate entry is also still queued', async () => {
+  it('asks the queue of the bound thread only', async () => {
     const { harness, server } = setup();
-    server.turns.push({ id: 't-1', status: 'completed', clientIds: ['rel-b-7'] });
-    server.queue.push({ id: 'q-dup', clientUserMessageId: 'rel-b-7', text: 'x' });
-    expect(await harness.reconcile(job())).toMatchObject({ kind: 'completed' });
+    server.queue.push({ id: 'q-1', clientUserMessageId: 'rel-b-7', text: 'x' });
+    await harness.reconcile(job());
+    expect(server.calls.map(call => call.params.threadId)).toEqual(['session-b', 'session-b']);
   });
 });

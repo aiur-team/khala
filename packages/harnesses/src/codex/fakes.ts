@@ -1,7 +1,8 @@
-// Test doubles for the Codex adapter. Not exported from `index.ts`. `FakeAppServer`
-// models the KHA-104 native behaviour that matters here: a durable queue that does
-// not deduplicate `clientUserMessageId`, and turns whose `userMessage.clientId`
-// carries it once the executor consumes an entry.
+// Test doubles for the Codex adapter. Not exported from `index.ts`, and excluded from
+// the package's `exports` map. `FakeAppServer` models the KHA-104 native behaviour that
+// matters here: a durable queue that does not deduplicate `clientUserMessageId`, and
+// turns whose `userMessage.clientId` carries it once the executor consumes an entry.
+// The adapter never reads those turns; they exist so tests can show it does not.
 
 import { createHash } from 'node:crypto';
 import {
@@ -10,15 +11,17 @@ import {
   decodeSessionBinding, releaseFromApproval,
 } from '@khala/contracts/delivery/index';
 import type {
-  CodexClientPort, CodexConnection, CodexEndpoint, CodexHost, CodexHostPort, CodexMethod, CodexRequestOutcome,
-  ThreadStatus, TurnStatus,
+  CodexClientPort, CodexConnection, CodexDeadlines, CodexEndpoint, CodexHost, CodexHostPort, CodexMethod, CodexRequestOutcome,
+  ThreadStatus,
 } from './native';
+import { createCodexHarness } from './index';
 import type { Clock, EvidenceSink } from './receipts';
 import type { ReleaseCodecPort } from './transport';
 
 const decodedLimits = decodeDeliveryLimits({ maxSelectionEvents: 4, maxPayloadBytes: 4096 });
 if (!decodedLimits.ok) throw new Error('fixture limits');
 export const limits: DeliveryLimits = decodedLimits.value;
+export const deadlines: CodexDeadlines = { callMs: 1_000, closeMs: 2_000 };
 const digest = (c: string) => `sha256:${c.repeat(64)}`;
 
 export function binding(overrides: Partial<Record<keyof SessionBinding, unknown>> = {}): SessionBinding {
@@ -54,11 +57,13 @@ export function job(releaseId = 'rel-b-7', target: SessionBinding = binding(), b
 }
 
 type Entry = { id: string; clientUserMessageId: string; text: string };
+type TurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress';
 type Turn = { id: string; status: TurnStatus; clientIds: (string | null)[] };
-type Override = (params: Record<string, unknown>) => CodexRequestOutcome | undefined;
+type Override = (params: Record<string, unknown>) => CodexRequestOutcome | Promise<CodexRequestOutcome> | undefined;
 
 export class FakeAppServer implements CodexClientPort {
   threadId = 'session-b';
+  cwd = '/scratch';
   status: ThreadStatus = 'idle';
   queue: Entry[] = [];
   turns: Turn[] = [];
@@ -97,7 +102,7 @@ export class FakeAppServer implements CodexClientPort {
     };
   }
 
-  private request(method: CodexMethod, params: Record<string, unknown>): CodexRequestOutcome {
+  private request(method: CodexMethod, params: Record<string, unknown>): CodexRequestOutcome | Promise<CodexRequestOutcome> {
     this.calls.push({ method, params });
     const override = this.overrides.get(method)?.shift();
     const forced = override?.(params);
@@ -124,7 +129,7 @@ export class FakeAppServer implements CodexClientPort {
 
   private thread(includeTurns: boolean) {
     return {
-      id: this.threadId, cwd: '/scratch', status: this.status === 'active' ? { type: 'active', activeFlags: [] } : { type: this.status },
+      id: this.threadId, cwd: this.cwd, status: this.status === 'active' ? { type: 'active', activeFlags: [] } : { type: this.status },
       turns: includeTurns
         ? this.turns.map(turn => ({
           id: turn.id, status: turn.status,
@@ -143,7 +148,7 @@ export class FakeHosts implements CodexHostPort {
   constructor(overrides: Partial<CodexHost> = {}) {
     this.host = {
       binding: binding(), endpoint: { kind: 'unix', path: '/run/khala/codex/bind-b-1/exec.sock' },
-      endpointPrivate: true, cliVersion: '0.154.0', holdsWriter: true, ...overrides,
+      endpointPrivate: true, workdir: '/scratch', cliVersion: '0.154.0', holdsWriter: true, ...overrides,
     };
   }
 
@@ -161,6 +166,21 @@ export class FakeCodec implements ReleaseCodecPort {
 }
 
 export const clock: Clock = { now: () => new Date('2026-09-18T10:00:00.000Z') };
+
+/** A port call that never settles. */
+export const never = <T>(): Promise<T> => new Promise<T>(() => {});
+
+/** An adapter wired to fresh fakes. */
+export function fakeHarness(hostOverrides: Partial<CodexHost> = {}) {
+  const server = new FakeAppServer();
+  const hosts = new FakeHosts(hostOverrides);
+  const codec = new FakeCodec();
+  const evidence = new RecordingSink();
+  const harness = createCodexHarness({ client: server, hosts, codec, clock, evidence, limits, deadlines });
+  return { server, hosts, codec, evidence, harness };
+}
+
+export type FakeHarness = ReturnType<typeof fakeHarness>;
 
 export class RecordingSink implements EvidenceSink {
   readonly receipts: DeliveryReceipt[] = [];

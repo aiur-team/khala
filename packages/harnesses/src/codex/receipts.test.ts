@@ -69,6 +69,16 @@ describe('createCodexReceiptTracker', () => {
     expect(t.observe({ method: 'item/started', params: null })).toEqual([]);
   });
 
+  it('does not track a release for another binding or generation', () => {
+    const t = createCodexReceiptTracker(binding(), clock);
+    expect(t.track(job('rel-b-7', binding({ generation: 1 })))).toBe(false);
+    expect(t.track(job('rel-b-8', binding({ bindingId: 'bind-other' })))).toBe(false);
+    expect(t.observe(consumed('rel-b-7'))).toEqual([]);
+    expect(t.observe(consumed('rel-b-8'))).toEqual([]);
+    expect(t.track(job())).toBe(true);
+    expect(t.observe(consumed('rel-b-7'))).toHaveLength(1);
+  });
+
   it('leaves a pending release unresolved when the session exits', () => {
     const t = tracker();
     expect(t.observe({ method: 'thread/status/changed', params: { threadId: 'session-b', status: { type: 'notLoaded' } } })).toEqual([]);

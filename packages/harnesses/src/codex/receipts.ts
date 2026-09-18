@@ -3,10 +3,11 @@
 // write, a token counter or generated text.
 
 import { createHash } from 'node:crypto';
-import type {
-  DeliveryReceipt, ReceiptErrorCode, ReceiptId, ReceiptKind, ReleasedJob, ReleaseId, SessionBinding,
+import {
+  type DeliveryReceipt, type ReceiptErrorCode, type ReceiptId, type ReceiptKind, type ReleasedJob, type ReleaseId,
+  type SessionBinding, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
-import { isRecord } from './native';
+import { isRecord, withDeadline } from './native';
 
 export interface Clock {
   now(): Date;
@@ -60,9 +61,9 @@ export function makeReceipt(
 }
 
 /** Records without letting a sink failure change the delivery outcome. */
-export async function recordQuietly(sink: EvidenceSink, receipt: DeliveryReceipt): Promise<void> {
+export async function recordQuietly(sink: EvidenceSink, receipt: DeliveryReceipt, deadlineMs: number): Promise<void> {
   try {
-    await sink.record(receipt);
+    await withDeadline(sink.record(receipt), deadlineMs, undefined);
   } catch {
     // The returned receipt remains authoritative; a lost intermediate record is not a
     // reason to report failure after a possible native acceptance.
@@ -72,8 +73,11 @@ export async function recordQuietly(sink: EvidenceSink, receipt: DeliveryReceipt
 export type NativeNotification = Readonly<{ method: string; params?: unknown }>;
 
 export interface CodexReceiptTracker {
-  /** Starts correlating native events for a submitted release. */
-  track(job: ReleasedJob): void;
+  /**
+   * Starts correlating native events for a submitted release. Returns false, and tracks
+   * nothing, when the job is not for this tracker's binding and generation.
+   */
+  track(job: ReleasedJob): boolean;
   /** Maps one native notification to zero or more new receipts. */
   observe(notification: NativeNotification): readonly DeliveryReceipt[];
 }
@@ -102,7 +106,10 @@ export function createCodexReceiptTracker(binding: SessionBinding, clock: Clock)
 
   return {
     track(job) {
+      // A release for another binding or generation must not be correlated on this thread.
+      if (!sameSessionBinding(job.binding, binding)) return false;
       tracked.set(job.releaseId, { releaseId: job.releaseId, binding: job.binding });
+      return true;
     },
     observe({ method, params }) {
       const out: DeliveryReceipt[] = [];
