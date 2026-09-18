@@ -4,7 +4,7 @@ import {
   type ContentLimits, type Decoded, array, decodeWith, elementPath, fail, identifier, label, literal,
   nullable, object, safeInteger,
 } from './decode';
-import { type EventRef, type MessageContent, type TimelineItem, readEventRef, readTimelineItem } from './events';
+import { type EventRef, type MessageContent, type TimelineItem, readEventRef, readTimelineItem, verifyContentDigest } from './events';
 import type { CallOptions, Disposer, OperationResult } from './outcomes';
 
 export type RoomMembership = 'joining' | 'joined' | 'left' | 'revoked';
@@ -90,12 +90,11 @@ export function readSendState(input: unknown, path: string): SendState {
 }
 
 /**
- * Structural page decode. Event IDs are unique within the page; item order is the
- * producer's and implies no global sequence. Verify each item's digest with
- * `decodeTimelineItem` before trusting its content.
+ * Event IDs are unique within the page and every item's digest is recomputed. Item
+ * order is the producer's and implies no global sequence.
  */
-export function decodeTimelinePage(input: unknown, limits: ContentLimits): Decoded<TimelinePage> {
-  return decodeWith(() => {
+export async function decodeTimelinePage(input: unknown, limits: ContentLimits): Promise<Decoded<TimelinePage>> {
+  const decoded = decodeWith(() => {
     const r = object(input, '', ['items', 'nextCursor', 'snapshotRevision']);
     return {
       items: readItems(r.field('items'), r.at('items'), limits),
@@ -103,10 +102,12 @@ export function decodeTimelinePage(input: unknown, limits: ContentLimits): Decod
       snapshotRevision: identifier(r.field('snapshotRevision'), r.at('snapshotRevision')),
     };
   });
+  return decoded.ok ? await verifyItems(decoded.value.items, 'items') ?? decoded : decoded;
 }
 
-export function decodeRoomSnapshot(input: unknown, limits: ContentLimits): Decoded<RoomSnapshot> {
-  return decodeWith(() => {
+/** Items must belong to the snapshot's room; every item's digest is recomputed. */
+export async function decodeRoomSnapshot(input: unknown, limits: ContentLimits): Promise<Decoded<RoomSnapshot>> {
+  const decoded = decodeWith(() => {
     const r = object(input, '', ['room', 'items', 'snapshotRevision', 'generation']);
     const snapshot: RoomSnapshot = {
       room: readRoomSummary(r.field('room'), r.at('room'), limits),
@@ -119,6 +120,15 @@ export function decodeRoomSnapshot(input: unknown, limits: ContentLimits): Decod
     });
     return snapshot;
   });
+  return decoded.ok ? await verifyItems(decoded.value.items, 'items') ?? decoded : decoded;
+}
+
+async function verifyItems(items: readonly TimelineItem[], path: string): Promise<Decoded<never> | null> {
+  for (const [index, item] of items.entries()) {
+    const mismatch = await verifyContentDigest(item, `${elementPath(path, index)}.ref.contentDigest`);
+    if (mismatch) return mismatch;
+  }
+  return null;
 }
 
 function readItems(input: unknown, path: string, limits: ContentLimits): readonly TimelineItem[] {

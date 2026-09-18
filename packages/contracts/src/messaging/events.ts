@@ -103,15 +103,21 @@ export function readMessageContent(input: unknown, path: string, limits: Content
 
 /**
  * Decodes a timeline item and proves the reference binds exactly this content and
- * this author. Structural success alone is not enough: the digest is recomputed.
+ * the attributed participant. Structural success alone is not enough: the digest is
+ * recomputed. `ref.authorDeviceId` is not required to appear in the participant's
+ * current `deviceIds`, because devices rotate and history outlives them; callers
+ * that approve a specific event compare the full reference with `sameEventRef`.
  */
 export async function decodeTimelineItem(input: unknown, limits: ContentLimits): Promise<Decoded<TimelineItem>> {
   const decoded = decodeWith(() => readTimelineItem(input, '', limits));
   if (!decoded.ok) return decoded;
-  if (await digestMessageContent(decoded.value.content) !== decoded.value.ref.contentDigest) {
-    return { ok: false, error: { path: 'ref.contentDigest', code: 'mismatch' } };
-  }
-  return decoded;
+  const mismatch = await verifyContentDigest(decoded.value, 'ref.contentDigest');
+  return mismatch ?? decoded;
+}
+
+/** Returns a located `mismatch` failure when the item's reference does not digest its content. */
+export async function verifyContentDigest(item: TimelineItem, path: string): Promise<Decoded<never> | null> {
+  return await digestMessageContent(item.content) === item.ref.contentDigest ? null : { ok: false, error: { path, code: 'mismatch' } };
 }
 
 /** Structural read only; callers must still verify the digest (see `decodeTimelineItem`). */

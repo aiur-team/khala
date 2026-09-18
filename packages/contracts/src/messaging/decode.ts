@@ -170,7 +170,10 @@ export function utcTimestamp(input: unknown, path: string): string {
   const match = UTC_TIMESTAMP.exec(input);
   if (!match) fail(path, 'invalid_value');
   const [year, month, day, hour, minute, second] = match.slice(1).map(Number) as [number, number, number, number, number, number];
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  // setUTCFullYear avoids Date.UTC mapping years 0-99 onto 1900-1999.
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, 0);
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day
     || date.getUTCHours() !== hour || date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second) fail(path, 'invalid_value');
   return input;

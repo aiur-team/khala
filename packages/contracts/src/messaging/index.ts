@@ -16,7 +16,7 @@ export {
 export {
   type EventRef, type MessageContent, type TimelineItem, MESSAGE_ENCODING_V1,
   decodeEventRef, decodeMessageContent, decodeTimelineItem, digestMessageContent, encodeMessageContent,
-  isContentDigest, sameEventRef,
+  isContentDigest, sameEventRef, verifyContentDigest,
 } from './events';
 export {
   type IntroBatch, type RoomMembership, type RoomPort, type RoomRejection, type RoomSnapshot, type RoomSummary,

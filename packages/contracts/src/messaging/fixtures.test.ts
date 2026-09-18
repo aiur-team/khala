@@ -71,18 +71,34 @@ describe('exact intro fixture', () => {
     expect(intro.content.body).toBe('Review the API change.\nDo not merge yet.');
   });
 
-  it('decodes a page and a snapshot containing the worked item', () => {
+  it('decodes a page and a snapshot containing the worked item', async () => {
     const room = { roomId: 'room_demo', title: 'API review', membership: 'joined', revision: 'rev_1' };
-    expect(decodeTimelinePage({ items: [intro.timelineItem], nextCursor: null, snapshotRevision: 's1' }, limits).ok).toBe(true);
-    expect(decodeRoomSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits).ok).toBe(true);
+    expect((await decodeTimelinePage({ items: [intro.timelineItem], nextCursor: null, snapshotRevision: 's1' }, limits)).ok).toBe(true);
+    expect((await decodeRoomSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits)).ok).toBe(true);
   });
 
-  it('rejects duplicate event IDs in a page and foreign-room items in a snapshot', () => {
-    expect(decodeTimelinePage({ items: [intro.timelineItem, intro.timelineItem], nextCursor: null, snapshotRevision: 's1' }, limits))
+  it('rejects duplicate event IDs in a page and foreign-room items in a snapshot', async () => {
+    expect(await decodeTimelinePage({ items: [intro.timelineItem, intro.timelineItem], nextCursor: null, snapshotRevision: 's1' }, limits))
       .toEqual({ ok: false, error: { path: 'items[1].ref.eventId', code: 'duplicate' } });
     const room = { roomId: 'room_other', title: null, membership: 'joined', revision: 'rev_1' };
-    expect(decodeRoomSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits))
+    expect(await decodeRoomSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits))
       .toEqual({ ok: false, error: { path: 'items[0].ref.roomId', code: 'mismatch' } });
+  });
+
+  it('rejects page and snapshot items whose reference does not digest their body', async () => {
+    const tampered = mutate(intro.timelineItem, { 'content.body': 'Merge it now.' });
+    const room = { roomId: 'room_demo', title: null, membership: 'joined', revision: 'rev_1' };
+    const failure = { ok: false, error: { path: 'items[1].ref.contentDigest', code: 'mismatch' } };
+    const second = mutate(tampered, { 'ref.eventId': 'event_intro_2' });
+    expect(await decodeTimelinePage({ items: [intro.timelineItem, second], nextCursor: null, snapshotRevision: 's1' }, limits)).toEqual(failure);
+    expect(await decodeRoomSnapshot({ room, items: [intro.timelineItem, second], snapshotRevision: 's1', generation: 1 }, limits)).toEqual(failure);
+  });
+});
+
+describe('timestamps', () => {
+  it('accepts early four-digit years without Date.UTC century mapping', () => {
+    const early = { ...intro.principal, sessionExpiresAt: '0050-01-01T00:00:00Z' };
+    expect(decodeAuthPrincipal(early)).toEqual({ ok: true, value: early });
   });
 });
 

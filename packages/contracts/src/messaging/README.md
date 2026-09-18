@@ -27,8 +27,11 @@ lowercased or normalised.
 `encodeMessageContent`: the UTF-8 encoding of the compact JSON array
 `["khala.message.v1","text",body]`. The body is never Unicode- or newline-normalised.
 Adapters hash the bytes that will be released, not rendered HTML or markdown, and not an
-encrypted blob. An edit produces a new event with a new reference. `decodeTimelineItem`
-recomputes the digest, so a reference paired with any other body is rejected.
+encrypted blob. An edit produces a new event with a new reference. `decodeTimelineItem`,
+`decodeTimelinePage` and `decodeRoomSnapshot` recompute every digest, so a reference paired
+with any other body is rejected. The author device is not checked against the participant's
+current devices, because devices rotate. To approve a specific event, compare the whole
+reference with `sameEventRef`.
 
 The worked fixture `fixtures/messaging/exact-intro.json` pins 71 bytes and
 `sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b`, computed
