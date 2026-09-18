@@ -86,14 +86,9 @@ export async function digestMessageContent(content: MessageContent): Promise<Dig
   let digest: Uint8Array;
   try {
     // A missing `crypto` or `crypto.subtle` throws here too, and is reported the same way.
-    // Cast via the call's own parameter type, not a named DOM type: this module has no DOM
-    // lib, so `bytes` types as `Uint8Array<ArrayBufferLike>`; a consumer that also includes
-    // DOM lib (any browser app) resolves `digest`'s parameter against the stricter
-    // `ArrayBufferView<ArrayBuffer>` and rejects it structurally. `Parameters<...>` resolves
-    // to whichever signature is actually in scope, so the cast compiles in both lib sets.
-    digest = new Uint8Array(
-      await globalThis.crypto.subtle.digest('SHA-256', bytes as Parameters<typeof globalThis.crypto.subtle.digest>[1]),
-    );
+    // Copy into an ArrayBuffer-backed view: DOM's BufferSource rejects
+    // Uint8Array<ArrayBufferLike> (TS 5.9 lib.dom), which broke web typecheck.
+    digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array(bytes)));
   } catch {
     return { ok: false, reason: 'crypto_unavailable' };
   }
