@@ -20,7 +20,7 @@ export type RecoveryBlocker =
   | 'payload_damaged'
   /** An unresolved event conflict is quarantined; its stream cannot advance until it is resolved. */
   | 'quarantine_unresolved'
-  /** A binding's current generation, or the device it delivers through, is revoked. */
+  /** A binding, or the device it delivers through, is revoked. */
   | 'revoked';
 
 export type RecoveryReport = Readonly<{
@@ -42,7 +42,7 @@ export type RecoveryReport = Readonly<{
   undispatchedReleases: readonly ReleaseId[];
   /** Unreplaced placeholders for events that could not be decrypted or authenticated. */
   unavailable: number;
-  /** Bindings whose current generation, or whose device, is revoked. */
+  /** Bindings that are revoked, at any generation, or whose device is revoked. */
   revokedBindings: readonly BindingId[];
   /** Receipts kept for reconciliation that did not match a known release. */
   uncorrelatedReceipts: number;
@@ -98,7 +98,7 @@ function inspect(db: DatabaseSync): RecoveryReport {
   if (quarantined > 0) blocked.push('quarantine_unresolved');
 
   const revoked = (db.prepare(`SELECT b.binding_id FROM bindings b WHERE EXISTS (SELECT 1 FROM revocations v WHERE
-      (v.target_kind = 'binding' AND v.target_id = b.binding_id AND v.generation >= b.generation)
+      (v.target_kind = 'binding' AND v.target_id = b.binding_id)
       OR (v.target_kind = 'device' AND v.target_id = json_extract(b.binding, '$.deviceId')))
     ORDER BY b.binding_id`).all() as { binding_id: string }[]).map(row => row.binding_id as BindingId);
   if (revoked.length > 0) blocked.push('revoked');

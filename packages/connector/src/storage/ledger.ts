@@ -44,7 +44,7 @@ export type RecipientBlockCode =
   | 'binding_unknown'
   /** The key names a generation older than the binding's current one. */
   | 'stale_generation'
-  /** The binding generation or its device is durably revoked. */
+  /** The binding, at any generation, or its device is durably revoked. */
   | 'revoked';
 
 export type PersistResult =
@@ -91,7 +91,7 @@ export type CommandRecord = Readonly<{
 
 export type BindingResult =
   | Readonly<{ kind: 'inserted' | 'advanced' | 'duplicate' }>
-  | Readonly<{ kind: 'conflict'; code: 'stale_generation' | 'binding_mismatch' }>;
+  | Readonly<{ kind: 'conflict'; code: 'stale_generation' | 'binding_mismatch' | 'revoked' }>;
 
 export type ReleaseConflictCode =
   | 'idempotency_conflict'
@@ -100,7 +100,7 @@ export type ReleaseConflictCode =
   | 'stale_ledger'
   | 'invalid_command_result'
   | 'stale_binding'
-  /** The job's binding generation or its device is durably revoked. */
+  /** The job's binding, at any generation, or its device is durably revoked. */
   | 'revoked'
   | 'pending_missing'
   | 'stale_content'
@@ -134,9 +134,10 @@ export type ReceiptCorrelation = 'correlated' | 'unknown_release' | 'correlation
 export type StoredReceipt = Readonly<{ receipt: DeliveryReceipt; correlation: ReceiptCorrelation }>;
 
 /**
- * A durable revocation. A binding revoked at `generation` blocks that generation and
- * every earlier one; a later generation (a re-arm) is not revoked by it. A revoked
- * device blocks every binding that delivers through it.
+ * A durable revocation. A revoked binding is blocked at every generation, including
+ * later ones: it is never re-armed or revived, and re-bootstrap mints a new binding ID.
+ * `generation` records the generation current when it was revoked. A revoked device
+ * blocks every binding that delivers through it.
  */
 export type RevocationRecord = Readonly<{
   operationId: string;
@@ -169,7 +170,7 @@ export type ApprovalSnapshot = Readonly<{
 export interface LedgerTx {
   /**
    * One consistent snapshot for pure approval evaluation (KHA-119). `revoked` when the
-   * binding's current generation or its device is revoked; `null` for an unknown binding.
+   * binding or its device is revoked; `null` for an unknown binding.
    */
   readApprovalSnapshot(input: { bindingId: BindingId; selection: readonly EventRef[] }):
     ApprovalSnapshot | Readonly<{ kind: 'revoked' }> | null;
@@ -355,17 +356,20 @@ function readBindingRow(db: DatabaseSync, bindingId: string): SessionBinding | n
   return row ? parseOrCorrupt(row.binding, decodeSessionBinding) : null;
 }
 
-/** True when the binding at `generation`, or the device it delivers through, is revoked. */
-function isRevoked(db: DatabaseSync, bindingId: string, generation: number, deviceId: string): boolean {
-  return db.prepare(`SELECT 1 FROM revocations WHERE (target_kind = 'binding' AND target_id = ? AND generation >= ?)
-    OR (target_kind = 'device' AND target_id = ?) LIMIT 1`).get(bindingId, generation, deviceId) !== undefined;
+/**
+ * True when the binding, at any generation, or the device it delivers through is
+ * revoked. Binding revocation is terminal for the binding ID: re-bootstrap mints a new one.
+ */
+function isRevoked(db: DatabaseSync, bindingId: string, deviceId: string): boolean {
+  return db.prepare(`SELECT 1 FROM revocations WHERE (target_kind = 'binding' AND target_id = ?)
+    OR (target_kind = 'device' AND target_id = ?) LIMIT 1`).get(bindingId, deviceId) !== undefined;
 }
 
 /** Events are recorded only for a known, current, unrevoked recipient generation. */
 function recipientBlock(db: DatabaseSync, key: PendingKey): RecipientBlockCode | null {
   const binding = readBindingRow(db, key.recipientBindingId);
   if (binding === null || key.recipientGeneration > binding.generation) return 'binding_unknown';
-  if (isRevoked(db, binding.bindingId, key.recipientGeneration, binding.deviceId)) return 'revoked';
+  if (isRevoked(db, binding.bindingId, binding.deviceId)) return 'revoked';
   if (key.recipientGeneration < binding.generation) return 'stale_generation';
   return null;
 }
@@ -614,12 +618,19 @@ export function commitCursor(
   });
 }
 
-/** Released payload bytes, only while a release references the handle. */
+/**
+ * Released payload bytes, only while a release references the handle and its binding
+ * and device are unrevoked. A revoked recipient's payload is `revoked`, never delivered.
+ */
 export function readReleasedPayload(ctx: LedgerContext, payloadRef: string): Uint8Array {
   const { db } = ctx;
   requireIdentifier(payloadRef);
-  const referenced = db.prepare('SELECT 1 FROM releases WHERE payload_ref = ?').get(payloadRef);
-  const bytes = referenced === undefined ? null : readPayload(db, payloadRef);
+  const row = db.prepare('SELECT job FROM releases WHERE payload_ref = ?').get(payloadRef) as { job: string } | undefined;
+  if (row !== undefined) {
+    const { binding } = parseOrCorrupt(row.job, input => decodeReleasedJob(input, ctx.limits));
+    if (isRevoked(db, binding.bindingId, binding.deviceId)) throw new StorageError('revoked');
+  }
+  const bytes = row === undefined ? null : readPayload(db, payloadRef);
   if (bytes === null) throw new StorageError('payload_unavailable');
   return bytes;
 }
@@ -676,7 +687,7 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
     };
   };
 
-  const bindingRevoked = (binding: SessionBinding) => isRevoked(db, binding.bindingId, binding.generation, binding.deviceId);
+  const bindingRevoked = (binding: SessionBinding) => isRevoked(db, binding.bindingId, binding.deviceId);
 
   const tx: LedgerTx = {
     readApprovalSnapshot: guarded(({ bindingId, selection }: { bindingId: BindingId; selection: readonly EventRef[] }) => {
@@ -695,8 +706,10 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
     putBinding: guarded((input: SessionBinding): BindingResult => {
       const binding = canonical(input, decodeSessionBinding);
       const stored = readBinding(binding.bindingId);
+      if (stored !== null && sameSessionBinding(stored, binding)) return { kind: 'duplicate' };
+      // A revoked binding ID is never rebound or re-armed, and nothing binds to a revoked device.
+      if (isRevoked(db, binding.bindingId, binding.deviceId)) return { kind: 'conflict', code: 'revoked' };
       if (stored !== null) {
-        if (sameSessionBinding(stored, binding)) return { kind: 'duplicate' };
         if (binding.generation <= stored.generation) {
           return { kind: 'conflict', code: binding.generation < stored.generation ? 'stale_generation' : 'binding_mismatch' };
         }
@@ -769,7 +782,7 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
         return { kind: 'conflict', code: 'command_mismatch' };
       }
       // Revocation outranks every other answer: a revoked recipient is never released to.
-      if (isRevoked(db, job.binding.bindingId, job.binding.generation, job.binding.deviceId)) {
+      if (isRevoked(db, job.binding.bindingId, job.binding.deviceId)) {
         return { kind: 'conflict', code: 'revoked' };
       }
       const binding = readBinding(job.binding.bindingId);

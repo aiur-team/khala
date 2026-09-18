@@ -284,6 +284,25 @@ describe('openConnectorStorage', () => {
     }
   });
 
+  it('refuses to open when the ledger is swapped between pinning and open', async () => {
+    const { state, file } = await closedLedger();
+    const decoy = path.join(state, 'decoy.sqlite');
+    fs.copyFileSync(file, decoy);
+    fs.chmodSync(decoy, 0o600);
+    // Swap in a valid copy (a different inode) right after the pin closes its descriptor.
+    const closeSync = fs.closeSync.bind(fs);
+    let swapped = false;
+    vi.spyOn(fs, 'closeSync').mockImplementation(fd => {
+      closeSync(fd);
+      if (!swapped) {
+        swapped = true;
+        fs.renameSync(decoy, file);
+      }
+    });
+    expect(await openError(state, 'existing')).toBe('unsafe_path');
+    expect(swapped).toBe(true);
+  });
+
   it('fences mutations once the open epoch has moved on', async () => {
     const { state } = dirs();
     const storage = await open(state);

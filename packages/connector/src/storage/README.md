@@ -26,6 +26,11 @@ const report = await recoverConnectorStorage(storage);
   - `conflict` holds the stream until the owner resolves it.
   - `blocked` (`binding_unknown`, `stale_generation`, `revoked`) stores nothing.
 - Events are recorded only for a known binding at its current, unrevoked generation.
+- A placeholder is keyed by its generation. After a rebind, a placeholder from the old
+  generation is never replaced by a later decrypt. It stays unavailable, and the event
+  must be observed again for the new generation.
+- Quarantine resolution is per stream. Resolving an entry releases only the stream that
+  recorded it, and an entry on another stream must be resolved on its own.
 - Consumers (KHA-121/130/133/134/135) use `storage.ledger.transaction(tx => …)`. The
   callback is synchronous local SQLite work only: no SDK, network, model or harness
   call. A callback that returns a promise, or a nested transaction, is refused and
@@ -64,12 +69,12 @@ KHA-101 after KHA-142; swapping it touches only this directory.
 | One review item per event and recipient | Key is room/event/binding/generation; identical text in distinct events stays distinct | `ledger.test.ts` |
 | Approved content is never overwritten | A changed digest or attribution is quarantined, and that stream's cursor stays blocked until it is resolved. A replay after resolution is `conflict_resolved` | `ledger.test.ts` |
 | No event is lost behind the cursor | An undecryptable or unauthenticated event is stored as a placeholder. Only the same key with the same attribution and a verified digest replaces it | `ledger.test.ts` |
-| Revocation is durable | A binding revoked at generation G (and earlier), or its device, blocks pending writes, snapshots and releases. Recovery reports it | `ledger.test.ts` |
+| Revocation is durable and terminal | A revoked binding ID is blocked at every generation and is never rebound or re-armed. Re-bootstrap mints a new binding ID. A revoked device blocks every binding on it. Both block pending writes, snapshots, releases, released-payload reads and new bindings. Recovery reports them | `ledger.test.ts` |
 | Content matches its reference | sha256 of the exact `encodeMessageContent` bytes must equal `contentDigest`; stored bytes are re-verified on every read | `ledger.test.ts` |
 | Cursor never advances optimistically | Compare-and-set on a durable revision | `ledger.test.ts`, `crash.test.ts` |
 | New generation adopts nothing | Records stay keyed by their generation; releasing them under a new binding is refused and they are reported as stale | `ledger.test.ts` |
 | Release is all or nothing | Command outcome, payload and job commit in one transaction, re-checked against revocation, binding, pending references, digest and ledger revision | `ledger.test.ts`, `crash.test.ts` (kill inside the transaction) |
-| Unknown outcome stays unknown | Recovery lists a release with any dispatch evidence as `outcomeUnknownReleases` (never resubmit), apart from `undispatchedReleases` | `crash.test.ts`, `ledger.test.ts` |
+| Unknown outcome stays unknown | Recovery lists a release with any dispatch evidence (`dispatching`, `transport_written`, `harness_queued`, `context_consumed` or `outcome_unknown`, correlated or not) as `outcomeUnknownReleases` (never resubmit), apart from `undispatchedReleases` | `crash.test.ts`, `ledger.test.ts` |
 
 `busy_timeout=0` and `synchronous=FULL` are set explicitly and asserted in `open.test.ts`.
 Both equal the Node 22 / SQLite defaults, so that test pins the effective values rather

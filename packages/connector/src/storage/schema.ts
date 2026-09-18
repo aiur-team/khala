@@ -77,8 +77,9 @@ CREATE TABLE bindings (
   binding TEXT NOT NULL
 ) STRICT;
 
--- Durable revocations. A binding revoked at generation G blocks every generation up to
--- G; a revoked device blocks every binding that delivers through it.
+-- Durable revocations. A revoked binding ID is blocked at every generation (generation
+-- records the one current at revocation); a revoked device blocks every binding that
+-- delivers through it.
 CREATE TABLE revocations (
   target_kind TEXT NOT NULL CHECK (target_kind IN ('binding', 'device')),
   target_id TEXT NOT NULL,

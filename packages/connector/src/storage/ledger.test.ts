@@ -8,7 +8,7 @@ import {
   approval, binding, bindingId, commandRecord, content, eventRef, limits, ownerId, pendingInput, receipt, release,
   scratchDirectory, streamId, unavailableInput,
 } from './fixtures/fakes';
-import type { DeviceId } from '@khala/contracts/delivery/index';
+import type { DeviceId, ParticipantId } from '@khala/contracts/delivery/index';
 import { type ConnectorStorage, openConnectorStorage, storageInternals } from './open';
 import { recoverConnectorStorage } from './recovery';
 
@@ -370,6 +370,54 @@ describe('transactions', () => {
   });
 });
 
+describe('recovery of released jobs', () => {
+  async function releasedJob() {
+    const ctx = await fresh();
+    await seedBinding(ctx.storage);
+    await ctx.storage.persistPending(pendingInput('event_7', 'hi'));
+    const command = approval('command_1', [eventRef('event_7', 'hi')]);
+    const payload = content('envelope');
+    const job = release(command, binding(0), payload);
+    const revision = await ctx.storage.ledger.transaction(tx => tx.ledgerRevision());
+    await ctx.storage.ledger.transaction(tx => tx.putRelease({
+      command: commandRecord(command, job.releaseId), job, payload, expectedLedgerRevision: revision,
+    }));
+    return { ...ctx, job };
+  }
+
+  // Listed here rather than imported so dropping a kind from recovery fails a test.
+  const evidence = ['dispatching', 'transport_written', 'harness_queued', 'context_consumed', 'outcome_unknown'] as const;
+
+  for (const kind of evidence) {
+    it(`treats a correlated ${kind} receipt as an unknown outcome, never undispatched`, async () => {
+      const { storage, state, job } = await releasedJob();
+      expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: receipt(job.releaseId, kind) })))
+        .toEqual({ kind: 'recorded' });
+      const report = await recoverConnectorStorage(await reopen(storage, state));
+      expect(report.outcomeUnknownReleases).toEqual([job.releaseId]);
+      expect(report.undispatchedReleases).toEqual([]);
+    });
+  }
+
+  it('treats an uncorrelated outcome_unknown receipt as dispatch evidence too', async () => {
+    const { storage, state, job } = await releasedJob();
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: receipt(job.releaseId, 'outcome_unknown', 3) })))
+      .toEqual({ kind: 'conflict', code: 'correlation_mismatch' });
+    const report = await recoverConnectorStorage(await reopen(storage, state));
+    expect(report.outcomeUnknownReleases).toEqual([job.releaseId]);
+    expect(report.undispatchedReleases).toEqual([]);
+    expect(report.uncorrelatedReceipts).toBe(1);
+  });
+
+  it('reports a release with only a queued receipt as undispatched', async () => {
+    const { storage, state, job } = await releasedJob();
+    await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: receipt(job.releaseId, 'queued') }));
+    const report = await recoverConnectorStorage(await reopen(storage, state));
+    expect(report.outcomeUnknownReleases).toEqual([]);
+    expect(report.undispatchedReleases).toEqual([job.releaseId]);
+  });
+});
+
 describe('revocation', () => {
   async function revokedSetup(target: 'binding' | 'device') {
     const ctx = await fresh();
@@ -410,17 +458,54 @@ describe('revocation', () => {
     });
   }
 
-  it('does not carry a binding revocation into a later generation', async () => {
-    const { storage } = await revokedSetup('binding');
-    await seedBinding(storage, 1);
-    expect((await snapshot(storage, [])).binding.generation).toBe(1);
-    expect(await storage.persistPending(pendingInput('event_8', 'more', 1))).toEqual({ kind: 'inserted' });
-    // The revoked generation stays revoked.
-    expect(await storage.persistPending(pendingInput('event_9', 'old', 0))).toEqual({ kind: 'blocked', code: 'revoked' });
-    const report = await recoverConnectorStorage(storage);
-    expect(report.revokedBindings).toEqual([]);
-    expect(report.blocked).toEqual([]);
+  it('keeps a revoked binding ID revoked at every generation', async () => {
+    const { storage, state } = await revokedSetup('binding');
+    // A revoked binding is never re-armed or rebound: re-bootstrap mints a new binding ID.
+    expect(await seedBinding(storage, 1)).toEqual({ kind: 'conflict', code: 'revoked' });
+    expect(await storage.ledger.transaction(tx => tx.readBinding(bindingId))).toMatchObject({ generation: 0 });
+
+    // Even a later generation already stored before the revocation stays blocked.
+    rawDb(storage).prepare('UPDATE bindings SET generation = 1, binding = ? WHERE binding_id = ?')
+      .run(JSON.stringify(binding(1)), bindingId);
+    const reopened = await reopen(storage, state);
+    expect(await reopened.persistPending(pendingInput('event_8', 'more', 1))).toEqual({ kind: 'blocked', code: 'revoked' });
+    expect(await reopened.persistUnavailable(unavailableInput('event_9', 'withheld', 1))).toEqual({ kind: 'blocked', code: 'revoked' });
+    expect(await reopened.ledger.transaction(tx => tx.readApprovalSnapshot({ bindingId, selection: [] })))
+      .toEqual({ kind: 'revoked' });
+    const report = await recoverConnectorStorage(reopened);
+    expect(report.revokedBindings).toEqual([bindingId]);
+    expect(report.blocked).toEqual(['revoked']);
   });
+
+  it('refuses to bind anything new to a revoked device', async () => {
+    const { storage } = await revokedSetup('device');
+    expect(await seedBinding(storage, 1)).toEqual({ kind: 'conflict', code: 'revoked' });
+  });
+
+  for (const target of ['binding', 'device'] as const) {
+    it(`withholds an already released payload once the ${target} is revoked`, async () => {
+      const { storage, state } = await fresh();
+      await seedBinding(storage);
+      await storage.persistPending(pendingInput('event_7', 'please review'));
+      const command = approval('command_1', [eventRef('event_7', 'please review')]);
+      const payload = content('release envelope bytes');
+      const job = release(command, binding(0), payload);
+      const revision = await storage.ledger.transaction(tx => tx.ledgerRevision());
+      await storage.ledger.transaction(tx => tx.putRelease({
+        command: commandRecord(command, job.releaseId), job, payload, expectedLedgerRevision: revision,
+      }));
+      expect(await storage.readReleasedPayload(job.payloadRef)).toEqual(payload);
+
+      const revocation = target === 'binding'
+        ? { targetKind: 'binding' as const, targetId: bindingId }
+        : { targetKind: 'device' as const, targetId: binding(0).deviceId };
+      await storage.ledger.transaction(tx => tx.putRevocation({
+        ...revocation, generation: 0, operationId: 'op_revoke_1', revokedAt: '2026-09-18T10:03:00Z',
+      }));
+      const reopened = await reopen(storage, state);
+      await expect(reopened.readReleasedPayload(job.payloadRef)).rejects.toMatchObject({ code: 'revoked' });
+    });
+  }
 
   it('refuses malformed revocations', async () => {
     const { storage } = await fresh();
@@ -459,17 +544,36 @@ describe('unavailable placeholders', () => {
     expect(report).toMatchObject({ unavailable: 0, pending: 1, blocked: [] });
   });
 
-  it('quarantines a decrypted event whose attribution differs from its placeholder', async () => {
-    const { storage } = await fresh();
-    await seedBinding(storage);
-    const held = unavailableInput('event_7');
-    await storage.persistUnavailable({ ...held, ref: { ...held.ref, authorDeviceId: 'device_other' as DeviceId } });
-    expect(await storage.persistPending(pendingInput('event_7', 'text'))).toEqual({ kind: 'conflict', code: 'event_ref_mismatch' });
-    expect(await storage.ledger.transaction(tx => tx.readPlaceholders(bindingId))).toHaveLength(1);
-    expect((await recoverConnectorStorage(storage)).pending).toBe(0);
-    expect(await storage.commitCursor({ streamId, expectedRevision: 0, opaqueCursor: 'c' }))
-      .toEqual({ kind: 'blocked', code: 'quarantine_unresolved' });
-  });
+  const misattributed = [
+    ['device', { authorDeviceId: 'device_other' as DeviceId }],
+    ['participant', { authorParticipantId: 'participant_other' as ParticipantId }],
+  ] as const;
+
+  for (const [field, change] of misattributed) {
+    it(`quarantines a decrypted event whose author ${field} differs from its placeholder`, async () => {
+      const { storage } = await fresh();
+      await seedBinding(storage);
+      const held = unavailableInput('event_7');
+      await storage.persistUnavailable({ ...held, ref: { ...held.ref, ...change } });
+      expect(await storage.persistPending(pendingInput('event_7', 'text'))).toEqual({ kind: 'conflict', code: 'event_ref_mismatch' });
+      expect(await storage.ledger.transaction(tx => tx.readPlaceholders(bindingId))).toHaveLength(1);
+      expect((await recoverConnectorStorage(storage)).pending).toBe(0);
+      expect(await storage.commitCursor({ streamId, expectedRevision: 0, opaqueCursor: 'c' }))
+        .toEqual({ kind: 'blocked', code: 'quarantine_unresolved' });
+    });
+
+    it(`quarantines a placeholder whose author ${field} differs from the stored pending event`, async () => {
+      const { storage } = await fresh();
+      await seedBinding(storage);
+      await storage.persistPending(pendingInput('event_7', 'text'));
+      const held = unavailableInput('event_7');
+      expect(await storage.persistUnavailable({ ...held, ref: { ...held.ref, ...change } }))
+        .toEqual({ kind: 'conflict', code: 'event_ref_mismatch' });
+      expect(await storage.ledger.transaction(tx => tx.readPlaceholders(bindingId))).toEqual([]);
+      expect((await snapshot(storage, [eventRef('event_7', 'text')])).pending[0]?.content).toEqual(content('text'));
+      expect((await recoverConnectorStorage(storage)).quarantined).toBe(1);
+    });
+  }
 
   it('keys placeholders by recipient generation and refuses mismatched input', async () => {
     const { storage } = await fresh();
@@ -600,7 +704,12 @@ describe('release refusals', () => {
     expect(await storage.ledger.transaction(tx => tx.putRelease({
       command: commandRecord(other, sameId.releaseId), job: sameId, payload, expectedLedgerRevision: revision,
     }))).toEqual({ kind: 'conflict', code: 'release_conflict' });
+    const sameHandle = { ...release(other, binding(0), payload, 'release_r8'), payloadRef: job.payloadRef };
+    expect(await storage.ledger.transaction(tx => tx.putRelease({
+      command: commandRecord(other, sameHandle.releaseId), job: sameHandle, payload, expectedLedgerRevision: revision,
+    }))).toEqual({ kind: 'conflict', code: 'release_conflict' });
     expect(await storage.ledger.transaction(tx => tx.readCommand(ownerId, other.commandId))).toBeNull();
+    expect(await storage.ledger.transaction(tx => tx.readRelease('release_r8' as ReleaseId))).toBeNull();
   });
 });
 
