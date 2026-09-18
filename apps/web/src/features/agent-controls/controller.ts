@@ -162,6 +162,19 @@ export function createAgentControlsController(
       && snapshot.policy.generation === pendingCommand.expectedGeneration
       && snapshot.policy.paused === pendingCommand.requestedPaused;
 
+    // This command's own "effective" ack already settled and is displayed as
+    // "confirmed" (`applyAck`). If a later authoritative snapshot for the same
+    // generation reports a version newer than what that ack confirmed, someone
+    // else's request won the race after ours landed — the "confirmed" request
+    // is stale, not current, so its requested fields are cleared rather than
+    // left displayed next to the newer effective version.
+    const ownAckSuperseded = !generationChanged
+      && pendingCommand === null
+      && view.policy.acknowledgment === 'effective'
+      && view.policy.requestedVersion !== null
+      && snapshot.policy.effectiveVersion !== null
+      && snapshot.policy.effectiveVersion > view.policy.requestedVersion;
+
     const nextAcknowledgment: AgentControlsView['policy']['acknowledgment'] = pendingClearedByGeneration
       ? 'pending'
       : reachedRequested
@@ -202,7 +215,7 @@ export function createAgentControlsController(
         // rather than clearing them in the same update, so the confirmation
         // is actually visible (and announced via the permanently mounted
         // live region) instead of disappearing the instant it is true.
-        ...(pendingClearedByGeneration
+        ...(pendingClearedByGeneration || ownAckSuperseded
           ? { requestedMode: null, requestedVersion: null, requestedPaused: null, errorCode: null }
           : {}),
       },
@@ -348,12 +361,21 @@ export function createAgentControlsController(
   function requestPause(paused: boolean): void {
     if (disposed) return;
     if (!view.controlsAvailable) return;
-    // Sourced from `latestSnapshot`, never the displayed `view`, so a request
-    // always targets the version the connector actually last confirmed — the
-    // view can otherwise show a request-derived (not snapshot-confirmed)
-    // effective version transiently, and that must never be what the next
-    // command's `expectedPolicyVersion` is built from.
-    const expectedPolicyVersion = latestSnapshot?.policy.effectiveVersion ?? null;
+    // Sourced from the higher of `latestSnapshot`'s effective version and this
+    // command's own most recent "effective" ack version. A snapshot push can
+    // lag behind our own ack (the connector confirms the command before the
+    // next snapshot catches up), so trusting `latestSnapshot` alone would send
+    // a stale `expectedPolicyVersion` and guarantee a `stale_policy` rejection.
+    // `view.policy.effectiveVersion` is only trusted here when it came from
+    // this exact command's own terminal ack (`acknowledgment === 'effective'`)
+    // — never from a request-derived value that was never snapshot-confirmed.
+    const snapshotVersion = latestSnapshot?.policy.effectiveVersion ?? null;
+    const ownAckVersion = view.policy.acknowledgment === 'effective' ? view.policy.effectiveVersion : null;
+    const expectedPolicyVersion = snapshotVersion === null
+      ? ownAckVersion
+      : ownAckVersion === null
+        ? snapshotVersion
+        : Math.max(snapshotVersion, ownAckVersion);
     if (expectedPolicyVersion === null) return;
 
     lastFailedCommand = null;
