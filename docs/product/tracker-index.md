@@ -4,7 +4,7 @@ Planning snapshot: [8200224](https://github.com/aiur-team/khala/commit/8200224).
 
 [Root build order #1](https://github.com/aiur-team/khala/issues/1) · [Canonical plans](../plans/README.md)
 
-The 44 executable issues (#10–53) are direct members of root #1. Epic issues #2–9 remain parked planning references, outside runtime membership. Dashboard columns come from `build-lane:*` metadata. The published [Build Order JSON](build-order.json) matches the host pack and workspace mirror.
+The 53 executable issues (#10–53 and #101–109) are direct members of root #1. KHA-145–KHA-153 were promoted from the native-agent-surface plan at [617c66c](https://github.com/aiur-team/khala/commit/617c66c); their epic grouping KHA-E09 is metadata only and has no epic issue. Epic issues #2–9 remain parked planning references, outside runtime membership. Dashboard columns come from `build-lane:*` metadata. The published [Build Order JSON](build-order.json) matches the host pack and workspace mirror.
 
 | Stable ID | Issue | Description |
 |---|---|---|
@@ -60,3 +60,12 @@ The 44 executable issues (#10–53) are direct members of root #1. Epic issues #
 | KHA-142 | [#51](https://github.com/aiur-team/khala/issues/51) | Prove TypeScript headless crypto persistence |
 | KHA-143 | [#52](https://github.com/aiur-team/khala/issues/52) | Choose client reuse boundary |
 | KHA-144 | [#53](https://github.com/aiur-team/khala/issues/53) | Prove OAuth-to-agent ownership bootstrap |
+| KHA-145 | [#101](https://github.com/aiur-team/khala/issues/101) | Prove the Claude native agent route |
+| KHA-146 | [#102](https://github.com/aiur-team/khala/issues/102) | Prove the Codex native CLI queue route |
+| KHA-147 | [#104](https://github.com/aiur-team/khala/issues/104) | Widen delivery contracts for native routes |
+| KHA-148 | [#105](https://github.com/aiur-team/khala/issues/105) | Build the Khala agent CLI |
+| KHA-149 | [#106](https://github.com/aiur-team/khala/issues/106) | Implement the Claude native route |
+| KHA-150 | [#107](https://github.com/aiur-team/khala/issues/107) | Implement the Codex native CLI route |
+| KHA-151 | [#108](https://github.com/aiur-team/khala/issues/108) | Build the Khala fallback skill |
+| KHA-152 | [#103](https://github.com/aiur-team/khala/issues/103) | Build the room page and agent presence panel |
+| KHA-153 | [#109](https://github.com/aiur-team/khala/issues/109) | Compose the native agent surface |
