@@ -81,7 +81,11 @@ export function prepareStatePath(directory: string, mode: OpenMode): string {
   checkFile(ledger);
   for (const suffix of COMPANION_SUFFIXES) checkFile(ledger + suffix);
 
-  if (lstatOrNull(ledger) === null) {
+  const existing = lstatOrNull(ledger);
+  // A created ledger is never empty (switching to WAL writes the header), so an empty
+  // one was truncated. Refuse it before SQLite writes into it, leaving it as found.
+  if (existing !== null && existing.size === 0 && mode === 'existing') throw new StorageError('corrupt');
+  if (existing === null) {
     if (mode === 'existing') throw new StorageError('missing_state');
     try {
       const flags = fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0);

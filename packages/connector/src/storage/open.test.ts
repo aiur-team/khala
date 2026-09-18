@@ -131,6 +131,14 @@ describe('openConnectorStorage', () => {
     expect(await openError(state, 'existing')).toBe('schema_unsupported');
   });
 
+  it('treats an empty ledger in existing mode as lost state, not a new one', async () => {
+    const { state } = dirs();
+    fs.mkdirSync(state, { mode: 0o700 });
+    fs.writeFileSync(path.join(state, LEDGER_FILE), '', { mode: 0o600 });
+    expect(await openError(state, 'existing')).toBe('corrupt');
+    expect(fs.statSync(path.join(state, LEDGER_FILE)).size).toBe(0);
+  });
+
   it('allows one owner at a time and releases ownership on close', async () => {
     const { state } = dirs();
     const first = await open(state);

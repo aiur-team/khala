@@ -87,6 +87,43 @@ describe('pending items', () => {
     expect(report.blocked).toContain('quarantine_unresolved');
   });
 
+  it('lets the owner resolve a quarantined conflict without adopting its content', async () => {
+    const { storage, state } = await fresh();
+    await seedBinding(storage);
+    await storage.persistPending(pendingInput('event_7', 'approved text'));
+    await storage.persistPending(pendingInput('event_7', 'rewritten text'));
+
+    const [entry] = await storage.readQuarantine();
+    expect(entry).toMatchObject({ code: 'event_digest_mismatch', resolvedAt: null, key: { eventId: 'event_7' } });
+    expect(JSON.stringify(entry)).not.toContain('rewritten');
+    const id = entry?.id ?? -1;
+    expect(await storage.resolveQuarantine({ id, resolvedAt: '2026-09-18T10:05:00Z' })).toEqual({ kind: 'resolved' });
+
+    const reopened = await reopen(storage, state);
+    expect(await reopened.resolveQuarantine({ id, resolvedAt: '2026-09-18T10:06:00Z' })).toEqual({ kind: 'already_resolved' });
+    expect(await reopened.resolveQuarantine({ id: id + 100, resolvedAt: '2026-09-18T10:06:00Z' }))
+      .toEqual({ kind: 'conflict', code: 'unknown_entry' });
+    expect(await reopened.commitCursor({ streamId: 's', expectedRevision: 0, opaqueCursor: 'c1' }))
+      .toEqual({ kind: 'committed', revision: 1 });
+    const snap = await snapshot(reopened, [eventRef('event_7', 'approved text')]);
+    expect(snap?.pending[0]?.content).toEqual(content('approved text'));
+    const report = await recoverConnectorStorage(reopened);
+    expect(report.quarantined).toBe(0);
+    expect(report.blocked).toEqual([]);
+  });
+
+  it('refuses malformed input with a closed code', async () => {
+    const { storage } = await fresh();
+    const input = pendingInput('event_7', 'hello');
+    await expect(storage.persistPending({ ...input, event: { ...input.event, contentDigest: 'not-a-digest' } }))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(storage.persistPending({ ...input, key: { ...input.key, recipientGeneration: -1 } }))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(storage.ledger.transaction(tx => tx.putBinding({ ...binding(0), generation: -1 })))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+    expect((await recoverConnectorStorage(storage)).pending).toBe(0);
+  });
+
   it('refuses plaintext that does not match its reference', async () => {
     const { storage } = await fresh();
     const input = { ...pendingInput('event_7', 'hello'), plaintext: content('not hello') };
@@ -189,6 +226,35 @@ describe('releases', () => {
       command: record, job, payload: content('other bytes'), expectedLedgerRevision: revision,
     }))).toEqual({ kind: 'conflict', code: 'payload_digest_mismatch' });
     await expect(storage.readReleasedPayload(job.payloadRef)).rejects.toMatchObject({ code: 'payload_unavailable' });
+  });
+
+  it('releases a pending item at most once', async () => {
+    const { storage, state, command, payload, job, revision } = await releasable();
+    await storage.ledger.transaction(tx => tx.putRelease({
+      command: commandRecord(command, job.releaseId), job, payload, expectedLedgerRevision: revision,
+    }));
+
+    const reopened = await reopen(storage, state);
+    const next = await reopened.ledger.transaction(tx => tx.ledgerRevision());
+    const again = approval('command_2', command.selection);
+    const rejob = release(again, binding(0), payload, 'release_r8');
+    expect(await reopened.ledger.transaction(tx => tx.putRelease({
+      command: commandRecord(again, rejob.releaseId), job: rejob, payload, expectedLedgerRevision: next,
+    }))).toEqual({ kind: 'conflict', code: 'already_released' });
+    expect(await reopened.ledger.transaction(tx => tx.readRelease(rejob.releaseId))).toBeNull();
+    expect(await reopened.ledger.transaction(tx => tx.readCommand(ownerId, again.commandId))).toBeNull();
+  });
+
+  it('refuses a command record that is not the approval the job names', async () => {
+    const { storage, command, payload, job, revision } = await releasable();
+    const other = approval('command_other', command.selection);
+    expect(await storage.ledger.transaction(tx => tx.putRelease({
+      command: commandRecord(other, job.releaseId), job, payload, expectedLedgerRevision: revision,
+    }))).toEqual({ kind: 'conflict', code: 'command_mismatch' });
+    const foreign = { ...commandRecord(command, job.releaseId), ownerId: 'owner_other' as typeof ownerId };
+    expect(await storage.ledger.transaction(tx => tx.putRelease({
+      command: foreign, job, payload, expectedLedgerRevision: revision,
+    }))).toEqual({ kind: 'conflict', code: 'command_mismatch' });
   });
 
   it('keeps old-generation items after rebinding and refuses to release them', async () => {
