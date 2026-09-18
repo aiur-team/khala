@@ -15,7 +15,9 @@ export interface CreateChatScreenProps {
 
 type Readiness = Readonly<{ kind: 'checking' } | { kind: 'blocked'; reason: string } | { kind: 'ready' }>;
 
-const RESOLVING_MESSAGE = 'Resuming the last step. This can take a moment.';
+// Distinct from the "-ing" busy phases below: `resolving` means the last attempt's
+// outcome is unknown and idle, waiting on an explicit Retry — never an ongoing action.
+const RESOLVING_MESSAGE = 'The last step did not confirm. Retry to find out what happened.';
 const BUSY_MESSAGE: Partial<Record<CreateChatView['phase'], string>> = {
   creating: 'Creating the chat…',
   preparing_intro: 'Sending your introduction messages…',
@@ -86,6 +88,9 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
   }, [view.shareUrl]);
 
   const editable = view.phase === 'editing';
+  // Once the room exists its title is already committed server-side; only the
+  // intro drafts can still change (for example after a rejected intro batch).
+  const titleEditable = editable && view.roomId === null;
   const retryable = view.phase === 'failed' || view.phase === 'resolving';
   const canSubmit = editable && readiness.kind === 'ready';
   const busyMessage = BUSY_MESSAGE[view.phase];
@@ -115,9 +120,16 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
             id="create-chat-title"
             type="text"
             value={view.title}
-            disabled={!editable}
+            disabled={!titleEditable}
+            aria-invalid={view.titleError !== null}
+            aria-describedby={view.titleError !== null ? 'create-chat-title-error' : undefined}
             onChange={event => controller.setTitle(event.target.value)}
           />
+          {view.titleError !== null ? (
+            <p role="alert" id="create-chat-title-error">
+              {view.titleError === 'title_too_long' ? 'That name is too long.' : view.titleError}
+            </p>
+          ) : null}
         </div>
 
         <fieldset className="create-chat__intros">
@@ -130,8 +142,19 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
                   id={`create-chat-intro-${intro.localId}`}
                   value={intro.body}
                   disabled={!editable}
+                  aria-invalid={intro.error !== null}
+                  aria-describedby={intro.error !== null ? `create-chat-intro-${intro.localId}-error` : undefined}
                   onChange={event => controller.updateIntro(intro.localId, event.target.value)}
                 />
+                {intro.error !== null ? (
+                  <p role="alert" id={`create-chat-intro-${intro.localId}-error`}>
+                    {intro.error === 'message_empty'
+                      ? 'This message is empty.'
+                      : intro.error === 'message_too_long'
+                        ? 'This message is too long.'
+                        : intro.error}
+                  </p>
+                ) : null}
                 <div className="create-chat__intro-actions">
                   <button
                     type="button"
@@ -178,7 +201,9 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
 
       {view.errorCode ? (
         <p role="alert">
-          Could not finish creating the chat ({view.errorCode}).{' '}
+          {view.roomId !== null
+            ? `Could not send your introduction messages (${view.errorCode}).`
+            : `Could not finish creating the chat (${view.errorCode}).`}{' '}
           {retryable ? (
             <button type="button" onClick={() => controller.retry()}>
               Retry

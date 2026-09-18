@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AdmissionPort, DevicePort, IdentityPort, RoomId, RoomPort, RoomSummary, SendState } from '@khala/contracts/messaging';
-import { ok } from '@khala/contracts/messaging';
+import type { AdmissionPort, ContentLimits, DevicePort, IdentityPort, RoomId, RoomPort, RoomSummary, SendState } from '@khala/contracts/messaging/index';
+import { decodeContentLimits, ok } from '@khala/contracts/messaging/index';
 import { CreateChatScreen } from '../CreateChatScreen';
 import type { CreateChatPorts } from '../ports';
 
@@ -82,13 +82,18 @@ const admission: AdmissionPort = {
   },
 };
 
-const signedInPorts: CreateChatPorts = { identity, device, room, admission };
+const limitsResult = decodeContentLimits({ maxBodyBytes: 4096, maxDisplayNameBytes: 64, maxRoomTitleBytes: 128 });
+if (!limitsResult.ok) throw new Error('invalid harness limits');
+const limits: ContentLimits = limitsResult.value;
+
+const signedInPorts: CreateChatPorts = { identity, device, room, admission, limits };
 
 const signedOutPorts: CreateChatPorts = {
   identity: { ...identity, current: async () => ({ kind: 'signed_out' }) },
   device,
   room,
   admission,
+  limits,
 };
 
 function logCopy(text: string) {

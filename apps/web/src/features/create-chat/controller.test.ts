@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AdmissionPort, RoomId, RoomPort, RoomSummary, SendState } from '@khala/contracts/messaging';
-import { ok, rejected, unavailable } from '@khala/contracts/messaging';
+import type { AdmissionPort, ContentLimits, RoomId, RoomPort, RoomSummary, SendState } from '@khala/contracts/messaging/index';
+import { decodeContentLimits, ok, rejected, unavailable } from '@khala/contracts/messaging/index';
 import { createChatController } from './controller';
 
 const ROOM_ID = 'room_1' as RoomId;
 const ROOM: RoomSummary = { roomId: ROOM_ID, title: null, membership: 'joined', revision: 'rev_1' };
+
+const LIMITS: ContentLimits = (() => {
+  const decoded = decodeContentLimits({ maxBodyBytes: 4096, maxDisplayNameBytes: 64, maxRoomTitleBytes: 128 });
+  if (!decoded.ok) throw new Error('invalid fixture limits');
+  return decoded.value;
+})();
 
 function pendingPromise<T>(): Promise<T> {
   return new Promise(() => {});
@@ -62,7 +68,7 @@ describe('createChatController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeRoomPort({ create, prepareIntro: vi.fn().mockResolvedValue(ok([sendState('t1', 'accepted'), sendState('t2', 'accepted')])) });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.addIntro();
     controller.addIntro();
@@ -91,7 +97,7 @@ describe('createChatController', () => {
     );
     const room = fakeRoomPort({ create: create as unknown as RoomPort['create'] });
     const admission = fakeAdmissionPort();
-    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     controller.submit();
@@ -102,17 +108,22 @@ describe('createChatController', () => {
     await vi.waitFor(() => expect(controller.getView().phase).not.toBe('creating'));
   });
 
-  it('AE1: resumes the same intro batch after one accepted and one unknown outcome, never re-creating the room or a fresh batch', async () => {
+  it('AE1: re-prepares the same intro batch after one accepted and one unknown outcome, never re-creating the room or a fresh batch', async () => {
     const create = vi.fn().mockResolvedValue(ok(ROOM));
-    const prepareIntro = vi.fn().mockResolvedValue(ok([sendState('t1', 'accepted'), sendState('t2', 'outcome_unknown')]));
-    const resumeIntro = vi.fn().mockResolvedValue(ok([sendState('t1', 'accepted'), sendState('t2', 'accepted')]));
+    const prepareIntro = vi
+      .fn()
+      .mockResolvedValueOnce(ok([sendState('t1', 'accepted'), sendState('t2', 'outcome_unknown')]))
+      .mockResolvedValueOnce(ok([sendState('t1', 'accepted'), sendState('t2', 'accepted')]));
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
-    const room = fakeRoomPort({ create, prepareIntro, resumeIntro });
+    const room = fakeRoomPort({ create, prepareIntro });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.addIntro();
     controller.addIntro();
+    const [first, second] = controller.getView().intros;
+    controller.updateIntro(first!.localId, 'Hello there.');
+    controller.updateIntro(second!.localId, 'Second message.');
     controller.submit();
 
     await vi.waitFor(() => expect(controller.getView().phase).toBe('resolving'));
@@ -123,9 +134,35 @@ describe('createChatController', () => {
     await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
 
     expect(create).toHaveBeenCalledTimes(1);
-    expect(prepareIntro).toHaveBeenCalledTimes(1);
-    expect(resumeIntro).toHaveBeenCalledTimes(1);
-    expect(resumeIntro).toHaveBeenCalledWith(firstBatchId);
+    expect(prepareIntro).toHaveBeenCalledTimes(2);
+    expect(prepareIntro.mock.calls[1]![0].batchId).toBe(firstBatchId);
+    expect(prepareIntro.mock.calls[1]![0].messages).toEqual(prepareIntro.mock.calls[0]![0].messages);
+  });
+
+  it('a batch rejected before the journal ever wrote it (for example forbidden) reopens intro editing with a fresh batch, not a dead resumeIntro', async () => {
+    const create = vi.fn().mockResolvedValue(ok(ROOM));
+    const prepareIntro = vi.fn().mockResolvedValueOnce(rejected('forbidden')).mockResolvedValueOnce(ok([sendState('t1', 'accepted')]));
+    const resumeIntro = vi.fn();
+    const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
+    const room = fakeRoomPort({ create, prepareIntro, resumeIntro });
+    const admission = fakeAdmissionPort({ share });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+
+    controller.addIntro();
+    controller.updateIntro(controller.getView().intros[0]!.localId, 'Hello there.');
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('editing'));
+    expect(controller.getView().roomId).toBe(ROOM_ID);
+    expect(controller.getView().errorCode).toBe('forbidden');
+
+    const firstBatchId = prepareIntro.mock.calls[0]![0].batchId;
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(resumeIntro).not.toHaveBeenCalled();
+    expect(prepareIntro).toHaveBeenCalledTimes(2);
+    expect(prepareIntro.mock.calls[1]![0].batchId).not.toBe(firstBatchId);
   });
 
   it('a rejected creation lets the user fix input and resubmit with a fresh operation, never duplicating an accepted room', async () => {
@@ -133,7 +170,7 @@ describe('createChatController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeRoomPort({ create });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
@@ -153,7 +190,7 @@ describe('createChatController', () => {
     const share = vi.fn().mockResolvedValueOnce(unavailable()).mockResolvedValueOnce(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeRoomPort({ create });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
@@ -171,7 +208,7 @@ describe('createChatController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeRoomPort({ create, prepareIntro });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
@@ -183,7 +220,7 @@ describe('createChatController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeRoomPort({ create });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
@@ -200,7 +237,7 @@ describe('createChatController', () => {
     const create = vi.fn(() => new Promise(resolve => (resolveCreate = resolve)));
     const room = fakeRoomPort({ create: create as unknown as RoomPort['create'] });
     const admission = fakeAdmissionPort();
-    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     controller.dispose();
@@ -209,5 +246,46 @@ describe('createChatController', () => {
     await Promise.resolve();
 
     expect(controller.getView().phase).toBe('creating');
+  });
+
+  it('rejects an empty or oversized intro locally, attaches the error to that field, and never calls the server', async () => {
+    const create = vi.fn().mockResolvedValue(ok(ROOM));
+    const prepareIntro = vi.fn();
+    const room = fakeRoomPort({ create, prepareIntro });
+    const admission = fakeAdmissionPort();
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+
+    controller.addIntro();
+    controller.addIntro();
+    const [first, second] = controller.getView().intros;
+    controller.updateIntro(first!.localId, '   ');
+    controller.updateIntro(second!.localId, 'x'.repeat(LIMITS.maxBodyBytes + 1));
+
+    controller.submit();
+
+    expect(controller.getView().phase).toBe('editing');
+    expect(controller.getView().intros[0]!.error).toBe('message_empty');
+    expect(controller.getView().intros[1]!.error).toBe('message_too_long');
+    expect(create).not.toHaveBeenCalled();
+    expect(prepareIntro).not.toHaveBeenCalled();
+  });
+
+  it('trims the title and rejects one over the room title limit locally', async () => {
+    const create = vi.fn().mockResolvedValue(ok(ROOM));
+    const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
+    const room = fakeRoomPort({ create });
+    const admission = fakeAdmissionPort({ share });
+    const controller = createChatController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+
+    controller.setTitle('  Hi  ');
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
+    expect(create).toHaveBeenCalledWith({ operationId: expect.any(String), title: 'Hi' });
+
+    const controller2 = createChatController({ room: fakeRoomPort(), admission: fakeAdmissionPort(), limits: LIMITS }, { createId: makeCreateId() });
+    controller2.setTitle('x'.repeat(LIMITS.maxRoomTitleBytes + 1));
+    controller2.submit();
+    expect(controller2.getView().phase).toBe('editing');
+    expect(controller2.getView().titleError).toBe('title_too_long');
   });
 });

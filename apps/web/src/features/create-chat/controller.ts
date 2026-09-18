@@ -1,8 +1,8 @@
-import type { Disposer, MessageContent, OperationResult, RoomId } from '@khala/contracts/messaging';
-import { INITIAL_VIEW, type CreateChatView } from './model';
+import type { ContentLimits, Disposer, MessageContent, OperationResult, RoomId } from '@khala/contracts/messaging/index';
+import { INITIAL_VIEW, type CreateChatView, type IntroDraft } from './model';
 import type { CreateChatPorts } from './ports';
 
-type JournalPorts = Pick<CreateChatPorts, 'room' | 'admission'>;
+type JournalPorts = Pick<CreateChatPorts, 'room' | 'admission' | 'limits'>;
 
 /** Which in-flight step `retry()` resumes; never exposed on the view. */
 type PendingStep = 'create' | 'intro' | 'share' | null;
@@ -25,6 +25,22 @@ const defaultCreateId = (): string =>
     ? globalThis.crypto.randomUUID()
     : `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+/** Local pre-check only; the server remains authoritative for every rule it enforces. */
+function validateTitle(title: string, limits: ContentLimits): string | null {
+  return byteLength(title) > limits.maxRoomTitleBytes ? 'title_too_long' : null;
+}
+
+/** An intro that is empty after trimming is never sent as a message. */
+function validateIntroBody(body: string, limits: ContentLimits): string | null {
+  if (body.trim().length === 0) return 'message_empty';
+  if (byteLength(body) > limits.maxBodyBytes) return 'message_too_long';
+  return null;
+}
+
 export function createChatController(
   ports: JournalPorts,
   options: Readonly<{ createId?: () => string }> = {},
@@ -39,6 +55,7 @@ export function createChatController(
   // already-accepted work; only editing before the room exists clears them.
   let operationId: string | null = null;
   let batchId: string | null = null;
+  let frozenIntros: readonly MessageContent[] | null = null;
   let shareOperationId: string | null = null;
   let pendingStep: PendingStep = null;
 
@@ -57,6 +74,19 @@ export function createChatController(
     notify();
   }
 
+  /**
+   * A rejection of the intro batch that reached the server is a rejection of that
+   * batch's exact content, not of the room. The room and title stay put; the intro
+   * drafts unlock so the human can fix them, and the next attempt starts a fresh
+   * batch (so edited content never collides with the old batch's journal entry).
+   */
+  function reopenIntroEditing(errorCode: string): void {
+    batchId = null;
+    frozenIntros = null;
+    view = { ...view, phase: 'editing', errorCode };
+    notify();
+  }
+
   function applyEdit(mutate: (current: CreateChatView) => CreateChatView): void {
     if (disposed) return;
     if (view.phase === 'failed' && view.roomId === null) {
@@ -72,10 +102,11 @@ export function createChatController(
 
   /**
    * Runs one journal step and dispatches its `OperationResult`: `ok` continues
-   * into `onOk`, `rejected`/`unavailable` fail the step, `outcome_unknown` moves
-   * to `resolving` for an explicit retry. A thrown rejection (not an
-   * `OperationResult`) is treated the same as `unavailable`, so a step never
-   * leaves the UI stuck busy.
+   * into `onOk`, `outcome_unknown` moves to `resolving` for an explicit retry.
+   * A `rejected` intro batch that already reached the server (room exists)
+   * reopens intro editing instead of dead-ending; every other rejection, and
+   * `unavailable`, fail the step. A thrown rejection (not an `OperationResult`)
+   * is treated the same as `unavailable`, so a step never leaves the UI stuck busy.
    */
   async function runStep<T>(step: PendingStep, run: () => Promise<OperationResult<T, string>>, onOk: (value: T) => void | Promise<void>): Promise<void> {
     pendingStep = step;
@@ -83,8 +114,10 @@ export function createChatController(
       const result = await run();
       if (disposed) return;
       if (result.kind === 'ok') await onOk(result.value);
-      else if (result.kind === 'rejected') setFailed(result.code);
-      else if (result.kind === 'unavailable') setFailed('unavailable');
+      else if (result.kind === 'rejected') {
+        if (step === 'intro' && view.roomId !== null) reopenIntroEditing(result.code);
+        else setFailed(result.code);
+      } else if (result.kind === 'unavailable') setFailed('unavailable');
       else setPhase('resolving');
     } catch {
       if (!disposed) setFailed('unavailable');
@@ -93,30 +126,32 @@ export function createChatController(
 
   async function attemptCreate(): Promise<void> {
     setPhase('creating');
-    const title = view.title.trim() === '' ? null : view.title;
+    const title = view.title === '' ? null : view.title;
     await runStep('create', () => ports.room.create({ operationId: operationId!, title }), async value => {
       view = { ...view, roomId: value.roomId };
       if (view.intros.length === 0) await attemptShare();
-      else await attemptIntro(false);
+      else await attemptIntro();
     });
   }
 
-  async function attemptIntro(resume: boolean): Promise<void> {
+  /**
+   * Always prepares (never resumes) the batch: the room command treats an
+   * identical `batchId` + identical message bytes as a resume of the same
+   * batch, so re-preparing is safe whether or not the prior attempt's intent
+   * ever reached the journal (a batch rejected before the journal write, for
+   * example on oversized content, has nothing for `resumeIntro` to find).
+   */
+  async function attemptIntro(): Promise<void> {
     setPhase('preparing_intro');
     const roomId = view.roomId as RoomId;
     batchId ??= createId();
+    frozenIntros ??= view.intros.map((intro): MessageContent => ({ v: 1, kind: 'text', body: intro.body }));
+    const messages = frozenIntros;
     await runStep(
       'intro',
-      () =>
-        resume
-          ? ports.room.resumeIntro(batchId!)
-          : ports.room.prepareIntro({
-              roomId,
-              batchId: batchId!,
-              messages: view.intros.map((intro): MessageContent => ({ v: 1, kind: 'text', body: intro.body })),
-            }),
+      () => ports.room.prepareIntro({ roomId, batchId: batchId!, messages }),
       async states => {
-        if (states.some(state => state.state === 'outcome_unknown' || state.state === 'pending')) {
+        if (states.length !== messages.length || states.some(state => state.state === 'outcome_unknown' || state.state === 'pending')) {
           setPhase('resolving');
           return;
         }
@@ -151,17 +186,17 @@ export function createChatController(
     },
 
     setTitle(title) {
-      applyEdit(current => ({ ...current, title }));
+      applyEdit(current => ({ ...current, title, titleError: null }));
     },
 
     addIntro() {
-      applyEdit(current => ({ ...current, intros: [...current.intros, { localId: createId(), body: '' }] }));
+      applyEdit(current => ({ ...current, intros: [...current.intros, { localId: createId(), body: '', error: null }] }));
     },
 
     updateIntro(localId, body) {
       applyEdit(current => ({
         ...current,
-        intros: current.intros.map(intro => (intro.localId === localId ? { ...intro, body } : intro)),
+        intros: current.intros.map(intro => (intro.localId === localId ? { ...intro, body, error: null } : intro)),
       }));
     },
 
@@ -186,8 +221,22 @@ export function createChatController(
 
     submit() {
       if (disposed || view.phase !== 'editing') return;
+      const title = view.title.trim();
+      const titleError = validateTitle(title, ports.limits);
+      const intros: readonly IntroDraft[] = view.intros.map(intro => ({ ...intro, error: validateIntroBody(intro.body, ports.limits) }));
+      if (titleError !== null || intros.some(intro => intro.error !== null)) {
+        view = { ...view, title, titleError, intros };
+        notify();
+        return;
+      }
+      view = { ...view, title, titleError: null, intros };
       // Double submit is a no-op: phase leaves 'editing' before the first await,
       // and operationId is only ever assigned once per room.
+      if (view.roomId !== null) {
+        // The room and title already exist; only the intro batch is retried.
+        void attemptIntro();
+        return;
+      }
       operationId ??= createId();
       void attemptCreate();
     },
@@ -197,7 +246,7 @@ export function createChatController(
       if (view.phase !== 'failed' && view.phase !== 'resolving') return;
       view = { ...view, errorCode: null };
       if (pendingStep === 'create') void attemptCreate();
-      else if (pendingStep === 'intro') void attemptIntro(true);
+      else if (pendingStep === 'intro') void attemptIntro();
       else if (pendingStep === 'share') void attemptShare();
     },
 

@@ -7,13 +7,19 @@ the local operation journal in `controller.ts`.
 
 ## Ports
 
-`CreateChatPorts` (`ports.ts`) bundles the four injected contracts from
+`CreateChatPorts` (`ports.ts`) bundles the injected contracts from
 `@khala/contracts/messaging`:
 
 - `identity: IdentityPort` — gates the screen on sign-in state.
 - `device: DevicePort` — gates the screen on local device readiness.
-- `room: RoomPort` — `create`, `prepareIntro`, `resumeIntro`.
+- `room: RoomPort` — `create`, `prepareIntro`.
 - `admission: AdmissionPort` — `share`.
+- `limits: ContentLimits` — the substrate's title/body byte limits, already
+  decoded through `decodeContentLimits` by the host before injection. The
+  controller validates title and intro bodies against it locally (trimming,
+  rejecting empty or oversized content) before ever calling `room.create` or
+  `room.prepareIntro`; the server remains authoritative for every rule it
+  enforces regardless.
 
 KHA132 supplies the production ports (backed by the selected messaging SDK)
 and mounts `<CreateChatScreen ports={ports} />` directly; no fixture adapter
@@ -32,10 +38,20 @@ the screen at a specific, already-driven phase without waiting on real ports.
 
 `controller.ts` generates one `operationId` per room, one `batchId` per intro
 batch, and one `shareOperationId` per share request — each created once and
-reused across every retry. Retrying `create`, `prepareIntro`/`resumeIntro`, or
-`share` therefore always resumes the same transport-level operation; it never
-duplicates an already-accepted room, intro message, or share grant, satisfying
-R3 (KHA-122).
+reused across every retry. Retrying `create` or `share` therefore always
+resumes the same transport-level operation. An intro retry always re-calls
+`room.prepareIntro` with the same `batchId` and the same frozen message bytes
+(never `resumeIntro`), since the room command treats an identical re-prepare as
+a resume — including when the prior attempt was rejected before it ever
+reached the journal (for example an oversized body), where `resumeIntro` would
+find nothing. This never duplicates an already-accepted room, intro message, or
+share grant, satisfying R3 (KHA-122).
+
+A `rejected` intro batch result, once the room already exists, reopens the
+intro drafts for editing instead of dead-ending on Retry; the next attempt
+mints a fresh `batchId` so edited content never collides with the old batch's
+journal entry. The room and its title are already committed at that point and
+stay locked.
 
 ## Testing
 

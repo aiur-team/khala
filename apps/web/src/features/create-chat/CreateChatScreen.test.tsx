@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type {
   AdmissionPort,
   Admission,
+  ContentLimits,
   DeviceView,
   DevicePort,
   IdentityPort,
@@ -14,7 +15,8 @@ import type {
   ShareGrant,
   TimelinePage,
   SendState,
-} from '@khala/contracts/messaging';
+} from '@khala/contracts/messaging/index';
+import { decodeContentLimits } from '@khala/contracts/messaging/index';
 import { CreateChatScreen } from './CreateChatScreen';
 import { createChatController } from './controller';
 import type { CreateChatPorts } from './ports';
@@ -24,6 +26,12 @@ function pendingPromise<T>(): Promise<T> {
 }
 
 const NEW_DEVICE: DeviceView = { deviceId: null, state: 'new', generation: 0, reason: null };
+
+const LIMITS: ContentLimits = (() => {
+  const decoded = decodeContentLimits({ maxBodyBytes: 4096, maxDisplayNameBytes: 64, maxRoomTitleBytes: 128 });
+  if (!decoded.ok) throw new Error('invalid fixture limits');
+  return decoded.value;
+})();
 
 function fakePorts(): CreateChatPorts {
   const identity: IdentityPort = {
@@ -50,7 +58,7 @@ function fakePorts(): CreateChatPorts {
     inspect: vi.fn(() => pendingPromise<InviteState>()),
     admit: vi.fn(() => pendingPromise<OperationResult<Admission, never>>()),
   };
-  return { identity, device, room, admission };
+  return { identity, device, room, admission, limits: LIMITS };
 }
 
 describe('CreateChatScreen initial render', () => {
@@ -79,6 +87,7 @@ describe('CreateChatScreen with a pre-driven controller', () => {
     const controller = createChatController({
       room: { create: vi.fn(), prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
       admission: { share: vi.fn(), inspect: vi.fn(), admit: vi.fn() },
+      limits: LIMITS,
     });
     controller.addIntro();
     controller.addIntro();
@@ -101,6 +110,7 @@ describe('CreateChatScreen with a pre-driven controller', () => {
     const controller = createChatController({
       room: { create, prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
       admission: { share: vi.fn(), inspect: vi.fn(), admit: vi.fn() },
+      limits: LIMITS,
     });
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
