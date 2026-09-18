@@ -1,0 +1,178 @@
+/*
+ * Timeline feature layout. Depends on ../brand/tokens.css custom properties
+ * being in scope; composition roots must import both (see shell/shell.css).
+ */
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.timeline__status {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--khala-panel-radius);
+  background: var(--khala-fill-control);
+}
+
+.timeline__load-older {
+  align-self: center;
+  background: var(--khala-fill-control);
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  color: inherit;
+}
+
+.timeline__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  min-width: 0;
+  /* Positioned so a row's `offsetTop` is relative to this scroll container,
+     not some ancestor further up the tree (scroll-anchor.ts depends on it). */
+  position: relative;
+  /* The browser's own native scroll-anchoring would otherwise also try to
+     compensate for prepended rows, double-correcting against scroll-anchor.ts's
+     explicit restore and overshooting the reader's position. */
+  overflow-anchor: none;
+}
+
+.timeline__empty {
+  color: var(--khala-ink-muted);
+  padding: 1rem;
+  text-align: center;
+}
+
+.timeline__row {
+  background: var(--khala-fill-raised);
+  border: 1px solid var(--khala-line);
+  border-radius: var(--khala-panel-radius);
+  padding: 0.75rem 1rem;
+  min-width: 0;
+}
+
+.timeline__row--pending {
+  border-style: dashed;
+}
+
+.timeline__row-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-family: var(--khala-font-mono);
+  font-size: 0.8rem;
+  color: var(--khala-ink-muted);
+}
+
+.timeline__author {
+  font-weight: 600;
+  color: var(--khala-ink);
+  max-width: 20rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+
+.timeline__kind {
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.timeline__send-state {
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.timeline__body {
+  margin-top: 0.4rem;
+  min-width: 0;
+}
+
+.message-content__text {
+  margin: 0 0 0.5rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-content__text:last-child {
+  margin-bottom: 0;
+}
+
+.message-content__code {
+  background: var(--khala-fill-control);
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  overflow-x: auto;
+  font-family: var(--khala-font-mono);
+  font-size: 0.85rem;
+  white-space: pre;
+}
+
+.message-content__code-lang {
+  display: block;
+  color: var(--khala-ink-muted);
+  font-size: 0.7rem;
+  margin-bottom: 0.3rem;
+}
+
+.message-content__unavailable {
+  color: var(--khala-ink-muted);
+  font-style: italic;
+}
+
+.timeline__jump-latest {
+  align-self: center;
+  background: var(--khala-accent);
+  color: var(--khala-fill);
+  border: none;
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  font-weight: 600;
+}
+
+.timeline__composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-top: 1px solid var(--khala-line);
+  padding-top: 0.75rem;
+}
+
+.timeline__composer-label {
+  font-family: var(--khala-font-mono);
+  font-size: 0.8rem;
+  color: var(--khala-ink-muted);
+}
+
+.timeline__composer-input {
+  min-height: 3.5rem;
+  resize: vertical;
+  background: var(--khala-fill-control);
+  color: inherit;
+  border: 1px solid var(--khala-line);
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  font-family: inherit;
+}
+
+@media (max-width: 959px) {
+  .timeline__list {
+    max-height: 50vh;
+  }
+
+  .timeline__author {
+    max-width: 60vw;
+  }
+}
