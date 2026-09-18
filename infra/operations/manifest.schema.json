@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://khala.aiur.team/schemas/backend-recovery-manifest.json",
+  "title": "Khala backend recovery manifest",
+  "description": "Describes one backup recovery set: database, server signing identity, configuration and media artifacts, plus the source versions needed to restore or upgrade safely. Secret artifacts are recorded only as opaque references; the manifest never carries a decryption key, database credential or plaintext participant content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "environment",
+    "created_at",
+    "database_version",
+    "synapse_image_digest",
+    "artifacts",
+    "restore_proof"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "environment": {
+      "enum": ["preview", "production"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "database_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "synapse_image_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 4,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "restore_proof": {
+      "enum": ["not-run", "pass", "fail"]
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["database", "signing-key", "config", "media"]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "enum": ["database", "media"] } }
+          },
+          "then": {
+            "required": ["sha256", "path"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "enum": ["signing-key", "config"] } }
+          },
+          "then": {
+            "required": ["reference"]
+          }
+        }
+      ]
+    }
+  }
+}
