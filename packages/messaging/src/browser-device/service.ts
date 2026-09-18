@@ -9,9 +9,10 @@ import {
   sameProviderIdentity, unavailable,
 } from '@khala/contracts/messaging/index';
 import {
-  type BrowserDeviceDependencies, type DeviceEngine, type EngineSignal, DEFAULT_LOCK_WAIT_MS, checkIdentity, deviceView,
+  type BrowserDeviceDependencies, type DeviceEngine, type EngineSignal, DEFAULT_ENGINE_TIMEOUT_MS, DEFAULT_LOCK_WAIT_MS,
+  checkIdentity, deviceView,
 } from './lifecycle';
-import { type Generation, Superseded, adopt, endGeneration, guard, isLive, onEnd, openGeneration } from './transitions';
+import { type Generation, Superseded, adopt, endGeneration, guard, isLive, onEnd, openGeneration, within } from './transitions';
 
 /** Handed to crypto operations; valid only for the generation that was ready when they began. */
 export type EngineContext = Readonly<{
@@ -31,11 +32,14 @@ export interface BrowserDeviceService extends DevicePort {
   /**
    * Runs a crypto operation against `ownerId`'s ready engine. Waits for that owner's
    * in-flight `ensureReady`; otherwise refuses with `not_ready` rather than opening a
-   * client. A result produced after its generation ended is discarded as `not_ready`,
-   * so an old account's output never reaches the caller after a switch.
+   * client. The current identity is confirmed before and after the operation: if it
+   * is signed out or another principal, the generation is retired and nothing is
+   * returned. A result produced after its generation ended is discarded as
+   * `not_ready`, so an old account's output never reaches the caller after a switch.
+   * An operation that throws yields `operation_failed`; the error is not surfaced.
    */
   use<T>(ownerId: OwnerId, operation: (context: EngineContext) => Promise<T>, options?: CallOptions):
-    Promise<OperationResult<T, 'not_ready' | 'owner_mismatch'>>;
+    Promise<OperationResult<T, 'not_ready' | 'owner_mismatch' | 'operation_failed'>>;
   /**
    * Leaves `lost` after the approved recovery or re-enrolment flow (injected by its
    * owner, never started here) has accepted the loss. Clears the identity marker
@@ -51,6 +55,7 @@ const sameSignedIn = (state: IdentityState, principal: AuthPrincipal): boolean =
 
 export function createBrowserDeviceService(deps: BrowserDeviceDependencies): BrowserDeviceService {
   const lockWaitMs = deps.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS;
+  const engineTimeoutMs = deps.engineTimeoutMs ?? DEFAULT_ENGINE_TIMEOUT_MS;
   const listeners = new Set<(view: DeviceView) => void>();
   let view = deviceView('new', 0, null);
   /** Owner the current view describes; `null` while `new`. */
@@ -76,7 +81,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
   async function retire(): Promise<void> {
     const g = live;
     live = null;
-    if (g) await endGeneration(g);
+    if (g) await endGeneration(g, engineTimeoutMs);
   }
 
   /**
@@ -87,17 +92,54 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
     if (!live && (view.state === 'ready' || view.state === 'initializing')) publish(deviceView('new', view.generation + 1, null), null);
   }
 
-  /** Ends `g` and publishes `next`, but only if `g` is still the live generation. */
-  async function finish(g: Generation, next: DeviceView): Promise<DeviceView> {
+  /**
+   * Ends `g` and publishes `next`, but only if `g` is still the live generation.
+   * `g` is invalidated and its projections wiped before any observer sees `next`.
+   */
+  async function finish(g: Generation, next: DeviceView, owner: OwnerId | null = g.ownerId): Promise<DeviceView> {
     if (live !== g) throw new Superseded();
     live = null;
-    publish(next, g.ownerId);
-    await endGeneration(g);
+    const closing = endGeneration(g, engineTimeoutMs);
+    publish(next, owner);
+    await closing;
     return next;
   }
 
+  /** The view left behind when a generation's owner is no longer the signed-in principal. */
+  const cleared = (g: Generation): DeviceView => deviceView('new', g.generation + 1, null);
+
+  /**
+   * Retires whatever belongs to someone other than `principal`: the live generation,
+   * or a settled view that still describes another owner.
+   */
+  async function dropOthers(principal: AuthPrincipal): Promise<void> {
+    const g = live;
+    if (g && !(g.ownerId === principal.ownerId && sameProviderIdentity(g.principal, principal))) {
+      await finish(g, cleared(g), null).catch(() => undefined);
+    } else if (!g && viewOwner !== null && viewOwner !== principal.ownerId) {
+      publish(deviceView('new', view.generation + 1, null), null);
+    }
+  }
+
+  /**
+   * Confirms `g` still belongs to the signed-in principal. If the owner signed out
+   * or another principal signed in, retires `g` and returns the refusal.
+   */
+  async function confirmHolder(g: Generation): Promise<OperationResult<never, 'not_ready' | 'owner_mismatch'> | null> {
+    const state = await identityNow();
+    if (!isLive(g)) return rejected('not_ready');
+    if (sameSignedIn(state, g.principal)) return null;
+    if (state.kind === 'unavailable') return unavailable();
+    if (state.kind === 'signed_out') {
+      await finish(g, locked(g.generation, g.deviceId)).catch(() => undefined);
+      return rejected('not_ready');
+    }
+    await finish(g, cleared(g), null).catch(() => undefined);
+    return rejected('owner_mismatch');
+  }
+
   function onEngineSignal(g: Generation, signal: EngineSignal): void {
-    if (live !== g) return;
+    // `emit` is guarded, so `g` is live here, and a live generation is always `live`.
     if (signal === 'revoked') void finish(g, deviceView('revoked', g.generation + 1, g.deviceId, 'revoked_by_owner')).catch(() => undefined);
     else if (signal === 'session_expired') void finish(g, locked(g.generation, g.deviceId)).catch(() => undefined);
     else void finish(g, deviceView('failed', g.generation, g.deviceId, 'storage_unavailable')).catch(() => undefined);
@@ -134,7 +176,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
   async function initialise(principal: AuthPrincipal, requested: number): Promise<OperationResult<DeviceView, DeviceRejection>> {
     const ownerId = principal.ownerId;
     const sameOwner = viewOwner === ownerId;
-    if (sameOwner && live && view.state === 'ready') return ok(view);
+    if (sameOwner && live && view.state === 'ready' && sameProviderIdentity(live.principal, principal)) return ok(view);
     // Lost and revoked are sticky: retrying must not quietly mint a new keyset.
     if (sameOwner && (view.state === 'lost' || view.state === 'revoked')) return ok(view);
 
@@ -148,7 +190,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
       settleOrphan();
       return unavailable();
     }
-    const g = openGeneration(ownerId, view.generation + 1, sameOwner ? view.deviceId : null);
+    const g = openGeneration(principal, view.generation + 1, sameOwner ? view.deviceId : null);
     live = g;
     publish(deviceView('initializing', g.generation, g.deviceId), ownerId);
     const fail = (reason: DeviceReason) => finish(g, deviceView('failed', g.generation, g.deviceId, reason));
@@ -163,7 +205,7 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
         await fail('initialization_failed');
         return unavailable();
       }
-      await finish(g, deviceView('new', g.generation + 1, null));
+      await finish(g, cleared(g), null);
       return rejected('owner_mismatch');
     }
 
@@ -235,11 +277,12 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
         if (!isLive(g)) throw new Superseded();
       }
 
-      await engine.start(g.abort.signal);
-      if (live !== g) throw new Superseded();
+      const starting = engine.start(g.abort.signal);
+      if (!(await within(starting, engineTimeoutMs))) return ok(await fail('initialization_failed'));
+      await starting;
+      if (!isLive(g)) throw new Superseded();
       const beforeReady = await confirmIdentity();
       if (beforeReady) return beforeReady;
-      if (live !== g) throw new Superseded();
       return ok(publish(deviceView('ready', g.generation, session.deviceId), ownerId));
     } catch (error) {
       if (error instanceof Superseded || live !== g) {
@@ -257,7 +300,11 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
     if (requested !== epoch) return unavailable();
     if (identity.kind === 'unavailable') return unavailable();
     if (identity.kind === 'signed_out') return signedOut(requested);
-    if (identity.principal.ownerId !== ownerId) return rejected('owner_mismatch');
+    if (identity.principal.ownerId !== ownerId) {
+      // The caller's owner is not signed in here; nothing of theirs may stay usable.
+      await dropOthers(identity.principal);
+      return rejected('owner_mismatch');
+    }
     return initialise(identity.principal, requested);
   }
 
@@ -317,21 +364,31 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
       const pending = inflight;
       if (pending && pending.ownerId === ownerId && !(await waitFor(pending.promise, options.signal))) return unavailable();
       const g = live;
-      if (!g || !isLive(g) || view.state !== 'ready' || !g.engine || !g.deviceId) {
+      if (!g || view.state !== 'ready' || !g.engine || !g.deviceId) {
         return viewOwner !== null && viewOwner !== ownerId ? rejected('owner_mismatch') : rejected('not_ready');
       }
       if (g.ownerId !== ownerId) return rejected('owner_mismatch');
+      const { engine, deviceId } = g;
+      const before = await confirmHolder(g);
+      if (before) return before;
       const context: EngineContext = {
         ownerId: g.ownerId,
-        deviceId: g.deviceId,
+        deviceId,
         generation: g.generation,
-        engine: g.engine,
+        engine,
         signal: g.abort.signal,
         guard: callback => guard(g, callback),
         onEnd: dispose => onEnd(g, dispose),
       };
-      const result = await operation(context);
-      return isLive(g) ? ok(result) : rejected('not_ready');
+      let result: Awaited<ReturnType<typeof operation>>;
+      try {
+        result = await operation(context);
+      } catch {
+        return isLive(g) ? rejected('operation_failed') : rejected('not_ready');
+      }
+      // The identity may have changed, or the generation ended, while the operation ran.
+      const after = await confirmHolder(g);
+      return after ?? ok(result);
     },
 
     async acceptLoss(ownerId) {

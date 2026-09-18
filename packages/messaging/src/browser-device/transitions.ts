@@ -3,12 +3,14 @@
 // invalidate first, so no late SDK callback can publish into its replacement, then
 // wipe projections, then close the engine, the store and the lease, in that order.
 
-import type { DeviceId, Disposer, OwnerId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, DeviceId, Disposer, OwnerId } from '@khala/contracts/messaging/index';
 import type { CryptoStore, DeviceEngine } from './lifecycle';
 import type { OwnerLease } from './ownership';
 
 export type Generation = {
   readonly ownerId: OwnerId;
+  /** The signed-in principal this generation was opened for. */
+  readonly principal: AuthPrincipal;
   readonly generation: number;
   readonly abort: AbortController;
   deviceId: DeviceId | null;
@@ -26,18 +28,33 @@ export class Superseded extends Error {
   }
 }
 
-export function openGeneration(ownerId: OwnerId, generation: number, deviceId: DeviceId | null): Generation {
-  return { ownerId, generation, abort: new AbortController(), deviceId, lease: null, store: null, engine: null, disposers: new Set(), closed: null };
+export function openGeneration(principal: AuthPrincipal, generation: number, deviceId: DeviceId | null): Generation {
+  return {
+    ownerId: principal.ownerId, principal, generation, abort: new AbortController(), deviceId,
+    lease: null, store: null, engine: null, disposers: new Set(), closed: null,
+  };
 }
 
 export const isLive = (g: Generation): boolean => !g.abort.signal.aborted;
 
+/** Resolves `true` if `promise` settles within `ms`, or `false` once the bound elapses. */
+export function within(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(false), ms);
+    void promise.then(() => true, () => true).then(settled => {
+      clearTimeout(timer);
+      resolve(settled);
+    });
+  });
+}
+
 /**
- * Ends a generation. Idempotent; resolves after every resource it held is closed.
- * Close failures are swallowed: the generation is already unreachable, and a
- * failing close must not keep a replacement from starting.
+ * Ends a generation. Idempotent; resolves after every resource it held is closed,
+ * or once `closeWaitMs` passes for an engine that will not close. Close failures
+ * are swallowed: the generation is already unreachable, and a failing close must
+ * not keep a replacement from starting.
  */
-export function endGeneration(g: Generation): Promise<void> {
+export function endGeneration(g: Generation, closeWaitMs: number): Promise<void> {
   if (g.closed) return g.closed;
   g.abort.abort();
   const disposers = [...g.disposers];
@@ -45,16 +62,18 @@ export function endGeneration(g: Generation): Promise<void> {
   for (const dispose of disposers) {
     try { dispose(); } catch { /* projection wipe failures cannot resurrect the generation */ }
   }
-  g.closed = closeResources(g);
+  g.closed = closeResources(g, closeWaitMs);
   return g.closed;
 }
 
-async function closeResources(g: Generation): Promise<void> {
+async function closeResources(g: Generation, closeWaitMs: number): Promise<void> {
   const { engine, store, lease } = g;
   g.engine = null;
   g.store = null;
   g.lease = null;
-  if (engine) await engine.close().catch(() => undefined);
+  // An engine that will not close may still be writing. Its store and lease stay
+  // held so no other tab can become a second writer; closing the tab frees them.
+  if (engine && !(await within(engine.close(), closeWaitMs))) return;
   if (store) await store.close().catch(() => undefined);
   lease?.release();
 }

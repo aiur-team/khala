@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./browser-device/*": "./src/browser-device/*.ts",
+    "./browser-device/index": "./src/browser-device/index.ts",
     "./rooms/*": "./src/rooms/*.ts",
     "./revocation/*": "./src/revocation/*.ts",
     "./recovery/*": "./src/recovery/*.ts"

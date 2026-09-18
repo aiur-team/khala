@@ -92,9 +92,12 @@ export function createIndexedDbMarkerStore(factory: IndexedDbLike | null = scope
   };
 }
 
-/** Name the SDK uses for one owner's crypto database; distinct per owner and device. */
+/**
+ * Name the SDK uses for one owner's crypto database; distinct per owner and device.
+ * `encodeURIComponent` escapes `:`, so no pair of ids can produce another pair's name.
+ */
 export const cryptoStoreName = (ownerId: OwnerId, deviceId: DeviceId): string =>
-  `khala.crypto.${encodeURIComponent(ownerId)}.${encodeURIComponent(deviceId)}`;
+  `khala.crypto:${encodeURIComponent(ownerId)}:${encodeURIComponent(deviceId)}`;
 
 type StorageManagerLike = Readonly<{ persist?(): Promise<boolean> }>;
 

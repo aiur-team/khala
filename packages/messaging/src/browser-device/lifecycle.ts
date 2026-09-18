@@ -57,6 +57,12 @@ export type LocalIdentity = Readonly<{
 /**
  * One SDK client over one crypto store. `open` must stay local: no key upload and
  * no sync until `start`, so a lost identity is refused before it reaches the server.
+ *
+ * This lifecycle does not enforce message-level crypto policy. The substrate adapter
+ * behind this seam owns it: share room keys only with verified devices (Matrix
+ * `OnlyTrustedDevices`), classify withheld and missing keys strictly rather than
+ * as generic decryption failures, and rotate outbound sessions when membership or
+ * device trust changes. `start` and `close` are bounded by `engineTimeoutMs`.
  */
 export interface DeviceEngine {
   identity(): Promise<LocalIdentity>;
@@ -96,9 +102,12 @@ export type BrowserDeviceDependencies = Readonly<{
   locks: OwnerLockProvider;
   /** Bounded wait for another tab's owner lock. Defaults to 10 seconds. */
   lockWaitMs?: number;
+  /** Bound on `engine.start()` and `engine.close()`. Defaults to 30 seconds. */
+  engineTimeoutMs?: number;
 }>;
 
 export const DEFAULT_LOCK_WAIT_MS = 10_000;
+export const DEFAULT_ENGINE_TIMEOUT_MS = 30_000;
 
 export function deviceView(state: DeviceState, generation: number, deviceId: DeviceId | null, reason: DeviceReason | null = null): DeviceView {
   return Object.freeze({ deviceId, state, generation, reason });
