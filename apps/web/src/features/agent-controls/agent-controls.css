@@ -49,6 +49,14 @@
   margin: 0.25rem 0;
 }
 
+.agent-controls__notice--alert {
+  color: var(--khala-critical, #b3261e);
+}
+
+.agent-controls__refresh-button {
+  font-size: 0.85rem;
+}
+
 .agent-controls__receipt {
   border-top: 1px solid var(--khala-line);
   padding-top: 0.5rem;

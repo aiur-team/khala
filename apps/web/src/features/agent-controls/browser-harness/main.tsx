@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
-  BindingId, DeliveryLimits, ParticipantId, PolicyAck, RoomId,
+  BindingId, DeliveryLimits, OwnerId, ParticipantId, PolicyAck, RoomId,
 } from '@khala/contracts/delivery/index';
 import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { AgentControlsPanel } from '../AgentControlsPanel';
@@ -18,6 +18,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const BINDING_ID = 'bind_harness' as BindingId;
 const ROOM_ID = 'room_harness' as RoomId;
 const PEER_ID = 'agent_harness' as ParticipantId;
+const OWNER_ID = 'owner_harness' as OwnerId;
 
 const limitsResult = decodeDeliveryLimits({ maxSelectionEvents: 2, maxPayloadBytes: 4096 });
 if (!limitsResult.ok) throw new Error('invalid harness limits');
@@ -27,7 +28,9 @@ const CONFIG: AgentControlsConfig = {
   bindingId: BINDING_ID,
   roomId: ROOM_ID,
   peerParticipantId: PEER_ID,
-  ownerLabel: 'owner-harness',
+  // The harness viewer owns this binding, so the panel shows "Your agent" and
+  // enables controls — matching the real host's authenticated-owner case.
+  viewerOwnerId: OWNER_ID,
   agentLabel: 'agent-harness',
   roomLabel: 'room-harness',
 };
@@ -43,13 +46,14 @@ function currentSnapshot(): AgentControlsSnapshot {
     binding: {
       v: 1,
       bindingId: BINDING_ID,
-      ownerId: 'owner_harness' as never,
+      ownerId: OWNER_ID,
       agentParticipantId: 'agent_harness' as never,
       deviceId: 'device_harness' as never,
       harness: 'codex',
       sessionId: 'thread_harness',
       generation,
     },
+    bindingStatus: 'active',
     capabilities: {
       v: 1,
       harness: 'codex',
@@ -89,6 +93,12 @@ const ports: AgentControlsPorts = {
     },
     submitPolicy: async command => {
       await delay(150);
+      // The connector has accepted the request but has not yet applied it, so
+      // `connectorState` is honestly `pending` here — `decodePolicyAck`
+      // requires `effectiveVersion === requestedVersion` whenever a command
+      // claims `effective`, which is not true until the snapshot below lands.
+      // KTD2: an ack alone never carries mode/paused, so the "requested"
+      // badge — not the effective badge — is what this ack can move.
       const ack: PolicyAck = {
         v: 1,
         commandId: command.commandId,
@@ -96,13 +106,9 @@ const ports: AgentControlsPorts = {
         generation,
         requestedVersion: command.expectedPolicyVersion + 1,
         effectiveVersion,
-        connectorState: 'effective',
+        connectorState: 'pending',
         errorCode: null,
       };
-      // The ack's connector acknowledgment lands before the authoritative
-      // snapshot that actually updates the effective display (KTD2: an ack
-      // alone never carries mode/paused) — this gap is deliberate so the
-      // "requested" badge is observable before the snapshot confirms it.
       setTimeout(() => {
         effectiveVersion = command.expectedPolicyVersion + 1;
         paused = command.paused;

@@ -20,8 +20,17 @@ export type PolicySnapshot = Readonly<{
   paused: boolean | null;
 }>;
 
+export const BINDING_STATUSES = ['active', 'revoked'] as const;
+export type BindingStatus = (typeof BINDING_STATUSES)[number];
+
 export type AgentControlsSnapshot = Readonly<{
   binding: SessionBinding;
+  /**
+   * A revoked binding must never leave an enabled control: the human revoked
+   * the connection precisely to stop it from receiving further commands, so
+   * this is checked independently of connectivity or capability state.
+   */
+  bindingStatus: BindingStatus;
   capabilities: HarnessCapabilities | null;
   policy: PolicySnapshot;
   connection: 'connected' | 'offline' | 'unknown';

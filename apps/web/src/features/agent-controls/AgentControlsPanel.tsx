@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Panel } from '../../shell/Panel';
 import { StatusBadge, type StatusTone } from '../../shell/StatusBadge';
 import { createAgentControlsController, type AgentControlsConfig, type AgentControlsController } from './controller';
@@ -29,44 +29,65 @@ const ACKNOWLEDGMENT_TONE: Record<AgentControlsView['policy']['acknowledgment'],
   effective: 'positive',
   offline: 'critical',
   rejected: 'critical',
+  unknown: 'critical',
 };
 
 function effectivePolicyLabel(view: AgentControlsView): string {
   if (view.policy.effectiveVersion === null || view.policy.effectiveMode === null || view.policy.paused === null) {
     return 'Effective policy unknown';
   }
-  const modeLabel = view.policy.effectiveMode === 'review' ? 'Review required' : 'Automatic delivery';
+  // "Automatic delivery" is never offered as a request from this panel — it is
+  // only decodable because the wire contract must not change shape when
+  // G-AUTOMATION opens (KTD3) — so a snapshot that already reports it is
+  // labelled as pending that unresolved decision, never as a live feature.
+  const modeLabel = view.policy.effectiveMode === 'review'
+    ? 'Review required'
+    : 'Automatic delivery (unavailable pending policy decision)';
   const pauseLabel = view.policy.paused ? ', paused' : '';
   return `${modeLabel}${pauseLabel} (v${view.policy.effectiveVersion})`;
 }
 
+const ACKNOWLEDGMENT_SUFFIX: Record<AgentControlsView['policy']['acknowledgment'], string> = {
+  pending: ' — request pending',
+  effective: ' — confirmed',
+  offline: ' — connector offline, request pending',
+  rejected: ' — request rejected',
+  unknown: ' — outcome unknown, connector unreachable',
+};
+
 /**
- * A pause request changes future delivery policy only. It is never a claim that
- * an in-flight model turn stopped or was cancelled (KTD3) — the wording here is
- * deliberately scoped to "delivery" and "requested", never "stopped"/"cancelled".
+ * A pause/resume request changes future delivery policy only. It is never a
+ * claim that an in-flight model turn stopped or was cancelled (KTD3) — the
+ * wording here is deliberately scoped to "delivery" and "requested", never
+ * "stopped"/"cancelled". Tracks `requestedPaused` explicitly so a resume
+ * request is never mislabelled as a pause request.
  */
 function requestedPolicyLabel(view: AgentControlsView): string | null {
-  if (view.policy.requestedMode === null || view.policy.requestedVersion === null) return null;
-  const suffix = view.policy.acknowledgment === 'offline'
-    ? ' — connector offline, request pending'
-    : view.policy.acknowledgment === 'rejected'
-      ? ' — request rejected'
-      : view.policy.acknowledgment === 'pending'
-        ? ' — request pending'
-        : ' — confirmed';
-  return `Requested: review, pause requested (v${view.policy.requestedVersion})${suffix}`;
+  if (view.policy.requestedVersion === null || view.policy.requestedPaused === null) return null;
+  const action = view.policy.requestedPaused ? 'pause requested' : 'resume requested';
+  const suffix = ACKNOWLEDGMENT_SUFFIX[view.policy.acknowledgment]
+    + (view.policy.acknowledgment === 'rejected' && view.policy.errorCode ? ` (${view.policy.errorCode})` : '');
+  return `Requested: review, ${action} (v${view.policy.requestedVersion})${suffix}`;
 }
 
 export function AgentControlsPanel({ ports, config, controller: injectedController }: AgentControlsPanelProps) {
-  const ownController = useMemo(() => createAgentControlsController(ports, config), [ports, config]);
-  const controller = injectedController ?? ownController;
+  const ownController = useMemo(
+    () => (injectedController ? null : createAgentControlsController(ports, config)),
+    [ports, config.bindingId, config.roomId, config.peerParticipantId, config.viewerOwnerId, injectedController],
+  );
+  const controller = injectedController ?? ownController!;
   const [view, setView] = useState<AgentControlsView>(() => controller.getView());
+  const unavailableReasonId = useId();
 
   useEffect(() => {
     setView(controller.getView());
     return controller.subscribe(setView);
   }, [controller]);
-  useEffect(() => () => controller.dispose(), [controller]);
+  useEffect(() => () => {
+    // Only dispose the controller this component built; an injected controller
+    // is owned by its caller (e.g. a test), never leaked into or torn down here.
+    if (ownController) ownController.dispose();
+  }, [ownController]);
 
   const requestedLabel = requestedPolicyLabel(view);
   const nextPaused = !(view.policy.paused ?? false);
@@ -90,28 +111,41 @@ export function AgentControlsPanel({ ports, config, controller: injectedControll
 
       <div className="agent-controls__status">
         <StatusBadge tone={CONNECTION_TONE[view.connection]} label={CONNECTION_LABEL[view.connection]} />
+        {view.revoked ? <StatusBadge tone="critical" label="Revoked" /> : null}
         <span className="agent-controls__effective">{effectivePolicyLabel(view)}</span>
       </div>
 
-      {requestedLabel ? (
-        <p className="agent-controls__requested" role="status">
+      {/* Permanently mounted so a later confirmation is announced by assistive
+          tech even though this element was empty when the page first rendered. */}
+      <p className="agent-controls__requested" role="status">
+        {requestedLabel ? (
           <StatusBadge tone={ACKNOWLEDGMENT_TONE[view.policy.acknowledgment]} label={requestedLabel} />
-        </p>
-      ) : null}
+        ) : null}
+      </p>
 
       <div className="agent-controls__actions">
         <button
           type="button"
           className="agent-controls__pause-button"
           disabled={!view.controlsAvailable}
+          aria-describedby={!view.controlsAvailable && view.unavailableReason ? unavailableReasonId : undefined}
           onClick={() => controller.requestPause(nextPaused)}
         >
-          {nextPaused ? 'Request pause' : 'Resume automatic review delivery'}
+          {nextPaused ? 'Request pause' : 'Resume review delivery'}
         </button>
+        {view.notice ? (
+          <button type="button" className="agent-controls__refresh-button" onClick={() => controller.refresh()}>
+            Refresh
+          </button>
+        ) : null}
       </div>
 
       {!view.controlsAvailable && view.unavailableReason ? (
-        <p className="agent-controls__notice" role="note">{view.unavailableReason}</p>
+        <p id={unavailableReasonId} className="agent-controls__notice" role="note">{view.unavailableReason}</p>
+      ) : null}
+
+      {view.notice ? (
+        <p className="agent-controls__notice agent-controls__notice--alert" role="alert">{view.notice.message}</p>
       ) : null}
 
       {view.receiptDetail ? (

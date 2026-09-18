@@ -14,7 +14,7 @@ const harnessRoot = join(here, 'browser-harness');
 // fabricated ports (see browser-harness/main.tsx) — no real harness sessions,
 // network calls or connector credentials. Narrow viewports per
 // docs/evidence/ui-planning-grounding.md.
-test('AgentControlsPanel requests a pause, confirms it as effective, and keyboard focus/announcement survive the round trip', { timeout: 90_000 }, async () => {
+test('AgentControlsPanel requests a pause, confirms it effective via role="status", and keyboard focus survives the round trip', { timeout: 90_000 }, async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'khala-agent-controls-dist-'));
   const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-agent-controls-profile-'));
   let server: PreviewServer | undefined;
@@ -33,13 +33,15 @@ test('AgentControlsPanel requests a pause, confirms it as effective, and keyboar
     const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
     await page.goto(url);
 
-    // Scope is visible next to the controls before any interaction.
-    await page.getByText('owner-harness').waitFor();
+    // Scope is visible next to the controls before any interaction. The
+    // harness viewer owns this binding, so ownership renders as "Your agent"
+    // (derived from ownerId), not a raw label string.
+    await page.getByText('Your agent').waitFor();
     await page.getByText('agent-harness').waitFor();
     await page.getByText('room-harness').waitFor();
 
     // Located by class, not accessible name: the button's label changes to
-    // "Resume automatic review delivery" once the pause takes effect below.
+    // "Resume review delivery" once the pause takes effect below.
     const pauseButton = page.locator('.agent-controls__pause-button');
     await pauseButton.waitFor();
     // Controls stay disabled until the harness's readSnapshot resolves.
@@ -47,15 +49,27 @@ test('AgentControlsPanel requests a pause, confirms it as effective, and keyboar
       const button = [...document.querySelectorAll('button')].find(node => node.textContent === 'Request pause');
       return button instanceof HTMLButtonElement && !button.disabled;
     });
+
+    // The live region that will carry the confirmation is mounted before any
+    // interaction — it must stay empty-but-present, not appear only once
+    // there is something to say, or a screen reader would never pick it up.
+    const statusRegion = page.locator('.agent-controls__requested[role="status"]');
+    await statusRegion.waitFor({ state: 'attached' });
+    assert.equal((await statusRegion.innerText()).trim(), '', 'the status live region starts empty, not absent');
+
     await pauseButton.focus();
     await pauseButton.press('Enter');
 
-    // The pending request is visible and never claims the model stopped.
-    await page.getByText(/Requested: review, pause requested/).waitFor();
+    // The pending request is announced through the live region and never
+    // claims the model stopped.
+    await statusRegion.getByText(/Requested: review, pause requested/).waitFor();
     const bodyText = await page.locator('body').innerText();
     assert.equal(/stopped|cancelled/i.test(bodyText), false, 'pending pause never claims the model stopped or was cancelled');
 
-    // The harness resolves the command as effective; the effective badge updates once.
+    // The harness resolves the command as effective; the live region's text
+    // updates to the confirmed wording — this is what actually announces to
+    // assistive tech, not just a static label appearing on the page.
+    await statusRegion.getByText(/confirmed/).waitFor({ timeout: 5_000 });
     await page.getByText(/Review required, paused/).waitFor({ timeout: 5_000 });
     assert.equal(
       await pauseButton.evaluate(node => node === document.activeElement),
@@ -80,7 +94,7 @@ test('AgentControlsPanel requests a pause, confirms it as effective, and keyboar
         true,
         `${label}: no horizontal overflow from the scope labels or badges`,
       );
-      assert.equal(await page.getByText('owner-harness').isVisible(), true, `${label}: owner scope remains reachable`);
+      assert.equal(await page.getByText('Your agent').isVisible(), true, `${label}: owner scope remains reachable`);
     }
   } finally {
     await browser?.close();
