@@ -18,12 +18,12 @@ additional undocumented setup.
 ## What each script does
 
 All three scripts are plain Node with built-in TypeScript type stripping (no
-`tsx`, matching `infra/messaging/`'s existing convention — the repository's
-`pnpm typecheck`/`pnpm test` workspace scope covers `apps/*` and `packages/*`
-only, so `infra/operations/` is verified the same way `infra/messaging/` is:
-`node --test infra/operations/*.test.ts`, `tsc --noEmit` with
+`tsx`, matching `infra/messaging/`'s existing convention). `pnpm test` runs
+`infra/**/*.test.ts` in CI; `pnpm typecheck`'s workspace scope is `apps/*` and
+`packages/*` only, so `infra/operations/` is additionally typechecked and
+linted the same way `infra/messaging/` is: `tsc --noEmit` with
 `--allowImportingTsExtensions`, and `eslint infra/operations/`, plus the manual
-rehearsal below). Every mutating step is injectable as a "port" function
+rehearsal below. Every mutating step is injectable as a "port" function
 (`BackupPorts`, `RestorePorts`, `UpgradeCheckPorts`); the shipped
 `dockerComposePorts` implementations operate the disposable
 `infra/messaging/compose.yaml` stack. Errors are a stable `OperationsError`
