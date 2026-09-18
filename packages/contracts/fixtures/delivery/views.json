@@ -1,0 +1,32 @@
+{
+  "_comment": "Port view examples. `valid` entries decode to `expected` (or to `input` when omitted); `invalid` entries fail with exactly `error`. Limits come from exact-release.json. Capability entries are evidence-scoped examples, not a launch allowlist: G-AUTOMATION and G-HARNESSES remain open. Approval results describe downstream policy/composition outcomes; this pure contract does not claim storage or harness execution.",
+  "valid": [
+    { "name": "Claude 2.1.276 no-setup route is unsupported", "decoder": "capabilities", "input": { "v": 1, "harness": "claude", "version": "2.1.276", "adapterVersion": "no-setup-route", "support": "unsupported", "existingSession": "unsupported", "immediateNotification": "unsupported", "busy": "unknown", "receiptEvidence": ["transport_written", "harness_queued", "context_consumed", "completed"], "reconcileByReleaseId": "unsupported", "limits": { "maxSelectionEvents": 50, "maxPayloadBytes": 1048576 }, "evidenceRef": "docs/evidence/claude.md" } },
+    { "name": "Codex executor Khala did not start is unknown", "decoder": "capabilities", "input": { "v": 1, "harness": "codex", "version": "0.154.0", "adapterVersion": "foreign-executor", "support": "unsupported", "existingSession": "unknown", "immediateNotification": "unknown", "busy": "unknown", "receiptEvidence": [], "reconcileByReleaseId": "unknown", "limits": { "maxSelectionEvents": 50, "maxPayloadBytes": 1048576 }, "evidenceRef": "docs/evidence/codex.md" } },
+    { "name": "unproven generic harness is unknown", "decoder": "capabilities", "input": { "v": 1, "harness": "unproven-extension", "version": "unknown", "adapterVersion": "unimplemented", "support": "unsupported", "existingSession": "unknown", "immediateNotification": "unknown", "busy": "unknown", "receiptEvidence": [], "reconcileByReleaseId": "unknown", "limits": { "maxSelectionEvents": 50, "maxPayloadBytes": 1048576 }, "evidenceRef": null } },
+
+    { "name": "failed receipt with a closed code", "decoder": "receipt", "input": { "v": 1, "receiptId": "receipt-release-1-failed", "releaseId": "release-1", "bindingId": "bind-b-1", "generation": 0, "kind": "failed", "observedAt": "2026-09-18T02:39:00Z", "source": "connector", "evidenceRef": null, "errorCode": "harness_unavailable" } },
+    { "name": "disconnect after a possible submission is outcome_unknown", "decoder": "receipt", "input": { "v": 1, "receiptId": "receipt-release-1-unknown", "releaseId": "release-1", "bindingId": "bind-b-1", "generation": 0, "kind": "outcome_unknown", "observedAt": "2026-09-18T02:39:00Z", "source": "connector", "evidenceRef": null, "errorCode": "disconnected" } },
+    { "name": "outcome_unknown may carry no code", "decoder": "receipt", "input": { "v": 1, "receiptId": "receipt-release-1-unknown-2", "releaseId": "release-1", "bindingId": "bind-b-1", "generation": 0, "kind": "outcome_unknown", "observedAt": "2026-09-18T02:39:00Z", "source": "connector", "evidenceRef": null, "errorCode": null } },
+    { "name": "correlated context consumption", "decoder": "receipt", "input": { "v": 1, "receiptId": "receipt-release-1-consumed", "releaseId": "release-1", "bindingId": "bind-b-1", "generation": 0, "kind": "context_consumed", "observedAt": "2026-09-18T02:38:01Z", "source": "harness", "evidenceRef": "codex:userMessage.clientId:release-1", "errorCode": null } },
+
+    { "name": "stale policy is rejected with the current version", "decoder": "policyAck", "input": { "v": 1, "commandId": "policy-1", "bindingId": "bind-b-1", "generation": 0, "requestedVersion": 4, "effectiveVersion": 3, "connectorState": "rejected", "errorCode": "stale_policy" } },
+    { "name": "ambiguous persistence keeps null versions", "decoder": "policyAck", "input": { "v": 1, "commandId": "policy-1", "bindingId": "bind-b-1", "generation": 0, "requestedVersion": null, "effectiveVersion": null, "connectorState": "offline", "errorCode": "outcome_unknown" } },
+
+    { "name": "approved selection lists its releases", "decoder": "approvalResult", "input": { "ok": true, "releaseIds": ["release-1"] } },
+    { "name": "same command ID with changed input", "decoder": "approvalResult", "input": { "ok": false, "code": "idempotency_conflict" } },
+    { "name": "stale policy approval", "decoder": "approvalResult", "input": { "ok": false, "code": "stale_policy" } },
+    { "name": "cross-owner binding", "decoder": "approvalResult", "input": { "ok": false, "code": "forbidden" } },
+    { "name": "changed selected content", "decoder": "approvalResult", "input": { "ok": false, "code": "stale_content" } },
+    { "name": "ambiguous approval keeps its operation", "decoder": "approvalResult", "input": { "ok": false, "code": "outcome_unknown", "operationId": "approval-operation-1" } }
+  ],
+  "invalid": [
+    { "name": "approval success without releases", "decoder": "approvalResult", "input": { "ok": true, "releaseIds": [] }, "error": { "code": "invalid_field", "field": "releaseIds" } },
+    { "name": "approval success with a duplicate release", "decoder": "approvalResult", "input": { "ok": true, "releaseIds": ["release-1", "release-1"] }, "error": { "code": "invalid_field", "field": "releaseIds" } },
+    { "name": "approval success over the selection limit", "decoder": "approvalResult", "input": { "ok": true, "releaseIds": ["release-1", "release-2", "release-3"] }, "error": { "code": "limit_exceeded", "field": "releaseIds" } },
+    { "name": "approval free-text error", "decoder": "approvalResult", "input": { "ok": false, "code": "database row locked" }, "error": { "code": "invalid_field", "field": "code" } },
+    { "name": "ambiguous approval without an operation", "decoder": "approvalResult", "input": { "ok": false, "code": "outcome_unknown" }, "error": { "code": "invalid_field", "field": "operationId" } },
+    { "name": "definitive approval error carrying an operation", "decoder": "approvalResult", "input": { "ok": false, "code": "stale_policy", "operationId": "approval-operation-1" }, "error": { "code": "invalid_field", "field": "operationId" } },
+    { "name": "success flag that is not a boolean", "decoder": "approvalResult", "input": { "ok": "true", "releaseIds": ["release-1"] }, "error": { "code": "invalid_field", "field": "releaseIds" } }
+  ]
+}

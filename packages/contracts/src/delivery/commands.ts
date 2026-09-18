@@ -3,7 +3,7 @@
 // only after authenticating the owner session.
 
 import {
-  type Decoded, type DeliveryLimits, booleanValue, decodeWith, fail, literal, nullable, object,
+  type Decoded, type DeliveryLimits, array, booleanValue, decodeWith, elementField, fail, literal, nullable, object,
   safeInteger, utcTimestamp, version,
 } from './decode';
 import { type EventRef, readEventSelection, sameEventRef } from './events';
@@ -41,6 +41,10 @@ export type ApprovalCommand = Readonly<{
 /**
  * A future-event policy request. It carries no pending selection, so changing to
  * `auto` cannot implicitly release an existing backlog.
+ *
+ * `mode: 'auto'` is gated by G-AUTOMATION: this contract selects no default mode,
+ * and no implementation may accept `auto` before that gate is decided at launch.
+ * It is decodable only so the wire shape need not change when the gate opens.
  */
 export type PolicySetCommand = Readonly<{
   v: 1;
@@ -69,6 +73,7 @@ export type PolicyAckErrorCode = (typeof POLICY_ACK_ERRORS)[number];
  * revision was observed and must never be coerced to zero or the requested value.
  */
 export type PolicyAck = Readonly<{
+  v: 1;
   commandId: CommandId;
   bindingId: BindingId;
   generation: number;
@@ -78,17 +83,14 @@ export type PolicyAck = Readonly<{
   errorCode: PolicyAckErrorCode | null;
 }>;
 
-export type ApprovalErrorCode =
-  | 'forbidden'
-  | 'stale_policy'
-  | 'stale_content'
-  | 'stale_binding'
-  | 'expired_content'
-  | 'idempotency_conflict'
-  | 'unavailable'
-  | 'outcome_unknown';
+const DEFINITIVE_APPROVAL_ERRORS = [
+  'forbidden', 'stale_policy', 'stale_content', 'stale_binding', 'expired_content', 'idempotency_conflict',
+  'unavailable',
+] as const;
 
-type DefinitiveApprovalErrorCode = Exclude<ApprovalErrorCode, 'outcome_unknown'>;
+type DefinitiveApprovalErrorCode = (typeof DEFINITIVE_APPROVAL_ERRORS)[number];
+
+export type ApprovalErrorCode = DefinitiveApprovalErrorCode | 'outcome_unknown';
 
 export type ApprovalResult =
   | Readonly<{ ok: true; releaseIds: readonly ReleaseId[] }>
@@ -98,6 +100,37 @@ export type ApprovalResult =
 export interface ApprovalPort {
   approve(authority: OwnerAuthority, command: ApprovalCommand): Promise<ApprovalResult>;
   setPolicy(authority: OwnerAuthority, command: PolicySetCommand): Promise<PolicyAck>;
+}
+
+/**
+ * Decodes an approval outcome crossing into the browser. A success lists at least
+ * one release; `outcome_unknown` keeps the operation identity for reconciliation.
+ */
+export function decodeApprovalResult(input: unknown, limits: DeliveryLimits): Decoded<ApprovalResult> {
+  return decodeWith((): ApprovalResult => {
+    const record = input as { ok?: unknown; code?: unknown } | null;
+    if (typeof record === 'object' && record !== null && record.ok === true) {
+      const r = object(input, '', ['ok', 'releaseIds']);
+      const values = array(r.field('releaseIds'), r.at('releaseIds'));
+      if (values.length === 0) fail(r.at('releaseIds'), 'invalid_field');
+      if (values.length > limits.maxSelectionEvents) fail(r.at('releaseIds'), 'limit_exceeded');
+      const releaseIds = values.map((value, index) => readId<'ReleaseId'>(value, elementField(r.at('releaseIds'), index)));
+      if (new Set(releaseIds).size !== releaseIds.length) fail(r.at('releaseIds'), 'invalid_field');
+      return { ok: true, releaseIds };
+    }
+    if (typeof record === 'object' && record !== null && record.code === 'outcome_unknown') {
+      const r = object(input, '', ['ok', 'code', 'operationId']);
+      literal(r.field('ok'), r.at('ok'), [false]);
+      return {
+        ok: false,
+        code: 'outcome_unknown',
+        operationId: readId<'OperationId'>(r.field('operationId'), r.at('operationId')),
+      };
+    }
+    const r = object(input, '', ['ok', 'code']);
+    literal(r.field('ok'), r.at('ok'), [false]);
+    return { ok: false, code: literal(r.field('code'), r.at('code'), DEFINITIVE_APPROVAL_ERRORS) };
+  });
 }
 
 export function decodeApprovalCommand(input: unknown, limits: DeliveryLimits): Decoded<ApprovalCommand> {
@@ -154,9 +187,11 @@ export function decodePolicySetCommand(input: unknown): Decoded<PolicySetCommand
 export function decodePolicyAck(input: unknown): Decoded<PolicyAck> {
   return decodeWith(() => {
     const r = object(input, '', [
-      'commandId', 'bindingId', 'generation', 'requestedVersion', 'effectiveVersion', 'connectorState', 'errorCode',
+      'v', 'commandId', 'bindingId', 'generation', 'requestedVersion', 'effectiveVersion', 'connectorState',
+      'errorCode',
     ]);
     const ack: PolicyAck = {
+      v: version(r.field('v'), r.at('v')),
       commandId: readId<'CommandId'>(r.field('commandId'), r.at('commandId')),
       bindingId: readId<'BindingId'>(r.field('bindingId'), r.at('bindingId')),
       generation: safeInteger(r.field('generation'), r.at('generation')),

@@ -1,108 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import capabilityFixtures from '../../fixtures/delivery/capabilities.json';
+import exact from '../../fixtures/delivery/exact-release.json';
+import views from '../../fixtures/delivery/views.json';
 import type { SessionBinding } from './binding';
-import { decodeHarnessCapabilities, type HarnessCapabilities, type HarnessPort } from './harness';
-import { decodeDeliveryReceipt, RECEIPT_KINDS, type DeliveryReceipt } from './receipts';
+import {
+  EXISTING_SESSION_SUPPORT, IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT,
+  type HarnessCapabilities, type HarnessPort, decodeHarnessCapabilities,
+} from './harness';
+import { type DeliveryReceipt, RECEIPT_ERROR_CODES, RECEIPT_KINDS, decodeDeliveryReceipt } from './receipts';
 
-const clone = <T>(value: T): T => structuredClone(value);
-
-const validReceipt = {
-  v: 1,
-  receiptId: 'receipt-release-b-1-queued',
-  releaseId: 'release-b-1',
-  bindingId: 'bind-b-1',
-  generation: 0,
-  kind: 'harness_queued',
-  observedAt: '2026-09-18T02:38:00.125Z',
-  source: 'harness',
-  evidenceRef: 'codex:userMessage:release-b-1',
-  errorCode: null,
-};
+const capabilityViews = views.valid.filter(view => view.decoder === 'capabilities');
+const route = (name: string): unknown => capabilityViews.find(view => view.name.startsWith(name))!.input;
 
 describe('HarnessCapabilities', () => {
-  it('decodes every evidence-scoped fixture without broadening its claim', () => {
-    const decoded = capabilityFixtures.valid.map(testCase => decodeHarnessCapabilities(testCase.input));
-    expect(decoded.every(result => result.ok)).toBe(true);
+  it('has no boolean capability: each is unknown, unsupported or evidence-scoped', () => {
+    for (const values of [EXISTING_SESSION_SUPPORT, IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT]) {
+      expect(values.slice(0, 2)).toEqual(['unknown', 'unsupported']);
+      expect(values).toHaveLength(3);
+    }
+    expect(EXISTING_SESSION_SUPPORT[2]).toBe('khala_hosted_resume');
+    expect(IMMEDIATE_NOTIFICATION_SUPPORT[2]).toBe('khala_hosted_idle');
+    expect(RECONCILE_SUPPORT[2]).toBe('while_queued');
+  });
 
-    const values = decoded.map(result => {
-      if (!result.ok) throw new Error(`fixture failed at ${result.field}`);
-      return result.value;
-    });
-    expect(values[0]).toMatchObject({
+  it('claims for the proven Codex route only what KHA-104 observed', () => {
+    expect(decodeHarnessCapabilities(exact.capabilities)).toEqual({ ok: true, value: exact.capabilities });
+    expect(exact.capabilities).toMatchObject({
       harness: 'codex',
       version: '0.154.0',
-      adapterVersion: 'probe-driver@9a28af84',
       support: 'tested',
+      existingSession: 'khala_hosted_resume',
+      reconcileByReleaseId: 'while_queued',
       busy: 'queue',
       evidenceRef: 'docs/evidence/codex.md',
     });
-    expect(values[1]).toMatchObject({
-      harness: 'claude',
-      version: '2.1.276',
-      support: 'unsupported',
-      existingSession: true,
-      immediateNotification: true,
-      busy: 'unknown',
-      evidenceRef: 'docs/evidence/claude.md',
-    });
-    expect(values[2]).toMatchObject({
-      harness: 'unproven-extension',
-      support: 'unsupported',
-      busy: 'unknown',
-      evidenceRef: null,
-    });
   });
 
-  it('requires evidence for tested support', () => {
-    const candidate = clone(capabilityFixtures.valid[0]!.input);
-    candidate.evidenceRef = null;
-    expect(decodeHarnessCapabilities(candidate)).toEqual({ ok: false, code: 'invalid_field', field: 'evidenceRef' });
+  it('keeps the Claude session and every foreign or generic route out of support claims', () => {
+    expect(route('Claude')).toMatchObject({ support: 'unsupported', existingSession: 'unsupported' });
+    for (const name of ['Codex executor Khala did not start', 'unproven generic harness']) {
+      expect(route(name)).toMatchObject({
+        support: 'unsupported',
+        existingSession: 'unknown',
+        immediateNotification: 'unknown',
+        reconcileByReleaseId: 'unknown',
+        busy: 'unknown',
+        receiptEvidence: [],
+      });
+    }
   });
 
-  it('does not choose a busy default', () => {
-    const candidate = clone(capabilityFixtures.valid[0]!.input) as Record<string, unknown>;
-    delete candidate.busy;
-    expect(decodeHarnessCapabilities(candidate)).toEqual({ ok: false, code: 'invalid_field', field: 'busy' });
-
-    candidate.busy = 'interrupt';
-    expect(decodeHarnessCapabilities(candidate)).toEqual({ ok: false, code: 'invalid_field', field: 'busy' });
-  });
-
-  it('requires explicit configured delivery limits', () => {
-    const missing = clone(capabilityFixtures.valid[0]!.input) as Record<string, unknown>;
-    delete missing.limits;
-    expect(decodeHarnessCapabilities(missing)).toEqual({ ok: false, code: 'invalid_field', field: 'limits' });
-
-    const invalid = clone(capabilityFixtures.valid[0]!.input);
-    invalid.limits.maxPayloadBytes = 0;
-    expect(decodeHarnessCapabilities(invalid)).toEqual({
-      ok: false,
-      code: 'invalid_field',
-      field: 'limits.maxPayloadBytes',
-    });
-  });
-
-  it('rejects duplicate or invented receipt evidence', () => {
-    const duplicate = clone(capabilityFixtures.valid[0]!.input);
-    duplicate.receiptEvidence = ['completed', 'completed'];
-    expect(decodeHarnessCapabilities(duplicate)).toEqual({
-      ok: false,
-      code: 'invalid_field',
-      field: 'receiptEvidence[1]',
-    });
-
-    const invented = clone(capabilityFixtures.valid[0]!.input);
-    invented.receiptEvidence = ['prompt_delivered'];
-    expect(decodeHarnessCapabilities(invented)).toEqual({
-      ok: false,
-      code: 'invalid_field',
-      field: 'receiptEvidence[0]',
-    });
-  });
-
-  it('rejects unknown fields instead of silently dropping them', () => {
-    const candidate = { ...clone(capabilityFixtures.valid[0]!.input), model: 'any' };
-    expect(decodeHarnessCapabilities(candidate)).toEqual({ ok: false, code: 'invalid_field', field: 'model' });
+  it('uses one harness name for a harness across fixtures', () => {
+    expect(exact.binding.harness).toBe(exact.capabilities.harness);
+    expect(exact.releasedJob.binding.harness).toBe(exact.capabilities.harness);
   });
 });
 
@@ -122,57 +71,43 @@ describe('DeliveryReceipt', () => {
     ]);
   });
 
-  it('decodes a correlated version 1 receipt unchanged', () => {
-    expect(decodeDeliveryReceipt(validReceipt)).toEqual({ ok: true, value: validReceipt });
+  it('pins a closed, content-free error vocabulary', () => {
+    expect(RECEIPT_ERROR_CODES).toEqual([
+      'harness_unavailable',
+      'harness_rejected',
+      'session_unavailable',
+      'busy_rejected',
+      'stale_binding',
+      'payload_digest_mismatch',
+      'limit_exceeded',
+      'disconnected',
+      'timeout',
+    ]);
   });
 
-  it.each([
-    ['v', { ...validReceipt, v: 2 }, 'invalid_version'],
-    ['kind', { ...validReceipt, kind: 'delivered' }, 'invalid_field'],
-    ['generation', { ...validReceipt, generation: -1 }, 'invalid_field'],
-    ['observedAt', { ...validReceipt, observedAt: '2026-09-18 02:38:00Z' }, 'invalid_field'],
-    ['source', { ...validReceipt, source: 'model' }, 'invalid_field'],
-  ])('rejects an invalid %s', (field, candidate, code) => {
-    expect(decodeDeliveryReceipt(candidate)).toEqual({ ok: false, code, field });
-  });
-
-  it('accepts nullable evidence and safe error codes without plaintext detail', () => {
-    const receipt = { ...validReceipt, kind: 'failed', evidenceRef: null, errorCode: 'writer_unavailable' };
+  it.each(RECEIPT_ERROR_CODES)('accepts closed code %s on a failed receipt', errorCode => {
+    const receipt = { ...exact.receipt, kind: 'failed', errorCode };
     expect(decodeDeliveryReceipt(receipt)).toEqual({ ok: true, value: receipt });
-  });
-
-  it('rejects content-bearing or cancellation-authority fields', () => {
-    expect(decodeDeliveryReceipt({ ...validReceipt, preview: 'pending plaintext' })).toEqual({
-      ok: false,
-      code: 'invalid_field',
-      field: 'preview',
-    });
-    expect(decodeDeliveryReceipt({ ...validReceipt, cancellationSucceeded: true })).toEqual({
-      ok: false,
-      code: 'invalid_field',
-      field: 'cancellationSucceeded',
-    });
   });
 });
 
 describe('HarnessPort', () => {
   it('keeps notification to a release hint and exposes reconciliation without cancellation', async () => {
     let notification: { v: 1; releaseId: string } | null = null;
-    const capabilities = capabilityFixtures.valid[0]!.input as unknown as HarnessCapabilities;
-    const receipt = validReceipt as unknown as DeliveryReceipt;
+    const capabilities = exact.capabilities as unknown as HarnessCapabilities;
+    const receipt = exact.receipt as unknown as DeliveryReceipt;
     const port = {
       inspect: async () => capabilities,
       notify: async (...args: [SessionBinding, { v: 1; releaseId: string }]) => {
-        const hint = args[1];
-        notification = hint;
+        notification = args[1];
       },
       submit: async () => receipt,
       reconcile: async () => receipt,
       close: async () => undefined,
     } satisfies HarnessPort;
 
-    await port.notify({} as SessionBinding, { v: 1, releaseId: 'release-b-1' });
-    expect(notification).toEqual({ v: 1, releaseId: 'release-b-1' });
+    await port.notify({} as SessionBinding, { v: 1, releaseId: 'release-1' });
+    expect(notification).toEqual({ v: 1, releaseId: 'release-1' });
     expect(Object.keys(notification ?? {})).toEqual(['v', 'releaseId']);
     expect('cancel' in port).toBe(false);
   });

@@ -7,7 +7,7 @@ import {
 import {
   type DeviceId, type OwnerId, decodeBindingId, decodeDeviceId, decodeOwnerId,
 } from './ids';
-import { type ReleasedJob, decodeReleasedJob, validatePayloadBytes } from './jobs';
+import { type UnverifiedReleasedJob, decodeReleasedJob, validatePayloadBytes } from './jobs';
 
 const digestA = 'sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b';
 const digestB = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -47,6 +47,7 @@ const binding = {
 const job = {
   v: 1,
   releaseId: 'release-1',
+  approval: { commandId: 'approve-1', policyVersion: 3, bindingGeneration: 0 },
   binding,
   policyVersion: 3,
   events: [eventA, eventB],
@@ -77,6 +78,12 @@ describe('delivery limits', () => {
     expect(decodeDeliveryLimits(input))
       .toEqual({ ok: false, code: 'invalid_field', field: 'maxSelectionEvents' });
   });
+
+  it('turns any other thrown error into a plaintext-free failure', () => {
+    const hostile = new Proxy({}, { ownKeys: () => { throw new Error('untrusted plaintext'); } });
+    expect(decodeEventRef(hostile)).toEqual({ ok: false, code: 'invalid_field', field: '' });
+    expect(decodeDeliveryLimits(hostile)).toEqual({ ok: false, code: 'invalid_field', field: '' });
+  });
 });
 
 describe('independent branded identifiers', () => {
@@ -106,6 +113,16 @@ describe('independent branded identifiers', () => {
     expect(decodeBindingId('a'.repeat(512)).ok).toBe(true);
     expect(decodeBindingId('\u00e9'.repeat(256)).ok).toBe(true);
     expect(decodeBindingId(`${'a'.repeat(511)}\u00e9`))
+      .toEqual({ ok: false, code: 'limit_exceeded', field: '' });
+  });
+
+  it('counts three- and four-byte UTF-8 characters exactly', () => {
+    // U+20AC is 3 bytes; U+1F44D is 4 bytes (a surrogate pair in UTF-16).
+    expect(decodeBindingId(`${'\u20ac'.repeat(170)}aa`).ok).toBe(true);
+    expect(decodeBindingId(`${'\u20ac'.repeat(170)}aaa`))
+      .toEqual({ ok: false, code: 'limit_exceeded', field: '' });
+    expect(decodeBindingId('\u{1f44d}'.repeat(128)).ok).toBe(true);
+    expect(decodeBindingId(`${'\u{1f44d}'.repeat(128)}a`))
       .toEqual({ ok: false, code: 'limit_exceeded', field: '' });
   });
 });
@@ -142,6 +159,32 @@ describe('EventRef', () => {
     expect(sameEventIdentity(eventA as EventRef, reattributed)).toBe(true);
     expect(sameEventRef(eventA as EventRef, reattributed)).toBe(false);
     expect(sameEventRef(eventA as EventRef, { ...eventA } as EventRef)).toBe(true);
+  });
+
+  // One case per compared field: an approval for this event must not match any other.
+  const substitutions: { [Field in keyof EventRef]: unknown } = {
+    v: 2,
+    roomId: 'room-2',
+    eventId: 'event-a-9',
+    authorParticipantId: 'agent-x',
+    authorDeviceId: 'dev-x',
+    contentDigest: digestB,
+  };
+
+  it('compares every reference field', () => {
+    expect(Object.keys(substitutions).sort()).toEqual(Object.keys(eventA).sort());
+  });
+
+  it.each(Object.entries(substitutions))('refuses a reference differing only in %s', (field, value) => {
+    const ref = eventA as EventRef;
+    expect(sameEventRef(ref, { ...ref, [field]: value } as EventRef)).toBe(false);
+    expect(sameEventRef({ ...ref, [field]: value } as EventRef, ref)).toBe(false);
+  });
+
+  it.each([['roomId', 'room-2'], ['eventId', 'event-a-9']])('refuses an identity differing only in %s', (field, value) => {
+    const ref = eventA as EventRef;
+    expect(sameEventIdentity(ref, { ...ref, [field]: value } as EventRef)).toBe(false);
+    expect(sameEventIdentity({ ...ref, [field]: value } as EventRef, ref)).toBe(false);
   });
 });
 
@@ -191,19 +234,39 @@ describe('SessionBinding', () => {
     }
   });
 
-  it('compares every binding field including generation', () => {
+  it('matches an identical binding', () => {
     const value = binding as SessionBinding;
     expect(sameSessionBinding(value, { ...value })).toBe(true);
-    expect(sameSessionBinding(value, { ...value, generation: 1 })).toBe(false);
-    expect(sameSessionBinding(value, { ...value, sessionId: 'thread-other' as SessionBinding['sessionId'] })).toBe(false);
+  });
+
+  // One case per compared field: a release approved for this binding must not match any other.
+  const substitutions: { [Field in keyof SessionBinding]: unknown } = {
+    v: 2,
+    bindingId: 'bind-b-2',
+    ownerId: 'owner-c',
+    agentParticipantId: 'agent-c',
+    deviceId: 'dev-c',
+    harness: 'claude',
+    sessionId: 'thread-other',
+    generation: 1,
+  };
+
+  it('compares every binding field', () => {
+    expect(Object.keys(substitutions).sort()).toEqual(Object.keys(binding).sort());
+  });
+
+  it.each(Object.entries(substitutions))('refuses a binding differing only in %s', (field, value) => {
+    const original = binding as SessionBinding;
+    expect(sameSessionBinding(original, { ...original, [field]: value } as SessionBinding)).toBe(false);
+    expect(sameSessionBinding({ ...original, [field]: value } as SessionBinding, original)).toBe(false);
   });
 });
 
 describe('ReleasedJob', () => {
-  it('decodes the exact release and preserves event ordering', () => {
+  it('decodes the exact release as unverified and preserves event ordering', () => {
     expect(decodeReleasedJob(job, limits)).toEqual({ ok: true, value: job });
     const decoded = decodeReleasedJob(job, limits);
-    if (decoded.ok) expectTypeOf(decoded.value).toEqualTypeOf<ReleasedJob>();
+    if (decoded.ok) expectTypeOf(decoded.value).toEqualTypeOf<UnverifiedReleasedJob>();
   });
 
   it('rejects missing and extra release fields', () => {

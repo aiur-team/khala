@@ -21,17 +21,21 @@ export {
   type SessionBinding, decodeSessionBinding, sameSessionBinding,
 } from './binding';
 export {
-  type ReleasedJob, decodeReleasedJob, validatePayloadBytes,
+  type ReleaseApproval, type ReleaseEnvelope, type ReleaseRejectionCode, type Released, type ReleasedJob,
+  type UnverifiedReleasedJob,
+  decodeReleasedJob, releaseFromApproval, validatePayloadBytes, verifyReleasedJob,
 } from './jobs';
 export {
   type ApprovalCommand, type ApprovalErrorCode, type ApprovalPort, type ApprovalResult,
   type OwnerAuthority, type PolicyAck, type PolicyAckErrorCode, type PolicySetCommand,
-  decodeApprovalCommand, decodePolicyAck, decodePolicySetCommand,
+  decodeApprovalCommand, decodeApprovalResult, decodePolicyAck, decodePolicySetCommand,
   sameApprovalCommandInput, samePolicySetCommandInput,
 } from './commands';
 export {
-  type DeliveryReceipt, type ReceiptKind, RECEIPT_KINDS, decodeDeliveryReceipt,
+  type DeliveryReceipt, type ReceiptErrorCode, type ReceiptKind, RECEIPT_ERROR_CODES, RECEIPT_KINDS,
+  decodeDeliveryReceipt,
 } from './receipts';
 export {
-  type HarnessCapabilities, type HarnessPort, decodeHarnessCapabilities,
+  type HarnessCapabilities, type HarnessPort, BUSY_BEHAVIORS, EXISTING_SESSION_SUPPORT, HARNESS_SUPPORT,
+  IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT, decodeHarnessCapabilities,
 } from './harness';
