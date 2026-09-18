@@ -12,15 +12,15 @@ describe('no-recovery capability projection', () => {
   it('exposes no recovery mode to a signed-in owner', async () => {
     const projected = await projectCapabilities(
       alice,
-      identity({ kind: 'signed_in', ownerId: alice, generation: 4 }),
+      identity({ kind: 'signed_in', ownerId: alice }),
     );
-    expect(projected.capabilities).toEqual({ modes: [], unavailableReason: 'not_configured' });
+    expect(projected.capabilities).toEqual({ modes: [], unavailableReason: 'unsupported_substrate' });
   });
 
   it('does not turn OAuth login for another owner into message-key recovery', async () => {
     const projected = await projectCapabilities(
       alice,
-      identity({ kind: 'signed_in', ownerId: 'owner_bob' as OwnerId, generation: 1 }),
+      identity({ kind: 'signed_in', ownerId: 'owner_bob' as OwnerId }),
     );
     expect(projected.capabilities).toEqual({ modes: [], unavailableReason: 'device_not_ready' });
   });

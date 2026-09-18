@@ -1,7 +1,7 @@
 import type { CallOptions, OwnerId, RecoveryCapabilities } from '@khala/contracts/messaging/index';
 
 export type RecoverySession =
-  | Readonly<{ kind: 'signed_in'; ownerId: OwnerId; generation: number }>
+  | Readonly<{ kind: 'signed_in'; ownerId: OwnerId }>
   | Readonly<{ kind: 'signed_out' }>
   | Readonly<{ kind: 'unavailable' }>;
 
@@ -14,7 +14,10 @@ export type CapabilityProjection = Readonly<{
   capabilities: RecoveryCapabilities;
 }>;
 
-/** P14 allows fresh-device re-admission only. It approves no old-history recovery mode. */
+/**
+ * P14 allows fresh-device re-admission only. `unsupported_substrate` is the policy refusal
+ * for old-history recovery and never represents a pending setup step.
+ */
 export async function projectCapabilities(
   ownerId: OwnerId,
   identity: RecoveryIdentity,
@@ -30,5 +33,5 @@ export async function projectCapabilities(
   if (session.kind !== 'signed_in' || session.ownerId !== ownerId) {
     return { session, capabilities: { modes: [], unavailableReason: 'device_not_ready' } };
   }
-  return { session, capabilities: { modes: [], unavailableReason: 'not_configured' } };
+  return { session, capabilities: { modes: [], unavailableReason: 'unsupported_substrate' } };
 }

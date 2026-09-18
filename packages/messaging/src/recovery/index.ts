@@ -1,5 +1,5 @@
 export {
-  type RecoveryIdentity, type RecoverySession, projectCapabilities,
+  type CapabilityProjection, type RecoveryIdentity, type RecoverySession, projectCapabilities,
 } from './capabilities';
 export {
   type RecoveryService, type RecoveryServiceDeps, createRecoveryService,

@@ -8,14 +8,14 @@ function service() {
   return createRecoveryService({
     ownerId: alice,
     identity: {
-      async current() { return { kind: 'signed_in' as const, ownerId: alice, generation: 7 }; },
+      async current() { return { kind: 'signed_in' as const, ownerId: alice }; },
     },
   });
 }
 
 describe('no-recovery service', () => {
   it('reports the approved no-recovery policy', async () => {
-    expect(await service().capabilities()).toEqual({ modes: [], unavailableReason: 'not_configured' });
+    expect(await service().capabilities()).toEqual({ modes: [], unavailableReason: 'unsupported_substrate' });
   });
 
   it('never requests a secret or creates an operation', async () => {
