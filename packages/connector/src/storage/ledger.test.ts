@@ -93,6 +93,11 @@ describe('pending items', () => {
     await storage.persistPending(pendingInput('event_7', 'approved text'));
     await storage.persistPending(pendingInput('event_7', 'rewritten text'));
 
+    // Re-delivery of the same conflict must not invalidate an open approval snapshot.
+    const before = await storage.ledger.transaction(tx => tx.ledgerRevision());
+    await storage.persistPending(pendingInput('event_7', 'rewritten text'));
+    expect(await storage.ledger.transaction(tx => tx.ledgerRevision())).toBe(before);
+
     const [entry] = await storage.readQuarantine();
     expect(entry).toMatchObject({ code: 'event_digest_mismatch', resolvedAt: null, key: { eventId: 'event_7' } });
     expect(JSON.stringify(entry)).not.toContain('rewritten');

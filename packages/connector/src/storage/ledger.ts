@@ -238,13 +238,17 @@ function toPendingRecord(db: DatabaseSync, row: PendingRow): PendingRecord {
   };
 }
 
-/** Records a conflict once; replaying the same conflicting event does not grow the table. */
+/**
+ * Records a conflict once and bumps the ledger revision only when it is new. Replaying
+ * the same conflicting event neither grows the table nor invalidates open snapshots.
+ */
 function quarantine(db: DatabaseSync, key: PendingKey, code: PersistConflictCode, digest: string, at: string): void {
   const seen = db.prepare(`SELECT 1 FROM quarantine WHERE room_id = ? AND event_id = ? AND binding_id = ? AND generation = ?
     AND code = ? AND observed_digest = ?`).get(key.roomId, key.eventId, key.recipientBindingId, key.recipientGeneration, code, digest);
   if (seen !== undefined) return;
   db.prepare(`INSERT INTO quarantine (room_id, event_id, binding_id, generation, code, observed_digest, observed_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)`).run(key.roomId, key.eventId, key.recipientBindingId, key.recipientGeneration, code, digest, at);
+  bumpRevision(db);
 }
 
 export function persistPending(
@@ -263,7 +267,6 @@ export function persistPending(
     const observed = sha256Digest(plaintext);
     if (observed !== event.contentDigest) {
       quarantine(db, key, 'content_digest_mismatch', observed, receivedAt);
-      bumpRevision(db);
       return { kind: 'conflict', code: 'content_digest_mismatch' } as const;
     }
 
@@ -276,7 +279,6 @@ export function persistPending(
       if (sameEventRef(existing, event)) continue;
       const code = existing.contentDigest !== event.contentDigest ? 'event_digest_mismatch' : 'event_ref_mismatch';
       quarantine(db, key, code, event.contentDigest, receivedAt);
-      bumpRevision(db);
       return { kind: 'conflict', code } as const;
     }
 
