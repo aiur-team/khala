@@ -33,29 +33,39 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
   const addButtonRef = useRef<HTMLButtonElement | null>(null);
   const [focusAfterRemoveIndex, setFocusAfterRemoveIndex] = useState<number | null>(null);
 
-  useEffect(() => controller.subscribe(setView), [controller]);
+  useEffect(() => {
+    // Sync immediately: a controller swap (new `ports`, e.g. a sign-out or
+    // account change) must not leave the previous controller's stale view —
+    // including a completed share link — rendered until it next emits.
+    setView(controller.getView());
+    return controller.subscribe(setView);
+  }, [controller]);
   useEffect(() => () => controller.dispose(), [controller]);
 
   useEffect(() => {
     let cancelled = false;
     async function checkReadiness() {
-      const identity = await ports.identity.current();
-      if (cancelled) return;
-      if (identity.kind === 'signed_out') {
-        setReadiness({ kind: 'blocked', reason: 'Sign in to create a chat.' });
-        return;
+      try {
+        const identity = await ports.identity.current();
+        if (cancelled) return;
+        if (identity.kind === 'signed_out') {
+          setReadiness({ kind: 'blocked', reason: 'Sign in to create a chat.' });
+          return;
+        }
+        if (identity.kind === 'unavailable') {
+          setReadiness({ kind: 'blocked', reason: 'Account status is unavailable right now. Try again shortly.' });
+          return;
+        }
+        const device = await ports.device.ensureReady(identity.principal.ownerId);
+        if (cancelled) return;
+        if (device.kind !== 'ok' || device.value.state !== 'ready') {
+          setReadiness({ kind: 'blocked', reason: 'This device is not ready yet.' });
+          return;
+        }
+        setReadiness({ kind: 'ready' });
+      } catch {
+        if (!cancelled) setReadiness({ kind: 'blocked', reason: 'Account status is unavailable right now. Try again shortly.' });
       }
-      if (identity.kind === 'unavailable') {
-        setReadiness({ kind: 'blocked', reason: 'Account status is unavailable right now. Try again shortly.' });
-        return;
-      }
-      const device = await ports.device.ensureReady(identity.principal.ownerId);
-      if (cancelled) return;
-      if (device.kind !== 'ok' || device.value.state !== 'ready') {
-        setReadiness({ kind: 'blocked', reason: 'This device is not ready yet.' });
-        return;
-      }
-      setReadiness({ kind: 'ready' });
     }
     void checkReadiness();
     return () => {

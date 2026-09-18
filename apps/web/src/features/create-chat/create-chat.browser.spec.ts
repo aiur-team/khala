@@ -99,6 +99,43 @@ test('CreateChatScreen completes an unnamed chat with two intros and keeps submi
       assert.equal(await shareUrlField.isVisible(), true, `${label}: share field remains reachable`);
       assert.equal(await copyButton.isVisible(), true, `${label}: copy control remains reachable`);
     }
+
+    // Simulating a sign-out swaps the injected ports; the previous controller's
+    // share link must not linger under the new (signed-out) session.
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.getByRole('button', { name: 'Simulate sign-out' }).click();
+    await page.getByText('Sign in to create a chat.').waitFor();
+    assert.equal(await page.getByLabel('Chat link').count(), 0, 'the prior share link is cleared, not left stale, after a session change');
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(outDir, { recursive: true, force: true });
+    await rm(chromiumProfileRoot, { recursive: true, force: true });
+  }
+});
+
+test('CreateChatScreen signed out at mount blocks submission with a reason and no stray share link', { timeout: 90_000 }, async () => {
+  const outDir = await mkdtemp(join(tmpdir(), 'khala-create-chat-dist-'));
+  const chromiumProfileRoot = await mkdtemp(join('/tmp', 'khala-create-chat-profile-'));
+  let server: PreviewServer | undefined;
+  let browser: Browser | undefined;
+  try {
+    await build({ root: harnessRoot, build: { outDir, emptyOutDir: true }, logLevel: 'error' });
+    server = await preview({ root: harnessRoot, build: { outDir }, preview: { host: '127.0.0.1', port: 0 } });
+    const url = server.resolvedUrls!.local[0]!;
+
+    browser = await chromium.launch({
+      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      headless: true,
+      args: ['--no-sandbox'],
+      env: { ...process.env, TMPDIR: chromiumProfileRoot },
+    });
+    const page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+    await page.goto(`${url}?mode=signed-out`);
+
+    await page.getByText('Sign in to create a chat.').waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Create chat' }).isDisabled(), true, 'submit stays disabled while signed out');
+    assert.equal(await page.getByLabel('Chat link').count(), 0, 'no share link leaks while signed out');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

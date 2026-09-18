@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AdmissionPort, DevicePort, IdentityPort, RoomId, RoomPort, RoomSummary, SendState } from '@khala/contracts/messaging';
 import { ok } from '@khala/contracts/messaging';
@@ -81,19 +82,38 @@ const admission: AdmissionPort = {
   },
 };
 
-const ports: CreateChatPorts = { identity, device, room, admission };
+const signedInPorts: CreateChatPorts = { identity, device, room, admission };
+
+const signedOutPorts: CreateChatPorts = {
+  identity: { ...identity, current: async () => ({ kind: 'signed_out' }) },
+  device,
+  room,
+  admission,
+};
 
 function logCopy(text: string) {
   const log = document.getElementById('copy-log')!;
   log.textContent = text;
 }
 
-createRoot(document.getElementById('root')!).render(
-  <CreateChatScreen
-    ports={ports}
-    onCopyShareLink={async shareUrl => {
-      logCopy(shareUrl);
-      return { ok: true };
-    }}
-  />,
-);
+const startSignedOut = new URLSearchParams(window.location.search).get('mode') === 'signed-out';
+
+function Harness() {
+  const [signedIn, setSignedIn] = useState(!startSignedOut);
+  return (
+    <>
+      <button type="button" onClick={() => setSignedIn(false)}>
+        Simulate sign-out
+      </button>
+      <CreateChatScreen
+        ports={signedIn ? signedInPorts : signedOutPorts}
+        onCopyShareLink={async shareUrl => {
+          logCopy(shareUrl);
+          return { ok: true };
+        }}
+      />
+    </>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(<Harness />);

@@ -178,6 +178,23 @@ describe('createChatController', () => {
     expect(prepareIntro).not.toHaveBeenCalled();
   });
 
+  it('a thrown port call fails rather than leaving the journal stuck busy, and retry resumes it', async () => {
+    const create = vi.fn().mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce(ok(ROOM));
+    const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
+    const room = fakeRoomPort({ create });
+    const admission = fakeAdmissionPort({ share });
+    const controller = createChatController({ room, admission }, { createId: makeCreateId() });
+
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
+    expect(controller.getView().errorCode).toBe('unavailable');
+
+    controller.retry();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1]![0].operationId).toBe(create.mock.calls[0]![0].operationId);
+  });
+
   it('applies no state after dispose, even if a pending promise resolves later', async () => {
     let resolveCreate!: (value: unknown) => void;
     const create = vi.fn(() => new Promise(resolve => (resolveCreate = resolve)));

@@ -1,4 +1,4 @@
-import type { Disposer, MessageContent, RoomId } from '@khala/contracts/messaging';
+import type { Disposer, MessageContent, OperationResult, RoomId } from '@khala/contracts/messaging';
 import { INITIAL_VIEW, type CreateChatView } from './model';
 import type { CreateChatPorts } from './ports';
 
@@ -70,84 +70,76 @@ export function createChatController(
     notify();
   }
 
+  /**
+   * Runs one journal step and dispatches its `OperationResult`: `ok` continues
+   * into `onOk`, `rejected`/`unavailable` fail the step, `outcome_unknown` moves
+   * to `resolving` for an explicit retry. A thrown rejection (not an
+   * `OperationResult`) is treated the same as `unavailable`, so a step never
+   * leaves the UI stuck busy.
+   */
+  async function runStep<T>(step: PendingStep, run: () => Promise<OperationResult<T, string>>, onOk: (value: T) => void | Promise<void>): Promise<void> {
+    pendingStep = step;
+    try {
+      const result = await run();
+      if (disposed) return;
+      if (result.kind === 'ok') await onOk(result.value);
+      else if (result.kind === 'rejected') setFailed(result.code);
+      else if (result.kind === 'unavailable') setFailed('unavailable');
+      else setPhase('resolving');
+    } catch {
+      if (!disposed) setFailed('unavailable');
+    }
+  }
+
   async function attemptCreate(): Promise<void> {
     setPhase('creating');
     const title = view.title.trim() === '' ? null : view.title;
-    const result = await ports.room.create({ operationId: operationId!, title });
-    if (disposed) return;
-    if (result.kind === 'ok') {
-      view = { ...view, roomId: result.value.roomId };
+    await runStep('create', () => ports.room.create({ operationId: operationId!, title }), async value => {
+      view = { ...view, roomId: value.roomId };
       if (view.intros.length === 0) await attemptShare();
       else await attemptIntro(false);
-    } else if (result.kind === 'rejected') {
-      pendingStep = 'create';
-      setFailed(result.code);
-    } else if (result.kind === 'unavailable') {
-      pendingStep = 'create';
-      setFailed('unavailable');
-    } else {
-      pendingStep = 'create';
-      setPhase('resolving');
-    }
+    });
   }
 
   async function attemptIntro(resume: boolean): Promise<void> {
     setPhase('preparing_intro');
     const roomId = view.roomId as RoomId;
     batchId ??= createId();
-    const result = resume
-      ? await ports.room.resumeIntro(batchId)
-      : await ports.room.prepareIntro({
-          roomId,
-          batchId,
-          messages: view.intros.map((intro): MessageContent => ({ v: 1, kind: 'text', body: intro.body })),
-        });
-    if (disposed) return;
-    if (result.kind === 'ok') {
-      const states = result.value;
-      if (states.some(state => state.state === 'outcome_unknown' || state.state === 'pending')) {
-        pendingStep = 'intro';
-        setPhase('resolving');
-        return;
-      }
-      if (states.some(state => state.state === 'failed')) {
-        pendingStep = 'intro';
-        setFailed('intro_failed');
-        return;
-      }
-      await attemptShare();
-    } else if (result.kind === 'rejected') {
-      pendingStep = 'intro';
-      setFailed(result.code);
-    } else if (result.kind === 'unavailable') {
-      pendingStep = 'intro';
-      setFailed('unavailable');
-    } else {
-      pendingStep = 'intro';
-      setPhase('resolving');
-    }
+    await runStep(
+      'intro',
+      () =>
+        resume
+          ? ports.room.resumeIntro(batchId!)
+          : ports.room.prepareIntro({
+              roomId,
+              batchId: batchId!,
+              messages: view.intros.map((intro): MessageContent => ({ v: 1, kind: 'text', body: intro.body })),
+            }),
+      async states => {
+        if (states.some(state => state.state === 'outcome_unknown' || state.state === 'pending')) {
+          setPhase('resolving');
+          return;
+        }
+        if (states.some(state => state.state === 'failed')) {
+          setFailed('intro_failed');
+          return;
+        }
+        await attemptShare();
+      },
+    );
   }
 
   async function attemptShare(): Promise<void> {
     setPhase('sharing');
+    // Cleared unconditionally: a stale prior share URL must never survive into
+    // a failed or resolving outcome, only a freshly confirmed `ok`.
+    view = { ...view, shareUrl: null };
     const roomId = view.roomId as RoomId;
     shareOperationId ??= createId();
-    const result = await ports.admission.share({ operationId: shareOperationId, roomId });
-    if (disposed) return;
-    if (result.kind === 'ok') {
-      view = { ...view, shareUrl: result.value.shareUrl };
+    await runStep('share', () => ports.admission.share({ operationId: shareOperationId!, roomId }), value => {
+      view = { ...view, shareUrl: value.shareUrl };
       setPhase('ready');
-    } else if (result.kind === 'rejected') {
-      pendingStep = 'share';
-      view = { ...view, shareUrl: null };
-      setFailed(result.code);
-    } else if (result.kind === 'unavailable') {
-      pendingStep = 'share';
-      setFailed('unavailable');
-    } else {
-      pendingStep = 'share';
-      setPhase('resolving');
-    }
+    });
   }
 
   return {
