@@ -11,6 +11,8 @@ import {
 const ROOM = 'room-1' as RoomId;
 const ALICE = 'participant-alice' as ParticipantId;
 const ALICE_DEVICE = 'device-alice' as DeviceId;
+const MALLORY = 'participant-mallory' as ParticipantId;
+const MALLORY_DEVICE = 'device-mallory' as DeviceId;
 const SECRET = 'pending secret text';
 
 const binding: SessionBinding = {
@@ -95,6 +97,7 @@ class FakeSource {
 class FakeStore {
   pending = new Map<string, string>();
   unavailable = new Map<string, string>();
+  unavailableAuthors = new Map<string, string>();
   accepts: Array<{ eventId: string; result: AcceptResult }> = [];
   failAccept: Array<'throw' | 'blocked'> = [];
   onAccept: ((eventId: string) => void) | null = null;
@@ -120,8 +123,9 @@ class FakeStore {
       this.onAccept?.(eventId);
       return result;
     },
-    acceptUnavailable: async (input: Readonly<{ ref: { eventId: string }; reason: string }>): Promise<AcceptResult> => {
+    acceptUnavailable: async (input: Readonly<{ ref: { eventId: string; authorParticipantId: string; authorDeviceId: string }; reason: string }>): Promise<AcceptResult> => {
       const known = this.unavailable.has(input.ref.eventId);
+      this.unavailableAuthors.set(input.ref.eventId, `${input.ref.authorParticipantId}/${input.ref.authorDeviceId}`);
       this.unavailable.set(input.ref.eventId, input.reason);
       return known ? 'duplicate' : 'stored';
     },
@@ -190,7 +194,7 @@ type Harness = {
   store: FakeStore;
   clock: FakeScheduler;
   states: SubscriptionState[];
-  provenance: { unavailable: number };
+  provenance: { unavailable: number; observerThrows?: boolean };
   handle: SubscriptionHandle;
 };
 
@@ -198,7 +202,7 @@ async function start(setup: (h: Omit<Harness, 'handle' | 'states'>) => void | Pr
   const source = new FakeSource();
   const store = new FakeStore();
   const clock = new FakeScheduler();
-  const provenance = { unavailable: 0 };
+  const provenance: Harness['provenance'] = { unavailable: 0 };
   await setup({ source, store, clock, provenance });
   const states: SubscriptionState[] = [];
   const ports: SubscriptionPorts = {
@@ -211,13 +215,16 @@ async function start(setup: (h: Omit<Harness, 'handle' | 'states'>) => void | Pr
           provenance.unavailable -= 1;
           return 'unavailable';
         }
-        return deviceId === ALICE_DEVICE ? ALICE : null;
+        return deviceId === ALICE_DEVICE ? ALICE : deviceId === MALLORY_DEVICE ? MALLORY : null;
       },
     },
     lock: store.lock,
     scheduler: clock.scheduler,
     random: () => 0.5,
-    onState: state => states.push(state),
+    onState: state => {
+      states.push(state);
+      if (provenance.observerThrows) throw new Error('observer');
+    },
   };
   const handle = await startSubscription({ binding, streamId: 'stream-1', pageSize, retry: { baseMs: 1_000, maxMs: 8_000 } }, ports);
   await settle();
@@ -319,6 +326,55 @@ describe('startSubscription', () => {
     expect(h.handle.state().kind).toBe('live');
   });
 
+  it('reconnects when the connection drops while blocked on missing keys', async () => {
+    const h = await start(async s => {
+      await committedThrough(s, 1);
+      s.source.log.push(missingKeys(2));
+    });
+    expect(h.handle.state()).toEqual({ kind: 'blocked', code: 'missing_keys' });
+    h.source.lose();
+    await settle();
+    expect(h.handle.state().kind).toBe('offline');
+    expect(h.clock.active()).toHaveLength(1);
+
+    h.source.log[1] = await decrypted(2);
+    await h.clock.advance(8_000);
+    expect(h.source.authorizeCalls).toBe(2);
+    expect(h.store.cursor).toBe('c2');
+    expect(h.handle.state().kind).toBe('live');
+  });
+
+  it('keeps a cursor commit that lands after the connection was superseded', async () => {
+    const h = await start(async s => committedThrough(s, 1));
+    const commit = h.store.cursors.commit;
+    h.store.cursors.commit = async input => {
+      h.source.lose();
+      return commit(input);
+    };
+    h.source.log.push(await decrypted(2));
+    h.source.hint();
+    await settle();
+    h.store.cursors.commit = commit;
+    expect(h.store.cursor).toBe('c2');
+    await h.clock.advance(8_000);
+    expect(h.source.reads.at(-1)).toBe('c2');
+    expect(h.states.some(s => s.kind === 'blocked')).toBe(false);
+    expect(h.handle.state().kind).toBe('live');
+  });
+
+  it('survives a throwing state observer and still releases the lock on stop', async () => {
+    const h = await start(async s => {
+      await committedThrough(s, 1);
+      s.provenance.observerThrows = true;
+    });
+    expect(h.handle.state().kind).toBe('live');
+    h.source.lose();
+    await h.clock.advance(8_000);
+    expect(h.handle.state().kind).toBe('live');
+    await h.handle.stop();
+    expect(h.store.lockHeld).toBe(false);
+  });
+
   it('ignores callbacks from a superseded connection', async () => {
     const h = await start(async s => committedThrough(s, 1));
     const [old] = h.source.listeners;
@@ -411,14 +467,28 @@ describe('startSubscription', () => {
     expect(h.handle.state().kind).toBe('live');
   });
 
-  it('records unauthenticated content as unavailable and keeps going', async () => {
+  it('attributes content forged by a participant to its verified sender, never the claimed author', async () => {
     const h = await start(async s => {
       s.source.log.push(
-        await decrypted(1, { verifiedDeviceId: 'device-mallory' as DeviceId }),
+        await decrypted(1, { verifiedDeviceId: MALLORY_DEVICE }),
         await decrypted(2),
       );
     });
     expect(h.store.unavailable.get('E1')).toBe('decrypt_failed');
+    expect(h.store.unavailableAuthors.get('E1')).toBe(`${MALLORY}/${MALLORY_DEVICE}`);
+    expect(h.store.pending.has('E1')).toBe(false);
+    expect(h.store.pending.has('E2')).toBe(true);
+    expect(h.store.cursor).toBe('c2');
+  });
+
+  it('drops content from a device that is not a room participant and keeps going', async () => {
+    const h = await start(async s => {
+      s.source.log.push(
+        await decrypted(1, { verifiedDeviceId: 'device-stranger' as DeviceId }),
+        await decrypted(2),
+      );
+    });
+    expect(h.store.unavailable.has('E1')).toBe(false);
     expect(h.store.pending.has('E1')).toBe(false);
     expect(h.store.pending.has('E2')).toBe(true);
     expect(h.store.cursor).toBe('c2');

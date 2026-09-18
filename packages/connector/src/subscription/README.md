@@ -32,14 +32,18 @@ state, and released work is dispatched elsewhere.
   `blocked: missing_keys`. A hint, such as arriving room keys, or the backoff timer retries.
   Final decryption failures (`withheld`, `withheld_unverified`, `decrypt_failed`,
   `unsupported`) are stored as unavailable placeholders so one event cannot stall the stream.
-- **Provenance.** Decrypted content is stored only when the crypto-verified device equals the
-  claimed author device, that device belongs to the claimed participant, and the payload bytes
-  match `contentDigest`. Anything else is stored as an unavailable `decrypt_failed` placeholder.
-  Its content never reaches the pending store.
+- **Provenance.** The crypto-verified sending device is mapped to its room participant.
+  Decrypted content is stored only when that device is the claimed author device, its
+  participant is the claimed author, and the payload bytes match `contentDigest`. Otherwise the
+  content never reaches the pending store. It becomes an unavailable `decrypt_failed`
+  placeholder attributed to the verified sender, never to the claimed author. Content from a
+  device that is not a room participant is dropped.
 - **Failures.** A transport outage is `offline` with a bounded, full-jitter exponential
   `retryAt`, and reconnecting rechecks authority. Storage failure and a busy lock are
   `blocked: storage_failed` and retried. `authority_lost`, `replay_gap` and `unsupported` are
   terminal: the stream is never labelled live past them, and recovery starts a new subscription.
+  The store reports a changed digest under a known event as `blocked`, which surfaces as
+  `storage_failed` and is retried until the owner repairs the stream.
 - **Generations.** Every connection and `stop()` takes a new local generation. Callbacks and
   awaited results from an older one are ignored. Connections run one at a time, so source calls
   must settle once their abort signal fires.

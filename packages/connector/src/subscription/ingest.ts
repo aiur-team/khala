@@ -3,6 +3,7 @@
 // the page cursor; the first event that cannot be handled stops the page.
 // Ingestion produces pending review state only, never a model notification.
 
+import { createHash } from 'node:crypto';
 import type { EventRef, SessionBinding } from '@khala/contracts/delivery/index';
 import type {
   CallOptions, DeviceId, ParticipantId, RoomId, UnavailableEventRef, UnavailableReason,
@@ -37,7 +38,7 @@ export interface ProvenancePort {
 
 export type IngestOutcome =
   | Readonly<{ kind: 'handled' }>
-  | Readonly<{ kind: 'blocked'; code: 'missing_keys' | 'storage_failed' | 'unsupported' }>
+  | Readonly<{ kind: 'blocked'; code: 'missing_keys' | 'storage_failed' }>
   | Readonly<{ kind: 'retry' }>
   | Readonly<{ kind: 'cancelled' }>;
 
@@ -68,14 +69,17 @@ async function ingestEvent(ctx: IngestContext, event: SourceEvent): Promise<Inge
   }
 
   const verified = await verifyEvent(ctx, event);
-  if (verified === 'retry' || verified === 'unsupported') {
-    return verified === 'retry' ? { kind: 'retry' } : { kind: 'blocked', code: 'unsupported' };
-  }
-  if (verified === 'forged') {
-    // Content that fails authentication never reaches the pending store. The owner
-    // still sees that an event existed, and one bad sender cannot stall the stream.
-    const { v, roomId, eventId, authorParticipantId, authorDeviceId } = event.ref;
-    const ref: UnavailableEventRef = { v, roomId, eventId, authorParticipantId, authorDeviceId };
+  if (verified.kind === 'retry') return { kind: 'retry' };
+  if (verified.kind === 'forged') {
+    // Content that fails authentication never reaches the pending store, and one bad
+    // sender cannot stall the stream. The owner sees a placeholder attributed to the
+    // verified sender, never to the author it claimed; a sender that is not a room
+    // participant has nothing trustworthy to show, so the event is dropped.
+    if (verified.sender === null) return { kind: 'handled' };
+    const { v, roomId, eventId } = event.ref;
+    const ref: UnavailableEventRef = {
+      v, roomId, eventId, authorParticipantId: verified.sender, authorDeviceId: event.verifiedDeviceId,
+    };
     return store(() => ctx.ingestion.acceptUnavailable({ binding: ctx.binding, ref, reason: 'decrypt_failed' }));
   }
   return store(() => ctx.ingestion.accept({ binding: ctx.binding, event: event.ref, canonicalPayload: event.canonicalPayload }));
@@ -91,33 +95,34 @@ async function store(write: () => Promise<AcceptResult>): Promise<IngestOutcome>
   return result === 'blocked' ? { kind: 'blocked', code: 'storage_failed' } : { kind: 'handled' };
 }
 
-type Verification = 'ok' | 'forged' | 'retry' | 'unsupported';
+type Verification =
+  | Readonly<{ kind: 'ok' }>
+  | Readonly<{ kind: 'forged'; sender: ParticipantId | null }>
+  | Readonly<{ kind: 'retry' }>;
 
-/** Binds the crypto-verified device to the claimed author, then the payload bytes to the digest. */
+/**
+ * Maps the crypto-verified device to its participant, then requires that sender to
+ * be the claimed author and the payload bytes to match the digest.
+ */
 async function verifyEvent(
   ctx: IngestContext,
   event: Extract<SourceEvent, { kind: 'decrypted' }>,
 ): Promise<Verification> {
   const { ref } = event;
-  if (event.verifiedDeviceId !== ref.authorDeviceId) return 'forged';
-  let participant: ParticipantId | null | 'unavailable';
+  let sender: ParticipantId | null | 'unavailable';
   try {
-    participant = await ctx.provenance.participantForDevice({ roomId: ref.roomId, deviceId: ref.authorDeviceId }, { signal: ctx.signal });
+    sender = await ctx.provenance.participantForDevice({ roomId: ref.roomId, deviceId: event.verifiedDeviceId }, { signal: ctx.signal });
   } catch {
-    participant = 'unavailable';
+    sender = 'unavailable';
   }
-  if (participant === 'unavailable') return 'retry';
-  if (participant !== ref.authorParticipantId) return 'forged';
-  const digest = await sha256(event.canonicalPayload);
-  if (digest === null) return 'unsupported';
-  return digest === ref.contentDigest ? 'ok' : 'forged';
+  if (sender === 'unavailable') return { kind: 'retry' };
+  if (sender === null || event.verifiedDeviceId !== ref.authorDeviceId || sender !== ref.authorParticipantId) {
+    return { kind: 'forged', sender };
+  }
+  return sha256(event.canonicalPayload) === ref.contentDigest ? { kind: 'ok' } : { kind: 'forged', sender };
 }
 
-async function sha256(bytes: Uint8Array): Promise<string | null> {
-  try {
-    const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array(bytes)));
-    return `sha256:${Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('')}`;
-  } catch {
-    return null;
-  }
+/** Connector code runs under Node, where hashing is synchronous and needs no platform Web Crypto. */
+function sha256(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }

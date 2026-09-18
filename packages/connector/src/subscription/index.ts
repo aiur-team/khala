@@ -124,7 +124,8 @@ class Subscription {
       this.#teardown();
       this.#setState({ kind: 'offline', retryAt: null });
     }
-    await this.#running;
+    // Failures of a superseded connection are already reflected in state.
+    await this.#running.catch(() => undefined);
     const lock = this.#lock;
     this.#lock = null;
     if (lock) await lock.release().catch(() => undefined);
@@ -210,13 +211,14 @@ class Subscription {
         const commit = await this.#ports.cursors
           .commit({ streamId: this.#input.streamId, expectedRevision: committed.revision, opaqueCursor: read.nextCursor })
           .catch((): CursorCommit => ({ kind: 'failed' }));
+        // Connections run one at a time, so a commit that landed after supersession is still the durable cursor.
+        if (commit.kind === 'committed') this.#committed = { cursor: read.nextCursor, revision: commit.revision };
         if (!live()) return;
         if (commit.kind !== 'committed') {
           // Never advance in-memory authority optimistically: reload the durable cursor on retry.
           this.#committed = null;
           return this.#blockThenRetry('storage_failed');
         }
-        this.#committed = { cursor: read.nextCursor, revision: commit.revision };
       }
 
       this.#attempt = 0;
@@ -236,9 +238,12 @@ class Subscription {
   async #retryInPlace(generation: number, code: BlockedCode | null): Promise<boolean> {
     const delay = this.#nextDelay();
     this.#setState(code ? { kind: 'blocked', code } : { kind: 'offline', retryAt: this.#retryAt(delay) });
-    this.#timer = this.#ports.scheduler.setTimer(delay, () => this.#signalWake());
+    const timer = this.#ports.scheduler.setTimer(delay, () => this.#signalWake());
+    this.#timer = timer;
     const woke = await this.#waitForWake(generation);
-    this.#clearTimer();
+    // Clear only this wake timer: a connection lost while waiting has installed its reconnect timer.
+    timer();
+    if (this.#timer === timer) this.#timer = null;
     return woke;
   }
 
@@ -284,8 +289,13 @@ class Subscription {
 
   #teardown(): void {
     this.#clearTimer();
-    this.#listener?.();
+    const listener = this.#listener;
     this.#listener = null;
+    try {
+      listener?.();
+    } catch {
+      // A failing SDK disposer must not block reconnect or lock release.
+    }
     this.#abort?.abort();
     this.#abort = null;
     this.#wake.pending = false;
@@ -311,6 +321,10 @@ class Subscription {
 
   #setState(state: SubscriptionState): void {
     this.current = state;
-    this.#ports.onState?.(state);
+    try {
+      this.#ports.onState?.(state);
+    } catch {
+      // An observer failure never interrupts the subscription or its cleanup.
+    }
   }
 }
