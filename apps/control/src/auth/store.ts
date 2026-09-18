@@ -1,0 +1,68 @@
+// ControlStore helpers shared by this module. Hashing is purpose-separated: a
+// value derived for one purpose (session lookup, CSRF, login binding) never
+// equals or reveals a value derived for another.
+
+import { createHash } from 'node:crypto';
+import type { CompareAndSetInput, ControlRecord, ControlStore, JsonValue } from '@khala/contracts/messaging/index';
+
+/** Injected cryptographically secure random source. */
+export type Random = (bytes: number) => Uint8Array;
+
+export function randomToken(random: Random, bytes: number): string {
+  const value = random(bytes);
+  if (value.length !== bytes) throw new Error('random source returned the wrong length');
+  return Buffer.from(value).toString('base64url');
+}
+
+export type TokenPurpose = 'session' | 'csrf' | 'login';
+
+export function derive(purpose: TokenPurpose, token: string): string {
+  return createHash('sha256').update(`khala.auth.${purpose}.v1\u0000${token}`).digest('hex');
+}
+
+/** Tokens minted by `randomToken(random, 32)`: 43 base64url characters. */
+export const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * Wraps an adapter so a thrown error reads as `unavailable`. An exception must
+ * never escape as a signed-out answer or leak its message.
+ */
+export function guardStore(store: ControlStore): ControlStore {
+  return {
+    read: (key, options) => orUnavailable(() => store.read(key, options)),
+    compareAndSet: (input, options) => orUnavailable(() => store.compareAndSet(input, options)),
+    resolve: (input, options) => orUnavailable(() => store.resolve(input, options)),
+  };
+}
+
+/** Runs a port call; any throw, synchronous or not, becomes `unavailable`. */
+export async function orUnavailable<T>(call: () => Promise<T>): Promise<T | Readonly<{ kind: 'unavailable' }>> {
+  try {
+    return await call();
+  } catch {
+    return { kind: 'unavailable' };
+  }
+}
+
+export type SettledWrite<T extends JsonValue> =
+  | Readonly<{ kind: 'applied'; record: ControlRecord<T> }>
+  | Readonly<{ kind: 'conflict'; current: ControlRecord<T> | null }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+/**
+ * Compare-and-set that settles an unknown outcome by resolving its operation ID
+ * once. Anything still unproven is reported as `unavailable`, never as success.
+ */
+export async function settleWrite<T extends JsonValue>(store: ControlStore, input: CompareAndSetInput<T>): Promise<SettledWrite<T>> {
+  const write = await store.compareAndSet(input);
+  if (write.kind === 'applied' || write.kind === 'conflict') return write;
+  if (write.kind !== 'outcome_unknown') return { kind: 'unavailable' };
+  const resolved = await store.resolve<T>({ key: input.key, operationId: input.operationId });
+  if (resolved.kind === 'applied') return resolved;
+  if (resolved.kind === 'not_applied') {
+    // Proven absent: the same operation and bytes may be retried once.
+    const retry = await store.compareAndSet(input);
+    if (retry.kind === 'applied' || retry.kind === 'conflict') return retry;
+  }
+  return { kind: 'unavailable' };
+}

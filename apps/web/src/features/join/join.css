@@ -1,0 +1,31 @@
+/*
+ * Join screen layout. Depends on ../../shell/shell.css and
+ * ../../brand/tokens.css custom properties being in scope.
+ */
+
+.join-sign-in,
+.join-joined,
+.join-outcome {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.join-joined__room-id {
+  font-family: var(--khala-font-mono);
+  font-size: 0.85rem;
+  color: var(--khala-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.join-sign-in button,
+.join-outcome button {
+  background: var(--khala-accent);
+  color: var(--khala-fill);
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.6rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
