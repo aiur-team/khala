@@ -109,23 +109,15 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
       <ol className="review__list" aria-label="Pending messages">
         {shown.length === 0 ? <li className="review__empty">No pending messages{filter === 'selected' ? ' selected' : ''}.</li> : null}
         {shown.map(item => (
-          <li key={item.ref.eventId} className="review__row">
-            <ReviewItem
-              item={item}
-              selected={selection.refs.some(ref => sameEventRef(ref, item.ref))}
-              disabled={!canAct || selection.phase === 'stale'}
-              onToggle={checked => controller.toggleSelect(item.ref, checked)}
-              renderContent={renderContent}
-            />
-            <button
-              type="button"
-              className="review__hide"
-              aria-label={`Hide message ${item.ref.eventId} from this list`}
-              onClick={() => setHidden(current => new Set(current).add(item.ref.eventId))}
-            >
-              Hide
-            </button>
-          </li>
+          <ReviewItem
+            key={item.ref.eventId}
+            item={item}
+            selected={selection.refs.some(ref => sameEventRef(ref, item.ref))}
+            disabled={!canAct || selection.phase === 'stale'}
+            onToggle={checked => controller.toggleSelect(item.ref, checked)}
+            renderContent={renderContent}
+            onHide={() => setHidden(current => new Set(current).add(item.ref.eventId))}
+          />
         ))}
       </ol>
 

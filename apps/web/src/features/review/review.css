@@ -86,13 +86,6 @@
   text-align: center;
 }
 
-.review__row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
 .review-item {
   flex: 1;
   min-width: 0;
@@ -139,6 +132,7 @@
 }
 
 .review__hide {
+  margin-left: auto;
   background: transparent;
   border: 1px solid var(--khala-line);
   border-radius: 999px;
@@ -189,7 +183,7 @@
     max-width: 50vw;
   }
 
-  .review__row {
+  .review-item__header {
     flex-wrap: wrap;
   }
 }

@@ -18,9 +18,15 @@ export interface ReviewItemProps {
   disabled: boolean;
   onToggle: (checked: boolean) => void;
   renderContent: (content: MessageContent) => ReactNode;
+  /**
+   * Local-only "collapse from view" action, rendered as a review-owned
+   * control alongside the checkbox — never touches selection or submission,
+   * so it can never authorize delivery (KTD4).
+   */
+  onHide: () => void;
 }
 
-export function ReviewItem({ item, selected, disabled, onToggle, renderContent }: ReviewItemProps) {
+export function ReviewItem({ item, selected, disabled, onToggle, renderContent, onHide }: ReviewItemProps) {
   const inputId = `review-item-${item.ref.eventId}`;
   return (
     <li className="review-item" data-event-id={item.ref.eventId}>
@@ -40,6 +46,9 @@ export function ReviewItem({ item, selected, disabled, onToggle, renderContent }
         <time className="review-item__timestamp" dateTime={item.receivedAt}>
           {item.receivedAt}
         </time>
+        <button type="button" className="review__hide" aria-label={`Hide message ${item.ref.eventId} from this list`} onClick={onHide}>
+          Hide
+        </button>
       </header>
       <div className="review-item__body">{renderContent(item.content)}</div>
     </li>
