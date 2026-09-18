@@ -1,58 +1,14 @@
 // Crash windows with real processes: a child opens the on-disk store, stops at an
 // exact boundary and is SIGKILLed. The parent then reopens the same directory and
-// inspects what was durably committed. No graceful close ever runs in the child.
+// inspects what was durably committed. No graceful close ever runs in the child. One
+// window kills the child inside an open transaction; the others kill it after commit.
 
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { bindingId, eventRef, limits, pendingInput, scratchDirectory } from './fakes';
+import { type Child, spawnChild } from './fixtures/child';
+import { bindingId, eventRef, limits, pendingInput, scratchDirectory } from './fixtures/fakes';
 import { type ConnectorStorage, openConnectorStorage } from './open';
 import { recoverConnectorStorage } from './recovery';
-
-const storageDir = path.dirname(fileURLToPath(import.meta.url));
-const packageRoot = path.resolve(storageDir, '../..');
-
-type Child = { process: ChildProcessWithoutNullStreams; line: Promise<unknown>; exited: Promise<unknown> };
-
-/**
- * Runs `body` in a separate Node process with `open`, `fx` (fixtures), `limits` and
- * `dir` in scope. The child prints its JSON result, then keeps its store open (and its
- * lock held) until it is killed.
- */
-function spawnChild(dir: string, body: string): Child {
-  const script = `
-    import { openConnectorStorage as open } from ${JSON.stringify(path.join(storageDir, 'open.ts'))};
-    import * as fx from ${JSON.stringify(path.join(storageDir, 'fakes.ts'))};
-    const limits = fx.limits;
-    const dir = ${JSON.stringify(dir)};
-    let out;
-    try {
-      out = { ok: true, result: await (async () => { ${body} })() };
-    } catch (error) {
-      out = { ok: false, code: error?.code ?? String(error) };
-    }
-    process.stdout.write(JSON.stringify(out) + '\\n');
-    setInterval(() => {}, 1000);
-  `;
-  const child = spawn(process.execPath, ['--no-warnings', '--import', 'tsx', '--input-type=module', '-e', script], {
-    cwd: packageRoot,
-  });
-  const exited = new Promise(resolve => child.once('exit', resolve));
-  let stderr = '';
-  child.stderr.on('data', chunk => { stderr += String(chunk); });
-  const line = new Promise((resolve, reject) => {
-    let out = '';
-    child.stdout.on('data', chunk => {
-      out += String(chunk);
-      const end = out.indexOf('\n');
-      if (end >= 0) resolve(JSON.parse(out.slice(0, end)));
-    });
-    void exited.then(() => reject(new Error(`child exited early: ${stderr}`)));
-  });
-  return { process: child, line, exited };
-}
 
 const children: Child[] = [];
 const opened: ConnectorStorage[] = [];
@@ -131,7 +87,7 @@ describe('crash recovery across processes', () => {
     const snap = await storage.ledger.transaction(tx => tx.readApprovalSnapshot({
       bindingId, selection: [eventRef('event_7', 'hello')],
     }));
-    expect(snap?.pending).toHaveLength(1);
+    expect(snap).toMatchObject({ kind: 'snapshot', pending: [{ key: { eventId: 'event_7' } }] });
     const report = await recoverConnectorStorage(storage);
     expect(report).toMatchObject({ pending: 1, quarantined: 0, blocked: [], epoch: 2 });
   }, TIMEOUT);
@@ -156,22 +112,59 @@ describe('crash recovery across processes', () => {
       const s = await open({ directory: dir, mode: 'create', limits });
       await s.ledger.transaction(tx => tx.putBinding(fx.binding(0)));
       await s.persistPending(fx.pendingInput('event_7', 'hello'));
-      const command = fx.approval('command_1', [fx.eventRef('event_7', 'hello')]);
-      const payload = fx.content('envelope');
-      const job = fx.release(command, fx.binding(0), payload);
-      return await s.ledger.transaction(tx => {
+      await s.persistPending(fx.pendingInput('event_8', 'later'));
+      const releaseOf = (eventId, body, commandId, releaseId, kind) => s.ledger.transaction(tx => {
+        const command = fx.approval(commandId, [fx.eventRef(eventId, body)]);
+        const payload = fx.content(body + ' envelope');
+        const job = fx.release(command, fx.binding(0), payload, releaseId);
         const put = tx.putRelease({ command: fx.commandRecord(command, job.releaseId), job, payload,
           expectedLedgerRevision: tx.ledgerRevision() });
-        tx.appendReceipt({ receipt: fx.receipt(job.releaseId, 'dispatching') });
+        if (kind) tx.appendReceipt({ receipt: fx.receipt(job.releaseId, kind) });
         return put;
       });
+      return [
+        await releaseOf('event_7', 'hello', 'command_1', 'release_r7', 'dispatching'),
+        await releaseOf('event_8', 'later', 'command_2', 'release_r8', 'queued'),
+      ];
     `);
-    expect(result).toEqual({ ok: true, result: { kind: 'committed' } });
+    expect(result).toEqual({ ok: true, result: [{ kind: 'committed' }, { kind: 'committed' }] });
     await killHard(child);
 
     const storage = await reopen(dir);
     const report = await recoverConnectorStorage(storage);
-    expect(report.unresolvedReleases).toEqual(['release_r7']);
+    expect(report.outcomeUnknownReleases).toEqual(['release_r7']);
+    expect(report.undispatchedReleases).toEqual(['release_r8']);
     expect(report.blocked).toEqual([]);
+  }, TIMEOUT);
+
+  it('commits nothing when the owner dies inside an open transaction', async () => {
+    const dir = state();
+    const { child, result } = await runChild(dir, `
+      const s = await open({ directory: dir, mode: 'create', limits });
+      await s.ledger.transaction(tx => tx.putBinding(fx.binding(0)));
+      await s.persistPending(fx.pendingInput('event_7', 'hello'));
+      await s.ledger.transaction(tx => {
+        const command = fx.approval('command_1', [fx.eventRef('event_7', 'hello')]);
+        const payload = fx.content('envelope');
+        const job = fx.release(command, fx.binding(0), payload);
+        tx.putRelease({ command: fx.commandRecord(command, job.releaseId), job, payload,
+          expectedLedgerRevision: tx.ledgerRevision() });
+        tx.appendReceipt({ receipt: fx.receipt(job.releaseId, 'dispatching') });
+        tx.putBinding(fx.binding(1));
+        // Every write above is inside the open transaction. Report, then hang in it.
+        signal(tx.ledgerRevision());
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+      });
+    `);
+    expect(result).toEqual({ ok: true, signal: 5 });
+    await killHard(child);
+
+    const storage = await reopen(dir);
+    const report = await recoverConnectorStorage(storage);
+    expect(report).toMatchObject({
+      ledgerRevision: 2, pending: 1, outcomeUnknownReleases: [], undispatchedReleases: [], blocked: [],
+    });
+    expect(await storage.ledger.transaction(tx => [tx.readRelease('release_r7' as never), tx.readBinding(bindingId)?.generation]))
+      .toEqual([null, 0]);
   }, TIMEOUT);
 });

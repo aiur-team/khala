@@ -20,7 +20,14 @@ const COMPANION_SUFFIXES = ['-wal', '-shm', '-journal'] as const;
 
 export type OpenMode = 'create' | 'existing';
 
-const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+/** Read per check, not cached at load, so ownership always reflects the running process. */
+function currentUid(): number | null {
+  return typeof process.getuid === 'function' ? process.getuid() : null;
+}
+
+function currentGid(): number | null {
+  return typeof process.getgid === 'function' ? process.getgid() : null;
+}
 
 function lstatOrNull(target: string): fs.Stats | null {
   try {
@@ -33,6 +40,7 @@ function lstatOrNull(target: string): fs.Stats | null {
 
 /** Owner-only where the platform reports POSIX ownership; otherwise best effort. */
 function ownerOnly(stats: fs.Stats): boolean {
+  const uid = currentUid();
   if (uid === null) return true;
   return stats.uid === uid && (stats.mode & 0o077) === 0;
 }
@@ -42,6 +50,34 @@ function checkFile(target: string): void {
   if (stats === null) return;
   // A hard link would let another path observe or replace the ledger's bytes.
   if (!stats.isFile() || stats.nlink !== 1 || !ownerOnly(stats)) throw new StorageError('unsafe_path');
+}
+
+const STICKY = 0o1000;
+
+/**
+ * Every ancestor must be a real directory, never a symlink, so the state lives exactly
+ * where it was configured. Where POSIX ownership exists, each must be owned by this
+ * user or root, and no other user may rename entries in it: writable by others only
+ * with the sticky bit set. Group write is tolerated only for this process's own
+ * primary group.
+ */
+function checkAncestors(dir: string, mode: OpenMode): void {
+  const uid = currentUid();
+  const gid = currentGid();
+  for (let current = path.dirname(dir); ; current = path.dirname(current)) {
+    const stats = lstatOrNull(current);
+    if (stats === null) throw new StorageError(mode === 'existing' ? 'missing_state' : 'io_failed');
+    if (!stats.isDirectory()) throw new StorageError('unsafe_path');
+    if (uid === null) {
+      if (current === path.dirname(current)) return;
+      continue;
+    }
+    if (stats.uid !== uid && stats.uid !== 0) throw new StorageError('unsafe_path');
+    const sticky = (stats.mode & STICKY) !== 0;
+    if (!sticky && (stats.mode & 0o002) !== 0) throw new StorageError('unsafe_path');
+    if (!sticky && (stats.mode & 0o020) !== 0 && stats.gid !== gid) throw new StorageError('unsafe_path');
+    if (current === path.dirname(current)) return;
+  }
 }
 
 /**
@@ -54,6 +90,7 @@ export function prepareStatePath(directory: string, mode: OpenMode): string {
   if (!path.isAbsolute(directory) || (dir !== directory && `${dir}${path.sep}` !== directory)) {
     throw new StorageError('unsafe_path');
   }
+  checkAncestors(dir, mode);
 
   let stats = lstatOrNull(dir);
   if (stats === null) {
@@ -68,14 +105,6 @@ export function prepareStatePath(directory: string, mode: OpenMode): string {
     stats = lstatOrNull(dir);
   }
   if (stats === null || !stats.isDirectory() || !ownerOnly(stats)) throw new StorageError('unsafe_path');
-  // No symlinked ancestor either: the state must live exactly where it was configured.
-  let real: string;
-  try {
-    real = fs.realpathSync(dir);
-  } catch {
-    throw new StorageError('io_failed');
-  }
-  if (real !== dir) throw new StorageError('unsafe_path');
 
   const ledger = path.join(dir, LEDGER_FILE);
   checkFile(ledger);
@@ -83,13 +112,15 @@ export function prepareStatePath(directory: string, mode: OpenMode): string {
 
   const existing = lstatOrNull(ledger);
   // A created ledger is never empty (switching to WAL writes the header), so an empty
-  // one was truncated. Refuse it before SQLite writes into it, leaving it as found.
-  if (existing !== null && existing.size === 0 && mode === 'existing') throw new StorageError('corrupt');
+  // one was truncated or never finished. Refuse it in either mode, before SQLite writes
+  // into it, leaving it as found.
+  if (existing !== null && existing.size === 0) throw new StorageError('corrupt');
   if (existing === null) {
     if (mode === 'existing') throw new StorageError('missing_state');
     try {
       const flags = fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0);
       fs.closeSync(fs.openSync(ledger, flags, 0o600));
+      // open applies the umask; set the intended mode explicitly.
       fs.chmodSync(ledger, 0o600);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new StorageError('locked');
@@ -101,17 +132,68 @@ export function prepareStatePath(directory: string, mode: OpenMode): string {
 
 export type FileIdentity = Readonly<{ dev: number; ino: number }>;
 
-export function fileIdentity(target: string): FileIdentity {
-  const stats = lstatOrNull(target);
-  if (stats === null || !stats.isFile()) throw new StorageError('unsafe_path');
-  return { dev: stats.dev, ino: stats.ino };
+/**
+ * Identifies the ledger through a descriptor opened without following links, so a
+ * symlink swapped in after validation is refused rather than resolved. The descriptor
+ * is closed before SQLite opens the file: closing any descriptor of a file drops this
+ * process's POSIX locks on it, including SQLite's.
+ */
+export function pinLedgerFile(target: string): FileIdentity {
+  let fd: number;
+  try {
+    fd = fs.openSync(target, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    throw new StorageError(code === 'ELOOP' || code === 'EMLINK' ? 'unsafe_path' : 'io_failed');
+  }
+  try {
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile() || stats.nlink !== 1 || !ownerOnly(stats)) throw new StorageError('unsafe_path');
+    return { dev: stats.dev, ino: stats.ino };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
-/** After open: the file SQLite opened must still be the one that was validated. */
-export function assertSameFile(target: string, expected: FileIdentity): void {
+const FD_DIRECTORY = '/proc/self/fd';
+
+function openDescriptors(): readonly string[] | null {
+  try {
+    return fs.readdirSync(FD_DIRECTORY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * After open: the file SQLite actually opened must be the one that was validated.
+ * Where `/proc` exists this inspects this process's descriptors for the ledger path
+ * and requires each to be the pinned inode, so a path swapped between validation and
+ * open is caught even if it was swapped back. Elsewhere it falls back to re-checking
+ * the path, which cannot see a swap that was undone before the check.
+ */
+export function assertOpenedFile(target: string, expected: FileIdentity): void {
   checkFile(target);
-  const now = fileIdentity(target);
-  if (now.dev !== expected.dev || now.ino !== expected.ino) throw new StorageError('unsafe_path');
+  const descriptors = openDescriptors();
+  if (descriptors === null) {
+    const stats = lstatOrNull(target);
+    if (stats === null || stats.dev !== expected.dev || stats.ino !== expected.ino) throw new StorageError('unsafe_path');
+    return;
+  }
+  let matched = false;
+  for (const fd of descriptors) {
+    const link = path.join(FD_DIRECTORY, fd);
+    let stats: fs.Stats;
+    try {
+      if (fs.readlinkSync(link) !== target) continue;
+      stats = fs.statSync(link);
+    } catch {
+      continue;
+    }
+    if (stats.dev !== expected.dev || stats.ino !== expected.ino) throw new StorageError('unsafe_path');
+    matched = true;
+  }
+  if (!matched) throw new StorageError('unsafe_path');
 }
 
 /**

@@ -3,14 +3,16 @@
 // opens, wraps or migrates it, and no operation here is atomic with an SDK write.
 
 import { DatabaseSync } from 'node:sqlite';
-import type { DeliveryLimits, DeviceId, EventRef } from '@khala/contracts/delivery/index';
+import type { DeliveryLimits, DeviceId } from '@khala/contracts/delivery/index';
 import { StorageError, toStorageError } from './errors';
 import {
-  type ConnectorLedger, type CursorResult, type LedgerContext, type PendingKey, type PersistResult, type QuarantineEntry,
-  commitCursor, createLedgerTx, persistPending, readCursor, readQuarantine, readReleasedPayload, resolveQuarantine,
-  runTransaction,
+  type ConnectorLedger, type CursorResult, type LedgerContext, type PersistInput, type PersistResult, type QuarantineEntry,
+  type UnavailableInput, type UnavailableResult, commitCursor, createLedgerTx, persistPending, persistUnavailable,
+  readCursor, readQuarantine, readReleasedPayload, requireIdentifier, resolveQuarantine, runTransaction,
 } from './ledger';
-import { type OpenMode, acquireExclusiveLock, assertSameFile, claimEpoch, fileIdentity, prepareStatePath } from './leases';
+import {
+  type OpenMode, acquireExclusiveLock, assertOpenedFile, claimEpoch, pinLedgerFile, prepareStatePath,
+} from './leases';
 import { newPayloadRef } from './payloads';
 import { prepareSchema } from './schema';
 
@@ -23,28 +25,45 @@ export type ConnectorStorageOptions = Readonly<{
    */
   mode: OpenMode;
   limits: DeliveryLimits;
-  /** Optional cap on the ledger's size; writes past it fail with `storage_full`. */
+  /**
+   * Optional cap on the ledger's size, at least MIN_MAX_BYTES; writes past it fail
+   * with `storage_full`.
+   */
   maxBytes?: number;
 }>;
 
 export type DeviceIdentity = Readonly<{ deviceId: DeviceId; fingerprint: string }>;
 
+/** Smallest accepted `maxBytes`: room for the schema and a few maximal payloads. */
+export const MIN_MAX_BYTES = 256 * 1024;
+
 export type IdentityResult =
   | Readonly<{ kind: 'bound' | 'matched' }>
-  | Readonly<{ kind: 'conflict'; code: 'identity_mismatch' }>;
+  /**
+   * `identity_mismatch`: a different device or fingerprint is already bound.
+   * `identity_unbound`: an `existing` ledger that already holds state has no bound
+   * identity, so nothing proves this device created it. Either way the handle is
+   * blocked: every later call fails with `identity_mismatch` until it is closed.
+   */
+  | Readonly<{ kind: 'conflict'; code: 'identity_mismatch' | 'identity_unbound' }>;
 
 export interface ConnectorStorage {
-  /** Durably records a decrypted event for review before its cursor may advance. */
-  persistPending(input: {
-    key: PendingKey;
-    event: EventRef;
-    plaintext: Uint8Array;
-    receivedAt: string;
-  }): Promise<PersistResult>;
+  /**
+   * Durably records a decrypted event for review before its cursor may advance. A
+   * decrypted event replaces an unavailable placeholder with the same key and
+   * attribution (`replaced`).
+   */
+  persistPending(input: PersistInput): Promise<PersistResult>;
+  /**
+   * Durably records an event that could not be decrypted or authenticated, so the
+   * cursor can move past it without losing it. Never replaces a decrypted record.
+   */
+  persistUnavailable(input: UnavailableInput): Promise<UnavailableResult>;
   readCursor(streamId: string): Promise<Readonly<{ revision: number; opaqueCursor: string }> | null>;
+  /** Blocked while a conflict quarantined on the same stream is unresolved. */
   commitCursor(input: { streamId: string; expectedRevision: number; opaqueCursor: string }): Promise<CursorResult>;
-  /** Conflicts that keep cursors blocked until the owner resolves them. */
-  readQuarantine(): Promise<readonly QuarantineEntry[]>;
+  /** One page of quarantined conflicts with `id > afterId` (at most MAX_QUARANTINE_PAGE). */
+  readQuarantine(input?: { afterId?: number; limit?: number }): Promise<readonly QuarantineEntry[]>;
   resolveQuarantine(input: { id: number; resolvedAt: string }): Promise<ReturnType<typeof resolveQuarantine>>;
   /** Resolves an opaque handle only while a release references it. */
   readReleasedPayload(payloadRef: string): Promise<Uint8Array>;
@@ -63,8 +82,12 @@ export interface ConnectorStorage {
 export const storageInternals = new WeakMap<ConnectorStorage, { ctx: LedgerContext; isOpen: () => boolean }>();
 
 export async function openConnectorStorage(options: ConnectorStorageOptions): Promise<ConnectorStorage> {
+  const { maxBytes } = options;
+  if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < MIN_MAX_BYTES)) {
+    throw new StorageError('invalid_input');
+  }
   const file = prepareStatePath(options.directory, options.mode);
-  const identity = fileIdentity(file);
+  const identity = pinLedgerFile(file);
 
   let db: DatabaseSync;
   try {
@@ -74,17 +97,19 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
   }
 
   let epoch: number;
+  let hadState: boolean;
   try {
     acquireExclusiveLock(db);
-    assertSameFile(file, identity);
+    assertOpenedFile(file, identity);
     db.exec('PRAGMA foreign_keys = ON');
-    if (options.maxBytes !== undefined) {
+    if (maxBytes !== undefined) {
       const pageSize = (db.prepare('PRAGMA page_size').get() as { page_size: number }).page_size;
-      db.exec(`PRAGMA max_page_count = ${Math.max(1, Math.floor(options.maxBytes / pageSize))}`);
+      db.exec(`PRAGMA max_page_count = ${Math.max(1, Math.floor(maxBytes / pageSize))}`);
     }
     db.exec('BEGIN IMMEDIATE');
     try {
       prepareSchema(db, options.mode);
+      hadState = holdsState(db);
       epoch = claimEpoch(db);
       db.exec('COMMIT');
     } catch (error) {
@@ -98,8 +123,10 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
 
   const ctx: LedgerContext = { db, epoch, limits: options.limits };
   let open = true;
+  let identityBlocked = false;
   const guard = () => {
     if (!open) throw new StorageError('closed');
+    if (identityBlocked) throw new StorageError('identity_mismatch');
   };
 
   const storage: ConnectorStorage = {
@@ -107,8 +134,13 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
 
     async persistPending(input) {
       guard();
-      if (input.plaintext.byteLength > options.limits.maxPayloadBytes) throw new StorageError('limit_exceeded');
+      if (input.plaintext?.byteLength > options.limits.maxPayloadBytes) throw new StorageError('limit_exceeded');
       return persistPending(ctx, input, newPayloadRef);
+    },
+
+    async persistUnavailable(input) {
+      guard();
+      return persistUnavailable(ctx, input);
     },
 
     async readCursor(streamId) {
@@ -121,9 +153,9 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
       return commitCursor(ctx, input);
     },
 
-    async readQuarantine() {
+    async readQuarantine(input) {
       guard();
-      return readQuarantine(db);
+      return readQuarantine(db, input);
     },
 
     async resolveQuarantine(input) {
@@ -138,24 +170,29 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
 
     async bindDeviceIdentity(identity) {
       guard();
-      const value = JSON.stringify({ deviceId: identity.deviceId, fingerprint: identity.fingerprint });
-      return runTransaction(ctx, () => {
+      const deviceId = requireIdentifier(identity.deviceId);
+      const fingerprint = requireIdentifier(identity.fingerprint);
+      const value = JSON.stringify({ deviceId, fingerprint });
+      const result = runTransaction(ctx, (): IdentityResult => {
         const row = db.prepare("SELECT value FROM meta WHERE key = 'device_identity'").get() as { value: string } | undefined;
-        if (row !== undefined) {
-          return row.value === value ? { kind: 'matched' } as const : { kind: 'conflict', code: 'identity_mismatch' } as const;
-        }
+        if (row !== undefined) return row.value === value ? { kind: 'matched' } : { kind: 'conflict', code: 'identity_mismatch' };
+        // Binding is first-bootstrap only. Existing state with no bound identity may
+        // belong to another device; adopting it would substitute an identity silently.
+        if (options.mode === 'existing' && hadState) return { kind: 'conflict', code: 'identity_unbound' };
         db.prepare("INSERT INTO meta (key, value) VALUES ('device_identity', ?)").run(value);
-        return { kind: 'bound' } as const;
+        return { kind: 'bound' };
       });
+      if (result.kind === 'conflict') identityBlocked = true;
+      return result;
     },
 
     ledger: {
       async transaction(run) {
         guard();
         let live = true;
-        const tx = createLedgerTx(ctx, () => live && open);
+        const { tx, failed } = createLedgerTx(ctx, () => live && open);
         try {
-          return runTransaction(ctx, () => run(tx));
+          return runTransaction(ctx, () => run(tx), () => !failed());
         } finally {
           live = false;
         }
@@ -171,4 +208,11 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
   };
   storageInternals.set(storage, { ctx, isOpen: () => open });
   return storage;
+}
+
+/** Whether the ledger held anything before this open claimed its epoch. */
+function holdsState(db: DatabaseSync): boolean {
+  const revision = db.prepare("SELECT value FROM meta WHERE key = 'ledger_revision'").get() as { value: string };
+  if (Number(revision.value) > 0) return true;
+  return db.prepare('SELECT 1 FROM cursors LIMIT 1').get() !== undefined;
 }

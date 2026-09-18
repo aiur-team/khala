@@ -35,17 +35,35 @@ CREATE TABLE pending (
 ) STRICT;
 CREATE INDEX pending_event ON pending (room_id, event_id);
 
+-- An event that could not be decrypted or authenticated, held so the cursor can pass it
+-- without losing it. A later decrypted event with the same key and attribution replaces it.
+CREATE TABLE unavailable (
+  room_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  event_ref TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  ledger_revision INTEGER NOT NULL,
+  replaced_revision INTEGER,
+  PRIMARY KEY (room_id, event_id, binding_id, generation)
+) STRICT;
+
+-- A conflict blocks the cursor of the stream that observed it, until the owner resolves it.
 CREATE TABLE quarantine (
   id INTEGER PRIMARY KEY,
+  stream_id TEXT NOT NULL,
   room_id TEXT NOT NULL,
   event_id TEXT NOT NULL,
   binding_id TEXT NOT NULL,
   generation INTEGER NOT NULL,
   code TEXT NOT NULL,
-  observed_digest TEXT NOT NULL,
+  observed_digest TEXT,
   observed_at TEXT NOT NULL,
   resolved_at TEXT
 ) STRICT;
+CREATE INDEX quarantine_stream ON quarantine (stream_id, resolved_at);
 
 CREATE TABLE cursors (
   stream_id TEXT PRIMARY KEY,
@@ -57,6 +75,18 @@ CREATE TABLE bindings (
   binding_id TEXT PRIMARY KEY,
   generation INTEGER NOT NULL,
   binding TEXT NOT NULL
+) STRICT;
+
+-- Durable revocations. A binding revoked at generation G blocks every generation up to
+-- G; a revoked device blocks every binding that delivers through it.
+CREATE TABLE revocations (
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('binding', 'device')),
+  target_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  operation_id TEXT NOT NULL,
+  revoked_at TEXT NOT NULL,
+  ledger_revision INTEGER NOT NULL,
+  PRIMARY KEY (target_kind, target_id, generation)
 ) STRICT;
 
 CREATE TABLE commands (
