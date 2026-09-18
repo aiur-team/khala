@@ -119,7 +119,7 @@ Depends U3. Run busy and disconnect cases, then the approved browser-closed/reco
 
 ## Verification Contract
 
-Run `pnpm test:conformance` and `pnpm test:e2e -- tests/e2e/collaboration/collaboration.test.ts` for the KHA-137 runner entry; put scenario assertions behind that entry and document environment inputs in `tests/e2e/collaboration/README.md`. Actual acceptance uses `KHALA_E2E_LIVE=1 pnpm test:e2e -- tests/e2e/collaboration/collaboration.test.ts` and must fail if no live scenario executed. Real run requires designated owner accounts/devices and existing sessions, selected deployment and approved scenario. Failure/blocked rows remain in the report; reruns retain distinct run IDs instead of overwriting adverse evidence. Planning performed no live collaboration.
+Run `pnpm test:conformance` and `pnpm test:e2e -- tests/e2e/collaboration/collaboration.test.ts` for the KHA-137 runner entry; put scenario assertions behind that entry and document environment inputs in `tests/e2e/collaboration/README.md`. Actual acceptance uses `KHALA_E2E_LIVE=1 KHALA_E2E_DISPOSABLE_ENV=<disposable environment> pnpm test:e2e -- tests/e2e/collaboration/collaboration.test.ts` and must fail if no live scenario executed; each live case returns the live evidence manifest its drivers produced (see `tests/e2e/harness/README.md`). Real run requires designated owner accounts/devices and existing sessions, selected deployment and approved scenario. Failure/blocked rows remain in the report; reruns retain distinct run IDs instead of overwriting adverse evidence. Planning performed no live collaboration.
 
 ## Definition of Done
 
