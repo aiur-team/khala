@@ -1,4 +1,5 @@
 import type { ContentLimits, Disposer, MessageContent, OperationResult, RoomId } from '@khala/contracts/messaging/index';
+import { decodeWith, displayText } from '@khala/contracts/messaging/decode';
 import { INITIAL_VIEW, type CreateChatView, type IntroDraft } from './model';
 import type { CreateChatPorts } from './ports';
 
@@ -29,9 +30,15 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
-/** Local pre-check only; the server remains authoritative for every rule it enforces. */
+/**
+ * Local pre-check using the contract's own room-title rules (`displayText`):
+ * byte limit, no control characters, and no bidi or invisible characters that
+ * let one label impersonate another. The server remains authoritative.
+ */
 function validateTitle(title: string, limits: ContentLimits): string | null {
-  return byteLength(title) > limits.maxRoomTitleBytes ? 'title_too_long' : null;
+  const checked = decodeWith(() => displayText(title, 'title', limits.maxRoomTitleBytes));
+  if (checked.ok) return null;
+  return checked.error.code === 'too_long' ? 'title_too_long' : 'title_invalid';
 }
 
 /** An intro that is empty after trimming is never sent as a message. */

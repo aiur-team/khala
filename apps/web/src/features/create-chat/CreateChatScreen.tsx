@@ -127,7 +127,11 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
           />
           {view.titleError !== null ? (
             <p role="alert" id="create-chat-title-error">
-              {view.titleError === 'title_too_long' ? 'That name is too long.' : view.titleError}
+              {view.titleError === 'title_too_long'
+                ? 'That name is too long.'
+                : view.titleError === 'title_invalid'
+                  ? 'That name contains characters that aren’t allowed.'
+                  : view.titleError}
             </p>
           ) : null}
         </div>

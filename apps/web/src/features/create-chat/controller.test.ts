@@ -288,4 +288,34 @@ describe('createChatController', () => {
     expect(controller2.getView().phase).toBe('editing');
     expect(controller2.getView().titleError).toBe('title_too_long');
   });
+
+  it.each([
+    ['a right-to-left override', 'Pay\u202Eroll'],
+    ['a zero-width space', 'Pay\u200Broll'],
+    ['a control character', 'Pay\u0007roll'],
+  ])('rejects a title containing %s locally, before any create call', (_label, title) => {
+    const create = vi.fn().mockResolvedValue(ok(ROOM));
+    const controller = createChatController(
+      { room: fakeRoomPort({ create }), admission: fakeAdmissionPort(), limits: LIMITS },
+      { createId: makeCreateId() },
+    );
+    controller.setTitle(title);
+    controller.submit();
+    expect(controller.getView().phase).toBe('editing');
+    expect(controller.getView().titleError).toBe('title_invalid');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('keeps ZWJ, which emoji sequences need, as a valid title', async () => {
+    const create = vi.fn().mockResolvedValue(ok(ROOM));
+    const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
+    const controller = createChatController(
+      { room: fakeRoomPort({ create }), admission: fakeAdmissionPort({ share }), limits: LIMITS },
+      { createId: makeCreateId() },
+    );
+    controller.setTitle('Team \u{1F469}\u200D\u{1F4BB}');
+    controller.submit();
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(controller.getView().titleError).toBeNull();
+  });
 });
