@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   type ApprovalCommand, type BindingId, type DeviceId, type ParticipantId, type RoomId, verifyReleasedJob,
 } from '@khala/contracts/delivery/index';
-import { evaluateApproval } from './index';
+import { evaluateApproval, type PendingRecord } from './index';
 import { authority, binding, command, digest, id, record, scenario, text } from './fixtures/sample';
 
 const decoded = (bytes: Uint8Array): unknown => JSON.parse(new TextDecoder().decode(bytes));
@@ -61,6 +61,47 @@ describe('evaluateApproval', () => {
     const substituted = { ...b, ref: { ...b.ref, authorDeviceId: id<DeviceId>('dev-mallory') } };
     const result = await evaluateApproval({ ...input, pending: [a, substituted, c] });
     expect(result).toMatchObject({ ok: false, code: 'stale_content', reason: 'content_mismatch', field: 'command.selection[1]' });
+  });
+
+  it('rejects an author participant substitution', async () => {
+    const { input, a, b, c } = await scenario();
+    const substituted = { ...b, ref: { ...b.ref, authorParticipantId: id<ParticipantId>('agent-b') } };
+    const result = await evaluateApproval({ ...input, pending: [a, substituted, c] });
+    expect(result).toMatchObject({ ok: false, code: 'stale_content', reason: 'content_mismatch', field: 'command.selection[1]' });
+  });
+
+  it('ignores a same-ID record from another room', async () => {
+    const { input, a, b } = await scenario();
+    const elsewhere = { ...b, ref: { ...b.ref, roomId: id<RoomId>('room-2') }, content: text('Other room text') };
+    const result = await evaluateApproval({ ...input, pending: [elsewhere, a, b] });
+    expect(result.ok).toBe(true);
+    const onlyElsewhere = await evaluateApproval({ ...input, pending: [a, elsewhere] });
+    expect(onlyElsewhere).toMatchObject({ ok: false, code: 'expired_content', reason: 'missing_content' });
+  });
+
+  it('refuses a selected event whose content is unavailable as expired, not stale', async () => {
+    const { input, a, b } = await scenario();
+    const withheld: PendingRecord = { ref: b.ref, content: { v: 1, kind: 'unavailable', reason: 'withheld' } };
+    const result = await evaluateApproval({ ...input, pending: [a, withheld] });
+    expect(result).toEqual({ ok: false, code: 'expired_content', reason: 'missing_content', field: 'command.selection[1]' });
+  });
+
+  it('returns a typed rejection instead of throwing on malformed trusted input', async () => {
+    const { input, a, b } = await scenario();
+    const broken = { ref: b.ref, content: null } as unknown as PendingRecord;
+    const result = await evaluateApproval({ ...input, pending: [a, broken] });
+    expect(result).toEqual({ ok: false, code: 'unavailable', reason: 'invalid_input', field: 'input' });
+  });
+
+  it('reports missing Web Crypto as unavailable without a decision', async () => {
+    const { input } = await scenario();
+    vi.stubGlobal('crypto', undefined);
+    try {
+      const result = await evaluateApproval(input);
+      expect(result).toMatchObject({ ok: false, code: 'unavailable', reason: 'crypto_unavailable' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('rejects a changed body that still carries the old digest', async () => {

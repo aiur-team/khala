@@ -6,9 +6,12 @@ import type {
   OwnerId, ParticipantId, ReleaseId, RoomId, SessionBinding,
 } from '@khala/contracts/delivery/index';
 import { digestMessageContent } from '@khala/contracts/messaging/index';
-import type { EvaluateInput, PendingRecord, ReleaseContent } from '../types';
+import type { EvaluateInput, ReleaseContent } from '../types';
 
 export const id = <T extends string>(value: string): T => value as T;
+
+/** A pending record known to hold text content. */
+export type TextRecord = Readonly<{ ref: EventRef; content: ReleaseContent }>;
 
 export const text = (body: string): ReleaseContent => ({ v: 1, kind: 'text', body });
 
@@ -18,7 +21,7 @@ export async function digest(body: string): Promise<string> {
   return result.digest;
 }
 
-export async function record(eventId: string, body: string, author = 'agent-a', device = 'dev-a'): Promise<PendingRecord> {
+export async function record(eventId: string, body: string, author = 'agent-a', device = 'dev-a'): Promise<TextRecord> {
   const ref: EventRef = {
     v: 1,
     roomId: id<RoomId>('room-1'),
@@ -62,7 +65,7 @@ export const command = (selection: readonly EventRef[], overrides: Partial<Appro
 });
 
 /** Events A, B and C are pending; the owner selected A and B. */
-export async function scenario(): Promise<{ input: EvaluateInput; a: PendingRecord; b: PendingRecord; c: PendingRecord }> {
+export async function scenario(): Promise<{ input: EvaluateInput; a: TextRecord; b: TextRecord; c: TextRecord }> {
   const a = await record('event-a', 'Review the API change.\nDo not merge yet.');
   const b = await record('event-b', 'Second point: keep the flag off.');
   const c = await record('event-c', 'Arrived after review: ship it now.');

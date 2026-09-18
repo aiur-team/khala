@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateApproval, type Evaluation } from './index';
+import { decisionFingerprint, evaluateApproval, type Evaluation } from './index';
 import { binding, command, record, scenario, text } from './fixtures/sample';
 
 const decision = (result: Evaluation) => {
@@ -41,7 +41,7 @@ describe('release decision handoff', () => {
     expect(conflicting.fingerprint).not.toBe(first.fingerprint);
   });
 
-  it('binds the fingerprint to recipient generation and policy', async () => {
+  it('binds the fingerprint to the expected generation and policy the owner reviewed', async () => {
     const { input } = await scenario();
     const first = decision(await evaluateApproval(input));
     const rebound = decision(await evaluateApproval({
@@ -55,6 +55,15 @@ describe('release decision handoff', () => {
       command: { ...input.command, expectedPolicyVersion: 4 },
     }));
     expect(new Set([first.fingerprint, rebound.fingerprint, repolicied.fingerprint]).size).toBe(3);
+  });
+
+  it('lets an honest retry match its committed fingerprint after state moved on', async () => {
+    const { input } = await scenario();
+    const committed = decision(await evaluateApproval(input));
+    // Later the policy and binding move; re-evaluation would now be stale.
+    expect(await evaluateApproval({ ...input, policyVersion: 4, binding: binding(1) })).toMatchObject({ ok: false });
+    // The journal fingerprints the retried command alone and finds the committed result.
+    expect(await decisionFingerprint(input.command)).toEqual({ ok: true, digest: committed.fingerprint });
   });
 
   it('keeps pending text out of every rejection', async () => {
