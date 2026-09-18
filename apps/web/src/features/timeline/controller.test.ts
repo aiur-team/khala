@@ -1,0 +1,137 @@
+import { describe, expect, it } from 'vitest';
+import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
+import type { RoomPort, RoomSnapshot, TimelineItem } from '@khala/contracts/messaging/index';
+import { ok, unavailable, type Disposer } from '@khala/contracts/messaging/outcomes';
+import { createTimelineController } from './controller';
+
+const roomId = 'room_demo' as RoomId;
+
+function participant(id: string, displayName: string) {
+  return {
+    participantId: id as ParticipantId,
+    kind: 'human' as const,
+    ownerId: `owner_${id}` as OwnerId,
+    displayName,
+    deviceIds: [] as DeviceId[],
+  };
+}
+
+function item(eventId: string, authorId: string, body: string, receivedAt = '2026-09-17T00:00:00Z'): TimelineItem {
+  return {
+    ref: {
+      v: 1,
+      roomId,
+      eventId: eventId as EventId,
+      authorParticipantId: authorId as ParticipantId,
+      authorDeviceId: `device_${authorId}` as DeviceId,
+      contentDigest: `sha256:${'0'.repeat(64)}`,
+    },
+    content: { v: 1, kind: 'text', body },
+    participant: participant(authorId, authorId),
+    clientTxnId: null,
+    receivedAt,
+  };
+}
+
+/** A minimal fake exposing only the two operations the controller calls. */
+function fakeRoomPort(pages: Record<string, TimelineItem[]> = {}): { port: RoomPort; emit: (snapshot: RoomSnapshot) => void; listenerCount: () => number } {
+  const listeners = new Set<(snapshot: RoomSnapshot) => void>();
+  const port: Pick<RoomPort, 'observe' | 'timeline'> = {
+    observe: (_roomId, listener): Disposer => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    timeline: async ({ cursor }) => {
+      const items = pages[cursor ?? 'first'] ?? [];
+      return ok({ items, nextCursor: null, snapshotRevision: 'rev_1' });
+    },
+  };
+  return {
+    port: port as RoomPort,
+    emit: snapshot => listeners.forEach(listener => listener(snapshot)),
+    listenerCount: () => listeners.size,
+  };
+}
+
+const room = { roomId, title: null, membership: 'joined' as const, revision: 'rev_1' };
+
+describe('createTimelineController', () => {
+  it('merges an older page and a later live snapshot by event ID, rendering shared items once', async () => {
+    const { port, emit } = fakeRoomPort({ first: [item('E1', 'alice', 'first'), item('E2', 'alice', 'second')] });
+    const controller = createTimelineController(port, roomId, { generation: 1 });
+
+    await controller.loadOlder();
+    emit({ room, items: [item('E2', 'alice', 'second'), item('E3', 'bob', 'third')], snapshotRevision: 'rev_2', generation: 1 });
+
+    const { items } = controller.getSnapshot();
+    expect(items.map(entry => entry.ref.eventId)).toEqual(['E1', 'E2', 'E3']);
+    controller.dispose();
+  });
+
+  it('keeps two records with identical text from different authenticated authors, each with correct ownership', () => {
+    const { port, emit } = fakeRoomPort();
+    const controller = createTimelineController(port, roomId, { generation: 1 });
+
+    emit({ room, items: [item('E1', 'alice', 'same text'), item('E2', 'bob', 'same text')], snapshotRevision: 'rev_1', generation: 1 });
+
+    const { items } = controller.getSnapshot();
+    expect(items).toHaveLength(2);
+    expect(items[0]!.ref.eventId).toBe('E1');
+    expect(items[0]!.participant.participantId).toBe('alice');
+    expect(items[1]!.ref.eventId).toBe('E2');
+    expect(items[1]!.participant.participantId).toBe('bob');
+    controller.dispose();
+  });
+
+  it('ignores a snapshot from a stale generation, and dispose unsubscribes exactly once', () => {
+    const { port, emit, listenerCount } = fakeRoomPort();
+    const controller = createTimelineController(port, roomId, { generation: 2 });
+    expect(listenerCount()).toBe(1);
+
+    emit({ room, items: [item('E1', 'alice', 'stale')], snapshotRevision: 'rev_stale', generation: 1 });
+    expect(controller.getSnapshot().items).toEqual([]);
+
+    controller.dispose();
+    controller.dispose();
+    expect(listenerCount()).toBe(0);
+
+    emit({ room, items: [item('E2', 'alice', 'after dispose')], snapshotRevision: 'rev_after', generation: 2 });
+    expect(controller.getSnapshot().items).toEqual([]);
+  });
+
+  it('caches the returned snapshot reference until state actually changes', () => {
+    const { port } = fakeRoomPort();
+    const controller = createTimelineController(port, roomId, { generation: 1 });
+    const first = controller.getSnapshot();
+    const second = controller.getSnapshot();
+    expect(first).toBe(second);
+    controller.dispose();
+  });
+
+  it('surfaces an unavailable first page as phase "unavailable" without throwing', async () => {
+    const port: Pick<RoomPort, 'observe' | 'timeline'> = {
+      observe: (): Disposer => () => {},
+      timeline: async () => unavailable(),
+    };
+    const controller = createTimelineController(port as RoomPort, roomId, { generation: 1 });
+    await controller.loadOlder();
+    expect(controller.getSnapshot().phase).toBe('unavailable');
+    controller.dispose();
+  });
+
+  it('resets newMessageCount only once the reader returns to latest', () => {
+    const { port, emit } = fakeRoomPort();
+    const controller = createTimelineController(port, roomId, { generation: 1 });
+    controller.setReaderAtLatest(false);
+
+    emit({ room, items: [item('E1', 'alice', 'one')], snapshotRevision: 'rev_1', generation: 1 });
+    expect(controller.getSnapshot().newMessageCount).toBe(1);
+
+    emit({ room, items: [item('E1', 'alice', 'one'), item('E2', 'alice', 'two')], snapshotRevision: 'rev_2', generation: 1 });
+    expect(controller.getSnapshot().newMessageCount).toBe(2);
+
+    controller.setReaderAtLatest(true);
+    expect(controller.getSnapshot().newMessageCount).toBe(0);
+    controller.dispose();
+  });
+});
