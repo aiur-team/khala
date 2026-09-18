@@ -199,6 +199,40 @@ describe('submit: AE1, a release ID cannot create two turns through routine retr
   });
 });
 
+describe('submit: repeat submit never reports failed once attempted', () => {
+  it('a lost reply, then the host gone, then a resubmit stays outcome_unknown', async () => {
+    const { harness, server, hosts } = setup();
+    server.override('thread/queue/add', () => ({ status: 'lost', written: true, cause: 'disconnected' }));
+    const first = await harness.submit({ job: job(), payload: payload() });
+    expect(first).toMatchObject({ kind: 'outcome_unknown', errorCode: 'disconnected' });
+    expect(server.adds()).toBe(1);
+
+    hosts.host = null;
+    const resubmit = await harness.submit({ job: job(), payload: payload() });
+    expect(resubmit).toMatchObject({ kind: 'outcome_unknown', errorCode: null, source: 'connector' });
+    expect(server.adds()).toBe(1);
+  });
+
+  it('an unreadable queue on a repeat submit stays outcome_unknown, not failed', async () => {
+    const { harness, server } = setup();
+    server.override('thread/queue/add', () => ({ status: 'lost', written: true, cause: 'disconnected' }));
+    await harness.submit({ job: job(), payload: payload() });
+    server.override('thread/queue/list', () => ({ status: 'lost', written: true, cause: 'timeout' }));
+    const resubmit = await harness.submit({ job: job(), payload: payload() });
+    expect(resubmit).toMatchObject({ kind: 'outcome_unknown', errorCode: 'harness_unavailable', source: 'connector' });
+    expect(server.adds()).toBe(1);
+  });
+
+  it('a repeat submit against a closed adapter stays outcome_unknown, not failed', async () => {
+    const { harness, server } = setup();
+    server.override('thread/queue/add', () => ({ status: 'lost', written: true, cause: 'disconnected' }));
+    await harness.submit({ job: job(), payload: payload() });
+    await harness.close();
+    const resubmit = await harness.submit({ job: job(), payload: payload() });
+    expect(resubmit).toMatchObject({ kind: 'outcome_unknown', errorCode: null, source: 'connector' });
+  });
+});
+
 describe('submit: AE2, uncertain outcomes stay uncertain', () => {
   it('a lost response after a flushed write is outcome_unknown, recorded as written', async () => {
     const { harness, server, evidence } = setup();
@@ -303,6 +337,24 @@ describe('deadlines', () => {
     expect(server.closed).toBe(server.opened);
   });
 
+  it('a resubmit racing a concurrent close joins the in-flight submit instead of reporting failed', async () => {
+    const { harness, server } = setup();
+    let release!: () => void;
+    server.override('thread/queue/add', () => new Promise(resolve => {
+      release = () => resolve({ status: 'response', result: { queuedSubmission: { id: 'q-1', clientUserMessageId: 'rel-b-7' } } });
+    }));
+    const first = harness.submit({ job: job(), payload: payload() });
+    await vi.waitFor(() => expect(server.adds()).toBe(1));
+    const closing = harness.close();
+    const resubmit = harness.submit({ job: job(), payload: payload() });
+    release();
+    const [firstReceipt, resubmitReceipt] = await Promise.all([first, resubmit]);
+    await closing;
+    expect(firstReceipt).toEqual(resubmitReceipt);
+    expect(resubmitReceipt.kind).toBe('harness_queued');
+    expect(server.adds()).toBe(1);
+  });
+
   it('close is bounded when in-flight work hangs', async () => {
     vi.useFakeTimers();
     // The call deadline is far longer than the close deadline, so close must not wait it out.
@@ -333,6 +385,7 @@ describe('submit: refusals before any send', () => {
     ['thread working in another directory', s => { s.server.cwd = '/home/owner/other'; }, 'session_unavailable'],
     ['unauthenticated endpoint', s => { s.hosts.host = { ...s.hosts.host!, endpointPrivate: false }; }, 'harness_unavailable'],
     ['untested version', s => { s.hosts.host = { ...s.hosts.host!, cliVersion: '0.160.0' }; }, 'harness_unavailable'],
+    ['connect throws synchronously instead of rejecting', s => { s.server.connect = () => { throw new Error('socket exploded'); }; }, 'harness_unavailable'],
   ])('%s', async (_name, arrange, errorCode) => {
     const s = setup();
     arrange(s);

@@ -39,3 +39,21 @@ test('build emits feature code and removes stale output but excludes adjacent te
   assert.equal(fs.existsSync(path.join(directory, 'dist/feature.test.js')), false);
   assert.equal(fs.existsSync(path.join(directory, 'dist/stale.js')), false);
 });
+test('build keeps fakes and fixtures out of dist', t => {
+  const directory = fixture(t, {
+    'src/feature.ts': 'export const count: number = 3;',
+    'src/fakes.ts': 'export const fakeThing = 1;',
+    'src/nested/fakes.ts': 'export const nestedFake = 1;',
+    'src/nested/fixtures/sample.ts': 'export const sample = 1;',
+    'src/nested/fixtures/deeper/sample.ts': 'export const deeper = 1;',
+    // A name that merely starts with "fakes" is real feature code, not a test double.
+    'src/fakestore.ts': 'export const notAFake = 1;',
+  });
+  const result = run(directory, 'build');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(path.join(directory, 'dist/feature.js')), true);
+  assert.equal(fs.existsSync(path.join(directory, 'dist/fakestore.js')), true);
+  assert.equal(fs.existsSync(path.join(directory, 'dist/fakes.js')), false);
+  assert.equal(fs.existsSync(path.join(directory, 'dist/nested/fakes.js')), false);
+  assert.equal(fs.existsSync(path.join(directory, 'dist/nested/fixtures')), false);
+});

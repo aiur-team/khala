@@ -97,7 +97,14 @@ export async function probeBinding(binding: SessionBinding, deps: ProbeDeps): Pr
   // The host's report; any other holder means another executor owns the thread.
   if (!host.holdsWriter) return fail('writer_not_held');
 
-  const connecting = deps.client.connect(host.endpoint);
+  let connecting: ReturnType<CodexClientPort['connect']>;
+  try {
+    connecting = deps.client.connect(host.endpoint);
+  } catch {
+    // A port must never throw synchronously, but a defensive port call still reports
+    // `unreachable` instead of rejecting the caller.
+    return fail('unreachable');
+  }
   let opened: CodexConnection | null;
   try {
     opened = await withDeadline(connecting, deps.deadlines.callMs, null);

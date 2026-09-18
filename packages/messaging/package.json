@@ -6,6 +6,7 @@
   "exports": {
     "./browser-device/index": "./src/browser-device/index.ts",
     "./rooms/*": "./src/rooms/*.ts",
+    "./rooms/fixtures/fakes": null,
     "./revocation/*": "./src/revocation/*.ts",
     "./recovery/*": "./src/recovery/*.ts"
   },

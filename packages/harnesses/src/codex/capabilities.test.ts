@@ -86,6 +86,13 @@ describe('inspect', () => {
     expect(server.endpoints).toEqual([]);
   });
 
+  it('a synchronous throw from connect reports unreachable instead of rejecting', async () => {
+    const { harness, server } = setup();
+    server.connect = () => { throw new Error('socket exploded'); };
+    await expect(harness.inspect(binding())).resolves.toMatchObject(unsupported);
+    expect(server.closed).toBe(server.opened);
+  });
+
   it.each<[string, (s: FakeHarness) => void]>([
     ['host lookup', s => { s.hosts.lookup = never; }],
     ['connect', s => { s.server.connect = never; }],
