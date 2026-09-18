@@ -38,7 +38,7 @@ It is not a full Element client build, Element browser crypto test, or SSO login
 | Device lifecycle | Separate real141 SDK proof inherited | Full Element host **not tested** |
 | Module failure | Not applicable | Actual incompatible loader rejection; browser displays missing review controls |
 
-Unit results: SDK 4 tests; Element 4 tests. Each candidate has one browser test with
+Unit results: SDK 6 tests; Element 4 tests. Each candidate has one browser test with
 all applicable assertions; no skipped tests. These are functional keyboard checks,
 not an exhaustive accessibility audit. The module fixture's client-side callbacks
 cannot establish human-only authority; future composition must bind approved
@@ -93,9 +93,9 @@ including build-only/transitive dependencies. A missing standalone license file 
 metadata-only record requires release notice review; these inventories are not a
 legal conclusion or distributable notice bundle.
 
-- React/ReactDOM 19.3.0: inspected installed MIT LICENSE; [exact React package](https://registry.npmjs.org/react/19.3.0).
+- React/ReactDOM 19.3.0: installed MIT LICENSE is byte-identical to the [`v19.3.0` revision LICENSE](https://github.com/facebook/react/blob/1d34f91dfde6bba84d08b683aaba164c7194dacb/LICENSE); ReactDOM ships the same file.
 - MatrixJS 42.4.0: installed Apache-2.0 LICENSE and [pinned source license](https://github.com/matrix-org/matrix-js-sdk/blob/bbffce963f7218ad72e23f972703794a05161e8a/LICENSE).
-- Vite 7.1.12: installed LICENSE.md covers MIT core and bundled third-party notices; [exact package](https://registry.npmjs.org/vite/7.1.12).
+- Vite 7.1.12: installed LICENSE.md covers MIT core and bundled third-party notices and is byte-identical to the [`v7.1.12` revision LICENSE.md](https://github.com/vitejs/vite/blob/2436afef044d90f710fdfd714488a71efdd29092/packages/vite/LICENSE.md).
 - Module API 2.1.0: [inspected revision README](https://github.com/element-hq/element-web/blob/f2e247684496637f80e73805442e7d8e99f68548/packages/module-api/README.md) says AGPL-3.0-or-later or commercial. Do **not** infer the full Element GPL option applies to this separately packaged API.
 - Full Element: [revision README](https://github.com/element-hq/element-web/blob/f2e247684496637f80e73805442e7d8e99f68548/README.md) identifies AGPL/GPL/commercial alternatives; inspected LICENSE-AGPL-3.0, LICENSE-GPL-3.0 and LICENSE-COMMERCIAL paths exist. No branding/trademark permissions inferred.
 - Aiur's local LICENSE is Apache-2.0; this fixture uses observed numerical design tokens and independently written JSX/CSS. No Compound/Hydrogen components or external font assets included.
@@ -131,3 +131,29 @@ Chromium 150.0.7871.128): for both `sdk` and `element`, the frozen install, `tes
 `build` and `test:browser` commands in the experiment README exited 0 with 0 skipped,
 and `check-upstream.mjs` source checks passed. The README pins Node 22.23.2; this run
 used 24.18.0 and was not repeated on 22.
+
+The KHA-143 audit against the plan's unit test scenarios then closed three gaps. The
+same commands exited 0 afterwards, with the SDK suite at 6 unit tests:
+
+- **U4 hidden-mock rule.** `canSelectForProduction` previously accepted a capability if
+  any row said `supported`, so a mocked passing row could hide a contradicting
+  `unsupported` or `not-tested` row. Now every row for a mandatory capability must be
+  `supported` with a non-null `testPath`, and `App.test.tsx` covers each case.
+- **U1 credentials and endpoints.** A unit test scans candidate and fixture sources for
+  real URLs, non-`.invalid` Matrix identifiers and token/password literals.
+- **U2 collapsed rail and narrow viewport.** Both browser specs now assert that the
+  timeline and review control stay visible after the rail collapses (SDK) and at
+  390×844, not just that screenshots were taken.
+
+## Acceptance trace
+
+| Criterion | Evidence | Status |
+| --- | --- | --- |
+| R1 same scenarios for both candidates | `fixtures/scenario.ts`; identical browser spec in each candidate | met |
+| R2 content/chrome split | SDK `?embedded=1` browser test; Element `requires-patch` via `check-upstream.mjs` | met for SDK |
+| R2 ordinary OAuth without setup | `ordinary-oauth-return` is `not-tested` for both | **open, KHA-144** |
+| R3 boundaries, dependencies, licenses, upgrade burden | `PATCHES.md`, `license-inventory.json`, `source-evidence.json`, 2.0.0→2.1.0 loader replay | met |
+| R4 one boundary with exact versions | Recommendation plus exact pins above; `canSelectForProduction` is false until R2 OAuth passes | recommended, not selected |
+| AE1 branding cannot pass for missing chrome separation | Element `content-only-mount` = `requires-patch` | met |
+| AE2 unsupported hooks never count as passing | Scorecard results plus the hidden-mock unit test | met |
+| U4 production paths match renderer | KHA-107 plan already targets `.tsx` React shell files | met, no amendment needed |

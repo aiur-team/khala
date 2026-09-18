@@ -18,6 +18,11 @@ export const capabilities: CapabilityEvidence[] = [
   ...(['sdk-ui', 'element-module'] as const).map(candidate => ({ candidate, capability: 'synthetic-review-and-keyboard-mobile', result: 'supported' as const, sourceRevision: candidate === 'sdk-ui' ? sdk : element, testPath: candidate === 'sdk-ui' ? 'sdk/tests/dashboard.spec.ts' : 'element/tests/capabilities.spec.ts', limitation: 'Synthetic approval port, no human authority or model release proof' })),
 ];
 const mandatory = ['content-only-mount', 'ordinary-oauth-return', 'browser-crypto-lifecycle', 'synthetic-review-and-keyboard-mobile'];
+// Every row for a mandatory capability must be supported by a named test; one
+// passing (possibly mocked) row cannot outvote a contradicting or untested row.
 export function canSelectForProduction(candidate: CapabilityEvidence['candidate'], rows = capabilities) {
-  return mandatory.every(capability => rows.some(row => row.candidate === candidate && row.capability === capability && row.result === 'supported'));
+  return mandatory.every(capability => {
+    const evidence = rows.filter(row => row.candidate === candidate && row.capability === capability);
+    return evidence.length > 0 && evidence.every(row => row.result === 'supported' && row.testPath !== null);
+  });
 }
