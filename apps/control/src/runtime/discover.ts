@@ -121,11 +121,17 @@ export function renderGeneratedFunction(result: DiscoveryResult): string {
 // via \`pnpm --filter @khala/control build:functions\`. This directory is
 // Netlify's functions *input*, not its build output; it is gitignored.
 import { createGateway } from '../../apps/control/src/runtime/handler';
+import { readServerEnv } from '../../apps/control/src/runtime/env';
 ${imports}
+
+// Fails closed at cold start if required server config is absent (never logs
+// a value); the resolved app origin also seeds the gateway's Origin check.
+const serverEnv = readServerEnv();
 
 const gateway = createGateway({
   registrations: [${registrationCalls}],
   absentPrefixes: ${absentPrefixesLiteral},
+  appOrigin: serverEnv.publicAppOrigin,
 });
 
 export default gateway;

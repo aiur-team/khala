@@ -13,11 +13,17 @@ type Entry = Readonly<{ data: unknown; etag: string }>;
 class FakeBlobsStore implements BlobsStoreLike {
   private entries = new Map<string, Entry>();
   private revision = 0;
-  private nextRejection: 'definite' | 'ambiguous' | null = null;
+  private nextRejection: 'definite' | 'ambiguous' | 'server-error' | null = null;
   private lostResponseOnNextSet = false;
   private beforeNextSet: (() => void) | null = null;
 
-  failNext(mode: 'definite' | 'ambiguous'): void {
+  /**
+   * `definite`: an explicit 4xx the provider round-tripped — the only mode
+   * that proves nothing committed. `server-error`: an explicit 5xx — still
+   * ambiguous, because the provider's own write can commit before it fails to
+   * report success. `ambiguous`: no status at all (a network-level throw).
+   */
+  failNext(mode: 'definite' | 'ambiguous' | 'server-error'): void {
     this.nextRejection = mode;
   }
 
@@ -31,15 +37,27 @@ class FakeBlobsStore implements BlobsStoreLike {
     this.beforeNextSet = fn;
   }
 
+  private nullifyNextGet: string | null = null;
+
+  /** Makes the next `getWithMetadata` for this exact key return null once, simulating an entry that vanished between two round trips. */
+  returnNullOnceFor(key: string): void {
+    this.nullifyNextGet = key;
+  }
+
   /** Writes directly, bypassing CAS — only for simulating a concurrent writer via `raceBeforeNextSet`. */
   rawWrite(key: string, data: unknown): void {
     this.revision += 1;
     this.entries.set(key, { data, etag: `r${this.revision}` });
   }
 
-  private throwRejection(mode: 'definite' | 'ambiguous'): never {
+  private throwRejection(mode: 'definite' | 'ambiguous' | 'server-error'): never {
     if (mode === 'definite') {
-      const error = new Error('service rejected the request') as Error & { status: number };
+      const error = new Error('bad request') as Error & { status: number };
+      error.status = 400;
+      throw error;
+    }
+    if (mode === 'server-error') {
+      const error = new Error('BlobsInternalError') as Error & { status: number };
       error.status = 503;
       throw error;
     }
@@ -55,6 +73,10 @@ class FakeBlobsStore implements BlobsStoreLike {
 
   async getWithMetadata(key: string): Promise<{ data: unknown; etag?: string } | null> {
     this.consumePreflightFailure();
+    if (this.nullifyNextGet === key) {
+      this.nullifyNextGet = null;
+      return null;
+    }
     const entry = this.entries.get(key);
     return entry ? { data: entry.data, etag: entry.etag } : null;
   }
@@ -205,6 +227,70 @@ describe('createControlStore', () => {
     expect(result).toEqual({ kind: 'outcome_unknown', operationId: 'op_d1' });
   });
 
+  it('a server-reported 5xx during the primary write is outcome_unknown, not unavailable: the provider can commit before it fails to report success', async () => {
+    const { store, records } = makeStore();
+    records.failNext('server-error');
+    const result = await store.compareAndSet({ key: 'membership/erin', expectedRevision: null, operationId: 'op_e1', next: { value: 'joined', expiresAt: null } });
+    expect(result).toEqual({ kind: 'outcome_unknown', operationId: 'op_e1' });
+  });
+
+  it('a server-reported 5xx on read is unavailable, not a false absence', async () => {
+    const { store, records } = makeStore();
+    records.failNext('server-error');
+    expect(await store.read('membership/frank')).toEqual({ kind: 'unavailable' });
+  });
+
+  it('a retry after a lost write that was then legitimately superseded is outcome_unknown, never a false conflict', async () => {
+    const { store, records } = makeStore();
+    const key = 'invite/superseded';
+    const operationId = 'op_first';
+    records.loseResponseOnNextSet();
+    const first = await store.compareAndSet({ key, expectedRevision: null, operationId, next: { value: 'mine', expiresAt: null } });
+    expect(first).toEqual({ kind: 'outcome_unknown', operationId });
+
+    // The lost write actually landed, and a second, unrelated operation then
+    // legitimately overwrote it using a correct CAS against that etag.
+    const current = await store.read<string>(key);
+    expect(current).toMatchObject({ kind: 'record', record: { value: 'mine' } });
+    const revision = current.kind === 'record' ? current.record.revision : never();
+    const superseded = await store.compareAndSet({ key, expectedRevision: revision, operationId: 'op_second', next: { value: 'theirs', expiresAt: null } });
+    expect(superseded.kind).toBe('applied');
+
+    // The original caller, unaware it was superseded, retries with its own
+    // original operation ID, content and (now-stale) expectedRevision. The
+    // ledger already recorded op_first's claim, so this cannot be reported as
+    // a fresh conflict — op_first's own effect on the key can't be disproved.
+    const retry = await store.compareAndSet({ key, expectedRevision: null, operationId, next: { value: 'mine', expiresAt: null } });
+    expect(retry).toEqual({ kind: 'outcome_unknown', operationId });
+  });
+
+  it('a ledger entry that vanishes between the failed claim attempt and its readback is unknown, never counted as claimed', async () => {
+    const { store, operations } = makeStore();
+    const key = 'invite/vanishing-ledger';
+    const operationId = 'op_vanish';
+    // Pre-populate the ledger so the initial onlyIfNew claim attempt fails and
+    // falls through to a readback, then make that readback see nothing.
+    operations.rawWrite(operationId, { key, digest: 'stale-digest-does-not-matter' });
+    operations.returnNullOnceFor(operationId);
+
+    const result = await store.compareAndSet({ key, expectedRevision: null, operationId, next: { value: 'x', expiresAt: null } });
+    expect(result).toEqual({ kind: 'outcome_unknown', operationId });
+  });
+
+  it('a value that is not valid JSON (e.g. undefined) is read as unavailable, never as a live record', async () => {
+    const { store, records } = makeStore();
+    const key = 'corrupt/undefined-value';
+    records.rawWrite(key, { operationId: 'op_corrupt', value: undefined, expiresAt: null });
+    expect(await store.read(key)).toEqual({ kind: 'unavailable' });
+  });
+
+  it('a corrupt (undecodable) stored record is unavailable, never treated as absent and silently overwritable', async () => {
+    const { store, records } = makeStore();
+    const key = 'corrupt/missing-operation-id';
+    records.rawWrite(key, { notAnEnvelope: true });
+    expect(await store.read(key)).toEqual({ kind: 'unavailable' });
+  });
+
   it('a concurrent writer landing between our read and our write, using our own operation ID and content, is discovered as applied via readback', async () => {
     const { store, records } = makeStore();
     const key = 'race/same-write';
@@ -238,6 +324,27 @@ describe('createControlStore', () => {
       const { store, records } = makeStore();
       records.failNext('definite');
       expect(await store.resolve({ key: 'k/x', operationId: 'op_x' })).toEqual({ kind: 'unavailable' });
+    });
+
+    it('reports applied for the caller\'s own write even after it has since expired, rather than licensing a re-apply', async () => {
+      const { store, setClock } = makeStore(1789560000000);
+      await store.compareAndSet({
+        key: 'k/expired-own', expectedRevision: null, operationId: 'op_own',
+        next: { value: 'mine', expiresAt: '2026-09-16T12:00:01Z' },
+      });
+      setClock(1789560001000);
+      expect(await store.read('k/expired-own')).toEqual({ kind: 'absent' });
+      expect(await store.resolve({ key: 'k/expired-own', operationId: 'op_own' })).toMatchObject({ kind: 'applied', record: { value: 'mine' } });
+    });
+
+    it('reports outcome_unknown, not not_applied, when a different operation\'s now-expired write occupies the key', async () => {
+      const { store, setClock } = makeStore(1789560000000);
+      await store.compareAndSet({
+        key: 'k/expired-other', expectedRevision: null, operationId: 'op_other',
+        next: { value: 'theirs', expiresAt: '2026-09-16T12:00:01Z' },
+      });
+      setClock(1789560001000);
+      expect(await store.resolve({ key: 'k/expired-other', operationId: 'op_mine' })).toEqual({ kind: 'outcome_unknown', operationId: 'op_mine' });
     });
   });
 });

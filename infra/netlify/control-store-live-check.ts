@@ -50,12 +50,14 @@ async function run(argv = process.argv.slice(2), env = process.env): Promise<rea
     throw new LiveCheckError('CONTROL_STATE_NAMESPACE must be a disposable khala-live-check-* namespace for this script');
   }
 
-  const records = getStore({ name: `${namespace}-records`, siteID, token });
-  const operations = getStore({ name: `${namespace}-operations`, siteID, token });
+  const records = getStore({ name: `${namespace}-records`, siteID, token, consistency: 'strong' });
+  const operations = getStore({ name: `${namespace}-operations`, siteID, token, consistency: 'strong' });
   const store = createControlStore({ records, operations, clock: () => Date.now() });
 
   const prefix = `khala-live-check/${randomUUID()}`;
   const results: CheckResult[] = [];
+  const recordKeys: string[] = [];
+  const operationKeys: string[] = [];
   const check = async (name: string, run: () => Promise<boolean>) => {
     try {
       results.push({ name, pass: await run() });
@@ -64,32 +66,47 @@ async function run(argv = process.argv.slice(2), env = process.env): Promise<rea
     }
   };
 
-  await check('create-if-absent succeeds once', async () => {
-    const key = `${prefix}/owner`;
-    const first = await store.compareAndSet({ key, expectedRevision: null, operationId: `${prefix}-a`, next: { value: 'alice', expiresAt: null } });
-    const second = await store.compareAndSet({ key, expectedRevision: null, operationId: `${prefix}-b`, next: { value: 'bob', expiresAt: null } });
-    return first.kind === 'applied' && second.kind === 'conflict';
-  });
-
-  await check('operation ID reuse across keys is rejected without writing the second key', async () => {
-    const keyA = `${prefix}/title-a`;
-    const keyB = `${prefix}/title-b`;
-    const operationId = `${prefix}-reused`;
-    await store.compareAndSet({ key: keyA, expectedRevision: null, operationId, next: { value: 'first', expiresAt: null } });
-    const mismatch = await store.compareAndSet({ key: keyB, expectedRevision: null, operationId, next: { value: 'first', expiresAt: null } });
-    const stillAbsent = await store.read(keyB);
-    return mismatch.kind === 'operation_mismatch' && stillAbsent.kind === 'absent';
-  });
-
-  await check('an expired record allows a fresh create-if-absent', async () => {
-    const key = `${prefix}/expiring`;
-    await store.compareAndSet({
-      key, expectedRevision: null, operationId: `${prefix}-exp1`,
-      next: { value: 'first', expiresAt: new Date(Date.now() - 1000).toISOString() },
+  try {
+    await check('create-if-absent succeeds once', async () => {
+      const key = `${prefix}/owner`;
+      recordKeys.push(key);
+      operationKeys.push(`${prefix}-a`, `${prefix}-b`);
+      const first = await store.compareAndSet({ key, expectedRevision: null, operationId: `${prefix}-a`, next: { value: 'alice', expiresAt: null } });
+      const second = await store.compareAndSet({ key, expectedRevision: null, operationId: `${prefix}-b`, next: { value: 'bob', expiresAt: null } });
+      return first.kind === 'applied' && second.kind === 'conflict';
     });
-    const recreated = await store.compareAndSet({ key, expectedRevision: null, operationId: `${prefix}-exp2`, next: { value: 'second', expiresAt: null } });
-    return recreated.kind === 'applied';
-  });
+
+    await check('operation ID reuse across keys is rejected without writing the second key', async () => {
+      const keyA = `${prefix}/title-a`;
+      const keyB = `${prefix}/title-b`;
+      const operationId = `${prefix}-reused`;
+      recordKeys.push(keyA, keyB);
+      operationKeys.push(operationId);
+      await store.compareAndSet({ key: keyA, expectedRevision: null, operationId, next: { value: 'first', expiresAt: null } });
+      const mismatch = await store.compareAndSet({ key: keyB, expectedRevision: null, operationId, next: { value: 'first', expiresAt: null } });
+      const stillAbsent = await store.read(keyB);
+      return mismatch.kind === 'operation_mismatch' && stillAbsent.kind === 'absent';
+    });
+
+    await check('an expired record allows a fresh create-if-absent', async () => {
+      const key = `${prefix}/expiring`;
+      recordKeys.push(key);
+      operationKeys.push(`${prefix}-exp1`, `${prefix}-exp2`);
+      await store.compareAndSet({
+        key, expectedRevision: null, operationId: `${prefix}-exp1`,
+        next: { value: 'first', expiresAt: new Date(Date.now() - 1000).toISOString() },
+      });
+      const recreated = await store.compareAndSet({ key, expectedRevision: null, operationId: `${prefix}-exp2`, next: { value: 'second', expiresAt: null } });
+      return recreated.kind === 'applied';
+    });
+  } finally {
+    // Best-effort cleanup: this is a disposable namespace, but leaving no
+    // trace makes repeated runs cheaper to audit.
+    await Promise.all([
+      ...recordKeys.map(key => records.delete(key).catch(() => undefined)),
+      ...operationKeys.map(key => operations.delete(key).catch(() => undefined)),
+    ]);
+  }
 
   return results;
 }

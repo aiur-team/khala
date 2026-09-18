@@ -43,13 +43,17 @@ type LedgerEntry = Readonly<{ key: string; digest: string }>;
 
 /**
  * A definite rejection is a completed round trip where the provider itself
- * reported the write did not commit (e.g. an HTTP error status) — safe to call
- * `unavailable`. Anything else (a network-level throw with no status, a
- * timeout) is genuinely ambiguous: the request's fate cannot be proven either
- * way, so it is always `outcome_unknown`, never guessed at.
+ * reported the request was rejected before any write could have committed —
+ * an explicit 4xx (bad request, unauthorized, precondition failed, …) — safe
+ * to call `unavailable`. A 5xx, a `BlobsInternalError`, or a network-level
+ * throw with no status is genuinely ambiguous: the provider's own commit may
+ * have already landed, so the request's fate cannot be proven either way and
+ * it is always `outcome_unknown`, never guessed at.
  */
 function isDefiniteRejection(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && typeof (error as { status?: unknown }).status === 'number';
+  if (typeof error !== 'object' || error === null) return false;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' && status >= 400 && status < 500;
 }
 
 function isJsonValue(value: unknown, depth = 0): value is JsonValue {
@@ -99,43 +103,65 @@ function sameWrite<T extends JsonValue>(record: ControlRecord<T> | null, operati
 export function createControlStore(deps: ControlStoreDeps): ControlStore {
   const { records, operations, clock } = deps;
 
-  async function readLive<T extends JsonValue>(key: string): Promise<{ raw: { data: unknown; etag?: string } | null; live: ControlRecord<T> | null }> {
+  async function readLive<T extends JsonValue>(key: string): Promise<{
+    raw: { data: unknown; etag?: string } | null;
+    live: ControlRecord<T> | null;
+    corrupt: boolean;
+    /** The decoded envelope regardless of liveness — lets `resolve` see an expired-but-decodable record's operation ID. */
+    envelope: StoredEnvelope | null;
+  }> {
     const raw = await records.getWithMetadata(key, { type: 'json' });
-    if (raw === null) return { raw: null, live: null };
+    if (raw === null) return { raw: null, live: null, corrupt: false, envelope: null };
     const envelope = decodeEnvelope(raw.data);
-    if (envelope === null || !isRecordLive({ expiresAt: envelope.expiresAt }, clock())) return { raw, live: null };
-    return { raw, live: toRecord<T>(key, raw.etag, envelope) };
+    if (envelope === null) return { raw, live: null, corrupt: true, envelope: null };
+    if (!isRecordLive({ expiresAt: envelope.expiresAt }, clock())) return { raw, live: null, corrupt: false, envelope };
+    return { raw, live: toRecord<T>(key, raw.etag, envelope), corrupt: false, envelope };
   }
+
+  type ClaimResult =
+    | Readonly<{ kind: 'claimed'; retry: boolean }>
+    | Readonly<{ kind: 'mismatch' }>
+    | Readonly<{ kind: 'unknown' }>
+    | Readonly<{ kind: 'unavailable' }>;
 
   /**
    * Claims `operationId` in the ledger for this exact `(key, digest)`. Claiming
    * is itself a single-key CAS, so two concurrent claims for the same
    * operationId can never both win — this is what makes cross-key operation ID
    * reuse detectable without a cross-key transaction.
+   *
+   * `retry: true` means the ledger already held this exact claim before this
+   * call — i.e. an earlier invocation (of this or another process) reached the
+   * claim step for this same operation and content. That earlier invocation's
+   * own record write may have landed and later been legitimately superseded;
+   * this call cannot disprove that, so its caller must not report a definite
+   * `conflict` off the strength of this claim alone.
    */
-  async function claimOperation(operationId: string, key: string, digest: string): Promise<'claimed' | 'mismatch' | 'unknown' | 'unavailable'> {
+  async function claimOperation(operationId: string, key: string, digest: string): Promise<ClaimResult> {
     try {
       const result = await operations.setJSON(operationId, { key, digest } satisfies LedgerEntry, { onlyIfNew: true });
-      if (result.modified) return 'claimed';
+      if (result.modified) return { kind: 'claimed', retry: false };
     } catch (error) {
-      return isDefiniteRejection(error) ? 'unavailable' : 'unknown';
+      return { kind: isDefiniteRejection(error) ? 'unavailable' : 'unknown' };
     }
     let entry: { data: unknown } | null;
     try {
       entry = await operations.getWithMetadata(operationId, { type: 'json' });
     } catch {
-      return 'unknown';
+      return { kind: 'unknown' };
     }
-    if (entry === null) return 'unknown';
+    if (entry === null) return { kind: 'unknown' };
     const decoded = entry.data as Partial<LedgerEntry> | null;
-    return decoded && decoded.key === key && decoded.digest === digest ? 'claimed' : 'mismatch';
+    return decoded && decoded.key === key && decoded.digest === digest ? { kind: 'claimed', retry: true } : { kind: 'mismatch' };
   }
 
   return {
     async read<T extends JsonValue>(key: string): Promise<ControlRead<T>> {
       try {
-        const { live } = await readLive<T>(key);
-        return live ? { kind: 'record', record: live } : { kind: 'absent' };
+        const { live, corrupt } = await readLive<T>(key);
+        if (live) return { kind: 'record', record: live };
+        if (corrupt) return { kind: 'unavailable' };
+        return { kind: 'absent' };
       } catch {
         return { kind: 'unavailable' };
       }
@@ -145,9 +171,10 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       const digest = digestOf(input.next.value, input.next.expiresAt);
 
       const claim = await claimOperation(input.operationId, input.key, digest);
-      if (claim === 'mismatch') return { kind: 'operation_mismatch' };
-      if (claim === 'unavailable') return { kind: 'unavailable' };
-      if (claim === 'unknown') return { kind: 'outcome_unknown', operationId: input.operationId };
+      if (claim.kind === 'mismatch') return { kind: 'operation_mismatch' };
+      if (claim.kind === 'unavailable') return { kind: 'unavailable' };
+      if (claim.kind === 'unknown') return { kind: 'outcome_unknown', operationId: input.operationId };
+      const isRetry = claim.retry;
 
       let before: { raw: { data: unknown; etag?: string } | null; live: ControlRecord<T> | null };
       try {
@@ -159,6 +186,13 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
         return { kind: 'applied', record: before.live as ControlRecord<T> };
       }
       if ((before.live?.revision ?? null) !== input.expectedRevision) {
+        // A prior invocation already claimed this exact (operationId, digest)
+        // in the ledger, and the key no longer shows our write as current. An
+        // earlier round trip for this same operation could have landed and
+        // then been legitimately superseded before we ever got here — that
+        // earlier effect can't be disproved, so this is unknown, not a fresh
+        // conflict.
+        if (isRetry) return { kind: 'outcome_unknown', operationId: input.operationId };
         return { kind: 'conflict', current: before.live };
       }
 
@@ -185,19 +219,35 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       if (sameWrite(after.live, input.operationId, input.next.value, input.next.expiresAt)) {
         return { kind: 'applied', record: after.live as ControlRecord<T> };
       }
+      // Same reasoning as the earlier conflict check: a retried claim means an
+      // earlier invocation's write could have landed and since been
+      // superseded, which this readback cannot disprove.
+      if (isRetry) return { kind: 'outcome_unknown', operationId: input.operationId };
       return { kind: 'conflict', current: after.live };
     },
 
     async resolve<T extends JsonValue>(input: Readonly<{ key: string; operationId: string }>): Promise<ResolveResult<T>> {
-      let current: { live: ControlRecord<T> | null };
+      let current: Awaited<ReturnType<typeof readLive<T>>>;
       try {
         current = await readLive<T>(input.key);
       } catch {
         return { kind: 'unavailable' };
       }
-      if (current.live === null) return { kind: 'not_applied' };
-      if (current.live.operationId === input.operationId) return { kind: 'applied', record: current.live };
-      return { kind: 'outcome_unknown', operationId: input.operationId };
+      if (current.live !== null) {
+        if (current.live.operationId === input.operationId) return { kind: 'applied', record: current.live };
+        return { kind: 'outcome_unknown', operationId: input.operationId };
+      }
+      if (current.corrupt) return { kind: 'unavailable' };
+      // The record is physically present but logically expired: its bytes
+      // still prove whether our operation landed before expiry did, so this
+      // still counts as evidence rather than a flat "never happened".
+      if (current.envelope !== null) {
+        if (current.envelope.operationId === input.operationId) {
+          return { kind: 'applied', record: toRecord<T>(input.key, current.raw?.etag, current.envelope) };
+        }
+        return { kind: 'outcome_unknown', operationId: input.operationId };
+      }
+      return { kind: 'not_applied' };
     },
   };
 }

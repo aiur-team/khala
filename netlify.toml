@@ -71,8 +71,8 @@
 
 [context.deploy-preview]
   [context.deploy-preview.environment]
-    KHALA_NETLIFY_CONTEXT = "preview"
+    NETLIFY_BLOBS_CONTEXT = "preview"
 
 [context.branch-deploy]
   [context.branch-deploy.environment]
-    KHALA_NETLIFY_CONTEXT = "preview"
+    NETLIFY_BLOBS_CONTEXT = "preview"

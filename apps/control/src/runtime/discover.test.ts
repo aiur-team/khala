@@ -114,6 +114,13 @@ describe('renderGeneratedFunction', () => {
     expect(rendered).toContain('"/api/agent/"');
     expect(rendered).toContain('export default gateway;');
   });
+
+  it('validates the server environment before building the gateway and seeds appOrigin from it', () => {
+    const rendered = renderGeneratedFunction({ presentDomains: [], absentPrefixes: [], routeManifest: [] });
+    expect(rendered).toContain("import { readServerEnv } from '../../apps/control/src/runtime/env';");
+    expect(rendered).toContain('const serverEnv = readServerEnv();');
+    expect(rendered).toContain('appOrigin: serverEnv.publicAppOrigin');
+  });
 });
 
 describe('renderRouteManifest', () => {
