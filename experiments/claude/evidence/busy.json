@@ -1,0 +1,161 @@
+{
+  "harness": "claude",
+  "version": "2.1.276",
+  "mode": "busy",
+  "originalSessionId": "51b0420c-e090-4215-81f0-2d1f7073a07c",
+  "observedSessionId": "51b0420c-e090-4215-81f0-2d1f7073a07c",
+  "setupActions": [
+    {
+      "actor": "agent",
+      "action": "start Monitor watch on the connector feed"
+    },
+    {
+      "actor": "human",
+      "action": "approve Monitor permission prompt: tail -n 0 -F ~/.aiur/workspaces/aiur-team/khala/12/experiments/claude/runs/2026-09-18T03-24-06-246Z-busy/released-feed.jsonl"
+    }
+  ],
+  "observations": [
+    {
+      "kind": "session-init",
+      "monotonicMs": 719,
+      "evidencePath": "events.jsonl#L2",
+      "detail": "session 51b0420c-e090-4215-81f0-2d1f7073a07c"
+    },
+    {
+      "kind": "agent-setup-tool-call",
+      "monotonicMs": 2773,
+      "evidencePath": "events.jsonl#L5",
+      "detail": "Monitor"
+    },
+    {
+      "kind": "permission-request",
+      "monotonicMs": 2780,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "Monitor: tail -n 0 -F ~/.aiur/workspaces/aiur-team/khala/12/experiments/claude/runs/2026-09-18T03-24-06-246Z-busy/released-feed.jsonl"
+    },
+    {
+      "kind": "setup-complete",
+      "monotonicMs": 3802,
+      "evidencePath": "events.jsonl#L11"
+    },
+    {
+      "kind": "busy-tool-start",
+      "monotonicMs": 5506,
+      "evidencePath": "events.jsonl#L13"
+    },
+    {
+      "kind": "notification-write",
+      "monotonicMs": 8507,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "m-busy"
+    },
+    {
+      "kind": "busy-tool-end",
+      "monotonicMs": 25527,
+      "evidencePath": "events.jsonl#L16",
+      "detail": "completed with expected output"
+    },
+    {
+      "kind": "context-consumption",
+      "monotonicMs": 26672,
+      "evidencePath": "events.jsonl#L17"
+    },
+    {
+      "kind": "prior-marker-recalled",
+      "monotonicMs": 26672,
+      "evidencePath": "events.jsonl#L17"
+    },
+    {
+      "kind": "task-complete",
+      "monotonicMs": 26681,
+      "evidencePath": "events.jsonl#L18"
+    },
+    {
+      "kind": "session-exit",
+      "monotonicMs": 58692,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "aborted"
+    },
+    {
+      "kind": "native-queue-accepted",
+      "monotonicMs": 8708,
+      "evidencePath": "transcript#L211",
+      "detail": "queue-operation enqueue; same-host wall clock"
+    },
+    {
+      "kind": "native-queue-delivered",
+      "monotonicMs": 25532,
+      "evidencePath": "transcript#L214",
+      "detail": "injected into the running turn, then removed from the queue; same-host wall clock"
+    },
+    {
+      "kind": "no-replacement-after-exit",
+      "monotonicMs": 61737,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "no process referencing the session or feed; no conversation turn after a post-exit write"
+    },
+    {
+      "kind": "undelivered-queue-entry",
+      "monotonicMs": 58696,
+      "evidencePath": "transcript#L218",
+      "detail": "still queued when the session exited"
+    }
+  ],
+  "identity": {
+    "before": {
+      "lines": 190,
+      "sha256": "23602861574d88175f7dda734cef36e9fcedf208f59bbe3064c371665182f126",
+      "sessionIds": [
+        "51b0420c-e090-4215-81f0-2d1f7073a07c"
+      ],
+      "cwds": [
+        "~/.cache/khala-disposable/claude-target"
+      ],
+      "versions": [
+        "2.1.276"
+      ],
+      "permissionModes": [
+        "default"
+      ],
+      "models": [
+        "claude-opus-5"
+      ],
+      "siblingTranscripts": 0
+    },
+    "after": {
+      "lines": 218,
+      "sha256": "211f13abca1f690428b0575d69174e0348904d75872b8b65d7152a7c159f40ab",
+      "sessionIds": [
+        "51b0420c-e090-4215-81f0-2d1f7073a07c"
+      ],
+      "cwds": [
+        "~/.cache/khala-disposable/claude-target"
+      ],
+      "versions": [
+        "2.1.276"
+      ],
+      "permissionModes": [
+        "default"
+      ],
+      "models": [
+        "claude-opus-5"
+      ],
+      "siblingTranscripts": 0
+    },
+    "init": {
+      "session_id": "51b0420c-e090-4215-81f0-2d1f7073a07c",
+      "cwd": "~/.cache/khala-disposable/claude-target",
+      "model": "claude-opus-5[1m]",
+      "permissionMode": "default",
+      "claude_code_version": "2.1.276",
+      "hasMonitor": true
+    }
+  },
+  "outcome": "unsupported",
+  "limitations": [
+    "Session stream ended with an error: Claude Code process aborted by user",
+    "Closing the input did not end the session while its Monitor watch was live; the probe aborted it.",
+    "1 human permission confirmation(s) were needed; the no-setup contract is not met without a pre-existing allow rule."
+  ],
+  "rawLogSha256": "c384bde735889877fa04b40a34352a0b845985fae1e9edf0cab3f5180526e4d1"
+}

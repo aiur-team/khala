@@ -1,0 +1,156 @@
+{
+  "harness": "claude",
+  "version": "2.1.276",
+  "mode": "disconnect",
+  "originalSessionId": "51b0420c-e090-4215-81f0-2d1f7073a07c",
+  "observedSessionId": "51b0420c-e090-4215-81f0-2d1f7073a07c",
+  "setupActions": [
+    {
+      "actor": "agent",
+      "action": "start Monitor watch on the connector feed"
+    },
+    {
+      "actor": "human",
+      "action": "approve Monitor permission prompt: tail -n 0 -F ~/.aiur/workspaces/aiur-team/khala/12/experiments/claude/runs/2026-09-18T03-25-08-237Z-disconnect/released-feed.jsonl"
+    }
+  ],
+  "observations": [
+    {
+      "kind": "session-init",
+      "monotonicMs": 600,
+      "evidencePath": "events.jsonl#L2",
+      "detail": "session 51b0420c-e090-4215-81f0-2d1f7073a07c"
+    },
+    {
+      "kind": "agent-setup-tool-call",
+      "monotonicMs": 2728,
+      "evidencePath": "events.jsonl#L5",
+      "detail": "Monitor"
+    },
+    {
+      "kind": "permission-request",
+      "monotonicMs": 2734,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "Monitor: tail -n 0 -F ~/.aiur/workspaces/aiur-team/khala/12/experiments/claude/runs/2026-09-18T03-25-08-237Z-disconnect/released-feed.jsonl"
+    },
+    {
+      "kind": "setup-complete",
+      "monotonicMs": 3820,
+      "evidencePath": "events.jsonl#L11"
+    },
+    {
+      "kind": "notification-write",
+      "monotonicMs": 6823,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "m-disconnect"
+    },
+    {
+      "kind": "connector-disconnect",
+      "monotonicMs": 6843,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "killed 2 watch process(es) immediately after the write"
+    },
+    {
+      "kind": "context-consumption",
+      "monotonicMs": 8643,
+      "evidencePath": "events.jsonl#L16"
+    },
+    {
+      "kind": "prior-marker-recalled",
+      "monotonicMs": 8643,
+      "evidencePath": "events.jsonl#L16"
+    },
+    {
+      "kind": "task-complete",
+      "monotonicMs": 8663,
+      "evidencePath": "events.jsonl#L17"
+    },
+    {
+      "kind": "notification-write",
+      "monotonicMs": 8663,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "m-after-disconnect"
+    },
+    {
+      "kind": "session-exit",
+      "monotonicMs": 23911,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "input closed, process exited"
+    },
+    {
+      "kind": "native-queue-accepted",
+      "monotonicMs": 6844,
+      "evidencePath": "transcript#L236",
+      "detail": "queue-operation enqueue; same-host wall clock"
+    },
+    {
+      "kind": "native-queue-delivered",
+      "monotonicMs": 6935,
+      "evidencePath": "transcript#L237",
+      "detail": "dequeued into a new turn; same-host wall clock"
+    },
+    {
+      "kind": "no-replacement-after-exit",
+      "monotonicMs": 26960,
+      "evidencePath": "events.jsonl#probe",
+      "detail": "no process referencing the session or feed; no conversation turn after a post-exit write"
+    }
+  ],
+  "identity": {
+    "before": {
+      "lines": 218,
+      "sha256": "211f13abca1f690428b0575d69174e0348904d75872b8b65d7152a7c159f40ab",
+      "sessionIds": [
+        "51b0420c-e090-4215-81f0-2d1f7073a07c"
+      ],
+      "cwds": [
+        "~/.cache/khala-disposable/claude-target"
+      ],
+      "versions": [
+        "2.1.276"
+      ],
+      "permissionModes": [
+        "default"
+      ],
+      "models": [
+        "claude-opus-5"
+      ],
+      "siblingTranscripts": 0
+    },
+    "after": {
+      "lines": 241,
+      "sha256": "ef247b098899b982d9b82271e15ebaf827ef6a34e4192bf9ee0114c862c033ff",
+      "sessionIds": [
+        "51b0420c-e090-4215-81f0-2d1f7073a07c"
+      ],
+      "cwds": [
+        "~/.cache/khala-disposable/claude-target"
+      ],
+      "versions": [
+        "2.1.276"
+      ],
+      "permissionModes": [
+        "default"
+      ],
+      "models": [
+        "claude-opus-5"
+      ],
+      "siblingTranscripts": 0
+    },
+    "init": {
+      "session_id": "51b0420c-e090-4215-81f0-2d1f7073a07c",
+      "cwd": "~/.cache/khala-disposable/claude-target",
+      "model": "claude-opus-5[1m]",
+      "permissionMode": "default",
+      "claude_code_version": "2.1.276",
+      "hasMonitor": true
+    }
+  },
+  "outcome": "unsupported",
+  "limitations": [
+    "No replay was attempted: Monitor exposes no acknowledgement or dedup semantics, so a resend could double-deliver.",
+    "A message released after the watch died was not delivered within 15s: nothing reconnects the watch without the agent re-arming it.",
+    "1 human permission confirmation(s) were needed; the no-setup contract is not met without a pre-existing allow rule."
+  ],
+  "rawLogSha256": "186d4c7b54320e5635a506630aa92bdb3588e95fd6ed7f81817825c0544fb7b8"
+}
