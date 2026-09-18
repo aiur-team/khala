@@ -12,13 +12,19 @@ import type {
 /**
  * One event read from the durable source, in source order.
  *
+ * `ref.roomId` and `ref.eventId` must come from the authenticated transport
+ * envelope, never from decrypted plaintext: a sender who could choose them could
+ * reuse another event's identity and stall the stream on a digest conflict.
+ *
  * - `decrypted`: the SDK verified the envelope and decrypted it. `verifiedDeviceId`
  *   is the sending device the crypto layer authenticated; the application still
  *   checks it against `ref.authorDeviceId` and the device's participant.
  *   `canonicalPayload` is the exact encoded content the `contentDigest` covers.
  * - `undecryptable`: the event exists but its plaintext is not available here.
  *   `missing_keys` may clear when room keys arrive later; the other reasons are
- *   final for this device.
+ *   final for this device. Nothing authenticated its `authorParticipantId` and
+ *   `authorDeviceId`: they are the sender's unverified claim, and the stored
+ *   placeholder carries them only as a claim.
  */
 export type SourceEvent =
   | Readonly<{ kind: 'decrypted'; ref: EventRef; verifiedDeviceId: DeviceId; canonicalPayload: Uint8Array }>
@@ -43,7 +49,13 @@ export type SourceRead =
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'rejected'; code: 'authority_lost' | 'unsupported' }>;
 
-/** Outcome of rechecking this device's authority before (re)connecting. */
+/**
+ * Outcome of rechecking this device's authority before (re)connecting.
+ * `revoked` is terminal. `expired` means the credentials need refreshing: the
+ * adapter refreshes them inside `authorize` where its SDK can, and the
+ * subscription retries with backoff instead of treating expiry as revocation.
+ * A throw proves nothing and is retried like `unavailable`; it never authorizes.
+ */
 export type AuthorityCheck = 'ok' | 'revoked' | 'expired' | 'unavailable';
 
 /**

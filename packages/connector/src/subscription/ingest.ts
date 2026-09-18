@@ -20,8 +20,14 @@ export type AcceptResult = 'stored' | 'duplicate' | 'blocked';
  * `eventId`.
  */
 export interface EventIngestionPort {
-  accept(input: Readonly<{ binding: SessionBinding; event: EventRef; canonicalPayload: Uint8Array }>): Promise<AcceptResult>;
-  acceptUnavailable(input: Readonly<{ binding: SessionBinding; ref: UnavailableEventRef; reason: UnavailableReason }>): Promise<AcceptResult>;
+  accept(
+    input: Readonly<{ binding: SessionBinding; event: EventRef; canonicalPayload: Uint8Array }>,
+    options?: CallOptions,
+  ): Promise<AcceptResult>;
+  acceptUnavailable(
+    input: Readonly<{ binding: SessionBinding; ref: UnavailableEventRef; reason: UnavailableReason }>,
+    options?: CallOptions,
+  ): Promise<AcceptResult>;
 }
 
 /**
@@ -65,7 +71,9 @@ async function ingestEvent(ctx: IngestContext, event: SourceEvent): Promise<Inge
   if (event.kind === 'undecryptable') {
     // Keys may still arrive: hold the cursor rather than let the event disappear behind it.
     if (event.reason === 'missing_keys') return { kind: 'blocked', code: 'missing_keys' };
-    return store(() => ctx.ingestion.acceptUnavailable({ binding: ctx.binding, ref: event.ref, reason: event.reason }));
+    return store(() => ctx.ingestion.acceptUnavailable(
+      { binding: ctx.binding, ref: event.ref, reason: event.reason }, { signal: ctx.signal },
+    ));
   }
 
   const verified = await verifyEvent(ctx, event);
@@ -74,15 +82,21 @@ async function ingestEvent(ctx: IngestContext, event: SourceEvent): Promise<Inge
     // Content that fails authentication never reaches the pending store, and one bad
     // sender cannot stall the stream. The owner sees a placeholder attributed to the
     // verified sender, never to the author it claimed; a sender that is not a room
-    // participant has nothing trustworthy to show, so the event is dropped.
+    // participant has nothing trustworthy to show, so the event is dropped. Every
+    // provenance or digest failure is recorded as `decrypt_failed`: to the owner it
+    // is content this device could not authenticate.
     if (verified.sender === null) return { kind: 'handled' };
     const { v, roomId, eventId } = event.ref;
     const ref: UnavailableEventRef = {
       v, roomId, eventId, authorParticipantId: verified.sender, authorDeviceId: event.verifiedDeviceId,
     };
-    return store(() => ctx.ingestion.acceptUnavailable({ binding: ctx.binding, ref, reason: 'decrypt_failed' }));
+    return store(() => ctx.ingestion.acceptUnavailable(
+      { binding: ctx.binding, ref, reason: 'decrypt_failed' }, { signal: ctx.signal },
+    ));
   }
-  return store(() => ctx.ingestion.accept({ binding: ctx.binding, event: event.ref, canonicalPayload: event.canonicalPayload }));
+  return store(() => ctx.ingestion.accept(
+    { binding: ctx.binding, event: event.ref, canonicalPayload: event.canonicalPayload }, { signal: ctx.signal },
+  ));
 }
 
 async function store(write: () => Promise<AcceptResult>): Promise<IngestOutcome> {
@@ -113,6 +127,7 @@ async function verifyEvent(
   try {
     sender = await ctx.provenance.participantForDevice({ roomId: ref.roomId, deviceId: event.verifiedDeviceId }, { signal: ctx.signal });
   } catch {
+    // A failed lookup proves nothing about the sender: retry, never drop it as a non-participant.
     sender = 'unavailable';
   }
   if (sender === 'unavailable') return { kind: 'retry' };

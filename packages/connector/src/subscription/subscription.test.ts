@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { EventRef, SessionBinding } from '@khala/contracts/delivery/index';
 import {
-  type DeviceId, type EventId, type ParticipantId, type RoomId, digestMessageContent, encodeMessageContent,
+  type CallOptions, type DeviceId, type EventId, type ParticipantId, type RoomId, type UnavailableReason,
+  digestMessageContent, encodeMessageContent,
 } from '@khala/contracts/messaging/index';
 import {
   type AcceptResult, type AuthorityCheck, type CursorCommit, type SourceEvent, type SourceListener, type SourceRead,
-  type SubscriptionHandle, type SubscriptionPorts, type SubscriptionState, startSubscription,
+  type SubscriptionHandle, type SubscriptionPorts, type SubscriptionState, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
+  startSubscription,
 } from './index';
 
 const ROOM = 'room-1' as RoomId;
 const ALICE = 'participant-alice' as ParticipantId;
 const ALICE_DEVICE = 'device-alice' as DeviceId;
+const ALICE_OTHER_DEVICE = 'device-alice-2' as DeviceId;
 const MALLORY = 'participant-mallory' as ParticipantId;
 const MALLORY_DEVICE = 'device-mallory' as DeviceId;
 const SECRET = 'pending secret text';
@@ -26,23 +29,30 @@ const binding: SessionBinding = {
   generation: 1,
 };
 
-async function decrypted(n: number, overrides: Partial<{ verifiedDeviceId: DeviceId; body: string }> = {}): Promise<SourceEvent> {
+type DecryptedOverrides = Partial<{ verifiedDeviceId: DeviceId; authorDeviceId: DeviceId; body: string }>;
+
+/** Claims Alice as author; `verifiedDeviceId` is the device the crypto layer authenticated. */
+async function decrypted(n: number, overrides: DecryptedOverrides = {}): Promise<SourceEvent> {
   const content = { v: 1 as const, kind: 'text' as const, body: overrides.body ?? `${SECRET} ${n}` };
   const digest = await digestMessageContent(content);
   if (!digest.ok) throw new Error('digest');
   const ref: EventRef = {
-    v: 1, roomId: ROOM, eventId: `E${n}` as EventId, authorParticipantId: ALICE, authorDeviceId: ALICE_DEVICE,
-    contentDigest: digest.digest,
+    v: 1, roomId: ROOM, eventId: `E${n}` as EventId, authorParticipantId: ALICE,
+    authorDeviceId: overrides.authorDeviceId ?? ALICE_DEVICE, contentDigest: digest.digest,
   };
   return { kind: 'decrypted', ref, verifiedDeviceId: overrides.verifiedDeviceId ?? ALICE_DEVICE, canonicalPayload: encodeMessageContent(content) };
 }
 
-function missingKeys(n: number): SourceEvent {
+function undecryptable(n: number, reason: UnavailableReason): SourceEvent {
   return {
     kind: 'undecryptable',
     ref: { v: 1, roomId: ROOM, eventId: `E${n}` as EventId, authorParticipantId: ALICE, authorDeviceId: ALICE_DEVICE },
-    reason: 'missing_keys',
+    reason,
   };
+}
+
+function missingKeys(n: number): SourceEvent {
+  return undecryptable(n, 'missing_keys');
 }
 
 /** Durable source whose cursors are `c<count>`: an opaque string to the subscription. */
@@ -50,14 +60,20 @@ class FakeSource {
   log: SourceEvent[] = [];
   retainedFrom = 0;
   authority: AuthorityCheck = 'ok';
+  /** One-shot answers taken before `authority`. */
+  nextAuthority: Array<AuthorityCheck | 'throw'> = [];
   authorizeCalls = 0;
   reads: (string | null)[] = [];
-  failReads: Array<'unavailable' | 'throw' | 'hang' | Readonly<{ kind: 'rejected'; code: 'authority_lost' | 'unsupported' }>> = [];
+  limits: number[] = [];
+  failReads: Array<
+    'unavailable' | 'throw' | 'hang' | 'stalled' | Readonly<{ kind: 'rejected'; code: 'authority_lost' | 'unsupported' }>
+  > = [];
   listeners: Array<{ listener: SourceListener; disposed: boolean }> = [];
 
   authorize(): Promise<AuthorityCheck> {
     this.authorizeCalls += 1;
-    return Promise.resolve(this.authority);
+    const next = this.nextAuthority.shift() ?? this.authority;
+    return next === 'throw' ? Promise.reject(new Error('auth server reset')) : Promise.resolve(next);
   }
 
   listen(listener: SourceListener) {
@@ -70,8 +86,10 @@ class FakeSource {
 
   read(input: Readonly<{ cursor: string | null; limit: number }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<SourceRead> {
     this.reads.push(input.cursor);
+    this.limits.push(input.limit);
     const failure = this.failReads.shift();
     if (failure === 'throw') return Promise.reject(new Error('socket reset'));
+    if (failure === 'stalled') return Promise.resolve({ kind: 'page', events: [], nextCursor: input.cursor ?? 'c0', caughtUp: false });
     if (failure === 'unavailable') return Promise.resolve({ kind: 'unavailable' });
     if (failure === 'hang') {
       return new Promise(resolve => options?.signal?.addEventListener('abort', () => resolve({ kind: 'unavailable' })));
@@ -107,9 +125,19 @@ class FakeStore {
   failCommit: Array<'failed' | 'conflict' | 'throw'> = [];
   lockBusy = 0;
   lockHeld = false;
+  bindings: SessionBinding[] = [];
+  /** Abort signal each port call received, by port. */
+  signals: Record<'accept' | 'acceptUnavailable' | 'load' | 'commit' | 'acquire', Array<AbortSignal | undefined>> = {
+    accept: [], acceptUnavailable: [], load: [], commit: [], acquire: [],
+  };
 
   readonly ingestion = {
-    accept: async (input: Readonly<{ binding: SessionBinding; event: EventRef; canonicalPayload: Uint8Array }>): Promise<AcceptResult> => {
+    accept: async (
+      input: Readonly<{ binding: SessionBinding; event: EventRef; canonicalPayload: Uint8Array }>,
+      options?: CallOptions,
+    ): Promise<AcceptResult> => {
+      this.bindings.push(input.binding);
+      this.signals.accept.push(options?.signal);
       const failure = this.failAccept.shift();
       if (failure === 'throw') throw new Error('disk full');
       const { eventId, contentDigest } = input.event;
@@ -123,7 +151,12 @@ class FakeStore {
       this.onAccept?.(eventId);
       return result;
     },
-    acceptUnavailable: async (input: Readonly<{ ref: { eventId: string; authorParticipantId: string; authorDeviceId: string }; reason: string }>): Promise<AcceptResult> => {
+    acceptUnavailable: async (
+      input: Readonly<{ binding: SessionBinding; ref: { eventId: string; authorParticipantId: string; authorDeviceId: string }; reason: string }>,
+      options?: CallOptions,
+    ): Promise<AcceptResult> => {
+      this.bindings.push(input.binding);
+      this.signals.acceptUnavailable.push(options?.signal);
       const known = this.unavailable.has(input.ref.eventId);
       this.unavailableAuthors.set(input.ref.eventId, `${input.ref.authorParticipantId}/${input.ref.authorDeviceId}`);
       this.unavailable.set(input.ref.eventId, input.reason);
@@ -132,8 +165,15 @@ class FakeStore {
   };
 
   readonly cursors = {
-    load: async () => ({ kind: 'loaded' as const, cursor: this.cursor, revision: this.revision }),
-    commit: async (input: Readonly<{ streamId: string; expectedRevision: number; opaqueCursor: string }>): Promise<CursorCommit> => {
+    load: async (_streamId: string, options?: CallOptions) => {
+      this.signals.load.push(options?.signal);
+      return { kind: 'loaded' as const, cursor: this.cursor, revision: this.revision };
+    },
+    commit: async (
+      input: Readonly<{ streamId: string; expectedRevision: number; opaqueCursor: string }>,
+      options?: CallOptions,
+    ): Promise<CursorCommit> => {
+      this.signals.commit.push(options?.signal);
       const failure = this.failCommit.shift();
       if (failure === 'throw') throw new Error('io');
       if (failure) return { kind: failure };
@@ -146,7 +186,8 @@ class FakeStore {
   };
 
   readonly lock = {
-    acquire: async () => {
+    acquire: async (options?: CallOptions) => {
+      this.signals.acquire.push(options?.signal);
       if (this.lockBusy > 0) {
         this.lockBusy -= 1;
         return { kind: 'busy' as const };
@@ -194,15 +235,19 @@ type Harness = {
   store: FakeStore;
   clock: FakeScheduler;
   states: SubscriptionState[];
-  provenance: { unavailable: number; observerThrows?: boolean };
+  provenance: { unavailable: number; throws: number; observerThrows?: boolean };
   handle: SubscriptionHandle;
 };
 
-async function start(setup: (h: Omit<Harness, 'handle' | 'states'>) => void | Promise<void> = () => undefined, pageSize = 50): Promise<Harness> {
+/** `pageSize: null` leaves the subscription's default in place. */
+async function start(
+  setup: (h: Omit<Harness, 'handle' | 'states'>) => void | Promise<void> = () => undefined,
+  pageSize: number | null = 50,
+): Promise<Harness> {
   const source = new FakeSource();
   const store = new FakeStore();
   const clock = new FakeScheduler();
-  const provenance: Harness['provenance'] = { unavailable: 0 };
+  const provenance: Harness['provenance'] = { unavailable: 0, throws: 0 };
   await setup({ source, store, clock, provenance });
   const states: SubscriptionState[] = [];
   const ports: SubscriptionPorts = {
@@ -215,7 +260,12 @@ async function start(setup: (h: Omit<Harness, 'handle' | 'states'>) => void | Pr
           provenance.unavailable -= 1;
           return 'unavailable';
         }
-        return deviceId === ALICE_DEVICE ? ALICE : deviceId === MALLORY_DEVICE ? MALLORY : null;
+        if (provenance.throws > 0) {
+          provenance.throws -= 1;
+          throw new Error('directory unreachable');
+        }
+        if (deviceId === ALICE_DEVICE || deviceId === ALICE_OTHER_DEVICE) return ALICE;
+        return deviceId === MALLORY_DEVICE ? MALLORY : null;
       },
     },
     lock: store.lock,
@@ -226,7 +276,9 @@ async function start(setup: (h: Omit<Harness, 'handle' | 'states'>) => void | Pr
       if (provenance.observerThrows) throw new Error('observer');
     },
   };
-  const handle = await startSubscription({ binding, streamId: 'stream-1', pageSize, retry: { baseMs: 1_000, maxMs: 8_000 } }, ports);
+  const handle = await startSubscription({
+    binding, streamId: 'stream-1', retry: { baseMs: 1_000, maxMs: 8_000 }, ...(pageSize === null ? {} : { pageSize }),
+  }, ports);
   await settle();
   return { source, store, clock, states, provenance, handle };
 }
@@ -504,15 +556,195 @@ describe('startSubscription', () => {
     expect(h.store.accepts).toEqual([]);
   });
 
-  it('records final decryption failures durably instead of stalling the stream', async () => {
+  it.each(['withheld', 'withheld_unverified', 'decrypt_failed', 'unsupported'] as const)(
+    'records the final decryption failure %s as a placeholder instead of stalling the stream',
+    async reason => {
+      const h = await start(async s => {
+        s.source.log.push(undecryptable(1, reason), await decrypted(2));
+      });
+      expect(h.store.unavailable.get('E1')).toBe(reason);
+      expect(h.store.pending.has('E2')).toBe(true);
+      expect(h.store.cursor).toBe('c2');
+      expect(h.handle.state().kind).toBe('live');
+    },
+  );
+
+  it('treats content from another device of the claimed author as unauthenticated', async () => {
     const h = await start(async s => {
-      s.source.log.push(
-        { kind: 'undecryptable', ref: { v: 1, roomId: ROOM, eventId: 'E1' as EventId, authorParticipantId: ALICE, authorDeviceId: ALICE_DEVICE }, reason: 'withheld' },
-        await decrypted(2),
-      );
+      s.source.log.push(await decrypted(1, { verifiedDeviceId: ALICE_OTHER_DEVICE }), await decrypted(2));
     });
-    expect(h.store.unavailable.get('E1')).toBe('withheld');
+    expect(h.store.pending.has('E1')).toBe(false);
+    expect(h.store.unavailable.get('E1')).toBe('decrypt_failed');
+    expect(h.store.unavailableAuthors.get('E1')).toBe(`${ALICE}/${ALICE_OTHER_DEVICE}`);
     expect(h.store.cursor).toBe('c2');
+  });
+
+  it('treats content whose verified participant is not the claimed author as unauthenticated', async () => {
+    const h = await start(async s => {
+      // The claimed device is the verified one, but it belongs to Mallory while Alice is claimed.
+      s.source.log.push(await decrypted(1, { verifiedDeviceId: MALLORY_DEVICE, authorDeviceId: MALLORY_DEVICE }));
+    });
+    expect(h.store.pending.has('E1')).toBe(false);
+    expect(h.store.unavailable.get('E1')).toBe('decrypt_failed');
+    expect(h.store.unavailableAuthors.get('E1')).toBe(`${MALLORY}/${MALLORY_DEVICE}`);
+  });
+
+  it('retries a provenance lookup that throws and never drops the event', async () => {
+    const h = await start(async s => {
+      s.source.log.push(await decrypted(1));
+      s.provenance.throws = 1;
+    });
+    expect(h.handle.state().kind).toBe('offline');
+    expect(h.store.cursor).toBe(null);
+    expect(h.store.pending.has('E1')).toBe(false);
+    expect(h.store.unavailable.has('E1')).toBe(false);
+
+    await h.clock.advance(8_000);
+    expect(h.store.pending.has('E1')).toBe(true);
+    expect(h.store.cursor).toBe('c1');
+  });
+
+  it('fails closed when authorize throws, then retries', async () => {
+    const h = await start(async s => {
+      await committedThrough(s, 1);
+      s.source.log.push(await decrypted(2));
+      s.source.nextAuthority.push('throw');
+    });
+    expect(h.handle.state().kind).toBe('offline');
+    expect(h.source.reads).toEqual([]);
+    expect(h.source.listeners).toEqual([]);
+    expect(h.store.accepts).toEqual([]);
+
+    await h.clock.advance(8_000);
+    expect(h.source.authorizeCalls).toBe(2);
+    expect(h.store.cursor).toBe('c2');
+    expect(h.handle.state().kind).toBe('live');
+  });
+
+  it('retries expired credentials instead of reading or treating expiry as revocation', async () => {
+    const h = await start(async s => {
+      await committedThrough(s, 1);
+      s.source.log.push(await decrypted(2));
+      s.source.nextAuthority.push('expired');
+    });
+    expect(h.handle.state().kind).toBe('offline');
+    expect(h.source.reads).toEqual([]);
+    expect(h.store.accepts).toEqual([]);
+    expect(h.clock.active()).toHaveLength(1);
+
+    await h.clock.advance(8_000);
+    expect(h.source.authorizeCalls).toBe(2);
+    expect(h.store.cursor).toBe('c2');
+    expect(h.handle.state().kind).toBe('live');
+  });
+
+  it('reloads and resumes from the cursor another writer committed', async () => {
+    const h = await start(async s => {
+      s.source.log.push(await decrypted(1), await decrypted(2));
+      const commit = s.store.cursors.commit;
+      let raced = false;
+      s.store.cursors.commit = async (input, options) => {
+        if (!raced) {
+          // Another writer durably handled E1 and committed c1 first.
+          raced = true;
+          s.store.cursor = 'c1';
+          s.store.revision += 1;
+        }
+        return commit(input, options);
+      };
+    });
+    expect(h.handle.state()).toEqual({ kind: 'blocked', code: 'storage_failed' });
+    expect(h.store.cursor).toBe('c1');
+
+    await h.clock.advance(8_000);
+    expect(h.source.reads).toEqual([null, 'c1']);
+    expect(h.store.cursor).toBe('c2');
+    expect(h.store.revision).toBe(2);
+    expect(h.handle.state().kind).toBe('live');
+  });
+
+  it('passes the session binding to the store and an abort signal to every storage and lock call', async () => {
+    const h = await start(async s => {
+      s.source.log.push(await decrypted(1), undecryptable(2, 'withheld'));
+    });
+    expect(h.store.bindings).toEqual([binding, binding]);
+    const signals = Object.values(h.store.signals).flat();
+    expect(Object.values(h.store.signals).every(list => list.length > 0)).toBe(true);
+    expect(signals.every(signal => signal instanceof AbortSignal && !signal.aborted)).toBe(true);
+
+    await h.handle.stop();
+    expect(signals.every(signal => signal!.aborted)).toBe(true);
+  });
+
+  it('backs off on an empty page that is not caught up and did not move the cursor', async () => {
+    const h = await start(async s => {
+      await committedThrough(s, 1);
+      s.source.failReads.push('stalled');
+    });
+    expect(h.handle.state()).toEqual({ kind: 'offline', retryAt: new Date(h.clock.time + 500).toISOString() });
+    expect(h.source.reads).toEqual(['c1']);
+    await settle();
+    expect(h.source.reads).toEqual(['c1']);
+
+    await h.clock.advance(500);
+    expect(h.source.reads).toEqual(['c1', 'c1']);
+    expect(h.handle.state().kind).toBe('live');
+  });
+
+  it('does not let hints bypass backoff while storage is failing', async () => {
+    const h = await start(async s => {
+      await committedThrough(s, 1);
+      s.source.log.push(await decrypted(2));
+      s.store.failAccept.push('throw');
+    });
+    expect(h.handle.state()).toEqual({ kind: 'blocked', code: 'storage_failed' });
+    const reads = h.source.reads.length;
+    h.source.hint();
+    h.source.hint();
+    await settle();
+    expect(h.source.reads.length).toBe(reads);
+
+    await h.clock.advance(8_000);
+    expect(h.store.cursor).toBe('c2');
+    expect(h.handle.state().kind).toBe('live');
+  });
+
+  it('reads the default page size and caps a larger requested one', async () => {
+    const byDefault = await start(async s => {
+      s.source.log.push(await decrypted(1));
+    }, null);
+    expect(byDefault.source.limits).toEqual([DEFAULT_PAGE_SIZE]);
+
+    const capped = await start(async s => {
+      s.source.log.push(await decrypted(1));
+    }, 1_000_000);
+    expect(capped.source.limits).toEqual([MAX_PAGE_SIZE]);
+  });
+
+  it('resets the backoff after a successful read', async () => {
+    const h = await start(async s => {
+      await committedThrough(s, 1);
+      s.source.failReads.push('unavailable');
+    });
+    expect(h.handle.state()).toEqual({ kind: 'offline', retryAt: new Date(h.clock.time + 500).toISOString() });
+    await h.clock.advance(500);
+    expect(h.handle.state().kind).toBe('live');
+
+    h.source.lose();
+    await settle();
+    // Back to the first attempt's 1s ceiling, not the second attempt's 2s.
+    expect(h.handle.state()).toEqual({ kind: 'offline', retryAt: new Date(h.clock.time + 500).toISOString() });
+  });
+
+  it('stop clears a pending in-place retry timer', async () => {
+    const h = await start(async s => {
+      await committedThrough(s, 1);
+      s.source.log.push(missingKeys(2));
+    });
+    expect(h.clock.active()).toHaveLength(1);
+    await h.handle.stop();
+    expect(h.clock.active()).toEqual([]);
+    expect(h.store.lockHeld).toBe(false);
   });
 
   it('retries a provenance lookup outage with backoff', async () => {
