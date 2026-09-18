@@ -26,8 +26,8 @@ recalled.
   claim a command id.
 - The command must name the current binding generation and policy version. A conflict
   is `stale_binding` or `stale_policy`: refresh and decide again, never last-write-wins.
-- A retried command id returns its first outcome; reuse with other input is
-  `idempotency_conflict`.
+- A retried command id returns its first outcome, refusals included; reuse with other
+  input is `idempotency_conflict`. A fresh decision uses a new command id.
 - Effective state only moves forward. A late ack for an older request cannot roll back
   a newer one. If the connector really enforced an older request, it becomes effective
   while the newer request stays requested, because hiding it would overstate review.
