@@ -1,0 +1,353 @@
+# Backend backup, restore and upgrade proof
+
+Proves that Khala's backend (Synapse + PostgreSQL, packaged by `infra/messaging/`;
+see `infra/messaging/railway.md`) can be backed up, restored into an isolated
+disposable environment, and upgraded with a verified recovery route. It does
+not select production retention or recovery objectives — those remain an
+explicit operator decision (see "Retention, RPO and RTO" below) — and it does
+not repeat the encrypted-history or Railway-hosting proofs already recorded
+elsewhere (see "Related evidence").
+
+## Ownership
+
+`infra/operations/` and this page are owned per `.github/CODEOWNERS`
+(`@its-everdred`). A second operator reproducing the rehearsal below needs only
+this page, `infra/operations/*.ts` and `infra/messaging/compose.yaml`; no
+additional undocumented setup.
+
+## What each script does
+
+All three scripts are plain Node with built-in TypeScript type stripping (no
+`tsx`, matching `infra/messaging/`'s existing convention). `pnpm test` runs
+`infra/**/*.test.ts` in CI; `pnpm typecheck`'s workspace scope is `apps/*` and
+`packages/*` only, so `infra/operations/` is additionally typechecked and
+linted the same way `infra/messaging/` is: `tsc --noEmit` with
+`--allowImportingTsExtensions`, and `eslint infra/operations/`, plus the manual
+rehearsal below. Every mutating step is injectable as a "port" function
+(`BackupPorts`, `RestorePorts`, `UpgradeCheckPorts`); the shipped
+`dockerComposePorts` implementations operate the disposable
+`infra/messaging/compose.yaml` stack. Errors are a stable `OperationsError`
+code (never a raw stack trace) so failures are safe to alert on.
+
+- **`backup.ts`** — stops Synapse (quiesces writes), dumps the database
+  (`pg_dump --format=custom`) and archives media from the same still point,
+  then restarts Synapse (always, even if the dump/media step failed) before
+  archiving the signing key and config. Hashes all four artifacts — including
+  the signing-key and config archives, not just database/media — and writes
+  `backup-manifest.json` (validated against `manifest.schema.json`; the
+  allowed top-level and artifact key lists are loaded from the schema file at
+  runtime so those specifically never drift — the per-field patterns and
+  enums below them are still duplicated by hand in `validateManifest`) only
+  after every artifact step has succeeded. A partial failure never leaves a
+  manifest behind — there is nothing for a stale-backup alert to
+  false-negative on.
+- **`restore.ts`** — rehearses a restore into an isolated, disposable target.
+  Refuses a wrong or non-allowlisted target, a production target, source-volume
+  reuse, a target config directory equal to the source's, a target whose
+  docker volumes already exist (checked against real docker state, not a
+  caller-supplied flag), or a corrupt/incomplete artifact set — including a
+  signing-key or config artifact that fails its checksum — *before* any
+  mutation. Every manifest-declared artifact path is also confined to its
+  owning directory before it is touched, so a manifest can't point outside the
+  artifact/secrets directory. Only after every check passes does it deny and
+  verify egress isolation, restore database/media, and boot the signing
+  identity — never before isolation is confirmed — and it restores exactly the
+  file it just checksummed for each artifact, never a differently named one.
+  It finishes by querying the restored database directly for expected
+  synthetic event IDs and recording measured recovery time and the data-loss
+  window (time between the backup's `created_at` and the restore start — i.e.
+  how much of a real incident's writes this backup interval would have lost,
+  not a production RPO estimate on its own).
+- **`upgrade-check.ts`** — tests a target Synapse image's migration against a
+  disposable copy of the database, health-checks the result, verifies expected
+  event history is still present after migration, and records whether
+  backward migration is supported. The copy target goes through the same
+  allowlist, source-refusal, fresh-volume and egress-isolation checks as
+  `restore.ts`'s target *before* any mutation, and `bootTargetImage` sets
+  `KHALA_SYNAPSE_IMAGE` so the target image actually boots — the migration
+  under test is genuinely from that image, not the pinned default silently
+  standing in for it. A same-digest target is reported as a no-op, never a
+  false "rollback tested" claim. A target image whose version is not strictly
+  newer than the currently pinned one is refused outright
+  (`target-not-newer-than-current`) before any mutation — a downgrade dressed
+  up as a migration rehearsal must never be recorded as one. A healthy boot
+  with missing expected events is reported as `history-check-failed`, not
+  `migration-verified`. When backward migration is not supported (the default
+  assumption, per Synapse's own operator docs), the recorded safe sequence is
+  restoring the pre-upgrade backup, not downgrading the image in place (R3).
+
+## Reproducing the restore rehearsal
+
+This is the exact sequence a second operator runs; it does not require
+Railway access. All values below are disposable/synthetic.
+
+```sh
+# 1. Bring up a source stack (see infra/messaging/railway.md for the full
+#    disposable-preview walkthrough) and populate it with real history via
+#    the ordinary Matrix client API — never by hand-editing rows in `events`,
+#    which breaks Synapse's own internal invariants.
+
+# 2. Back it up:
+export KHALA_ENVIRONMENT=preview
+export KHALA_STATE_NAMESPACE=khala-source-preview
+export KHALA_DB_HOST=postgres KHALA_DB_PORT=5432 KHALA_DB_NAME=synapse KHALA_DB_USER=synapse
+export KHALA_DB_PASSWORD='<the running stack'"'"'s password>'
+export KHALA_CONFIG_DIR=/private/khala-source-config
+export KHALA_BACKUP_OUTPUT_DIR=/private/khala-backup-set       # non-secret: manifest + hashed database/media
+export KHALA_BACKUP_SECRETS_DIR=/private/khala-backup-secrets  # secret: signing key + config, reference-only in the manifest
+node infra/operations/backup.ts --environment preview
+
+# 3. Validate the manifest structure alone (no target/mutation required):
+node infra/operations/restore.ts --validate-only --manifest "$KHALA_BACKUP_OUTPUT_DIR/backup-manifest.json" --environment preview
+
+# 4. Execute the full restore rehearsal. Full execution takes an explicit
+#    target/expectations pair and is not exposed as a bare CLI flag (a
+#    real target and its allowlist must come from the runbook, not a typo-able
+#    flag) — call runRestore directly:
+export KHALA_STATE_NAMESPACE=khala-rehearsal-1        # the fresh disposable target's own namespace
+export KHALA_DB_PASSWORD='<same value as step 2>'      # the restored config's embedded DB credential must match what the target's own postgres is provisioned with
+export KHALA_CONFIG_DIR=/private/khala-rehearsal-config # 0700, empty; receives the restored homeserver.yaml
+node --input-type=module -e '
+import { runRestore, dockerComposePorts } from "/abs/path/to/infra/operations/restore.ts";
+import { readFile } from "node:fs/promises";
+const manifest = JSON.parse(await readFile(process.env.KHALA_BACKUP_OUTPUT_DIR + "/backup-manifest.json", "utf8"));
+const proof = await runRestore({
+  manifest,
+  sourceStateNamespace: "khala-source-preview",
+  sourceConfigDir: "/private/khala-source-config",
+  targetConfigDir: process.env.KHALA_CONFIG_DIR,
+  artifactDir: process.env.KHALA_BACKUP_OUTPUT_DIR,
+  secretsDir: process.env.KHALA_BACKUP_SECRETS_DIR,
+  target: { stateNamespace: "khala-rehearsal-1", environment: "preview" },
+  allowedTargetIds: ["khala-rehearsal-1"],
+  expectations: { eventIds: ["<expected event id 1>", "<expected event id 2>"], syntheticUserId: "@<synthetic user>:<source server name>" },
+}, dockerComposePorts);
+console.log(JSON.stringify(proof, null, 2));
+' 2>&1
+
+# 5. Tear down both stacks and remove the backup artifacts once satisfied:
+docker compose -p khala-rehearsal-1 -f infra/messaging/compose.yaml -f infra/operations/rehearsal-isolation.override.yaml down --volumes
+docker compose -p khala-source-preview -f infra/messaging/compose.yaml down --volumes
+rm -rf "$KHALA_BACKUP_OUTPUT_DIR" "$KHALA_BACKUP_SECRETS_DIR"
+```
+
+`infra/operations/rehearsal-isolation.override.yaml` composes on top of
+`infra/messaging/compose.yaml` to mark the otherwise-public `client-edge`
+network `internal: true` for the rehearsal project only, so the target has no
+route to the internet or to production discovery/DNS by construction. Because
+Docker also disables host port forwarding on an internal network, the
+restored Synapse is unreachable from the host too — verify it only via
+`docker compose exec`/`run` from inside the isolated project.
+
+Never restore into `khala-preview` or `khala-production` directly (`restore.ts`
+refuses any target whose `environment` is not `preview`, and refuses
+`stateNamespace === sourceStateNamespace` as source-volume reuse). A real
+incident restore into a live namespace remains a deliberate, manually
+supervised operation outside this tool's allowlist-and-mutate path.
+
+## Reproducing the upgrade rehearsal
+
+`upgrade-check.ts`'s copy target goes through the same allowlist,
+source-refusal, fresh-volume and egress-isolation checks as a restore target
+above, so it needs an equivalent explicit set of inputs:
+
+```sh
+export KHALA_SYNAPSE_CURRENT_DIGEST=sha256:<the pinned digest compose.yaml currently runs>
+export KHALA_SYNAPSE_CURRENT_IMAGE=ghcr.io/element-hq/synapse:<the pinned tag compose.yaml currently runs>@sha256:<current digest>
+export KHALA_SYNAPSE_TARGET_IMAGE=ghcr.io/element-hq/synapse:<target tag>@sha256:<target digest>
+export KHALA_BACKUP_DATABASE_DUMP="$KHALA_BACKUP_OUTPUT_DIR/database.dump"  # from the backup step above
+export KHALA_STATE_NAMESPACE=khala-source-preview           # the real source, refused as a copy target
+export KHALA_UPGRADE_COPY_NAMESPACE=khala-upgrade-copy-1     # the fresh disposable copy's own namespace
+export KHALA_UPGRADE_ALLOWED_NAMESPACES=khala-upgrade-copy-1 # set independently of the line above; a real allowlist, not a restatement
+export KHALA_UPGRADE_EXPECTED_EVENT_IDS='$event-id-1,$event-id-2' # the source copy's own event IDs, checked after migration
+node infra/operations/upgrade-check.ts --environment preview
+```
+
+`<target tag>` must parse as a strictly newer `vX.Y.Z` than `<the pinned
+tag>`: `upgrade-check.ts` compares the two version tuples and refuses a target
+that is not genuinely newer (`target-not-newer-than-current`), so this
+rehearsal can never silently record a downgrade as a forward migration.
+
+`bootTargetImage` sets `KHALA_SYNAPSE_IMAGE` for its own docker compose
+invocations only, overriding compose.yaml's pinned image for that one
+rehearsal; the target image genuinely boots and runs its own pending schema
+migrations as part of ordinary Synapse startup (there is no separate
+`migrate_config`-based "run the migration" step — that subcommand only
+generates a config file). The health check queries the copy from inside its
+own isolated network, the same way `probeEgressDenied` does, since the copy's
+`client-edge` network is forced internal exactly like a restore target's.
+
+Tear down the copy the same way as a restore target once satisfied:
+
+```sh
+docker compose -p khala-upgrade-copy-1 -f infra/messaging/compose.yaml -f infra/operations/rehearsal-isolation.override.yaml down --volumes
+```
+
+### Local verification record
+
+On 2026-09-18, this rehearsal ran end to end on Node 24.18.0, Docker Engine
+29.6.2, Docker Compose 5.3.1, Linux (per the "Reproducing the restore
+rehearsal" steps above, against real Matrix protocol history — an
+admin-registered synthetic user, a room and two real messages sent through the
+ordinary client API, not hand-inserted rows). This run followed the Executor
+review of PR #60 (`its-everdred`, 2026-09-18) that found several claims in an
+earlier version of this record were not backed by the code — the fixes below
+and this record were produced together, not the code first and the evidence
+assumed after:
+
+- `node --test infra/operations/*.test.ts`: 52/52 passing (71/71 with
+  `infra/messaging`'s existing suite, `pnpm test`'s actual scope), including
+  coverage for this and the prior review round's findings — real (non-faked)
+  `verifyArtifactChecksumOnDisk` behavior, a real `supportsBackwardMigration`
+  port assertion, manifest additional-properties rejection sourced from
+  `manifest.schema.json` itself, a digest-prefix collision that must not be
+  treated as a no-op upgrade, a version-tuple comparison that refuses a
+  target image that is not genuinely newer than the current one, a
+  history-check-failed result when expected events go missing after a
+  healthy boot, restore/media checksum-mismatch and CLI environment-mismatch
+  coverage across all three CLIs, and a restore-paths fixture whose artifact
+  names deliberately differ from the hardcoded defaults a regression could
+  fall back to. `runBackup` call ordering (quiesce before dump/media, resume always,
+  signing-key/config archived only after resume), and that no manifest is
+  written when a backup fails partway.
+- `tsc --noEmit --strict --allowImportingTsExtensions --module esnext
+  --moduleResolution bundler --target es2022` and `eslint infra/operations/`:
+  clean (this package sits outside `pnpm typecheck`'s `apps/*`/`packages/*`
+  workspace scope, so these flags are the actual command run, not `pnpm
+  typecheck` itself).
+- A real backup quiesced Synapse (`docker compose stop synapse`) before
+  dumping the database and archiving media from the same still point, resumed
+  it afterward, then archived and hashed the signing key and config — all four
+  artifacts carry a real `sha256` in the manifest, not just database/media.
+- A real restore into a disposable, freshly named target (`khala-rehearsal-1`,
+  distinct from the `khala-source-preview` it was backed up from) refused to
+  run before the target allowlist, environment, target-config-directory, and
+  fresh-volume checks passed — the fresh-volume check queries real docker
+  volume state (`docker volume ls --filter label=com.docker.compose.project=...`)
+  rather than trusting a caller-supplied flag — denied egress before any
+  container booted, and only then restored the database, media and signing
+  identity, each restored from exactly the path whose checksum had just been
+  verified (database, media, signing-key and config all four checksummed).
+- The restored server matched both real event IDs from the source room,
+  accepted the original synthetic user's password via a login request made
+  from inside the isolated project (same signing identity, same account), and
+  the restored `server.signing.key` was byte-identical to the source's
+  (`sha256sum` match, verified directly in both containers).
+- Measured recovery time (restore start to verified) was ~15 seconds; the
+  data-loss window (last backup to restore start) was ~310ms — both are
+  artifacts of this rehearsal's tiny synthetic dataset and local disk, not a
+  production RTO/RPO estimate (see below). "Data-loss window" here means
+  exactly what it says: how much of a real incident's writes between the last
+  backup and the restore would have been unrecoverable, not a general latency
+  metric.
+- The egress-isolation probe (run from inside the target, before any restore
+  mutation) reported `UNREACHABLE`, matching `runRestore`'s own recorded
+  `isolationVerifiedAt`.
+- **The forward-migration path itself is not proven by real evidence.** An
+  earlier version of this record booted `v1.160.0` — older than the pinned
+  `v1.161.0` — against a disposable copy of the real database and reported
+  that as an upgrade rehearsal; that was wrong. `v1.160.0` is not newer than
+  `v1.161.0`, so no forward schema migration ran: that run was a *downgrade*
+  rehearsal, not the migration proof R3 requires, and calling it "migration
+  verified" would have been false evidence. As of this writing, `ghcr.io/
+  element-hq/synapse` has not published a release newer than the `v1.161.0`
+  this stack pins (`docker manifest inspect` against candidate `v1.16x`/`v1.17x`
+  tags found none), so a real forward-migration rehearsal cannot currently be
+  run against this repository's pinned version. `upgrade-check.ts` now
+  refuses this mistake structurally: `isForwardUpgrade` parses both image
+  refs' `vX.Y.Z` tags and `runUpgradeCheck` throws
+  `target-not-newer-than-current` before any mutation if the target is not
+  strictly newer than the current pinned image (covered by
+  `infra/operations/upgrade-check.test.ts`). The downgrade-safety mechanics
+  that run *did* prove for real — target image actually boots via
+  `KHALA_SYNAPSE_IMAGE` rather than the pinned default silently standing in
+  (`docker exec ... pip show matrix-synapse` confirmed `Version: 1.160.0` on
+  the booted container), the copy goes through the same allowlist/source-
+  refusal/fresh-volume/egress-isolation checks as a restore target, and the
+  health check passed from inside the isolated copy's force-internal network
+  — remain valid evidence for those specific claims, not for R3's forward-
+  migration requirement. `runUpgradeCheck` also now checks that the migrated
+  copy's expected event IDs are still readable after boot
+  (`verifyEventHistory`), not just `/health`; that check has not yet been
+  exercised against a real forward migration for the same reason. A forward-
+  migration rehearsal, once a newer Synapse release exists, must re-run this
+  sequence and replace this note with real `ready: true, reason:
+  'migration-verified'` evidence before this ticket's R3/U4 can be considered
+  proven end to end.
+- Every container, volume and network created by the rehearsal (all three
+  projects: source, restore target, upgrade copy) was removed afterward; no
+  `khala-*`-prefixed volume was left behind.
+
+This record demonstrates the backup/restore/isolation mechanics, and the
+upgrade rehearsal's downgrade-safety mechanics, against the local disposable
+stack, using real synthetic Matrix protocol messages (plain, not encrypted —
+this package does not repeat the encrypted-history proof; see "Related
+evidence" for KHA-141/KHA-142, which covers encrypted history surviving a
+client restart, not a database restore). It does **not** yet demonstrate a
+real forward schema migration (see the corrected bullet above) — that
+requires a Synapse release newer than this stack's pinned `v1.161.0`, which
+does not exist yet. It also does not repeat the Railway-hosted proof (not yet
+provisioned; see `infra/messaging/railway.md`'s "Railway promotion contract").
+A hosted rehearsal must re-run this same sequence against the real Railway
+volumes before this evidence can be treated as covering production.
+
+## Resource baseline (local disposable rehearsal)
+
+Measured on the host that ran the rehearsal above: 16 CPUs, 31 GiB RAM (~23
+GiB available at the time), 1.9 TB root filesystem with 1.5 TB free. The
+rehearsal's own footprint was small (a ~290 KB database dump, a two-message
+media/room fixture, two short-lived Postgres+Synapse container pairs). This is
+not a production capacity plan — Railway resource sizing is listed as an open
+approval item in `infra/messaging/railway.md` and remains an operator decision.
+
+## Retention, RPO and RTO — operator decision, not an invented SLA
+
+This package does not schedule recurring backups, define a retention window,
+or claim a production recovery time/point objective. Those numbers must come
+from an explicit operator decision before this runs against `khala-production`
+or `khala-preview`. Until that decision is recorded, only the disposable
+rehearsal above is authorized (per the ticket's "Backup retention and recovery
+objectives require operator decision before production operation; disposable
+rehearsal remains executable").
+
+## Alerting on stale or failed backups
+
+No scheduler exists yet for recurring production backups (out of scope for
+this ticket). Whatever job runner is chosen to run `backup.ts` on a schedule
+should alert on both of the following, because the script's own failure mode
+makes them the correct signals:
+
+- **Failed job**: `backup.ts` exits non-zero with a JSON `{ ok: false, reason:
+  "<OperationsError code>" }` on stderr and — because the manifest is only
+  written after every artifact step succeeds, via write-then-atomic-rename —
+  never leaves behind a manifest that looks complete but isn't.
+- **Stale backup**: alert if the newest `backup-manifest.json`'s `created_at`
+  exceeds the (operator-decided) backup interval plus a grace period. Do not
+  infer freshness from the job scheduler's own "last run" state alone; read
+  the manifest's `created_at`, since a job that "ran" but failed before
+  writing a manifest is exactly the failure this is meant to catch.
+
+## Account-specific caveats
+
+- Railway's Compose/volume tooling snapshots within one project/environment;
+  it is not a cross-environment or cross-account disaster-recovery mechanism
+  (`infra/messaging/railway.md`). This package's logical `pg_dump` plus
+  protected identity/config/media artifacts is the actual cross-environment
+  recovery set — Railway snapshots remain supplementary.
+- The Synapse signing key (`server.signing.key`) is the server's cryptographic
+  identity. Losing it is not recoverable by restoring the database alone —
+  federation and any signature-dependent behavior would need a new identity —
+  which is why `restore.ts` treats a missing signing-key artifact as a hard
+  failure even when the database and media restore cleanly (AE2).
+- `KHALA_MATRIX_SERVER_NAME` is immutable identity, not a hosting detail: a
+  restored server must reuse the exact backed-up value, never a value derived
+  from wherever it happens to be rehearsed or hosted.
+
+## Related evidence
+
+- Deployment packaging and the disposable local-preview walkthrough:
+  `infra/messaging/railway.md`.
+- Account/history persistence across database recovery on these pinned image
+  digests: KHA-102.
+- Encrypted history surviving a real browser/headless client restart:
+  KHA-141/KHA-142 (this package does not repeat either).

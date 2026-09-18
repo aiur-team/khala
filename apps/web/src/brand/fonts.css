@@ -1,0 +1,30 @@
+/*
+ * Vendored under OFL-1.1 from the google/fonts repository. See SOURCES.md for
+ * source commit, per-file blob SHA and SHA-256, and license file locations.
+ * Font names are prefixed "Khala " so they never collide with a future host
+ * page's own font-family declarations of the same open-source families.
+ */
+
+@font-face {
+  font-family: 'Khala Bungee';
+  src: url('./fonts/Bungee-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Khala Space Grotesk';
+  src: url('./fonts/SpaceGrotesk-Variable.woff2') format('woff2-variations');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Khala JetBrains Mono';
+  src: url('./fonts/JetBrainsMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
