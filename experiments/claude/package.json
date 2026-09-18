@@ -1,0 +1,19 @@
+{
+  "name": "khala-claude-attachment-experiment",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "probe": "node probe.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.276"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

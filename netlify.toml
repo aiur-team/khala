@@ -1,0 +1,78 @@
+# Root Netlify configuration for the Khala monorepo. The build runs from the
+# workspace root so pnpm can resolve every workspace package; only apps/web's
+# static output and the generated control functions ship to Netlify.
+# See infra/netlify/README.md for the full build/env contract.
+
+[build]
+  base = "."
+  publish = "apps/web/dist"
+  command = "pnpm install --frozen-lockfile && pnpm --filter @khala/control build:functions && pnpm --filter @khala/web build"
+
+[build.environment]
+  NODE_VERSION = "22.23.2"
+  PNPM_VERSION = "10.34.5"
+  # Never set at this scope: server secrets (OIDC_CLIENT_SECRET, CONTROL_STATE_NAMESPACE).
+  # Those live in Netlify's per-context environment variable store, not this file.
+
+[functions]
+  directory = "infra/netlify/functions-generated"
+  node_bundler = "esbuild"
+
+# API routes resolve to the generated control gateway function before the SPA
+# fallback below is considered. Order matters: Netlify evaluates redirects
+# top to bottom and stops at the first match.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/khala-control/:splat"
+  status = 200
+  force = true
+
+# Deep links into the SPA (e.g. a shared chat room URL) must reload the app
+# shell rather than 404ing. This rule only ever sees non-API paths because the
+# /api/* rule above already claimed them.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Static, content-hashed build output is safe to cache forever.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# The app shell and API responses must always be revalidated: they carry
+# session-sensitive or dynamic content and are never safe to cache.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Content-Type-Options = "nosniff"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "same-origin"
+    # Baseline, SDK-agnostic policy. `wasm-unsafe-eval` and `worker-src blob:`
+    # are here because the messaging SDK's crypto runs as WASM in a worker;
+    # exact allowed origins are finalized once KHA-141/143 pick the SDK build
+    # (see docs/plans/2026-09-16-kha-131-netlify-deployment-plan.md).
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+
+[context.production]
+  [context.production.environment]
+    PUBLIC_APP_ORIGIN = "https://khala.aiur.team"
+
+[context.deploy-preview]
+  [context.deploy-preview.environment]
+    NETLIFY_BLOBS_CONTEXT = "preview"
+
+[context.branch-deploy]
+  [context.branch-deploy.environment]
+    NETLIFY_BLOBS_CONTEXT = "preview"
