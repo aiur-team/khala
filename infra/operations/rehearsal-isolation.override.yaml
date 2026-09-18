@@ -1,0 +1,9 @@
+# Composed on top of infra/messaging/compose.yaml only for restore
+# rehearsal projects (see restore.ts). Forces the otherwise-public
+# client-edge network internal too, so the rehearsal stack has no route to
+# the internet, real users, or production discovery/DNS by construction —
+# restore.ts's egress probe then only needs to confirm the override took
+# effect, not implement isolation itself.
+networks:
+  client-edge:
+    internal: true
