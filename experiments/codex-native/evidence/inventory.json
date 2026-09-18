@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "artifacts": [
+    {
+      "path": "live-run.json",
+      "sha256": "66be13aa20ae297fe4523e905d29fa6783edf944eedd4eb4e537d20561210aaf",
+      "sanitized": true,
+      "note": "Machine-local executable and worktree paths are replaced with angle-bracket placeholders; all message values are synthetic markers."
+    }
+  ]
+}

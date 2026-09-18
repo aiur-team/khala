@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-18T21:31:10.000Z",
+  "host": { "os": "linux", "arch": "x64" },
+  "codexVersion": "codex-cli 0.154.0",
+  "target": {
+    "disposable": true,
+    "threadId": "01a0b66b-ce0c-7ee3-823e-14ecdb9f2856",
+    "workdir": "<WORKSPACE_TMP>/kha146-fixture",
+    "priorMarker": "kha146-prior-alpha",
+    "owner": "interactive Codex TUI started by this experiment"
+  },
+  "cmdlineExposure": {
+    "source": "/proc/<child-pid>/cmdline",
+    "syntheticMarker": "kha146-proc-marker-20260918",
+    "targetThread": "<DISPOSABLE_MISSING_UUID>",
+    "observedArgv": [
+      "<SANDBOX_LAUNCHER>",
+      "node",
+      "<CODEX_ENTRYPOINT>",
+      "queue",
+      "--thread",
+      "<DISPOSABLE_MISSING_UUID>",
+      "--message",
+      "kha146-proc-marker-20260918"
+    ],
+    "messageFlagPresent": true,
+    "syntheticMarkerPresent": true,
+    "exitCode": 1,
+    "signal": null,
+    "stdoutBytes": 0,
+    "stderrContainsMarker": false
+  },
+  "cases": {
+    "dormant": {
+      "socketBefore": "absent",
+      "socketAfter": "absent",
+      "exitCode": 0,
+      "queueId": "01a0b66c-297f-7102-b775-73f52543ad12",
+      "consumedAfterResume": true,
+      "priorContextRecalled": true
+    },
+    "liveOwner": {
+      "exitCode": 0,
+      "queueId": "01a0b66d-03f8-7ac1-934c-d193f709e8f7",
+      "consumedByTui": true,
+      "priorContextRecalled": true,
+      "queueAcceptedAt": "2026-09-18T21:29:52.888Z",
+      "consumedAt": "2026-09-18T21:30:02.835Z"
+    },
+    "stdinDash": {
+      "exitCode": 0,
+      "queueId": "01a0b66d-048f-7f92-8362-bb1f8e055598",
+      "observedUserText": "-",
+      "pipedPayloadObserved": false
+    },
+    "stdinAtDash": {
+      "exitCode": 0,
+      "queueId": "01a0b66d-0523-7653-ab9e-c6d19e360ffc",
+      "observedUserText": "@-",
+      "pipedPayloadObserved": false
+    },
+    "duplicate": {
+      "distinctQueueIds": [
+        "01a0b66d-05b9-7121-8be4-9e3e6d443b6f",
+        "01a0b66d-0653-75e1-a224-8820c2ec0b33"
+      ],
+      "consumptionCount": 2
+    },
+    "busy": {
+      "queueId": "01a0b66e-0ac2-7851-a25e-3d0c38ec79f9",
+      "sourceStartedAt": "2026-09-18T21:30:56.283Z",
+      "queueAcceptedAt": "2026-09-18T21:31:00.162Z",
+      "sourceCompletedAt": "2026-09-18T21:31:02.930Z",
+      "consumedAt": "2026-09-18T21:31:02.996Z",
+      "consumedInLaterTurn": true
+    },
+    "killed": {
+      "signal": "SIGKILL",
+      "receiptObserved": false,
+      "messageLanded": false,
+      "observationWindowMs": 2000
+    },
+    "missingThread": {
+      "exitCode": 1,
+      "errorCode": -32603,
+      "payloadEchoed": false
+    },
+    "foreignStoreThread": {
+      "exitCode": 1,
+      "errorCode": -32603,
+      "payloadEchoed": false,
+      "note": "The target existed in the host store but not the isolated experiment store; this is not proof of cross-user authorization."
+    }
+  },
+  "correlation": {
+    "cliAcceptsClientMessageId": false,
+    "queueIdPresentAtConsumption": false,
+    "note": "The CLI receipt UUID was not present on the consumed user message; only content supplied by the caller can correlate it."
+  },
+  "permissions": {
+    "queuePromptsPerDelivery": 0,
+    "fixtureSetupPrompts": 2,
+    "fixtureSetupPromptReason": "A fresh isolated CODEX_HOME asked to trust the workdir and choose the recorded session directory."
+  },
+  "notVerified": [
+    "A thread owned by a different OS user or Codex account; no second credential was available.",
+    "A kill after the queue write but before the success receipt; the CLI completed too quickly to deterministically hit that interval.",
+    "Any Codex CLI version other than 0.154.0."
+  ]
+}
