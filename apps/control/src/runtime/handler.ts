@@ -2,6 +2,10 @@
 // checks, request IDs and sanitized error mapping. Owned by KHA-131;
 // KHA-132/133 own the domain handlers this dispatches to.
 
+import { checkMutationOrigin, type OriginCheck } from '../auth/csrf';
+
+export { checkMutationOrigin, type OriginCheck };
+
 /** An exact, normalized HTTP path. No regex or parameter routes. */
 export type RouteRegistration = Readonly<{
   path: string;
@@ -53,24 +57,6 @@ function jsonResponse(status: number, code: string, requestId: string): Response
 function logSanitizedError(requestId: string, path: string, error: unknown): void {
   const reason = error instanceof Error ? error.name : 'unknown_error';
   console.error(JSON.stringify({ requestId, path, reason }));
-}
-
-const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-
-export type OriginCheck = 'ok' | 'not_a_mutation' | 'forbidden_origin';
-
-/**
- * Exact-origin check for state-changing requests. Mirrors the policy in
- * `apps/control/src/auth/csrf.ts` (KHA-110); duplicated here rather than
- * imported because that module doesn't exist on this ticket's dependency yet.
- * Unify once both land.
- */
-export function checkMutationOrigin(request: Pick<Request, 'method' | 'headers'>, origin: string): OriginCheck {
-  if (SAFE_METHODS.has(request.method.toUpperCase())) return 'not_a_mutation';
-  if (request.headers.get('origin') !== origin) return 'forbidden_origin';
-  const site = request.headers.get('sec-fetch-site');
-  if (site !== null && site !== 'same-origin') return 'forbidden_origin';
-  return 'ok';
 }
 
 /**

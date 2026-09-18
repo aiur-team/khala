@@ -13,7 +13,7 @@ type Entry = Readonly<{ data: unknown; etag: string }>;
 class FakeBlobsStore implements BlobsStoreLike {
   private entries = new Map<string, Entry>();
   private revision = 0;
-  private nextRejection: 'definite' | 'ambiguous' | 'server-error' | null = null;
+  private nextRejection: 'definite' | 'ambiguous' | 'server-error' | 'out-of-allowlist-4xx' | null = null;
   private lostResponseOnNextSet = false;
   private beforeNextSet: (() => void) | null = null;
 
@@ -22,8 +22,11 @@ class FakeBlobsStore implements BlobsStoreLike {
    * that proves nothing committed. `server-error`: an explicit 5xx — still
    * ambiguous, because the provider's own write can commit before it fails to
    * report success. `ambiguous`: no status at all (a network-level throw).
+   * `out-of-allowlist-4xx`: a real `@netlify/blobs` `BlobsInternalError`,
+   * which sets `status` to the underlying response's status — here a 408,
+   * outside the definite-rejection allowlist — still ambiguous, not `definite`.
    */
-  failNext(mode: 'definite' | 'ambiguous' | 'server-error'): void {
+  failNext(mode: 'definite' | 'ambiguous' | 'server-error' | 'out-of-allowlist-4xx'): void {
     this.nextRejection = mode;
   }
 
@@ -50,7 +53,7 @@ class FakeBlobsStore implements BlobsStoreLike {
     this.entries.set(key, { data, etag: `r${this.revision}` });
   }
 
-  private throwRejection(mode: 'definite' | 'ambiguous' | 'server-error'): never {
+  private throwRejection(mode: 'definite' | 'ambiguous' | 'server-error' | 'out-of-allowlist-4xx'): never {
     if (mode === 'definite') {
       const error = new Error('bad request') as Error & { status: number };
       error.status = 400;
@@ -59,6 +62,11 @@ class FakeBlobsStore implements BlobsStoreLike {
     if (mode === 'server-error') {
       const error = new Error('BlobsInternalError') as Error & { status: number };
       error.status = 503;
+      throw error;
+    }
+    if (mode === 'out-of-allowlist-4xx') {
+      const error = new Error('BlobsInternalError') as Error & { status: number };
+      error.status = 408;
       throw error;
     }
     throw new Error('network timeout');
@@ -240,6 +248,13 @@ describe('createControlStore', () => {
     expect(await store.read('membership/frank')).toEqual({ kind: 'unavailable' });
   });
 
+  it('an out-of-allowlist 4xx (e.g. a BlobsInternalError reporting 408) during the primary write is outcome_unknown, not unavailable', async () => {
+    const { store, records } = makeStore();
+    records.failNext('out-of-allowlist-4xx');
+    const result = await store.compareAndSet({ key: 'membership/gabe', expectedRevision: null, operationId: 'op_g1', next: { value: 'joined', expiresAt: null } });
+    expect(result).toEqual({ kind: 'outcome_unknown', operationId: 'op_g1' });
+  });
+
   it('a retry after a lost write that was then legitimately superseded is outcome_unknown, never a false conflict', async () => {
     const { store, records } = makeStore();
     const key = 'invite/superseded';
@@ -262,6 +277,33 @@ describe('createControlStore', () => {
     // a fresh conflict — op_first's own effect on the key can't be disproved.
     const retry = await store.compareAndSet({ key, expectedRevision: null, operationId, next: { value: 'mine', expiresAt: null } });
     expect(retry).toEqual({ kind: 'outcome_unknown', operationId });
+  });
+
+  it('a retry whose own write races a third writer during the CAS attempt is outcome_unknown, never a false conflict', async () => {
+    const { store, records } = makeStore();
+    const key = 'invite/retry-races-write';
+    const operationId = 'op_first';
+
+    const created = await store.compareAndSet({ key, expectedRevision: null, operationId, next: { value: 'v1', expiresAt: null } });
+    expect(created.kind).toBe('applied');
+
+    const revisionAfterFirst = created.kind === 'applied' ? created.record.revision : never();
+    const superseded = await store.compareAndSet({ key, expectedRevision: revisionAfterFirst, operationId: 'op_second', next: { value: 'v2', expiresAt: null } });
+    expect(superseded.kind).toBe('applied');
+    const revisionAfterSecond = superseded.kind === 'applied' ? superseded.record.revision : never();
+
+    // The original caller retries op_first (same operation ID and content, so
+    // the ledger already holds this exact claim) against the now-current
+    // revision. Between its read and its own CAS write, a third writer lands.
+    records.raceBeforeNextSet(() => records.rawWrite(key, { operationId: 'op_third', value: 'v3', expiresAt: null }));
+    const retry = await store.compareAndSet({ key, expectedRevision: revisionAfterSecond, operationId, next: { value: 'v1', expiresAt: null } });
+
+    // The precondition fails against op_third's write, and the readback shows
+    // op_third rather than our own retried write — but op_first's ledger claim
+    // means an earlier invocation's effect can't be disproved, so this must
+    // not be reported as a fresh conflict.
+    expect(retry).toEqual({ kind: 'outcome_unknown', operationId });
+    expect(await store.read(key)).toMatchObject({ kind: 'record', record: { value: 'v3', operationId: 'op_third' } });
   });
 
   it('a ledger entry that vanishes between the failed claim attempt and its readback is unknown, never counted as claimed', async () => {

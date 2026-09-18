@@ -44,16 +44,20 @@ type LedgerEntry = Readonly<{ key: string; digest: string }>;
 /**
  * A definite rejection is a completed round trip where the provider itself
  * reported the request was rejected before any write could have committed —
- * an explicit 4xx (bad request, unauthorized, precondition failed, …) — safe
- * to call `unavailable`. A 5xx, a `BlobsInternalError`, or a network-level
- * throw with no status is genuinely ambiguous: the provider's own commit may
+ * one of this explicit allowlist of 4xx codes (bad request, unauthorized,
+ * forbidden, not found, conflict, precondition failed, payload too large) —
+ * safe to call `unavailable`. Anything else, including an out-of-allowlist
+ * 4xx (e.g. a 408 or 499), a 5xx, a `BlobsInternalError`, or a network-level
+ * throw with no status, is genuinely ambiguous: the provider's own commit may
  * have already landed, so the request's fate cannot be proven either way and
  * it is always `outcome_unknown`, never guessed at.
  */
+const DEFINITE_REJECTION_STATUSES = new Set([400, 401, 403, 404, 409, 412, 413]);
+
 function isDefiniteRejection(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const status = (error as { status?: unknown }).status;
-  return typeof status === 'number' && status >= 400 && status < 500;
+  return typeof status === 'number' && DEFINITE_REJECTION_STATUSES.has(status);
 }
 
 function isJsonValue(value: unknown, depth = 0): value is JsonValue {
