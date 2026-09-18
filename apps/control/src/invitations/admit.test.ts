@@ -80,6 +80,15 @@ describe('admit', () => {
     expect(h.histories).toEqual(['admit-1', 'admit-1']);
   });
 
+  it('completes no-history admission without requiring a history-ready signal', async () => {
+    const { h, inviteRef } = await invite();
+    h.failAdmission('history_unavailable');
+    expect(await h.service.admit({ operationId: 'admit-1', inviteRef, deviceId: DEVICE_ID }))
+      .toMatchObject({ kind: 'ok', value: { outcome: 'joined' } });
+    expect(h.admits).toEqual(['admit-1']);
+    expect(h.histories).toEqual([]);
+  });
+
   it('does not hide committed membership when a full-history invite is later revoked', async () => {
     const { h, inviteRef } = await invite('full');
     h.failAdmission('history_unavailable');
