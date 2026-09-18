@@ -65,9 +65,9 @@ describe('timeline projection', () => {
 
   it('binds every item reference to the exact content digest', async () => {
     const t = observed();
-    t.emit([message('$a', 'Hi there')]);
+    t.emit([message('$a', 'Hi\u2028there')]);
     await settle();
-    const digest = await digestMessageContent(text('Hi there'));
+    const digest = await digestMessageContent(text('Hi\u2028there'));
     expect(t.last()?.items[0]?.ref.contentDigest).toBe(digest.ok ? digest.digest : 'unreachable');
   });
 
@@ -101,6 +101,32 @@ describe('timeline projection', () => {
     expect(t.snapshots.every(snapshot => snapshot.generation === 1)).toBe(true);
   });
 
+  it('starts a new lifecycle generation from an empty projection', async () => {
+    const t = observed();
+    t.emit([message('$old', 'from the previous device')]);
+    await settle();
+    t.device.view = { ...t.device.view, generation: 2 };
+    t.emit([message('$new', 'from the replacement')], 2);
+    await settle();
+    expect(t.last()).toMatchObject({ generation: 2 });
+    expect(t.last()?.items.map(item => item.ref.eventId)).toEqual(['$new']);
+  });
+
+  it('keeps delivering to other observers and later updates when one observer throws', async () => {
+    const t = observed();
+    t.service.observe(t.room.roomId, () => {
+      throw new Error('observer bug');
+    });
+    t.emit([message('$a', 'one')]);
+    await settle();
+    t.emit([message('$b', 'two')]);
+    await settle();
+    expect(t.last()?.items.map(item => item.ref.eventId)).toEqual(['$a', '$b']);
+    // Entry observers are notified after the throwing snapshot observer.
+    expect(t.lastView()?.entries).toHaveLength(2);
+    expect(t.listenerErrors).toHaveLength(2);
+  });
+
   it('keeps accepted history when membership is revoked', async () => {
     const t = observed();
     t.emit([message('$a', 'before')]);
@@ -130,6 +156,24 @@ describe('timeline page', () => {
     const page = await service.timeline({ roomId: room.roomId, cursor: null, limit: 20 });
     expect(page).toMatchObject({ kind: 'ok', value: { nextCursor: 'opaque/cursor==', snapshotRevision: 'rev-9' } });
     if (page.kind === 'ok') expect(page.value.items.map(item => item.ref.eventId)).toEqual(['$a', '$b']);
+  });
+
+  it('keeps the decrypted copy when a page holds a placeholder and the message for one event', async () => {
+    const { service, substrate } = harness();
+    const room = substrate.addRoom();
+    substrate.page = {
+      kind: 'done',
+      value: {
+        events: [
+          { kind: 'undecryptable', eventId: '$a' as EventId, authorParticipantId: human.participantId, reason: 'missing_key', receivedAt: '2026-09-17T00:00:01Z' },
+          message('$a', 'readable'),
+        ],
+        nextCursor: null,
+        revision: 'rev-1',
+      },
+    };
+    const page = await service.timeline({ roomId: room.roomId, cursor: null, limit: 20 });
+    expect(page.kind === 'ok' && page.value.items.map(item => item.content.body)).toEqual(['readable']);
   });
 
   it('rejects invalid page requests and maps substrate failures', async () => {

@@ -18,9 +18,11 @@ export type RoomContext = Readonly<{
   journal: RoomJournal;
   limits: ContentLimits;
   newId: () => string;
+  /** Trusted local time in epoch milliseconds. */
+  clock: () => number;
   stopped: () => boolean;
-  /** Reports a local send state change to room observers. */
-  echo: (roomId: RoomId, item: SendItem) => void;
+  /** Reports a local send state change, made under lifecycle `generation`, to room observers. */
+  echo: (roomId: RoomId, item: SendItem, generation: number) => void;
 }>;
 
 export type Refusal = OperationResult<never, RoomRejection>;

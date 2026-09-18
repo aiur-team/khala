@@ -12,15 +12,20 @@ the port and never the SDK client, journal or device lifecycle.
 | `actor` | The signed-in participant: the owner's human participant, or an agent that owner delegated. It must share the principal's `ownerId` |
 | `device` | `DevicePort` (KHA-111). Effects run only while it is `ready`; `revoked` or `lost` returns `forbidden`, anything else `unavailable` |
 | `substrate` | `RoomSubstrate`, the narrow SDK surface in `substrate.ts`. G-SUBSTRATE is open, so the selected SDK's adapter implements it |
-| `journal` | `RoomJournal`, device-local storage. It holds message bodies, so it is never the shared `ControlStore`. `createMemoryRoomJournal` is not durable and only suits tests |
+| `journal` | `RoomJournal`, device-local storage. It holds message bodies, so it is never the shared `ControlStore`. Tabs may share it, so every update is a compare-and-set on the record revision. `createMemoryRoomJournal` is not durable and only suits tests |
 | `limits` | `ContentLimits` from the substrate capability record |
+| `clock` | Trusted epoch milliseconds, used for the create lease and local receipt times. Defaults to `Date.now` |
+| `onListenerError` | Receives errors thrown by observers. A throwing observer never stops the others or later updates |
 
 ## Outcomes
 
 - **Create.** Only a human actor may create a room; a delegated agent gets `forbidden`. The
-  intent is journaled before the SDK call. A lost response is `outcome_unknown`. A retry with
-  the same `operationId` looks the room up with `findCreatedRoom` and creates again only on
-  proof (`absent`) that nothing was created. The same `operationId` with another owner or title
+  intent is journaled before the SDK call, together with a lease (`CREATE_LEASE_MS`). While
+  the lease is live, another call with the same `operationId`, from a second click or another
+  tab, returns `outcome_unknown` and touches nothing. A lost response is `outcome_unknown`. A
+  retry after the attempt ends, or after its lease expires, looks the room up with
+  `findCreatedRoom`. It creates again only on proof (`absent`) that nothing was created, and
+  only after winning the compare-and-set on the journal record. The same `operationId` with another owner or title
   is `operation_mismatch`. An empty title is `null`. The title is room metadata, and nothing
   here promises that it is encrypted.
 - **Intro batches.** `prepareIntro` freezes the room, author, device, item order, bytes and a
@@ -39,8 +44,10 @@ the port and never the SDK client, journal or device lifecycle.
 
 Every `EventRef.contentDigest` is computed here over the exact decrypted bytes. Events are
 keyed by `eventId`, so duplicate, replayed or reordered sync events and the race between the
-remote echo and the send response all produce one item. Updates from another lifecycle
-generation (`DevicePort.current().generation`) are dropped.
+remote echo and the send response all produce one item. Updates and send echoes from another
+lifecycle generation (`DevicePort.current().generation`) are dropped. A new generation starts
+from an empty projection, so it never republishes the previous lifecycle's history. Concurrent
+intro runs never overwrite each other's progress: a run whose journal write conflicts stops.
 
 The contract's `TimelinePage` and `RoomSnapshot` carry only decrypted messages. The extra
 `observeEntries` view adds explicit `unavailable` placeholders (`missing_key`,

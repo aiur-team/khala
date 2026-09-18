@@ -79,16 +79,19 @@ export async function timeline(
   const page = await safeRead(() => ctx.substrate.timeline(input, options));
   if (page.kind === 'unavailable') return unavailable();
   if (page.kind === 'rejected') return rejected(page.code);
-  const seen = new Set<EventId>();
-  const items: TimelineItem[] = [];
+  const entries = new Map<EventId, RemoteEntry>();
   for (const event of page.value.events) {
     const entry = await toEntry(input.roomId, event);
-    if (seen.has(eventIdOf(entry))) continue;
-    seen.add(eventIdOf(entry));
-    // The contract page has no placeholder shape; `observeEntries` carries them.
-    if (entry.kind === 'message') items.push(entry.item);
+    if (supersedes(entries.get(eventIdOf(entry)), entry)) entries.set(eventIdOf(entry), entry);
   }
+  // The contract page has no placeholder shape; `observeEntries` carries them.
+  const items = [...entries.values()].flatMap(entry => (entry.kind === 'message' ? [entry.item] : []));
   return ok({ items, nextCursor: page.value.nextCursor, snapshotRevision: page.value.revision });
+}
+
+/** A duplicate or replayed event never adds a row; only a late decryption replaces its placeholder. */
+function supersedes(existing: RemoteEntry | undefined, entry: RemoteEntry): boolean {
+  return existing === undefined || (existing.kind === 'unavailable' && entry.kind === 'message');
 }
 
 /**
@@ -116,9 +119,7 @@ export class RoomProjection {
   applyRemote(entries: readonly RemoteEntry[]): void {
     for (const entry of entries) {
       const eventId = eventIdOf(entry);
-      const existing = this.remote.get(eventId);
-      // A duplicate or replayed event never adds a row; a late decryption replaces its placeholder.
-      if (existing && !(existing.kind === 'unavailable' && entry.kind === 'message')) continue;
+      if (!supersedes(this.remote.get(eventId), entry)) continue;
       this.remote.set(eventId, entry);
       if (entry.kind === 'message' && entry.item.clientTxnId !== null) this.local.delete(entry.item.clientTxnId);
     }

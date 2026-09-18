@@ -108,6 +108,13 @@ describe('intro batches', () => {
     expect(await service.resumeIntro('batch-7')).toMatchObject({ kind: 'ok', value: [{ state: 'accepted' }, { state: 'accepted' }, { state: 'accepted' }] });
   });
 
+  it('refuses a batch whose generated transaction IDs collide', async () => {
+    const { service, substrate } = harness({ newId: () => 'same-txn' });
+    const room = substrate.addRoom();
+    expect(await service.prepareIntro({ roomId: room.roomId, batchId: 'batch-dup', messages })).toEqual({ kind: 'unavailable', retryable: true });
+    expect(substrate.sendCalls).toEqual([]);
+  });
+
   it('validates the batch before any effect', async () => {
     const { service, substrate } = harness();
     const room = substrate.addRoom();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/index';
+import { CREATE_LEASE_MS } from './create';
 import { agent, deviceId, harness, human, principal } from './fixtures/fakes';
 
 describe('room create', () => {
@@ -75,6 +76,34 @@ describe('room create', () => {
     expect(substrate.createCalls).toEqual(['op-a', 'op-a']);
   });
 
+  it('lets only one of two overlapping creates reach the SDK', async () => {
+    const { service, substrate } = harness();
+    let release = () => {};
+    substrate.createGate = new Promise(resolve => { release = resolve; });
+    const first = service.create({ operationId: 'op-race', title: null });
+    const second = await service.create({ operationId: 'op-race', title: null });
+    expect(second).toEqual({ kind: 'outcome_unknown', operationId: 'op-race' });
+    release();
+    const settled = await first;
+    expect(settled).toMatchObject({ kind: 'ok' });
+    expect(await service.create({ operationId: 'op-race', title: null })).toEqual(settled);
+    expect(substrate.createCalls).toEqual(['op-race']);
+  });
+
+  it('reconciles an attempt whose lease expired without a result', async () => {
+    const { service, substrate, time } = harness();
+    substrate.createGate = new Promise(() => {});
+    void service.create({ operationId: 'op-stale', title: null });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(await service.create({ operationId: 'op-stale', title: null })).toEqual({ kind: 'outcome_unknown', operationId: 'op-stale' });
+
+    time.now += CREATE_LEASE_MS;
+    substrate.createGate = null;
+    expect(await service.create({ operationId: 'op-stale', title: null })).toMatchObject({ kind: 'ok' });
+    expect(substrate.createCalls).toEqual(['op-stale', 'op-stale']);
+    expect(substrate.rooms.size).toBe(1);
+  });
+
   it('rejects the same operation ID with another title or another owner', async () => {
     const first = harness();
     await first.service.create({ operationId: 'op-m', title: 'One' });
@@ -100,7 +129,7 @@ describe('room create', () => {
   it('validates titles against the substrate limits', async () => {
     const { service, substrate } = harness();
     expect(await service.create({ operationId: 'op-long', title: 'x'.repeat(33) })).toEqual({ kind: 'rejected', code: 'too_large' });
-    expect(await service.create({ operationId: 'op-bidi', title: 'a‮b' })).toEqual({ kind: 'rejected', code: 'invalid_request' });
+    expect(await service.create({ operationId: 'op-bidi', title: 'a\u202eb' })).toEqual({ kind: 'rejected', code: 'invalid_request' });
     expect(await service.create({ operationId: '', title: null })).toEqual({ kind: 'rejected', code: 'invalid_request' });
     expect(substrate.createCalls).toEqual([]);
   });

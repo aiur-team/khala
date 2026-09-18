@@ -21,7 +21,8 @@ export function toSendState(item: SendItem): SendState {
 export async function transmit(
   ctx: RoomContext, roomId: RoomId, item: SendItem, options: CallOptions | undefined,
 ): Promise<Readonly<{ item: SendItem; rejection: RoomRejection | null }>> {
-  ctx.echo(roomId, { ...item, state: 'pending', eventRef: null });
+  const generation = ctx.device.current().generation;
+  ctx.echo(roomId, { ...item, state: 'pending', eventRef: null }, generation);
   const result = await safeEffect(() => ctx.substrate.sendEvent({ roomId, clientTxnId: item.clientTxnId, content: item.content }, options));
   let next: SendItem;
   let rejection: RoomRejection | null = null;
@@ -47,7 +48,7 @@ export async function transmit(
       next = { ...item, state: 'outcome_unknown', eventRef: null };
       break;
   }
-  ctx.echo(roomId, next);
+  ctx.echo(roomId, next, generation);
   return { item: next, rejection };
 }
 
@@ -83,7 +84,8 @@ export async function send(ctx: RoomContext, input: SendInput, options?: CallOpt
   const room = await membershipGate(ctx, input.roomId, options);
   if (isRefusal(room)) return room;
   const sent = await transmit(ctx, input.roomId, record.item, options);
-  await ctx.journal.put(key, { ...record, item: sent.item });
+  // A conflict means another caller advanced this transaction; ours never overwrites it.
+  await ctx.journal.replace(key, claim.revision, { ...record, item: sent.item });
   if (sent.rejection) return rejected(sent.rejection);
   switch (sent.item.state) {
     case 'accepted':

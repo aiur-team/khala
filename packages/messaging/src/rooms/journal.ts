@@ -1,19 +1,23 @@
 // Local operation journal. Intent is written here before any remote effect so a
 // retry reuses the original operation identity and bytes. Records hold message
 // bodies, so the journal is device-local storage supplied by composition, never
-// the shared ControlStore.
+// the shared ControlStore. Several tabs may share it, so writes compare revisions.
 
 import type { DeviceId, EventRef, MessageContent, OwnerId, ParticipantId, RoomId, RoomSummary, SendState } from '@khala/contracts/messaging/index';
 
 /**
- * `in_flight` is written before the SDK call and stays when its result is lost,
- * so it doubles as "outcome unknown". `not_applied` is proof nothing was created.
+ * - `attempting`: an SDK create is outstanding until `leaseUntilMs`. Another
+ *   caller must not reconcile or create while the lease is live.
+ * - `unknown`: the create finished without a result; reconcile before retrying.
+ * - `not_applied`: proof nothing was created.
+ * - `created`: the room exists.
  */
 export type CreateRecord = Readonly<{
   type: 'create';
   ownerId: OwnerId;
   title: string | null;
-  state: 'in_flight' | 'not_applied' | 'created';
+  state: 'attempting' | 'unknown' | 'not_applied' | 'created';
+  leaseUntilMs: number | null;
   room: RoomSummary | null;
 }>;
 
@@ -36,16 +40,24 @@ export type IntroRecord = Readonly<{ type: 'intro'; roomId: RoomId; author: Send
 
 export type JournalRecord = CreateRecord | SendRecord | IntroRecord;
 
-export type JournalRead = Readonly<{ kind: 'absent' }> | Readonly<{ kind: 'record'; value: JournalRecord }> | Readonly<{ kind: 'unavailable' }>;
+export type JournalRead =
+  | Readonly<{ kind: 'absent' }>
+  | Readonly<{ kind: 'record'; value: JournalRecord; revision: string }>
+  | Readonly<{ kind: 'unavailable' }>;
 
-export type JournalClaim = Readonly<{ kind: 'claimed' }> | Readonly<{ kind: 'exists'; value: JournalRecord }> | Readonly<{ kind: 'unavailable' }>;
+export type JournalClaim =
+  | Readonly<{ kind: 'claimed'; revision: string }>
+  | Readonly<{ kind: 'exists'; value: JournalRecord; revision: string }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+export type JournalWrite = Readonly<{ kind: 'stored'; revision: string }> | Readonly<{ kind: 'conflict' }> | Readonly<{ kind: 'unavailable' }>;
 
 export interface RoomJournal {
   read(key: string): Promise<JournalRead>;
   /** Stores `value` only when `key` is absent; otherwise returns what is there. */
   claim(key: string, value: JournalRecord): Promise<JournalClaim>;
-  /** Replaces the record at `key`. `unavailable` means it was not stored. */
-  put(key: string, value: JournalRecord): Promise<Readonly<{ kind: 'stored' | 'unavailable' }>>;
+  /** Replaces the record only while its revision is still `expectedRevision`. */
+  replace(key: string, expectedRevision: string, value: JournalRecord): Promise<JournalWrite>;
 }
 
 export const journalKey = {
@@ -59,21 +71,26 @@ export const journalKey = {
  * module behaviour; composition supplies persistent device-local storage.
  */
 export function createMemoryRoomJournal(): RoomJournal {
-  const records = new Map<string, JournalRecord>();
+  const records = new Map<string, { value: JournalRecord; revision: string }>();
+  let sequence = 0;
+  const store = (key: string, value: JournalRecord) => {
+    const revision = String(++sequence);
+    records.set(key, { value: structuredClone(value), revision });
+    return revision;
+  };
   return {
     async read(key) {
-      const value = records.get(key);
-      return value ? { kind: 'record', value: structuredClone(value) } : { kind: 'absent' };
+      const found = records.get(key);
+      return found ? { kind: 'record', value: structuredClone(found.value), revision: found.revision } : { kind: 'absent' };
     },
     async claim(key, value) {
-      const existing = records.get(key);
-      if (existing) return { kind: 'exists', value: structuredClone(existing) };
-      records.set(key, structuredClone(value));
-      return { kind: 'claimed' };
+      const found = records.get(key);
+      if (found) return { kind: 'exists', value: structuredClone(found.value), revision: found.revision };
+      return { kind: 'claimed', revision: store(key, value) };
     },
-    async put(key, value) {
-      records.set(key, structuredClone(value));
-      return { kind: 'stored' };
+    async replace(key, expectedRevision, value) {
+      if (records.get(key)?.revision !== expectedRevision) return { kind: 'conflict' };
+      return { kind: 'stored', revision: store(key, value) };
     },
   };
 }

@@ -26,8 +26,10 @@ export type RoomServiceInput = Readonly<{
   journal: RoomJournal;
   limits: ContentLimits;
   newId?: () => string;
-  /** UTC RFC 3339 receipt time for own events the room has not echoed yet. */
-  now?: () => string;
+  /** Trusted local time in epoch milliseconds; defaults to `Date.now`. */
+  clock?: () => number;
+  /** Receives errors thrown by observers. One failing observer never stops the others or later updates. */
+  onListenerError?: (error: unknown) => void;
 }>;
 
 export interface RoomService extends RoomPort {
@@ -38,6 +40,9 @@ export interface RoomService extends RoomPort {
 }
 
 type Observation = {
+  roomId: RoomId;
+  /** Lifecycle generation that produced `projection`; a new generation starts from an empty one. */
+  generation: number;
   projection: RoomProjection;
   snapshotListeners: Set<(snapshot: RoomSnapshot) => void>;
   entryListeners: Set<(view: RoomEntriesView) => void>;
@@ -51,14 +56,42 @@ export function createRoomService(input: RoomServiceInput): RoomService {
   const observations = new Map<RoomId, Observation>();
   let stopped = false;
   const generation = () => input.device.current().generation;
-  const now = input.now ?? (() => new Date().toISOString());
+  const clock = input.clock ?? (() => Date.now());
+  const report = input.onListenerError ?? (() => {});
+  const projectionFor = (roomId: RoomId) => new RoomProjection(roomId, input.actor, () => new Date(clock()).toISOString());
 
-  const publish = (observation: Observation) => {
-    const current = generation();
-    const snapshot = observation.projection.snapshot(current);
-    if (snapshot) for (const listener of observation.snapshotListeners) listener(snapshot);
-    const view = observation.projection.entries(current);
-    for (const listener of observation.entryListeners) listener(view);
+  const notify = <T>(listeners: Iterable<(value: T) => void>, value: T) => {
+    for (const listener of listeners) {
+      try {
+        listener(value);
+      } catch (error) {
+        report(error);
+      }
+    }
+  };
+
+  /**
+   * Runs `apply` in arrival order against a projection of the current lifecycle,
+   * then publishes. Work queued for an earlier generation or a released
+   * observation is dropped, and a failure never blocks later updates.
+   */
+  const enqueue = (observation: Observation, madeIn: number, apply: (projection: RoomProjection) => Promise<void> | void) => {
+    observation.queue = observation.queue
+      .then(async () => {
+        if (observations.get(observation.roomId) !== observation) return;
+        const current = generation();
+        if (madeIn !== current) return;
+        if (observation.generation !== current) {
+          observation.generation = current;
+          observation.projection = projectionFor(observation.roomId);
+        }
+        await apply(observation.projection);
+        if (observations.get(observation.roomId) !== observation || generation() !== current) return;
+        const snapshot = observation.projection.snapshot(current);
+        if (snapshot) notify(observation.snapshotListeners, snapshot);
+        notify(observation.entryListeners, observation.projection.entries(current));
+      })
+      .catch(report);
   };
 
   const ctx: RoomContext = {
@@ -69,28 +102,22 @@ export function createRoomService(input: RoomServiceInput): RoomService {
     journal: input.journal,
     limits: input.limits,
     newId: input.newId ?? (() => globalThis.crypto.randomUUID()),
+    clock,
     stopped: () => stopped,
-    echo(roomId: RoomId, item: SendItem) {
+    echo(roomId: RoomId, item: SendItem, madeIn: number) {
       const observation = observations.get(roomId);
-      if (!observation) return;
-      observation.queue = observation.queue.then(() => {
-        if (observations.get(roomId) !== observation) return;
-        observation.projection.applyLocal(item);
-        publish(observation);
-      });
+      if (observation) enqueue(observation, madeIn, projection => projection.applyLocal(item));
     },
   };
 
+  // An update from an earlier device or account lifecycle never touches the current one.
   const receive = (roomId: RoomId, observation: Observation, update: SubstrateUpdate) => {
-    // An update from an earlier device or account lifecycle never touches the current one.
     if (update.generation !== generation()) return;
     const entries = Promise.all(update.events.map(event => toEntry(roomId, event)));
-    observation.queue = observation.queue.then(async () => {
+    enqueue(observation, update.generation, async projection => {
       const resolved = await entries;
-      if (observations.get(roomId) !== observation || update.generation !== generation()) return;
-      observation.projection.applyRoom(update.room);
-      observation.projection.applyRemote(resolved);
-      publish(observation);
+      projection.applyRoom(update.room);
+      projection.applyRemote(resolved);
     });
   };
 
@@ -99,7 +126,9 @@ export function createRoomService(input: RoomServiceInput): RoomService {
     let observation = observations.get(roomId);
     if (!observation) {
       const created: Observation = {
-        projection: new RoomProjection(roomId, input.actor, now),
+        roomId,
+        generation: generation(),
+        projection: projectionFor(roomId),
         snapshotListeners: new Set(),
         entryListeners: new Set(),
         dispose: () => {},

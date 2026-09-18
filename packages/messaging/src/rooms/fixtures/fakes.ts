@@ -57,6 +57,9 @@ export class FakeSubstrate implements RoomSubstrate {
   sendMode: (clientTxnId: string, attempt: number) => SendMode = () => 'accept';
   page: SubstrateRead<SubstratePage> = { kind: 'done', value: { events: [], nextCursor: null, revision: 'r1' } };
   sendingDevice: DeviceId = deviceId;
+  readsThrow = false;
+  /** When set, `createRoom` waits for it before answering, so tests can overlap calls. */
+  createGate: Promise<void> | null = null;
   private sequence = 0;
 
   addRoom(room: Partial<RoomSummary> = {}): RoomSummary {
@@ -67,6 +70,7 @@ export class FakeSubstrate implements RoomSubstrate {
 
   async createRoom(input: Readonly<{ operationId: string; title: string | null }>): Promise<SubstrateEffect<RoomSummary>> {
     this.createCalls.push(input.operationId);
+    if (this.createGate) await this.createGate;
     const mode = this.createMode;
     if (mode === 'unavailable') return { kind: 'unavailable' };
     if (typeof mode === 'object') return { kind: 'rejected', code: mode.rejected };
@@ -83,6 +87,7 @@ export class FakeSubstrate implements RoomSubstrate {
   }
 
   async room(roomId: RoomId): Promise<SubstrateRead<RoomSummary>> {
+    if (this.readsThrow) throw new Error('sdk read failed');
     const room = this.rooms.get(roomId);
     return room ? { kind: 'done', value: room } : { kind: 'rejected', code: 'not_found' };
   }
@@ -104,6 +109,7 @@ export class FakeSubstrate implements RoomSubstrate {
   }
 
   async timeline(): Promise<SubstrateRead<SubstratePage>> {
+    if (this.readsThrow) throw new Error('sdk read failed');
     return this.page;
   }
 
@@ -123,18 +129,30 @@ export class FakeSubstrate implements RoomSubstrate {
   }
 }
 
-export type Harness = Readonly<{ service: RoomService; substrate: FakeSubstrate; device: ReturnType<typeof fakeDevice>; journal: RoomJournal }>;
+export type Harness = Readonly<{
+  service: RoomService;
+  substrate: FakeSubstrate;
+  device: ReturnType<typeof fakeDevice>;
+  journal: RoomJournal;
+  /** Epoch milliseconds the service reads; tests advance it. */
+  time: { now: number };
+  listenerErrors: unknown[];
+}>;
 
-export function harness(options: Partial<{ actor: ParticipantView; substrate: FakeSubstrate; journal: RoomJournal; principal: AuthPrincipal }> = {}): Harness {
+export function harness(
+  options: Partial<{ actor: ParticipantView; substrate: FakeSubstrate; journal: RoomJournal; principal: AuthPrincipal; newId: () => string }> = {},
+): Harness {
   const substrate = options.substrate ?? new FakeSubstrate();
   const device = fakeDevice();
   const journal = options.journal ?? createMemoryRoomJournal();
+  const time = { now: Date.parse('2026-09-17T00:00:00Z') };
+  const listenerErrors: unknown[] = [];
   let id = 0;
   const service = createRoomService({
     principal: options.principal ?? principal, actor: options.actor ?? human, device, substrate, journal, limits,
-    newId: () => `txn-${++id}`, now: () => '2026-09-17T00:00:00Z',
+    newId: options.newId ?? (() => `txn-${++id}`), clock: () => time.now, onListenerError: error => listenerErrors.push(error),
   });
-  return { service, substrate, device, journal };
+  return { service, substrate, device, journal, time, listenerErrors };
 }
 
 /** Lets queued projection work settle. */
