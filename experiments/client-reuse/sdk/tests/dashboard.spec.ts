@@ -32,10 +32,16 @@ test(`${candidate}: synthetic invitation, review, focus, mobile, and failure sta
       await page.getByRole('button', { name: 'Toggle navigation' }).click();
       await page.getByRole('button', { name: 'Use light theme' }).click();
     }
+    const usable = async (layout: string) => {
+      assert(await page.getByRole('region', { name: 'Timeline' }).isVisible(), `${layout}: timeline visible`);
+      assert(await review.isVisible(), `${layout}: review control visible`);
+    };
+    await usable('desktop');
     await mkdir('evidence', { recursive: true });
     await page.screenshot({ path: 'evidence/desktop.png', fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no long-message horizontal overflow');
+    await usable('narrow');
     await page.screenshot({ path: 'evidence/mobile.png', fullPage: true });
     if (candidate === 'sdk') {
       await page.goto(url + '?embedded=1');
