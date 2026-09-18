@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { BindingId, HarnessCapabilities } from '@khala/contracts/delivery/index';
-import { binding, makeRelease, receipt, recordOf, seed, testPolicy, world } from './fixtures/fakes';
+import { type World, binding, makeRelease, receipt, recordOf, seed, testPolicy, world } from './fixtures/fakes';
 import type { DispatchPolicy, Dispatcher } from './types';
 
 describe('eligibility and transactional claim', () => {
   it('AE1: a pause applied before the claim blocks a queued job, and resuming dispatches it once', async () => {
-    const w = await world(testPolicy({ paused: true }));
+    // Released at v3. As in KHA-120's transitions, the pause (v4) and the resume (v5) each bump the
+    // version; neither re-arms the binding.
+    const w = await world();
     const dispatcher = w.dispatcher();
-    const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
+    const { job } = w.add(makeRelease({ releaseId: 'release-1', policyVersion: 3 }));
+    await w.setPolicy(testPolicy({ version: 4, armedAt: 3, paused: true }));
     expect(await dispatcher.enqueue(job)).toBe('queued');
     await dispatcher.idle();
 
@@ -15,11 +18,28 @@ describe('eligibility and transactional claim', () => {
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'paused', attemptId: null });
     expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
 
-    await w.setPolicy(testPolicy());
+    await w.setPolicy(testPolicy({ version: 5, armedAt: 3 }));
+    dispatcher.wake();
+    await dispatcher.idle();
     dispatcher.wake();
     await dispatcher.idle();
     expect(w.harness.submittedIds()).toEqual(['release-1']);
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'accepted', reason: null });
+  });
+
+  it('rejects a paused release when the binding is re-armed before the resume', async () => {
+    const w = await world();
+    const dispatcher = w.dispatcher();
+    const { job } = w.add(makeRelease({ releaseId: 'release-1', policyVersion: 3 }));
+    await w.setPolicy(testPolicy({ version: 4, armedAt: 3, paused: true }));
+    await dispatcher.enqueue(job);
+    await dispatcher.idle();
+    // v5 re-arms while paused; v6 resumes.
+    await w.setPolicy(testPolicy({ version: 6, armedAt: 5 }));
+    dispatcher.wake();
+    await dispatcher.idle();
+    expect(w.harness.submitted).toHaveLength(0);
+    expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'rejected', reason: 'stale_policy' });
   });
 
   it('AE1: a pause applied after the job was read but before the claim still blocks it', async () => {
@@ -29,7 +49,7 @@ describe('eligibility and transactional claim', () => {
       // Pause lands while the dispatcher is still verifying the payload, before the claim.
       payloads: {
         read: async () => {
-          await w.setPolicy(testPolicy({ paused: true }));
+          await w.setPolicy(testPolicy({ version: 4, armedAt: 3, paused: true }));
           return release.payload;
         },
       },
@@ -44,7 +64,7 @@ describe('eligibility and transactional claim', () => {
     const w = await world();
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
     w.harness.onSubmit = async submitted => {
-      await w.setPolicy(testPolicy({ paused: true }));
+      await w.setPolicy(testPolicy({ version: 4, armedAt: 3, paused: true }));
       return receipt(submitted, 'harness_queued');
     };
     const dispatcher = w.dispatcher();
@@ -87,14 +107,26 @@ describe('eligibility and transactional claim', () => {
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'rejected', reason: 'stale_binding' });
   });
 
-  it('rejects a release reviewed under another policy version', async () => {
-    const w = await world(testPolicy({ version: 4 }));
-    const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
+  it.each([
+    ['before the binding was re-armed', 3, testPolicy({ version: 4, armedAt: 4 })],
+    ['under a version the connector has not applied', 4, testPolicy({ version: 3, armedAt: 3 })],
+  ])('rejects a release reviewed %s', async (_, policyVersion, policy) => {
+    const w = await world(policy);
+    const { job } = w.add(makeRelease({ releaseId: 'release-1', policyVersion }));
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(job);
     await dispatcher.idle();
     expect(w.harness.submitted).toHaveLength(0);
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'rejected', reason: 'stale_policy' });
+  });
+
+  it('dispatches a release reviewed exactly at the arming version, after later non-arming revisions', async () => {
+    const w = await world(testPolicy({ version: 7, armedAt: 3 }));
+    const dispatcher = w.dispatcher();
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1', policyVersion: 3 })).job);
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2', policyVersion: 7 })).job);
+    await dispatcher.idle();
+    expect(w.harness.submittedIds()).toEqual(['release-1', 'release-2']);
   });
 
   it('stops new claims for a revoked binding', async () => {
@@ -124,6 +156,10 @@ describe('eligibility and transactional claim', () => {
     ['a steer busy policy', malformed(policy => { policy.busy = 'steer'; })],
     ['a negative version', testPolicy({ version: -1 })],
     ['a fractional version', testPolicy({ version: 3.5 })],
+    ['an arming version after the version', testPolicy({ version: 3, armedAt: 4 })],
+    ['a negative arming version', testPolicy({ armedAt: -1 })],
+    ['a fractional arming version', testPolicy({ armedAt: 2.5 })],
+    ['no arming version', malformed(policy => delete policy.armedAt)],
   ])('blocks dispatch with %s', async (_, policy) => {
     const w = await world(policy);
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
@@ -192,7 +228,7 @@ describe('eligibility and transactional claim', () => {
   describe('policy per binding', () => {
     it("checks each release against its own binding's policy version", async () => {
       const w = await world();
-      await w.ledger.transact(tx => tx.setPolicy('bind-2' as BindingId, testPolicy({ version: 4 })));
+      await w.ledger.transact(tx => tx.setPolicy('bind-2' as BindingId, testPolicy({ version: 4, armedAt: 4 })));
       const dispatcher = w.dispatcher();
       await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-1', policyVersion: 3 })).job);
       await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2', policyVersion: 4 })).job);
@@ -205,7 +241,7 @@ describe('eligibility and transactional claim', () => {
       const dispatcher = w.dispatcher();
       const { job } = w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-2', policyVersion: 3 }));
       // bind-2 re-arms from v3 to v4; bind-1 and bind-3 stay at v3.
-      await w.ledger.transact(tx => tx.setPolicy('bind-2' as BindingId, testPolicy({ version: 4 })));
+      await w.ledger.transact(tx => tx.setPolicy('bind-2' as BindingId, testPolicy({ version: 4, armedAt: 4 })));
       await dispatcher.enqueue(job);
       await dispatcher.idle();
       expect(w.harness.submitted).toHaveLength(0);
@@ -270,6 +306,24 @@ describe('eligibility and transactional claim', () => {
       await dispatcher.idle();
       expect(w.harness.submitted).toHaveLength(0);
       expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', attemptId: null });
+      expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
+    });
+
+    it.each([
+      ['revoked', 'revoked', (w: World) => w.ledger.transact(tx => tx.setBinding({ binding: binding('bind-1'), revoked: true }))],
+      ['moved to a new generation', 'stale_binding', (w: World) => w.ledger.transact(tx => tx.setBinding({ binding: binding('bind-1', 1), revoked: false }))],
+      ['re-armed', 'stale_policy', (w: World) => w.setPolicy(testPolicy({ version: 4, armedAt: 4 }))],
+    ])('rejects at the claim a job whose binding was %s after the precheck', async (_, code, change) => {
+      const w = await world();
+      const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
+      // The change lands while the job is being verified, after the precheck passed it.
+      w.onApproval = () => change(w);
+      const dispatcher = w.dispatcher();
+      await dispatcher.enqueue(job);
+      await dispatcher.idle();
+      expect(w.lookups).toEqual([job.approval.commandId]);
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'rejected', reason: code, attemptId: null });
       expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
     });
 

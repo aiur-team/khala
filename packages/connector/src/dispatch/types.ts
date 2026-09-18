@@ -14,10 +14,17 @@ import type {
  */
 export type DispatchPolicy = Readonly<{
   /**
-   * The binding's effective policy version (`PolicyAck.effectiveVersion`). It must equal the
-   * release's `policyVersion`; any other version makes the release stale.
+   * The binding's effective policy version (`PolicyAck.effectiveVersion`). Every policy revision
+   * bumps it, including a pause or a resume.
    */
   version: number;
+  /**
+   * The version of the newest effective revision that changed the binding's `mode`,
+   * `peerParticipantId` or generation. A release is current only when
+   * `armedAt <= policyVersion <= version`, so a re-arm invalidates older releases and a pause or
+   * resume does not.
+   */
+  armedAt: number;
   paused: boolean;
   maxJobsPerCausalRoot: number;
   maxConcurrentJobs: number;

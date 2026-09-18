@@ -5,7 +5,7 @@
 import {
   type HarnessCapabilities, type ReleasedJob, type UnverifiedReleasedJob, sameEventRef, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
-import { checkLimits, expired, reserve, supportedRoute, usablePolicy } from './budget';
+import { checkLimits, currentRelease, expired, reserve, supportedRoute, usablePolicy } from './budget';
 import type { BlockCode, ClaimResult, DispatchRecord, DispatchTx } from './types';
 
 export type ClaimInput = Readonly<{
@@ -49,7 +49,7 @@ function refusal(tx: DispatchTx, record: DispatchRecord, now: Date, capabilities
 
   const policy = tx.policy(job.binding.bindingId);
   if (!usablePolicy(policy)) return { code: 'unconfigured', terminal: false };
-  if (job.policyVersion !== policy.version) return { code: 'stale_policy', terminal: true };
+  if (!currentRelease(policy, job.policyVersion)) return { code: 'stale_policy', terminal: true };
   if (policy.paused) return { code: 'paused', terminal: false };
   if (expired(policy, now)) return { code: 'expired', terminal: false };
   if (capabilities !== null && !supportedRoute(capabilities, job.binding)) {

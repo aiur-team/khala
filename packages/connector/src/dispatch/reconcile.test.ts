@@ -42,6 +42,17 @@ describe('restart reconciliation', () => {
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'outcome_unknown' });
   });
 
+  it('treats malformed native evidence as no evidence', async () => {
+    const { w, restarted } = await dispatchingWithoutReceipt();
+    // Correlated, but not a valid receipt: the timestamp is not strict UTC.
+    w.harness.onReconcile = async found => receipt(found, 'completed', { observedAt: 'yesterday' });
+    await restarted.reconcile('release-1');
+    const record = await recordOf(w.ledger, 'release-1');
+    expect(record).toMatchObject({ state: 'outcome_unknown' });
+    expect(record?.receipts).toEqual([]);
+    expect(w.harness.submitted).toHaveLength(1);
+  });
+
   it('resolves an unknown outcome when evidence arrives later', async () => {
     const { w, restarted } = await dispatchingWithoutReceipt();
     await restarted.reconcile('release-1');

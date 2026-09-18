@@ -19,6 +19,7 @@ export const POLICY_VERSION = 3;
 export function testPolicy(overrides: Partial<DispatchPolicy> = {}): DispatchPolicy {
   return {
     version: POLICY_VERSION,
+    armedAt: POLICY_VERSION,
     paused: false,
     maxJobsPerCausalRoot: 10,
     maxConcurrentJobs: 10,

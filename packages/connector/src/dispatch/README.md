@@ -16,8 +16,9 @@ subscription and harness; KHA-135 binds pause and budget status.
 | `clock`, `newId`, `workerId` | Time, attempt and receipt IDs, and this process's identity |
 
 The test doubles and `createMemoryLedger()`, an in-process reference ledger, live under
-`fixtures/`. They are test-only: `index.ts` does not export them, and the boundary check refuses
-production imports of `fixtures/`. The memory ledger is not durable, so a restart that re-enqueued
+`fixtures/`. They are test-only: `index.ts` does not export them, the package export map blocks
+`@khala/connector/dispatch/fixtures/*`, and the boundary check refuses production imports of
+`fixtures/`. The memory ledger is not durable, so a restart that re-enqueued
 from it could submit twice.
 
 ## Dispatch order
@@ -83,7 +84,9 @@ no evidence, a `dispatching` record becomes `outcome_unknown`: neither a timeout
 lookup proves the submission did not happen. A claim made by another process is never
 resubmitted, because an expired claim does not prove its owner stopped. `abandon` ends an
 unknown outcome. It takes an `OwnerAuthority` whose `ownerId` owns the binding, and records its
-`authorizationId` on the record. Any other authority is refused.
+`authorizationId` on the record. Any other authority is refused. This module does not check that
+the authorization is fresh or unused: composition must pass only an `authorizationId` it has just
+authenticated for this abandon, and must refuse to reuse one.
 
 Receipts from `submit`, `reconcile` and `observe` are decoded with `decodeDeliveryReceipt` before
 they touch a record. Each record keeps at most `MAX_RECEIPTS` receipts. A stored receipt ID that
@@ -97,7 +100,7 @@ accepted the job.
 
 `DispatchPolicy` is candidate configuration, not an approved product default. The ledger holds
 one effective policy per binding. A missing policy, or one with an unknown or missing field, a
-non-boolean `paused`, a limit that is not a positive safe integer, an expiry that is not a strict
+non-boolean `paused`, an invalid `armedAt`, a limit that is not a positive safe integer, an expiry that is not a strict
 UTC timestamp, or an unknown `busy` value, blocks every claim on that binding.
 
 - `maxJobsPerCausalRoot` counts dispatch attempts under the trusted causal root the
@@ -113,10 +116,16 @@ UTC timestamp, or an unknown `busy` value, blocks every claim on that binding.
 - `busy` applies when the bound session already has active work: `wait` holds the job,
   `reject` rejects it, `queue` submits it only if the harness route reports `busy: queue`.
   Otherwise it waits.
-- `version` is the binding's effective policy version, and must equal the release's
-  `policyVersion`. A re-arm of one binding therefore rejects that binding's releases queued
-  under the old version, and leaves other bindings alone. KHA-135 should apply a pause without
-  changing the version.
+- `version` is the binding's effective policy version. As in KHA-120's trust transitions, every
+  revision bumps it, including a pause or a resume.
+- `armedAt` is the version of the newest effective revision that changed the binding's `mode`,
+  `peerParticipantId` or generation. A release is current only when
+  `armedAt <= policyVersion <= version`. A re-arm of one binding therefore rejects that binding's
+  releases queued before it, and leaves other bindings alone. A pause and a resume leave queued
+  releases current: released at v3, paused at v4, resumed at v5, the job dispatches once.
+  A release from a version the connector has not applied yet is also stale. Composition
+  (KHA-135) derives `armedAt` from the KHA-120 revisions the connector has applied. A policy whose
+  `armedAt` is not a safe integer between 0 and `version` blocks the binding.
 
 ## Open gate
 

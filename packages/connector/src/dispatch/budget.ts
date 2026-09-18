@@ -6,14 +6,14 @@ import { decodeWith, utcTimestamp } from '@khala/contracts/delivery/decode';
 import type { HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
 import type { BlockCode, DispatchPolicy, DispatchRecord, DispatchTx } from './types';
 
-const POLICY_KEYS = ['busy', 'expiresAt', 'maxConcurrentJobs', 'maxJobsPerCausalRoot', 'paused', 'version'];
+const POLICY_KEYS = ['armedAt', 'busy', 'expiresAt', 'maxConcurrentJobs', 'maxJobsPerCausalRoot', 'paused', 'version'];
 const BUSY_POLICIES: readonly unknown[] = ['queue', 'wait', 'reject'];
 
 const positive = (value: unknown): boolean => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 
 /**
- * A policy is usable only with exactly the known fields, an explicit pause flag, finite limits and
- * a strict UTC expiry. Anything else, including a missing field, blocks dispatch.
+ * A policy is usable only with exactly the known fields, an explicit pause flag, an arming version
+ * no later than its version, finite limits and a strict UTC expiry. Anything else, including a missing field, blocks dispatch.
  */
 export function usablePolicy(policy: DispatchPolicy | null): policy is DispatchPolicy {
   if (typeof policy !== 'object' || policy === null) return false;
@@ -21,9 +21,15 @@ export function usablePolicy(policy: DispatchPolicy | null): policy is DispatchP
   if (keys.length !== POLICY_KEYS.length || keys.some((key, index) => key !== POLICY_KEYS[index])) return false;
   if (typeof policy.paused !== 'boolean') return false;
   if (!Number.isSafeInteger(policy.version) || policy.version < 0) return false;
+  if (!Number.isSafeInteger(policy.armedAt) || policy.armedAt < 0 || policy.armedAt > policy.version) return false;
   if (!positive(policy.maxJobsPerCausalRoot) || !positive(policy.maxConcurrentJobs)) return false;
   if (policy.expiresAt !== null && !decodeWith(() => utcTimestamp(policy.expiresAt, 'expiresAt')).ok) return false;
   return BUSY_POLICIES.includes(policy.busy);
+}
+
+/** Whether a release's policy version lies within the binding's current arming. */
+export function currentRelease(policy: DispatchPolicy, policyVersion: number): boolean {
+  return policy.armedAt <= policyVersion && policyVersion <= policy.version;
 }
 
 export function expired(policy: DispatchPolicy, now: Date): boolean {
