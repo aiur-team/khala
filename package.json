@@ -10,7 +10,7 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint . && pnpm check:boundaries",
     "check:boundaries": "node scripts/check-boundaries.mjs",
-    "test": "node --test scripts/*.test.mjs && pnpm -r test",
+    "test": "node --test scripts/*.test.mjs && node --test 'infra/**/*.test.ts' && pnpm -r test",
     "test:integration": "playwright test --config tests/integration/playwright.config.ts",
     "build": "pnpm check:boundaries && pnpm -r build"
   },
