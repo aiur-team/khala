@@ -59,8 +59,11 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     } catch {
       receipt = connectorUnknown(job);
     }
-    const stored = await ledger.transact(tx => applyReceipt(tx, receipt));
+    // A receipt naming another release is evidence about nothing we sent.
+    const stored = receipt.releaseId === job.releaseId && await ledger.transact(tx => applyReceipt(tx, receipt));
     if (!stored) await ledger.transact(tx => markUnknown(tx, job.releaseId, attemptId));
+    // A settled submission may have freed a slot or its binding.
+    wake();
   }
 
   async function attempt(releaseId: ReleaseId): Promise<void> {
@@ -130,6 +133,8 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     const result = await ledger.transact((tx): EnqueueResult => {
       const existing = tx.record(job.releaseId);
       if (existing !== null) return sameRelease(existing.job, job) ? 'duplicate' : 'conflict';
+      // One approval releases once; a new release ID cannot re-send it under a fresh causal root.
+      if (tx.releaseFor(job.approval.commandId) !== null) return 'conflict';
       tx.put(queuedRecord(job, tx.nextSeq()));
       return 'queued';
     });
@@ -157,13 +162,14 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       } catch (error) {
         report(error);
       }
-      if (evidence !== null) await ledger.transact(tx => applyReceipt(tx, evidence));
+      if (evidence?.releaseId === id) await ledger.transact(tx => applyReceipt(tx, evidence));
     }
     // Liveness of whoever claimed it is unknown, and so is acceptance. It is never re-queued.
     if (record.state === 'dispatching' && record.attemptId !== null) {
       const { attemptId } = record;
       await ledger.transact(tx => markUnknown(tx, id, attemptId));
     }
+    wake();
   }
 
   async function abandon(releaseId: string): Promise<boolean> {

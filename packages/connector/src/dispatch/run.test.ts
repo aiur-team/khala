@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { faultyLedger, makeRelease, receipt, recordOf, seed, world } from './fakes';
+import { describe, expect, it, vi } from 'vitest';
+import { deferred, faultyLedger, makeRelease, receipt, recordOf, seed, testPolicy, world } from './fakes';
 
 // With a release seeded and no dispatcher awake, one pass makes these transactions in order.
 const QUEUE_READ = 1;
@@ -127,5 +127,52 @@ describe('submission and receipt persistence', () => {
       expect(w.harness.submittedIds()).toEqual(['release-1']);
       expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'accepted' });
     });
+  });
+});
+
+describe('receipt ownership and slot release', () => {
+  it('never lets a receipt for another release move that release', async () => {
+    const w = await world();
+    const dispatcher = w.dispatcher();
+    const first = w.add(makeRelease({ releaseId: 'release-a' }));
+    await dispatcher.enqueue(first.job);
+    await dispatcher.idle();
+    w.harness.onSubmit = async () => receipt(first.job, 'completed');
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-b', bindingId: 'bind-2' })).job);
+    await dispatcher.idle();
+    expect(await recordOf(w.ledger, 'release-a')).toMatchObject({ state: 'accepted' });
+    expect(await recordOf(w.ledger, 'release-b')).toMatchObject({ state: 'outcome_unknown' });
+
+    w.harness.onReconcile = async () => receipt(first.job, 'failed', { errorCode: 'harness_rejected' });
+    await dispatcher.reconcile('release-b');
+    expect(await recordOf(w.ledger, 'release-a')).toMatchObject({ state: 'accepted' });
+  });
+
+  it('starts waiting work when a submission settles and frees the slot', async () => {
+    const w = await world(testPolicy({ maxConcurrentJobs: 1 }));
+    const gate = deferred<void>();
+    w.harness.onSubmit = async job => {
+      await gate.promise;
+      return receipt(job, 'failed', { errorCode: 'harness_rejected' });
+    };
+    const dispatcher = w.dispatcher();
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2' })).job);
+    await vi.waitFor(async () => expect(await recordOf(w.ledger, 'release-2')).toMatchObject({ reason: 'at_capacity' }));
+    gate.resolve();
+    await dispatcher.idle();
+    expect(w.harness.submittedIds()).toEqual(['release-1', 'release-2']);
+  });
+
+  it('refuses a second release of one approval under a fresh causal root', async () => {
+    const w = await world(testPolicy({ maxJobsPerCausalRoot: 1 }));
+    const dispatcher = w.dispatcher();
+    const release = w.add(makeRelease({ releaseId: 'release-1', root: 'cause-1' }));
+    await dispatcher.enqueue(release.job);
+    await dispatcher.idle();
+    const replay = { ...release.job, releaseId: 'release-1b' as never, causalRootId: 'cause-fresh' as never };
+    expect(await dispatcher.enqueue(replay)).toBe('conflict');
+    await dispatcher.idle();
+    expect(w.harness.submittedIds()).toEqual(['release-1']);
   });
 });

@@ -24,6 +24,9 @@ describe('budget and causal accounting', () => {
     const w = await world(testPolicy({ maxJobsPerCausalRoot: 1 }));
     const first = w.dispatcher();
     await first.enqueue(w.add(makeRelease({ releaseId: 'release-1', root: 'cause-1' })).job);
+    await first.idle();
+    expect(w.harness.submittedIds()).toEqual(['release-1']);
+    expect(await w.ledger.transact(tx => tx.causalCount('cause-1' as never))).toBe(1);
     await first.stop();
 
     const restarted = w.dispatcher({ workerId: 'worker-2' });

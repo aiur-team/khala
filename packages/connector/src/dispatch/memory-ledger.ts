@@ -35,6 +35,7 @@ export function createMemoryLedger(): MemoryLedger {
       policy: () => staged.policy,
       binding: bindingId => staged.bindings.get(bindingId) ?? null,
       record: releaseId => staged.records.get(releaseId) ?? null,
+      releaseFor: commandId => records().find(record => record.job.approval.commandId === commandId)?.releaseId ?? null,
       put: record => void staged.records.set(record.releaseId, record),
       queued: () => records().filter(record => record.state === 'queued').map(record => record.releaseId),
       active: () => records().filter(record => ACTIVE_STATES.includes(record.state)),

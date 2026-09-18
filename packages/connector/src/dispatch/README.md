@@ -25,8 +25,8 @@ subscription and harness; KHA-135 binds pause and budget status.
 2. **Claim**, in one ledger transaction: recheck the effective policy, revocation and binding
    generation, check limits, reserve one attempt under the causal root and persist the
    dispatch intent with a stable attempt ID.
-3. Submit the verified bytes once. Persist the returned receipt if it correlates with the
-   release, binding and generation.
+3. Submit the verified bytes once. Persist the returned receipt if it names this release and
+   correlates with its binding and generation. A settled submission starts another pass.
 4. Anything else becomes `outcome_unknown`: a thrown call, an uncorrelated receipt, a
    transport write, or a `failed` caused by `disconnected` or `timeout`.
 
@@ -73,7 +73,8 @@ policy, or a limit that is not a positive safe integer, blocks every claim.
 - `maxJobsPerCausalRoot` counts dispatch attempts under the trusted causal root the
   releaser sets. It is a job-count cap, not a spend or token cap. Nothing in this module
   resets or refunds a reservation, including after a definitive rejection, an unknown
-  outcome or an abandon. Enqueueing the same release ID with another root is a `conflict`.
+  outcome or an abandon. Enqueueing the same release ID with another root, or a second
+  release of an approval that already has one, is a `conflict`.
 - `maxConcurrentJobs` counts `dispatching`, `accepted` and `outcome_unknown` records.
   Accepted work holds its slot until `observe` records `completed`, `failed` or
   `cancelled`. An unknown outcome holds its slot until evidence arrives or it is abandoned.

@@ -86,6 +86,8 @@ export interface DispatchTx {
   policy(): DispatchPolicy | null;
   binding(bindingId: BindingId): BindingState | null;
   record(releaseId: ReleaseId): DispatchRecord | null;
+  /** The release already recorded for an approval, in any state, or null. */
+  releaseFor(commandId: CommandId): ReleaseId | null;
   put(record: DispatchRecord): void;
   /** Queued release IDs in enqueue order. */
   queued(): readonly ReleaseId[];
@@ -125,7 +127,10 @@ export type ClaimResult =
 export type EnqueueResult = 'queued' | 'duplicate' | 'conflict';
 
 export interface Dispatcher {
-  /** Stores a release for dispatch. The same release ID with other content is a conflict. */
+  /**
+   * Stores a release for dispatch. The same release ID with other content, or another release of
+   * an approval that already has one, is a conflict.
+   */
   enqueue(job: UnverifiedReleasedJob): Promise<EnqueueResult>;
   /** Starts a pass over the queue. Repeated wakes coalesce and never reserve twice. */
   wake(): void;
