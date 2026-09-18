@@ -46,7 +46,7 @@ export const FAULT_SPECS: Readonly<Record<Fault, FaultSpec>> = {
     boundary: 'transport.before_write',
     effect: 'throw_disconnect',
     held: false,
-    oracle: 'nothing reaches the model; the attempt reports failed(disconnected), not success',
+    oracle: 'nothing reaches the model and the attempt is never reported as success',
   },
   disconnect_after_write: {
     boundary: 'transport.after_write',

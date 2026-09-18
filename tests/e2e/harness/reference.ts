@@ -9,7 +9,7 @@ import {
   type ApprovalCommand, type ApprovalPort, type ApprovalResult, type DeliveryLimits, type DeliveryReceipt,
   type EventRef, type HarnessCapabilities, type HarnessPort, type OwnerAuthority, type PolicyAck,
   type PolicySetCommand, type ReceiptErrorCode, type ReceiptKind, type ReleasedJob, type SessionBinding,
-  decodeDeliveryReceipt, decodeOperationId, releaseFromApproval, sameApprovalCommandInput, sameEventIdentity,
+  decodeCausalRootId, decodeDeliveryReceipt, decodeOperationId, decodeReleaseId, releaseFromApproval, sameApprovalCommandInput, sameEventIdentity,
   sameSessionBinding,
 } from '@khala/contracts/delivery/index';
 import { InjectedCrash, InjectedDisconnect } from './faults';
@@ -69,6 +69,8 @@ function receipt(
 export type AdapterDefect = 'cross_owner_release' | 'false_consumption';
 
 export interface FakeHarnessAdapter extends HarnessPort {
+  /** The busy session finishes its turn and takes queued releases, in order. */
+  idle(): void;
   modelInputs(): readonly ModelInput[];
   /** Release IDs seen through `notify`; hints carry no content. */
   hints(): readonly string[];
@@ -120,10 +122,9 @@ export function createFakeHarnessAdapter(input: Readonly<{
       if (sha256(payload) !== job.payloadDigest) {
         return receipt(scenario, owner, job, 'failed', 'harness', 'payload_digest_mismatch');
       }
-      if (inputs.some(entry => entry.releaseId === job.releaseId) || queued.has(job.releaseId)) {
-        // The session already has this release; accepting it again would duplicate model input.
-        return receipt(scenario, owner, job, 'failed', 'harness', 'harness_rejected');
-      }
+      // Like a real session, this adapter does not deduplicate: a second submission
+      // of a consumed release reaches the model again. Preventing that is the
+      // connector's job (see the delivery contract), and the oracles must see it.
       scenario.faults.checkpoint('transport.before_write', owner.ownerId, job.releaseId);
       const accept = scenario.faults.checkpoint('harness.accept', owner.ownerId, job.releaseId);
       if (accept === 'session_exit') {
@@ -155,7 +156,15 @@ export function createFakeHarnessAdapter(input: Readonly<{
     async close() {
       queued.clear();
     },
-    modelInputs: () => [...inputs, ...queued.values()].filter(entry => inputs.includes(entry)),
+    idle() {
+      scenario.faults.clear('session_busy', owner.ownerId);
+      for (const entry of queued.values()) {
+        inputs.push(entry);
+        scenario.record('model.input', { ownerId: owner.ownerId, operationId: entry.releaseId });
+      }
+      queued.clear();
+    },
+    modelInputs: () => [...inputs],
     hints: () => [...hints],
   };
 }
@@ -199,7 +208,7 @@ export function createReferenceConnector(input: Readonly<{
   const inbox: { ref: EventRef; payload: Uint8Array; decryptable: boolean }[] = [];
   const ledger = new Map<string, LedgerEntry>();
   const commands = new Map<string, { command: ApprovalCommand; result: ApprovalResult }>();
-  let binding: SessionBinding = owner.binding;
+  const binding: SessionBinding = owner.binding;
   let policyVersion = owner.policyVersion;
   let operationSequence = 0;
 
@@ -231,6 +240,20 @@ export function createReferenceConnector(input: Readonly<{
     // release stays unknown instead of licensing a second submission.
   };
 
+  // Receipts are facts: each is kept once by ID, whatever order they arrive in.
+  const ingest = (receipts: readonly DeliveryReceipt[]): void => {
+    const ordered = [...receipts];
+    const first = ordered[0];
+    if (first && scenario.faults.checkpoint('transport.deliver_receipts', owner.ownerId, first.releaseId) === 'reordered_receipt') {
+      ordered.reverse();
+    }
+    for (const entry of ordered) {
+      const target = ledger.get(entry.releaseId);
+      if (!target || entry.bindingId !== binding.bindingId || entry.generation !== binding.generation) continue;
+      if (!target.receipts.some(known => known.receiptId === entry.receiptId)) target.receipts.push(entry);
+    }
+  };
+
   const approve = async (authority: OwnerAuthority, command: ApprovalCommand): Promise<ApprovalResult> => {
     if (defect !== 'cross_owner_release' && authority.ownerId !== owner.ownerId) return { ok: false, code: 'forbidden' };
     if (command.bindingId !== binding.bindingId) return { ok: false, code: 'forbidden' };
@@ -255,10 +278,10 @@ export function createReferenceConnector(input: Readonly<{
       binding,
       policyVersion,
       release: {
-        releaseId: releaseId as ReleasedJob['releaseId'],
+        releaseId: unwrap(decodeReleaseId(releaseId), 'releaseId'),
         payloadRef: `ledger-${releaseId}`,
         payloadDigest: sha256(payload),
-        causalRootId: selected[0]!.ref.eventId as unknown as ReleasedJob['causalRootId'],
+        causalRootId: unwrap(decodeCausalRootId(selected[0]!.ref.eventId), 'causalRootId'),
       },
     });
     if (!released.ok) return { ok: false, code: released.code === 'stale_policy' ? 'stale_policy' : 'stale_content' };
@@ -319,22 +342,17 @@ export function createReferenceConnector(input: Readonly<{
     },
     async restart() {
       for (const entry of ledger.values()) {
-        if (entry.state !== 'submitted') await reconcile(entry);
+        if (entry.state !== 'submitted') {
+          await reconcile(entry);
+          continue;
+        }
+        // A settled release's receipts are re-read from the transport after restart.
+        const current = await adapter.reconcile(entry.job);
+        ingest([...entry.receipts, ...(current ? [current] : [])]);
       }
     },
     releaseFacts: releaseId => [...new Set((ledger.get(releaseId)?.receipts ?? []).map(entry => entry.kind))],
-    ingestReceipts(receipts) {
-      const ordered = [...receipts];
-      const first = ordered[0];
-      if (first && scenario.faults.checkpoint('transport.deliver_receipts', owner.ownerId, first.releaseId) === 'reordered_receipt') {
-        ordered.reverse();
-      }
-      for (const entry of ordered) {
-        const target = ledger.get(entry.releaseId);
-        if (!target || entry.bindingId !== binding.bindingId || entry.generation !== binding.generation) continue;
-        target.receipts.push(entry);
-      }
-    },
+    ingestReceipts: ingest,
     policyVersion: () => policyVersion,
   };
 }
