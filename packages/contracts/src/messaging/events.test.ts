@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import intro from '../../fixtures/messaging/exact-intro.json';
 import { type ContentLimits, decodeContentLimits } from './decode';
 import {
-  type EventRef, type MessageContent, UNAVAILABLE_REASONS, decodeEventRef, decodeTimelineItem, decodeUnavailableContent,
-  digestMessageContent, encodeMessageContent, sameEventRef,
+  type EventRef, type MessageContent, type UnavailableEventRef, UNAVAILABLE_REASONS, decodeEventRef, decodeTimelineItem,
+  decodeUnavailableContent, decodeUnavailableEventRef, digestMessageContent, encodeMessageContent, sameEventRef,
 } from './events';
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
@@ -140,12 +140,12 @@ describe('unavailable content', () => {
       .toEqual({ ok: false, error: { path: 'reason', code: 'invalid_value' } });
   });
 
-  it('keeps the same EventRef identity and ordering as a decryptable item', async () => {
+  it('keeps the same identity and ordering fields as a decryptable item, minus the digest', async () => {
     const decoded = await decodeTimelineItem(intro.timelineItemUnavailable, limits);
     expect(decoded).toEqual({ ok: true, value: intro.timelineItemUnavailable });
     if (decoded.ok) {
       expect(decoded.value.ref.roomId).toBe(intro.timelineItem.ref.roomId);
-      expect(decodeEventRef(decoded.value.ref)).toEqual({ ok: true, value: decoded.value.ref });
+      expect(decodeUnavailableEventRef(decoded.value.ref)).toEqual({ ok: true, value: decoded.value.ref });
     }
   });
 
@@ -156,5 +156,16 @@ describe('unavailable content', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('decodes the unavailable reference unchanged, with no contentDigest field', () => {
+    expect(decodeUnavailableEventRef(intro.timelineItemUnavailable.ref)).toEqual({ ok: true, value: intro.timelineItemUnavailable.ref });
+    expect(intro.timelineItemUnavailable.ref).not.toHaveProperty('contentDigest');
+  });
+
+  it('is a compile-time guarantee, not just a runtime one, that an unavailable reference cannot approve an event', () => {
+    const unavailableRef = intro.timelineItemUnavailable.ref as UnavailableEventRef;
+    // @ts-expect-error UnavailableEventRef has no contentDigest, so it cannot stand in for an EventRef.
+    expect(sameEventRef(unavailableRef, ref)).toBe(false);
   });
 });

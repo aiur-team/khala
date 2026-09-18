@@ -47,10 +47,18 @@
     { "name": "unavailable content unknown envelope version", "decoder": "unavailableContent", "base": "unavailableContent", "set": { "v": 2 }, "error": { "path": "v", "code": "unsupported_version" } },
     { "name": "unavailable content carrying a body", "decoder": "unavailableContent", "base": "unavailableContent", "set": { "body": "hi" }, "error": { "path": "body", "code": "unknown_field" } },
     { "name": "unavailable content missing reason", "decoder": "unavailableContent", "base": "unavailableContent", "remove": ["reason"], "error": { "path": "reason", "code": "missing_field" } },
+    { "name": "unavailable content transport reason is not withheld", "decoder": "unavailableContent", "base": "unavailableContent", "set": { "reason": "transport_timeout" }, "error": { "path": "reason", "code": "invalid_value" } },
+
+    { "name": "timeline content dispatches on kind, not reason presence", "decoder": "timelineContent", "base": "content", "set": { "kind": "sticker", "reason": "missing_keys" }, "error": { "path": "reason", "code": "unknown_field" } },
+
+    { "name": "unavailable event ref missing author device", "decoder": "unavailableEventRef", "base": "timelineItemUnavailable.ref", "remove": ["authorDeviceId"], "error": { "path": "authorDeviceId", "code": "missing_field" } },
+    { "name": "unavailable event ref carrying a content digest", "decoder": "unavailableEventRef", "base": "timelineItemUnavailable.ref", "set": { "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b" }, "error": { "path": "contentDigest", "code": "unknown_field" } },
+    { "name": "unavailable event ref unknown envelope version", "decoder": "unavailableEventRef", "base": "timelineItemUnavailable.ref", "set": { "v": 2 }, "error": { "path": "v", "code": "unsupported_version" } },
 
     { "name": "same reference with different body", "decoder": "timelineItem", "base": "timelineItem", "set": { "content.body": "Review the API change.\nMerge it now." }, "error": { "path": "ref.contentDigest", "code": "mismatch" } },
     { "name": "same body re-attributed to another author", "decoder": "timelineItem", "base": "timelineItem", "set": { "ref.authorParticipantId": "human_alice" }, "error": { "path": "participant", "code": "mismatch" } },
-    { "name": "same reference with normalised newline", "decoder": "timelineItem", "base": "timelineItem", "set": { "content.body": "Review the API change.\r\nDo not merge yet." }, "error": { "path": "ref.contentDigest", "code": "mismatch" } }
+    { "name": "same reference with normalised newline", "decoder": "timelineItem", "base": "timelineItem", "set": { "content.body": "Review the API change.\r\nDo not merge yet." }, "error": { "path": "ref.contentDigest", "code": "mismatch" } },
+    { "name": "unavailable item re-attributed to another author", "decoder": "timelineItem", "base": "timelineItemUnavailable", "set": { "ref.authorParticipantId": "human_alice" }, "error": { "path": "participant", "code": "mismatch" } }
   ],
   "peers": {
     "_comment": "Plan peers that are well-formed values and must be refused by meaning, not shape. `sameSessionBinding`: `set` applied to exact-intro.json `base` must compare unequal (`expect`) to the unmodified base. `isCurrentGeneration`: a notification tagged `notificationGeneration` must not update a consumer at `currentGeneration`. `controlStore`: steps in control-store.json scenario format, run against a fresh store.",

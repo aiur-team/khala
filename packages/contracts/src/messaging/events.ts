@@ -2,7 +2,7 @@
 // SDK encryption, rendering and transport formats stay outside this contract.
 
 import {
-  type ContentLimits, type Decoded, decodeWith, fail, identifier, literal, nullable, object, text,
+  type ContentLimits, type Decoded, type Reader, decodeWith, fail, identifier, literal, nullable, object, text,
   utcTimestamp, version,
 } from './decode';
 import { type DeviceId, type EventId, type ParticipantId, type RoomId, readId } from './ids';
@@ -27,11 +27,15 @@ export type MessageContent = Readonly<{ v: 1; kind: 'text'; body: string }>;
 
 /**
  * Finite public reasons a timeline event's content cannot be shown. Never a free-text
- * SDK error: `missing_keys` (no room key reached this device), `withheld_unverified`
- * (see the KHA-142 evidence categories), `decrypt_failed`, or `unsupported` (an
- * encoding this client does not understand).
+ * SDK error. Maps from matrix-js-sdk `DecryptionFailureCode` (see the KHA-142 evidence
+ * categories): `MEGOLM_UNKNOWN_INBOUND_SESSION_ID` is `missing_keys` (no room key
+ * reached this device); `MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE` is
+ * `withheld_unverified`; plain `MEGOLM_KEY_WITHHELD` is `withheld`; any other
+ * decryption failure is `decrypt_failed`; an encoding this client does not understand
+ * is `unsupported`. A transport error or timeout is never mapped to a reason here: it
+ * is a page or snapshot failure outcome, never a withheld placeholder.
  */
-export const UNAVAILABLE_REASONS = ['missing_keys', 'withheld_unverified', 'decrypt_failed', 'unsupported'] as const;
+export const UNAVAILABLE_REASONS = ['missing_keys', 'withheld_unverified', 'withheld', 'decrypt_failed', 'unsupported'] as const;
 
 export type UnavailableReason = (typeof UNAVAILABLE_REASONS)[number];
 
@@ -42,18 +46,44 @@ export type UnavailableContent = Readonly<{ v: 1; kind: 'unavailable'; reason: U
 export type TimelineContent = MessageContent | UnavailableContent;
 
 /**
- * A timeline entry. Only endpoint ports expose these; control APIs carry `EventRef`
- * metadata alone. `content` is `unavailable` when the plaintext cannot be shown; the
- * `ref` identity and ordering are unaffected.
+ * Reference to a timeline event whose plaintext cannot be shown. Carries the same
+ * identity and ordering fields as `EventRef`, but no `contentDigest`: there is nothing
+ * recovered to hash. Missing that required field makes it structurally unassignable to
+ * `EventRef`, so it can never reach `sameEventRef` or any approval or release API —
+ * approvals only ever apply to decrypted items. A later decrypted item can carry the
+ * same `eventId`; a store keys on `eventId` and lets that item replace the placeholder.
  */
-export type TimelineItem = Readonly<{
-  ref: EventRef;
-  content: TimelineContent;
-  participant: ParticipantView;
-  clientTxnId: string | null;
-  /** UTC RFC 3339, local receipt time; not an ordering authority. */
-  receivedAt: string;
+export type UnavailableEventRef = Readonly<{
+  v: 1;
+  roomId: RoomId;
+  eventId: EventId;
+  authorParticipantId: ParticipantId;
+  authorDeviceId: DeviceId;
 }>;
+
+/**
+ * A timeline entry. Only endpoint ports expose these; control APIs carry `EventRef`
+ * metadata alone. `content` is `unavailable` when the plaintext cannot be shown, and
+ * then `ref` is an `UnavailableEventRef` rather than an `EventRef`; ordering is
+ * unaffected either way.
+ */
+export type TimelineItem =
+  | Readonly<{
+      ref: EventRef;
+      content: MessageContent;
+      participant: ParticipantView;
+      clientTxnId: string | null;
+      /** UTC RFC 3339, local receipt time; not an ordering authority. */
+      receivedAt: string;
+    }>
+  | Readonly<{
+      ref: UnavailableEventRef;
+      content: UnavailableContent;
+      participant: ParticipantView;
+      clientTxnId: string | null;
+      /** UTC RFC 3339, local receipt time; not an ordering authority. */
+      receivedAt: string;
+    }>;
 
 /** Domain separator of the version 1 content encoding. */
 export const MESSAGE_ENCODING_V1 = 'khala.message.v1';
@@ -112,28 +142,41 @@ export async function digestMessageContent(content: MessageContent): Promise<Dig
   return { ok: true, digest: `sha256:${Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('')}` };
 }
 
+/** The five identity and ordering fields every reference shape shares, `EventRef` and `UnavailableEventRef` alike. */
+function readEventIdentity(r: Reader): Omit<EventRef, 'contentDigest'> {
+  return {
+    v: version(r.field('v'), r.at('v')),
+    roomId: readId<'RoomId'>(r.field('roomId'), r.at('roomId')),
+    eventId: readId<'EventId'>(r.field('eventId'), r.at('eventId')),
+    authorParticipantId: readId<'ParticipantId'>(r.field('authorParticipantId'), r.at('authorParticipantId')),
+    authorDeviceId: readId<'DeviceId'>(r.field('authorDeviceId'), r.at('authorDeviceId')),
+  };
+}
+
 export function decodeEventRef(input: unknown): Decoded<EventRef> {
   return decodeWith(() => readEventRef(input, ''));
 }
 
 export function readEventRef(input: unknown, path: string): EventRef {
   const r = object(input, path, ['v', 'roomId', 'eventId', 'authorParticipantId', 'authorDeviceId', 'contentDigest']);
-  const ref: EventRef = {
-    v: version(r.field('v'), r.at('v')),
-    roomId: readId<'RoomId'>(r.field('roomId'), r.at('roomId')),
-    eventId: readId<'EventId'>(r.field('eventId'), r.at('eventId')),
-    authorParticipantId: readId<'ParticipantId'>(r.field('authorParticipantId'), r.at('authorParticipantId')),
-    authorDeviceId: readId<'DeviceId'>(r.field('authorDeviceId'), r.at('authorDeviceId')),
-    contentDigest: identifier(r.field('contentDigest'), r.at('contentDigest')),
-  };
+  const ref: EventRef = { ...readEventIdentity(r), contentDigest: identifier(r.field('contentDigest'), r.at('contentDigest')) };
   if (!isContentDigest(ref.contentDigest)) fail(r.at('contentDigest'), 'invalid_value');
   return ref;
 }
 
-/** Exact equality of every reference field. */
+/** Exact equality of every reference field. An `UnavailableEventRef` cannot reach here: it has no `contentDigest`. */
 export function sameEventRef(a: EventRef, b: EventRef): boolean {
   return a.v === b.v && a.roomId === b.roomId && a.eventId === b.eventId && a.authorParticipantId === b.authorParticipantId
     && a.authorDeviceId === b.authorDeviceId && a.contentDigest === b.contentDigest;
+}
+
+export function decodeUnavailableEventRef(input: unknown): Decoded<UnavailableEventRef> {
+  return decodeWith(() => readUnavailableEventRef(input, ''));
+}
+
+export function readUnavailableEventRef(input: unknown, path: string): UnavailableEventRef {
+  const r = object(input, path, ['v', 'roomId', 'eventId', 'authorParticipantId', 'authorDeviceId']);
+  return readEventIdentity(r);
 }
 
 export function decodeMessageContent(input: unknown, limits: ContentLimits): Decoded<MessageContent> {
@@ -193,22 +236,33 @@ export async function decodeTimelineItem(input: unknown, limits: ContentLimits):
  * `unavailable` item carries no recoverable plaintext, so there is nothing to digest.
  */
 export async function verifyContentDigest(item: TimelineItem, path: string): Promise<Decoded<never> | null> {
-  if (item.content.kind === 'unavailable') return null;
+  if (isUnavailableItem(item)) return null;
   const result = await digestMessageContent(item.content);
   if (!result.ok) return { ok: false, error: { path, code: result.reason === 'crypto_unavailable' ? 'digest_unavailable' : 'invalid_value' } };
   return result.digest === item.ref.contentDigest ? null : { ok: false, error: { path, code: 'mismatch' } };
 }
 
-/** Structural read only; callers must still verify the digest (see `decodeTimelineItem`). */
+/** Narrows the discriminated `TimelineItem` union on `content.kind` for callers that only hold the whole item. */
+function isUnavailableItem(item: TimelineItem): item is Extract<TimelineItem, { content: UnavailableContent }> {
+  return item.content.kind === 'unavailable';
+}
+
+/**
+ * Structural read only; callers must still verify the digest (see `decodeTimelineItem`).
+ * `content.kind` decides the reference reader: an `unavailable` item gets an
+ * `UnavailableEventRef` (no `contentDigest`), never an `EventRef`.
+ */
 export function readTimelineItem(input: unknown, path: string, limits: ContentLimits): TimelineItem {
   const r = object(input, path, ['ref', 'content', 'participant', 'clientTxnId', 'receivedAt']);
-  const item: TimelineItem = {
-    ref: readEventRef(r.field('ref'), r.at('ref')),
-    content: readTimelineContent(r.field('content'), r.at('content'), limits),
-    participant: readParticipantView(r.field('participant'), r.at('participant'), limits),
+  const content = readTimelineContent(r.field('content'), r.at('content'), limits);
+  const ref = content.kind === 'unavailable'
+    ? readUnavailableEventRef(r.field('ref'), r.at('ref'))
+    : readEventRef(r.field('ref'), r.at('ref'));
+  const participant = readParticipantView(r.field('participant'), r.at('participant'), limits);
+  if (participant.participantId !== ref.authorParticipantId) fail(r.at('participant'), 'mismatch');
+  return {
+    ref, content, participant,
     clientTxnId: nullable(r.field('clientTxnId'), value => identifier(value, r.at('clientTxnId'))),
     receivedAt: utcTimestamp(r.field('receivedAt'), r.at('receivedAt')),
-  };
-  if (item.participant.participantId !== item.ref.authorParticipantId) fail(r.at('participant'), 'mismatch');
-  return item;
+  } as TimelineItem;
 }

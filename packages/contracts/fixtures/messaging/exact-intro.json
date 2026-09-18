@@ -166,8 +166,7 @@
       "roomId": "room_demo",
       "eventId": "event_intro_3",
       "authorParticipantId": "agent_alice",
-      "authorDeviceId": "device_a1",
-      "contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b"
+      "authorDeviceId": "device_a1"
     },
     "content": {
       "v": 1,

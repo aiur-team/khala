@@ -19,9 +19,9 @@ export {
 } from './identity';
 export {
   type DigestResult, type EventRef, type MessageContent, type TimelineContent, type TimelineItem,
-  type UnavailableContent, type UnavailableReason, MESSAGE_ENCODING_V1, UNAVAILABLE_REASONS,
+  type UnavailableContent, type UnavailableEventRef, type UnavailableReason, MESSAGE_ENCODING_V1, UNAVAILABLE_REASONS,
   decodeEventRef, decodeMessageContent, decodeTimelineContent, decodeTimelineItem, decodeUnavailableContent,
-  digestMessageContent, encodeMessageContent, isContentDigest, sameEventRef, verifyContentDigest,
+  decodeUnavailableEventRef, digestMessageContent, encodeMessageContent, isContentDigest, sameEventRef, verifyContentDigest,
 } from './events';
 export {
   type IntroBatch, type RoomMembership, type RoomPort, type RoomRejection, type RoomSnapshot, type RoomSummary,

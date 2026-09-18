@@ -7,7 +7,10 @@ import { decodeAdmission, decodeInviteState, decodeShareGrant } from './admissio
 import { decodeControlRecord } from './control-store';
 import { type ContentLimits, type Decoded, decodeContentLimits } from './decode';
 import { decodeDeviceView } from './devices';
-import { decodeEventRef, decodeMessageContent, decodeTimelineItem, decodeUnavailableContent } from './events';
+import {
+  decodeEventRef, decodeMessageContent, decodeTimelineContent, decodeTimelineItem, decodeUnavailableContent,
+  decodeUnavailableEventRef,
+} from './events';
 import { type SessionBinding, decodeAuthPrincipal, decodeParticipantView, decodeSessionBinding, sameSessionBinding } from './identity';
 import * as messaging from './index';
 import { decodeRecoveryCapabilities, decodeRecoveryStatus } from './recovery';
@@ -27,6 +30,8 @@ const decoders: Record<string, (input: unknown) => Decoded<unknown> | Promise<De
   eventRef: decodeEventRef,
   content: input => decodeMessageContent(input, limits),
   unavailableContent: decodeUnavailableContent,
+  timelineContent: input => decodeTimelineContent(input, limits),
+  unavailableEventRef: decodeUnavailableEventRef,
   timelineItem: input => decodeTimelineItem(input, limits),
   roomSummary: input => decodeRoomSummary(input, limits),
   sendState: decodeSendState,
@@ -65,6 +70,7 @@ describe('exact intro fixture', () => {
     ['principal', 'principal'], ['participant', 'participants.human'], ['participant', 'participants.agent'],
     ['binding', 'binding'], ['eventRef', 'eventRef'], ['content', 'content'], ['timelineItem', 'timelineItem'],
     ['unavailableContent', 'unavailableContent'], ['timelineItem', 'timelineItemUnavailable'],
+    ['unavailableEventRef', 'timelineItemUnavailable.ref'],
   ])('%s decodes %s and round-trips byte-stable JSON', async (decoder, path) => {
     const input = lookup(path);
     const decoded = await decoders[decoder]!(input);
@@ -99,6 +105,25 @@ describe('exact intro fixture', () => {
     const room = { roomId: 'room_other', title: null, membership: 'joined', revision: 'rev_1' };
     expect(await decodeRoomSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits))
       .toEqual({ ok: false, error: { path: 'items[0].ref.roomId', code: 'mismatch' } });
+  });
+
+  it('applies the page dedup and snapshot room check to unavailable items too', async () => {
+    expect(await decodeTimelinePage({ items: [intro.timelineItemUnavailable, intro.timelineItemUnavailable], nextCursor: null, snapshotRevision: 's1' }, limits))
+      .toEqual({ ok: false, error: { path: 'items[1].ref.eventId', code: 'duplicate' } });
+    const room = { roomId: 'room_other', title: null, membership: 'joined', revision: 'rev_1' };
+    expect(await decodeRoomSnapshot({ room, items: [intro.timelineItemUnavailable], snapshotRevision: 's1', generation: 1 }, limits))
+      .toEqual({ ok: false, error: { path: 'items[0].ref.roomId', code: 'mismatch' } });
+  });
+
+  it('lets a later decrypted item carry the same eventId as an earlier placeholder, ready for a store to replace it', async () => {
+    const decrypted = mutate(intro.timelineItem, { 'ref.eventId': intro.timelineItemUnavailable.ref.eventId });
+    const placeholder = await decodeTimelineItem(intro.timelineItemUnavailable, limits);
+    const replacement = await decodeTimelineItem(decrypted, limits);
+    expect(placeholder.ok && replacement.ok).toBe(true);
+    if (placeholder.ok && replacement.ok) {
+      expect(placeholder.value.ref.eventId).toBe(replacement.value.ref.eventId);
+      expect(replacement.value.content.kind).toBe('text');
+    }
   });
 
   it('rejects page and snapshot items whose reference does not digest their body', async () => {
