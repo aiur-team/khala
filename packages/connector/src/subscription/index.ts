@@ -1,0 +1,361 @@
+// Live encrypted subscription with durable catch-up for one owner connector.
+//
+// Each connection generation rechecks authority, attaches live reception, then
+// replays from the committed cursor. A page's cursor is committed only after
+// every event in it is durably handled, so a crash or reconnect replays into
+// deduplication instead of loss. Live hints only wake a durable read; they carry
+// no content and coalesce into one pending wake. Nothing here notifies a model:
+// released work is dispatched elsewhere, and state exposes readiness only.
+
+import type { SessionBinding } from '@khala/contracts/delivery/index';
+import type { CallOptions, Disposer } from '@khala/contracts/messaging/index';
+import type { SourceRead, SubscriptionSource } from './adapter';
+import { type EventIngestionPort, type ProvenancePort, ingestPage } from './ingest';
+import {
+  type BlockedCode, type RetryPolicy, type SubscriptionState, DEFAULT_RETRY, Generation, TERMINAL_BLOCKS, backoffDelay,
+} from './state';
+
+export type { AuthorityCheck, SourceEvent, SourceListener, SourceRead, SubscriptionSource } from './adapter';
+export type { AcceptResult, EventIngestionPort, ProvenancePort } from './ingest';
+export type { BlockedCode, RetryPolicy, SubscriptionState } from './state';
+export { DEFAULT_RETRY, backoffDelay } from './state';
+
+export type CursorLoad = Readonly<{ kind: 'loaded'; cursor: string | null; revision: number }> | Readonly<{ kind: 'failed' }>;
+
+export type CursorCommit =
+  | Readonly<{ kind: 'committed'; revision: number }>
+  | Readonly<{ kind: 'conflict' }>
+  | Readonly<{ kind: 'failed' }>;
+
+/**
+ * Durable per-stream application cursor (KHA-115). Commit is compare-and-set on `expectedRevision`.
+ * Like every port here, calls should settle promptly once `options.signal` aborts, so `stop()` cannot hang.
+ */
+export interface CursorStore {
+  load(streamId: string, options?: CallOptions): Promise<CursorLoad>;
+  commit(
+    input: Readonly<{ streamId: string; expectedRevision: number; opaqueCursor: string }>,
+    options?: CallOptions,
+  ): Promise<CursorCommit>;
+}
+
+/** Exclusive single-writer lock on the connector device state (KHA-115). */
+export interface DeviceLock {
+  acquire(options?: CallOptions): Promise<Readonly<{ kind: 'held'; release: () => Promise<void> }> | Readonly<{ kind: 'busy' }>>;
+}
+
+/** Injected time source so retry and cancellation are testable without real delays. */
+export type Scheduler = Readonly<{
+  /** Epoch milliseconds. */
+  now: () => number;
+  setTimer: (delayMs: number, run: () => void) => Disposer;
+}>;
+
+export type SubscriptionInput = Readonly<{
+  binding: SessionBinding;
+  /** Stream identity under which the cursor is stored; surfaced in readiness states. */
+  streamId: string;
+  pageSize?: number;
+  retry?: RetryPolicy;
+}>;
+
+export type SubscriptionPorts = Readonly<{
+  source: SubscriptionSource;
+  cursors: CursorStore;
+  ingestion: EventIngestionPort;
+  provenance: ProvenancePort;
+  lock: DeviceLock;
+  scheduler: Scheduler;
+  /** Uniform in `[0, 1)`; jitter for backoff. */
+  random: () => number;
+  /** Readiness observer for runtime status. Receives states only, never event content. */
+  onState?: (state: SubscriptionState) => void;
+}>;
+
+export interface SubscriptionHandle {
+  state(): SubscriptionState;
+  /** Cancels reception, retries and in-flight work, then releases the device lock. Idempotent. */
+  stop(): Promise<void>;
+}
+
+export const DEFAULT_PAGE_SIZE = 50;
+/** Upper bound on one page, so a caller's `pageSize` cannot unbound in-flight decryption and storage work. */
+export const MAX_PAGE_SIZE = 500;
+
+function pageLimit(pageSize: number | undefined): number {
+  if (pageSize === undefined || !Number.isFinite(pageSize)) return DEFAULT_PAGE_SIZE;
+  return Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(pageSize)));
+}
+
+export async function startSubscription(input: SubscriptionInput, ports: SubscriptionPorts): Promise<SubscriptionHandle> {
+  const subscription = new Subscription(input, ports);
+  subscription.begin();
+  return { state: () => subscription.current, stop: () => subscription.stop() };
+}
+
+type Committed = Readonly<{ cursor: string | null; revision: number }>;
+
+class Subscription {
+  current: SubscriptionState;
+  readonly #input: SubscriptionInput;
+  readonly #ports: SubscriptionPorts;
+  readonly #generation = new Generation();
+  #lock: Readonly<{ release: () => Promise<void> }> | null = null;
+  #committed: Committed | null = null;
+  #attempt = 0;
+  #stopped = false;
+  #running: Promise<void> = Promise.resolve();
+  #listener: Disposer | null = null;
+  #timer: Disposer | null = null;
+  #abort: AbortController | null = null;
+  #wake: { pending: boolean; resolve: (() => void) | null } = { pending: false, resolve: null };
+  #hintsWake = true;
+
+  constructor(input: SubscriptionInput, ports: SubscriptionPorts) {
+    this.#input = input;
+    this.#ports = ports;
+    this.current = { kind: 'starting', streamId: input.streamId };
+  }
+
+  /** Starts a new connection generation, superseding any earlier one. */
+  begin(): void {
+    if (this.#stopped) return;
+    this.#teardown();
+    const generation = this.#generation.next();
+    const abort = new AbortController();
+    this.#abort = abort;
+    // Single flight: a superseded connection finishes (its ports honour the abort
+    // signal) before the next one touches the source or the store.
+    this.#running = this.#running.then(() => this.#connect(generation, abort.signal)).catch(() => {
+      if (this.#generation.isCurrent(generation)) this.#reconnectLater();
+    });
+  }
+
+  async stop(): Promise<void> {
+    if (!this.#stopped) {
+      this.#stopped = true;
+      this.#generation.next();
+      this.#teardown();
+      this.#setState({ kind: 'offline', retryAt: null });
+    }
+    // Failures of a superseded connection are already reflected in state.
+    await this.#running.catch(() => undefined);
+    const lock = this.#lock;
+    this.#lock = null;
+    if (lock) await lock.release().catch(() => undefined);
+  }
+
+  async #connect(generation: number, signal: AbortSignal): Promise<void> {
+    const live = () => this.#generation.isCurrent(generation);
+    if (!live()) return;
+
+    if (!this.#lock) {
+      const lock = await this.#ports.lock.acquire({ signal }).catch(() => ({ kind: 'busy' as const }));
+      if (!live()) {
+        if (lock.kind === 'held') await lock.release().catch(() => undefined);
+        return;
+      }
+      if (lock.kind === 'busy') return this.#blockThenRetry('storage_failed');
+      this.#lock = lock;
+    }
+
+    if (!this.#committed) {
+      const loaded = await this.#ports.cursors.load(this.#input.streamId, { signal }).catch((): CursorLoad => ({ kind: 'failed' }));
+      if (!live()) return;
+      if (loaded.kind === 'failed') return this.#blockThenRetry('storage_failed');
+      this.#committed = { cursor: loaded.cursor, revision: loaded.revision };
+    }
+
+    // A throw proves nothing: fail closed and retry, never authorize.
+    const authority = await this.#ports.source.authorize({ signal }).catch(() => 'unavailable' as const);
+    if (!live()) return;
+    if (authority === 'revoked') return this.#block('authority_lost');
+    // Expired credentials are refreshed by the adapter on the next authorize, not treated as revocation.
+    if (authority !== 'ok') return this.#reconnectLater();
+
+    // Subscribe first, then replay: anything arriving during catch-up leaves a wake behind.
+    const dispose = this.#ports.source.listen({
+      hint: () => {
+        if (live() && this.#hintsWake) this.#signalWake();
+      },
+      lost: () => {
+        if (live()) this.#reconnectLater();
+      },
+    });
+    // A connection lost while attaching has already been superseded.
+    if (!live()) return dispose();
+    this.#listener = dispose;
+    if (this.current.kind !== 'live') this.#setState({ kind: 'catching_up', streamId: this.#input.streamId });
+    await this.#pump(generation, signal);
+  }
+
+  /** Reads and ingests pages until caught up, then waits for a wake. Exits when the generation ends. */
+  async #pump(generation: number, signal: AbortSignal): Promise<void> {
+    const live = () => this.#generation.isCurrent(generation);
+    while (live()) {
+      this.#wake.pending = false;
+      const committed = this.#committed!;
+      const read = await this.#ports.source
+        .read({ cursor: committed.cursor, limit: pageLimit(this.#input.pageSize) }, { signal })
+        .catch((): SourceRead => ({ kind: 'unavailable' }));
+      if (!live()) return;
+
+      if (read.kind === 'unavailable') return this.#reconnectLater();
+      if (read.kind === 'gap') return this.#block('replay_gap');
+      if (read.kind === 'rejected') return this.#block(read.code);
+
+      const outcome = await ingestPage({
+        binding: this.#input.binding,
+        ingestion: this.#ports.ingestion,
+        provenance: this.#ports.provenance,
+        isCurrent: live,
+        signal,
+      }, read.events);
+      if (outcome.kind === 'cancelled' || !live()) return;
+      if (outcome.kind === 'retry') {
+        if (!(await this.#retryInPlace(generation, null))) return;
+        continue;
+      }
+      if (outcome.kind === 'blocked') {
+        if (TERMINAL_BLOCKS.has(outcome.code)) return this.#block(outcome.code);
+        // A hint (for example arriving room keys) or the backoff timer retries from the same cursor.
+        if (!(await this.#retryInPlace(generation, outcome.code))) return;
+        continue;
+      }
+
+      // A source that is behind but returned nothing new would otherwise be re-read in a tight loop.
+      if (read.events.length === 0 && !read.caughtUp && read.nextCursor === committed.cursor) {
+        if (!(await this.#retryInPlace(generation, null))) return;
+        continue;
+      }
+
+      if (read.nextCursor !== committed.cursor) {
+        const commit = await this.#ports.cursors
+          .commit(
+            { streamId: this.#input.streamId, expectedRevision: committed.revision, opaqueCursor: read.nextCursor },
+            { signal },
+          )
+          .catch((): CursorCommit => ({ kind: 'failed' }));
+        // Connections run one at a time, so a commit that landed after supersession is still the durable cursor.
+        if (commit.kind === 'committed') this.#committed = { cursor: read.nextCursor, revision: commit.revision };
+        if (!live()) return;
+        if (commit.kind !== 'committed') {
+          // Never advance in-memory authority optimistically: reload the durable cursor on retry.
+          this.#committed = null;
+          return this.#blockThenRetry('storage_failed');
+        }
+      }
+
+      this.#attempt = 0;
+      if (!read.caughtUp) {
+        if (this.current.kind !== 'live') this.#setState({ kind: 'catching_up', streamId: this.#input.streamId });
+        continue;
+      }
+      this.#setState({ kind: 'live', streamId: this.#input.streamId });
+      if (!(await this.#waitForWake(generation))) return;
+    }
+  }
+
+  /**
+   * Holds the cursor, advertises why, and waits for a hint or the backoff timer
+   * within the same connection. Returns false when the generation ended. Only
+   * `missing_keys` lets a hint (such as arriving room keys) cut the wait short;
+   * other retries keep their backoff however busy the room is. A hint ignored
+   * here loses nothing: the retry reads the durable source anyway.
+   */
+  async #retryInPlace(generation: number, code: BlockedCode | null): Promise<boolean> {
+    const delay = this.#nextDelay();
+    this.#setState(code ? { kind: 'blocked', code } : { kind: 'offline', retryAt: this.#retryAt(delay) });
+    const timer = this.#ports.scheduler.setTimer(delay, () => this.#signalWake());
+    this.#timer = timer;
+    this.#hintsWake = code === 'missing_keys';
+    const woke = await this.#waitForWake(generation);
+    this.#hintsWake = true;
+    // Clear only this wake timer: a connection lost while waiting has installed its reconnect timer.
+    timer();
+    if (this.#timer === timer) this.#timer = null;
+    return woke;
+  }
+
+  #waitForWake(generation: number): Promise<boolean> {
+    if (!this.#generation.isCurrent(generation)) return Promise.resolve(false);
+    if (this.#wake.pending) return Promise.resolve(true);
+    return new Promise(resolve => {
+      this.#wake.resolve = () => resolve(this.#generation.isCurrent(generation));
+    });
+  }
+
+  #signalWake(): void {
+    this.#wake.pending = true;
+    const resolve = this.#wake.resolve;
+    this.#wake.resolve = null;
+    resolve?.();
+  }
+
+  /** Ends this connection and schedules a fresh one, which rechecks authority. */
+  #reconnectLater(): void {
+    if (this.#stopped) return;
+    this.#generation.next();
+    this.#teardown();
+    const delay = this.#nextDelay();
+    this.#setState({ kind: 'offline', retryAt: this.#retryAt(delay) });
+    this.#timer = this.#ports.scheduler.setTimer(delay, () => this.begin());
+  }
+
+  #blockThenRetry(code: BlockedCode): void {
+    if (this.#stopped) return;
+    this.#generation.next();
+    this.#teardown();
+    this.#setState({ kind: 'blocked', code });
+    this.#timer = this.#ports.scheduler.setTimer(this.#nextDelay(), () => this.begin());
+  }
+
+  /** Terminal: no retry. The owner recovers the stream and starts a new subscription. */
+  #block(code: BlockedCode): void {
+    this.#generation.next();
+    this.#teardown();
+    this.#setState({ kind: 'blocked', code });
+  }
+
+  #teardown(): void {
+    this.#clearTimer();
+    const listener = this.#listener;
+    this.#listener = null;
+    try {
+      listener?.();
+    } catch {
+      // A failing SDK disposer must not block reconnect or lock release.
+    }
+    this.#abort?.abort();
+    this.#abort = null;
+    this.#wake.pending = false;
+    this.#hintsWake = true;
+    const resolve = this.#wake.resolve;
+    this.#wake.resolve = null;
+    resolve?.();
+  }
+
+  #clearTimer(): void {
+    this.#timer?.();
+    this.#timer = null;
+  }
+
+  #nextDelay(): number {
+    const delay = backoffDelay(this.#input.retry ?? DEFAULT_RETRY, this.#attempt, this.#ports.random);
+    this.#attempt += 1;
+    return delay;
+  }
+
+  #retryAt(delayMs: number): string {
+    return new Date(this.#ports.scheduler.now() + delayMs).toISOString();
+  }
+
+  #setState(state: SubscriptionState): void {
+    this.current = state;
+    try {
+      this.#ports.onState?.(state);
+    } catch {
+      // An observer failure never interrupts the subscription or its cleanup.
+    }
+  }
+}
