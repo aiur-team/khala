@@ -118,3 +118,16 @@ homeserver/key setup presented to users. Element additionally needs a full-host
 embedding/crypto run or should remain rejected for the current dashboard boundary.
 These are explicit missing proofs, not green mocks. No new messaging backend or
 production renderer has been silently selected.
+
+The OAuth/admission proof is owned by KHA-144 and gated by G-ADMISSION and
+G-SUBSTRATE. When that evidence lands, flip the `sdk-ui` `ordinary-oauth-return` row in
+`fixtures/capabilities.ts` to `supported` with its test path. That flip is the production
+selection; no other candidate row blocks it.
+
+## Reproduction record
+
+Re-run 2026-09-17 on a clean checkout of `2272d16` (Node 24.18.0, pnpm 10.34.5,
+Chromium 150.0.7871.128): for both `sdk` and `element`, the frozen install, `test`,
+`build` and `test:browser` commands in the experiment README exited 0 with 0 skipped,
+and `check-upstream.mjs` source checks passed. The README pins Node 22.23.2; this run
+used 24.18.0 and was not repeated on 22.
