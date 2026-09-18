@@ -1,6 +1,6 @@
 /*
- * Aiur application tokens, scoped under .aiur-shell so a future embedding
- * host is never globally restyled. Values are grounded in
+ * Aiur application tokens, scoped under .aiur-shell and .khala-content-root
+ * so a future embedding host is never globally restyled. Values are grounded in
  * ../aiur/src/priv/static/dashboard.css per docs/evidence/ui-planning-grounding.md
  * and the browser-tested fixture in docs/evidence/client-reuse.md
  * (experiments/client-reuse/sdk/src/style.css). See SOURCES.md.

@@ -104,11 +104,13 @@ describe('resolveInitialTheme', () => {
 
 describe('persistTheme + resolveInitialTheme round trip', () => {
   test('a theme persisted through the storage port is the theme resolved back from it', () => {
-    let saved: string | null = null;
+    // Keyed like real storage, so a write under one key and a read under
+    // another cannot round-trip.
+    const saved = new Map<string, string>();
     const storage: ThemeStorage = {
-      getItem: () => saved,
-      setItem: (_key, value) => {
-        saved = value;
+      getItem: (key) => saved.get(key) ?? null,
+      setItem: (key, value) => {
+        saved.set(key, value);
       },
     };
     persistTheme('light', storage);
@@ -120,7 +122,7 @@ describe('persistTheme', () => {
   test('writes the choice through the provided storage port', () => {
     let written: [string, string] | undefined;
     persistTheme('light', { getItem: () => null, setItem: (key, value) => { written = [key, value]; } });
-    expect(written?.[1]).toBe('light');
+    expect(written).toEqual(['khala.theme', 'light']);
   });
 
   test('blocked storage on write does not throw', () => {

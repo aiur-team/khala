@@ -14,7 +14,8 @@ import into this directory, so that boundary is a review convention here, not
 a checked one.
 
 - `mode: "standalone"` renders the full topbar/nav/main chrome.
-- `mode: "hosted-content"` renders only the children — a future embedding
+- `mode: "hosted-content"` renders only the children, inside a
+  `.khala-content-root` wrapper that carries the tokens. A future embedding
   host supplies its own chrome and the single navigation/main landmark.
 
 ## What is verified here
