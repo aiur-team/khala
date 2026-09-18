@@ -68,7 +68,13 @@ export async function submitRelease(
   }
 
   const probe = await probeBinding(job.binding, deps);
-  if (!probe.ok) return failed(probeErrorCode(probe.reason));
+  if (!probe.ok) {
+    // A repeat submit whose earlier queue/add may have reached the listener must not
+    // report `failed`: that would read as permission to re-release (README "must not be
+    // weakened"). The probe refusal itself is not evidence either way.
+    if (attempted.has(job.releaseId)) return makeReceipt(target, 'outcome_unknown', deps.clock, { source: 'connector' });
+    return failed(probeErrorCode(probe.reason));
+  }
   const { connection } = probe;
   try {
     return await enqueue(deps, attempted, connection, job, text);
@@ -94,6 +100,9 @@ async function enqueue(
   // A consumed release has left the queue, so absence proves nothing about the past.
   const located = await locateInQueue(connection, threadId, job.releaseId);
   if (located === 'unobservable') {
+    // Same rule as the probe refusal above: an unreadable queue on a repeat submit is
+    // uncertain, not a definite failure that invites another try.
+    if (attempted.has(job.releaseId)) return unknown('harness_unavailable');
     return makeReceipt(target, 'failed', deps.clock, { source: 'connector', errorCode: 'harness_unavailable' });
   }
   if (located === 'queued') return queuedReceipt(job, deps.clock);

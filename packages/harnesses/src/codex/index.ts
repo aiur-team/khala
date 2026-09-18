@@ -63,6 +63,9 @@ export function createCodexHarness(deps: CodexHarnessDeps): HarnessPort {
     async submit({ job, payload }): Promise<DeliveryReceipt> {
       if (closed) {
         const target = { releaseId: job.releaseId, binding: job.binding };
+        // A repeat submit against a closed adapter is a pre-send refusal like the ones in
+        // transport.ts: uncertain, not a definite failure a caller could read as clear to retry.
+        if (attempted.has(job.releaseId)) return makeReceipt(target, 'outcome_unknown', deps.clock, { source: 'connector' });
         return makeReceipt(target, 'failed', deps.clock, { source: 'connector', errorCode: 'harness_unavailable' });
       }
       const pending = submitting.get(job.releaseId);
