@@ -160,10 +160,10 @@ describe('createBrowserDeviceService', () => {
     const { deps } = rig(createDisk());
     const service = createBrowserDeviceService(deps);
 
-    expect(await service.use(async () => 'early')).toEqual({ kind: 'rejected', code: 'not_ready' });
+    expect(await service.use(alice, async () => 'early')).toEqual({ kind: 'rejected', code: 'not_ready' });
 
     const init = service.ensureReady(alice);
-    const queued = service.use(async context => `${context.deviceId}@${context.generation}`);
+    const queued = service.use(alice, async context => `${context.deviceId}@${context.generation}`);
     await init;
 
     expect(await queued).toEqual({ kind: 'ok', value: 'DEVICE_A@1' });

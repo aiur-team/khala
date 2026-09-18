@@ -16,7 +16,7 @@ describe('account switch', () => {
     // Alice's timeline projection, fed by an SDK decryption callback.
     const projection: string[] = [];
     let lateDecrypted!: (body: string) => void;
-    await service.use(async context => {
+    await service.use(alice, async context => {
       lateDecrypted = context.guard((body: string) => projection.push(body));
       context.onEnd(() => projection.splice(0));
       lateDecrypted('alice: before switch');
@@ -131,7 +131,7 @@ describe('expired sessions', () => {
     await service.ensureReady(alice);
     const seen: string[] = [];
     let callback!: () => void;
-    await service.use(async context => { callback = context.guard(() => seen.push('late')); });
+    await service.use(alice, async context => { callback = context.guard(() => seen.push('late')); });
 
     tab.identity.set({ kind: 'signed_out' });
     expect(await service.ensureReady(alice)).toEqual({ kind: 'ok', value: { deviceId: 'DEVICE_A', state: 'locked', generation: 1, reason: 'signed_out' } });

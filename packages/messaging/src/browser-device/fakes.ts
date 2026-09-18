@@ -81,6 +81,8 @@ export type EngineOptions = {
   failStart?: boolean;
   /** Runs inside `start` before it resolves, for injecting mid-initialisation events. */
   onStart?: (engine: FakeEngine) => Promise<void> | void;
+  /** Runs inside `close` before it resolves, for holding a teardown open. */
+  onClose?: (engine: FakeEngine) => Promise<void> | void;
 };
 
 let fingerprints = 0;
@@ -108,6 +110,7 @@ export function fakeEngines(disk: Disk, log: EngineLog, options: EngineOptions =
         },
         async close() {
           log.push(`close:${input.ownerId}`);
+          await options.onClose?.(engine);
           engine.closed = true;
         },
       };

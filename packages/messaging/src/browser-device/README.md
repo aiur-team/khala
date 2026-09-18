@@ -39,8 +39,14 @@ outcomes. `ensureReady` returns:
 
 Rules:
 
-- Same-owner calls coalesce into one generation. `use()` queues behind in-flight
-  initialisation and refuses with `not_ready` otherwise. It never opens a client.
+- Same-owner calls coalesce into one generation. `use(ownerId, operation)` queues behind
+  that owner's in-flight initialisation and otherwise refuses with `not_ready` or
+  `owner_mismatch`. It never opens a client. A result produced after its generation
+  ended is discarded as `not_ready`.
+- Identity is read again after the owner lock is granted and before `ready` is
+  published, so a sign-out or account switch during the lock wait never yields `ready`.
+  Every request that changes state carries an epoch. A slower, superseded request
+  (a sign-out, an account switch or `acceptLoss`) never publishes over a newer one.
 - The engine opens, then its local identity is checked **before** `start`. A marker that
   names this device with another fingerprint is `lost/storage_cleared`. Local keys that
   differ from the server's published keys are `lost/key_material_missing`. The old device

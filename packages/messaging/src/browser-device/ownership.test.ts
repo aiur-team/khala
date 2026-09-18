@@ -20,7 +20,7 @@ describe('cross-tab ownership', () => {
     expect(b.current()).toEqual({ deviceId: null, state: 'failed', generation: 1, reason: 'storage_unavailable' });
     // The follower never reserved the store or opened a client.
     expect(tabB.log).toEqual([]);
-    expect(await b.use(async () => 'write')).toEqual({ kind: 'rejected', code: 'not_ready' });
+    expect(await b.use(alice, async () => 'write')).toEqual({ kind: 'rejected', code: 'not_ready' });
   });
 
   it('hands ownership to a waiting tab when the owner ends, without cloning state', async () => {

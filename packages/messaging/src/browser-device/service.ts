@@ -5,7 +5,8 @@
 
 import {
   type AuthPrincipal, type CallOptions, type DeviceId, type DevicePort, type DeviceReason, type DeviceRejection,
-  type DeviceView, type Disposer, type OperationResult, type OwnerId, ok, outcomeUnknown, rejected, unavailable,
+  type DeviceView, type Disposer, type IdentityState, type OperationResult, type OwnerId, ok, outcomeUnknown, rejected,
+  sameProviderIdentity, unavailable,
 } from '@khala/contracts/messaging/index';
 import {
   type BrowserDeviceDependencies, type DeviceEngine, type EngineSignal, DEFAULT_LOCK_WAIT_MS, checkIdentity, deviceView,
@@ -28,10 +29,13 @@ export type EngineContext = Readonly<{
 
 export interface BrowserDeviceService extends DevicePort {
   /**
-   * Runs a crypto operation against the ready engine. Waits for an in-flight
-   * `ensureReady`; otherwise refuses with `not_ready` rather than opening a client.
+   * Runs a crypto operation against `ownerId`'s ready engine. Waits for that owner's
+   * in-flight `ensureReady`; otherwise refuses with `not_ready` rather than opening a
+   * client. A result produced after its generation ended is discarded as `not_ready`,
+   * so an old account's output never reaches the caller after a switch.
    */
-  use<T>(operation: (context: EngineContext) => Promise<T>, options?: CallOptions): Promise<OperationResult<T, 'not_ready'>>;
+  use<T>(ownerId: OwnerId, operation: (context: EngineContext) => Promise<T>, options?: CallOptions):
+    Promise<OperationResult<T, 'not_ready' | 'owner_mismatch'>>;
   /**
    * Leaves `lost` after the approved recovery or re-enrolment flow (injected by its
    * owner, never started here) has accepted the loss. Clears the identity marker
@@ -42,6 +46,9 @@ export interface BrowserDeviceService extends DevicePort {
 
 type Ensure = Readonly<{ ownerId: OwnerId; promise: Promise<OperationResult<DeviceView, DeviceRejection>> }>;
 
+const sameSignedIn = (state: IdentityState, principal: AuthPrincipal): boolean =>
+  state.kind === 'signed_in' && state.principal.ownerId === principal.ownerId && sameProviderIdentity(state.principal, principal);
+
 export function createBrowserDeviceService(deps: BrowserDeviceDependencies): BrowserDeviceService {
   const lockWaitMs = deps.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS;
   const listeners = new Set<(view: DeviceView) => void>();
@@ -50,7 +57,10 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
   let viewOwner: OwnerId | null = null;
   let live: Generation | null = null;
   let inflight: Ensure | null = null;
-  /** Advances on every ensure or stop request; only the newest may open a generation. */
+  /**
+   * Advances on every request that may change state (ensure, stop, acceptLoss). A
+   * request that awaited anything publishes or opens only while it is still newest.
+   */
   let epoch = 0;
 
   function publish(next: DeviceView, owner: OwnerId | null): DeviceView {
@@ -67,6 +77,14 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
     const g = live;
     live = null;
     if (g) await endGeneration(g);
+  }
+
+  /**
+   * A superseded request that already ended a generation must not leave a `ready` or
+   * `initializing` view behind with nothing live. Its successor publishes over this.
+   */
+  function settleOrphan(): void {
+    if (!live && (view.state === 'ready' || view.state === 'initializing')) publish(deviceView('new', view.generation + 1, null), null);
   }
 
   /** Ends `g` and publishes `next`, but only if `g` is still the live generation. */
@@ -90,12 +108,27 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
     ? deviceView('locked', generation, deviceId, 'signed_out')
     : deviceView('failed', generation, null, 'signed_out');
 
-  async function signedOut(): Promise<DeviceView> {
+  async function identityNow(): Promise<IdentityState> {
+    try {
+      return await deps.identity.current();
+    } catch {
+      return { kind: 'unavailable', retryable: true };
+    }
+  }
+
+  async function signedOut(requested: number): Promise<OperationResult<DeviceView, DeviceRejection>> {
     const deviceId = viewOwner ? view.deviceId : null;
     const owner = viewOwner;
-    await retire();
-    if (view.state === 'lost' || view.state === 'revoked') return view;
-    return publish(locked(view.generation, deviceId), owner);
+    while (live) {
+      if (requested !== epoch) return unavailable();
+      await retire();
+    }
+    if (requested !== epoch) {
+      settleOrphan();
+      return unavailable();
+    }
+    if (view.state === 'lost' || view.state === 'revoked') return ok(view);
+    return ok(publish(locked(view.generation, deviceId), owner));
   }
 
   async function initialise(principal: AuthPrincipal, requested: number): Promise<OperationResult<DeviceView, DeviceRejection>> {
@@ -106,13 +139,33 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
     if (sameOwner && (view.state === 'lost' || view.state === 'revoked')) return ok(view);
 
     // Account switch or re-initialisation: the previous generation ends before the
-    // next one can open anything.
-    while (live) await retire();
-    if (requested !== epoch) return unavailable();
+    // next one can open anything, and only the newest request may end one.
+    while (live) {
+      if (requested !== epoch) return unavailable();
+      await retire();
+    }
+    if (requested !== epoch) {
+      settleOrphan();
+      return unavailable();
+    }
     const g = openGeneration(ownerId, view.generation + 1, sameOwner ? view.deviceId : null);
     live = g;
     publish(deviceView('initializing', g.generation, g.deviceId), ownerId);
     const fail = (reason: DeviceReason) => finish(g, deviceView('failed', g.generation, g.deviceId, reason));
+
+    /** The owner may have signed out or switched while this generation waited. */
+    async function confirmIdentity(): Promise<OperationResult<DeviceView, DeviceRejection> | null> {
+      const state = await identityNow();
+      if (!isLive(g)) throw new Superseded();
+      if (sameSignedIn(state, principal)) return null;
+      if (state.kind === 'signed_out') return ok(await finish(g, locked(g.generation, g.deviceId)));
+      if (state.kind === 'unavailable') {
+        await fail('initialization_failed');
+        return unavailable();
+      }
+      await finish(g, deviceView('new', g.generation + 1, null));
+      return rejected('owner_mismatch');
+    }
 
     try {
       const acquisition = await deps.locks.acquire(ownerId, { waitMs: lockWaitMs, signal: g.abort.signal });
@@ -127,6 +180,8 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
         return unavailable();
       }
       await adopt(g, 'lease', acquisition.lease);
+      const afterLock = await confirmIdentity();
+      if (afterLock) return afterLock;
 
       const credentials = await deps.credentials.resolve(principal, g.abort.signal);
       if (!isLive(g)) throw new Superseded();
@@ -182,6 +237,9 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
 
       await engine.start(g.abort.signal);
       if (live !== g) throw new Superseded();
+      const beforeReady = await confirmIdentity();
+      if (beforeReady) return beforeReady;
+      if (live !== g) throw new Superseded();
       return ok(publish(deviceView('ready', g.generation, session.deviceId), ownerId));
     } catch (error) {
       if (error instanceof Superseded || live !== g) {
@@ -195,10 +253,10 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
 
   async function ensure(ownerId: OwnerId): Promise<OperationResult<DeviceView, DeviceRejection>> {
     const requested = ++epoch;
-    const identity = await deps.identity.current();
+    const identity = await identityNow();
     if (requested !== epoch) return unavailable();
     if (identity.kind === 'unavailable') return unavailable();
-    if (identity.kind === 'signed_out') return ok(await signedOut());
+    if (identity.kind === 'signed_out') return signedOut(requested);
     if (identity.principal.ownerId !== ownerId) return rejected('owner_mismatch');
     return initialise(identity.principal, requested);
   }
@@ -207,10 +265,25 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
     if (inflight && inflight.ownerId === ownerId) return inflight;
     const entry: Ensure = {
       ownerId,
-      promise: ensure(ownerId).finally(() => { if (inflight === entry) inflight = null; }),
+      // Every port call is guarded, but the lifecycle promise must still never reject.
+      promise: ensure(ownerId).catch(() => unavailable()).finally(() => { if (inflight === entry) inflight = null; }),
     };
     inflight = entry;
     return entry;
+  }
+
+  /** Resolves `true` once `promise` settles, or `false` if `signal` aborts first. */
+  function waitFor(promise: Promise<unknown>, signal: AbortSignal | undefined): Promise<boolean> {
+    if (!signal) return promise.then(() => true, () => true);
+    if (signal.aborted) return Promise.resolve(false);
+    return new Promise(resolve => {
+      const onAbort = () => resolve(false);
+      signal.addEventListener('abort', onAbort, { once: true });
+      void promise.then(() => true, () => true).then(done => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(done);
+      });
+    });
   }
 
   return {
@@ -218,16 +291,9 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
       const signal = options.signal;
       if (signal?.aborted) return unavailable();
       const { promise } = track(ownerId);
-      if (!signal) return promise;
       // Aborting stops the caller's wait only; initialisation carries on.
-      return new Promise(resolve => {
-        const onAbort = () => resolve(outcomeUnknown(`browser-device:${ownerId}:${view.generation}`));
-        signal.addEventListener('abort', onAbort, { once: true });
-        void promise.then(result => {
-          signal.removeEventListener('abort', onAbort);
-          resolve(result);
-        });
-      });
+      if (!(await waitFor(promise, signal))) return outcomeUnknown(`browser-device:${ownerId}:${view.generation}`);
+      return promise;
     },
 
     current: () => view,
@@ -246,17 +312,15 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
       await retiring;
     },
 
-    async use(operation, options = {}) {
+    async use(ownerId, operation, options = {}) {
+      if (options.signal?.aborted) return unavailable();
       const pending = inflight;
-      if (pending) {
-        const settled = pending.promise.then(() => true);
-        const aborted = options.signal
-          ? new Promise<false>(resolve => options.signal!.addEventListener('abort', () => resolve(false), { once: true }))
-          : null;
-        if (!(await (aborted ? Promise.race([settled, aborted]) : settled))) return unavailable();
-      }
+      if (pending && pending.ownerId === ownerId && !(await waitFor(pending.promise, options.signal))) return unavailable();
       const g = live;
-      if (!g || !isLive(g) || view.state !== 'ready' || !g.engine || !g.deviceId) return rejected('not_ready');
+      if (!g || !isLive(g) || view.state !== 'ready' || !g.engine || !g.deviceId) {
+        return viewOwner !== null && viewOwner !== ownerId ? rejected('owner_mismatch') : rejected('not_ready');
+      }
+      if (g.ownerId !== ownerId) return rejected('owner_mismatch');
       const context: EngineContext = {
         ownerId: g.ownerId,
         deviceId: g.deviceId,
@@ -266,13 +330,21 @@ export function createBrowserDeviceService(deps: BrowserDeviceDependencies): Bro
         guard: callback => guard(g, callback),
         onEnd: dispose => onEnd(g, dispose),
       };
-      return ok(await operation(context));
+      const result = await operation(context);
+      return isLive(g) ? ok(result) : rejected('not_ready');
     },
 
     async acceptLoss(ownerId) {
       if (viewOwner !== ownerId) return rejected('owner_mismatch');
       if (view.state !== 'lost') return rejected('not_lost');
-      await deps.markers.clear(ownerId);
+      const requested = ++epoch;
+      try {
+        await deps.markers.clear(ownerId);
+      } catch {
+        return unavailable();
+      }
+      // A newer request may have switched owner or re-initialised meanwhile.
+      if (requested !== epoch || viewOwner !== ownerId || view.state !== 'lost') return unavailable();
       return ok(publish(deviceView('new', view.generation, null), ownerId));
     },
   };

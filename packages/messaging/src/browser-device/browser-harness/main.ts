@@ -106,11 +106,11 @@ const harness = {
   },
   current: (): DeviceView | null => service?.current() ?? null,
   async fingerprint() {
-    const result = await service!.use(async ({ engine }) => (await engine.identity()).fingerprint);
+    const result = await service!.use(ownerId, async ({ engine }) => (await engine.identity()).fingerprint);
     return result.kind === 'ok' ? result.value : null;
   },
   async encrypt(text: string) {
-    const result = await service!.use(async ({ engine }) => {
+    const result = await service!.use(ownerId, async ({ engine }) => {
       const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
       const sealed = await subtle.encrypt({ name: 'AES-GCM', iv }, (engine as TestEngine).keys.room, new TextEncoder().encode(text));
       return `${b64(iv)}.${b64(sealed)}`;
@@ -120,7 +120,7 @@ const harness = {
   /** `{ kind: 'rejected' }` when not ready; `{ kind: 'undecryptable' }` when keys do not match. */
   async decrypt(event: string) {
     const [iv = '', sealed = ''] = event.split('.');
-    const result = await service!.use(async ({ engine }) => {
+    const result = await service!.use(ownerId, async ({ engine }) => {
       try {
         const plain = await subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, (engine as TestEngine).keys.room, unb64(sealed));
         return { kind: 'plaintext' as const, text: new TextDecoder().decode(plain) };

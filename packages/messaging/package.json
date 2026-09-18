@@ -13,7 +13,7 @@
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests",
-    "test:browser": "node --import tsx --test src/browser-device/browser-device.browser.spec.ts"
+    "test:browser": "node --import tsx --test 'src/**/*.browser.spec.ts'"
   },
   "dependencies": {
     "@khala/contracts": "workspace:*"
