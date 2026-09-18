@@ -12,17 +12,26 @@ export, selects a provider, or starts a daemon.
 | `pnpm test:e2e -- tests/e2e/security/security.test.ts` | one acceptance entry |
 
 Both go through `run.mjs`, which drops the `--` that pnpm forwards. It then runs
-Vitest with `tests/e2e/harness/vitest.config.ts`, which maps `@khala/contracts/*`
-onto the package's own `exports` targets. A filter that matches no file fails. `pnpm typecheck` also
-checks `tests/` through `tests/e2e/harness/tsconfig.json`.
+Vitest with `tests/e2e/harness/vitest.config.ts`. That config maps `@khala/contracts`,
+`@khala/harnesses`, `@khala/connector` and `@khala/policy` subpaths onto exactly the
+targets each package's `exports` names; withheld subpaths do not resolve. A filter
+that matches no file fails. `pnpm typecheck` also checks `tests/` through
+`tests/e2e/harness/tsconfig.json`.
 
 Live acceptance needs `KHALA_E2E_LIVE=1` and `KHALA_E2E_DISPOSABLE_ENV` naming a
 disposable environment. Without them, `describeLive` entries are skipped and the
-reason is shown in the name. `KHALA_E2E_LIVE=1` without an environment fails. In live
-mode an entry fails unless at least one live case ran to completion. `pnpm test:e2e`
-also loads `live-reporter.ts`, which fails the whole live run unless at least one live
-case passed. That covers name filters, file selections and runs with no live entries.
-Never pass tokens as script arguments.
+reason is shown in the name. `KHALA_E2E_LIVE=1` without an environment fails. Never
+pass tokens as script arguments.
+
+In live mode, a live case passes only if it returns the manifest of the live scenario it
+drove. That manifest must be issued by a scenario, be in a live mode, and hold at least
+one record, and a registered driver must have produced every record. An entry fails
+unless at least one of its cases did this. Both scripts also load `live-reporter.ts`,
+which fails the whole run unless at least one such case passed. It counts only cases
+that `describeLive` tagged after checking their evidence, so a test merely named
+`live: …` does not count. This covers name filters, file selections and runs with no
+live entries. `live-gate.test.ts` runs the fixtures in `fixtures/live-gate/` through
+`run.mjs` to prove each of these.
 
 ## Modules
 
@@ -31,42 +40,69 @@ Never pass tokens as script arguments.
   KHA-105/106 fixture scalars (`owner-b`, `agent-b`, `dev-b`, `bind-b-1`). Every
   control is required. `assertIndependentOwners` refuses shared identities but
   ignores colliding email or display name. `ownerAuthority` is the only way to get
-  an `OwnerAuthority`.
+  an `OwnerAuthority`. `nextGeneration` re-arms a binding after revocation.
 - `clock.ts`: one clock per owner. Fake clocks move only when advanced. Live
   clocks are monotonic and carry wall-clock provenance. `elapsed` refuses readings
   from different clocks.
 - `faults.ts`: the nine faults. Each has one boundary and one oracle in
-  `FAULT_SPECS`. Drivers call `faults.checkpoint(boundary, ownerId, operationId)`.
-  Disconnect and crash faults throw from the checkpoint. The others return the fault
-  for the driver to act out. An injected fault that never fires fails
-  `assertCleanClose`.
-- `evidence.ts`: every record has an `EvidenceMode` and holds only identifier tokens.
-  `requireEvidence` names the modes it accepts, so a fake `context_consumed` cannot
-  satisfy a live query. `combineManifests` refuses to mix modes or versions.
+  `FAULT_SPECS`. Drivers call `checkpoint(boundary, ownerId, operationId)` at the
+  boundary. Disconnect and crash faults throw from the checkpoint. The others return
+  the fault for the driver to act out natively. An injected fault that never fires
+  fails `assertCleanClose`.
+- `evidence.ts`: every record has an `EvidenceMode`, holds only identifiers, and names
+  the driver that produced it. Each field accepts only its own prefixed shape
+  (`owner-…`, `release-…`, `event-…`, dotted kinds), so free text and email addresses
+  are refused. Live records require a driver. `requireEvidence` names the modes it
+  accepts, so a fake `context_consumed` cannot satisfy a live query.
+  `combineManifests` combines only manifests an evidence log issued. It refuses to mix
+  modes or versions.
 - `scenario.ts`: `createScenarioHarness(config)` checks that owners are independent,
   gives each owner a private state directory and clock, and registers `ScenarioDriver`s.
   A driver must use the scenario's mode. A live scenario needs at least one live
-  driver, and live faults need a driver that can enact them. `close()` disposes resources in reverse order and reports leftovers and
-  unfired faults.
-- `live.ts`: `describeLive(entry, liveCase => ...)` for KHA-138/139 entries.
+  driver. In live modes `scenario.record`, `faults.checkpoint` and `faults.clear` are
+  refused: each driver receives a `DriverHandle` through `attach`, and live evidence
+  and fault firings go only through it. `close()` disposes resources in reverse order
+  and reports leftovers and unfired faults.
+- `live.ts`: `describeLive(entry, liveCase => ...)` for KHA-138/139 entries. A case
+  body receives `{ disposableEnv, skip }` and returns its live `EvidenceManifest`.
 - `reference.ts`: the fake owner connector and harness adapter used by self-tests and
   conformance. They are `fake-contract` evidence only. Their `defect` options add
-  the bugs that the conformance oracles must catch.
+  the bugs that the conformance oracles must catch. Every oracle has at least one.
 
 ## Conformance (`tests/conformance/`)
 
 `runHarnessConformance(factory, capabilities, environment)` and
 `runDeliveryConformance(factory, environment)` run each check in a fresh scenario
-and return a report with `pass`, `fail` or `skip` plus a reason for each check.
-Receipt kinds that the capabilities do not claim, and faults that the subject
-cannot inject, are skipped with a reason. They are never counted as passes.
-`acceptLiveHarness(report, required)` refuses a fake report, any failed check, and
-any required check that was skipped. An adapter that emits a receipt kind its
-capabilities do not claim fails the check in which it did so.
+and return a report with `pass`, `fail` or `skip` plus a reason for each check, and
+one evidence manifest per check. Receipt kinds that the capabilities do not claim,
+and faults that the subject cannot inject, are skipped with a reason. They are never
+counted as passes. An adapter that emits a receipt kind its capabilities do not claim
+fails the check in which it did so. In a live suite a check passes only if a
+registered driver recorded evidence during it.
 
-A live driver for a real adapter or connector implements `HarnessSubject` or
-`DeliverySubject`. The subject declares its own evidence `mode`, and a check fails
-when that differs from the suite's, so a fake cannot be relabelled as live. It
-reports what the model session actually received (`modelInputs`) and lists the
-faults it can inject. Live suites pass `drivers` in the environment so that live
-faults are enacted by a registered driver.
+`acceptLiveHarness(report, { required?, environment? })` refuses:
+
+- a report that `runChecks` did not build
+- a report that is not `live-harness`
+- a run outside an opted-in live environment
+- an empty required set (the default is `CORE_LIVE_HARNESS_CHECKS`)
+- any failed check
+- any required check that did not pass
+
+A subject for a real adapter or connector implements `HarnessSubject` or
+`DeliverySubject`. It declares its own evidence `mode`, and a check fails when that
+differs from the suite's. It reports what the model session actually received
+(`modelInputs`). A harness subject also reports receipts observed after `submit`
+returned (`receipts`, for example a native receipt tracker). Its `settle` lets the
+session consume queued work, and checks read consumption only after it. To enact a
+fault, a subject lists it in `faults` and calls `checkpoint` at the matching native
+seam. `inject(fault)` prepares that seam, for example an app-server reply that is
+lost after the write. `codex-subject.ts` does this for the real Codex adapter over its
+fake app-server, and `codex.test.ts` grades it with the same suite. Live suites pass
+`drivers` in the environment; a live subject records and fires faults through its
+driver's handle.
+
+Delivery checks cover owner-specific authority and release, pending events kept out
+of model context, refusal of `auto` policy, revocation (a revoked binding generation
+blocks approval), no resubmission after an unknown outcome or a crash after intent,
+duplicate delivery, delayed keys and reordered receipts.

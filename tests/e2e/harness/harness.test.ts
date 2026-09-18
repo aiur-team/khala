@@ -2,10 +2,13 @@ import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { controlsFor } from '../../conformance/subjects';
 import { CrossClockComparison, createFakeClock, createMonotonicClock, elapsed } from './clock';
-import { EvidenceError, combineManifests, createEvidenceLog, reading, requireEvidence } from './evidence';
-import { createLiveTally, liveEnvironment } from './live';
+import {
+  EvidenceError, type EvidenceManifest, combineManifests, createEvidenceLog, isIssuedManifest, reading, requireEvidence,
+} from './evidence';
+import { InjectedDisconnect } from './faults';
+import { assertLiveManifest, createLiveTally, liveEnvironment } from './live';
 import { ConflatedOwners, assertIndependentOwners, createOwnerFixture } from './owners';
-import { type ScenarioDriver, assertCleanClose, createScenarioHarness } from './scenario';
+import { type DriverHandle, type ScenarioDriver, assertCleanClose, createScenarioHarness } from './scenario';
 
 const owners = (seeds: readonly string[]) => seeds.map(seed => ({ seed, controls: controlsFor(seed) }));
 
@@ -59,28 +62,45 @@ describe('clocks', () => {
 
 describe('evidence', () => {
   const fakeClock = createFakeClock('c');
+  const subject = { ownerId: 'owner-a', operationId: 'op-1' };
+  const codex = [{ component: 'codex', version: '0.154.0' }];
 
-  it('requires a mode and names sources for live evidence', () => {
+  it('requires a mode, names sources for live evidence, and takes live records only from a driver', () => {
     expect(() => createEvidenceLog({ runId: 'r', mode: 'live-harness', sources: [] })).toThrow(/source versions/);
     const live = createEvidenceLog({ runId: 'r', mode: 'live-sdk', sources: [{ component: 'sdk', version: '1.0.0' }] });
-    expect(() => live.record('k', { ownerId: 'o', operationId: 'op' }, fakeClock)).toThrow(/fake clock/);
+    expect(() => live.record('test.kind', subject, fakeClock, 'sdk-driver')).toThrow(/fake clock/);
+    expect(() => live.record('test.kind', subject, createMonotonicClock('m'), null)).toThrow(/registered driver/);
+    expect(live.record('test.kind', subject, createMonotonicClock('m'), 'sdk-driver').driver).toBe('sdk-driver');
   });
 
-  it('keeps free text out of records', () => {
+  it('accepts only each field’s own identifier shape', () => {
     const log = createEvidenceLog({ runId: 'r', mode: 'fake-contract', sources: [] });
-    expect(() => log.record('model.input', { ownerId: 'owner-a', operationId: 'Review the API change.' }, fakeClock)).toThrow(EvidenceError);
-    const record = log.record('model.input', { ownerId: 'owner-a', operationId: 'release-1' }, fakeClock);
-    expect(Object.keys(record).sort()).toEqual(['at', 'clockId', 'clockSource', 'kind', 'mode', 'operationId', 'ownerId', 'wallClock']);
+    const rejected: [string, Readonly<{ ownerId: string; operationId: string }>][] = [
+      ['model.input', { ownerId: 'owner-a', operationId: 'Review the API change.' }],
+      ['model.input', { ownerId: 'alice@example.com', operationId: 'op-1' }],
+      ['model.input', { ownerId: 'owner-a', operationId: 'alice@example.com' }],
+      ['model.input', { ownerId: 'owner-a', operationId: 'op-alice@example.com' }],
+      ['modelinput', subject],
+    ];
+    for (const [kind, entry] of rejected) expect(() => log.record(kind, entry, fakeClock, null)).toThrow(EvidenceError);
+    expect(() => createEvidenceLog({ runId: 'r', mode: 'fake-contract', sources: [{ component: 'a@b.c', version: '1' }] })).toThrow(EvidenceError);
+    const record = log.record('model.input', { ownerId: 'owner-a', operationId: 'release-1' }, fakeClock, null);
+    expect(Object.keys(record).sort()).toEqual(['at', 'clockId', 'clockSource', 'driver', 'kind', 'mode', 'operationId', 'ownerId', 'wallClock']);
     expect(reading(record)).toEqual({ clockId: 'c', at: 0 });
   });
 
-  it('never combines fake and live manifests', () => {
+  it('never combines fake and live manifests, or manifests no log issued', () => {
     const fake = createEvidenceLog({ runId: 'r', mode: 'fake-contract', sources: [] }).manifest();
-    const live = createEvidenceLog({ runId: 'r', mode: 'live-harness', sources: [{ component: 'codex', version: '0.154.0' }] }).manifest();
+    const live = createEvidenceLog({ runId: 'r', mode: 'live-harness', sources: codex }).manifest();
     expect(() => combineManifests([fake, live])).toThrow(/cannot mix fake-contract and live-harness/);
     const other = createEvidenceLog({ runId: 'r', mode: 'live-harness', sources: [{ component: 'codex', version: '0.155.0' }] }).manifest();
     expect(() => combineManifests([live, other])).toThrow(/conflicting versions for codex/);
-    expect(combineManifests([live, live]).sources).toEqual([{ component: 'codex', version: '0.154.0' }]);
+    const combined = combineManifests([live, live]);
+    expect(combined.sources).toEqual(codex);
+    expect(isIssuedManifest(combined)).toBe(true);
+    const forged: EvidenceManifest = { ...live };
+    expect(isIssuedManifest(forged)).toBe(false);
+    expect(() => combineManifests([live, forged])).toThrow(/no evidence log issued/);
   });
 
   it('requires queries to name acceptable modes', () => {
@@ -98,6 +118,7 @@ describe('scenario harness', () => {
     close: async () => undefined,
     ...overrides,
   });
+  const liveSources = [{ component: 'codex', version: '0.154.0' }];
 
   it('gives each owner a private state directory and its own clock, and removes them on close', async () => {
     const harness = await createScenarioHarness({ runId: 'iso', mode: 'fake-contract', owners: owners(['a', 'b', 'c']), sources: [] });
@@ -109,14 +130,38 @@ describe('scenario harness', () => {
     expect(directories.some(directory => existsSync(directory))).toBe(false);
   });
 
+  it('refuses owners that share a session', async () => {
+    const shared = [{ seed: 'a', controls: controlsFor('a') }, { seed: 'b', controls: { ...controlsFor('b'), sessionId: controlsFor('a').sessionId } }];
+    await expect(createScenarioHarness({ runId: 'shared', mode: 'fake-contract', owners: shared, sources: [] }))
+      .rejects.toThrow(/owners share session fake-reference\/thread-existing-a/);
+  });
+
   it('refuses a driver whose evidence mode differs from the scenario', async () => {
     await expect(createScenarioHarness({ runId: 'mix', mode: 'fake-contract', owners: owners(['a']), sources: [], drivers: [driver({ mode: 'live-sdk' })] }))
       .rejects.toThrow(/produces live-sdk evidence in a fake-contract scenario/);
   });
 
   it('refuses a live scenario with no registered live driver', async () => {
-    await expect(createScenarioHarness({ runId: 'bare', mode: 'live-harness', owners: owners(['a']), sources: [{ component: 'codex', version: '0.154.0' }] }))
+    await expect(createScenarioHarness({ runId: 'bare', mode: 'live-harness', owners: owners(['a']), sources: liveSources }))
       .rejects.toThrow(/needs at least one registered live-harness driver/);
+  });
+
+  it('in live mode, records and fires faults only through a registered driver’s handle', async () => {
+    let handle: DriverHandle | undefined;
+    const harness = await createScenarioHarness({
+      runId: 'live', mode: 'live-harness', owners: owners(['a']), sources: liveSources,
+      drivers: [driver({ name: 'codex-live', mode: 'live-harness', faults: ['disconnect_after_write'], attach: issued => { handle = issued; } })],
+    });
+    const subject = { ownerId: 'owner-a', operationId: 'release-1' };
+    expect(() => harness.record('model.input', subject)).toThrow(/must go through a registered driver's handle/);
+    await harness.inject('disconnect_after_write', 'owner-a');
+    expect(() => harness.faults.checkpoint('transport.after_write', 'owner-a', 'release-1')).toThrow(/registered driver's handle/);
+    expect(harness.faults.fired()).toEqual([]);
+    expect(handle!.record('model.input', subject)).toMatchObject({ mode: 'live-harness', driver: 'codex-live' });
+    expect(() => handle!.faults.checkpoint('transport.after_write', 'owner-a', 'release-1')).toThrow(InjectedDisconnect);
+    expect(harness.faults.fired()).toEqual([{ fault: 'disconnect_after_write', ownerId: 'owner-a', operationId: 'release-1', driver: 'codex-live' }]);
+    expect(harness.evidence().map(record => [record.kind, record.driver])).toEqual([['model.input', 'codex-live'], ['fault.disconnect_after_write', 'codex-live']]);
+    assertCleanClose(await harness.close());
   });
 
   it('refuses a live fault that no registered driver can enact', async () => {
@@ -125,17 +170,20 @@ describe('scenario harness', () => {
       drivers: [driver({ mode: 'live-harness', faults: ['session_busy'] })],
     });
     await expect(harness.inject('session_exit', 'owner-a')).rejects.toThrow(/no registered driver can inject session_exit/);
-    const injected: string[] = [];
     await harness.close();
+    const injected: string[] = [];
+    let handle: DriverHandle | undefined;
     const second = await createScenarioHarness({
       runId: 'live2', mode: 'live-harness', owners: owners(['a']), sources: [],
-      drivers: [driver({ mode: 'live-harness', faults: ['session_busy'], inject: async fault => { injected.push(fault); } })],
+      drivers: [driver({
+        mode: 'live-harness', faults: ['session_busy'], attach: issued => { handle = issued; }, inject: async fault => { injected.push(fault); },
+      })],
     });
     await second.inject('session_busy', 'owner-a');
     expect(injected).toEqual(['session_busy']);
     expect(second.manifest().sources).toEqual([{ component: 'fake-driver', version: '0' }]);
     expect(second.clock('owner-a').source).toBe('monotonic');
-    second.faults.checkpoint('harness.accept', 'owner-a', 'op-1');
+    expect(handle!.faults.checkpoint('harness.accept', 'owner-a', 'op-1')).toBe('session_busy');
     await second.close();
   });
 
@@ -165,5 +213,23 @@ describe('live gate', () => {
     expect(() => tally.assertAnyRan('security')).toThrow(/all-skipped is not acceptance/);
     tally.ran('case-1');
     expect(() => tally.assertAnyRan('security')).not.toThrow();
+  });
+
+  it('accepts only an issued live manifest with driver records as a live case’s proof', async () => {
+    let handle: DriverHandle | undefined;
+    const liveDriver: ScenarioDriver = {
+      name: 'stub-live', mode: 'live-harness', source: { component: 'stub-live', version: '0' }, faults: [],
+      attach: issued => { handle = issued; }, close: async () => undefined,
+    };
+    const live = await createScenarioHarness({ runId: 'proof', mode: 'live-harness', owners: owners(['a']), sources: [], drivers: [liveDriver] });
+    expect(() => assertLiveManifest(live.manifest(), 'case')).toThrow(/live manifest with no records/);
+    handle!.record('model.input', { ownerId: 'owner-a', operationId: 'release-1' });
+    expect(assertLiveManifest(live.manifest(), 'case').records).toHaveLength(1);
+    expect(() => assertLiveManifest({ ...live.manifest() }, 'case')).toThrow(/no evidence manifest issued by a scenario/);
+    expect(() => assertLiveManifest(undefined, 'case')).toThrow(/no evidence manifest/);
+    const fake = await createScenarioHarness({ runId: 'proof-fake', mode: 'fake-contract', owners: owners(['a']), sources: [] });
+    fake.record('model.input', { ownerId: 'owner-a', operationId: 'release-1' });
+    expect(() => assertLiveManifest(fake.manifest(), 'case')).toThrow(/returned fake-contract evidence/);
+    await Promise.all([live.close(), fake.close()]);
   });
 });

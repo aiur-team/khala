@@ -121,8 +121,9 @@ describe('fault runner', () => {
     const job = releaseFor(b, [event.ref], event.payload, 'release-busy', fixtureLimits);
     expect(await adapter.submit({ job, payload: event.payload })).toMatchObject({ kind: 'harness_queued' });
     expect(adapter.modelInputs()).toEqual([]);
-    adapter.idle();
+    adapter.settle();
     expect(adapter.modelInputs().map(input => input.releaseId)).toEqual(['release-busy']);
+    expect(adapter.streamed()).toEqual([expect.objectContaining({ kind: 'context_consumed', releaseId: 'release-busy' })]);
     expect(await adapter.reconcile(job)).toMatchObject({ kind: 'context_consumed' });
     assertCleanClose(await harness.close());
   });

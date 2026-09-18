@@ -8,10 +8,12 @@ import {
 import exact from '../../packages/contracts/fixtures/delivery/exact-release.json';
 import type { SourceVersion } from '../e2e/harness/evidence';
 import { FAULTS } from '../e2e/harness/faults';
-import type { OwnerControls } from '../e2e/harness/owners';
+import { type OwnerControls, nextGeneration } from '../e2e/harness/owners';
 import {
-  type AdapterDefect, type ConnectorDefect, createFakeHarnessAdapter, createReferenceConnector,
+  type AdapterDefect, type ConnectorDefect, type ReferenceRoom, createFakeHarnessAdapter, createReferenceConnector,
+  createReferenceRoom,
 } from '../e2e/harness/reference';
+import type { ScenarioHarness } from '../e2e/harness/scenario';
 import type { DeliverySubjectFactory, HarnessSubjectFactory, SuiteEnvironment } from './suites';
 
 function unwrap<T>(result: { ok: true; value: T } | { ok: false; field: string }, what: string): T {
@@ -45,9 +47,9 @@ export function fakeCapabilities(busy: HarnessCapabilities['busy']): HarnessCapa
 export const fakeSources: readonly SourceVersion[] = [{ component: 'fake-reference', version: '0' }];
 
 /** Explicit per-owner controls; profiles deliberately collide to prove they do not merge owners. */
-export function controlsFor(seed: string): OwnerControls {
+export function controlsFor(seed: string, harness = 'fake-reference'): OwnerControls {
   return {
-    harness: 'fake-reference',
+    harness,
     sessionId: `thread-existing-${seed}`,
     generation: 0,
     policyVersion: 3,
@@ -71,6 +73,8 @@ export function fakeHarnessSubject(capabilities: HarnessCapabilities, defect?: A
       mode: 'fake-contract',
       port: adapter,
       modelInputs: async () => adapter.modelInputs(),
+      receipts: async () => adapter.streamed(),
+      settle: async () => adapter.settle(),
       faults: FAULTS,
       close: () => adapter.close(),
     };
@@ -80,13 +84,18 @@ export function fakeHarnessSubject(capabilities: HarnessCapabilities, defect?: A
 export function referenceDeliverySubject(
   options: Readonly<{ capabilities: HarnessCapabilities; connectorDefect?: ConnectorDefect }>,
 ): DeliverySubjectFactory {
+  // One room per scenario: the room-wide defects reach the other owners through it.
+  const rooms = new WeakMap<ScenarioHarness, ReferenceRoom>();
   return async (scenario, owner) => {
+    const room = rooms.get(scenario) ?? createReferenceRoom();
+    rooms.set(scenario, room);
     const adapter = createFakeHarnessAdapter({ scenario, owner, capabilities: options.capabilities });
     const connector = createReferenceConnector({
       scenario,
       owner,
       adapter,
       limits: fixtureLimits,
+      room,
       ...(options.connectorDefect ? { defect: options.connectorDefect } : {}),
     });
     return {
@@ -97,6 +106,12 @@ export function referenceDeliverySubject(
       undecryptable: async () => connector.undecryptable(),
       keysArrived: async () => connector.keysArrived(),
       restart: () => connector.restart(),
+      revoke: async () => {
+        // The session is re-armed at the next generation, whatever the connector does.
+        connector.revoke();
+        adapter.rearm(nextGeneration(owner).binding);
+      },
+      releases: async () => connector.releases(),
       modelInputs: async () => adapter.modelInputs(),
       releaseFacts: async releaseId => connector.releaseFacts(releaseId),
       faults: FAULTS,

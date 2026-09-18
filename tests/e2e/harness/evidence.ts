@@ -1,6 +1,7 @@
 // Evidence records carry a mandatory mode so a fake contract proof can never stand
 // in for live SDK or harness evidence. Records hold identifiers only: no message
-// text, payload bytes or credentials.
+// text, payload bytes or credentials. Live records also name the registered driver
+// that produced them, and only manifests an evidence log issued count as evidence.
 
 import type { ClockReading, ClockSource, ScenarioClock } from './clock';
 
@@ -17,6 +18,8 @@ export type EvidenceRecord = Readonly<{
   clockId: string;
   clockSource: ClockSource;
   wallClock: string | null;
+  /** The registered driver that produced the record; null only for in-process fake evidence. */
+  driver: string | null;
 }>;
 
 /** A component whose behaviour the evidence describes, pinned to an exact version. */
@@ -36,13 +39,38 @@ export class EvidenceError extends Error {
   }
 }
 
-// Kinds and identifiers are short, whitespace-free tokens. This keeps accidental
-// plaintext (a message body, an error string) out of the evidence log.
-const TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$/;
+// Each field accepts only its own prefixed identifier shape, so accidental plaintext
+// (a message body, an error string, an email address) never enters the evidence log.
+const FIELDS = {
+  runId: /^[a-z0-9][a-z0-9_.:-]{0,127}$/,
+  kind: /^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$/,
+  ownerId: /^owner-[a-z][a-z0-9]{0,15}$/,
+  operationId: /^(?:rel|release|event|op|cmd|approve)-[A-Za-z0-9_.:-]{1,120}$/,
+  component: /^[a-z][a-z0-9-]{0,63}$/,
+  version: /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/,
+  driver: /^[a-z][a-z0-9-]{0,63}$/,
+} as const;
 
-export function evidenceToken(value: string, field: string): string {
-  if (!TOKEN.test(value)) throw new EvidenceError(`${field} must be an identifier token, not free text`);
+export type EvidenceField = keyof typeof FIELDS;
+
+export function evidenceToken(value: string, field: EvidenceField): string {
+  if (typeof value !== 'string' || !FIELDS[field].test(value)) {
+    throw new EvidenceError(`${field} must be a ${field} identifier, not free text`);
+  }
   return value;
+}
+
+// Manifests built by an evidence log, or combined from such manifests. A hand-built
+// object of the same shape is not evidence.
+const issued = new WeakSet<EvidenceManifest>();
+
+function issue(manifest: EvidenceManifest): EvidenceManifest {
+  issued.add(manifest);
+  return manifest;
+}
+
+export function isIssuedManifest(manifest: EvidenceManifest): boolean {
+  return issued.has(manifest);
 }
 
 export function isLiveMode(mode: EvidenceMode): boolean {
@@ -52,7 +80,13 @@ export function isLiveMode(mode: EvidenceMode): boolean {
 export interface EvidenceLog {
   readonly runId: string;
   readonly mode: EvidenceMode;
-  record(kind: string, subject: Readonly<{ ownerId: string; operationId: string }>, clock: ScenarioClock): EvidenceRecord;
+  /** `driver` is required in live modes: live evidence comes only from a registered driver. */
+  record(
+    kind: string,
+    subject: Readonly<{ ownerId: string; operationId: string }>,
+    clock: ScenarioClock,
+    driver: string | null,
+  ): EvidenceRecord;
   records(): readonly EvidenceRecord[];
   manifest(): EvidenceManifest;
 }
@@ -64,8 +98,8 @@ export function createEvidenceLog(
   const runId = evidenceToken(config.runId, 'runId');
   if (!EVIDENCE_MODES.includes(mode)) throw new EvidenceError(`unknown evidence mode ${String(mode)}`);
   for (const source of config.sources) {
-    evidenceToken(source.component, 'source.component');
-    evidenceToken(source.version, 'source.version');
+    evidenceToken(source.component, 'component');
+    evidenceToken(source.version, 'version');
   }
   if (isLiveMode(mode) && config.sources.length === 0) {
     throw new EvidenceError('live evidence must name the exact source versions it observed');
@@ -76,9 +110,12 @@ export function createEvidenceLog(
   return {
     runId,
     mode,
-    record(kind, subject, clock) {
+    record(kind, subject, clock, driver) {
       if (isLiveMode(mode) && clock.source === 'fake') {
         throw new EvidenceError('live evidence cannot be timed by a fake clock');
+      }
+      if (isLiveMode(mode) && driver === null) {
+        throw new EvidenceError('live evidence must come from a registered driver');
       }
       const entry: EvidenceRecord = Object.freeze({
         mode,
@@ -89,12 +126,13 @@ export function createEvidenceLog(
         clockId: clock.id,
         clockSource: clock.source,
         wallClock: clock.wallClock(),
+        driver: driver === null ? null : evidenceToken(driver, 'driver'),
       });
       records.push(entry);
       return entry;
     },
     records: () => Object.freeze([...records]),
-    manifest: () => Object.freeze({ runId, mode, sources, records: Object.freeze([...records]) }),
+    manifest: () => issue(Object.freeze({ runId, mode, sources, records: Object.freeze([...records]) })),
   };
 }
 
@@ -110,10 +148,14 @@ export function combineManifests(manifests: readonly EvidenceManifest[]): Eviden
   const [first] = manifests;
   if (!first) throw new EvidenceError('no manifests to combine');
   for (const manifest of manifests) {
+    if (!isIssuedManifest(manifest)) throw new EvidenceError('cannot combine a manifest no evidence log issued');
     if (manifest.mode !== first.mode) {
       throw new EvidenceError(`cannot mix ${first.mode} and ${manifest.mode} evidence in one manifest`);
     }
     if (manifest.runId !== first.runId) throw new EvidenceError('cannot combine manifests from different runs');
+    if (manifest.records.some(record => record.mode !== manifest.mode)) {
+      throw new EvidenceError(`a ${manifest.mode} manifest holds records of another mode`);
+    }
   }
   const sources = new Map<string, SourceVersion>();
   for (const source of manifests.flatMap(manifest => manifest.sources)) {
@@ -123,12 +165,12 @@ export function combineManifests(manifests: readonly EvidenceManifest[]): Eviden
     }
     sources.set(source.component, source);
   }
-  return Object.freeze({
+  return issue(Object.freeze({
     runId: first.runId,
     mode: first.mode,
     sources: Object.freeze([...sources.values()]),
     records: Object.freeze(manifests.flatMap(manifest => manifest.records)),
-  });
+  }));
 }
 
 export type EvidenceQuery = Readonly<{

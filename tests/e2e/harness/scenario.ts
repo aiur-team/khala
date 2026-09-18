@@ -7,10 +7,22 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type ScenarioClock, createFakeClock, createMonotonicClock } from './clock';
 import {
-  type EvidenceManifest, type EvidenceMode, type EvidenceRecord, type SourceVersion, createEvidenceLog, isLiveMode,
+  type EvidenceManifest, type EvidenceMode, type EvidenceRecord, type SourceVersion, createEvidenceLog, evidenceToken, isLiveMode,
 } from './evidence';
-import { type ArmedFault, type Fault, type FaultInjector, createFaultInjector } from './faults';
+import { type ArmedFault, type Fault, type FaultBoundaryPort, type FaultInjector, createFaultState } from './faults';
 import { type OwnerControls, type OwnerFixture, assertIndependentOwners, createOwnerFixture } from './owners';
+
+/**
+ * What a registered driver receives when the scenario starts. In live modes this is
+ * the only way to record evidence or fire a fault, and every record it writes names
+ * the driver.
+ */
+export interface DriverHandle {
+  readonly driver: string;
+  record(kind: string, subject: Readonly<{ ownerId: string; operationId: string }>): EvidenceRecord;
+  readonly faults: FaultBoundaryPort;
+  clock(ownerId: string): ScenarioClock;
+}
 
 /**
  * An injected browser, API, connector or native harness driver. Its mode must equal
@@ -22,7 +34,9 @@ export interface ScenarioDriver {
   readonly source: SourceVersion;
   /** Faults this driver can enact at their documented boundary. */
   readonly faults: readonly Fault[];
-  /** Arms a fault in the real component; fake drivers rely on `faults.checkpoint`. */
+  /** Receives the driver's own evidence and fault handle; called once, at scenario creation. */
+  attach?(handle: DriverHandle): void;
+  /** Arms a fault in the real component, which fires it through its handle's `faults`. */
   inject?(fault: Fault, owner: OwnerFixture): Promise<void>;
   close(): Promise<void>;
 }
@@ -50,12 +64,14 @@ export interface ScenarioHarness {
   readonly runId: string;
   readonly mode: EvidenceMode;
   readonly owners: readonly OwnerFixture[];
+  /** `checkpoint` and `clear` work only in fake-contract mode; live drivers use their handle. */
   readonly faults: FaultInjector;
   owner(seed: string): OwnerFixture;
   clock(ownerId: string): ScenarioClock;
   /** A state directory private to one owner; never shared with another owner. */
   stateDir(ownerId: string): string;
   inject(fault: Fault, targetOwnerId: string): Promise<void>;
+  /** In-process fake evidence. Refused in live modes: live evidence comes from a driver handle. */
   record(kind: string, subject: Readonly<{ ownerId: string; operationId: string }>): EvidenceRecord;
   evidence(): ReadonlyArray<EvidenceRecord>;
   manifest(): EvidenceManifest;
@@ -76,7 +92,9 @@ export async function createScenarioHarness(config: ScenarioConfig): Promise<Sce
   if (isLiveMode(config.mode) && drivers.length === 0) {
     throw new Error(`a ${config.mode} scenario needs at least one registered ${config.mode} driver`);
   }
-  for (const driver of drivers) {
+  for (const [index, driver] of drivers.entries()) {
+    evidenceToken(driver.name, 'driver');
+    if (drivers.findIndex(other => other.name === driver.name) !== index) throw new Error(`driver ${driver.name} is registered twice`);
     if (driver.mode !== config.mode) {
       throw new Error(`driver ${driver.name} produces ${driver.mode} evidence in a ${config.mode} scenario`);
     }
@@ -117,7 +135,29 @@ export async function createScenarioHarness(config: ScenarioConfig): Promise<Sce
   }
   for (const driver of drivers) cleanups.push({ label: `driver:${driver.name}`, ownerId: null, dispose: () => driver.close() });
 
-  const faults = createFaultInjector(evidence, clock);
+  const faultState = createFaultState(evidence, clock);
+  const inProcess = faultState.boundaryFor(null);
+  const refuseLive = (what: string) => (): never => {
+    throw new Error(`${what} in a ${config.mode} scenario must go through a registered driver's handle`);
+  };
+  const faults: FaultInjector = {
+    arm: faultState.arm,
+    isArmed: faultState.isArmed,
+    armed: faultState.armed,
+    fired: faultState.fired,
+    unfired: faultState.unfired,
+    checkpoint: live ? refuseLive('a fault checkpoint') : inProcess.checkpoint,
+    clear: live ? refuseLive('clearing a fault') : inProcess.clear,
+  };
+  for (const driver of drivers) {
+    const handle: DriverHandle = {
+      driver: driver.name,
+      record: (kind, subject) => evidence.record(kind, subject, clock(subject.ownerId), driver.name),
+      faults: faultState.boundaryFor(driver.name),
+      clock,
+    };
+    driver.attach?.(Object.freeze(handle));
+  }
   const byId = (ownerId: string): OwnerFixture => {
     const owner = owners.find(candidate => candidate.ownerId === ownerId);
     if (!owner) throw new Error(`unknown owner ${ownerId}`);
@@ -148,7 +188,9 @@ export async function createScenarioHarness(config: ScenarioConfig): Promise<Sce
       faults.arm(fault, owner.ownerId);
       for (const driver of capable) await driver.inject?.(fault, owner);
     },
-    record: (kind, subject) => evidence.record(kind, subject, clock(subject.ownerId)),
+    record: live
+      ? refuseLive('recording evidence')
+      : (kind, subject) => evidence.record(kind, subject, clock(subject.ownerId), null),
     evidence: () => evidence.records(),
     manifest: () => evidence.manifest(),
     defer(label, ownerId, dispose) {

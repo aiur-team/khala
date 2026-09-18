@@ -167,7 +167,7 @@ This suite documents unrestricted same-host agent access as outside the connecto
 
 ## Verification Contract
 
-After integration prerequisites: planned `KHALA_E2E_LIVE=1 pnpm test:e2e -- tests/e2e/security/security.test.ts` (101/137 register the common test:e2e target), `pnpm check:boundaries`, and the suite's inventory check. Require positive leak-detection control, actual existing-session receipt and process-restart evidence. Scripts do not exist yet; creating them outside owned surface is101 coordination, not this worker's edit.
+After integration prerequisites: planned `KHALA_E2E_LIVE=1 KHALA_E2E_DISPOSABLE_ENV=<disposable environment> pnpm test:e2e -- tests/e2e/security/security.test.ts` (101/137 register the common test:e2e target), `pnpm check:boundaries`, and the suite's inventory check. Require positive leak-detection control, actual existing-session receipt and process-restart evidence. Scripts do not exist yet; creating them outside owned surface is101 coordination, not this worker's edit.
 
 ## Definition of Done
 

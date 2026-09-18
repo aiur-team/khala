@@ -6,14 +6,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const [project, ...rest] = process.argv.slice(2);
-if (!['conformance', 'e2e'].includes(project)) throw new Error(`unknown test project: ${project}`);
+// `live-gate` runs the live gate's fixtures; only `live-gate.test.ts` selects it.
+if (!['conformance', 'e2e', 'live-gate'].includes(project)) throw new Error(`unknown test project: ${project}`);
 
 const config = fileURLToPath(new URL('./vitest.config.ts', import.meta.url));
 const filters = rest.filter(argument => argument !== '--');
-// e2e runs also load the live gate, which fails a live run in which no live case passed.
-const reporters = project === 'e2e'
-  ? ['--reporter=default', `--reporter=${fileURLToPath(new URL('./live-reporter.ts', import.meta.url))}`]
-  : [];
+// Every project loads the live gate, which fails a live run in which no live case passed.
+const reporters = ['--reporter=default', `--reporter=${fileURLToPath(new URL('./live-reporter.ts', import.meta.url))}`];
 // `pnpm run` puts the workspace's `node_modules/.bin` on PATH.
 const result = spawnSync('vitest', ['run', '--config', config, '--project', project, ...reporters, ...filters], { stdio: 'inherit' });
 if (result.error) throw result.error;

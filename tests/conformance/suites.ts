@@ -2,14 +2,16 @@
 // pass, fail with a reason, or skip with a reason. A skipped check is never counted
 // as a pass, and unsupported capabilities are skipped rather than synthesized.
 
+import { isDeepStrictEqual } from 'node:util';
 import {
   type ApprovalCommand, type ApprovalPort, type DeliveryLimits, type DeliveryReceipt, type EventRef, type HarnessCapabilities, type HarnessPort,
-  type ReceiptKind, type ReleasedJob, RECEIPT_KINDS, type SessionBinding, decodeApprovalCommand,
-  releaseFromApproval, sameSessionBinding,
+  type PolicySetCommand, type ReceiptKind, type ReleasedJob, RECEIPT_KINDS, type SessionBinding, decodeApprovalCommand,
+  decodePolicySetCommand, releaseFromApproval, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
-import type { EvidenceMode, SourceVersion } from '../e2e/harness/evidence';
+import { type EvidenceManifest, type EvidenceMode, type SourceVersion, isLiveMode } from '../e2e/harness/evidence';
 import { type Fault, InjectedDisconnect } from '../e2e/harness/faults';
-import { type OwnerControls, type OwnerFixture, ownerAuthority } from '../e2e/harness/owners';
+import { type LiveEnvironment, liveEnvironment } from '../e2e/harness/live';
+import { type OwnerControls, type OwnerFixture, nextGeneration, ownerAuthority } from '../e2e/harness/owners';
 import { type ModelInput, sha256 } from '../e2e/harness/reference';
 import { type ScenarioDriver, type ScenarioHarness, assertCleanClose, createScenarioHarness } from '../e2e/harness/scenario';
 
@@ -24,7 +26,12 @@ export type ConformanceReport = Readonly<{
   suite: string;
   mode: EvidenceMode;
   results: readonly CheckResult[];
+  /** One manifest per check, in check order. */
+  manifests: readonly EvidenceManifest[];
 }>;
+
+// Reports built by `runChecks`. A hand-built object of the same shape is not a report.
+const issuedReports = new WeakSet<ConformanceReport>();
 
 class CheckFailed extends Error {}
 class CheckSkipped extends Error {}
@@ -46,7 +53,7 @@ export type SuiteEnvironment = Readonly<{
   limits: DeliveryLimits;
   /**
    * Fresh drivers for each check. Required in live modes: live evidence and live
-   * faults come from registered drivers, never from in-process fakes.
+   * faults come only through a registered driver's handle, never from in-process fakes.
    */
   drivers?: () => readonly ScenarioDriver[];
 }>;
@@ -56,6 +63,8 @@ type Check<Subject> = Readonly<{
   run: (context: Readonly<{ scenario: ScenarioHarness; subjects: ReadonlyMap<string, Subject> }>) => Promise<void>;
 }>;
 
+const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
 async function runChecks<Subject extends { mode: EvidenceMode; close(): Promise<void> }>(
   suite: string,
   environment: SuiteEnvironment,
@@ -63,9 +72,11 @@ async function runChecks<Subject extends { mode: EvidenceMode; close(): Promise<
   factory: (scenario: ScenarioHarness, owner: OwnerFixture) => Promise<Subject>,
 ): Promise<ConformanceReport> {
   const results: CheckResult[] = [];
+  const manifests: EvidenceManifest[] = [];
+  const live = isLiveMode(environment.mode);
   for (const [index, check] of checks.entries()) {
     const scenario = await createScenarioHarness({
-      runId: `${suite}-${index}`,
+      runId: `conformance-${slug(suite)}-${index}`,
       mode: environment.mode,
       owners: environment.owners,
       sources: environment.sources,
@@ -82,6 +93,8 @@ async function runChecks<Subject extends { mode: EvidenceMode; close(): Promise<
         ensure(subject.mode === environment.mode, `subject produces ${subject.mode} evidence in a ${environment.mode} suite`);
       }
       await check.run({ scenario, subjects });
+      // A live pass must rest on evidence a registered driver produced.
+      ensure(!live || scenario.evidence().length > 0, 'passed without any live evidence from a registered driver');
       outcome = { status: 'pass' };
     } catch (error) {
       if (error instanceof CheckSkipped) outcome = { status: 'skip', reason: error.message };
@@ -97,8 +110,13 @@ async function runChecks<Subject extends { mode: EvidenceMode; close(): Promise<
       }
     }
     results.push({ check: check.name, outcome });
+    manifests.push(scenario.manifest());
   }
-  return Object.freeze({ suite, mode: environment.mode, results: Object.freeze(results) });
+  const report: ConformanceReport = Object.freeze({
+    suite, mode: environment.mode, results: Object.freeze(results), manifests: Object.freeze(manifests),
+  });
+  issuedReports.add(report);
+  return report;
 }
 
 export function outcomeOf(report: ConformanceReport, check: string): CheckOutcome {
@@ -107,14 +125,34 @@ export function outcomeOf(report: ConformanceReport, check: string): CheckOutcom
   return result.outcome;
 }
 
+/** Checks live harness acceptance requires unless a caller names a larger set. */
+export const CORE_LIVE_HARNESS_CHECKS: readonly string[] = [
+  'capabilities.declared',
+  'session.identity_preserved',
+  'payload.exact_digest',
+  'notify.no_pending_hint',
+  'binding.owner_specific',
+  'binding.revoked_blocks',
+  'receipt.consumption_is_observed',
+];
+
 /**
- * Accepts a report as live harness evidence. A fake report, a failed check or a
- * skipped required check is refused, whatever its receipts claimed.
+ * Accepts a report as live harness evidence. Refused: a report `runChecks` did not
+ * build, a fake report, a run outside an opted-in live environment, an empty required
+ * set, any failed check, and any required check that did not pass.
  */
-export function acceptLiveHarness(report: ConformanceReport, required: readonly string[]): void {
+export function acceptLiveHarness(
+  report: ConformanceReport,
+  options: Readonly<{ required?: readonly string[]; environment?: LiveEnvironment }> = {},
+): void {
+  if (!issuedReports.has(report)) throw new Error('only a report produced by a conformance run can be accepted');
   if (report.mode !== 'live-harness') {
     throw new Error(`${report.suite} is ${report.mode} evidence; live harness acceptance needs live-harness`);
   }
+  const environment = options.environment ?? liveEnvironment();
+  if (!environment.enabled) throw new Error(`live harness acceptance needs an opted-in live environment: ${environment.reason}`);
+  const required = options.required ?? CORE_LIVE_HARNESS_CHECKS;
+  if (required.length === 0) throw new Error('live harness acceptance needs at least one required check');
   const failed = report.results.filter(entry => entry.outcome.status === 'fail');
   if (failed.length > 0) throw new Error(`${report.suite} failed: ${failed.map(entry => entry.check).join(', ')}`);
   for (const check of required) {
@@ -189,18 +227,47 @@ export function releaseFor(
   return released.value;
 }
 
+function policyCommand(owner: OwnerFixture, peer: OwnerFixture, mode: PolicySetCommand['mode'], commandId: string): PolicySetCommand {
+  const decoded = decodePolicySetCommand({
+    v: 1,
+    commandId,
+    roomId: 'room-1',
+    bindingId: owner.binding.bindingId,
+    peerParticipantId: peer.agentParticipantId,
+    expectedPolicyVersion: owner.policyVersion,
+    expectedBindingGeneration: owner.binding.generation,
+    mode,
+    paused: false,
+    issuedAt: '2026-09-18T00:00:00Z',
+  });
+  if (!decoded.ok) throw new Error(`policy fixture invalid at ${decoded.field}`);
+  return decoded.value;
+}
+
 // ---------------------------------------------------------------------------
 // Harness adapter conformance.
 
-/** One owner's harness adapter plus the model-facing observation of its session. */
+/**
+ * One owner's harness adapter plus the model-facing observation of its session.
+ *
+ * Faults: a subject lists the faults it can enact. A fake enacts them from built-in
+ * `checkpoint` calls. A real component implements `inject`, which prepares its native
+ * seam (a host registry, an app-server reply, a thread status) to call `checkpoint`
+ * at the fault's boundary and act the fault out natively when it fires.
+ */
 export type HarnessSubject = Readonly<{
   /** The evidence this subject produces: a fake adapter is `fake-contract`, whatever it claims. */
   mode: EvidenceMode;
   port: HarnessPort;
   /** What the existing model session actually received. */
   modelInputs(): Promise<readonly ModelInput[]>;
+  /** Receipts observed after `submit` returned, for example from a native receipt tracker. */
+  receipts(): Promise<readonly DeliveryReceipt[]>;
+  /** Lets the session finish any running turn and consume what is queued; ends a busy fault. */
+  settle(): Promise<void>;
   /** Faults this subject can enact at their documented boundary. */
   faults: readonly Fault[];
+  inject?(fault: Fault): Promise<void>;
   close(): Promise<void>;
 }>;
 
@@ -218,7 +285,8 @@ async function submitCapturing(port: HarnessPort, job: ReleasedJob, payload: Uin
 }
 
 function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits): Check<HarnessSubject>[] {
-  const subjectOf = (context: { scenario: ScenarioHarness; subjects: ReadonlyMap<string, HarnessSubject> }, index: number) => {
+  type Context = { scenario: ScenarioHarness; subjects: ReadonlyMap<string, HarnessSubject> };
+  const subjectOf = (context: Context, index: number) => {
     const owner = context.scenario.owners[index];
     if (!owner) throw new Error(`the suite needs owner #${index + 1}`);
     return { owner, subject: context.subjects.get(owner.ownerId)! };
@@ -227,9 +295,17 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
     const event = authoredEvent(peer, 'room-conformance', label);
     return { event, job: releaseFor(owner, [event.ref], event.payload, `release-${owner.seed}-${label}`, limits) };
   };
-  const requireFault = (subject: HarnessSubject, fault: Fault): void => {
+  const inject = async (context: Context, subject: HarnessSubject, owner: OwnerFixture, fault: Fault) => {
     if (!subject.faults.includes(fault)) skip(`subject cannot inject ${fault}`);
+    await context.scenario.inject(fault, owner.ownerId);
+    await subject.inject?.(fault);
   };
+  /** Every receipt for `job`: the one `submit` returned plus any observed afterwards. */
+  const receiptsFor = async (subject: HarnessSubject, job: ReleasedJob, returned: DeliveryReceipt | null) => [
+    ...(returned ? [returned] : []),
+    ...(await subject.receipts()).filter(entry => entry.releaseId === job.releaseId),
+  ];
+  const inputsFor = async (subject: HarnessSubject, job: ReleasedJob) => (await subject.modelInputs()).filter(input => input.releaseId === job.releaseId);
 
   const checks: Check<HarnessSubject>[] = [
     {
@@ -237,7 +313,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
       async run(context) {
         const { owner, subject } = subjectOf(context, 0);
         const inspected = await subject.port.inspect(owner.binding);
-        ensure(JSON.stringify(inspected) === JSON.stringify(capabilities), 'inspect() differs from the registered capabilities');
+        ensure(isDeepStrictEqual(inspected, capabilities), 'inspect() differs from the registered capabilities');
       },
     },
     {
@@ -245,11 +321,18 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
       async run(context) {
         const { owner, subject } = subjectOf(context, 0);
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'identity');
-        const receipt = await subject.port.submit({ job, payload: event.payload });
-        ensure(receipt.bindingId === owner.binding.bindingId && receipt.generation === owner.binding.generation,
-          'receipt names a different binding or generation');
+        const returned = await subject.port.submit({ job, payload: event.payload });
+        ensure(returned.kind !== 'failed', `a healthy session refused a valid release (${returned.errorCode})`);
+        await subject.settle();
+        const receipts = await receiptsFor(subject, job, returned);
+        for (const receipt of receipts) {
+          ensure(receipt.bindingId === owner.binding.bindingId && receipt.generation === owner.binding.generation,
+            `a ${receipt.kind} receipt names a different binding or generation`);
+        }
         const inputs = await subject.modelInputs();
-        if (receipt.kind === 'context_consumed') ensure(inputs.length > 0, 'consumption reported but no model input observed');
+        if (receipts.some(receipt => receipt.kind === 'context_consumed')) {
+          ensure(inputs.some(input => input.releaseId === job.releaseId), 'consumption reported but no model input observed');
+        }
         for (const input of inputs) {
           ensure(input.bindingId === owner.binding.bindingId && input.sessionId === owner.binding.sessionId
             && input.generation === owner.binding.generation, 'model input landed outside the bound existing session');
@@ -260,17 +343,17 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
       name: 'payload.exact_digest',
       async run(context) {
         const { owner, subject } = subjectOf(context, 0);
-        const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'digest');
+        const peer = subjectOf(context, 1).owner;
+        const { job, event } = firstRelease(owner, peer, 'digest');
         const receipt = await subject.port.submit({ job, payload: event.payload });
-        const inputs = (await subject.modelInputs()).filter(input => input.releaseId === job.releaseId);
-        if (receipt.kind === 'failed') skip(`submission failed (${receipt.errorCode}); digest not observable`);
-        ensure(inputs.every(input => input.payloadDigest === job.payloadDigest), 'model received bytes with another digest');
+        ensure(receipt.kind !== 'failed', `a healthy session refused a valid release (${receipt.errorCode})`);
         const tampered = new Uint8Array([...event.payload, 0x20]);
-        const second = firstRelease(owner, subjectOf(context, 1).owner, 'tampered');
+        const second = firstRelease(owner, peer, 'tampered');
         const refused = await subject.port.submit({ job: second.job, payload: tampered });
         ensure(refused.kind === 'failed', 'a payload that does not match the release digest was accepted');
-        ensure(!(await subject.modelInputs()).some(input => input.releaseId === second.job.releaseId),
-          'mismatched payload reached the model');
+        await subject.settle();
+        ensure((await inputsFor(subject, job)).every(input => input.payloadDigest === job.payloadDigest), 'model received bytes with another digest');
+        ensure((await inputsFor(subject, second.job)).length === 0, 'mismatched payload reached the model');
       },
     },
     {
@@ -279,6 +362,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const { owner, subject } = subjectOf(context, 0);
         const { job } = firstRelease(owner, subjectOf(context, 1).owner, 'hint');
         await subject.port.notify(owner.binding, { v: 1, releaseId: job.releaseId });
+        await subject.settle();
         ensure((await subject.modelInputs()).length === 0, 'a notification put content into model context');
       },
     },
@@ -290,11 +374,27 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         const bystander = context.scenario.owners[2] ?? other;
         const { job, event } = firstRelease(target, bystander, 'foreign');
         const result = await submitCapturing(subject.port, job, event.payload);
-        ensure(!(await subject.modelInputs()).some(input => input.releaseId === job.releaseId),
-          `${target.seed}'s release reached ${other.seed}'s session`);
+        await subject.settle();
+        ensure((await inputsFor(subject, job)).length === 0, `${target.seed}'s release reached ${other.seed}'s session`);
         ensure(result.receipt === null || !ACCEPTANCE.includes(result.receipt.kind),
           `${other.seed}'s adapter reported acceptance of ${target.seed}'s release`);
         ensure(!sameSessionBinding(job.binding, other.binding), 'fixture error: bindings are not distinct');
+      },
+    },
+    {
+      name: 'binding.revoked_blocks',
+      async run(context) {
+        // Revocation re-arms the binding at the next generation. A job for a generation
+        // the session does not serve must not reach it, even with the same binding ID.
+        const { owner, subject } = subjectOf(context, 0);
+        const rearmed = nextGeneration(owner);
+        const { job, event } = firstRelease(rearmed, subjectOf(context, 1).owner, 'revoked');
+        ensure(job.binding.bindingId === owner.binding.bindingId, 'fixture error: re-arm changed the binding ID');
+        const result = await submitCapturing(subject.port, job, event.payload);
+        await subject.settle();
+        ensure((await inputsFor(subject, job)).length === 0, 'a release for another binding generation reached the session');
+        ensure(result.receipt === null || result.receipt.kind === 'failed',
+          `a release for another binding generation reported ${result.receipt?.kind}`);
       },
     },
     {
@@ -304,25 +404,29 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         // unclaimed context_consumed receipts fails instead of skipping.
         const { owner, subject } = subjectOf(context, 0);
         const peer = subjectOf(context, 1).owner;
-        const receipts = [];
+        const submitted: { job: ReleasedJob; receipt: DeliveryReceipt }[] = [];
         for (const label of ['consume-1', 'consume-2']) {
           const { job, event } = firstRelease(owner, peer, label);
-          receipts.push({ job, receipt: await subject.port.submit({ job, payload: event.payload }) });
+          submitted.push({ job, receipt: await subject.port.submit({ job, payload: event.payload }) });
         }
+        ensure(submitted.some(({ receipt }) => receipt.kind !== 'failed'), 'every valid submission failed; consumption was never exercised');
+        await subject.settle();
         if (subject.faults.includes('session_exit')) {
-          await context.scenario.inject('session_exit', owner.ownerId);
+          await inject(context, subject, owner, 'session_exit');
           const { job, event } = firstRelease(owner, peer, 'consume-exit');
-          receipts.push({ job, receipt: await subject.port.submit({ job, payload: event.payload }) });
+          submitted.push({ job, receipt: await subject.port.submit({ job, payload: event.payload }) });
+          await subject.settle();
         }
+        const receipts = (await Promise.all(submitted.map(({ job, receipt }) => receiptsFor(subject, job, receipt)))).flat();
         if (!capabilities.receiptEvidence.includes('context_consumed')) {
           skip('capabilities do not claim context_consumed receipts');
         }
         const inputs = await subject.modelInputs();
-        const consumed = receipts.filter(({ receipt }) => receipt.kind === 'context_consumed');
+        const consumed = receipts.filter(receipt => receipt.kind === 'context_consumed');
         ensure(consumed.length > 0, 'capabilities claim context_consumed but no submission produced one');
-        for (const { job } of consumed) {
-          ensure(inputs.some(input => input.releaseId === job.releaseId),
-            `context_consumed for ${job.releaseId} without a model-facing input`);
+        for (const receipt of consumed) {
+          ensure(inputs.some(input => input.releaseId === receipt.releaseId),
+            `context_consumed for ${receipt.releaseId} without a model-facing input`);
         }
       },
     },
@@ -330,15 +434,15 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
       name: 'fault.disconnect_after_write',
       async run(context) {
         const { owner, subject } = subjectOf(context, 0);
-        requireFault(subject, 'disconnect_after_write');
-        await context.scenario.inject('disconnect_after_write', owner.ownerId);
+        await inject(context, subject, owner, 'disconnect_after_write');
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'unknown');
         const result = await submitCapturing(subject.port, job, event.payload);
         ensure(result.disconnected || result.receipt?.kind === 'outcome_unknown',
           'an unconfirmed write was reported as a definite outcome');
         const reconciled = await subject.port.reconcile(job);
         ensure(reconciled === null || reconciled.releaseId === job.releaseId, 'reconcile answered for another release');
-        const count = (await subject.modelInputs()).filter(input => input.releaseId === job.releaseId).length;
+        await subject.settle();
+        const count = (await inputsFor(subject, job)).length;
         ensure(count <= 1, `model received release ${job.releaseId} ${count} times`);
       },
     },
@@ -346,12 +450,12 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
       name: 'fault.session_exit',
       async run(context) {
         const { owner, subject } = subjectOf(context, 0);
-        requireFault(subject, 'session_exit');
-        await context.scenario.inject('session_exit', owner.ownerId);
+        await inject(context, subject, owner, 'session_exit');
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'exit');
         const receipt = await subject.port.submit({ job, payload: event.payload });
         ensure(receipt.kind === 'failed' && receipt.errorCode === 'session_unavailable',
           `exited session reported ${receipt.kind}`);
+        await subject.settle();
         ensure((await subject.modelInputs()).length === 0, 'content reached a model after its session exited');
       },
     },
@@ -359,20 +463,23 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
       name: 'fault.session_busy',
       async run(context) {
         const { owner, subject } = subjectOf(context, 0);
-        requireFault(subject, 'session_busy');
+        if (!subject.faults.includes('session_busy')) skip('subject cannot inject session_busy');
         if (capabilities.busy === 'unknown') skip('busy behaviour is unknown for this route');
-        await context.scenario.inject('session_busy', owner.ownerId);
+        await inject(context, subject, owner, 'session_busy');
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'busy');
         const receipt = await subject.port.submit({ job, payload: event.payload });
-        const count = (await subject.modelInputs()).filter(input => input.releaseId === job.releaseId).length;
+        const whileBusy = (await inputsFor(subject, job)).length;
         if (capabilities.busy === 'reject') {
           ensure(receipt.kind === 'failed' && receipt.errorCode === 'busy_rejected', `busy reject reported ${receipt.kind}`);
-          ensure(count === 0, 'a rejected release reached the model');
+          ensure(whileBusy === 0, 'a rejected release reached the model');
         } else {
           // A queue route must hold the release while the session is busy; writing it
           // straight through means the busy fault was ignored.
           ensure(receipt.kind === 'harness_queued', `busy queue reported ${receipt.kind}`);
-          ensure(count === 0, 'a busy session received the release before its turn ended');
+          ensure(whileBusy === 0, 'a busy session received the release before its turn ended');
+          await subject.settle();
+          const delivered = (await inputsFor(subject, job)).length;
+          ensure(delivered === 1, `the queued release reached the model ${delivered} times once the session was idle`);
         }
       },
     },
@@ -413,6 +520,7 @@ function claimedReceiptsOnly(factory: HarnessSubjectFactory, capabilities: Harne
     const { port } = subject;
     return {
       ...subject,
+      receipts: async () => (await subject.receipts()).map(claimed),
       port: {
         inspect: binding => port.inspect(binding),
         notify: (binding, hint) => port.notify(binding, hint),
@@ -427,6 +535,9 @@ function claimedReceiptsOnly(factory: HarnessSubjectFactory, capabilities: Harne
 // ---------------------------------------------------------------------------
 // Delivery (owner connector) conformance.
 
+/** Ledger states for a release. `unknown` and `reconciling` never license a new submission. */
+export type ReleaseLedgerState = 'intent' | 'submitted' | 'unknown' | 'reconciling';
+
 /** One owner's trusted connector stack as seen from outside. */
 export type DeliverySubject = Readonly<{
   mode: EvidenceMode;
@@ -437,6 +548,10 @@ export type DeliverySubject = Readonly<{
   keysArrived(): Promise<void>;
   /** Restarts the owner process from durable state. */
   restart(): Promise<void>;
+  /** Revokes the current binding and re-arms the same session at the next generation. */
+  revoke(): Promise<void>;
+  /** Every release the connector created, with its ledger state. */
+  releases(): Promise<readonly Readonly<{ releaseId: string; state: ReleaseLedgerState }>[]>;
   modelInputs(): Promise<readonly ModelInput[]>;
   releaseFacts(releaseId: string): Promise<readonly ReceiptKind[]>;
   faults: readonly Fault[];
@@ -500,6 +615,30 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
       },
     },
     {
+      name: 'policy.auto_refused',
+      async run(context) {
+        // G-AUTOMATION is open: no connector may accept `auto` mode.
+        const { a, b, at } = await setup(context);
+        const auto = await at(b).approvals.setPolicy(grant(b), policyCommand(b, a, 'auto', 'policy-b-auto'));
+        ensure(auto.connectorState === 'rejected' && auto.effectiveVersion === null, `auto mode was ${auto.connectorState}`);
+        // The refusal must not have moved the policy version either.
+        const review = await at(b).approvals.setPolicy(grant(b), policyCommand(b, a, 'review', 'policy-b-review'));
+        ensure(review.connectorState === 'effective', `a review policy at the original version was ${review.connectorState}`);
+      },
+    },
+    {
+      name: 'binding.revoked_blocks',
+      async run(context) {
+        const { b, at, e7 } = await setup(context);
+        await at(b).deliver(e7.ref, e7.payload);
+        await at(b).revoke();
+        // Approved against the revoked generation, which the owner's UI may still show.
+        const result = await at(b).approvals.approve(grant(b), approvalFor(b, [e7.ref], 'b-revoked', limits));
+        ensure(!result.ok && result.code === 'stale_binding', `approval for a revoked binding returned ${result.ok ? 'ok' : result.code}`);
+        ensure(released(await at(b).modelInputs()) === 0, 'an approval for a revoked binding reached the model');
+      },
+    },
+    {
       name: 'unknown.no_repeat_submit',
       async run(context) {
         const { b, at, e7 } = await setup(context);
@@ -529,8 +668,14 @@ function deliveryChecks(limits: DeliveryLimits): Check<DeliverySubject>[] {
         }
         ensure(crashed, 'crash_after_intent did not interrupt the approval');
         await at(b).restart();
-        const inputs = await at(b).modelInputs();
-        ensure(inputs.length <= 1, 'restart resubmitted a release with an unknown outcome');
+        // `outcome_unknown` is never resubmitted. Only reconciliation that proves absence
+        // could license a submit, and no RECONCILE_SUPPORT value does: `while_queued`
+        // cannot tell a consumed release from one never sent.
+        ensure(released(await at(b).modelInputs()) === 0, 'restart submitted a release whose outcome is unknown');
+        const ledger = await at(b).releases();
+        ensure(ledger.length === 1, `expected one release in the ledger, saw ${ledger.length}`);
+        ensure(ledger[0]!.state === 'unknown' || ledger[0]!.state === 'reconciling',
+          `after restart the crashed release is ${ledger[0]!.state}, not unknown or reconciling`);
       },
     },
     {

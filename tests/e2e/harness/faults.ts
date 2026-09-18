@@ -1,6 +1,9 @@
 // Named faults, each tied to one injection boundary and the oracle a scenario must
 // check after it fires. Drivers call `checkpoint` at their boundaries; an armed fault
-// that never reaches its boundary is itself a failure (`unfired`).
+// that never reaches its boundary is itself a failure (`unfired`). A real component
+// enacts a fault by calling `checkpoint` at the native seam that matches the boundary
+// and turning the returned or thrown fault into native behaviour (a lost reply, an
+// exited host, a busy thread).
 
 import type { ScenarioClock } from './clock';
 import type { EvidenceLog } from './evidence';
@@ -117,27 +120,38 @@ export class InjectedCrash extends Error {
 }
 
 export type ArmedFault = Readonly<{ fault: Fault; ownerId: string }>;
-export type FiredFault = Readonly<{ fault: Fault; ownerId: string; operationId: string }>;
+export type FiredFault = Readonly<{ fault: Fault; ownerId: string; operationId: string; driver: string | null }>;
 
-export interface FaultInjector {
-  arm(fault: Fault, ownerId: string): void;
-  /** Ends a held fault (for example, keys arrive or the session becomes idle). */
-  clear(fault: Fault, ownerId: string): void;
+/** The boundary side of fault injection: what a driver calls where a fault can happen. */
+export interface FaultBoundaryPort {
   /**
-   * Called by a driver at `boundary` for `ownerId`. Throws for disconnect/crash
-   * faults, returns a driver-enacted fault, or returns null when nothing is armed.
+   * Called at `boundary` for `ownerId`. Throws for disconnect/crash faults, returns a
+   * driver-enacted fault, or returns null when nothing is armed.
    */
   checkpoint(boundary: FaultBoundary, ownerId: string, operationId: string): Fault | null;
+  /** Ends a held fault (for example, keys arrive or the session becomes idle). */
+  clear(fault: Fault, ownerId: string): void;
+}
+
+export interface FaultInjector extends FaultBoundaryPort {
+  arm(fault: Fault, ownerId: string): void;
+  isArmed(fault: Fault, ownerId: string): boolean;
   armed(): readonly ArmedFault[];
   fired(): readonly FiredFault[];
   /** Armed faults that have not fired once: a scenario that injected them proved nothing. */
   unfired(): readonly ArmedFault[];
 }
 
-export function createFaultInjector(
+/** Shared fault state. The scenario hands out boundary ports stamped with a driver. */
+export interface FaultState extends Omit<FaultInjector, keyof FaultBoundaryPort> {
+  /** A boundary port whose firings are `driver`'s evidence; null is the in-process fake. */
+  boundaryFor(driver: string | null): FaultBoundaryPort;
+}
+
+export function createFaultState(
   evidence: EvidenceLog,
   clockFor: (ownerId: string) => ScenarioClock,
-): FaultInjector {
+): FaultState {
   const armed: { fault: Fault; ownerId: string; fired: boolean }[] = [];
   const fired: FiredFault[] = [];
 
@@ -149,27 +163,31 @@ export function createFaultInjector(
       }
       armed.push({ fault, ownerId, fired: false });
     },
-    clear(fault, ownerId) {
-      const index = armed.findIndex(entry => entry.fault === fault && entry.ownerId === ownerId);
-      if (index < 0) throw new Error(`${fault} is not armed for ${ownerId}`);
-      if (!armed[index]!.fired) throw new Error(`${fault} for ${ownerId} was cleared before it fired`);
-      armed.splice(index, 1);
-    },
-    checkpoint(boundary, ownerId, operationId) {
-      const entry = armed.find(candidate => candidate.ownerId === ownerId
-        && FAULT_SPECS[candidate.fault].boundary === boundary
-        && (FAULT_SPECS[candidate.fault].held || !candidate.fired));
-      if (!entry) return null;
-      const spec = FAULT_SPECS[entry.fault];
-      entry.fired = true;
-      fired.push({ fault: entry.fault, ownerId, operationId });
-      evidence.record(`fault.${entry.fault}`, { ownerId, operationId }, clockFor(ownerId));
-      if (spec.effect === 'throw_disconnect') throw new InjectedDisconnect(entry.fault);
-      if (spec.effect === 'throw_crash') throw new InjectedCrash(entry.fault);
-      return entry.fault;
-    },
+    isArmed: (fault, ownerId) => armed.some(entry => entry.fault === fault && entry.ownerId === ownerId),
     armed: () => armed.map(({ fault, ownerId }) => ({ fault, ownerId })),
     fired: () => [...fired],
     unfired: () => armed.filter(entry => !entry.fired).map(({ fault, ownerId }) => ({ fault, ownerId })),
+    boundaryFor: driver => ({
+      clear(fault, ownerId) {
+        const index = armed.findIndex(entry => entry.fault === fault && entry.ownerId === ownerId);
+        if (index < 0) throw new Error(`${fault} is not armed for ${ownerId}`);
+        if (!armed[index]!.fired) throw new Error(`${fault} for ${ownerId} was cleared before it fired`);
+        armed.splice(index, 1);
+      },
+      checkpoint(boundary, ownerId, operationId) {
+        const entry = armed.find(candidate => candidate.ownerId === ownerId
+          && FAULT_SPECS[candidate.fault].boundary === boundary
+          && (FAULT_SPECS[candidate.fault].held || !candidate.fired));
+        if (!entry) return null;
+        const spec = FAULT_SPECS[entry.fault];
+        // Recorded before it counts: a live firing without a driver is refused here.
+        evidence.record(`fault.${entry.fault}`, { ownerId, operationId }, clockFor(ownerId), driver);
+        entry.fired = true;
+        fired.push({ fault: entry.fault, ownerId, operationId, driver });
+        if (spec.effect === 'throw_disconnect') throw new InjectedDisconnect(entry.fault);
+        if (spec.effect === 'throw_crash') throw new InjectedCrash(entry.fault);
+        return entry.fault;
+      },
+    }),
   };
 }

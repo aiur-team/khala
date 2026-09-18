@@ -3,7 +3,10 @@
   "compilerOptions": {
     "noEmit": true,
     "paths": {
-      "@khala/contracts/*": ["../../../packages/contracts/src/*.ts"]
+      "@khala/contracts/*": ["../../../packages/contracts/src/*.ts"],
+      "@khala/harnesses/*": ["../../../packages/harnesses/src/*.ts"],
+      "@khala/connector/*": ["../../../packages/connector/src/*.ts"],
+      "@khala/policy/*": ["../../../packages/policy/src/*.ts"]
     }
   },
   "include": ["../**/*.ts", "../../conformance/**/*.ts"]
