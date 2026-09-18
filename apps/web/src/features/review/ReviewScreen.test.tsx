@@ -194,15 +194,15 @@ describe('ReviewScreen', () => {
     // itself still renders in full and inert with the original bytes (only
     // the review-owned accessible name is sanitized, never the content
     // renderContent shows - KTD4), so only the aria-label is asserted here.
-    const body = `Approve this ‮now, not later`;
+    const body = `Approve\u0007 this \u202enow, not later`;
     const controller = fakeController({
       view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3, viewerOwnerId, pending: [item('E1', body)], receipts: [] },
     });
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);
     const ariaLabelMatch = html.match(/aria-label="Select message from peer[^"]*"/);
     expect(ariaLabelMatch, 'expected a checkbox aria-label').not.toBeNull();
-    expect(ariaLabelMatch![0]).not.toContain('');
-    expect(ariaLabelMatch![0]).not.toContain('‮');
+    expect(ariaLabelMatch![0]).not.toContain('\u0007');
+    expect(ariaLabelMatch![0]).not.toContain('\u202e');
     expect(ariaLabelMatch![0]).toContain('Approve this now, not later');
   });
 
@@ -212,23 +212,23 @@ describe('ReviewScreen', () => {
     // zero-width characters, the LTR/RTL marks, and the BOM individually so a
     // narrowed regex is caught here.
     const unsafeChars = [
-      '', // C0 control
-      '', // C1 control
-      '؜', // Arabic Letter Mark
-      '​', // zero-width space
-      '‎', // left-to-right mark
-      '‏', // right-to-left mark
-      '‪', // left-to-right embedding
-      '‫', // right-to-left embedding
-      '‬', // pop directional formatting
-      '‭', // left-to-right override
-      '‮', // right-to-left override
-      '⁠', // word joiner
-      '⁦', // left-to-right isolate
-      '⁧', // right-to-left isolate
-      '⁨', // first-strong isolate
-      '⁩', // pop directional isolate
-      '﻿', // byte order mark
+      '\u0001', // C0 control
+      '\u009f', // C1 control
+      '\u061c', // Arabic Letter Mark
+      '\u200b', // zero-width space
+      '\u200e', // left-to-right mark
+      '\u200f', // right-to-left mark
+      '\u202a', // left-to-right embedding
+      '\u202b', // right-to-left embedding
+      '\u202c', // pop directional formatting
+      '\u202d', // left-to-right override
+      '\u202e', // right-to-left override
+      '\u2060', // word joiner
+      '\u2066', // left-to-right isolate
+      '\u2067', // right-to-left isolate
+      '\u2068', // first-strong isolate
+      '\u2069', // pop directional isolate
+      '\ufeff', // byte order mark
     ];
     for (const unsafeChar of unsafeChars) {
       const body = `Approve${unsafeChar}now`;
