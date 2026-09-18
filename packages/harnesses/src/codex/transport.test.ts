@@ -337,6 +337,24 @@ describe('deadlines', () => {
     expect(server.closed).toBe(server.opened);
   });
 
+  it('a resubmit racing a concurrent close joins the in-flight submit instead of reporting failed', async () => {
+    const { harness, server } = setup();
+    let release!: () => void;
+    server.override('thread/queue/add', () => new Promise(resolve => {
+      release = () => resolve({ status: 'response', result: { queuedSubmission: { id: 'q-1', clientUserMessageId: 'rel-b-7' } } });
+    }));
+    const first = harness.submit({ job: job(), payload: payload() });
+    await vi.waitFor(() => expect(server.adds()).toBe(1));
+    const closing = harness.close();
+    const resubmit = harness.submit({ job: job(), payload: payload() });
+    release();
+    const [firstReceipt, resubmitReceipt] = await Promise.all([first, resubmit]);
+    await closing;
+    expect(firstReceipt).toEqual(resubmitReceipt);
+    expect(resubmitReceipt.kind).toBe('harness_queued');
+    expect(server.adds()).toBe(1);
+  });
+
   it('close is bounded when in-flight work hangs', async () => {
     vi.useFakeTimers();
     // The call deadline is far longer than the close deadline, so close must not wait it out.

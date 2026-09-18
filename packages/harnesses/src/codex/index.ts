@@ -61,6 +61,11 @@ export function createCodexHarness(deps: CodexHarnessDeps): HarnessPort {
     async notify(): Promise<void> {},
 
     async submit({ job, payload }): Promise<DeliveryReceipt> {
+      // A submission already in flight is joined even if close() lands concurrently: the
+      // dispatch it started may still reach the listener, so its real outcome — not a
+      // synthesized failed — must be what every caller of this release ID sees.
+      const pending = submitting.get(job.releaseId);
+      if (pending) return pending;
       if (closed) {
         const target = { releaseId: job.releaseId, binding: job.binding };
         // A repeat submit against a closed adapter is a pre-send refusal like the ones in
@@ -68,8 +73,6 @@ export function createCodexHarness(deps: CodexHarnessDeps): HarnessPort {
         if (attempted.has(job.releaseId)) return makeReceipt(target, 'outcome_unknown', deps.clock, { source: 'connector' });
         return makeReceipt(target, 'failed', deps.clock, { source: 'connector', errorCode: 'harness_unavailable' });
       }
-      const pending = submitting.get(job.releaseId);
-      if (pending) return pending;
       const work = track(submitRelease(deps, attempted, job, payload))
         .finally(() => submitting.delete(job.releaseId));
       submitting.set(job.releaseId, work);
