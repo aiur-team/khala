@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -28,7 +29,8 @@ function run(args: readonly string[], env: Readonly<Record<string, string>>): Pr
     child.stdout.on('data', chunk => { output += chunk; });
     child.stderr.on('data', chunk => { output += chunk; });
     child.on('error', reject);
-    child.on('close', status => resolve({ status, output }));
+    // CI forces color, so strip ANSI codes before matching summary text.
+    child.on('close', status => resolve({ status, output: stripVTControlCharacters(output) }));
   });
 }
 
