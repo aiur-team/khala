@@ -1,0 +1,204 @@
+/*
+ * Review feature layout. Depends on ../brand/tokens.css custom properties
+ * being in scope; composition roots must import both (see shell/shell.css).
+ */
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.review__header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.review__title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.review__recipient {
+  font-family: var(--khala-font-mono);
+  font-size: 0.8rem;
+  color: var(--khala-ink-muted);
+}
+
+.review__count {
+  margin-left: auto;
+  font-family: var(--khala-font-mono);
+  font-size: 0.8rem;
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+}
+
+.review__status {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--khala-panel-radius);
+  background: var(--khala-fill-control);
+}
+
+.review__status--revoked,
+.review__status--stale {
+  border: 1px solid var(--khala-line);
+}
+
+.review__filters {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.review__filter-chip {
+  background: var(--khala-fill-control);
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  color: inherit;
+  font-size: 0.85rem;
+}
+
+.review__filter-chip--active {
+  background: var(--khala-accent);
+  color: var(--khala-fill);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.review__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.review__empty {
+  color: var(--khala-ink-muted);
+  padding: 1rem;
+  text-align: center;
+}
+
+.review-item {
+  flex: 1;
+  min-width: 0;
+  background: var(--khala-fill-raised);
+  border: 1px solid var(--khala-line);
+  border-radius: var(--khala-panel-radius);
+  padding: 0.75rem 1rem;
+}
+
+.review-item__header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-family: var(--khala-font-mono);
+  font-size: 0.8rem;
+  color: var(--khala-ink-muted);
+}
+
+.review-item__checkbox {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.review-item__author {
+  font-weight: 600;
+  color: var(--khala-ink);
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+
+.review-item__kind {
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.review-item__body {
+  margin-top: 0.4rem;
+  min-width: 0;
+}
+
+.review__hide {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--khala-line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  color: var(--khala-ink-muted);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.review__action-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-top: 1px solid var(--khala-line);
+  padding-top: 0.75rem;
+}
+
+.review__release {
+  align-self: flex-start;
+  background: var(--khala-accent);
+  color: var(--khala-fill);
+  border: none;
+  border-radius: 999px;
+  padding: 0.5rem 1.1rem;
+  font-weight: 600;
+}
+
+.review__release:disabled {
+  background: var(--khala-fill-control);
+  color: var(--khala-ink-muted);
+}
+
+.review__submission-status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--khala-ink-muted);
+}
+
+.review__receipts {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.8rem;
+  color: var(--khala-ink-muted);
+}
+
+@media (max-width: 390px) {
+  .review-item__header {
+    flex-wrap: wrap;
+  }
+}
+
+.review__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.review-item--unavailable {
+  opacity: 0.75;
+}
+
+.review-item__unavailable-reason {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  color: var(--khala-ink-muted);
+}

@@ -1,0 +1,72 @@
+/*
+ * Agent controls panel layout. Depends on ../../brand/tokens.css custom
+ * properties and ../../shell/shell.css `.panel`/`.status-badge` being in scope.
+ */
+
+.agent-controls__scope {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.agent-controls__scope div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.agent-controls__scope dt {
+  font-size: 0.75rem;
+  color: var(--khala-ink-muted);
+}
+
+.agent-controls__scope dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-controls__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.agent-controls__requested {
+  margin: 0 0 0.75rem;
+}
+
+.agent-controls__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.agent-controls__notice {
+  color: var(--khala-ink-muted);
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+
+.agent-controls__notice--alert {
+  color: var(--khala-critical, #b3261e);
+}
+
+.agent-controls__refresh-button,
+.agent-controls__retry-button {
+  font-size: 0.85rem;
+}
+
+.agent-controls__capability {
+  color: var(--khala-ink-muted);
+  font-size: 0.8rem;
+  margin: 0 0 0.5rem;
+}
+
+.agent-controls__receipt {
+  border-top: 1px solid var(--khala-line);
+  padding-top: 0.5rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+}
