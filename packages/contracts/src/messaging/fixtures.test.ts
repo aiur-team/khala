@@ -160,6 +160,20 @@ describe('invalid fixtures', () => {
       'next generation substituted into a release targeting generation 1',
       'principal unknown envelope version',
       'stale observer generation',
+      'unavailable content free-text reason',
+      'unavailable content wrong kind',
+      'unavailable content unknown envelope version',
+      'unavailable content carrying a body',
+      'unavailable content missing reason',
+      'unavailable content transport reason is not withheld',
+      'timeline content dispatches on kind, not reason presence',
+      'unavailable event ref missing author device',
+      'unavailable event ref carrying a content digest',
+      'unavailable event ref unknown envelope version',
+      'unavailable item ref carrying a content digest',
+      'unavailable item content unsupported kind',
+      'unavailable item content carrying a body',
+      'unavailable item re-attributed to another author',
     ]));
   });
 

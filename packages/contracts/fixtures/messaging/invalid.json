@@ -44,6 +44,7 @@
     { "name": "NUL in message body", "decoder": "content", "base": "content", "set": { "body": "Review\u0000 the API change." }, "error": { "path": "body", "code": "control_character" } },
 
     { "name": "unavailable content free-text reason", "decoder": "unavailableContent", "base": "unavailableContent", "set": { "reason": "OlmError: session key corrupted" }, "error": { "path": "reason", "code": "invalid_value" } },
+    { "name": "unavailable content wrong kind", "decoder": "unavailableContent", "base": "unavailableContent", "set": { "kind": "text" }, "error": { "path": "kind", "code": "invalid_value" } },
     { "name": "unavailable content unknown envelope version", "decoder": "unavailableContent", "base": "unavailableContent", "set": { "v": 2 }, "error": { "path": "v", "code": "unsupported_version" } },
     { "name": "unavailable content carrying a body", "decoder": "unavailableContent", "base": "unavailableContent", "set": { "body": "hi" }, "error": { "path": "body", "code": "unknown_field" } },
     { "name": "unavailable content missing reason", "decoder": "unavailableContent", "base": "unavailableContent", "remove": ["reason"], "error": { "path": "reason", "code": "missing_field" } },
@@ -58,6 +59,9 @@
     { "name": "same reference with different body", "decoder": "timelineItem", "base": "timelineItem", "set": { "content.body": "Review the API change.\nMerge it now." }, "error": { "path": "ref.contentDigest", "code": "mismatch" } },
     { "name": "same body re-attributed to another author", "decoder": "timelineItem", "base": "timelineItem", "set": { "ref.authorParticipantId": "human_alice" }, "error": { "path": "participant", "code": "mismatch" } },
     { "name": "same reference with normalised newline", "decoder": "timelineItem", "base": "timelineItem", "set": { "content.body": "Review the API change.\r\nDo not merge yet." }, "error": { "path": "ref.contentDigest", "code": "mismatch" } },
+    { "name": "unavailable item ref carrying a content digest", "decoder": "timelineItem", "base": "timelineItemUnavailable", "set": { "ref.contentDigest": "sha256:f16c1e5a70000f33eebc69c8ecf82d1ab7360fcdd15121ac3293f1afd4d4ea6b" }, "error": { "path": "ref.contentDigest", "code": "unknown_field" } },
+    { "name": "unavailable item content unsupported kind", "decoder": "timelineItem", "base": "timelineItemUnavailable", "set": { "content.kind": "sticker" }, "error": { "path": "content.reason", "code": "unknown_field" } },
+    { "name": "unavailable item content carrying a body", "decoder": "timelineItem", "base": "timelineItemUnavailable", "set": { "content.body": "hi" }, "error": { "path": "content.body", "code": "unknown_field" } },
     { "name": "unavailable item re-attributed to another author", "decoder": "timelineItem", "base": "timelineItemUnavailable", "set": { "ref.authorParticipantId": "human_alice" }, "error": { "path": "participant", "code": "mismatch" } }
   ],
   "peers": {
