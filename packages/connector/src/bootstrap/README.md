@@ -1,0 +1,91 @@
+# `@khala/connector/bootstrap`
+
+Agent-operated link bootstrap (KHA-114). The human pastes a chat link into their existing
+agent session. The agent calls `bootstrapAgent` with that link and its own session claim.
+The connector does the rest; the human only signs in, if they are not already signed in.
+Import from `@khala/connector/bootstrap/index`.
+
+```ts
+const result = await bootstrapAgent(
+  { chatUrl, session: { harness, sessionId, workdir }, operationId },
+  { discovery, sessions, ownership, admission, devices, operations },
+);
+```
+
+The link is a locator, never proof of ownership. The session claim is untrusted until
+`sessions` verifies the native session. Owner, agent participant, device and binding IDs
+exist only after verified ownership and admission.
+
+## Flow
+
+1. **Operation.** The operation ledger is read by `operationId`. A different link or session under the
+   same ID is `operation_conflict`. A `connected` record whose device is still ready is
+   returned as `{ kind: 'connected', reused: true }`.
+2. **Discovery.** The link's origin must be a configured trusted origin, and the link must
+   carry no credentials. The descriptor always comes from
+   `<origin>/api/agent/bootstrap/descriptor?link=…`, requested with manual redirects. Each
+   redirect is revalidated against the allowlist (at most 3). The body must be
+   `application/json`, at most 4 KiB and a strict v1 descriptor. Unknown keys fail, and
+   endpoints must be the fixed paths on the answering origin. A descriptor cannot name
+   an executable, a command or another origin.
+3. **Session.** The harness adapter verifies the native session and reports its capabilities. Missing or
+   unsupported harnesses are reported here, before any browser opens or device exists.
+   `existingSession` must be evidence-backed (not `unknown` or `unsupported`).
+4. **Device reservation.** A device ID is reserved and written to the ledger (`reserved`)
+   **before** anything is admitted, so no retry can mint a second device.
+5. **Ownership.** The first method both sides support runs. `loopback-browser-v1` (KHA-144)
+   opens the owner's browser at the authorize page with a loopback redirect, PKCE S256
+   and the connector key thumbprint. It exchanges the one-time code with a key proof for a
+   60-second grant bound to this session generation and device.
+6. **Admission.** The grant is redeemed with a fresh proof. The returned `SessionBinding`
+   must name the reserved device and the exact verified session and generation. The ledger then moves to `admitted`.
+7. **Device.** The device port creates or resumes the reserved device with the short-lived
+   credential. `connected` is returned only when the device is ready. On failure the ledger
+   keeps `repair_required` with the device and binding (never a secret), and the result is
+   `device_unavailable`.
+
+Secrets (the grant and device credential) are never written to the ledger, returned or logged. A port
+that throws is treated as `unavailable`, and its message is dropped.
+
+## Results
+
+| Result | Meaning | Agent's next action |
+|---|---|---|
+| `connected` | The binding is live on a ready device | Report connected. `reused: true` means an earlier attempt had already finished |
+| `unavailable` (retryable) | Nothing conclusive happened, or the outcome is unknown | Retry later with the **same** `operationId` |
+| `blocked: invalid_request` | Malformed input (operation ID `[A-Za-z0-9_-]{8,64}`, harness, session, workdir) | Fix the call |
+| `blocked: invalid_link` | Not a URL, too long, or it carries credentials | Ask the human for the chat link again |
+| `blocked: untrusted_origin` | The link, a redirect or an endpoint is off the allowlist | Tell the human this is not a Khala link |
+| `blocked: link_unavailable` | The service does not know the link | Ask for a fresh link |
+| `blocked: unsupported_descriptor` | The service speaks a protocol version this connector does not | Report that an update is needed |
+| `blocked: harness_session_missing` | The harness cannot identify the current session | Report it; never start a fresh session instead |
+| `blocked: unsupported_harness` | No evidence-backed existing-session support for this harness | Report it honestly; do not ask the human to configure anything |
+| `blocked: ownership_required` | The owner did not finish sign-in, or no browser on this machine | Ask the human to finish in the opened tab, or report that remote agents need the (unbuilt) fallback |
+| `blocked: admission_denied` | The owner declined, or the invite or policy refused | Report it |
+| `blocked: binding_conflict` | This room is bound to another session or generation of this owner | Report it; rebinding is an explicit owner flow |
+| `blocked: operation_conflict` | This operation ID was used for other input | Use a new operation ID for new input |
+| `blocked: device_unavailable` | Admitted, but the device could not become ready | Retry with the same ID (it resumes the same device), or let the owner revoke it |
+
+## Injection points for KHA-133
+
+| Port | Supplied by |
+|---|---|
+| `discovery` | `createDiscovery({ trustedOrigins })`: production is `https://khala.aiur.team`; each preview origin is explicit |
+| `sessions: SessionInspectionPort` | Harness adapters (KHA-117/118) over KHA-103/104 evidence |
+| `ownership` | `createLoopbackOwnership({ signer, openBrowser })`. `openBrowser` comes from the harness adapter |
+| `admission` | `createHttpAdmission({ signer })` |
+| `signer` | `createProofSigner(ed25519PrivateKey)`. KHA-115 persists the key owner-only |
+| `devices: ConnectorDevicePort` | Messaging device lifecycle (G-SUBSTRATE). `reserve` must be stable per operation, and re-activating resumes |
+| `operations: BootstrapOperationStore` | KHA-115 durable storage, compare-and-set by revision |
+
+The HTTP clients send `Origin: <service origin>` on POSTs, which the control gateway requires
+on state-changing requests. Authority comes from the proof and grant, never that header.
+
+## Not proven here
+
+Tests use injected doubles plus a real loopback listener and real Ed25519 signatures, so
+they prove module behaviour only. Real owner connection without setup belongs to
+KHA-133/139. G-ADMISSION (silent bind versus a visible confirmation), G-SUBSTRATE and
+G-HARNESSES remain open. An agent on a different machine from the owner's browser
+is unsupported by `loopback-browser-v1`. The connector does not claim isolation from an
+unrestricted agent on the same host.
