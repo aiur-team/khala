@@ -11,6 +11,13 @@ This isolated experiment tests two candidate routes for delivering released Khal
 The durable result and route recommendation live in
 [`docs/evidence/claude-native-cli.md`](../../docs/evidence/claude-native-cli.md).
 
+## Result
+
+The 2.1.276 live proof recommends neither route. The hosted stream accepted idle and busy messages while alive,
+but did not resume after interruption. Starting the child route required an approval surface the hosted session
+did not have. See the durable evidence document and `evidence/live-proof.json`; do not infer support from the
+presence of the probe.
+
 ## Offline validation
 
 This package does not touch root manifests and uses Node's built-in test runner.
@@ -72,7 +79,7 @@ The private input has this shape:
 
 ## Route B seam
 
-`hosted.ts` pins the documented CLI flags, emits one stream-json user line per payload, parses JSONL output, and
+`hosted.ts` pins both fresh (`--session-id`) and resume (`--resume`) CLI flags, emits one stream-json user line per payload, parses JSONL output, and
 classifies four independent observations: replayed-user acknowledgement, hook event, context consumption, and
 completion. It deliberately uses `--permission-prompts none`; anything that would require a prompt is denied
 instead of silently widening permissions. The live proof records idle, busy, disconnect, backlog, and duplicate

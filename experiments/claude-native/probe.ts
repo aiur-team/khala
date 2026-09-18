@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { createConnection } from 'node:net';
+import { createConnection, type Socket } from 'node:net';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
@@ -48,6 +48,7 @@ export type SocketChildResult = {
 type SocketChildDeps = {
   allowedTargets?: readonly NativeTarget[];
   runtime?: (target: NativeTarget) => Promise<RuntimeEvidence>;
+  socketFactory?: (options: { path: string }) => Socket;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -124,7 +125,12 @@ function verifyRuntime(target: NativeTarget, runtime: RuntimeEvidence): void {
   if (!runtime.ancestorPids.includes(target.sessionPid)) throw new Error('The sender is not a child of the designated Claude session');
 }
 
-async function writeSocket(socketPath: string, frame: string, deadlineMs: number): Promise<{
+async function writeSocket(
+  socketPath: string,
+  frame: string,
+  deadlineMs: number,
+  socketFactory: (options: { path: string }) => Socket = createConnection,
+): Promise<{
   transportWritten: boolean;
   response: Buffer;
   responseTimedOut: boolean;
@@ -133,22 +139,32 @@ async function writeSocket(socketPath: string, frame: string, deadlineMs: number
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let responseBytes = 0;
+    let writeStarted = false;
     let transportWritten = false;
     let settled = false;
-    const socket = createConnection({ path: socketPath });
+    const socket = socketFactory({ path: socketPath });
     const finish = (responseTimedOut: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       socket.destroy();
-      resolve({ transportWritten, response: Buffer.concat(chunks), responseTimedOut, failedAfterWrite: false });
+      if (!writeStarted) {
+        reject(new Error('Socket failed before the frame was written'));
+        return;
+      }
+      resolve({
+        transportWritten,
+        response: Buffer.concat(chunks),
+        responseTimedOut,
+        failedAfterWrite: !transportWritten,
+      });
     };
     const fail = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       socket.destroy();
-      if (transportWritten) {
+      if (writeStarted) {
         resolve({ transportWritten, response: Buffer.concat(chunks), responseTimedOut: false, failedAfterWrite: true });
       } else {
         reject(new Error('Socket failed before the frame was written'));
@@ -166,6 +182,7 @@ async function writeSocket(socketPath: string, frame: string, deadlineMs: number
     });
     socket.once('close', () => finish(false));
     socket.once('connect', () => {
+      writeStarted = true;
       socket.end(frame, 'utf8', () => { transportWritten = true; });
     });
   });
@@ -179,7 +196,7 @@ export async function runSocketChild(input: SocketChildInput, deps: SocketChildD
   const runtime = await (deps.runtime ?? collectRuntime)(input.target);
   verifyRuntime(input.target, runtime);
   const frame = buildSocketFrame(runtime.token, input.payload);
-  const result = await writeSocket(runtime.socketPath, frame, input.deadlineMs);
+  const result = await writeSocket(runtime.socketPath, frame, input.deadlineMs, deps.socketFactory);
   return {
     route: 'agent_child_socket',
     sessionId: input.target.sessionId,

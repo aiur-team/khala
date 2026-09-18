@@ -1,0 +1,85 @@
+{
+  "recordedAt": "2026-09-18T21:58:14Z",
+  "host": "orangekid",
+  "cliVersion": "2.1.276 (Claude Code)",
+  "target": {
+    "sessionId": "118f6a23-92a8-4f67-824c-58e012149e88",
+    "workdir": "/home/everdred/.aiur/workspaces/aiur-team/khala/101/.khala-disposable/claude-native-target",
+    "requestedWorkdir": "/home/everdred/.cache/khala-disposable/claude-native-target",
+    "fallbackReason": "The managed workspace sandbox could read but could not write the operator-created home-cache directory. The operator explicitly authorized this workspace-local fallback.",
+    "mode": "fresh --session-id"
+  },
+  "hostedArgs": [
+    "-p",
+    "--session-id",
+    "118f6a23-92a8-4f67-824c-58e012149e88",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--replay-user-messages",
+    "--include-hook-events",
+    "--permission-prompts",
+    "none",
+    "--verbose"
+  ],
+  "observations": {
+    "idle": {
+      "transportWritten": true,
+      "userReplayed": true,
+      "contextConsumed": true,
+      "completed": true,
+      "nonce": "IDLE-NONCE-7F3A"
+    },
+    "busy": {
+      "tool": "Bash sleep 12",
+      "secondReleaseWrittenWhileToolRunning": true,
+      "secondReleaseReplayed": true,
+      "behavior": "queued and consumed after the tool completed",
+      "assistantResult": "BUSY-FIRST-2A9C\nBUSY-SECOND-84D1",
+      "humanApprovals": 0
+    },
+    "duplicate": {
+      "writes": 2,
+      "userReplays": 2,
+      "completedResults": 2,
+      "deduplicated": false,
+      "nonce": "DUP-NONCE-55E0"
+    },
+    "permission": {
+      "safeSleepAllowedWithoutPrompt": true,
+      "childInspectionCommandExecuted": false,
+      "reason": "no approval surface in this session; permission request denied automatically",
+      "humanApprovals": 0
+    },
+    "disconnect": {
+      "firstReleaseStartedTool": true,
+      "pendingReleaseWrittenToStdin": true,
+      "pendingReleaseReplayedBeforeDisconnect": false,
+      "processInterrupted": true,
+      "outcome": "outcome_unknown"
+    },
+    "backlogAndResume": {
+      "resumeAttempted": true,
+      "resumeResult": "No conversation found with session ID",
+      "pendingReleaseDelivered": false,
+      "automaticReconnect": false
+    },
+    "discovery": {
+      "agentsJsonRanWithoutTty": true,
+      "targetEnumerated": false,
+      "targetRegistryFound": false,
+      "busyStatusAvailable": false
+    },
+    "negativeToken": {
+      "liveAttempted": false,
+      "reason": "The agent-child command was denied before execution, so the designated session exposed no child socket route to test. Offline tests reject malformed tokens and a token/socket registry bound to another session before connecting."
+    }
+  },
+  "receiptCeiling": {
+    "hostedWhileAlive": ["transport_written", "user_replayed", "context_consumed", "completed"],
+    "afterDisconnect": ["transport_written", "outcome_unknown"],
+    "nativeChildSocket": []
+  },
+  "recommendation": "neither qualifies"
+}
