@@ -73,6 +73,13 @@ categories), `decrypt_failed` or `unsupported` — never a free-text SDK error. 
 digest verification for it, because there is no recovered plaintext to hash. UI
 rendering of the placeholder is out of scope here (KHA-123).
 
+Widening `TimelineItem.content` to accept `kind: 'unavailable'` needs the same
+synchronized-deploy discipline as a `v` bump, even though neither `MessageContent`
+nor `TimelineItem` carries a changed version number: a producer that emits an
+unavailable item before every consumer has this contract version will fail that
+consumer's whole page or snapshot decode (`readItems` decodes eagerly, so one
+unrecognized item fails the batch), not just drop the one item.
+
 ## Outcomes
 
 `OperationResult` is `ok`, `rejected` (a finite code), `unavailable` (nothing happened, so

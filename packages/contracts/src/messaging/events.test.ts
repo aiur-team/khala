@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import intro from '../../fixtures/messaging/exact-intro.json';
 import { type ContentLimits, decodeContentLimits } from './decode';
 import {
-  type EventRef, type MessageContent, decodeEventRef, decodeTimelineItem, decodeUnavailableContent, digestMessageContent,
-  encodeMessageContent, sameEventRef,
+  type EventRef, type MessageContent, UNAVAILABLE_REASONS, decodeEventRef, decodeTimelineItem, decodeUnavailableContent,
+  digestMessageContent, encodeMessageContent, sameEventRef,
 } from './events';
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
@@ -129,6 +129,10 @@ describe('event references', () => {
 describe('unavailable content', () => {
   it('decodes a closed reason unchanged', () => {
     expect(decodeUnavailableContent(intro.unavailableContent)).toEqual({ ok: true, value: intro.unavailableContent });
+  });
+
+  it.each(UNAVAILABLE_REASONS)('accepts every closed reason, including %s', reason => {
+    expect(decodeUnavailableContent({ ...intro.unavailableContent, reason })).toEqual({ ok: true, value: { ...intro.unavailableContent, reason } });
   });
 
   it('refuses a reason outside the closed set, including a plausible SDK-shaped one', () => {

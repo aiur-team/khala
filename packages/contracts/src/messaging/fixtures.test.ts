@@ -84,6 +84,15 @@ describe('exact intro fixture', () => {
     expect((await decodeRoomSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits)).ok).toBe(true);
   });
 
+  it('decodes a page and a snapshot mixing text and unavailable items', async () => {
+    const room = { roomId: 'room_demo', title: 'API review', membership: 'joined', revision: 'rev_1' };
+    const items = [intro.timelineItem, intro.timelineItemUnavailable];
+    expect(await decodeTimelinePage({ items, nextCursor: null, snapshotRevision: 's1' }, limits))
+      .toEqual({ ok: true, value: { items, nextCursor: null, snapshotRevision: 's1' } });
+    expect(await decodeRoomSnapshot({ room, items, snapshotRevision: 's1', generation: 1 }, limits))
+      .toEqual({ ok: true, value: { room, items, snapshotRevision: 's1', generation: 1 } });
+  });
+
   it('rejects duplicate event IDs in a page and foreign-room items in a snapshot', async () => {
     expect(await decodeTimelinePage({ items: [intro.timelineItem, intro.timelineItem], nextCursor: null, snapshotRevision: 's1' }, limits))
       .toEqual({ ok: false, error: { path: 'items[1].ref.eventId', code: 'duplicate' } });
