@@ -18,8 +18,8 @@ Trusted composition supplies every input:
 - `binding` and `policyVersion`: the recipient binding and effective policy as they
   are now.
 - `room`: the room ID and its current member participant IDs.
-- `pending`: the decrypted pending snapshot. Redacted, undecryptable or deleted
-  events are omitted.
+- `pending`: the decrypted pending snapshot. Deleted events are omitted; redacted
+  or undecryptable ones are omitted or carry `unavailable` content.
 - `release`: releaser-chosen `releaseId`, `payloadRef` and `causalRootId`.
 
 Checks run in this order, and each failure refuses the whole command:
@@ -29,8 +29,8 @@ Checks run in this order, and each failure refuses the whole command:
 2. Binding ID and `expectedBindingGeneration` match (`stale_binding`), then the
    policy version (`stale_policy`).
 3. The selection is nonempty, single-room and free of duplicate events (`forbidden`).
-4. For each selected event, in order: exactly one snapshot record exists
-   (`expired_content`); its reference equals the selected reference, including
+4. For each selected event, in order: exactly one snapshot record exists and its
+   content is available (`expired_content`); its reference equals the selected reference, including
    author and device (`stale_content`); its author is a member (`forbidden`); its
    body is version 1 text whose KHA-105 digest equals `contentDigest`
    (`stale_content`).
@@ -39,7 +39,9 @@ Checks run in this order, and each failure refuses the whole command:
 
 `command.issuedAt` is audit data and is never consulted. Unselected records,
 including later arrivals, are never read or released. An edit is a new digest and
-needs a new approval.
+needs a new approval. Malformed trusted input returns `unavailable`/`invalid_input`
+instead of throwing. `release.causalRootId` is shape-checked only: it is provenance
+chosen by KHA-134 and need not be a selected event.
 
 A rejection is `{ ok: false, code, reason, field }`: `code` is the `ApprovalResult`
 code, `reason` a finer audit reason and `field` a location. None carries message
@@ -67,11 +69,12 @@ these bytes, via Web Crypto. `codec.test.ts` pins the plan's literal fixture
 
 ## Retry handoff to KHA-134
 
-`decision.fingerprint` digests what the owner authorised: the command input
-(including `issuedAt`, matching `sameApprovalCommandInput`), the full recipient
-binding and the policy version. It excludes releaser-chosen identifiers, so the
-same command against the same state has the same fingerprint even when a retry
-picks a new `releaseId`.
+`decision.fingerprint` is `decisionFingerprint(command)`. It digests exactly the
+command input that `sameApprovalCommandInput` compares: `issuedAt`, the expected
+binding generation and policy version, and every selected content digest. It
+reads no current state and no releaser-chosen identifiers. The journal can
+therefore compute it for a retry before evaluating, even after the binding or
+policy has changed.
 
 The journal owns idempotency, not this module:
 
