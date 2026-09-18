@@ -1,0 +1,107 @@
+// One lifecycle generation: the lease, store and engine opened for one owner. Account
+// switch, sign-out, expiry and revocation all end a generation the same way:
+// invalidate first, so no late SDK callback can publish into its replacement, then
+// wipe projections, then close the engine, the store and the lease, in that order.
+
+import type { AuthPrincipal, DeviceId, Disposer, OwnerId } from '@khala/contracts/messaging/index';
+import type { CryptoStore, DeviceEngine } from './lifecycle';
+import type { OwnerLease } from './ownership';
+
+export type Generation = {
+  readonly ownerId: OwnerId;
+  /** The signed-in principal this generation was opened for. */
+  readonly principal: AuthPrincipal;
+  readonly generation: number;
+  readonly abort: AbortController;
+  deviceId: DeviceId | null;
+  lease: OwnerLease | null;
+  store: CryptoStore | null;
+  engine: DeviceEngine | null;
+  readonly disposers: Set<() => void>;
+};
+
+export class Superseded extends Error {
+  constructor() {
+    super('device generation superseded');
+  }
+}
+
+export function openGeneration(principal: AuthPrincipal, generation: number, deviceId: DeviceId | null): Generation {
+  return {
+    ownerId: principal.ownerId, principal, generation, abort: new AbortController(), deviceId,
+    lease: null, store: null, engine: null, disposers: new Set(),
+  };
+}
+
+export const isLive = (g: Generation): boolean => !g.abort.signal.aborted;
+
+/** Resolves `true` if `promise` settles within `ms`, or `false` once the bound elapses. */
+export function within(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(false), ms);
+    void promise.then(() => true, () => true).then(settled => {
+      clearTimeout(timer);
+      resolve(settled);
+    });
+  });
+}
+
+/**
+ * Ends a generation. The service detaches `g` before calling this, so it runs once
+ * per generation. Resolves after every resource it held is closed, or once
+ * `closeWaitMs` passes for an engine that will not close. Close failures are
+ * swallowed: the generation is already unreachable, and a failing close must not
+ * keep a replacement from starting.
+ */
+export function endGeneration(g: Generation, closeWaitMs: number): Promise<void> {
+  g.abort.abort();
+  const disposers = [...g.disposers];
+  g.disposers.clear();
+  for (const dispose of disposers) {
+    try { dispose(); } catch { /* projection wipe failures cannot resurrect the generation */ }
+  }
+  return closeResources(g, closeWaitMs);
+}
+
+async function closeResources(g: Generation, closeWaitMs: number): Promise<void> {
+  const { engine, store, lease } = g;
+  g.engine = null;
+  g.store = null;
+  g.lease = null;
+  // An engine that will not close may still be writing. Its store and lease stay
+  // held so no other tab can become a second writer; closing the tab frees them.
+  if (engine && !(await within(engine.close(), closeWaitMs))) return;
+  if (store) await store.close().catch(() => undefined);
+  lease?.release();
+}
+
+/**
+ * Attaches a resource opened by an in-flight step. If the generation ended while
+ * the step was pending, the resource is closed at once and the step is abandoned.
+ */
+export async function adopt<K extends 'lease' | 'store' | 'engine'>(g: Generation, key: K, resource: NonNullable<Generation[K]>): Promise<void> {
+  if (isLive(g)) {
+    g[key] = resource;
+    return;
+  }
+  if (key === 'lease') (resource as OwnerLease).release();
+  else await (resource as CryptoStore | DeviceEngine).close().catch(() => undefined);
+  throw new Superseded();
+}
+
+/** Wraps an SDK callback so it runs only while its generation is live. */
+export function guard<Args extends unknown[]>(g: Generation, callback: (...args: Args) => void): (...args: Args) => void {
+  return (...args) => {
+    if (isLive(g)) callback(...args);
+  };
+}
+
+/** Registers a projection wipe that runs when the generation ends, before the engine closes. */
+export function onEnd(g: Generation, dispose: () => void): Disposer {
+  if (!isLive(g)) {
+    dispose();
+    return () => undefined;
+  }
+  g.disposers.add(dispose);
+  return () => { g.disposers.delete(dispose); };
+}
