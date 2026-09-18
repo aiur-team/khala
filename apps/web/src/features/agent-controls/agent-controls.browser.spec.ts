@@ -38,8 +38,15 @@ test('AgentControlsPanel requests a pause, confirms it as effective, and keyboar
     await page.getByText('agent-harness').waitFor();
     await page.getByText('room-harness').waitFor();
 
-    const pauseButton = page.getByRole('button', { name: 'Request pause' });
+    // Located by class, not accessible name: the button's label changes to
+    // "Resume automatic review delivery" once the pause takes effect below.
+    const pauseButton = page.locator('.agent-controls__pause-button');
     await pauseButton.waitFor();
+    // Controls stay disabled until the harness's readSnapshot resolves.
+    await page.waitForFunction(() => {
+      const button = [...document.querySelectorAll('button')].find(node => node.textContent === 'Request pause');
+      return button instanceof HTMLButtonElement && !button.disabled;
+    });
     await pauseButton.focus();
     await pauseButton.press('Enter');
 

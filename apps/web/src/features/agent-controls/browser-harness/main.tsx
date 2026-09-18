@@ -32,9 +32,9 @@ const CONFIG: AgentControlsConfig = {
   roomLabel: 'room-harness',
 };
 
-let generation = 0;
+const generation = 0;
 let effectiveVersion = 3;
-let effectiveMode: 'review' | 'auto' = 'review';
+const effectiveMode: 'review' | 'auto' = 'review';
 let paused = false;
 let listeners: ((snapshot: AgentControlsSnapshot) => void)[] = [];
 
@@ -99,9 +99,15 @@ const ports: AgentControlsPorts = {
         connectorState: 'effective',
         errorCode: null,
       };
-      effectiveVersion = command.expectedPolicyVersion + 1;
-      paused = command.paused;
-      notify();
+      // The ack's connector acknowledgment lands before the authoritative
+      // snapshot that actually updates the effective display (KTD2: an ack
+      // alone never carries mode/paused) — this gap is deliberate so the
+      // "requested" badge is observable before the snapshot confirms it.
+      setTimeout(() => {
+        effectiveVersion = command.expectedPolicyVersion + 1;
+        paused = command.paused;
+        notify();
+      }, 600);
       return ack;
     },
   },
