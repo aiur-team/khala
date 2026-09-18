@@ -31,7 +31,7 @@ export type RoomScope = Readonly<{
 /** Release identifiers chosen by the releaser (KHA-134), validated like wire input. */
 export type ReleaseIdentity = Readonly<{
   releaseId: ReleaseId;
-  /** Connector-local opaque ledger handle; never a path, URL or token. */
+  /** Connector-local opaque ledger key, resolved only by the ledger; never a URL or filesystem path. */
   payloadRef: string;
   causalRootId: CausalRootId;
 }>;

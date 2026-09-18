@@ -8,10 +8,11 @@ export const DECISION_FINGERPRINT_V1 = 'khala.release-decision.v1';
 
 /**
  * `sha256:` digest of UTF-8 compact JSON
- * `["khala.release-decision.v1",commandId,roomId,bindingId,expectedPolicyVersion,
+ * `["khala.release-decision.v1",v,commandId,roomId,bindingId,expectedPolicyVersion,
  * expectedBindingGeneration,issuedAt,[[roomId,eventId,authorParticipantId,authorDeviceId,contentDigest],...]]`.
  *
- * It covers exactly the command input `sameApprovalCommandInput` compares and
+ * It covers exactly the command fields `sameApprovalCommandInput` compares, with
+ * the selection in command order, and
  * nothing from current state: a decision already requires the binding and policy
  * to equal the command's expected values. The journal can compute it before
  * evaluating, and an honest retry still matches its committed result after the
@@ -20,6 +21,7 @@ export const DECISION_FINGERPRINT_V1 = 'khala.release-decision.v1';
 export function decisionFingerprint(command: ApprovalCommand): Promise<DigestResult> {
   const tuple = [
     DECISION_FINGERPRINT_V1,
+    command.v,
     command.commandId,
     command.roomId,
     command.bindingId,

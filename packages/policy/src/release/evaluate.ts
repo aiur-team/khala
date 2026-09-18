@@ -14,7 +14,11 @@ import type {
 const reject = (code: ReleaseRejectionCode, reason: RejectionReason, field: string): ReleaseRejection =>
   ({ ok: false, code, reason, field });
 
-/** An opaque ledger handle: no scheme, path, query or whitespace, so never a URL or file path. */
+/**
+ * An opaque ledger handle: no scheme, separator, query or whitespace, so never a
+ * URL or multi-segment path. A bare name still passes; consumers resolve it only
+ * as a ledger key.
+ */
 const OPAQUE_REF = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
 const CONTRACT_REJECTIONS: Readonly<Record<ContractRejectionCode, [ReleaseRejectionCode, RejectionReason]>> = {

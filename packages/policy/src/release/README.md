@@ -15,8 +15,12 @@ Trusted composition supplies every input:
 - `authority`: a verified `OwnerAuthority`. A browser body is never authority, and
   a user-supplied `human: true` grants nothing.
 - `command`: the decoded `ApprovalCommand`.
-- `binding` and `policyVersion`: the recipient binding and effective policy as they
-  are now.
+- `binding` and `policyVersion`: the recipient binding as it is now, and the
+  connector-**effective** policy version for it. That is the version the connector
+  has acknowledged (KHA-120 `applyPolicyAck`), never the requested one.
+  Pause and revocation are enforced here only through these values: a pause or
+  revoke must advance the effective policy version or the binding generation, or
+  replace the binding composition supplies, before this module will refuse.
 - `room`: the room ID and its current member participant IDs.
 - `pending`: the decrypted pending snapshot. Deleted events are omitted; redacted
   or undecryptable ones are omitted or carry `unavailable` content.
@@ -29,13 +33,15 @@ Checks run in this order, and each failure refuses the whole command:
 2. Binding ID and `expectedBindingGeneration` match (`stale_binding`), then the
    policy version (`stale_policy`).
 3. The selection is nonempty, single-room and free of duplicate events (`forbidden`).
-4. For each selected event, in order: exactly one snapshot record exists and its
-   content is available (`expired_content`); its reference equals the selected reference, including
+4. For each selected event, in order: a snapshot record exists (`expired_content`);
+   it is the only one and its reference equals the selected reference, including
    author and device (`stale_content`); its author is a member (`forbidden`); its
-   body is version 1 text whose KHA-105 digest equals `contentDigest`
-   (`stale_content`).
-5. `payloadRef` is an opaque token of `[A-Za-z0-9._-]` starting alphanumeric, so it
-   cannot be a URL, path or query (`unavailable`).
+   content is available (`expired_content`); its body is version 1 text
+   (`stale_content`) whose KHA-105 digest equals `contentDigest` (`stale_content`).
+5. `payloadRef` is a token of `[A-Za-z0-9._-]` starting alphanumeric
+   (`unavailable`). It has no scheme, separator, query or whitespace, so it cannot
+   be a URL or multi-segment path. A bare name such as `payload.bin` still passes,
+   so consumers must resolve it only as a ledger key, never against a filesystem.
 
 `command.issuedAt` is audit data and is never consulted. Unselected records,
 including later arrivals, are never read or released. An edit is a new digest and
@@ -70,8 +76,10 @@ these bytes, via Web Crypto. `codec.test.ts` pins the plan's literal fixture
 ## Retry handoff to KHA-134
 
 `decision.fingerprint` is `decisionFingerprint(command)`. It digests exactly the
-command input that `sameApprovalCommandInput` compares: `issuedAt`, the expected
-binding generation and policy version, and every selected content digest. It
+fields that `sameApprovalCommandInput` compares: `v`, command, room and binding
+IDs, the expected policy version and binding generation, `issuedAt`, and every
+selected reference in command order, including its content digest. A retry that
+is re-dated or reorders the selection therefore conflicts. It
 reads no current state and no releaser-chosen identifiers. The journal can
 therefore compute it for a retry before evaluating, even after the binding or
 policy has changed.
@@ -84,7 +92,18 @@ The journal owns idempotency, not this module:
 - Ambiguous commit: `outcome_unknown` with the operation ID, never a plain
   retryable rejection and never a second release.
 
-Validation happens before commit. The binding can still change after evaluation,
-so KHA-106/121 re-check the binding generation at ledger claim and dispatch
-(`verifyReleasedJob`). Pure evaluation cannot make that a distributed transaction
-or promise exactly-once harness delivery.
+## After evaluation
+
+Validation happens before commit, and the binding or policy can still change after
+evaluation. Pure evaluation cannot make that a distributed transaction or promise
+exactly-once harness delivery, so consumers must hold two rules:
+
+- `decision.job` must not be dispatched, and no notification sent, before the
+  KHA-134 journal commit.
+- At dispatch, KHA-121 compares `job.binding` with the current binding using
+  `sameSessionBinding`, and `job.policyVersion` with the current effective policy
+  version. It refuses on any difference.
+
+`verifyReleasedJob` does not do this. It only checks a job's recorded values
+against its recorded approval, so it cannot detect a rebind or policy change
+after evaluation.

@@ -57,6 +57,29 @@ describe('release decision handoff', () => {
     expect(new Set([first.fingerprint, rebound.fingerprint, repolicied.fingerprint]).size).toBe(3);
   });
 
+  it('conflicts when a retry reuses the command ID with a different issuedAt', async () => {
+    const { input } = await scenario();
+    const first = await decisionFingerprint(input.command);
+    const redated = await decisionFingerprint({ ...input.command, issuedAt: '2026-09-18T00:00:01Z' });
+    expect(redated.ok && first.ok && redated.digest !== first.digest).toBe(true);
+  });
+
+  it('conflicts when a retry reuses the command ID with a reordered selection', async () => {
+    const { input, a, b } = await scenario();
+    const first = await decisionFingerprint(command([a.ref, b.ref]));
+    const reordered = await decisionFingerprint(command([b.ref, a.ref]));
+    expect(reordered.ok && first.ok && reordered.digest !== first.digest).toBe(true);
+    // Both orders still evaluate; only the journal's fingerprint tells them apart.
+    expect((await evaluateApproval({ ...input, command: command([b.ref, a.ref]) })).ok).toBe(true);
+  });
+
+  it('conflicts when a retry reuses the command ID with a different command version', async () => {
+    const { input } = await scenario();
+    const first = await decisionFingerprint(input.command);
+    const other = await decisionFingerprint({ ...input.command, v: 2 } as never);
+    expect(other.ok && first.ok && other.digest !== first.digest).toBe(true);
+  });
+
   it('lets an honest retry match its committed fingerprint after state moved on', async () => {
     const { input } = await scenario();
     const committed = decision(await evaluateApproval(input));

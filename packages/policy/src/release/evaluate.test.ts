@@ -1,4 +1,8 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { digestMessageContent } from '@khala/contracts/messaging/index';
 import {
   type ApprovalCommand, type BindingId, type DeviceId, type ParticipantId, type RoomId, verifyReleasedJob,
 } from '@khala/contracts/delivery/index';
@@ -151,6 +155,16 @@ describe('evaluateApproval', () => {
     expect(result).toMatchObject({ ok: false, reason: 'owner_mismatch' });
   });
 
+  it.each([
+    ['stale binding', { binding: binding(1) }, 'stale_binding'],
+    ['stale policy', { policyVersion: 4 }, 'stale_policy'],
+  ] as const)('rejects a %s before touching pending content', async (_name, change, reason) => {
+    const { input } = await scenario();
+    const pending = new Proxy([], { get: () => { throw new Error('pending read'); } });
+    const result = await evaluateApproval({ ...input, ...change, pending });
+    expect(result).toMatchObject({ ok: false, reason });
+  });
+
   it('does not treat issuedAt as freshness or authority', async () => {
     const { input } = await scenario();
     const old = await evaluateApproval({ ...input, command: { ...input.command, issuedAt: '1970-01-01T00:00:00Z' } });
@@ -164,5 +178,50 @@ describe('evaluateApproval', () => {
     expect(item.ref.contentDigest).toBe(await digest(body));
     const result = await evaluateApproval({ ...input, command: command([item.ref]), pending: [item] });
     expect(result.ok).toBe(true);
+  });
+
+  it('keeps a decomposed body byte-exact against the KHA-105 digest', async () => {
+    const { input } = await scenario();
+    const nfd = 'café';
+    expect(nfd.normalize('NFC')).not.toBe(nfd);
+    const item = await record('event-u', nfd);
+    // `record` digests with the KHA-105 `digestMessageContent`, not the policy re-derivation.
+    expect(await digestMessageContent(text(nfd))).toEqual({ ok: true, digest: item.ref.contentDigest });
+    const result = await evaluateApproval({ ...input, command: command([item.ref]), pending: [item] });
+    if (!result.ok) throw new Error(`rejected: ${result.reason}`);
+    expect(new TextDecoder().decode(result.decision.payload)).toContain(nfd);
+  });
+
+  it('rejects a composed body whose digest was taken over the decomposed form', async () => {
+    const { input } = await scenario();
+    const nfd = await record('event-u', 'café');
+    const composed = { ...nfd, content: text('café') };
+    const result = await evaluateApproval({ ...input, command: command([nfd.ref]), pending: [composed] });
+    expect(result).toMatchObject({ ok: false, code: 'stale_content', reason: 'digest_mismatch' });
+  });
+
+  it('makes no network or storage calls', async () => {
+    const { input } = await scenario();
+    const forbidden = () => { throw new Error('io'); };
+    for (const name of ['fetch', 'XMLHttpRequest', 'WebSocket', 'indexedDB', 'localStorage', 'sessionStorage']) {
+      vi.stubGlobal(name, new Proxy(forbidden, { get: forbidden, apply: forbidden, construct: forbidden }));
+    }
+    try {
+      expect((await evaluateApproval(input)).ok).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('imports only the KHA-106 delivery contract and its own modules', () => {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const sources = readdirSync(dir).filter(name => name.endsWith('.ts') && !name.endsWith('.test.ts'));
+    expect(sources).toContain('evaluate.ts');
+    for (const name of sources) {
+      const specifiers = [...readFileSync(join(dir, name), 'utf8').matchAll(/\b(?:from|import)\s*\(?\s*'([^']+)'/g)]
+        .map(match => match[1]);
+      const foreign = specifiers.filter(s => s !== '@khala/contracts/delivery/index' && !/^\.\/[a-z]+$/.test(s!));
+      expect(foreign, name).toEqual([]);
+    }
   });
 });
