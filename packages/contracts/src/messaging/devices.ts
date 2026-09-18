@@ -1,6 +1,7 @@
 // Messaging device lifecycle. A device is never a human or an agent identity.
 
-import { type Decoded, decodeWith, fail, identifier, literal, nullable, object, safeInteger } from './decode';
+import { type Decoded, decodeWith, fail, literal, nullable, object, safeInteger } from './decode';
+import { type DeviceId, type OwnerId, readId } from './ids';
 import type { CallOptions, Disposer, OperationResult } from './outcomes';
 
 export type DeviceState = 'new' | 'initializing' | 'ready' | 'locked' | 'lost' | 'revoked' | 'failed';
@@ -23,8 +24,13 @@ export type DeviceReason = (typeof DEVICE_REASONS)[number];
 
 export type DeviceView = Readonly<{
   /** `null` until the device has a substrate identity. */
-  deviceId: string | null;
+  deviceId: DeviceId | null;
   state: DeviceState;
+  /**
+   * Advances whenever the device is re-initialised or revoked. It doubles as the
+   * `expectedGeneration` of a device `RevocationRequest`, so a stale revoke cannot
+   * hit a replacement.
+   */
   generation: number;
   reason: DeviceReason | null;
 }>;
@@ -32,7 +38,7 @@ export type DeviceView = Readonly<{
 export type DeviceRejection = 'owner_mismatch' | 'unsupported_environment';
 
 export interface DevicePort {
-  ensureReady(ownerId: string, options?: CallOptions): Promise<OperationResult<DeviceView, DeviceRejection>>;
+  ensureReady(ownerId: OwnerId, options?: CallOptions): Promise<OperationResult<DeviceView, DeviceRejection>>;
   current(): DeviceView;
   /** Listeners receive full views; ignore views whose generation is not current. */
   observe(listener: (view: DeviceView) => void): Disposer;
@@ -46,7 +52,7 @@ export function decodeDeviceView(input: unknown): Decoded<DeviceView> {
   return decodeWith(() => {
     const r = object(input, '', ['deviceId', 'state', 'generation', 'reason']);
     const view: DeviceView = {
-      deviceId: nullable(r.field('deviceId'), value => identifier(value, r.at('deviceId'))),
+      deviceId: nullable(r.field('deviceId'), value => readId<'DeviceId'>(value, r.at('deviceId'))),
       state: literal(r.field('state'), r.at('state'), ['new', 'initializing', 'ready', 'locked', 'lost', 'revoked', 'failed']),
       generation: safeInteger(r.field('generation'), r.at('generation')),
       reason: nullable(r.field('reason'), value => literal(value, r.at('reason'), DEVICE_REASONS)),

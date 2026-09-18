@@ -5,16 +5,21 @@ import invalid from '../../fixtures/messaging/invalid.json';
 import views from '../../fixtures/messaging/views.json';
 import { decodeAdmission, decodeInviteState, decodeShareGrant } from './admission';
 import { decodeControlRecord } from './control-store';
-import type { Decoded } from './decode';
+import { type ContentLimits, type Decoded, decodeContentLimits } from './decode';
 import { decodeDeviceView } from './devices';
 import { decodeEventRef, decodeMessageContent, decodeTimelineItem } from './events';
-import { decodeAuthPrincipal, decodeParticipantView, decodeSessionBinding } from './identity';
+import { type SessionBinding, decodeAuthPrincipal, decodeParticipantView, decodeSessionBinding, sameSessionBinding } from './identity';
 import * as messaging from './index';
 import { decodeRecoveryCapabilities, decodeRecoveryStatus } from './recovery';
 import { decodeRevocationProgress, decodeRevocationRequest } from './revocation';
+import { isCurrentGeneration } from './outcomes';
 import { decodeRoomSnapshot, decodeRoomSummary, decodeSendState, decodeTimelinePage } from './rooms';
 
-const limits = intro.limits;
+const limits = (() => {
+  const decoded = decodeContentLimits(intro.limits);
+  if (!decoded.ok) throw new Error('fixture limits must decode');
+  return decoded.value;
+})();
 const decoders: Record<string, (input: unknown) => Decoded<unknown> | Promise<Decoded<unknown>>> = {
   principal: decodeAuthPrincipal,
   participant: input => decodeParticipantView(input, limits),
@@ -67,7 +72,7 @@ describe('exact intro fixture', () => {
 
   it('keeps the reference, binding and content fields both contract domains mirror', () => {
     expect(Object.keys(intro.eventRef).sort()).toEqual(['authorDeviceId', 'authorParticipantId', 'contentDigest', 'eventId', 'roomId', 'v']);
-    expect(Object.keys(intro.binding).sort()).toEqual(['agentParticipantId', 'bindingId', 'deviceId', 'generation', 'harness', 'ownerId', 'sessionId']);
+    expect(Object.keys(intro.binding).sort()).toEqual(['agentParticipantId', 'bindingId', 'deviceId', 'generation', 'harness', 'ownerId', 'sessionId', 'v']);
     expect(intro.content.body).toBe('Review the API change.\nDo not merge yet.');
   });
 
@@ -106,6 +111,64 @@ describe('invalid fixtures', () => {
   it.each(invalid.cases)('$name', async testCase => {
     const input = mutate(lookup(testCase.base), testCase.set, 'remove' in testCase ? testCase.remove : []);
     expect(await decoders[testCase.decoder]!(input)).toEqual({ ok: false, error: testCase.error });
+  });
+
+  it('lists every plan peer', () => {
+    const names = [...invalid.cases, ...invalid.peers.cases].map(testCase => testCase.name);
+    expect(names).toEqual(expect.arrayContaining([
+      'same reference with different body',
+      'same command operation ID with another room',
+      'empty issuer',
+      'email mapped as owner ID',
+      'wrong digest prefix',
+      'next generation substituted into a release targeting generation 1',
+      'principal unknown envelope version',
+      'stale observer generation',
+    ]));
+  });
+
+  it('knows how to run every peer check', () => {
+    // controlStore peers run against the conformance fake in control-store.test.ts.
+    expect(invalid.peers.cases.map(peer => peer.check).filter(check => !['controlStore', 'sameSessionBinding', 'isCurrentGeneration'].includes(check)))
+      .toEqual([]);
+  });
+
+  it.each(invalid.peers.cases.filter(peer => peer.check === 'sameSessionBinding'))('peer: $name', peer => {
+    const base = lookup(peer.base as string);
+    const decoded = [decodeSessionBinding(base), decodeSessionBinding(mutate(base, peer.set))];
+    if (!decoded[0]!.ok || !decoded[1]!.ok) throw new Error('peer bindings must be well-formed');
+    expect(sameSessionBinding(decoded[0]!.value as SessionBinding, decoded[1]!.value as SessionBinding)).toBe(peer.expect);
+  });
+
+  it.each(invalid.peers.cases.filter(peer => peer.check === 'isCurrentGeneration'))('peer: $name', peer => {
+    expect(isCurrentGeneration(peer.currentGeneration as number, { generation: peer.notificationGeneration as number })).toBe(peer.expect);
+  });
+});
+
+describe('content limits', () => {
+  it('decodes the fixture limits unchanged', () => {
+    expect(decodeContentLimits(intro.limits)).toEqual({ ok: true, value: intro.limits });
+  });
+
+  it.each([
+    ['empty object', {}, 'maxBodyBytes', 'missing_field'],
+    ['NaN body limit', { ...intro.limits, maxBodyBytes: Number.NaN }, 'maxBodyBytes', 'unsafe_integer'],
+    ['infinite display name limit', { ...intro.limits, maxDisplayNameBytes: Number.POSITIVE_INFINITY }, 'maxDisplayNameBytes', 'unsafe_integer'],
+    ['zero title limit', { ...intro.limits, maxRoomTitleBytes: 0 }, 'maxRoomTitleBytes', 'invalid_value'],
+    ['negative body limit', { ...intro.limits, maxBodyBytes: -1 }, 'maxBodyBytes', 'invalid_value'],
+    ['fractional body limit', { ...intro.limits, maxBodyBytes: 10.5 }, 'maxBodyBytes', 'unsafe_integer'],
+    ['string body limit', { ...intro.limits, maxBodyBytes: '4096' }, 'maxBodyBytes', 'wrong_type'],
+    ['unknown limit', { ...intro.limits, maxAttachmentBytes: 1 }, 'maxAttachmentBytes', 'unknown_field'],
+  ])('refuses %s', (_name, input, path, code) => {
+    expect(decodeContentLimits(input)).toEqual({ ok: false, error: { path, code } });
+  });
+
+  it('fails closed when forged limits reach a decoder anyway', () => {
+    const forged = { maxBodyBytes: Number.NaN, maxDisplayNameBytes: undefined, maxRoomTitleBytes: -1 } as unknown as ContentLimits;
+    expect(decodeMessageContent(intro.content, forged)).toEqual({ ok: false, error: { path: 'body', code: 'invalid_limits' } });
+    expect(decodeParticipantView(intro.participants.agent, forged)).toEqual({ ok: false, error: { path: 'displayName', code: 'invalid_limits' } });
+    expect(decodeRoomSummary({ roomId: 'room_demo', title: 'API review', membership: 'joined', revision: 'rev_1' }, forged))
+      .toEqual({ ok: false, error: { path: 'title', code: 'invalid_limits' } });
   });
 });
 

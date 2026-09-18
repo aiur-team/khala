@@ -5,6 +5,7 @@ import {
   type ContentLimits, type Decoded, decodeWith, fail, identifier, literal, nullable, object, text,
   utcTimestamp, version,
 } from './decode';
+import { type DeviceId, type EventId, type ParticipantId, type RoomId, readId } from './ids';
 import { type ParticipantView, readParticipantView } from './identity';
 
 /**
@@ -13,10 +14,10 @@ import { type ParticipantView, readParticipantView } from './identity';
  */
 export type EventRef = Readonly<{
   v: 1;
-  roomId: string;
-  eventId: string;
-  authorParticipantId: string;
-  authorDeviceId: string;
+  roomId: RoomId;
+  eventId: EventId;
+  authorParticipantId: ParticipantId;
+  authorDeviceId: DeviceId;
   /** `sha256:` followed by 64 lowercase hex digits. */
   contentDigest: string;
 }>;
@@ -49,19 +50,47 @@ export function isContentDigest(value: string): boolean {
 /**
  * Version 1 content encoding: UTF-8 of the compact JSON array
  * `["khala.message.v1","text",body]`. Positional, so no key ordering applies; the
- * body is never Unicode- or newline-normalised. Unpaired surrogates are refused
- * because UTF-8 cannot carry them without substitution.
+ * body is never Unicode- or newline-normalised. String escaping is exactly
+ * ECMAScript `JSON.stringify`: `"` and `\` are backslash-escaped; U+0008, U+0009,
+ * U+000A, U+000C and U+000D use `\b \t \n \f \r`; every other U+0000-U+001F uses
+ * `\u00xx` with lowercase hex; everything else, including DEL, U+2028, U+2029,
+ * `<`, `>`, `&` and all non-ASCII, is emitted as raw UTF-8. Unpaired surrogates and
+ * NUL are refused, so the escaping never has to represent them.
+ *
+ * Throws `TypeError` for content outside version 1 `text`; digest through
+ * `digestMessageContent` for a total result.
  */
 export function encodeMessageContent(content: MessageContent): Uint8Array {
   if (content.v !== 1 || content.kind !== 'text') throw new TypeError('unsupported message content version or kind');
-  decodeOrThrow(() => text(content.body, 'body', Number.MAX_SAFE_INTEGER));
+  const body = decodeWith(() => text(content.body, 'body', Number.MAX_SAFE_INTEGER));
+  if (!body.ok) throw new TypeError(`invalid message content: ${body.error.path} ${body.error.code}`);
   return new TextEncoder().encode(JSON.stringify([MESSAGE_ENCODING_V1, content.kind, content.body]));
 }
 
-/** `sha256:<hex>` over `encodeMessageContent(content)`, via the platform Web Crypto API. */
-export async function digestMessageContent(content: MessageContent): Promise<string> {
-  const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', encodeMessageContent(content)));
-  return `sha256:${Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+/**
+ * Digest outcome. `crypto_unavailable` means the platform has no usable Web Crypto
+ * (for example a non-secure browser origin); it never means the content is wrong.
+ */
+export type DigestResult =
+  | Readonly<{ ok: true; digest: string }>
+  | Readonly<{ ok: false; reason: 'invalid_content' | 'crypto_unavailable' }>;
+
+/** `sha256:<hex>` over `encodeMessageContent(content)`, via the platform Web Crypto API. Never throws. */
+export async function digestMessageContent(content: MessageContent): Promise<DigestResult> {
+  let bytes: Uint8Array;
+  try {
+    bytes = encodeMessageContent(content);
+  } catch {
+    return { ok: false, reason: 'invalid_content' };
+  }
+  let digest: Uint8Array;
+  try {
+    // A missing `crypto` or `crypto.subtle` throws here too, and is reported the same way.
+    digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', bytes));
+  } catch {
+    return { ok: false, reason: 'crypto_unavailable' };
+  }
+  return { ok: true, digest: `sha256:${Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('')}` };
 }
 
 export function decodeEventRef(input: unknown): Decoded<EventRef> {
@@ -72,10 +101,10 @@ export function readEventRef(input: unknown, path: string): EventRef {
   const r = object(input, path, ['v', 'roomId', 'eventId', 'authorParticipantId', 'authorDeviceId', 'contentDigest']);
   const ref: EventRef = {
     v: version(r.field('v'), r.at('v')),
-    roomId: identifier(r.field('roomId'), r.at('roomId')),
-    eventId: identifier(r.field('eventId'), r.at('eventId')),
-    authorParticipantId: identifier(r.field('authorParticipantId'), r.at('authorParticipantId')),
-    authorDeviceId: identifier(r.field('authorDeviceId'), r.at('authorDeviceId')),
+    roomId: readId<'RoomId'>(r.field('roomId'), r.at('roomId')),
+    eventId: readId<'EventId'>(r.field('eventId'), r.at('eventId')),
+    authorParticipantId: readId<'ParticipantId'>(r.field('authorParticipantId'), r.at('authorParticipantId')),
+    authorDeviceId: readId<'DeviceId'>(r.field('authorDeviceId'), r.at('authorDeviceId')),
     contentDigest: identifier(r.field('contentDigest'), r.at('contentDigest')),
   };
   if (!isContentDigest(ref.contentDigest)) fail(r.at('contentDigest'), 'invalid_value');
@@ -115,9 +144,14 @@ export async function decodeTimelineItem(input: unknown, limits: ContentLimits):
   return mismatch ?? decoded;
 }
 
-/** Returns a located `mismatch` failure when the item's reference does not digest its content. */
+/**
+ * Returns a located failure when the item's reference does not digest its content
+ * (`mismatch`) or the digest cannot be computed here (`digest_unavailable`).
+ */
 export async function verifyContentDigest(item: TimelineItem, path: string): Promise<Decoded<never> | null> {
-  return await digestMessageContent(item.content) === item.ref.contentDigest ? null : { ok: false, error: { path, code: 'mismatch' } };
+  const result = await digestMessageContent(item.content);
+  if (!result.ok) return { ok: false, error: { path, code: result.reason === 'crypto_unavailable' ? 'digest_unavailable' : 'invalid_value' } };
+  return result.digest === item.ref.contentDigest ? null : { ok: false, error: { path, code: 'mismatch' } };
 }
 
 /** Structural read only; callers must still verify the digest (see `decodeTimelineItem`). */
@@ -132,9 +166,4 @@ export function readTimelineItem(input: unknown, path: string, limits: ContentLi
   };
   if (item.participant.participantId !== item.ref.authorParticipantId) fail(r.at('participant'), 'mismatch');
   return item;
-}
-
-function decodeOrThrow(read: () => unknown): void {
-  const decoded = decodeWith(read);
-  if (!decoded.ok) throw new TypeError(`invalid message content: ${decoded.error.path} ${decoded.error.code}`);
 }

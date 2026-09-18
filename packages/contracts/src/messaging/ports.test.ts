@@ -6,8 +6,11 @@ import intro from '../../fixtures/messaging/exact-intro.json';
 import type { Admission, AdmissionPort } from './admission';
 import type { EventRef, MessageContent } from './events';
 import type { IdentityPort, IdentityState } from './identity';
+import type { DeviceId, RoomId } from './ids';
 import { type Disposer, type OperationResult, isCurrentGeneration, ok, outcomeUnknown, rejected, unavailable } from './outcomes';
 import type { RoomPort, RoomRejection, RoomSnapshot, SendState } from './rooms';
+
+const roomDemo = 'room_demo' as RoomId;
 
 describe('RoomPort.send', () => {
   // A transport that accepted the write remotely but whose response never arrived locally.
@@ -24,7 +27,7 @@ describe('RoomPort.send', () => {
     const remote = new Map<string, EventRef>();
     const controller = new AbortController();
     const pending = slowRoomPort(remote).send(
-      { roomId: 'room_demo', clientTxnId: 'txn_intro_1', content: intro.content as MessageContent },
+      { roomId: roomDemo, clientTxnId: 'txn_intro_1', content: intro.content as MessageContent },
       { signal: controller.signal },
     );
     controller.abort();
@@ -36,14 +39,14 @@ describe('RoomPort.send', () => {
 describe('RoomPort.observe', () => {
   it('lets consumers ignore snapshots from a stale lifecycle generation', () => {
     const listeners = new Set<(snapshot: RoomSnapshot) => void>();
-    const observe = (_roomId: string, listener: (snapshot: RoomSnapshot) => void): Disposer => {
+    const observe = (_roomId: RoomId, listener: (snapshot: RoomSnapshot) => void): Disposer => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     };
-    const room = { roomId: 'room_demo', title: null, membership: 'joined' as const, revision: 'rev_1' };
+    const room = { roomId: roomDemo, title: null, membership: 'joined' as const, revision: 'rev_1' };
     const currentGeneration = 1;
     const applied: RoomSnapshot[] = [];
-    const dispose = observe('room_demo', snapshot => {
+    const dispose = observe(roomDemo, snapshot => {
       if (isCurrentGeneration(currentGeneration, snapshot)) applied.push(snapshot);
     });
     for (const generation of [0, 1]) listeners.forEach(listener => listener({ room, items: [], snapshotRevision: `s${generation}`, generation }));
@@ -74,10 +77,10 @@ describe('AdmissionPort.admit', () => {
       admit: async ({ deviceId }) => {
         const outcome: Admission['outcome'] = joined.has(deviceId) ? 'already_joined' : 'joined';
         joined.add(deviceId);
-        return ok({ outcome, room: { roomId: 'room_demo', title: null, membership: 'joined', revision: 'rev_2' } });
+        return ok({ outcome, room: { roomId: roomDemo, title: null, membership: 'joined', revision: 'rev_2' } });
       },
     };
-    const input = { operationId: 'op_admit_1', inviteRef: 'invite_7', deviceId: 'device_browser_b' };
+    const input = { operationId: 'op_admit_1', inviteRef: 'invite_7', deviceId: 'device_browser_b' as DeviceId };
     const first = await port.admit(input);
     const retry = await port.admit(input);
     expect(first.kind === 'ok' && first.value.outcome).toBe('joined');

@@ -2,19 +2,23 @@
 // only: no SDK, storage or delivery-domain imports. Test fixtures are not exported.
 
 export {
-  type ContentLimits, type DecodeError, type DecodeErrorCode, type Decoded, MAX_IDENTIFIER_BYTES,
+  type ContentLimits, type DecodeError, type DecodeErrorCode, type Decoded, MAX_IDENTIFIER_BYTES, decodeContentLimits,
 } from './decode';
+export {
+  type BindingId, type DeviceId, type EventId, type Id, type IdKind, type OwnerId, type ParticipantId, type RoomId,
+  decodeBindingId, decodeDeviceId, decodeEventId, decodeOwnerId, decodeParticipantId, decodeRoomId,
+} from './ids';
 export {
   type CallOptions, type Disposer, type GenerationTagged, type OperationResult,
   isCurrentGeneration, ok, outcomeUnknown, rejected, unavailable,
 } from './outcomes';
 export {
   type AuthPrincipal, type IdentityPort, type IdentityState, type ParticipantView, type SessionBinding, type SignInIntent,
-  decodeAuthPrincipal, decodeParticipantView, decodeSessionBinding, isSameOriginReturnPath, sameProviderIdentity,
+  MAX_RETURN_PATH_BYTES, decodeAuthPrincipal, decodeParticipantView, decodeSessionBinding, isSameOriginReturnPath, sameProviderIdentity,
   sameSessionBinding,
 } from './identity';
 export {
-  type EventRef, type MessageContent, type TimelineItem, MESSAGE_ENCODING_V1,
+  type DigestResult, type EventRef, type MessageContent, type TimelineItem, MESSAGE_ENCODING_V1,
   decodeEventRef, decodeMessageContent, decodeTimelineItem, digestMessageContent, encodeMessageContent,
   isContentDigest, sameEventRef, verifyContentDigest,
 } from './events';
@@ -32,7 +36,8 @@ export {
   decodeAdmission, decodeInviteState, decodeShareGrant,
 } from './admission';
 export {
-  type RevocationPort, type RevocationProgress, type RevocationRejection, type RevocationRequest, type RevocationTarget,
+  type RevocationPort, type RevocationProgress, type RevocationRejection, type RevocationRequest, type RevocationSubject,
+  type RevocationTarget,
   decodeRevocationProgress, decodeRevocationRequest,
 } from './revocation';
 export {
@@ -43,5 +48,5 @@ export {
 export {
   type CompareAndSetInput, type ControlRead, type ControlRecord, type ControlStore, type JsonValue,
   type ResolveResult, type TrustedClock, type WriteResult,
-  decodeControlRecord, isRecordLive, sameJsonValue,
+  MAX_JSON_DEPTH, decodeControlRecord, isRecordLive, sameJsonValue,
 } from './control-store';

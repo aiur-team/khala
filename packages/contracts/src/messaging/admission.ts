@@ -1,8 +1,9 @@
 // Room sharing and admission. The authenticated principal always comes from the
-// control context, never from these inputs. History disclosure on admission is an
-// open product gate (G-ADMISSION, G-RETENTION) and deliberately absent here.
+// control context, never from these inputs. The admission result carries no history;
+// disclosure is gated by G-ADMISSION and G-RETENTION and deliberately absent here.
 
 import { type ContentLimits, type Decoded, decodeWith, fail, identifier, literal, nullable, object, utcTimestamp } from './decode';
+import type { DeviceId, RoomId } from './ids';
 import type { CallOptions, OperationResult } from './outcomes';
 import { type RoomSummary, readRoomSummary } from './rooms';
 
@@ -25,16 +26,18 @@ export type InviteState =
 
 /**
  * A successful admission. Retrying the same admission after it applied yields
- * `already_joined` for the same room, never a second membership.
+ * `already_joined` for the same room, never a second membership. Resolving
+ * G-ADMISSION may add `outcome` variants (for example a pending approval); consumers
+ * must handle `outcome` exhaustively so such an addition is a reviewed version bump.
  */
 export type Admission = Readonly<{ outcome: 'joined' | 'already_joined'; room: RoomSummary }>;
 
 export type AdmissionRejection = 'auth_required' | 'expired' | 'revoked' | 'identity_mismatch' | 'forbidden' | 'operation_mismatch';
 
 export interface AdmissionPort {
-  share(input: Readonly<{ operationId: string; roomId: string }>, options?: CallOptions): Promise<OperationResult<ShareGrant, AdmissionRejection>>;
+  share(input: Readonly<{ operationId: string; roomId: RoomId }>, options?: CallOptions): Promise<OperationResult<ShareGrant, AdmissionRejection>>;
   inspect(inviteRef: string, options?: CallOptions): Promise<InviteState>;
-  admit(input: Readonly<{ operationId: string; inviteRef: string; deviceId: string }>, options?: CallOptions): Promise<OperationResult<Admission, AdmissionRejection>>;
+  admit(input: Readonly<{ operationId: string; inviteRef: string; deviceId: DeviceId }>, options?: CallOptions): Promise<OperationResult<Admission, AdmissionRejection>>;
 }
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);

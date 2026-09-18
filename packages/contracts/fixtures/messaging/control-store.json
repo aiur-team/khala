@@ -1,5 +1,5 @@
 {
-  "_comment": "ControlStore conformance scenarios for any persistence adapter. Steps run in order against a fresh store. `fault` makes the next store call fail: `unavailable` performs nothing; `lose_response` performs the write and then reports `outcome_unknown`. `clock` sets trusted time (epoch ms). `saveRevisionAs` captures an applied record's revision; `$name` in `expectedRevision` substitutes it. Expectations match `kind` plus, when given, the record `value` (`value`) or the conflicting record's value (`currentValue`, `null` for none). Live adapters must satisfy every scenario except those marked `fakeOnly`, where a real provider may return `outcome_unknown` instead of proving the result.",
+  "_comment": "ControlStore conformance scenarios for any persistence adapter. Steps run in order against a fresh store. `fault` makes the next store call fail: `unavailable` performs nothing; `lose_response` performs the write and then reports `outcome_unknown`. `clock` sets trusted time (epoch ms). `saveRevisionAs` captures an applied record's revision; `$name` in `expectedRevision` substitutes it. Expectations match `kind` plus, when given, the record `value` (`value`) or the conflicting record's value (`currentValue`, `null` for none). Live adapters must satisfy every scenario except those marked `fakeOnly`, where a real provider may return `outcome_unknown` instead of proving the result. Adapters must also pass the `controlStore` peers in invalid.json (operation ID reuse on another key).",
   "scenarios": [
     {
       "name": "two create-if-absent requests have one winner",
@@ -34,12 +34,11 @@
       ]
     },
     {
-      "name": "operation ID cannot be reused with other bytes or another key",
+      "name": "operation ID cannot be reused with other bytes",
       "steps": [
         { "op": "compareAndSet", "key": "room/room_demo/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "API review", "expiresAt": null }, "expect": { "kind": "applied" } },
         { "op": "compareAndSet", "key": "room/room_demo/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "Merge now", "expiresAt": null }, "expect": { "kind": "operation_mismatch" } },
-        { "op": "compareAndSet", "key": "room/room_other/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "API review", "expiresAt": null }, "expect": { "kind": "operation_mismatch" } },
-        { "op": "read", "key": "room/room_other/title", "expect": { "kind": "absent" } }
+        { "op": "compareAndSet", "key": "room/room_demo/title", "expectedRevision": null, "operationId": "op_cmd", "next": { "value": "API review", "expiresAt": "2026-09-17T00:00:00Z" }, "expect": { "kind": "operation_mismatch" } }
       ]
     },
     {

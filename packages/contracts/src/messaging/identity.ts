@@ -2,19 +2,20 @@
 // separate identities. None of them is derived from another's display data.
 
 import {
-  type ContentLimits, type Decoded, array, decodeWith, elementPath, fail, identifier, label, literal,
+  type ContentLimits, type Decoded, array, decodeWith, displayText, elementPath, fail, identifier, literal,
   object, safeInteger, utcTimestamp, utf8Length, version,
 } from './decode';
+import { type BindingId, type DeviceId, type OwnerId, type ParticipantId, readId } from './ids';
 import type { CallOptions, OperationResult } from './outcomes';
 
 /**
  * An authenticated human owner. Identity is the provider issuer plus subject;
  * `verifiedEmail` is contact/display data only, so an email change never merges
- * or splits owners. `ownerId` is Khala's opaque owner key, never the email.
+ * or splits owners. `ownerId` is Khala's opaque owner key, never an email.
  */
 export type AuthPrincipal = Readonly<{
   v: 1;
-  ownerId: string;
+  ownerId: OwnerId;
   providerIssuer: string;
   providerSubject: string;
   verifiedEmail: string;
@@ -27,23 +28,26 @@ export type AuthPrincipal = Readonly<{
  * never from a display label.
  */
 export type ParticipantView = Readonly<{
-  participantId: string;
+  participantId: ParticipantId;
   kind: 'human' | 'agent';
-  ownerId: string;
+  ownerId: OwnerId;
+  /** Nonempty; no control, bidi or invisible zero-width characters. */
   displayName: string;
-  deviceIds: readonly string[];
+  deviceIds: readonly DeviceId[];
 }>;
 
 /**
  * Immutable binding of an agent participant to one existing harness session on one
  * device. Targeting another session requires another binding; a revoked or
- * re-armed binding advances `generation`.
+ * re-armed binding advances `generation`. Mirrored by the delivery domain, so it
+ * carries its own envelope version.
  */
 export type SessionBinding = Readonly<{
-  bindingId: string;
-  ownerId: string;
-  agentParticipantId: string;
-  deviceId: string;
+  v: 1;
+  bindingId: BindingId;
+  ownerId: OwnerId;
+  agentParticipantId: ParticipantId;
+  deviceId: DeviceId;
   harness: string;
   sessionId: string;
   generation: number;
@@ -56,15 +60,16 @@ export function decodeAuthPrincipal(input: unknown): Decoded<AuthPrincipal> {
     const r = object(input, '', ['v', 'ownerId', 'providerIssuer', 'providerSubject', 'verifiedEmail', 'sessionExpiresAt']);
     const principal: AuthPrincipal = {
       v: version(r.field('v'), r.at('v')),
-      ownerId: identifier(r.field('ownerId'), r.at('ownerId')),
+      ownerId: readId<'OwnerId'>(r.field('ownerId'), r.at('ownerId')),
       providerIssuer: identifier(r.field('providerIssuer'), r.at('providerIssuer')),
       providerSubject: identifier(r.field('providerSubject'), r.at('providerSubject')),
       verifiedEmail: identifier(r.field('verifiedEmail'), r.at('verifiedEmail')),
       sessionExpiresAt: utcTimestamp(r.field('sessionExpiresAt'), r.at('sessionExpiresAt')),
     };
     if (!EMAIL.test(principal.verifiedEmail)) fail(r.at('verifiedEmail'), 'invalid_value');
-    // An email standing in as the owner key would let an address change re-key an owner.
-    if (principal.ownerId.toLowerCase() === principal.verifiedEmail.toLowerCase()) fail(r.at('ownerId'), 'mismatch');
+    // An email standing in as the owner key would let an address change re-key an owner,
+    // so any email-shaped owner key is refused, not only this principal's address.
+    if (EMAIL.test(principal.ownerId)) fail(r.at('ownerId'), 'mismatch');
     return principal;
   });
 }
@@ -81,17 +86,19 @@ export function decodeParticipantView(input: unknown, limits: ContentLimits): De
 export function readParticipantView(input: unknown, path: string, limits: ContentLimits): ParticipantView {
   const r = object(input, path, ['participantId', 'kind', 'ownerId', 'displayName', 'deviceIds']);
   const deviceIds = array(r.field('deviceIds'), r.at('deviceIds'))
-    .map((value, index) => identifier(value, elementPath(r.at('deviceIds'), index)));
+    .map((value, index) => readId<'DeviceId'>(value, elementPath(r.at('deviceIds'), index)));
   deviceIds.forEach((id, index) => {
     if (deviceIds.indexOf(id) !== index) fail(elementPath(r.at('deviceIds'), index), 'duplicate');
   });
-  return {
-    participantId: identifier(r.field('participantId'), r.at('participantId')),
+  const view: ParticipantView = {
+    participantId: readId<'ParticipantId'>(r.field('participantId'), r.at('participantId')),
     kind: literal(r.field('kind'), r.at('kind'), ['human', 'agent']),
-    ownerId: identifier(r.field('ownerId'), r.at('ownerId')),
-    displayName: label(r.field('displayName'), r.at('displayName'), limits.maxDisplayNameBytes),
+    ownerId: readId<'OwnerId'>(r.field('ownerId'), r.at('ownerId')),
+    displayName: displayText(r.field('displayName'), r.at('displayName'), limits.maxDisplayNameBytes),
     deviceIds,
   };
+  if (view.displayName.length === 0) fail(r.at('displayName'), 'empty');
+  return view;
 }
 
 export function decodeSessionBinding(input: unknown): Decoded<SessionBinding> {
@@ -99,21 +106,22 @@ export function decodeSessionBinding(input: unknown): Decoded<SessionBinding> {
 }
 
 export function readSessionBinding(input: unknown, path: string): SessionBinding {
-  const r = object(input, path, ['bindingId', 'ownerId', 'agentParticipantId', 'deviceId', 'harness', 'sessionId', 'generation']);
+  const r = object(input, path, ['v', 'bindingId', 'ownerId', 'agentParticipantId', 'deviceId', 'harness', 'sessionId', 'generation']);
   return {
-    bindingId: identifier(r.field('bindingId'), r.at('bindingId')),
-    ownerId: identifier(r.field('ownerId'), r.at('ownerId')),
-    agentParticipantId: identifier(r.field('agentParticipantId'), r.at('agentParticipantId')),
-    deviceId: identifier(r.field('deviceId'), r.at('deviceId')),
+    v: version(r.field('v'), r.at('v')),
+    bindingId: readId<'BindingId'>(r.field('bindingId'), r.at('bindingId')),
+    ownerId: readId<'OwnerId'>(r.field('ownerId'), r.at('ownerId')),
+    agentParticipantId: readId<'ParticipantId'>(r.field('agentParticipantId'), r.at('agentParticipantId')),
+    deviceId: readId<'DeviceId'>(r.field('deviceId'), r.at('deviceId')),
     harness: identifier(r.field('harness'), r.at('harness')),
     sessionId: identifier(r.field('sessionId'), r.at('sessionId')),
     generation: safeInteger(r.field('generation'), r.at('generation')),
   };
 }
 
-/** Exact equality of every binding field, including generation. */
+/** Exact equality of every binding field, including version and generation. */
 export function sameSessionBinding(a: SessionBinding, b: SessionBinding): boolean {
-  return a.bindingId === b.bindingId && a.ownerId === b.ownerId && a.agentParticipantId === b.agentParticipantId
+  return a.v === b.v && a.bindingId === b.bindingId && a.ownerId === b.ownerId && a.agentParticipantId === b.agentParticipantId
     && a.deviceId === b.deviceId && a.harness === b.harness && a.sessionId === b.sessionId && a.generation === b.generation;
 }
 
@@ -133,6 +141,9 @@ export interface IdentityPort {
   signOut(operationId: string, options?: CallOptions): Promise<OperationResult<null, never>>;
 }
 
+/** Longest accepted sign-in return path, in UTF-8 bytes. */
+export const MAX_RETURN_PATH_BYTES = 2048;
+
 const UNSAFE_PATH = /[\\\u0000-\u001f\u007f]/;
 
 /**
@@ -141,5 +152,5 @@ const UNSAFE_PATH = /[\\\u0000-\u001f\u007f]/;
  * to another origin.
  */
 export function isSameOriginReturnPath(path: string): boolean {
-  return path.startsWith('/') && !path.startsWith('//') && !UNSAFE_PATH.test(path) && utf8Length(path) <= 2048;
+  return path.startsWith('/') && !path.startsWith('//') && !UNSAFE_PATH.test(path) && utf8Length(path) <= MAX_RETURN_PATH_BYTES;
 }

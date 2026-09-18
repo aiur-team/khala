@@ -1,16 +1,17 @@
 // Room views and the room port consumed by human UI and connector code.
 
 import {
-  type ContentLimits, type Decoded, array, decodeWith, elementPath, fail, identifier, label, literal,
+  type ContentLimits, type Decoded, array, decodeWith, displayText, elementPath, fail, identifier, literal,
   nullable, object, safeInteger,
 } from './decode';
 import { type EventRef, type MessageContent, type TimelineItem, readEventRef, readTimelineItem, verifyContentDigest } from './events';
+import { type EventId, type RoomId, readId } from './ids';
 import type { CallOptions, Disposer, OperationResult } from './outcomes';
 
 export type RoomMembership = 'joining' | 'joined' | 'left' | 'revoked';
 
 export type RoomSummary = Readonly<{
-  roomId: string;
+  roomId: RoomId;
   /** An empty title is not a title: decoders map `""` to `null`. */
   title: string | null;
   membership: RoomMembership;
@@ -27,7 +28,10 @@ export type TimelinePage = Readonly<{
 
 /**
  * Local send state for one client transaction. `accepted` means the transport
- * accepted the event, never that any model read or processed it.
+ * accepted the event, never that any model read or processed it. An
+ * `outcome_unknown` send is resolved through its `clientTxnId`: the transport
+ * deduplicates on it, so re-sending the same transaction with the same content
+ * either finds the landed event or sends it once.
  */
 export type SendState = Readonly<{
   clientTxnId: string;
@@ -46,16 +50,17 @@ export type RoomSnapshot = Readonly<{
 
 export type RoomRejection = 'forbidden' | 'not_found' | 'not_joined' | 'too_large' | 'invalid_request' | 'operation_mismatch';
 
-export type IntroBatch = Readonly<{ roomId: string; batchId: string; messages: readonly MessageContent[] }>;
+export type IntroBatch = Readonly<{ roomId: RoomId; batchId: string; messages: readonly MessageContent[] }>;
 
 export interface RoomPort {
   create(input: Readonly<{ operationId: string; title: string | null }>, options?: CallOptions): Promise<OperationResult<RoomSummary, RoomRejection>>;
   /** One `SendState` per message, in input order. Resuming the same `batchId` never duplicates messages. */
   prepareIntro(input: IntroBatch, options?: CallOptions): Promise<OperationResult<readonly SendState[], RoomRejection>>;
   resumeIntro(batchId: string, options?: CallOptions): Promise<OperationResult<readonly SendState[], RoomRejection>>;
-  send(input: Readonly<{ roomId: string; clientTxnId: string; content: MessageContent }>, options?: CallOptions): Promise<OperationResult<SendState, RoomRejection>>;
-  timeline(input: Readonly<{ roomId: string; cursor: string | null; limit: number }>, options?: CallOptions): Promise<OperationResult<TimelinePage, RoomRejection>>;
-  observe(roomId: string, listener: (snapshot: RoomSnapshot) => void): Disposer;
+  /** `outcome_unknown` carries the `clientTxnId` as its operation ID; resolve by re-sending that transaction. */
+  send(input: Readonly<{ roomId: RoomId; clientTxnId: string; content: MessageContent }>, options?: CallOptions): Promise<OperationResult<SendState, RoomRejection>>;
+  timeline(input: Readonly<{ roomId: RoomId; cursor: string | null; limit: number }>, options?: CallOptions): Promise<OperationResult<TimelinePage, RoomRejection>>;
+  observe(roomId: RoomId, listener: (snapshot: RoomSnapshot) => void): Disposer;
 }
 
 export function decodeRoomSummary(input: unknown, limits: ContentLimits): Decoded<RoomSummary> {
@@ -64,9 +69,9 @@ export function decodeRoomSummary(input: unknown, limits: ContentLimits): Decode
 
 export function readRoomSummary(input: unknown, path: string, limits: ContentLimits): RoomSummary {
   const r = object(input, path, ['roomId', 'title', 'membership', 'revision']);
-  const title = nullable(r.field('title'), value => label(value, r.at('title'), limits.maxRoomTitleBytes));
+  const title = nullable(r.field('title'), value => displayText(value, r.at('title'), limits.maxRoomTitleBytes));
   return {
-    roomId: identifier(r.field('roomId'), r.at('roomId')),
+    roomId: readId<'RoomId'>(r.field('roomId'), r.at('roomId')),
     title: title === '' ? null : title,
     membership: literal(r.field('membership'), r.at('membership'), ['joining', 'joined', 'left', 'revoked']),
     revision: identifier(r.field('revision'), r.at('revision')),
@@ -132,7 +137,7 @@ async function verifyItems(items: readonly TimelineItem[], path: string): Promis
 }
 
 function readItems(input: unknown, path: string, limits: ContentLimits): readonly TimelineItem[] {
-  const seen = new Set<string>();
+  const seen = new Set<EventId>();
   return array(input, path).map((value, index) => {
     const item = readTimelineItem(value, elementPath(path, index), limits);
     if (seen.has(item.ref.eventId)) fail(`${elementPath(path, index)}.ref.eventId`, 'duplicate');

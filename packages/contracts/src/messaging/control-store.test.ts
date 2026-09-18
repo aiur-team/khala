@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import conformance from '../../fixtures/messaging/control-store.json';
+import invalid from '../../fixtures/messaging/invalid.json';
 import {
   type CompareAndSetInput, type ControlRecord, type ControlStore, type JsonValue, type TrustedClock,
-  isRecordLive, sameJsonValue,
+  MAX_JSON_DEPTH, decodeControlRecord, isRecordLive, sameJsonValue,
 } from './control-store';
 
 type Fault = 'unavailable' | 'lose_response' | null;
@@ -70,43 +71,51 @@ type Expectation = Readonly<{ kind: string; value?: JsonValue; currentValue?: Js
 
 describe('ControlStore conformance scenarios', () => {
   it.each(conformance.scenarios)('$name', async scenario => {
-    let now = Date.parse('2026-09-16T00:00:00Z');
-    const { store, inject } = createFakeStore(() => now);
-    const saved = new Map<string, string>();
-    for (const step of scenario.steps as readonly Step[]) {
-      const expectation = step.expect as Expectation | undefined;
-      let result: Readonly<Record<string, unknown> & { kind: string }>;
-      if (step.op === 'fault') {
-        inject(step.mode as Fault);
-        continue;
-      } else if (step.op === 'clock') {
-        now = step.nowMs as number;
-        continue;
-      } else if (step.op === 'read') {
-        result = await store.read(step.key as string);
-      } else if (step.op === 'resolve') {
-        result = await store.resolve({ key: step.key as string, operationId: step.operationId as string });
-      } else if (step.op === 'compareAndSet') {
-        const expected = step.expectedRevision as string | null;
-        result = await store.compareAndSet({
-          key: step.key as string,
-          expectedRevision: expected?.startsWith('$') ? saved.get(expected.slice(1)) ?? null : expected,
-          operationId: step.operationId as string,
-          next: step.next as CompareAndSetInput['next'],
-        });
-      } else throw new Error(`unknown step ${step.op}`);
+    await runSteps(scenario.steps as readonly Step[]);
+  });
 
-      expect(result.kind, JSON.stringify(step)).toBe(expectation?.kind);
-      const record = result.record as ControlRecord | undefined;
-      if (expectation?.value !== undefined) expect(record?.value).toEqual(expectation.value);
-      if (expectation?.currentValue !== undefined) {
-        expect((result.current as ControlRecord | null)?.value ?? null).toEqual(expectation.currentValue);
-      }
-      if (result.kind === 'outcome_unknown') expect(result.operationId).toBe(step.operationId);
-      if (typeof step.saveRevisionAs === 'string' && record) saved.set(step.saveRevisionAs, record.revision);
-    }
+  it.each(invalid.peers.cases.filter(peer => peer.check === 'controlStore'))('invalid peer: $name', async peer => {
+    await runSteps(peer.steps as readonly Step[]);
   });
 });
+
+async function runSteps(steps: readonly Step[]): Promise<void> {
+  let now = Date.parse('2026-09-16T00:00:00Z');
+  const { store, inject } = createFakeStore(() => now);
+  const saved = new Map<string, string>();
+  for (const step of steps) {
+    const expectation = step.expect as Expectation | undefined;
+    let result: Readonly<Record<string, unknown> & { kind: string }>;
+    if (step.op === 'fault') {
+      inject(step.mode as Fault);
+      continue;
+    } else if (step.op === 'clock') {
+      now = step.nowMs as number;
+      continue;
+    } else if (step.op === 'read') {
+      result = await store.read(step.key as string);
+    } else if (step.op === 'resolve') {
+      result = await store.resolve({ key: step.key as string, operationId: step.operationId as string });
+    } else if (step.op === 'compareAndSet') {
+      const expected = step.expectedRevision as string | null;
+      result = await store.compareAndSet({
+        key: step.key as string,
+        expectedRevision: expected?.startsWith('$') ? saved.get(expected.slice(1)) ?? null : expected,
+        operationId: step.operationId as string,
+        next: step.next as CompareAndSetInput['next'],
+      });
+    } else throw new Error(`unknown step ${step.op}`);
+
+    expect(result.kind, JSON.stringify(step)).toBe(expectation?.kind);
+    const record = result.record as ControlRecord | undefined;
+    if (expectation?.value !== undefined) expect(record?.value).toEqual(expectation.value);
+    if (expectation?.currentValue !== undefined) {
+      expect((result.current as ControlRecord | null)?.value ?? null).toEqual(expectation.currentValue);
+    }
+    if (result.kind === 'outcome_unknown') expect(result.operationId).toBe(step.operationId);
+    if (typeof step.saveRevisionAs === 'string' && record) saved.set(step.saveRevisionAs, record.revision);
+  }
+}
 
 describe('isRecordLive', () => {
   const expiresAt = '2026-09-16T12:00:00Z';
@@ -114,6 +123,11 @@ describe('isRecordLive', () => {
     expect(isRecordLive({ expiresAt }, Date.parse(expiresAt) - 1)).toBe(true);
     expect(isRecordLive({ expiresAt }, Date.parse(expiresAt))).toBe(false);
     expect(isRecordLive({ expiresAt: null }, Number.MAX_SAFE_INTEGER)).toBe(true);
+  });
+
+  it('never authorises with an unparseable expiry or clock', () => {
+    expect(isRecordLive({ expiresAt: 'not a timestamp' }, 0)).toBe(false);
+    expect(isRecordLive({ expiresAt }, Number.NaN)).toBe(false);
   });
 });
 
@@ -123,5 +137,48 @@ describe('sameJsonValue', () => {
     expect(sameJsonValue([1, 2], [2, 1])).toBe(false);
     expect(sameJsonValue({ a: null }, {})).toBe(false);
     expect(sameJsonValue([], {})).toBe(false);
+  });
+
+  it('refuses extra keys on either side', () => {
+    expect(sameJsonValue({ a: 1 }, { a: 1, b: 2 })).toBe(false);
+    expect(sameJsonValue({ a: 1, b: 2 }, { a: 1 })).toBe(false);
+    expect(sameJsonValue({ a: 1, b: 2 }, { a: 1, c: 2 })).toBe(false);
+  });
+});
+
+describe('decodeControlRecord is total', () => {
+  const envelope = (value: unknown) => ({ key: 'k', revision: 'r1', operationId: 'op_1', value, expiresAt: null });
+
+  it.each([
+    ['NaN', Number.NaN, 'value', 'invalid_value'],
+    ['Infinity', Number.POSITIVE_INFINITY, 'value', 'invalid_value'],
+    ['nested -Infinity', { limits: [Number.NEGATIVE_INFINITY] }, 'value.limits[0]', 'invalid_value'],
+    ['undefined', undefined, 'value', 'wrong_type'],
+    ['a function', () => 1, 'value', 'wrong_type'],
+    ['a bigint', 1n, 'value', 'wrong_type'],
+    ['a Date', new Date(0), 'value', 'wrong_type'],
+    ['a sparse array hole', { roles: ['owner', , 'member'] }, 'value.roles[1]', 'wrong_type'],
+  ])('rejects %s in the value', (_name, value, path, code) => {
+    expect(decodeControlRecord(envelope(value))).toEqual({ ok: false, error: { path, code } });
+  });
+
+  it('accepts nesting up to the depth bound', () => {
+    let value: JsonValue = 'leaf';
+    for (let depth = 0; depth < MAX_JSON_DEPTH; depth += 1) value = [value];
+    expect(decodeControlRecord(envelope(value)).ok).toBe(true);
+  });
+
+  it('fails on deeper nesting instead of exhausting the stack', () => {
+    let value: JsonValue = 'leaf';
+    for (let depth = 0; depth < 100_000; depth += 1) value = { next: value };
+    const decoded = decodeControlRecord(envelope(value));
+    expect(decoded.ok || decoded.error.code).toBe('too_deep');
+  });
+
+  it('fails on cyclic input instead of throwing', () => {
+    const cyclic: Record<string, unknown> = { name: 'loop' };
+    cyclic.self = cyclic;
+    const decoded = decodeControlRecord(envelope(cyclic));
+    expect(decoded.ok || decoded.error.code).toBe('too_deep');
   });
 });

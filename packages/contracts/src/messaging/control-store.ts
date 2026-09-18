@@ -1,7 +1,7 @@
 // Guarded account/membership/control metadata. Atomicity is per key: there is no
 // cross-key transaction. Messaging history and keys never live here.
 
-import { type Decoded, decodeWith, fail, identifier, nullable, object, utcTimestamp } from './decode';
+import { type Decoded, decodeWith, elementPath, fail, identifier, nullable, object, utcTimestamp } from './decode';
 import type { CallOptions } from './outcomes';
 
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -36,7 +36,10 @@ export type CompareAndSetInput<T extends JsonValue = JsonValue> = Readonly<{
  *   identical retry finds its own write already applied).
  * - `conflict`: the expected revision did not match; `current` is what was found.
  * - `operation_mismatch`: the operation ID was already used for another key or
- *   different bytes. An operation ID never names two different writes.
+ *   different bytes. An operation ID never names two different writes. A provider
+ *   whose atomicity is per key cannot see another key's write, so its adapter must
+ *   first claim the operation ID in its own record (key, value and expiry) and
+ *   compare against that claim.
  * - `outcome_unknown`: the write may have landed. Call `resolve`; do not retry
  *   with new bytes.
  * - `unavailable`: nothing was written.
@@ -69,7 +72,7 @@ export interface ControlStore {
 /** Trusted clock injected into store implementations, in epoch milliseconds. */
 export type TrustedClock = () => number;
 
-/** A record authorises reads only strictly before its expiry. */
+/** A record authorises reads only strictly before its expiry; an unparseable expiry never authorises. */
 export function isRecordLive(record: Pick<ControlRecord, 'expiresAt'>, nowMs: number): boolean {
   return record.expiresAt === null || nowMs < Date.parse(record.expiresAt);
 }
@@ -89,27 +92,38 @@ export function sameJsonValue(a: JsonValue, b: JsonValue): boolean {
   return keys.every(key => Object.hasOwn(right, key) && sameJsonValue(left[key] as JsonValue, right[key] as JsonValue));
 }
 
+/** Deepest nesting a record value may use. Deeper or cyclic input fails with `too_deep`. */
+export const MAX_JSON_DEPTH = 64;
+
 /** Decodes a record envelope. The value is checked to be JSON only; its schema belongs to the key's owner. */
 export function decodeControlRecord(input: unknown): Decoded<ControlRecord> {
   return decodeWith(() => {
     const r = object(input, '', ['key', 'revision', 'operationId', 'value', 'expiresAt']);
-    const value = r.field('value');
-    if (!isJsonValue(value)) fail(r.at('value'), 'wrong_type');
     return {
       key: identifier(r.field('key'), r.at('key')),
       revision: identifier(r.field('revision'), r.at('revision')),
       operationId: identifier(r.field('operationId'), r.at('operationId')),
-      value,
+      value: readJsonValue(r.field('value'), r.at('value'), 0),
       expiresAt: nullable(r.field('expiresAt'), expiry => utcTimestamp(expiry, r.at('expiresAt'))),
     };
   });
 }
 
-function isJsonValue(value: unknown): value is JsonValue {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  if (typeof value !== 'object') return false;
+function readJsonValue(value: unknown, path: string, depth: number): JsonValue {
+  if (depth > MAX_JSON_DEPTH) fail(path, 'too_deep');
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) fail(path, 'invalid_value');
+    return value;
+  }
+  if (Array.isArray(value)) {
+    // Index loop, not `every`: holes in a sparse array are `undefined`, which is not JSON.
+    for (let index = 0; index < value.length; index += 1) readJsonValue(value[index], elementPath(path, index), depth + 1);
+    return value as JsonValue[];
+  }
+  if (typeof value !== 'object') fail(path, 'wrong_type');
   const prototype = Object.getPrototypeOf(value);
-  return (prototype === Object.prototype || prototype === null) && Object.values(value).every(isJsonValue);
+  if (prototype !== Object.prototype && prototype !== null) fail(path, 'wrong_type');
+  for (const [key, item] of Object.entries(value)) readJsonValue(item, `${path}.${key}`, depth + 1);
+  return value as { readonly [key: string]: JsonValue };
 }

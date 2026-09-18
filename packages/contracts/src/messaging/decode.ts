@@ -9,13 +9,16 @@ export type DecodeErrorCode =
   | 'wrong_type'
   | 'empty'
   | 'too_long'
+  | 'too_deep'
   | 'control_character'
   | 'malformed_unicode'
   | 'unsupported_version'
   | 'unsafe_integer'
   | 'invalid_value'
+  | 'invalid_limits'
   | 'duplicate'
-  | 'mismatch';
+  | 'mismatch'
+  | 'digest_unavailable';
 
 export type DecodeError = Readonly<{ path: string; code: DecodeErrorCode }>;
 
@@ -28,13 +31,14 @@ export const MAX_IDENTIFIER_BYTES = 512;
 
 /**
  * Size limits declared by the selected substrate's capability record. No universal
- * protocol limit is assumed here; callers pass what their substrate supports.
+ * protocol limit is assumed here. The brand means a value only comes from
+ * `decodeContentLimits`, so `{}` or `NaN` limits cannot reach a decoder.
  */
 export type ContentLimits = Readonly<{
   maxBodyBytes: number;
   maxDisplayNameBytes: number;
   maxRoomTitleBytes: number;
-}>;
+}> & { readonly __khala: 'ContentLimits' };
 
 export class DecodeFailure extends Error {
   readonly path: string;
@@ -59,6 +63,23 @@ export function decodeWith<T>(read: () => T): Decoded<T> {
     if (error instanceof DecodeFailure) return { ok: false, error: { path: error.path, code: error.code } };
     throw error;
   }
+}
+
+/** Every limit must be a positive safe integer; anything else fails closed. */
+export function decodeContentLimits(input: unknown): Decoded<ContentLimits> {
+  return decodeWith(() => {
+    const r = object(input, '', ['maxBodyBytes', 'maxDisplayNameBytes', 'maxRoomTitleBytes']);
+    const limit = (key: string) => {
+      const value = safeInteger(r.field(key), r.at(key));
+      if (value === 0) fail(r.at(key), 'invalid_value');
+      return value;
+    };
+    return {
+      maxBodyBytes: limit('maxBodyBytes'),
+      maxDisplayNameBytes: limit('maxDisplayNameBytes'),
+      maxRoomTitleBytes: limit('maxRoomTitleBytes'),
+    } as ContentLimits;
+  });
 }
 
 const join = (path: string, key: string | number) =>
@@ -114,19 +135,37 @@ export function isWellFormed(value: string): boolean {
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
-/** Well-formed string within a UTF-8 byte limit; content may contain newlines and tabs. */
+/**
+ * Bidi controls and invisible zero-width characters that let one label impersonate
+ * another. ZWNJ and ZWJ (U+200C, U+200D) stay allowed because Persian and Indic
+ * scripts and emoji sequences need them.
+ */
+const INVISIBLE = /[\u061c\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/;
+
+/**
+ * Well-formed string within a UTF-8 byte limit; content may contain newlines and tabs.
+ * A limit that is not a nonnegative safe integer fails closed.
+ */
 export function text(input: unknown, path: string, maxBytes: number): string {
   if (typeof input !== 'string') fail(path, 'wrong_type');
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) fail(path, 'invalid_limits');
   if (!isWellFormed(input)) fail(path, 'malformed_unicode');
   if (utf8Length(input) > maxBytes) fail(path, 'too_long');
   if (input.includes('\u0000')) fail(path, 'control_character');
   return input;
 }
 
-/** Single-line label (display name, title): no control characters at all. */
+/** Single-line label: no control characters at all. */
 export function label(input: unknown, path: string, maxBytes: number): string {
   const value = text(input, path, maxBytes);
   if (CONTROL.test(value)) fail(path, 'control_character');
+  return value;
+}
+
+/** Human-facing label (display name, room title): also free of bidi and invisible characters. */
+export function displayText(input: unknown, path: string, maxBytes: number): string {
+  const value = label(input, path, maxBytes);
+  if (INVISIBLE.test(value)) fail(path, 'control_character');
   return value;
 }
 
