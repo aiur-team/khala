@@ -61,6 +61,10 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [arrivalAnnouncement, setArrivalAnnouncement] = useState('');
   const previousPendingCount = useRef(0);
+  // Distinguishes the very first render (never announce) from a genuine live
+  // arrival into a queue that had already drained to empty (must still
+  // announce) — both start with `previousPendingCount.current === 0`.
+  const hasMounted = useRef(false);
   const listRef = useRef<HTMLOListElement>(null);
   const releaseStatusRef = useRef<HTMLParagraphElement>(null);
 
@@ -68,10 +72,11 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
 
   useEffect(() => {
     const previous = previousPendingCount.current;
-    if (previous > 0 && view.pending.length > previous) {
+    if (hasMounted.current && view.pending.length > previous) {
       const added = view.pending.length - previous;
       setArrivalAnnouncement(`${added} new pending message${added > 1 ? 's' : ''} arrived.`);
     }
+    hasMounted.current = true;
     previousPendingCount.current = view.pending.length;
   }, [view.pending.length]);
 
@@ -174,6 +179,7 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
               onToggle={checked => controller.toggleSelect(item.ref, checked)}
               renderContent={renderContent}
               onHide={() => handleHide(item)}
+              hideDisabled={submissionInFlight}
             />
           ) : (
             <li key={item.ref.eventId} className="review-item review-item--unavailable" data-event-id={item.ref.eventId} aria-disabled="true">
@@ -182,7 +188,13 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
                 <time className="review-item__timestamp" dateTime={item.receivedAt}>
                   {item.receivedAt}
                 </time>
-                <button type="button" className="review__hide" aria-label={`Hide message ${item.ref.eventId} from this list`} onClick={() => hide(item.ref.eventId)}>
+                <button
+                  type="button"
+                  className="review__hide"
+                  aria-label={`Hide message ${item.ref.eventId} from this list`}
+                  onClick={() => hide(item.ref.eventId)}
+                  disabled={submissionInFlight}
+                >
                   Hide
                 </button>
               </header>

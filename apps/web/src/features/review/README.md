@@ -54,11 +54,22 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`) and KHA-106
 - **`ReviewItem.tsx`** renders one pending row: full content through an
   *injected* `renderContent` function, plus review-owned checkbox and Hide
   controls as structural DOM outside that render call, so message body
-  content can never fabricate or invoke a control (KTD4).
+  content can never fabricate or invoke a control (KTD4). The checkbox's
+  `aria-label` includes a preview of the body, but — unlike `displayName`,
+  which is decoder-guaranteed free of control/bidi/invisible characters —
+  the body carries no such guarantee, so that preview is stripped of the
+  same character classes before it reaches the accessible name. Hide is
+  disabled while a submission is in flight or unresolved: hiding a selected
+  row then would leave its ref selected-but-invisible, since `toggleSelect`
+  is itself a no-op during that window, with no way back short of a full
+  Reselect.
 - **`ReviewScreen.tsx`** composes the list, filter chips (All/Selected), a
   stale-selection banner with an explicit Reselect action, a revoked-access
   banner, and the release action bar showing submission status and — once
-  released — per-`releaseId` receipt-derived evidence.
+  released — per-`releaseId` receipt-derived evidence. The live-arrival
+  announcement fires on any growth of the pending count once mounted,
+  including a first arrival into a queue that had already drained to empty —
+  not just growth after a nonzero previous count.
 
 ## Why `renderContent` is an injected prop, not a timeline import
 
@@ -122,7 +133,10 @@ never joins an existing selection, that two events sharing identical body
 content remain separately selectable objects, that adding an already-selected
 exact ref is rejected as a no-op rather than stored twice, and that the model
 itself — not just the screen — rejects a ref that is not currently present
-and readable in `pending`, including an unavailable/withheld placeholder.
+and readable in `pending`, including an unavailable/withheld placeholder (using
+that placeholder's own digest-less ref, so the rejection is pinned to the
+`isReadableItem` guard rather than an incidental digest mismatch against a
+separately constructed `EventRef`).
 `receipt-labels.test.ts` proves `transport_written` is never labeled "read"
 or "consumed," and that correlated `context_consumed`/`completed` evidence is
 required before claiming agent consumption. `controller.test.ts` proves one
@@ -149,31 +163,51 @@ controller-owned selection state (never content), a stale selection shows
 its own banner and disables its controls, a revoked view shows its own
 banner and disables release, a released submission shows receipt-derived
 evidence rather than inventing consumption from release alone, own-vs-other
-agent attribution and same-name disambiguation follow the #72 rules, each
-checkbox carries an accessible name beyond the bare author name, and an
-unavailable item renders as a disabled placeholder with its withheld reason
-instead of being dropped silently.
+agent attribution and same-name disambiguation follow the #72 rules — scoped
+per row, since a whole-document substring check cannot tell an inverted
+ownership comparison from a correct one when both label strings still appear
+somewhere on the page — each checkbox carries an accessible name beyond the
+bare author name, that accessible name strips control and bidi characters out
+of the body preview even though the same characters still render in the
+visible, inert body, Hide is disabled on a row while any submission is in
+flight or unresolved, and an unavailable item renders as a disabled
+placeholder with its withheld reason instead of being dropped silently.
 
 `review.browser.spec.ts` (named outside vitest's glob, same convention as
 `timeline.browser.spec.ts`) builds a small harness (`browser-harness/`) that
 mounts the real `ReviewScreen`/`createReviewController` against a synthetic
 in-memory `ReviewUiPort` (no real network, storage, owner authority, or
-credentials) and drives it with headless Chromium via Playwright, across
-several focused specs: full content and author are visible before selection;
-selecting one item updates the count without touching the other; a live
-arrival during selection never joins it and does not disturb the existing
-selection, including under the Selected filter; hiding an *unselected* item
-never changes the selection or triggers a release; hiding a *selected* item
-deselects it, so Release can never carry a row that is no longer visible;
+credentials) and drives it with headless Chromium via Playwright. The
+harness's default pending set covers the full attribution matrix — a human
+and an agent owned by the viewer, and a human and an agent owned by someone
+else — plus a `pushOutcomeUnknownTarget` helper that parks a submission in
+`unknown` durably (the only reliable way to observe in-flight UI state, since
+the fake port otherwise resolves synchronously). Specs cover: full content
+and author are visible before selection; selecting one item updates the
+count without touching the other; a live arrival during selection never
+joins it and does not disturb the existing selection, including under the
+Selected filter; hiding an *unselected* item never changes the selection or
+triggers a release; hiding a *selected* item deselects it, so Release can
+never carry a row that is no longer visible — proven both end to end and, in
+a second spec, isolated from the visible-count guard that would otherwise
+mask a missing deselection (hiding one of *two* selected items and requiring
+Release to re-enable for the one real deselection left, since the guard alone
+can't explain a re-enabled Release without an actual `toggleSelect(false)`);
 submitting the exact remaining selection shows a truthful "Released" status
 with receipt-derived evidence, never inventing a consumption claim from the
-release step alone; a revoked facade shows an explicit banner and disables
-further submission; editing a selected pending item's body, and separately
-bumping the binding generation, each mark the captured selection stale end
-to end through the real harness (AE1) and Reselect clears it; a long message
-renders in full (not truncated) and its checkbox responds to keyboard
-selection (Space); and switching to a 390px viewport preserves the exact
-selection and its count.
+release step alone; a revoked facade shows an explicit banner, disables
+further submission, and removes the protected preview bodies themselves, not
+just covers them with the banner; editing a selected pending item's body,
+and separately bumping the binding generation, each mark the captured
+selection stale end to end through the real harness (AE1) and Reselect
+clears it; an agent-authored row is labeled "Your agent" for the viewer's own
+agent and "Another person's agent" for someone else's, cross-checked so
+neither row also carries the other's label; Hide is disabled on every row —
+not just the submitted one — while a submission is in flight or unresolved;
+a live arrival into a queue that has drained to empty (not just its very
+first mount) is still announced; a long message renders in full (not
+truncated) and its checkbox responds to keyboard selection (Space); and
+switching to a 390px viewport preserves the exact selection and its count.
 
 ## What this does not prove
 

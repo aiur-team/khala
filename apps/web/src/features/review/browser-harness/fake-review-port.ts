@@ -6,7 +6,7 @@ import type { ApprovalCommand } from '@khala/contracts/delivery/index';
 import type { BindingId, ReceiptId, ReleaseId } from '@khala/contracts/delivery/ids';
 import type { DeliveryReceipt } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/ids';
-import type { OwnerId, ParticipantId, TimelineItem } from '@khala/contracts/messaging/index';
+import type { OwnerId, ParticipantId, ParticipantView, TimelineItem } from '@khala/contracts/messaging/index';
 import type { ApprovalUiResult, ReviewUiPort } from '../ports';
 import type { ReviewView } from '../model';
 
@@ -15,6 +15,8 @@ const roomId = 'room_harness' as RoomId;
 const viewerOwnerId = 'owner_alice' as OwnerId;
 const alice = { participantId: 'alice' as ParticipantId, kind: 'human' as const, ownerId: viewerOwnerId, displayName: 'Alice', deviceIds: [] };
 const bob = { participantId: 'bob' as ParticipantId, kind: 'human' as const, ownerId: 'owner_bob' as OwnerId, displayName: 'Bob', deviceIds: [] };
+const agentMine = { participantId: 'agent-mine' as ParticipantId, kind: 'agent' as const, ownerId: viewerOwnerId, displayName: 'Assistant', deviceIds: [] };
+const agentTheirs = { participantId: 'agent-theirs' as ParticipantId, kind: 'agent' as const, ownerId: 'owner_carol' as OwnerId, displayName: 'Helper', deviceIds: [] };
 
 /** Synthetic, non-cryptographic digest that actually varies with `body` — real enough for this harness to exercise AE1 (an edited body must change the digest and invalidate a captured selection). */
 function digestFor(body: string): string {
@@ -23,7 +25,7 @@ function digestFor(body: string): string {
   return `sha256:${hash.toString(16).padStart(8, '0').repeat(8)}`;
 }
 
-function makeItem(eventId: string, author: typeof alice, body: string): Extract<TimelineItem, { content: { kind: 'text' } }> {
+function makeItem(eventId: string, author: ParticipantView, body: string): Extract<TimelineItem, { content: { kind: 'text' } }> {
   return {
     ref: {
       v: 1,
@@ -47,6 +49,8 @@ export function createFakeReviewPort() {
   let pending: TimelineItem[] = [
     makeItem('pending_1', alice, 'Please forward the deployment summary to the release channel.'),
     makeItem('pending_2', bob, 'Approve the fix for the review queue bug.'),
+    makeItem('pending_3', agentMine, 'Draft reply queued for your approval.'),
+    makeItem('pending_4', agentTheirs, 'Draft reply queued from someone else’s agent.'),
   ];
   let receipts: DeliveryReceipt[] = [];
   const listeners = new Set<() => void>();
@@ -101,6 +105,11 @@ export function createFakeReviewPort() {
     port,
     pushLiveArrival(body: string) {
       pending = [...pending, makeItem(`live_${pending.length}`, bob, body)];
+      notify();
+    },
+    /** Adds a pending item whose eventId `approve` recognizes and answers with `outcome_unknown` — the only way this harness durably parks a submission in `unknown` for tests to observe. */
+    pushOutcomeUnknownTarget() {
+      pending = [...pending, makeItem('outcome_unknown_target', bob, 'Submitting this intentionally loses the response.')];
       notify();
     },
     editPending(eventId: string, body: string) {

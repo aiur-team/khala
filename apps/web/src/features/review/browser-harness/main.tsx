@@ -16,6 +16,7 @@ declare global {
   interface Window {
     __reviewHarness: {
       pushLiveArrival: (body: string) => void;
+      pushOutcomeUnknownTarget: () => void;
       editPending: (eventId: string, body: string) => void;
       bumpBindingGeneration: () => void;
       revoke: () => void;
@@ -25,6 +26,7 @@ declare global {
 }
 window.__reviewHarness = {
   pushLiveArrival: harness.pushLiveArrival,
+  pushOutcomeUnknownTarget: harness.pushOutcomeUnknownTarget,
   editPending: harness.editPending,
   bumpBindingGeneration: harness.bumpBindingGeneration,
   revoke: harness.revoke,

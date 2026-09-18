@@ -136,12 +136,16 @@ describe('review selection', () => {
     expect(isSelected(state, refA)).toBe(false);
   });
 
-  it('an unavailable (undecryptable/withheld) item is never selectable, even by exact eventId', () => {
-    const refA = ref('event-a');
-    // The pending item at this eventId exists but is unavailable, so it carries
-    // no digest and is structurally not an EventRef the model can select.
-    const state = addRef(emptySelection(), refA, binding, [unavailableItem('event-a')]);
+  it('an unavailable (undecryptable/withheld) item is never selectable, even by its own exact ref', () => {
+    const unavailable = unavailableItem('event-a');
+    // Pass the item's *own* ref — it has no `contentDigest` — rather than a
+    // separately constructed `EventRef` with a digest. A digest-bearing ref
+    // would already fail `sameEventRef`'s digest comparison regardless of
+    // `isReadableItem`, so it would pass even if the `isReadableItem` guard
+    // were removed. Using the item's own ref pins the rejection to
+    // `isReadableItem` specifically.
+    const state = addRef(emptySelection(), unavailable.ref as EventRef, binding, [unavailable]);
     expect(state.phase).toBe('viewing');
-    expect(isSelected(state, refA)).toBe(false);
+    expect(isSelected(state, unavailable.ref as EventRef)).toBe(false);
   });
 });
