@@ -265,7 +265,7 @@ function parseArguments(argv: string[]): { validateOnly: boolean; manifestPath?:
   return { validateOnly, manifestPath, environment };
 }
 
-async function run(argv: string[] = process.argv.slice(2)): Promise<{ ok: true; validated: boolean; manifest?: RecoveryManifest }> {
+export async function run(argv: string[] = process.argv.slice(2)): Promise<{ ok: true; validated: boolean; manifest?: RecoveryManifest }> {
   const args = parseArguments(argv);
   if (!args.manifestPath) throw new OperationsError('missing-manifest-argument');
   const raw = JSON.parse(await readFile(args.manifestPath, 'utf8'));

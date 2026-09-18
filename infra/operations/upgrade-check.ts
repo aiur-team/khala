@@ -10,11 +10,20 @@ import { OperationsError, captureProcess, runProcess } from './backup.ts';
 
 export interface UpgradeCheckInputs {
   currentSynapseImageDigest: string;
+  // The full current image reference (including its `vX.Y.Z` tag), separate
+  // from currentSynapseImageDigest: the digest alone carries no ordering, so
+  // proving a rehearsal is a forward migration (not a downgrade dressed up as
+  // one) requires comparing the current and target *versions*.
+  currentSynapseImage: string;
   targetSynapseImage: string;
   databaseDumpPath: string;
   sourceStateNamespace: string;
   copyStateNamespace: string;
   allowedCopyNamespaces: string[];
+  // Event IDs already present in the source database copy before migration;
+  // a health check alone proves the server booted, not that history survived
+  // the schema migration.
+  expectedEventIds: string[];
 }
 
 export interface UpgradeCheckPorts {
@@ -30,6 +39,11 @@ export interface UpgradeCheckPorts {
   // origin): the copy's client-edge network is forced internal, same as
   // restore.ts's target, so a host-side fetch would never reach it anyway.
   checkHealth(copyStateNamespace: string): Promise<boolean>;
+  // Reads the migrated copy's own database, from inside the isolated
+  // project, for exactly the event IDs the source copy had before migration:
+  // a passing /health check proves the server booted, not that the schema
+  // migration preserved history.
+  verifyEventHistory(copyStateNamespace: string, expectedEventIds: string[]): Promise<{ matchedEventIds: string[]; missingEventIds: string[] }>;
   supportsBackwardMigration(inputs: UpgradeCheckInputs): Promise<boolean>;
   now(): Date;
 }
@@ -44,6 +58,8 @@ export interface UpgradeCheckResult {
   isRollback: boolean;
   supportsBackwardMigration: boolean;
   safeSequence: UpgradeSequenceStep[];
+  matchedEventIds: string[];
+  missingEventIds: string[];
   checkedAt: string;
 }
 
@@ -51,6 +67,38 @@ export interface UpgradeCheckResult {
 // all; calling that "rollback" would be false evidence.
 export function isNoOpUpgrade(inputs: UpgradeCheckInputs): boolean {
   return inputs.targetSynapseImage.includes(inputs.currentSynapseImageDigest);
+}
+
+// Synapse image references carry their version as a `vX.Y.Z` tag
+// (`ghcr.io/element-hq/synapse:v1.161.0@sha256:...`). Returns null for a
+// reference this cannot parse, so callers can distinguish "not newer" from
+// "not a version we understand" without guessing.
+export function extractSynapseVersion(imageRef: string): [number, number, number] | null {
+  const match = /:v(\d+)\.(\d+)\.(\d+)(?:@|$)/.exec(imageRef);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+// R3's forward-migration proof is only real when the target is a genuinely
+// newer Synapse release than what is currently running: booting an older
+// image against a copy of the current database is a downgrade rehearsal, not
+// a migration rehearsal, and must never be recorded as one.
+export function isForwardUpgrade(inputs: Pick<UpgradeCheckInputs, 'currentSynapseImage' | 'targetSynapseImage'>): boolean {
+  const current = extractSynapseVersion(inputs.currentSynapseImage);
+  const target = extractSynapseVersion(inputs.targetSynapseImage);
+  if (!current || !target) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (target[index] !== current[index]) return target[index] > current[index];
+  }
+  return false;
+}
+
+// The env override that boots the target image instead of compose.yaml's
+// pinned default. Extracted as a pure function so the fix for "the rehearsal
+// always boots the pinned image, never the target" can be asserted directly,
+// without invoking docker.
+export function bootTargetImageEnv(inputs: UpgradeCheckInputs, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...baseEnv, KHALA_SYNAPSE_IMAGE: inputs.targetSynapseImage };
 }
 
 // Every check in this function must run, and must be able to refuse, before
@@ -66,9 +114,16 @@ export async function runUpgradeCheck(inputs: UpgradeCheckInputs, ports: Upgrade
       isRollback: false,
       supportsBackwardMigration: false,
       safeSequence: [],
+      matchedEventIds: [],
+      missingEventIds: [],
       checkedAt: ports.now().toISOString(),
     };
   }
+
+  // A target that is not a genuinely newer Synapse release is a downgrade
+  // rehearsal, not the forward-migration proof R3 requires; refuse it before
+  // any mutation rather than record a downgrade as a migration.
+  if (!isForwardUpgrade(inputs)) throw new OperationsError('target-not-newer-than-current');
 
   if (!inputs.allowedCopyNamespaces.includes(inputs.copyStateNamespace)) throw new OperationsError('copy-namespace-not-allowlisted');
   if (inputs.copyStateNamespace === inputs.sourceStateNamespace) throw new OperationsError('source-volume-reuse-refused');
@@ -80,6 +135,12 @@ export async function runUpgradeCheck(inputs: UpgradeCheckInputs, ports: Upgrade
   await ports.restoreDatabaseCopy(inputs);
   await ports.bootTargetImage(inputs);
   const healthy = await ports.checkHealth(inputs.copyStateNamespace);
+  // A booted-but-unhealthy target never gets asked about its history: a
+  // health check failure is already conclusive, and querying a server that
+  // failed to come up would misreport every event as missing.
+  const { matchedEventIds, missingEventIds } = healthy
+    ? await ports.verifyEventHistory(inputs.copyStateNamespace, inputs.expectedEventIds)
+    : { matchedEventIds: [], missingEventIds: inputs.expectedEventIds };
   const supportsBackwardMigration = await ports.supportsBackwardMigration(inputs);
 
   // R3: downgrading the image alone is never called a rollback when the
@@ -89,14 +150,19 @@ export async function runUpgradeCheck(inputs: UpgradeCheckInputs, ports: Upgrade
     ? ['restore-database-copy', 'boot-target-image', 'health-check']
     : ['restore-database-copy', 'boot-target-image', 'health-check', 'restore-pre-upgrade-backup'];
 
+  const ready = healthy && missingEventIds.length === 0;
+  const reason = !healthy ? 'health-check-failed' : missingEventIds.length > 0 ? 'history-check-failed' : 'migration-verified';
+
   return {
-    ready: healthy,
-    reason: healthy ? 'migration-verified' : 'health-check-failed',
+    ready,
+    reason,
     currentSynapseImageDigest: inputs.currentSynapseImageDigest,
     targetSynapseImage: inputs.targetSynapseImage,
     isRollback: false,
     supportsBackwardMigration,
     safeSequence,
+    matchedEventIds,
+    missingEventIds,
     checkedAt: ports.now().toISOString(),
   };
 }
@@ -139,8 +205,7 @@ export const dockerComposePorts: UpgradeCheckPorts = {
     // boot against the disposable database copy *is* the migration
     // rehearsal; there is no separate "migrate" subcommand to invoke, and
     // `migrate_config` is a config-file generator, not a schema migration.
-    const env = { ...process.env, KHALA_SYNAPSE_IMAGE: inputs.targetSynapseImage };
-    await runProcess('docker', [...composeArgs(inputs.copyStateNamespace), 'up', '-d', '--wait', 'synapse'], { env });
+    await runProcess('docker', [...composeArgs(inputs.copyStateNamespace), 'up', '-d', '--wait', 'synapse'], { env: bootTargetImageEnv(inputs) });
   },
   async checkHealth(copyStateNamespace) {
     try {
@@ -149,6 +214,15 @@ export const dockerComposePorts: UpgradeCheckPorts = {
     } catch {
       return false;
     }
+  },
+  async verifyEventHistory(copyStateNamespace, expectedEventIds) {
+    const matchedEventIds: string[] = [];
+    const missingEventIds: string[] = [];
+    for (const eventId of expectedEventIds) {
+      const output = await captureProcess('docker', [...composeArgs(copyStateNamespace), 'exec', '-T', 'postgres', 'psql', '-U', 'synapse', '-d', 'synapse', '-tAc', `select 1 from events where event_id = '${eventId.replaceAll("'", "''")}'`]);
+      (output.trim() === '1' ? matchedEventIds : missingEventIds).push(eventId);
+    }
+    return { matchedEventIds, missingEventIds };
   },
   async supportsBackwardMigration() {
     // Synapse's own operator documentation states schema downgrades are not
@@ -176,7 +250,7 @@ function requiredEnv(env: NodeJS.ProcessEnv, key: string): string {
   return value;
 }
 
-async function run(argv: string[] = process.argv.slice(2), env: NodeJS.ProcessEnv = process.env): Promise<UpgradeCheckResult> {
+export async function run(argv: string[] = process.argv.slice(2), env: NodeJS.ProcessEnv = process.env): Promise<UpgradeCheckResult> {
   const { environment } = parseArguments(argv);
   // The upgrade rehearsal only ever runs against a disposable preview copy;
   // any other value means the caller passed the wrong environment on purpose
@@ -185,9 +259,11 @@ async function run(argv: string[] = process.argv.slice(2), env: NodeJS.ProcessEn
   if (environment !== 'preview') throw new OperationsError('environment-mismatch');
   const inputs: UpgradeCheckInputs = {
     currentSynapseImageDigest: requiredEnv(env, 'KHALA_SYNAPSE_CURRENT_DIGEST'),
+    currentSynapseImage: requiredEnv(env, 'KHALA_SYNAPSE_CURRENT_IMAGE'),
     targetSynapseImage: requiredEnv(env, 'KHALA_SYNAPSE_TARGET_IMAGE'),
     databaseDumpPath: requiredEnv(env, 'KHALA_BACKUP_DATABASE_DUMP'),
     sourceStateNamespace: requiredEnv(env, 'KHALA_STATE_NAMESPACE'),
+    expectedEventIds: requiredEnv(env, 'KHALA_UPGRADE_EXPECTED_EVENT_IDS').split(',').map((eventId) => eventId.trim()).filter(Boolean),
     copyStateNamespace: requiredEnv(env, 'KHALA_UPGRADE_COPY_NAMESPACE'),
     // Set independently from KHALA_UPGRADE_COPY_NAMESPACE (not derived from
     // it) so the allowlist is a real check against a typo'd or wrong copy

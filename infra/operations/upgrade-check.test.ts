@@ -1,16 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { OperationsError } from './backup.ts';
-import { dockerComposePorts, isNoOpUpgrade, runUpgradeCheck } from './upgrade-check.ts';
+import {
+  bootTargetImageEnv,
+  dockerComposePorts,
+  extractSynapseVersion,
+  isForwardUpgrade,
+  isNoOpUpgrade,
+  run,
+  runUpgradeCheck,
+} from './upgrade-check.ts';
 import type { UpgradeCheckInputs, UpgradeCheckPorts } from './upgrade-check.ts';
 
 const baseInputs: UpgradeCheckInputs = {
   currentSynapseImageDigest: `sha256:${'a'.repeat(64)}`,
+  currentSynapseImage: `ghcr.io/element-hq/synapse:v1.161.0@sha256:${'a'.repeat(64)}`,
   targetSynapseImage: `ghcr.io/element-hq/synapse:v1.162.0@sha256:${'b'.repeat(64)}`,
   databaseDumpPath: '/artifacts/database.dump',
   sourceStateNamespace: 'khala-source-preview',
   copyStateNamespace: 'khala-upgrade-copy',
   allowedCopyNamespaces: ['khala-upgrade-copy'],
+  expectedEventIds: ['$synthetic-event-1', '$synthetic-event-2'],
 };
 
 function fakePorts(overrides: Partial<UpgradeCheckPorts> = {}): { ports: UpgradeCheckPorts; calls: string[] } {
@@ -36,6 +46,10 @@ function fakePorts(overrides: Partial<UpgradeCheckPorts> = {}): { ports: Upgrade
     checkHealth: async () => {
       calls.push('checkHealth');
       return true;
+    },
+    verifyEventHistory: async (_copyStateNamespace, expectedEventIds) => {
+      calls.push('verifyEventHistory');
+      return { matchedEventIds: expectedEventIds, missingEventIds: [] };
     },
     supportsBackwardMigration: async () => {
       calls.push('supportsBackwardMigration');
@@ -125,8 +139,48 @@ test('a version change without backward-migration support is never called a roll
   assert.equal(result.reason, 'migration-verified');
   assert.equal(result.isRollback, false);
   assert.equal(result.supportsBackwardMigration, false);
+  assert.deepEqual(result.matchedEventIds, baseInputs.expectedEventIds);
+  assert.deepEqual(result.missingEventIds, []);
   assert.deepEqual(result.safeSequence, ['restore-database-copy', 'boot-target-image', 'health-check', 'restore-pre-upgrade-backup']);
-  assert.deepEqual(calls, ['targetVolumesExist', 'denyEgress', 'probeEgressDenied', 'restoreDatabaseCopy', 'bootTargetImage', 'checkHealth', 'supportsBackwardMigration']);
+  assert.deepEqual(calls, ['targetVolumesExist', 'denyEgress', 'probeEgressDenied', 'restoreDatabaseCopy', 'bootTargetImage', 'checkHealth', 'verifyEventHistory', 'supportsBackwardMigration']);
+});
+
+test('refuses a target image that is not a genuinely newer Synapse version than the current one, before any mutation', async () => {
+  const { ports, calls } = fakePorts();
+  const olderTarget = `ghcr.io/element-hq/synapse:v1.160.0@sha256:${'c'.repeat(64)}`;
+  await assert.rejects(
+    runUpgradeCheck({ ...baseInputs, targetSynapseImage: olderTarget }, ports),
+    (error: unknown) => error instanceof OperationsError && error.code === 'target-not-newer-than-current',
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('isForwardUpgrade compares parsed version tuples, not string order', () => {
+  assert.equal(isForwardUpgrade(baseInputs), true);
+  assert.equal(isForwardUpgrade({ ...baseInputs, targetSynapseImage: baseInputs.currentSynapseImage }), false);
+  assert.equal(isForwardUpgrade({ ...baseInputs, currentSynapseImage: `ghcr.io/element-hq/synapse:v1.9.0@sha256:${'a'.repeat(64)}`, targetSynapseImage: `ghcr.io/element-hq/synapse:v1.10.0@sha256:${'b'.repeat(64)}` }), true);
+  assert.equal(isForwardUpgrade({ ...baseInputs, currentSynapseImage: 'not-a-parseable-ref' }), false);
+});
+
+test('extractSynapseVersion parses the vX.Y.Z tag and rejects an unparseable reference', () => {
+  assert.deepEqual(extractSynapseVersion(`ghcr.io/element-hq/synapse:v1.161.0@sha256:${'a'.repeat(64)}`), [1, 161, 0]);
+  assert.equal(extractSynapseVersion('ghcr.io/element-hq/synapse:latest'), null);
+});
+
+test('bootTargetImageEnv overrides KHALA_SYNAPSE_IMAGE with the target image, not the pinned compose.yaml default', () => {
+  const env = bootTargetImageEnv(baseInputs, { KHALA_SYNAPSE_IMAGE: 'should-be-overridden', OTHER: 'kept' });
+  assert.equal(env.KHALA_SYNAPSE_IMAGE, baseInputs.targetSynapseImage);
+  assert.equal(env.OTHER, 'kept');
+});
+
+test('a passing health check with missing expected events reports history-check-failed, not migration-verified', async () => {
+  const { ports } = fakePorts({
+    verifyEventHistory: async (_copyStateNamespace, expectedEventIds) => ({ matchedEventIds: [expectedEventIds[0]!], missingEventIds: expectedEventIds.slice(1) }),
+  });
+  const result = await runUpgradeCheck(baseInputs, ports);
+  assert.equal(result.ready, false);
+  assert.equal(result.reason, 'history-check-failed');
+  assert.deepEqual(result.missingEventIds, baseInputs.expectedEventIds.slice(1));
 });
 
 test('a version change with proven backward-migration support omits the restore step from the safe sequence', async () => {
@@ -136,11 +190,16 @@ test('a version change with proven backward-migration support omits the restore 
   assert.equal(result.supportsBackwardMigration, true);
 });
 
-test('a failed health check after migration reports failure rather than a passing upgrade', async () => {
-  const { ports } = fakePorts({ checkHealth: async () => false });
+test('a failed health check after migration reports failure rather than a passing upgrade, and never queries history against an unhealthy server', async () => {
+  const { ports, calls } = fakePorts({ checkHealth: async () => {
+    calls.push('checkHealth');
+    return false;
+  } });
   const result = await runUpgradeCheck(baseInputs, ports);
   assert.equal(result.ready, false);
   assert.equal(result.reason, 'health-check-failed');
+  assert.deepEqual(result.missingEventIds, baseInputs.expectedEventIds);
+  assert.equal(calls.includes('verifyEventHistory'), false);
 });
 
 test('records exact source and target versions', async () => {
@@ -149,4 +208,25 @@ test('records exact source and target versions', async () => {
   assert.equal(result.currentSynapseImageDigest, baseInputs.currentSynapseImageDigest);
   assert.equal(result.targetSynapseImage, baseInputs.targetSynapseImage);
   assert.equal(result.checkedAt, '2026-09-17T00:00:00.000Z');
+});
+
+test('the CLI refuses any environment other than preview, before reading any input env vars', async () => {
+  await assert.rejects(
+    run(['--environment', 'production'], {}),
+    (error: unknown) => error instanceof OperationsError && error.code === 'environment-mismatch',
+  );
+});
+
+test('the CLI requires an explicit --environment argument', async () => {
+  await assert.rejects(
+    run([], {}),
+    (error: unknown) => error instanceof OperationsError && error.code === 'missing-environment-argument',
+  );
+});
+
+test('the CLI rejects an unrecognized argument', async () => {
+  await assert.rejects(
+    run(['--bogus', 'value'], {}),
+    (error: unknown) => error instanceof OperationsError && error.code === 'invalid-argument',
+  );
 });

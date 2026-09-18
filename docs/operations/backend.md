@@ -34,10 +34,13 @@ code (never a raw stack trace) so failures are safe to alert on.
   then restarts Synapse (always, even if the dump/media step failed) before
   archiving the signing key and config. Hashes all four artifacts — including
   the signing-key and config archives, not just database/media — and writes
-  `backup-manifest.json` (validated against `manifest.schema.json`, loaded at
-  runtime so the two never drift) only after every artifact step has
-  succeeded. A partial failure never leaves a manifest behind — there is
-  nothing for a stale-backup alert to false-negative on.
+  `backup-manifest.json` (validated against `manifest.schema.json`; the
+  allowed top-level and artifact key lists are loaded from the schema file at
+  runtime so those specifically never drift — the per-field patterns and
+  enums below them are still duplicated by hand in `validateManifest`) only
+  after every artifact step has succeeded. A partial failure never leaves a
+  manifest behind — there is nothing for a stale-backup alert to
+  false-negative on.
 - **`restore.ts`** — rehearses a restore into an isolated, disposable target.
   Refuses a wrong or non-allowlisted target, a production target, source-volume
   reuse, a target config directory equal to the source's, a target whose
@@ -56,17 +59,22 @@ code (never a raw stack trace) so failures are safe to alert on.
   how much of a real incident's writes this backup interval would have lost,
   not a production RPO estimate on its own).
 - **`upgrade-check.ts`** — tests a target Synapse image's migration against a
-  disposable copy of the database, health-checks the result, and records
-  whether backward migration is supported. The copy target goes through the
-  same allowlist, source-refusal, fresh-volume and egress-isolation checks as
+  disposable copy of the database, health-checks the result, verifies expected
+  event history is still present after migration, and records whether
+  backward migration is supported. The copy target goes through the same
+  allowlist, source-refusal, fresh-volume and egress-isolation checks as
   `restore.ts`'s target *before* any mutation, and `bootTargetImage` sets
   `KHALA_SYNAPSE_IMAGE` so the target image actually boots — the migration
   under test is genuinely from that image, not the pinned default silently
   standing in for it. A same-digest target is reported as a no-op, never a
-  false "rollback tested" claim. When backward migration is not supported (the
-  default assumption, per Synapse's own operator docs), the recorded safe
-  sequence is restoring the pre-upgrade backup, not downgrading the image in
-  place (R3).
+  false "rollback tested" claim. A target image whose version is not strictly
+  newer than the currently pinned one is refused outright
+  (`target-not-newer-than-current`) before any mutation — a downgrade dressed
+  up as a migration rehearsal must never be recorded as one. A healthy boot
+  with missing expected events is reported as `history-check-failed`, not
+  `migration-verified`. When backward migration is not supported (the default
+  assumption, per Synapse's own operator docs), the recorded safe sequence is
+  restoring the pre-upgrade backup, not downgrading the image in place (R3).
 
 ## Reproducing the restore rehearsal
 
@@ -145,13 +153,20 @@ above, so it needs an equivalent explicit set of inputs:
 
 ```sh
 export KHALA_SYNAPSE_CURRENT_DIGEST=sha256:<the pinned digest compose.yaml currently runs>
+export KHALA_SYNAPSE_CURRENT_IMAGE=ghcr.io/element-hq/synapse:<the pinned tag compose.yaml currently runs>@sha256:<current digest>
 export KHALA_SYNAPSE_TARGET_IMAGE=ghcr.io/element-hq/synapse:<target tag>@sha256:<target digest>
 export KHALA_BACKUP_DATABASE_DUMP="$KHALA_BACKUP_OUTPUT_DIR/database.dump"  # from the backup step above
 export KHALA_STATE_NAMESPACE=khala-source-preview           # the real source, refused as a copy target
 export KHALA_UPGRADE_COPY_NAMESPACE=khala-upgrade-copy-1     # the fresh disposable copy's own namespace
 export KHALA_UPGRADE_ALLOWED_NAMESPACES=khala-upgrade-copy-1 # set independently of the line above; a real allowlist, not a restatement
+export KHALA_UPGRADE_EXPECTED_EVENT_IDS='$event-id-1,$event-id-2' # the source copy's own event IDs, checked after migration
 node infra/operations/upgrade-check.ts --environment preview
 ```
+
+`<target tag>` must parse as a strictly newer `vX.Y.Z` than `<the pinned
+tag>`: `upgrade-check.ts` compares the two version tuples and refuses a target
+that is not genuinely newer (`target-not-newer-than-current`), so this
+rehearsal can never silently record a downgrade as a forward migration.
 
 `bootTargetImage` sets `KHALA_SYNAPSE_IMAGE` for its own docker compose
 invocations only, overriding compose.yaml's pinned image for that one
@@ -180,12 +195,19 @@ earlier version of this record were not backed by the code — the fixes below
 and this record were produced together, not the code first and the evidence
 assumed after:
 
-- `node --test infra/operations/*.test.ts`: 38/38 passing, including new
-  coverage for the review's findings — real (non-faked) `verifyArtifactChecksumOnDisk`
-  behavior, a real `supportsBackwardMigration` port assertion, manifest
-  additional-properties rejection sourced from `manifest.schema.json` itself,
-  a digest-prefix collision that must not be treated as a no-op upgrade,
-  `runBackup` call ordering (quiesce before dump/media, resume always,
+- `node --test infra/operations/*.test.ts`: 52/52 passing (71/71 with
+  `infra/messaging`'s existing suite, `pnpm test`'s actual scope), including
+  coverage for this and the prior review round's findings — real (non-faked)
+  `verifyArtifactChecksumOnDisk` behavior, a real `supportsBackwardMigration`
+  port assertion, manifest additional-properties rejection sourced from
+  `manifest.schema.json` itself, a digest-prefix collision that must not be
+  treated as a no-op upgrade, a version-tuple comparison that refuses a
+  target image that is not genuinely newer than the current one, a
+  history-check-failed result when expected events go missing after a
+  healthy boot, restore/media checksum-mismatch and CLI environment-mismatch
+  coverage across all three CLIs, and a restore-paths fixture whose artifact
+  names deliberately differ from the hardcoded defaults a regression could
+  fall back to. `runBackup` call ordering (quiesce before dump/media, resume always,
   signing-key/config archived only after resume), and that no manifest is
   written when a backup fails partway.
 - `tsc --noEmit --strict --allowImportingTsExtensions --module esnext
@@ -221,32 +243,53 @@ assumed after:
 - The egress-isolation probe (run from inside the target, before any restore
   mutation) reported `UNREACHABLE`, matching `runRestore`'s own recorded
   `isolationVerifiedAt`.
-- A real upgrade rehearsal booted a genuinely different, independently pulled
-  Synapse image (`v1.160.0`, digest
-  `sha256:78de1d10bef02e375f861d1cc99f8bedd9381d4f9083ea8b2c22a053477b205f`, distinct from the
-  pinned `v1.161.0` this stack otherwise always runs) against a disposable
-  copy of the real database, through the same allowlist/source-refusal/
-  fresh-volume/egress-isolation checks restore.ts's target goes through.
-  `docker exec ... pip show matrix-synapse` on the booted container confirmed
-  `Version: 1.160.0` — the target image is what actually ran, not the pinned
-  default silently standing in for it. The health check (queried from inside
-  the isolated copy, since its network is force-internal the same as a
-  restore target) passed, and the rehearsal correctly recorded
-  `supportsBackwardMigration: false` and a safe sequence ending in
-  `restore-pre-upgrade-backup` rather than calling the swap a rollback.
+- **The forward-migration path itself is not proven by real evidence.** An
+  earlier version of this record booted `v1.160.0` — older than the pinned
+  `v1.161.0` — against a disposable copy of the real database and reported
+  that as an upgrade rehearsal; that was wrong. `v1.160.0` is not newer than
+  `v1.161.0`, so no forward schema migration ran: that run was a *downgrade*
+  rehearsal, not the migration proof R3 requires, and calling it "migration
+  verified" would have been false evidence. As of this writing, `ghcr.io/
+  element-hq/synapse` has not published a release newer than the `v1.161.0`
+  this stack pins (`docker manifest inspect` against candidate `v1.16x`/`v1.17x`
+  tags found none), so a real forward-migration rehearsal cannot currently be
+  run against this repository's pinned version. `upgrade-check.ts` now
+  refuses this mistake structurally: `isForwardUpgrade` parses both image
+  refs' `vX.Y.Z` tags and `runUpgradeCheck` throws
+  `target-not-newer-than-current` before any mutation if the target is not
+  strictly newer than the current pinned image (covered by
+  `infra/operations/upgrade-check.test.ts`). The downgrade-safety mechanics
+  that run *did* prove for real — target image actually boots via
+  `KHALA_SYNAPSE_IMAGE` rather than the pinned default silently standing in
+  (`docker exec ... pip show matrix-synapse` confirmed `Version: 1.160.0` on
+  the booted container), the copy goes through the same allowlist/source-
+  refusal/fresh-volume/egress-isolation checks as a restore target, and the
+  health check passed from inside the isolated copy's force-internal network
+  — remain valid evidence for those specific claims, not for R3's forward-
+  migration requirement. `runUpgradeCheck` also now checks that the migrated
+  copy's expected event IDs are still readable after boot
+  (`verifyEventHistory`), not just `/health`; that check has not yet been
+  exercised against a real forward migration for the same reason. A forward-
+  migration rehearsal, once a newer Synapse release exists, must re-run this
+  sequence and replace this note with real `ready: true, reason:
+  'migration-verified'` evidence before this ticket's R3/U4 can be considered
+  proven end to end.
 - Every container, volume and network created by the rehearsal (all three
   projects: source, restore target, upgrade copy) was removed afterward; no
   `khala-*`-prefixed volume was left behind.
 
-This record demonstrates the backup/restore/upgrade/isolation mechanics
-against the local disposable stack, using real synthetic Matrix protocol
-messages (plain, not encrypted — this package does not repeat the encrypted-
-history proof; see "Related evidence" for KHA-141/KHA-142, which covers
-encrypted history surviving a client restart, not a database restore). It
-does not repeat the Railway-hosted proof (not yet provisioned; see
-`infra/messaging/railway.md`'s "Railway promotion contract"). A hosted
-rehearsal must re-run this same sequence against the real Railway volumes
-before this evidence can be treated as covering production.
+This record demonstrates the backup/restore/isolation mechanics, and the
+upgrade rehearsal's downgrade-safety mechanics, against the local disposable
+stack, using real synthetic Matrix protocol messages (plain, not encrypted —
+this package does not repeat the encrypted-history proof; see "Related
+evidence" for KHA-141/KHA-142, which covers encrypted history surviving a
+client restart, not a database restore). It does **not** yet demonstrate a
+real forward schema migration (see the corrected bullet above) — that
+requires a Synapse release newer than this stack's pinned `v1.161.0`, which
+does not exist yet. It also does not repeat the Railway-hosted proof (not yet
+provisioned; see `infra/messaging/railway.md`'s "Railway promotion contract").
+A hosted rehearsal must re-run this same sequence against the real Railway
+volumes before this evidence can be treated as covering production.
 
 ## Resource baseline (local disposable rehearsal)
 

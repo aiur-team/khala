@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { OperationsError, runBackup } from './backup.ts';
+import { OperationsError, runBackup, validateBackupInputs } from './backup.ts';
 import type { BackupInputs, BackupPorts } from './backup.ts';
 
 async function tempDirs(): Promise<{ outputDir: string; secretsDir: string }> {
@@ -109,6 +109,17 @@ test('writes matter to the manifest are the actual hashes of the archived artifa
   // hash is computed from real content, not a constant.
   const { createHash } = await import('node:crypto');
   assert.equal(databaseArtifact.sha256, createHash('sha256').update(databaseOnDisk).digest('hex'));
+
+  // Signing-key and config are the secrets restore.ts checksums before
+  // restoring identity (AE2); their hashes must be real too, not just the
+  // database/media hashes a narrower test could pass with.
+  const signingKeyArtifact = manifest.artifacts.find((artifact) => artifact.kind === 'signing-key')!;
+  const signingKeyOnDisk = await readFile(join(secretsDir, 'signing-key.tar.gz'), 'utf8');
+  assert.equal(signingKeyArtifact.sha256, createHash('sha256').update(signingKeyOnDisk).digest('hex'));
+
+  const configArtifact = manifest.artifacts.find((artifact) => artifact.kind === 'config')!;
+  const configOnDisk = await readFile(join(secretsDir, 'config.tar.gz'), 'utf8');
+  assert.equal(configArtifact.sha256, createHash('sha256').update(configOnDisk).digest('hex'));
 });
 
 test('resumeWrites still runs when the dump fails, and no manifest is written for a partial backup', async () => {
@@ -145,4 +156,32 @@ test('a failure after every artifact step but before the manifest write leaves n
   await assert.rejects(runBackup(baseInputs({ outputDir, secretsDir }), ports));
   const outputEntries = await readdir(outputDir).catch((): string[] => []);
   assert.equal(outputEntries.includes('backup-manifest.json'), false);
+});
+
+function baseCliEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return {
+    KHALA_ENVIRONMENT: 'preview',
+    KHALA_STATE_NAMESPACE: 'khala-source-preview',
+    KHALA_DB_HOST: 'postgres',
+    KHALA_DB_PORT: '5432',
+    KHALA_DB_NAME: 'synapse',
+    KHALA_DB_USER: 'synapse',
+    KHALA_DB_PASSWORD: 'synthetic-password',
+    KHALA_CONFIG_DIR: '/config',
+    KHALA_BACKUP_OUTPUT_DIR: '/output',
+    KHALA_BACKUP_SECRETS_DIR: '/secrets',
+    ...overrides,
+  };
+}
+
+test('the CLI refuses an --environment that does not match KHALA_ENVIRONMENT, matching the other two CLIs', () => {
+  assert.throws(
+    () => validateBackupInputs(baseCliEnv(), 'production'),
+    (error: unknown) => error instanceof OperationsError && error.code === 'environment-mismatch',
+  );
+});
+
+test('the CLI accepts an --environment that matches KHALA_ENVIRONMENT', () => {
+  const inputs = validateBackupInputs(baseCliEnv(), 'preview');
+  assert.equal(inputs.environment, 'preview');
 });

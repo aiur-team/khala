@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { OperationsError, validateManifest } from './backup.ts';
 import type { RecoveryManifest } from './backup.ts';
-import { runRestore, verifyArtifactChecksumOnDisk } from './restore.ts';
+import { run, runRestore, verifyArtifactChecksumOnDisk } from './restore.ts';
 import type { ExpectedFixture, RestorePorts, RestoreTarget } from './restore.ts';
 
 const validManifest = (overrides: Partial<RecoveryManifest> = {}): RecoveryManifest => ({
@@ -266,6 +266,23 @@ test('a corrupt artifact fails checksum verification before any restore mutation
   assert.deepEqual(calls.map((call) => call.name), ['targetVolumesExist', 'verifyArtifactChecksum']);
 });
 
+test('a corrupt media artifact fails checksum verification before any restore mutation runs', async () => {
+  const { ports, calls } = fakePorts({
+    verifyArtifactChecksum: async (path: string) => {
+      calls.push({ name: 'verifyArtifactChecksum' });
+      return !path.includes('media');
+    },
+  });
+  await assert.rejects(
+    runRestore(baseInputs(), ports),
+    (error: unknown) => error instanceof OperationsError && error.code === 'artifact-checksum-mismatch:media',
+  );
+  assert.deepEqual(
+    calls.map((call) => call.name),
+    ['targetVolumesExist', 'verifyArtifactChecksum', 'verifyArtifactChecksum'],
+  );
+});
+
 test('a corrupt signing-key or config artifact fails checksum verification before any restore mutation runs', async () => {
   const { ports: signingKeyPorts, calls: signingKeyCalls } = fakePorts({
     verifyArtifactChecksum: async (path: string) => {
@@ -350,6 +367,18 @@ test('a successful restore records measured recovery time, data-loss window and 
 });
 
 test('restores exactly the checksum-verified path for each artifact, never a differently named file', async () => {
+  // Fixture paths deliberately differ from the names backup.ts happens to
+  // write (database.dump, media.tar.gz, ...): a restore step that hardcoded
+  // those defaults instead of using the manifest-declared, checksum-verified
+  // path would still pass if the fixture reused them by coincidence.
+  const manifest = validManifest({
+    artifacts: [
+      { kind: 'database', sha256: 'b'.repeat(64), path: 'db-artifact-9f2.bin' },
+      { kind: 'signing-key', sha256: 'd'.repeat(64), reference: 'signing-key-artifact-9f2.bin' },
+      { kind: 'config', sha256: 'e'.repeat(64), reference: 'config-artifact-9f2.bin' },
+      { kind: 'media', sha256: 'c'.repeat(64), path: 'media-artifact-9f2.bin' },
+    ],
+  });
   const restoredPaths: Record<string, string> = {};
   const { ports } = fakePorts({
     restoreDatabase: async (databaseDumpPath: string) => {
@@ -363,11 +392,11 @@ test('restores exactly the checksum-verified path for each artifact, never a dif
       restoredPaths.config = configArchivePath;
     },
   });
-  await runRestore(baseInputs(), ports);
-  assert.equal(restoredPaths.database, '/artifacts/database.dump');
-  assert.equal(restoredPaths.media, '/artifacts/media.tar.gz');
-  assert.equal(restoredPaths.signingKey, '/secrets/signing-key.tar.gz');
-  assert.equal(restoredPaths.config, '/secrets/config.tar.gz');
+  await runRestore(baseInputs({ manifest }), ports);
+  assert.equal(restoredPaths.database, '/artifacts/db-artifact-9f2.bin');
+  assert.equal(restoredPaths.media, '/artifacts/media-artifact-9f2.bin');
+  assert.equal(restoredPaths.signingKey, '/secrets/signing-key-artifact-9f2.bin');
+  assert.equal(restoredPaths.config, '/secrets/config-artifact-9f2.bin');
 });
 
 test('reports missing expected events instead of claiming readiness', async () => {
@@ -378,4 +407,32 @@ test('reports missing expected events instead of claiming readiness', async () =
   assert.equal(proof.ready, false);
   assert.equal(proof.reason, 'expected-events-missing');
   assert.deepEqual(proof.missingEventIds, ['$synthetic-event-2']);
+});
+
+test('the CLI refuses a manifest whose recorded environment does not match the requested --environment', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'khala-restore-cli-test-'));
+  const manifestPath = join(dir, 'backup-manifest.json');
+  await writeFile(manifestPath, JSON.stringify(validManifest({ environment: 'preview' })));
+
+  await assert.rejects(
+    run(['--manifest', manifestPath, '--environment', 'production', '--validate-only']),
+    (error: unknown) => error instanceof OperationsError && error.code === 'environment-mismatch',
+  );
+});
+
+test('the CLI validates a manifest whose environment matches --environment', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'khala-restore-cli-test-'));
+  const manifestPath = join(dir, 'backup-manifest.json');
+  await writeFile(manifestPath, JSON.stringify(validManifest({ environment: 'preview' })));
+
+  const result = await run(['--manifest', manifestPath, '--environment', 'preview', '--validate-only']);
+  assert.equal(result.ok, true);
+  assert.equal(result.validated, true);
+});
+
+test('the CLI requires an explicit --manifest argument', async () => {
+  await assert.rejects(
+    run(['--validate-only']),
+    (error: unknown) => error instanceof OperationsError && error.code === 'missing-manifest-argument',
+  );
 });
