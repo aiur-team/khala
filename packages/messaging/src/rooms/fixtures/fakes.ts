@@ -1,6 +1,7 @@
 // Typed fakes for the room tests. They prove module behaviour only, never a
 // provider capability. Production code cannot import this directory.
 
+import { createHash } from 'node:crypto';
 import {
   type AuthPrincipal, type ContentLimits, type DeviceId, type DevicePort, type DeviceView, type EventId, type MessageContent,
   type OwnerId, type ParticipantId, type ParticipantView, type RoomId, type RoomRejection, type RoomSummary,
@@ -8,6 +9,27 @@ import {
 } from '@khala/contracts/messaging/index';
 import { createMemoryRoomJournal, createRoomService, type RoomJournal, type RoomService } from '../index';
 import type { AcceptedEvent, CreateLookup, RoomSubstrate, SubstrateEffect, SubstratePage, SubstrateRead, SubstrateUpdate } from '../substrate';
+
+// `digestMessageContent` awaits Node's real `crypto.subtle.digest`, which runs on
+// the libuv threadpool and can take longer than a test's fixed settle ticks under
+// thread-pool contention (a busy shared CI runner). Swap in a same-algorithm
+// digest that resolves on the microtask queue instead, so projection tests never
+// race the OS scheduler.
+const nativeSubtle = globalThis.crypto.subtle;
+Object.defineProperty(globalThis, 'crypto', {
+  configurable: true,
+  value: {
+    ...globalThis.crypto,
+    subtle: {
+      ...nativeSubtle,
+      digest: async (algorithm: string, data: Uint8Array): Promise<ArrayBuffer> => {
+        if (algorithm !== 'SHA-256') return nativeSubtle.digest(algorithm, data);
+        const hash = createHash('sha256').update(data).digest();
+        return hash.buffer.slice(hash.byteOffset, hash.byteOffset + hash.byteLength) as ArrayBuffer;
+      },
+    },
+  },
+});
 
 const decoded = decodeContentLimits({ maxBodyBytes: 256, maxDisplayNameBytes: 64, maxRoomTitleBytes: 32 });
 if (!decoded.ok) throw new Error('fixture limits');
