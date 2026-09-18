@@ -17,7 +17,12 @@ export interface MessagingAccountDirectory {
   lookup(externalId: OwnerId, options?: CallOptions): Promise<
     Readonly<{ kind: 'found'; accountId: string }> | Readonly<{ kind: 'absent' }> | Readonly<{ kind: 'unavailable' }>
   >;
-  /** `outcome_unknown`: the account may exist; the next attempt looks it up first. */
+  /**
+   * Must converge per `externalId`: a repeated or concurrent create for the same
+   * owner yields the same account (for example a deterministic account name and
+   * create-or-update). `outcome_unknown`: the account may exist; the next attempt
+   * looks it up first.
+   */
   create(externalId: OwnerId, options?: CallOptions): Promise<
     Readonly<{ kind: 'created'; accountId: string }> | Readonly<{ kind: 'unavailable' }> | Readonly<{ kind: 'outcome_unknown' }>
   >;
@@ -66,8 +71,13 @@ export async function ensureMessagingAccount(
   });
   if (write.kind === 'applied') return { kind: 'active', accountId };
   if (write.kind === 'conflict' && write.current?.value.state === 'active') {
-    // A competing request activated first; agreement converges, disagreement is explicit.
-    return write.current.value.accountId === accountId ? { kind: 'active', accountId } : { kind: 'conflict' };
+    // A competing request activated first. Converge when the directory agrees with
+    // the winner; a disagreement that persists on re-lookup is explicit.
+    const winner = write.current.value.accountId;
+    if (winner === accountId) return { kind: 'active', accountId };
+    const again = await orUnavailable(() => directory.lookup(ownerId));
+    if (again.kind === 'found') return again.accountId === winner ? { kind: 'active', accountId: winner } : { kind: 'conflict' };
+    return { kind: 'unavailable' };
   }
   return { kind: 'unavailable' };
 }

@@ -101,8 +101,10 @@ export async function completeSignIn(deps: SignInDeps, request: Pick<Request, 'u
   const login = read.record.value;
   if (login.status !== 'pending') return reject('login_replayed');
   const callback = new URL(request.url);
-  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH) return reject('state_mismatch');
-  if (callback.searchParams.get('state') !== login.state) return reject('state_mismatch');
+  // A forged callback keeps the login cookie, so it cannot cancel a sign-in in progress.
+  if (callback.origin + callback.pathname !== deps.origin + CALLBACK_PATH || callback.searchParams.get('state') !== login.state) {
+    return { kind: 'rejected', code: 'state_mismatch', cookies: [] };
+  }
 
   // One-time consume. Of any number of concurrent callbacks, exactly one applies.
   // Each attempt has its own operation ID: a shared one would make a concurrent

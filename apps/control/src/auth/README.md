@@ -26,7 +26,8 @@ The request-lifetime functions (KHA-131/132) bind the service to routes:
 - Mutation routes → `requireHumanMutation(request)` before reading the body. Take the owner
   only from `context.principal`, never from a body `ownerId` or email.
 - `POST /api/human/auth/logout` → `signOut(request, operationId)`. On `outcome_unknown`,
-  retry with the same `operationId`.
+  retry with the same `operationId`. The ID is scoped to the session before it reaches
+  the store, so an ID reused across sessions cannot collide.
 
 `identityFor(request)` wraps these as the KHA-105 `IdentityPort`. That port has no refusal
 code, so a sign-out through a request that fails the mutation guard reports `unavailable`
@@ -45,7 +46,8 @@ and leaves the session untouched.
   session token, so a page can hold it without learning the cookie.
 - **Callback.** The login binding (state, nonce, PKCE verifier, return path) is keyed by the
   hash of the login cookie. A callback must present that cookie, the matching `state` and
-  the exact callback URL. The binding is consumed by compare-and-set before the code is
+  the exact callback URL. A mismatched callback leaves the login cookie in place, so a
+  forged link cannot cancel a sign-in in progress. The binding is consumed by compare-and-set before the code is
   exchanged, so concurrent replays produce at most one session. A session is minted only
   after the claims pass, the owner resolves and the messaging mapping is active.
 - **Failure categories.** `signed_out` (no valid session), `rejected` (a finite code) and
@@ -53,7 +55,9 @@ and leaves the session untouched.
   error becomes `unavailable`, and its message is never propagated.
 - **Provisioning.** The mapping moves `pending` → `active`. A lookup by the owner ID
   (the external ID) precedes every create, so a lost create response is adopted rather
-  than duplicated. If a competing activation disagrees, the result is `conflict`. The
+  than duplicated. The directory's `create` must converge per external ID (a
+  deterministic account name with create-or-update). When a competing activation won,
+  the directory is re-checked, and the result is `conflict` only if it disagrees. The
   mapping stores only the protocol account ID: no access token, password or crypto
   secret. Signing in is not message-key recovery.
 - **Diagnostics.** `log` receives `{ event, code, requestId }` only. The request ID comes

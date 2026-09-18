@@ -43,6 +43,18 @@ describe('authenticateRequest', () => {
     expect(JSON.stringify(h.logs)).not.toContain('secret-cookie-value');
   });
 
+  it.each([
+    ['an unparseable expiry', { expiresAt: 'garbage' }],
+    ['a non-boolean revoked flag', { revoked: 'yes' }],
+    ['a non-object value', null],
+  ])('reports a session record with %s as unavailable, not signed out', async (_name, patch) => {
+    const { h, cookies } = await signedIn();
+    const key = h.store.keys('auth.session.')[0]!;
+    const record = h.store.records.get(key)!;
+    h.store.records.set(key, { ...record, value: patch === null ? 'corrupt' : { ...(record.value as object), ...patch } });
+    expect(await h.service.authenticateRequest(request('/', { cookies }))).toEqual({ kind: 'unavailable' });
+  });
+
   it('refuses an ambiguous duplicated session cookie', async () => {
     const { h, cookies } = await signedIn();
     expect(await h.service.authenticateRequest(request('/', { cookies: [...cookies, `__Host-khala_session=${'B'.repeat(43)}`] })))
@@ -128,7 +140,17 @@ describe('signOut', () => {
     expect(retry.kind).toBe('signed_out');
     const writes = [...h.store.records.values()].filter(record => record.key.startsWith('auth.session.'));
     expect(writes).toHaveLength(1);
-    expect(writes[0]!.operationId).toBe('op-logout-2');
+    expect(writes[0]!.operationId).toMatch(/^auth\.session\.revoke\./);
+  });
+
+  it('revokes even when the caller reuses an operation ID from another session', async () => {
+    const { h, cookies, csrf } = await signedIn();
+    expect((await h.service.signOut(mutation(cookies, { [CSRF_HEADER]: csrf }), 'logout')).kind).toBe('signed_out');
+    const second = await signIn(h, 'user-1', 'ada@example.test');
+    const auth = await h.service.authenticateRequest(request('/', { cookies: second.cookies }));
+    const secondCsrf = auth.kind === 'authenticated' ? auth.context.csrfToken : '';
+    expect((await h.service.signOut(mutation(second.cookies, { [CSRF_HEADER]: secondCsrf }), 'logout')).kind).toBe('signed_out');
+    expect(await h.service.authenticateRequest(request('/', { cookies: second.cookies }))).toEqual({ kind: 'signed_out' });
   });
 
   it('settles a lost response within one call when the store can resolve it', async () => {

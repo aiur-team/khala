@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OwnerId } from '@khala/contracts/messaging/index';
-import { ensureMessagingAccount, mappingKey, readMessagingAccount } from './provisioning';
+import { type MessagingAccountDirectory, ensureMessagingAccount, mappingKey, readMessagingAccount } from './provisioning';
 import { T0, fakeDirectory, fakeStore, secureRandom } from './support.test';
 
 const owner = 'own_provisioning_test' as OwnerId;
@@ -38,6 +38,31 @@ describe('ensureMessagingAccount', () => {
     const accounts = new Set(results.map(result => (result.kind === 'active' ? result.accountId : result.kind)));
     expect(accounts).toEqual(new Set(['@khala_1:messaging.test']));
     expect(messaging.accounts.size).toBe(1);
+  });
+
+  it.each([
+    ['converges when the directory settles on the winner', '@first:messaging.test', { kind: 'active', accountId: '@first:messaging.test' }],
+    ['is an explicit conflict when the directory disagrees with the winner', '@second:messaging.test', { kind: 'conflict' }],
+  ])('racing first sign-ins with diverging creates: %s', async (_name, settled, expected) => {
+    const store = fakeStore(() => T0);
+    let lookups = 0;
+    let creates = 0;
+    const directory: MessagingAccountDirectory = {
+      async lookup() {
+        lookups += 1;
+        return lookups <= 2 ? { kind: 'absent' } : { kind: 'found', accountId: settled };
+      },
+      async create() {
+        creates += 1;
+        return { kind: 'created', accountId: creates === 1 ? '@first:messaging.test' : '@second:messaging.test' };
+      },
+    };
+    const [first, second] = await Promise.all([
+      ensureMessagingAccount(store.store, directory, secureRandom, owner),
+      ensureMessagingAccount(store.store, directory, secureRandom, owner),
+    ]);
+    expect(first).toEqual({ kind: 'active', accountId: '@first:messaging.test' });
+    expect(second).toEqual(expected);
   });
 
   it('fails explicitly when a competing request activated a different account', async () => {

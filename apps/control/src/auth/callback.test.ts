@@ -100,7 +100,8 @@ describe('completeSignIn', () => {
     h.oidc.signInAs('user-1', 'ada@example.test');
     const callback = await beginAndReturn(h);
     const forged = request('/api/human/auth/callback?code=attacker&state=forged', { cookies: [callback.headers.get('cookie')!] });
-    expect(await h.service.completeSignIn(forged)).toMatchObject({ kind: 'rejected', code: 'state_mismatch' });
+    // A forged callback must not clear the login cookie of the sign-in in progress.
+    expect(await h.service.completeSignIn(forged)).toEqual({ kind: 'rejected', code: 'state_mismatch', cookies: [] });
     expect((await h.service.completeSignIn(callback)).kind).toBe('signed_in');
   });
 

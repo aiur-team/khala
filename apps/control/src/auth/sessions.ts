@@ -2,6 +2,7 @@
 // purpose-separated hash, so a store read never yields a usable credential. A
 // store outage is `unavailable`, never signed out.
 
+import { createHash } from 'node:crypto';
 import {
   type AuthPrincipal, type ControlRecord, type ControlStore, type OwnerId, decodeAuthPrincipal,
 } from '@khala/contracts/messaging/index';
@@ -77,23 +78,26 @@ export async function lookupSession(store: ControlStore, cookieHeader: string | 
   if (read.kind === 'unavailable') return { kind: 'unavailable' };
   if (read.kind === 'absent') return { kind: 'signed_out' };
   const session = read.record.value;
+  // A record that no longer decodes is corrupt state, not a signed-out user.
+  const principal = principalOf(session);
+  if (!principal || typeof session.revoked !== 'boolean') return { kind: 'unavailable' };
   // The store enforces expiry too; checking here keeps an adapter clock skew from extending a session.
   if (session.revoked || !(nowMs < Date.parse(session.expiresAt))) return { kind: 'signed_out' };
-  const principal = principalOf(session);
-  // A record that no longer decodes is corrupt state, not a signed-out user.
-  if (!principal) return { kind: 'unavailable' };
   return { kind: 'authenticated', principal, token, record: read.record };
 }
 
 /**
  * Revokes the session. `operationId` names this revocation: a retry after a lost
  * response resolves to the same write, and an already revoked or expired session
- * is success.
+ * is success. The caller's ID is scoped to this session before it reaches the
+ * store, so an ID reused across sessions, or chosen by someone else, never
+ * collides with another write.
  */
 export async function revokeSession(
-  store: ControlStore, token: string, operationId: string,
+  store: ControlStore, token: string, callerOperationId: string,
 ): Promise<Readonly<{ kind: 'revoked' }> | Readonly<{ kind: 'unavailable' }> | Readonly<{ kind: 'outcome_unknown' }>> {
   const key = sessionKey(token);
+  const operationId = `auth.session.revoke.${derive('session', token)}.${createHash('sha256').update(callerOperationId).digest('hex')}`;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const read = await store.read<SessionRecord>(key);
     if (read.kind === 'unavailable') return { kind: 'unavailable' };
@@ -114,6 +118,7 @@ export async function revokeSession(
 }
 
 function principalOf(session: SessionRecord): AuthPrincipal | null {
+  if (typeof session !== 'object' || session === null) return null;
   const decoded = decodeAuthPrincipal({
     v: 1,
     ownerId: session.ownerId,
