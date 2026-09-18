@@ -1,10 +1,16 @@
-// Orchestrates OAuth entry and chat admission. Reinspects admission after
-// every identity change, fences stale async responses by a lifecycle
-// generation, and never issues a second `admit` for one attempt: the
-// operation ID is created once per attempt and reused across retries.
+// Orchestrates OAuth entry and chat admission. Re-inspects admission on every
+// `start()`/`retry()` (there is no identity-change subscription to react to —
+// `IdentityPort` exposes none), fences every async step's response by a
+// lifecycle generation so a superseded `start()` cannot mount stale state, and
+// never issues a second `admit` for one attempt: the operation ID is created
+// once per attempt and reused across retries.
 
 import type { AuthPrincipal, DeviceId, Disposer } from '@khala/contracts/messaging/index';
-import { admissionRejectionPhase, CHECKING_IDENTITY_VIEW, deviceReasonErrorCode, inviteStatePhase, type JoinView } from './model';
+import {
+  admissionRejectionErrorCode, admissionRejectionPhase, admissionRejectionRetryAllowed,
+  CHECKING_IDENTITY_VIEW, deviceReasonErrorCode, inviteStatePhase, type JoinView,
+} from './model';
+import type { Admission } from '@khala/contracts/messaging/index';
 import { buildReturnPath } from './location';
 import type { JoinPorts } from './ports';
 
@@ -24,6 +30,23 @@ function unavailableView(errorCode: string, retryAllowed = true, email: string |
 }
 
 const SIGN_IN_VIEW: JoinView = { phase: 'sign_in', email: null, roomId: null, retryAllowed: false, errorCode: null };
+
+/**
+ * `Admission.outcome` is exhaustively switched, not merely narrowed to `'ok'`:
+ * a future pending-approval variant (G-ADMISSION) must fail to compile here
+ * rather than silently render "You're in".
+ */
+function joinedView(admission: Admission, email: string | null): JoinView {
+  switch (admission.outcome) {
+    case 'joined':
+    case 'already_joined':
+      return { phase: 'joined', email, roomId: admission.room.roomId, retryAllowed: false, errorCode: null };
+    default: {
+      const exhaustive: never = admission.outcome;
+      throw new Error(`unhandled admission outcome: ${String(exhaustive)}`);
+    }
+  }
+}
 
 export function createJoinController(ports: JoinPorts): JoinController {
   let generation = 0;
@@ -110,7 +133,7 @@ export function createJoinController(ports: JoinPorts): JoinController {
 
     if (result.kind === 'ok') {
       operationId = null;
-      setView({ phase: 'joined', email: principal.verifiedEmail, roomId: result.value.room.roomId, retryAllowed: false, errorCode: null });
+      setView(joinedView(result.value, principal.verifiedEmail));
       return;
     }
     if (result.kind === 'rejected') {
@@ -122,8 +145,13 @@ export function createJoinController(ports: JoinPorts): JoinController {
       }
       if (phase === 'unavailable') {
         // operation_mismatch: the attempt's operation id is already cleared above,
-        // so a retry claims a fresh one rather than reusing a rejected id.
-        setView(unavailableView('admission_rejected', true, principal.verifiedEmail));
+        // so a retry claims a fresh one rather than reusing a rejected id. `forbidden`
+        // is a neutral denial with no authoritative account-mismatch evidence.
+        setView(unavailableView(
+          admissionRejectionErrorCode(result.code),
+          admissionRejectionRetryAllowed(result.code),
+          principal.verifiedEmail,
+        ));
         return;
       }
       setView({ phase, email: principal.verifiedEmail, roomId: null, retryAllowed: false, errorCode: null });

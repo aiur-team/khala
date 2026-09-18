@@ -16,11 +16,13 @@ credentials, homeserver selection or device-key setup screens.
 - `ports.ts` — `JoinPorts`: the injected `IdentityPort`, `DevicePort`,
   `AdmissionPort`, `RouteCodec` and a `navigate` callback standing in for the
   host's navigation capability (the identity adapter never navigates itself).
-- `controller.ts` — `createJoinController(ports)`. Reinspects admission after
-  every identity change, fences stale async responses with a lifecycle
-  generation, and creates the `admit` operation ID once per attempt, reusing
-  it across retries so a retry after `outcome_unknown` resolves the same
-  attempt rather than issuing a second claim.
+- `controller.ts` — `createJoinController(ports)`. Re-inspects admission on
+  every `start()`/`retry()` (there is no identity-change subscription —
+  `IdentityPort` exposes none), fences every async step's response with a
+  lifecycle generation so a superseded attempt cannot mount stale state, and
+  creates the `admit` operation ID once per attempt, reusing it across retries
+  so a retry after `outcome_unknown` resolves the same attempt rather than
+  issuing a second claim.
 - `JoinScreen.tsx` / `join.css` — presentational only. It renders exactly
   `view: JoinView` plus `onSignIn` / `onRetry` callbacks; it never imports a
   port and never navigates. Wiring `createJoinController` to this component
@@ -61,8 +63,10 @@ changing the journey.
 
 ## Known gaps intentionally left to dependency owners
 
-- `RoomPort` / queued-introduction preview content is out of scope for this
-  screen (`KTD1`); `JoinView` carries only `roomId`, never room title or body.
+- The queued-introduction preview happens on the room route reached *after*
+  `joined` (the plan's journey diagram places it there, not on this screen);
+  this ticket owns only the join screen, so `JoinView` carries `roomId` and
+  nothing else room-shaped — no `RoomPort`, no title, no body.
 - Production route parsing, the real OAuth callback and cross-origin/open-
   redirect handling belong to `KHA-110` / `KHA-131`, tested end-to-end at
   `KHA-132`.

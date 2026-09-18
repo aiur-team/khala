@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import type {
-  AdmissionPort, AuthPrincipal, DeviceId, DevicePort, DeviceView, IdentityPort, IdentityState, OwnerId, RoomId,
+  AdmissionPort, Admission, AuthPrincipal, DeviceId, DevicePort, DeviceView, IdentityPort, IdentityState, InviteState, OwnerId, RoomId,
 } from '@khala/contracts/messaging/index';
 import { ok, outcomeUnknown, rejected, unavailable } from '@khala/contracts/messaging/index';
 import { createJoinController } from './controller';
@@ -134,6 +134,7 @@ describe('createJoinController invitation states', () => {
     ['expired', 'expired'],
     ['revoked', 'revoked'],
     ['identity_mismatch', 'wrong_account'],
+    ['auth_required', 'sign_in'],
   ] as const)('inspect() %s maps to phase %s without touching device or admission.admit', async (state, phase) => {
     const admit = vi.fn();
     const ensureReady = vi.fn();
@@ -173,6 +174,26 @@ describe('createJoinController — AE1: revocation during OAuth', () => {
     expect(last.phase).toBe('revoked');
     expect(last.roomId).toBeNull();
   });
+
+  test('admit() rejected with auth_required shows sign_in, not revoked', async () => {
+    const controller = createJoinController(makePorts({
+      admission: { share: async () => unavailable(), inspect: async () => 'eligible', admit: async () => rejected('auth_required') },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush();
+    expect(views.at(-1)?.phase).toBe('sign_in');
+  });
+
+  test('admit() rejected with forbidden shows a neutral, non-retryable denial, never wrong_account', async () => {
+    const controller = createJoinController(makePorts({
+      admission: { share: async () => unavailable(), inspect: async () => 'eligible', admit: async () => rejected('forbidden') },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush();
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', retryAllowed: false, errorCode: 'admission_denied' });
+  });
 });
 
 describe('createJoinController device retry', () => {
@@ -199,6 +220,186 @@ describe('createJoinController device retry', () => {
     expect(views.at(-1)?.phase).toBe('joined');
     expect(admit).toHaveBeenCalledTimes(1);
     expect(ensureReady).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createJoinController device rejection', () => {
+  test('owner_mismatch maps to wrong_account, not unavailable', async () => {
+    const controller = createJoinController(makePorts({
+      device: { ensureReady: async () => rejected('owner_mismatch'), current: () => readyDevice, observe: () => () => {}, stop: async () => {} },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush();
+    expect(views.at(-1)).toMatchObject({ phase: 'wrong_account', retryAllowed: false });
+  });
+});
+
+describe('createJoinController retry flags', () => {
+  test('a device port outcome_unknown is retryable', async () => {
+    const controller = createJoinController(makePorts({
+      device: { ensureReady: async () => outcomeUnknown('op_1'), current: () => readyDevice, observe: () => () => {}, stop: async () => {} },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush();
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', retryAllowed: true, errorCode: 'device_unavailable' });
+  });
+
+  test('a device port unavailable result is retryable', async () => {
+    const controller = createJoinController(makePorts({
+      device: { ensureReady: async () => unavailable(), current: () => readyDevice, observe: () => () => {}, stop: async () => {} },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush();
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', retryAllowed: true, errorCode: 'device_unavailable' });
+  });
+
+  test('an admission port unavailable result (as opposed to a rejection) is retryable', async () => {
+    const controller = createJoinController(makePorts({
+      admission: { share: async () => unavailable(), inspect: async () => 'eligible', admit: async () => unavailable() },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush();
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', retryAllowed: true, errorCode: 'admission_unavailable' });
+  });
+});
+
+describe('createJoinController signIn rejection', () => {
+  test('a rejected beginSignIn result surfaces invalid_return_path, not a silent no-op', async () => {
+    const identity: IdentityPort = {
+      current: async () => ({ kind: 'signed_out' }),
+      beginSignIn: async () => rejected('invalid_return_path'),
+      signOut: async () => ok(null),
+    };
+    const navigate = vi.fn();
+    const controller = createJoinController(makePorts({ identity, navigate }));
+    controller.start('/join?invite=abc');
+    await flush();
+    await controller.signIn();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(controller.getView()).toMatchObject({ phase: 'unavailable', errorCode: 'invalid_return_path' });
+  });
+});
+
+describe('createJoinController stale-response fences', () => {
+  test('a stale inspect() response is discarded by a newer start()', async () => {
+    const first = deferred<InviteState>();
+    let calls = 0;
+    const admit = vi.fn();
+    const controller = createJoinController(makePorts({
+      admission: {
+        share: async () => unavailable(),
+        inspect: () => { calls += 1; return calls === 1 ? first.promise : Promise.resolve('unavailable' as const); },
+        admit,
+      },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush(); // first call reaches checking_invitation; its inspect() is pending on `first`
+    expect(calls).toBe(1);
+    controller.start('/join?invite=abc');
+    await flush(); // the second call's own inspect() resolves 'unavailable'
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', errorCode: 'invitation_unavailable' });
+
+    first.resolve('eligible');
+    await flush();
+    expect(admit).not.toHaveBeenCalled();
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', errorCode: 'invitation_unavailable' });
+  });
+
+  test('a stale ensureReady() response is discarded by a newer start()', async () => {
+    const first = deferred<Awaited<ReturnType<DevicePort['ensureReady']>>>();
+    let calls = 0;
+    const admit = vi.fn();
+    const controller = createJoinController(makePorts({
+      device: {
+        ensureReady: () => { calls += 1; return calls === 1 ? first.promise : Promise.resolve(unavailable()); },
+        current: () => readyDevice,
+        observe: () => () => {},
+        stop: async () => {},
+      },
+      admission: { share: async () => unavailable(), inspect: async () => 'eligible', admit },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush(); // first call reaches initializing_device; its ensureReady() is pending on `first`
+    expect(calls).toBe(1);
+    controller.start('/join?invite=abc');
+    await flush(); // the second call's own ensureReady() resolves unavailable
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', errorCode: 'device_unavailable' });
+
+    first.resolve(ok(readyDevice));
+    await flush();
+    expect(admit).not.toHaveBeenCalled();
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', errorCode: 'device_unavailable' });
+  });
+
+  test('a stale admit() response is discarded by a newer start()', async () => {
+    const first = deferred<Awaited<ReturnType<AdmissionPort['admit']>>>();
+    let calls = 0;
+    const admit = vi.fn((): Promise<Awaited<ReturnType<AdmissionPort['admit']>>> => {
+      calls += 1;
+      return calls === 1 ? first.promise : Promise.resolve(unavailable());
+    });
+    const controller = createJoinController(makePorts({
+      admission: { share: async () => unavailable(), inspect: async () => 'eligible', admit },
+    }));
+    const views = record(controller);
+    controller.start('/join?invite=abc');
+    await flush(); // first call reaches joining; its admit() is pending on `first`
+    expect(calls).toBe(1);
+    controller.start('/join?invite=abc');
+    await flush(); // the second call's own admit() resolves unavailable
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', errorCode: 'admission_unavailable' });
+
+    first.resolve(ok<Admission>({ outcome: 'joined', room }));
+    await flush();
+    expect(views.some(v => v.phase === 'joined')).toBe(false);
+    expect(views.at(-1)).toMatchObject({ phase: 'unavailable', errorCode: 'admission_unavailable' });
+  });
+});
+
+describe('createJoinController operation id lifecycle', () => {
+  test('a completed ok clears the operation id so retry() after re-joining claims a fresh one', async () => {
+    // Uses retry(), not start(): start() always resets operationId itself, so
+    // only retry() isolates whether admit()'s own 'ok' branch clears it.
+    const seenOperationIds: string[] = [];
+    const admit = vi.fn(async (input: Parameters<AdmissionPort['admit']>[0]) => {
+      seenOperationIds.push(input.operationId);
+      return ok<Admission>({ outcome: 'joined', room });
+    });
+    const controller = createJoinController(makePorts({
+      admission: { share: async () => unavailable(), inspect: async () => 'eligible', admit },
+    }));
+    controller.start('/join?invite=abc');
+    await flush();
+    controller.retry();
+    await flush();
+    expect(admit).toHaveBeenCalledTimes(2);
+    expect(seenOperationIds[0]).not.toBe(seenOperationIds[1]);
+  });
+
+  test('start() discards a stale in-flight operation id rather than reusing it', async () => {
+    const seenOperationIds: string[] = [];
+    const admitDeferred = deferred<Awaited<ReturnType<AdmissionPort['admit']>>>();
+    let calls = 0;
+    const admit = vi.fn((input: Parameters<AdmissionPort['admit']>[0]) => {
+      seenOperationIds.push(input.operationId);
+      calls += 1;
+      return calls === 1 ? admitDeferred.promise : Promise.resolve(ok<Admission>({ outcome: 'joined', room }));
+    });
+    const controller = createJoinController(makePorts({
+      admission: { share: async () => unavailable(), inspect: async () => 'eligible', admit },
+    }));
+    controller.start('/join?invite=abc');
+    await flush();
+    controller.start('/join?invite=abc');
+    await flush();
+    expect(admit).toHaveBeenCalledTimes(2);
+    expect(seenOperationIds[0]).not.toBe(seenOperationIds[1]);
   });
 });
 

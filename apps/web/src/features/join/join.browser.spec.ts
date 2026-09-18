@@ -58,6 +58,14 @@ test('join screen: real navigation, viewport overflow and secret handling', { ti
 
       // The raw invite reference never reaches console output.
       assert.equal(consoleMessages.some(text => text.includes(SECRET_INVITE_REF)), false, 'invite reference leaked into console output');
+
+      // Nor does it land in localStorage.
+      const storedValues = await page.evaluate(() => Object.values(window.localStorage));
+      assert.equal(
+        storedValues.some(value => value.includes(SECRET_INVITE_REF)),
+        false,
+        'invite reference leaked into localStorage',
+      );
       await page.close();
     }
 

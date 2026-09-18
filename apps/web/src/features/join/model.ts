@@ -68,13 +68,27 @@ export function admissionRejectionPhase(code: AdmissionRejection): JoinPhase {
     case 'revoked':
       return 'revoked';
     case 'identity_mismatch':
-    case 'forbidden':
       return 'wrong_account';
     case 'auth_required':
       return 'sign_in';
+    case 'forbidden':
     case 'operation_mismatch':
       return 'unavailable';
   }
+}
+
+/**
+ * Codes that reach `admissionRejectionPhase`'s `unavailable` phase are not
+ * interchangeable: `operation_mismatch` is a transient race that a retry with
+ * a fresh operation id resolves, while `forbidden` is a denial with no
+ * authoritative account-mismatch evidence — neutral, and not retryable.
+ */
+export function admissionRejectionRetryAllowed(code: AdmissionRejection): boolean {
+  return code === 'operation_mismatch';
+}
+
+export function admissionRejectionErrorCode(code: AdmissionRejection): string {
+  return code === 'forbidden' ? 'admission_denied' : 'admission_rejected';
 }
 
 /**

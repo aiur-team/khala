@@ -45,6 +45,13 @@ describe('JoinScreen error states', () => {
     }
   });
 
+  test('wrong_account renders its own distinct copy, not the generic unavailable copy', () => {
+    const html = render({ phase: 'wrong_account', email: 'person@example.com', roomId: null, retryAllowed: false, errorCode: null });
+    expect(html).toContain('Wrong account');
+    expect(html).toContain('This invitation is not for the account you are signed in as.');
+    expect(html).not.toContain('Something did not load');
+  });
+
   test('an unrecoverable outcome (AE1: revoked after callback) exposes no retry and no room content', () => {
     const html = render({ phase: 'revoked', email: 'person@example.com', roomId: null, retryAllowed: false, errorCode: null });
     expect(html).not.toContain('Try again');

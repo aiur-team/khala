@@ -73,7 +73,7 @@ function Joined({ roomId }: { roomId: string | null }) {
   return (
     <div className="join-joined" role="status">
       <StatusBadge tone="positive" label="Joined" />
-      <p>You&apos;re in. Share this same link with your existing agent to bring it into the conversation.</p>
+      <p>You&apos;re in.</p>
       {roomId ? <p className="join-joined__room-id">Room: {roomId}</p> : null}
     </div>
   );
