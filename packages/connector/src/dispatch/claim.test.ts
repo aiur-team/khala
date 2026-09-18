@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { binding, makeRelease, receipt, recordOf, seed, testPolicy, world } from './fakes';
+import type { BindingId, HarnessCapabilities } from '@khala/contracts/delivery/index';
+import { binding, makeRelease, receipt, recordOf, seed, testPolicy, world } from './fixtures/fakes';
+import type { DispatchPolicy, Dispatcher } from './types';
 
 describe('eligibility and transactional claim', () => {
   it('AE1: a pause applied before the claim blocks a queued job, and resuming dispatches it once', async () => {
@@ -13,7 +15,7 @@ describe('eligibility and transactional claim', () => {
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'paused', attemptId: null });
     expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
 
-    await w.ledger.transact(tx => tx.setPolicy(testPolicy()));
+    await w.setPolicy(testPolicy());
     dispatcher.wake();
     await dispatcher.idle();
     expect(w.harness.submittedIds()).toEqual(['release-1']);
@@ -27,7 +29,7 @@ describe('eligibility and transactional claim', () => {
       // Pause lands while the dispatcher is still verifying the payload, before the claim.
       payloads: {
         read: async () => {
-          await w.ledger.transact(tx => tx.setPolicy(testPolicy({ paused: true })));
+          await w.setPolicy(testPolicy({ paused: true }));
           return release.payload;
         },
       },
@@ -42,7 +44,7 @@ describe('eligibility and transactional claim', () => {
     const w = await world();
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
     w.harness.onSubmit = async submitted => {
-      await w.ledger.transact(tx => tx.setPolicy(testPolicy({ paused: true })));
+      await w.setPolicy(testPolicy({ paused: true }));
       return receipt(submitted, 'harness_queued');
     };
     const dispatcher = w.dispatcher();
@@ -112,6 +114,16 @@ describe('eligibility and transactional claim', () => {
     ['a zero concurrency limit', testPolicy({ maxConcurrentJobs: 0 })],
     ['a fractional limit', testPolicy({ maxJobsPerCausalRoot: 1.5 })],
     ['an unreadable expiry', testPolicy({ expiresAt: 'soon' })],
+    ['an expiry with an offset', testPolicy({ expiresAt: '2026-09-18T03:00:00+02:00' })],
+    ['an expiry on a date that does not exist', testPolicy({ expiresAt: '2026-02-30T00:00:00Z' })],
+    ['no pause flag', malformed(policy => delete policy.paused)],
+    ['an undefined pause flag', malformed(policy => { policy.paused = undefined; })],
+    ['a string pause flag', malformed(policy => { policy.paused = 'false'; })],
+    ['no expiry field', malformed(policy => delete policy.expiresAt)],
+    ['an unknown field', malformed(policy => { policy.resetBy = 'agent'; })],
+    ['a steer busy policy', malformed(policy => { policy.busy = 'steer'; })],
+    ['a negative version', testPolicy({ version: -1 })],
+    ['a fractional version', testPolicy({ version: 3.5 })],
   ])('blocks dispatch with %s', async (_, policy) => {
     const w = await world(policy);
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
@@ -176,4 +188,146 @@ describe('eligibility and transactional claim', () => {
     expect(await dispatcher.enqueue({ ...job, payloadDigest: `sha256:${'c'.repeat(64)}` })).toBe('conflict');
     await dispatcher.stop();
   });
+
+  describe('policy per binding', () => {
+    it("checks each release against its own binding's policy version", async () => {
+      const w = await world();
+      await w.ledger.transact(tx => tx.setPolicy('bind-2' as BindingId, testPolicy({ version: 4 })));
+      const dispatcher = w.dispatcher();
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-1', policyVersion: 3 })).job);
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2', policyVersion: 4 })).job);
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1', 'release-2']);
+    });
+
+    it('rejects a release reviewed before its own binding was re-armed, while other bindings are unchanged', async () => {
+      const w = await world();
+      const dispatcher = w.dispatcher();
+      const { job } = w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-2', policyVersion: 3 }));
+      // bind-2 re-arms from v3 to v4; bind-1 and bind-3 stay at v3.
+      await w.ledger.transact(tx => tx.setPolicy('bind-2' as BindingId, testPolicy({ version: 4 })));
+      await dispatcher.enqueue(job);
+      await dispatcher.idle();
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'rejected', reason: 'stale_policy' });
+    });
+
+    it('applies a pause to its own binding only', async () => {
+      const w = await world();
+      await w.ledger.transact(tx => tx.setPolicy('bind-1' as BindingId, testPolicy({ paused: true })));
+      const dispatcher = w.dispatcher();
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-1' })).job);
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2' })).job);
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-2']);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'paused' });
+    });
+  });
+
+  describe('harness route', () => {
+    it.each([
+      ['a route that steers a running turn', { busy: 'steer' }],
+      ['a route with unknown busy behavior', { busy: 'unknown' }],
+      ['an unsupported route', { support: 'unsupported' }],
+      ['a route that cannot resume the existing session', { existingSession: 'unknown' }],
+      ['a route for another harness', { harness: 'claude' }],
+      ['a malformed capability report', null],
+      ['a tested route with no evidence, which the decoder rejects', { evidenceRef: null }],
+    ] as Array<[string, Partial<HarnessCapabilities> | null]>)('refuses %s before claiming, even with the session idle', async (_, route) => {
+      const w = await world();
+      w.harness.route = route;
+      const dispatcher = w.dispatcher();
+      const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
+      await dispatcher.enqueue(job);
+      await dispatcher.idle();
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'harness_unsupported', attemptId: null });
+      expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
+    });
+
+    it('submits to an idle session on a route that rejects when busy', async () => {
+      const w = await world();
+      w.harness.busy = 'reject';
+      const dispatcher = w.dispatcher();
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1']);
+    });
+  });
+
+  describe('claim guards', () => {
+    it('does not claim when the stored release changed after it was verified', async () => {
+      const w = await world();
+      const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
+      await seed(w.ledger, job);
+      // Another writer replaces the stored release while this one is being verified.
+      w.onApproval = () => w.ledger.transact(tx => {
+        const record = tx.record(job.releaseId)!;
+        tx.put({ ...record, job: { ...record.job, causalRootId: 'cause-other' as never } });
+      });
+      const dispatcher = w.dispatcher();
+      dispatcher.wake();
+      await dispatcher.idle();
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', attemptId: null });
+      expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
+    });
+
+    it('skips a listed release that another worker claimed before this pass reached it', async () => {
+      const w = await world();
+      const one = w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-1', root: 'cause-1' })).job;
+      const two = w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2', root: 'cause-2' })).job;
+      await seed(w.ledger, one);
+      await seed(w.ledger, two);
+      w.onApproval = id => {
+        if (id !== one.approval.commandId) return;
+        return w.ledger.transact(tx => {
+          tx.put({ ...tx.record(two.releaseId)!, state: 'dispatching', attemptId: 'attempt-other', workerId: 'worker-other' });
+        });
+      };
+      const dispatcher = w.dispatcher();
+      dispatcher.wake();
+      await dispatcher.idle();
+      expect(w.lookups).toEqual([one.approval.commandId]);
+      expect(w.harness.submittedIds()).toEqual(['release-1']);
+    });
+
+    it('does not verify a job that the controls hold, however often it is woken', async () => {
+      const w = await world(testPolicy({ paused: true }));
+      const dispatcher = w.dispatcher();
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+      for (let i = 0; i < 3; i += 1) {
+        dispatcher.wake();
+        await dispatcher.idle();
+      }
+      expect(w.lookups).toEqual([]);
+      expect(w.reads).toEqual([]);
+      expect(w.harness.inspected).toBe(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'paused' });
+    });
+
+    it('makes no new claim and starts no new attempt once stopped', async () => {
+      const w = await world();
+      const one = w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-1', root: 'cause-1' })).job;
+      await seed(w.ledger, one);
+      await seed(w.ledger, w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2', root: 'cause-2' })).job);
+      let dispatcher: Dispatcher | null = null;
+      let stopped: Promise<void> | null = null;
+      w.onApproval = () => { stopped ??= dispatcher!.stop(); };
+      dispatcher = w.dispatcher();
+      dispatcher.wake();
+      await dispatcher.idle();
+      await stopped;
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(w.lookups).toEqual([one.approval.commandId]);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', attemptId: null });
+    });
+  });
 });
+
+/** A fixture policy edited into a shape the type system would refuse. */
+function malformed(edit: (policy: Record<string, unknown>) => unknown): DispatchPolicy {
+  const policy: Record<string, unknown> = { ...testPolicy() };
+  edit(policy);
+  return policy as DispatchPolicy;
+}

@@ -5,17 +5,21 @@
 import {
   type HarnessCapabilities, type ReleasedJob, type UnverifiedReleasedJob, sameEventRef, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
-import { checkLimits, expired, reserve, usablePolicy } from './budget';
+import { checkLimits, expired, reserve, supportedRoute, usablePolicy } from './budget';
 import type { BlockCode, ClaimResult, DispatchRecord, DispatchTx } from './types';
 
 export type ClaimInput = Readonly<{
   /** The stored release, already verified against its approval and payload digest. */
   job: ReleasedJob;
-  harnessBusy: HarnessCapabilities['busy'];
+  /** The harness route the payload will be submitted to. */
+  capabilities: HarnessCapabilities;
+  /** Read inside the claiming transaction. */
   now: Date;
   attemptId: string;
   workerId: string;
 }>;
+
+type Refusal = Readonly<{ code: BlockCode; terminal: boolean }>;
 
 export function sameRelease(a: UnverifiedReleasedJob, b: UnverifiedReleasedJob): boolean {
   return a.v === b.v
@@ -32,6 +36,48 @@ export function sameRelease(a: UnverifiedReleasedJob, b: UnverifiedReleasedJob):
     && a.causalRootId === b.causalRootId;
 }
 
+/**
+ * Effective controls for one queued record, all read from the release's own binding. Without
+ * `capabilities` (a precheck before the harness was inspected) the route is not checked yet.
+ */
+function refusal(tx: DispatchTx, record: DispatchRecord, now: Date, capabilities: HarnessCapabilities | null): Refusal | null {
+  const { job } = record;
+  const current = tx.binding(job.binding.bindingId);
+  if (current === null) return { code: 'stale_binding', terminal: true };
+  if (current.revoked) return { code: 'revoked', terminal: true };
+  if (!sameSessionBinding(current.binding, job.binding)) return { code: 'stale_binding', terminal: true };
+
+  const policy = tx.policy(job.binding.bindingId);
+  if (!usablePolicy(policy)) return { code: 'unconfigured', terminal: false };
+  if (job.policyVersion !== policy.version) return { code: 'stale_policy', terminal: true };
+  if (policy.paused) return { code: 'paused', terminal: false };
+  if (expired(policy, now)) return { code: 'expired', terminal: false };
+  if (capabilities !== null && !supportedRoute(capabilities, job.binding)) {
+    return { code: 'harness_unsupported', terminal: false };
+  }
+  return checkLimits(tx, policy, record, capabilities?.busy ?? null);
+}
+
+function block(tx: DispatchTx, record: DispatchRecord, { code, terminal }: Refusal): ClaimResult {
+  if (terminal) tx.put({ ...record, state: 'rejected', reason: code });
+  else if (record.reason !== code) tx.put({ ...record, reason: code });
+  return { kind: 'blocked', code };
+}
+
+/**
+ * Runs inside `DispatchLedger.transact` before any verification. It records why a queued job
+ * cannot claim now, so a paused or exhausted job is not re-verified on every wake. Returns the
+ * record when it may go on to verification and the claim, which checks everything again.
+ */
+export function precheck(tx: DispatchTx, releaseId: DispatchRecord['releaseId'], now: Date): DispatchRecord | null {
+  const record = tx.record(releaseId);
+  if (record?.state !== 'queued') return null;
+  const refused = refusal(tx, record, now, null);
+  if (refused === null) return record;
+  block(tx, record, refused);
+  return null;
+}
+
 /** Runs inside `DispatchLedger.transact`. Never performs an external effect. */
 export function claim(tx: DispatchTx, input: ClaimInput): ClaimResult {
   const { job } = input;
@@ -40,25 +86,8 @@ export function claim(tx: DispatchTx, input: ClaimInput): ClaimResult {
     return { kind: 'blocked', code: 'claimed_elsewhere' };
   }
 
-  const block = (code: BlockCode, terminal: boolean): ClaimResult => {
-    if (terminal) tx.put({ ...record, state: 'rejected', reason: code });
-    else if (record.reason !== code) tx.put({ ...record, reason: code });
-    return { kind: 'blocked', code };
-  };
-
-  const policy = tx.policy();
-  if (!usablePolicy(policy)) return block('unconfigured', false);
-
-  const current = tx.binding(job.binding.bindingId);
-  if (current === null) return block('stale_binding', true);
-  if (current.revoked) return block('revoked', true);
-  if (!sameSessionBinding(current.binding, job.binding)) return block('stale_binding', true);
-  if (job.policyVersion !== policy.version) return block('stale_policy', true);
-  if (policy.paused) return block('paused', false);
-  if (expired(policy, input.now)) return block('expired', false);
-
-  const limited = checkLimits(tx, policy, record, input.harnessBusy);
-  if (limited !== null) return block(limited.code, limited.terminal);
+  const refused = refusal(tx, record, input.now, input.capabilities);
+  if (refused !== null) return block(tx, record, refused);
 
   reserve(tx, record);
   tx.put({
@@ -84,5 +113,6 @@ export function queuedRecord(job: UnverifiedReleasedJob, seq: number): DispatchR
     workerId: null,
     claimedAt: null,
     receipts: [],
+    abandonedBy: null,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deferred, makeRelease, receipt, recordOf, seed, testPolicy, world } from './fakes';
+import { deferred, makeRelease, ownerAuthority, receipt, recordOf, seed, testPolicy, world } from './fixtures/fakes';
 import type { DeliveryReceipt } from '@khala/contracts/delivery/index';
 
 describe('budget and causal accounting', () => {
@@ -73,7 +73,7 @@ describe('budget and causal accounting', () => {
     await dispatcher.idle();
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'outcome_unknown' });
 
-    expect(await dispatcher.abandon('release-1')).toBe(true);
+    expect(await dispatcher.abandon(ownerAuthority(), 'release-1')).toBe(true);
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2' })).job);
     await dispatcher.idle();
     expect(w.harness.submittedIds()).toEqual(['release-1']);

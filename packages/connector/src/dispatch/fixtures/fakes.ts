@@ -1,16 +1,17 @@
-// Test doubles for dispatch. Not exported from `index.ts`. A "restart" is a new dispatcher over the
+// Test doubles for dispatch. Test-only: not exported from `index.ts`, and production code may not
+// import from `fixtures/`. A "restart" is a new dispatcher over the
 // same ledger; a "crash" is a ledger or harness call that throws at a chosen boundary.
 
 import { createHash } from 'node:crypto';
 import {
-  type ApprovalCommand, type BindingId, type CausalRootId, type CommandId, type DeliveryReceipt, type EventRef,
-  type HarnessCapabilities, type HarnessPort, type ReceiptKind, type ReleasedJob, type SessionBinding,
-  type UnverifiedReleasedJob, decodeDeliveryLimits, releaseFromApproval,
+  type ApprovalCommand, type AuthorizationId, type BindingId, type CausalRootId, type CommandId, type DeliveryReceipt,
+  type EventRef, type HarnessCapabilities, type HarnessPort, type OwnerAuthority, type ReceiptKind, type ReleasedJob,
+  type SessionBinding, type UnverifiedReleasedJob, decodeDeliveryLimits, releaseFromApproval,
 } from '@khala/contracts/delivery/index';
-import { queuedRecord } from './claim';
+import { queuedRecord } from '../claim';
 import { createMemoryLedger, type MemoryLedger } from './memory-ledger';
-import { createDispatcher } from './run';
-import type { DispatchDeps, DispatchLedger, DispatchPolicy, Dispatcher } from './types';
+import { createDispatcher } from '../run';
+import type { DispatchDeps, DispatchLedger, DispatchPolicy, Dispatcher } from '../types';
 
 export const POLICY_VERSION = 3;
 
@@ -27,11 +28,25 @@ export function testPolicy(overrides: Partial<DispatchPolicy> = {}): DispatchPol
   };
 }
 
+export const OWNER = 'owner-b' as SessionBinding['ownerId'];
+
+/** Owner authority as trusted composition would construct it after authenticating the owner. */
+export function ownerAuthority(overrides: Partial<OwnerAuthority> = {}): OwnerAuthority {
+  return {
+    ownerId: OWNER,
+    issuer: 'https://id.example.test',
+    subject: 'owner-b-subject',
+    authenticatedAt: '2026-09-18T00:30:00Z',
+    authorizationId: 'authz-abandon-1' as AuthorizationId,
+    ...overrides,
+  };
+}
+
 export function binding(id: string, generation = 0): SessionBinding {
   return {
     v: 1,
     bindingId: id as BindingId,
-    ownerId: 'owner-b' as SessionBinding['ownerId'],
+    ownerId: OWNER,
     agentParticipantId: `agent-${id}` as SessionBinding['agentParticipantId'],
     deviceId: 'dev-b' as SessionBinding['deviceId'],
     harness: 'codex',
@@ -52,7 +67,10 @@ export function makeRelease(input: Readonly<{
   bindingId?: string;
   root?: string;
   generation?: number;
+  policyVersion?: number;
+  payload?: Uint8Array;
 }>): Release {
+  const policyVersion = input.policyVersion ?? POLICY_VERSION;
   const bound = binding(input.bindingId ?? 'bind-1', input.generation ?? 0);
   const event: EventRef = {
     v: 1,
@@ -67,17 +85,17 @@ export function makeRelease(input: Readonly<{
     commandId: `approve-${input.releaseId}` as CommandId,
     roomId: event.roomId,
     bindingId: bound.bindingId,
-    expectedPolicyVersion: POLICY_VERSION,
+    expectedPolicyVersion: policyVersion,
     expectedBindingGeneration: bound.generation,
     selection: [event],
     issuedAt: '2026-09-18T00:00:00Z',
   };
-  const payload = new TextEncoder().encode(`payload for ${input.releaseId}`);
+  const payload = input.payload ?? new TextEncoder().encode(`payload for ${input.releaseId}`);
   const released = releaseFromApproval({
     approval,
     items: [event],
     binding: bound,
-    policyVersion: POLICY_VERSION,
+    policyVersion,
     release: {
       releaseId: input.releaseId as ReleasedJob['releaseId'],
       payloadRef: `ledger-${input.releaseId}`,
@@ -105,13 +123,18 @@ export function receipt(job: UnverifiedReleasedJob, kind: ReceiptKind, extra: Pa
   };
 }
 
+export const MAX_PAYLOAD_BYTES = 4096;
+
 const LIMITS = (() => {
-  const decoded = decodeDeliveryLimits({ maxSelectionEvents: 50, maxPayloadBytes: 4096 });
+  const decoded = decodeDeliveryLimits({ maxSelectionEvents: 50, maxPayloadBytes: MAX_PAYLOAD_BYTES });
   if (!decoded.ok) throw new Error('fixture limits rejected');
   return decoded.value;
 })();
 
-export function capabilities(busy: HarnessCapabilities['busy'] = 'queue'): HarnessCapabilities {
+export function capabilities(
+  busy: HarnessCapabilities['busy'] = 'queue',
+  overrides: Partial<HarnessCapabilities> = {},
+): HarnessCapabilities {
   return {
     v: 1,
     harness: 'codex',
@@ -125,6 +148,7 @@ export function capabilities(busy: HarnessCapabilities['busy'] = 'queue'): Harne
     reconcileByReleaseId: 'while_queued',
     limits: LIMITS,
     evidenceRef: 'docs/evidence/codex.md',
+    ...overrides,
   };
 }
 
@@ -143,10 +167,16 @@ export type SubmitBehavior = (job: ReleasedJob) => Promise<DeliveryReceipt>;
 export class FakeHarness implements HarnessPort {
   readonly submitted: Array<Readonly<{ job: ReleasedJob; payload: Uint8Array }>> = [];
   busy: HarnessCapabilities['busy'] = 'queue';
+  /** Replaces fields of the reported capabilities, or the whole report when it is not an object. */
+  route: Partial<HarnessCapabilities> | null = {};
+  inspected = 0;
   onSubmit: SubmitBehavior = async job => receipt(job, 'harness_queued');
   onReconcile: (job: ReleasedJob) => Promise<DeliveryReceipt | null> = async () => null;
 
-  async inspect(): Promise<HarnessCapabilities> { return capabilities(this.busy); }
+  async inspect(): Promise<HarnessCapabilities> {
+    this.inspected += 1;
+    return (this.route === null ? null : capabilities(this.busy, this.route)) as HarnessCapabilities;
+  }
   async notify(): Promise<void> {}
   async submit(input: Readonly<{ job: ReleasedJob; payload: Uint8Array }>): Promise<DeliveryReceipt> {
     this.submitted.push(input);
@@ -158,17 +188,17 @@ export class FakeHarness implements HarnessPort {
   submittedIds(): string[] { return this.submitted.map(entry => entry.job.releaseId); }
 }
 
-/** Wraps a ledger so a chosen transaction throws before or after it commits. */
+/** Wraps a ledger so chosen transactions throw before or after they commit. */
 export function faultyLedger(inner: DispatchLedger): DispatchLedger & { crashAt(n: number, when: 'before' | 'after'): void; count: number } {
-  let crash: { n: number; when: 'before' | 'after' } | null = null;
+  const crashes = new Map<number, 'before' | 'after'>();
   const ledger = {
     count: 0,
-    crashAt(n: number, when: 'before' | 'after') { crash = { n, when }; },
+    crashAt(n: number, when: 'before' | 'after') { crashes.set(n, when); },
     async transact<T>(work: Parameters<DispatchLedger['transact']>[0]): Promise<T> {
       const index = ++ledger.count;
-      if (crash?.n === index && crash.when === 'before') throw new Error('crash before commit');
+      if (crashes.get(index) === 'before') throw new Error('crash before commit');
       const result = await inner.transact(work) as T;
-      if (crash?.n === index && crash.when === 'after') throw new Error('crash after commit');
+      if (crashes.get(index) === 'after') throw new Error('crash after commit');
       return result;
     },
   };
@@ -181,15 +211,25 @@ export type World = {
   releases: Map<string, Release>;
   errors: unknown[];
   now: Date;
+  /** Payload refs read, with the byte limit each read was given. */
+  reads: Array<Readonly<{ ref: string; maxBytes: number }>>;
+  /** Approval command IDs looked up, in order. */
+  lookups: string[];
+  /** Runs inside each approval lookup, before it returns. */
+  onApproval: (commandId: string) => Promise<void> | void;
   add(release: Release): Release;
+  /** Sets the effective policy of every binding. */
+  setPolicy(policy: DispatchPolicy | null): Promise<void>;
   dispatcher(overrides?: Partial<DispatchDeps>): Dispatcher;
 };
 
 export async function world(policy: DispatchPolicy | null = testPolicy(), bindingIds = ['bind-1', 'bind-2', 'bind-3']): Promise<World> {
   const ledger = createMemoryLedger();
   await ledger.transact(tx => {
-    tx.setPolicy(policy);
-    for (const id of bindingIds) tx.setBinding({ binding: binding(id), revoked: false });
+    for (const id of bindingIds) {
+      tx.setBinding({ binding: binding(id), revoked: false });
+      tx.setPolicy(id as BindingId, policy);
+    }
   });
   const releases = new Map<string, Release>();
   const approvals = new Map<string, ApprovalCommand>();
@@ -201,6 +241,12 @@ export async function world(policy: DispatchPolicy | null = testPolicy(), bindin
     releases,
     errors: [],
     now: new Date('2026-09-18T01:00:00Z'),
+    reads: [],
+    lookups: [],
+    onApproval: () => undefined,
+    setPolicy: next => ledger.transact(tx => {
+      for (const id of bindingIds) tx.setPolicy(id as BindingId, next);
+    }),
     add(release) {
       releases.set(release.job.releaseId, release);
       approvals.set(release.approval.commandId, release.approval);
@@ -211,8 +257,19 @@ export async function world(policy: DispatchPolicy | null = testPolicy(), bindin
       return createDispatcher({
         ledger,
         harness: state.harness,
-        approvals: { get: async id => approvals.get(id) ?? null },
-        payloads: { read: async ref => payloads.get(ref) ?? null },
+        approvals: {
+          get: async id => {
+            state.lookups.push(id);
+            await state.onApproval(id);
+            return approvals.get(id) ?? null;
+          },
+        },
+        payloads: {
+          read: async (ref, maxBytes) => {
+            state.reads.push({ ref, maxBytes });
+            return payloads.get(ref)?.subarray(0, maxBytes + 1) ?? null;
+          },
+        },
         digest: async bytes => sha256(bytes),
         clock: { now: () => state.now },
         newId: kind => `${kind}-${++ids}`,
@@ -229,5 +286,5 @@ export async function world(policy: DispatchPolicy | null = testPolicy(), bindin
 export const seed = (ledger: DispatchLedger, job: UnverifiedReleasedJob) =>
   ledger.transact(tx => tx.put(queuedRecord(job, tx.nextSeq())));
 
-export const recordOf =(ledger: DispatchLedger, releaseId: string) =>
+export const recordOf = (ledger: DispatchLedger, releaseId: string) =>
   ledger.transact(tx => tx.record(releaseId as ReleasedJob['releaseId']));

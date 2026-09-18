@@ -2,8 +2,10 @@
 // once, correlated to one release, and moves the record only toward a state it proves. Nothing here
 // returns a record to `queued`, so an intent is submitted at most once.
 
-import type { DeliveryReceipt, ReceiptKind } from '@khala/contracts/delivery/index';
-import type { DispatchRecord, DispatchState, DispatchTx } from './types';
+import {
+  type DeliveryReceipt, type OwnerAuthority, type ReceiptKind, decodeDeliveryReceipt,
+} from '@khala/contracts/delivery/index';
+import { type DispatchRecord, type DispatchState, type DispatchTx, MAX_RECEIPTS } from './types';
 
 /** States a record reaches only after its dispatch intent was persisted. */
 const AFTER_INTENT: readonly DispatchState[] = [
@@ -19,6 +21,15 @@ const PROVES: Partial<Record<ReceiptKind, DispatchState>> = {
   cancelled: 'cancelled',
   failed: 'failed',
 };
+
+/** A receipt from the harness or an observer, decoded before it can touch a record; else null. */
+export function decodeReceipt(input: unknown): DeliveryReceipt | null {
+  const decoded = decodeDeliveryReceipt(input);
+  return decoded.ok ? decoded.value : null;
+}
+
+const sameReceipt = (a: DeliveryReceipt, b: DeliveryReceipt): boolean =>
+  (Object.keys(a) as (keyof DeliveryReceipt)[]).every(key => a[key] === b[key]);
 
 export function correlates(record: DispatchRecord, receipt: DeliveryReceipt): boolean {
   return receipt.releaseId === record.releaseId
@@ -42,13 +53,16 @@ function next(current: DispatchState, evidence: DispatchState): DispatchState {
 }
 
 /**
- * Stores a correlated receipt and applies the state it proves. Returns false for a receipt that
- * belongs to no dispatched attempt; it is not stored.
+ * Stores a decoded, correlated receipt and applies the state it proves. Returns false, storing
+ * nothing, for a receipt that belongs to no dispatched attempt, reuses a stored receipt ID with other
+ * content, or would exceed `MAX_RECEIPTS`.
  */
 export function applyReceipt(tx: DispatchTx, receipt: DeliveryReceipt): boolean {
   const record = tx.record(receipt.releaseId);
   if (record === null || !AFTER_INTENT.includes(record.state) || !correlates(record, receipt)) return false;
-  if (record.receipts.some(seen => seen.receiptId === receipt.receiptId)) return true;
+  const seen = record.receipts.find(stored => stored.receiptId === receipt.receiptId);
+  if (seen !== undefined) return sameReceipt(seen, receipt);
+  if (record.receipts.length >= MAX_RECEIPTS) return false;
   tx.put({ ...record, state: next(record.state, proven(receipt)), receipts: [...record.receipts, receipt] });
   return true;
 }
@@ -62,10 +76,19 @@ export function markUnknown(tx: DispatchTx, releaseId: DispatchRecord['releaseId
   if (record?.state === 'dispatching' && record.attemptId === attemptId) tx.put({ ...record, state: 'outcome_unknown' });
 }
 
-/** Ends an unknown outcome on owner authority. The reservation is kept. */
-export function abandonUnknown(tx: DispatchTx, releaseId: DispatchRecord['releaseId']): boolean {
+/**
+ * Ends an unknown outcome on the authority of the binding's owner and records the authorization.
+ * The reservation is kept.
+ */
+export function abandonUnknown(
+  tx: DispatchTx,
+  authority: OwnerAuthority | null | undefined,
+  releaseId: DispatchRecord['releaseId'],
+): boolean {
   const record = tx.record(releaseId);
   if (record?.state !== 'outcome_unknown') return false;
-  tx.put({ ...record, state: 'abandoned' });
+  if (typeof authority?.authorizationId !== 'string' || authority.authorizationId === '') return false;
+  if (authority.ownerId !== record.job.binding.ownerId) return false;
+  tx.put({ ...record, state: 'abandoned', abandonedBy: authority.authorizationId });
   return true;
 }

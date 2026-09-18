@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { deferred, faultyLedger, makeRelease, receipt, recordOf, seed, testPolicy, world } from './fakes';
+import {
+  MAX_PAYLOAD_BYTES, deferred, faultyLedger, makeRelease, receipt, recordOf, seed, testPolicy, world,
+} from './fixtures/fakes';
+import type { DispatchLedger } from './types';
 
 // With a release seeded and no dispatcher awake, one pass makes these transactions in order.
 const QUEUE_READ = 1;
@@ -51,6 +54,80 @@ describe('submission and receipt persistence', () => {
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
     await dispatcher.idle();
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'outcome_unknown' });
+  });
+
+  it('quarantines a payload over the harness limit, reading no more than the limit allows', async () => {
+    const w = await world();
+    const release = w.add(makeRelease({ releaseId: 'release-1', payload: new Uint8Array(MAX_PAYLOAD_BYTES + 1).fill(0x61) }));
+    const dispatcher = w.dispatcher();
+    await dispatcher.enqueue(release.job);
+    await dispatcher.idle();
+    expect(w.harness.submitted).toHaveLength(0);
+    expect(w.reads).toEqual([{ ref: release.job.payloadRef, maxBytes: MAX_PAYLOAD_BYTES }]);
+    expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'quarantined', reason: 'payload_invalid' });
+  });
+
+  it('submits a payload exactly at the harness limit', async () => {
+    const w = await world();
+    const release = w.add(makeRelease({ releaseId: 'release-1', payload: new Uint8Array(MAX_PAYLOAD_BYTES).fill(0x61) }));
+    const dispatcher = w.dispatcher();
+    await dispatcher.enqueue(release.job);
+    await dispatcher.idle();
+    expect(w.harness.submitted[0]!.payload).toEqual(release.payload);
+  });
+
+  it('submits its own copy of the verified bytes, not the store\'s buffer', async () => {
+    const w = await world();
+    const release = w.add(makeRelease({ releaseId: 'release-1' }));
+    const verified = release.payload.slice();
+    const dispatcher = w.dispatcher({
+      // The store's buffer changes after the digest check and before the submission.
+      newId: kind => {
+        release.payload.set([0x58], 0);
+        return `${kind}-1`;
+      },
+    });
+    await dispatcher.enqueue(release.job);
+    await dispatcher.idle();
+    expect(w.harness.submitted[0]!.payload).toEqual(verified);
+  });
+
+  it('reads the clock inside the claiming transaction', async () => {
+    const w = await world(testPolicy({ expiresAt: '2026-09-18T02:00:00Z' }));
+    const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
+    await seed(w.ledger, job);
+    let count = 0;
+    // The policy expires while the claim waits for its transaction.
+    const ledger: DispatchLedger = {
+      transact: work => {
+        count += 1;
+        if (count === CLAIM) {
+          return w.ledger.transact(tx => {
+            w.now = new Date('2026-09-18T02:00:00Z');
+            return work(tx);
+          });
+        }
+        return w.ledger.transact(work);
+      },
+    };
+    const dispatcher = w.dispatcher({ ledger });
+    dispatcher.wake();
+    await dispatcher.idle();
+    expect(w.harness.submitted).toHaveLength(0);
+    expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'expired' });
+  });
+
+  it.each([
+    ['a receipt missing its fields', (job: { releaseId: string }) => ({ kind: 'completed', releaseId: job.releaseId })],
+    ['a completed receipt carrying an error code', (job: Parameters<typeof receipt>[0]) => receipt(job, 'completed', { errorCode: 'timeout' })],
+    ['no receipt at all', () => null],
+  ] as const)('treats %s from the harness as no evidence', async (_, reply) => {
+    const w = await world();
+    w.harness.onSubmit = async job => reply(job as never) as never;
+    const dispatcher = w.dispatcher();
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+    await dispatcher.idle();
+    expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'outcome_unknown', receipts: [] });
   });
 
   it('treats an uncorrelated receipt as no evidence', async () => {
@@ -110,10 +187,11 @@ describe('submission and receipt persistence', () => {
       expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'outcome_unknown' });
     });
 
-    it('AE2: after the call but before the receipt commits: a restart does not resubmit', async () => {
+    it('AE2: a failed receipt commit leaves the outcome unknown, and a restart does not resubmit', async () => {
       const { w } = await crashing(RECEIPT, 'before');
       expect(w.harness.submittedIds()).toEqual(['release-1']);
-      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'dispatching' });
+      // The receipt is lost with its commit, so nothing proves what the harness did.
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'outcome_unknown', receipts: [] });
       const restarted = w.dispatcher({ workerId: 'worker-2' });
       restarted.wake();
       await restarted.reconcile('release-1');
@@ -122,7 +200,7 @@ describe('submission and receipt persistence', () => {
       expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'outcome_unknown' });
     });
 
-    it('during the receipt commit: the committed receipt stands', async () => {
+    it('after the receipt commits: the committed receipt stands', async () => {
       const { w } = await crashing(RECEIPT, 'after');
       expect(w.harness.submittedIds()).toEqual(['release-1']);
       expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'accepted' });

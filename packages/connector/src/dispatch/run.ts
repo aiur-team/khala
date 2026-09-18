@@ -3,12 +3,12 @@
 // harness reported. It never retries a submission: a lost response becomes `outcome_unknown`.
 
 import {
-  type DeliveryReceipt, type ReleaseId, type ReleasedJob, type UnverifiedReleasedJob, validatePayloadBytes,
-  verifyReleasedJob,
+  type DeliveryReceipt, type HarnessCapabilities, type OwnerAuthority, type ReleaseId, type ReleasedJob,
+  type UnverifiedReleasedJob, decodeHarnessCapabilities, validatePayloadBytes, verifyReleasedJob,
 } from '@khala/contracts/delivery/index';
-import { claim, queuedRecord, sameRelease } from './claim';
-import { abandonUnknown, applyReceipt, markUnknown } from './reconcile';
-import type { DispatchDeps, Dispatcher, EnqueueResult, QuarantineCode } from './types';
+import { claim, precheck, queuedRecord, sameRelease } from './claim';
+import { abandonUnknown, applyReceipt, decodeReceipt, markUnknown } from './reconcile';
+import type { BlockCode, DispatchDeps, Dispatcher, EnqueueResult, QuarantineCode } from './types';
 
 type Verified = Readonly<{ ok: true; job: ReleasedJob }> | Readonly<{ ok: false; code: QuarantineCode }>;
 
@@ -37,6 +37,19 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     });
   }
 
+  /** Records why a queued job waits, without claiming it. */
+  async function hold(job: UnverifiedReleasedJob, code: BlockCode): Promise<void> {
+    await ledger.transact(tx => {
+      const record = tx.record(job.releaseId);
+      if (record?.state === 'queued' && sameRelease(record.job, job) && record.reason !== code) tx.put({ ...record, reason: code });
+    });
+  }
+
+  async function inspect(job: ReleasedJob): Promise<HarnessCapabilities | null> {
+    const decoded = decodeHarnessCapabilities(await harness.inspect(job.binding));
+    return decoded.ok ? decoded.value : null;
+  }
+
   function connectorUnknown(job: ReleasedJob): DeliveryReceipt {
     return {
       v: 1,
@@ -53,38 +66,49 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
   }
 
   async function submit(job: ReleasedJob, payload: Uint8Array, attemptId: string): Promise<void> {
-    let receipt: DeliveryReceipt;
+    let receipt: DeliveryReceipt | null;
     try {
-      receipt = await harness.submit({ job, payload });
+      receipt = decodeReceipt(await harness.submit({ job, payload }));
     } catch {
       receipt = connectorUnknown(job);
     }
-    // A receipt naming another release is evidence about nothing we sent.
-    const stored = receipt.releaseId === job.releaseId && await ledger.transact(tx => applyReceipt(tx, receipt));
+    // A malformed receipt, or one naming another release, is evidence about nothing we sent.
+    let stored = false;
+    if (receipt?.releaseId === job.releaseId) {
+      const evidence = receipt;
+      try {
+        stored = await ledger.transact(tx => applyReceipt(tx, evidence));
+      } catch (error) {
+        // The receipt is lost with its commit. What the harness did is now unknown.
+        report(error);
+      }
+    }
     if (!stored) await ledger.transact(tx => markUnknown(tx, job.releaseId, attemptId));
     // A settled submission may have freed a slot or its binding.
     wake();
   }
 
   async function attempt(releaseId: ReleaseId): Promise<void> {
-    const record = await ledger.transact(tx => tx.record(releaseId));
-    if (record?.state !== 'queued') return;
+    // A job the controls hold now is not verified again until they change.
+    const record = await ledger.transact(tx => precheck(tx, releaseId, deps.clock.now()));
+    if (record === null) return;
 
     const verified = await verify(record.job);
     if (!verified.ok) return quarantine(record.job, verified.code);
     const { job } = verified;
-    const stored = await deps.payloads.read(job.payloadRef);
+    const capabilities = await inspect(job);
+    if (capabilities === null) return hold(job, 'harness_unsupported');
+    const stored = await deps.payloads.read(job.payloadRef, capabilities.limits.maxPayloadBytes);
     if (stored === null) return quarantine(job, 'payload_missing');
     // Our own copy: the bytes checked against the digest are exactly the bytes submitted.
     const payload = stored.slice();
-    const capabilities = await harness.inspect(job.binding);
     if (!validatePayloadBytes(payload, capabilities.limits).ok) return quarantine(job, 'payload_invalid');
     if (await deps.digest(payload) !== job.payloadDigest) return quarantine(job, 'payload_digest_mismatch');
+    if (stopped) return;
 
     const attemptId = deps.newId('attempt');
-    const now = deps.clock.now();
     const claimed = await ledger.transact(tx => claim(tx, {
-      job, harnessBusy: capabilities.busy, now, attemptId, workerId: deps.workerId,
+      job, capabilities, now: deps.clock.now(), attemptId, workerId: deps.workerId,
     }));
     if (claimed.kind !== 'claimed') return;
 
@@ -142,7 +166,9 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     return result;
   }
 
-  async function observe(receipt: DeliveryReceipt): Promise<boolean> {
+  async function observe(input: unknown): Promise<boolean> {
+    const receipt = decodeReceipt(input);
+    if (receipt === null) return false;
     const stored = await ledger.transact(tx => applyReceipt(tx, receipt));
     if (stored) wake();
     return stored;
@@ -158,7 +184,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     if (verified.ok) {
       let evidence: DeliveryReceipt | null = null;
       try {
-        evidence = await harness.reconcile(verified.job);
+        evidence = decodeReceipt(await harness.reconcile(verified.job));
       } catch (error) {
         report(error);
       }
@@ -172,8 +198,8 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     wake();
   }
 
-  async function abandon(releaseId: string): Promise<boolean> {
-    const abandoned = await ledger.transact(tx => abandonUnknown(tx, releaseId as ReleaseId));
+  async function abandon(authority: OwnerAuthority, releaseId: string): Promise<boolean> {
+    const abandoned = await ledger.transact(tx => abandonUnknown(tx, authority, releaseId as ReleaseId));
     if (abandoned) wake();
     return abandoned;
   }

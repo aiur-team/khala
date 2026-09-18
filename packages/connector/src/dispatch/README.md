@@ -8,27 +8,49 @@ subscription and harness; KHA-135 binds pause and budget status.
 
 | Port | Responsibility |
 |---|---|
-| `DispatchLedger` | One local transaction at a time: effective policy, binding state, dispatch records and causal counters. Must be serializable across processes. No external effect runs inside it |
+| `DispatchLedger` | One local transaction at a time: each binding's effective policy, binding state, dispatch records and causal counters. Must be serializable across processes. Work runs synchronously; a throw rolls it back. No external effect runs inside it |
 | `HarnessPort` (contract) | `inspect`, `submit`, `reconcile` for the bound session |
 | `approvals` | The approval a release names, from the owner connector's own ledger |
-| `payloads` | Owner-local payload bytes by `payloadRef` |
+| `payloads` | Owner-local payload bytes by `payloadRef`, reading at most the harness byte limit plus one |
 | `digest` | KHA-119 canonical payload digest |
 | `clock`, `newId`, `workerId` | Time, attempt and receipt IDs, and this process's identity |
 
-`createMemoryLedger()` is an in-process reference ledger for tests. It is not durable.
+The test doubles and `createMemoryLedger()`, an in-process reference ledger, live under
+`fixtures/`. They are test-only: `index.ts` does not export them, and the boundary check refuses
+production imports of `fixtures/`. The memory ledger is not durable, so a restart that re-enqueued
+from it could submit twice.
 
 ## Dispatch order
 
-1. Read the queued release. Verify it against its approval (`verifyReleasedJob`), read its
-   payload, apply the harness `DeliveryLimits` and compare the digest. Any failure
-   quarantines the release. Nothing is reserved and nothing is sent.
-2. **Claim**, in one ledger transaction: recheck the effective policy, revocation and binding
-   generation, check limits, reserve one attempt under the causal root and persist the
-   dispatch intent with a stable attempt ID.
-3. Submit the verified bytes once. Persist the returned receipt if it names this release and
-   correlates with its binding and generation. A settled submission starts another pass.
-4. Anything else becomes `outcome_unknown`: a thrown call, an uncorrelated receipt, a
-   transport write, or a `failed` caused by `disconnected` or `timeout`.
+1. **Precheck**, in one ledger transaction: a queued release that the controls hold now
+   (paused, expired, unconfigured, over a limit) records why and waits. It is not verified
+   again until the controls change.
+2. Verify the release against its approval (`verifyReleasedJob`). Inspect and decode the harness
+   capabilities. Read the payload up to the harness byte limit, apply the `DeliveryLimits` and
+   compare the digest. Any failure quarantines the release. Nothing is reserved and nothing is
+   sent.
+3. **Claim**, in one ledger transaction that also reads the clock: recheck revocation, binding
+   generation and the binding's own effective policy, check the harness route and the limits,
+   reserve one attempt under the causal root and persist the dispatch intent with a stable
+   attempt ID.
+4. Submit the verified bytes once. Decode the returned receipt, and persist it if it names this
+   release and correlates with its binding and generation. A settled submission starts another
+   pass.
+5. Anything else becomes `outcome_unknown`: a thrown call, a malformed or uncorrelated receipt, a
+   receipt whose commit failed, a transport write, or a `failed` caused by `disconnected` or
+   `timeout`.
+
+If even the fallback to `outcome_unknown` cannot be committed, the record stays `dispatching`.
+Composition must therefore call `reconcile` on startup for every `dispatching` record. That
+marks it `outcome_unknown` unless native evidence settles it, and it never resubmits.
+
+## Harness route
+
+A job is claimed only for a route that delivers into the existing session without steering a turn
+the human is running (KD1). The decoded `HarnessCapabilities` must report `support` other than
+`unsupported`, `existingSession: khala_hosted_resume`, the binding's own `harness`, and `busy` of
+`queue` or `reject`. Otherwise the job waits as `harness_unsupported`, even when the ledger shows
+the session idle.
 
 ## Linearization point and in-flight limit
 
@@ -52,14 +74,20 @@ queued → dispatching → accepted → completed
 
 A record never returns to `queued` after its intent is persisted, so each release is
 submitted at most once. Waiting reasons (`paused`, `expired`, `unconfigured`,
-`budget_exhausted`, `at_capacity`, `busy`) leave the record queued for a later `wake()`.
+`budget_exhausted`, `at_capacity`, `busy`, `harness_unsupported`) leave the record queued for a
+later `wake()`.
 `stale_binding`, `stale_policy`, `revoked` and `busy` under a `reject` policy reject it.
 
 `reconcile(releaseId)` asks the harness for native evidence about an unfinished intent. With
 no evidence, a `dispatching` record becomes `outcome_unknown`: neither a timeout nor an empty
 lookup proves the submission did not happen. A claim made by another process is never
 resubmitted, because an expired claim does not prove its owner stopped. `abandon` ends an
-unknown outcome on owner authority. The caller checks that authority.
+unknown outcome. It takes an `OwnerAuthority` whose `ownerId` owns the binding, and records its
+`authorizationId` on the record. Any other authority is refused.
+
+Receipts from `submit`, `reconcile` and `observe` are decoded with `decodeDeliveryReceipt` before
+they touch a record. Each record keeps at most `MAX_RECEIPTS` receipts. A stored receipt ID that
+comes back with other content is refused.
 
 `stop()` stops new claims and waits for the submissions this instance already started. The
 dispatcher sets no submission timeout, because a timeout does not show whether the harness
@@ -67,22 +95,28 @@ accepted the job.
 
 ## Limits
 
-`DispatchPolicy` is candidate configuration, not an approved product default. A missing
-policy, or a limit that is not a positive safe integer, blocks every claim.
+`DispatchPolicy` is candidate configuration, not an approved product default. The ledger holds
+one effective policy per binding. A missing policy, or one with an unknown or missing field, a
+non-boolean `paused`, a limit that is not a positive safe integer, an expiry that is not a strict
+UTC timestamp, or an unknown `busy` value, blocks every claim on that binding.
 
 - `maxJobsPerCausalRoot` counts dispatch attempts under the trusted causal root the
   releaser sets. It is a job-count cap, not a spend or token cap. Nothing in this module
   resets or refunds a reservation, including after a definitive rejection, an unknown
-  outcome or an abandon. Enqueueing the same release ID with another root, or a second
-  release of an approval that already has one, is a `conflict`.
-- `maxConcurrentJobs` counts `dispatching`, `accepted` and `outcome_unknown` records.
+  outcome or an abandon. Each approval has at most one release: enqueueing the same release
+  ID with another root, or a second release of an approval that already has one, is a
+  `conflict`.
+- `maxConcurrentJobs` counts `dispatching`, `accepted` and `outcome_unknown` records across all
+  bindings, against the claiming binding's limit.
   Accepted work holds its slot until `observe` records `completed`, `failed` or
   `cancelled`. An unknown outcome holds its slot until evidence arrives or it is abandoned.
 - `busy` applies when the bound session already has active work: `wait` holds the job,
   `reject` rejects it, `queue` submits it only if the harness route reports `busy: queue`.
   Otherwise it waits.
-- `version` must equal the release's `policyVersion`. A version change therefore rejects
-  releases queued under the old version. KHA-135 should apply a pause without changing it.
+- `version` is the binding's effective policy version, and must equal the release's
+  `policyVersion`. A re-arm of one binding therefore rejects that binding's releases queued
+  under the old version, and leaves other bindings alone. KHA-135 should apply a pause without
+  changing the version.
 
 ## Open gate
 

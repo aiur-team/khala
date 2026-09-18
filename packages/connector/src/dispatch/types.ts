@@ -2,17 +2,21 @@
 // approvals, payload store, codec, harness and clock are all supplied by composition (KHA-133).
 
 import type {
-  ApprovalCommand, BindingId, CausalRootId, CommandId, DeliveryReceipt, HarnessPort, ReleaseId, ReleasedJob,
-  SessionBinding, UnverifiedReleasedJob,
+  ApprovalCommand, AuthorizationId, BindingId, CausalRootId, CommandId, DeliveryReceipt, HarnessPort, OwnerAuthority,
+  ReleaseId, ReleasedJob, SessionBinding, UnverifiedReleasedJob,
 } from '@khala/contracts/delivery/index';
 
 /**
- * Candidate automation controls. These are not product defaults: G-AUTOMATION decides limits,
- * budget scope and unit, reset ownership and busy behavior. A missing or non-finite policy blocks
- * every claim. `maxJobsPerCausalRoot` counts dispatch attempts; it is not a token or spend cap.
+ * Candidate automation controls for one binding. These are not product defaults: G-AUTOMATION
+ * decides limits, budget scope and unit, reset ownership and busy behavior. A missing or malformed
+ * policy blocks every claim on its binding. `maxJobsPerCausalRoot` counts dispatch attempts; it is
+ * not a token or spend cap.
  */
 export type DispatchPolicy = Readonly<{
-  /** Must equal the release's `policyVersion`; any other version makes the release stale. */
+  /**
+   * The binding's effective policy version (`PolicyAck.effectiveVersion`). It must equal the
+   * release's `policyVersion`; any other version makes the release stale.
+   */
   version: number;
   paused: boolean;
   maxJobsPerCausalRoot: number;
@@ -50,7 +54,9 @@ export type BlockCode =
   | 'expired'
   | 'claimed_elsewhere'
   | 'unconfigured'
-  | 'at_capacity';
+  | 'at_capacity'
+  /** The harness route is not proven to deliver into this existing session without steering it. */
+  | 'harness_unsupported';
 
 export type QuarantineCode =
   | 'approval_missing'
@@ -72,9 +78,14 @@ export type DispatchRecord = Readonly<{
   attemptId: string | null;
   workerId: string | null;
   claimedAt: string | null;
-  /** Correlated observations, in arrival order, deduplicated by receipt ID. */
+  /** Correlated observations, in arrival order, deduplicated by receipt ID, at most `MAX_RECEIPTS`. */
   receipts: readonly DeliveryReceipt[];
+  /** The owner authorization that abandoned an unknown outcome, else null. */
+  abandonedBy: AuthorizationId | null;
 }>;
+
+/** Receipts kept per record. Later distinct receipts are refused, so a record stays bounded. */
+export const MAX_RECEIPTS = 32;
 
 /**
  * One local transaction. Work runs synchronously: every read and write inside it is atomic and
@@ -82,8 +93,8 @@ export type DispatchRecord = Readonly<{
  * If the work throws, nothing it wrote is committed. No external effect may run inside it.
  */
 export interface DispatchTx {
-  /** The effective policy the connector has applied, or null when none is configured. */
-  policy(): DispatchPolicy | null;
+  /** The effective policy the connector has applied to a binding, or null when none is configured. */
+  policy(bindingId: BindingId): DispatchPolicy | null;
   binding(bindingId: BindingId): BindingState | null;
   record(releaseId: ReleaseId): DispatchRecord | null;
   /** The release already recorded for an approval, in any state, or null. */
@@ -108,8 +119,11 @@ export type DispatchDeps = Readonly<{
   harness: HarnessPort;
   /** The approval a release names, from the owner connector's own ledger. */
   approvals: Readonly<{ get(commandId: CommandId): Promise<ApprovalCommand | null> }>;
-  /** Owner-local payload bytes by the release's `payloadRef`. */
-  payloads: Readonly<{ read(payloadRef: string): Promise<Uint8Array | null> }>;
+  /**
+   * Owner-local payload bytes by the release's `payloadRef`. The store reads at most
+   * `maxBytes + 1` bytes, so an oversized payload is detected without reading it in full.
+   */
+  payloads: Readonly<{ read(payloadRef: string, maxBytes: number): Promise<Uint8Array | null> }>;
   /** KHA-119 canonical payload digest (`sha256:<hex>`). */
   digest(payload: Uint8Array): Promise<string>;
   clock: Readonly<{ now(): Date }>;
@@ -136,11 +150,14 @@ export interface Dispatcher {
   wake(): void;
   /** Settles when no pass or submission started by this instance is running. */
   idle(): Promise<void>;
-  /** Records a later correlated observation, such as `completed`. */
-  observe(receipt: DeliveryReceipt): Promise<boolean>;
+  /** Decodes and records a later correlated observation, such as `completed`. */
+  observe(receipt: unknown): Promise<boolean>;
   /** Resolves an unfinished intent from native evidence; never resubmits. */
   reconcile(releaseId: string): Promise<void>;
-  /** Owner-authorized end of an unknown outcome. It frees the slot but refunds nothing. */
-  abandon(releaseId: string): Promise<boolean>;
+  /**
+   * Ends an unknown outcome on the authority of the binding's owner, and records that
+   * authorization. It frees the slot but refunds nothing. Any other authority is refused.
+   */
+  abandon(authority: OwnerAuthority, releaseId: string): Promise<boolean>;
   stop(): Promise<void>;
 }
