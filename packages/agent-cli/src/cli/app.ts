@@ -1,10 +1,12 @@
 import type { Readable, Writable } from 'node:stream';
-import type { BindingId } from '@khala/contracts/delivery/index';
+import type { BindingId, SessionBinding } from '@khala/contracts/delivery/index';
 import { CliError, cliErrorCode } from './errors.js';
 import type { Inbox, InboxItem } from './inbox.js';
 import { MAX_SEND_BYTES, SendService } from './send.js';
-import type { AgentClientPort } from './types.js';
-import { validBindingArgument } from './validation.js';
+import {
+  AGENT_ROUTES, CONNECT_REFUSAL_CODES, type AgentClientPort, type AgentStatus, type ConnectRefusalCode,
+} from './types.js';
+import { plainObject, validBindingArgument, validIdentifier } from './validation.js';
 import { runMcpServer } from '../mcp/server.js';
 
 export type CliDependencies = Readonly<{
@@ -32,7 +34,7 @@ export async function runCli(argv: readonly string[], deps: CliDependencies): Pr
 
 async function connect(args: readonly string[], deps: CliDependencies): Promise<number> {
   if (args.length !== 1 || !validLink(args[0])) throw new CliError('invalid_link');
-  const result = await deps.client.connect(args[0]!);
+  const result = publicConnectResult(await deps.client.connect(args[0]!, deps.signal));
   if (result.kind === 'unavailable') throw new CliError('transport_unavailable');
   if (result.kind === 'refused') { await write(deps.stdout, JSON.stringify({ ok: false, error: result.code }) + '\n'); return 3; }
   await write(deps.stdout, JSON.stringify({ ok: true, binding: result.binding, reused: result.reused }) + '\n');
@@ -42,22 +44,28 @@ async function connect(args: readonly string[], deps: CliDependencies): Promise<
 async function send(args: readonly string[], deps: CliDependencies): Promise<number> {
   const bindingId = optionalBinding(args);
   const body = await readStdin(deps.stdin, MAX_SEND_BYTES);
-  const result = await new SendService(deps.client).send(body, bindingId);
-  await write(deps.stdout, JSON.stringify({ ok: result.kind === 'accepted', ...result }) + '\n');
+  const result = await new SendService(deps.client).send(body, bindingId, undefined, deps.signal);
+  await write(deps.stdout, JSON.stringify(publicSendOutput(result)) + '\n');
   return result.kind === 'accepted' ? 0 : result.kind === 'refused' ? 3 : 4;
 }
 
 async function listen(args: readonly string[], deps: CliDependencies): Promise<number> {
   const requested = optionalBinding(args);
-  const current = await deps.client.status();
+  const current = publicStatus(await deps.client.status(deps.signal));
   if (!current.binding || !current.connected) throw new CliError('not_connected');
   if (requested !== null && requested !== current.binding.bindingId) throw new CliError('binding_not_held');
   const inbox = await deps.inbox(current.binding.bindingId, current.binding.generation);
   const lock = await inbox.acquireListener();
   try {
+    let idleDelay = 50;
     while (!deps.signal?.aborted) {
       const item = await inbox.readNext();
-      if (item === null) { await waitForSignal(deps.signal, 50); continue; }
+      if (item === null) {
+        await waitForSignal(deps.signal, idleDelay);
+        idleDelay = Math.min(idleDelay * 2, 1_000);
+        continue;
+      }
+      idleDelay = 50;
       await write(deps.stdout, renderInboxItem(item) + '\n');
       await inbox.acknowledge(item);
     }
@@ -67,7 +75,7 @@ async function listen(args: readonly string[], deps: CliDependencies): Promise<n
 
 async function status(args: readonly string[], deps: CliDependencies): Promise<number> {
   if (args.length !== 0) throw new CliError('invalid_arguments');
-  const current = await deps.client.status();
+  const current = publicStatus(await deps.client.status(deps.signal));
   let inbox = null;
   if (current.binding) inbox = await (await deps.inbox(current.binding.bindingId, current.binding.generation)).status();
   await write(deps.stdout, JSON.stringify({ ...current, inbox }) + '\n');
@@ -122,4 +130,61 @@ function waitForSignal(signal: AbortSignal | undefined, milliseconds: number): P
     function done() { clearTimeout(timer); signal?.removeEventListener('abort', abort); resolve(); }
     signal?.addEventListener('abort', abort, { once: true });
   });
+}
+
+function publicConnectResult(value: unknown) {
+  if (!plainObject(value)) throw new CliError('transport_unavailable');
+  if (value.kind === 'unavailable') return { kind: 'unavailable' } as const;
+  if (value.kind === 'refused' && typeof value.code === 'string'
+    && (CONNECT_REFUSAL_CODES as readonly string[]).includes(value.code)) {
+    return { kind: 'refused', code: value.code as ConnectRefusalCode } as const;
+  }
+  if (value.kind === 'connected' && typeof value.reused === 'boolean') {
+    return { kind: 'connected', binding: publicBinding(value.binding), reused: value.reused } as const;
+  }
+  throw new CliError('transport_unavailable');
+}
+
+function publicStatus(value: unknown): AgentStatus {
+  if (!plainObject(value) || value.v !== 1 || typeof value.connected !== 'boolean'
+    || typeof value.route !== 'string' || !(AGENT_ROUTES as readonly string[]).includes(value.route)
+    || !(value.sourceCursor === null || validIdentifier(value.sourceCursor))) {
+    throw new CliError('transport_unavailable');
+  }
+  const binding = value.binding === null ? null : publicBinding(value.binding);
+  return {
+    v: 1,
+    connected: value.connected,
+    binding,
+    route: value.route as AgentStatus['route'],
+    sourceCursor: value.sourceCursor,
+  };
+}
+
+function publicBinding(value: unknown): SessionBinding {
+  if (!plainObject(value) || value.v !== 1 || !validIdentifier(value.bindingId) || !validIdentifier(value.ownerId)
+    || !validIdentifier(value.agentParticipantId) || !validIdentifier(value.deviceId) || !validIdentifier(value.harness)
+    || !validIdentifier(value.sessionId) || !Number.isSafeInteger(value.generation) || (value.generation as number) < 0) {
+    throw new CliError('transport_unavailable');
+  }
+  return {
+    v: 1,
+    bindingId: value.bindingId,
+    ownerId: value.ownerId,
+    agentParticipantId: value.agentParticipantId,
+    deviceId: value.deviceId,
+    harness: value.harness,
+    sessionId: value.sessionId,
+    generation: value.generation,
+  } as SessionBinding;
+}
+
+function publicSendOutput(result: Awaited<ReturnType<SendService['send']>>): Record<string, unknown> {
+  if (result.kind === 'accepted') {
+    return { ok: true, kind: result.kind, clientTxnId: result.clientTxnId, eventId: result.eventId };
+  }
+  if (result.kind === 'refused') {
+    return { ok: false, kind: result.kind, code: result.code, clientTxnId: result.clientTxnId };
+  }
+  return { ok: false, kind: result.kind, clientTxnId: result.clientTxnId };
 }

@@ -1,6 +1,6 @@
 import type { Readable, Writable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import type { BindingId } from '@khala/contracts/delivery/index';
-import { cliErrorCode } from '../cli/errors.js';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import type { SendResult } from '../cli/types.js';
 import { plainObject, validBindingArgument } from '../cli/validation.js';
@@ -32,11 +32,15 @@ export type McpServerOptions = Readonly<{
  */
 export async function runMcpServer(options: McpServerOptions): Promise<void> {
   const { input, output, send: sends, signal } = options;
+  const decoder = new StringDecoder('utf8');
   let buffered = '';
   let discarding = false;
-  for await (const chunk of input) {
-    if (signal?.aborted) break;
-    let text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+  const iterator = input[Symbol.asyncIterator]();
+  while (!signal?.aborted) {
+    const next = await nextChunk(iterator, signal);
+    if (next.done) break;
+    const chunk = next.value;
+    let text = decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
     if (discarding) {
       const boundary = text.indexOf('\n');
       if (boundary === -1) continue;
@@ -58,6 +62,8 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
       await writeResponse(output, failure(null, -32600, 'Invalid Request'));
     }
   }
+  if (signal?.aborted) return;
+  buffered += decoder.end();
   if (!discarding && buffered.trim().length > 0) await processLine(buffered.replace(/\r$/, ''), output, sends);
 }
 
@@ -88,9 +94,7 @@ async function handleMessage(message: unknown, sends: SendService): Promise<Json
     case 'initialize':
       if (!validInitializeParams(message.params)) return failure(id, -32602, 'Invalid params');
       return success(id, {
-        protocolVersion: typeof message.params?.protocolVersion === 'string'
-          ? message.params.protocolVersion
-          : MCP_PROTOCOL_VERSION,
+        protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'khala-agent-cli', version: '0.0.0' },
       });
@@ -118,12 +122,7 @@ async function callTool(id: JsonRpcId, params: unknown, sends: SendService): Pro
     bindingId = params.arguments.bindingId;
   }
 
-  let result: SendResult;
-  try {
-    result = await sends.send(params.arguments.message, bindingId);
-  } catch (error) {
-    result = { kind: 'refused', code: cliErrorCode(error), clientTxnId: 'unavailable' };
-  }
+  const result: SendResult = await sends.send(params.arguments.message, bindingId);
   const safe = publicResult(result);
   return success(id, {
     content: [{ type: 'text', text: JSON.stringify(safe) }],
@@ -136,20 +135,31 @@ type McpToolDefinition = Readonly<{
   name: typeof TOOL_NAME;
   description: string;
   inputSchema: Readonly<{ type: 'object'; properties: Readonly<Record<string, unknown>>; required: readonly string[]; additionalProperties: false }>;
+  outputSchema: Readonly<{ type: 'object'; properties: Readonly<Record<string, unknown>>; required: readonly string[] }>;
 }>;
 
 function toolDefinition(): McpToolDefinition {
   return {
     name: TOOL_NAME,
-    description: 'Send a message to a Khala room through a binding held by this agent.',
+    description: 'Send a message through a binding held by this agent. An omitted bindingId uses the current binding. Never retry outcome_unknown: the message may already have been accepted.',
     inputSchema: {
       type: 'object',
       properties: {
-        message: { type: 'string', minLength: 1 },
-        bindingId: { type: 'string' },
+        message: { type: 'string', minLength: 1, description: 'Message body to send; it is never echoed in the result.' },
+        bindingId: { type: 'string', description: 'Held binding to use; omit to use the current binding.' },
       },
       required: ['message'],
       additionalProperties: false,
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        kind: { enum: ['accepted', 'refused', 'outcome_unknown'] },
+        clientTxnId: { type: 'string' },
+        eventId: { type: ['string', 'null'] },
+        code: { type: 'string' },
+      },
+      required: ['kind', 'clientTxnId'],
     },
   };
 }
@@ -201,5 +211,22 @@ function hasOnly(value: Record<string, unknown>, allowed: readonly string[]): bo
 function writeResponse(output: Writable, response: JsonRpcResponse): Promise<void> {
   return new Promise((resolve, reject) => {
     output.write(`${JSON.stringify(response)}\n`, error => error ? reject(error) : resolve());
+  });
+}
+
+function nextChunk(
+  iterator: AsyncIterator<unknown>,
+  signal: AbortSignal | undefined,
+): Promise<IteratorResult<unknown>> {
+  if (signal?.aborted) return Promise.resolve({ done: true, value: undefined });
+  const pending = iterator.next();
+  if (!signal) return pending;
+  return new Promise((resolve, reject) => {
+    const abort = () => resolve({ done: true, value: undefined });
+    signal.addEventListener('abort', abort, { once: true });
+    pending.then(
+      value => { signal.removeEventListener('abort', abort); resolve(value); },
+      error => { signal.removeEventListener('abort', abort); reject(error); },
+    );
   });
 }

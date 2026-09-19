@@ -76,9 +76,39 @@ describe('MCP server', () => {
     ]);
 
     expect(responses).toHaveLength(1);
-    expect(responses[0]).toMatchObject({ id: 1, result: { isError: true, structuredContent: { code: 'storage_failed' } } });
+    expect(responses[0]).toMatchObject({
+      id: 1,
+      result: { isError: true, structuredContent: { kind: 'outcome_unknown', clientTxnId: expect.any(String) } },
+    });
     expect(JSON.stringify(responses)).not.toContain(secret);
     expect(JSON.stringify(responses)).not.toContain('payload-secret');
+  });
+
+  it('uses the supported protocol version when a client requests another version', async () => {
+    const [response] = await exchange(fakeClient(), [
+      request(1, 'initialize', { protocolVersion: '2099-01-01', capabilities: {}, clientInfo: { name: 'test' } }),
+    ]);
+    expect(response).toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26' } });
+  });
+
+  it('decodes a multibyte message split across input chunks', async () => {
+    const client = fakeClient();
+    const encoded = Buffer.from(`${JSON.stringify(request(1, 'tools/call', {
+      name: 'khala_send', arguments: { message: 'hello 🌍' },
+    }))}\n`);
+    const split = encoded.indexOf(Buffer.from('🌍')) + 1;
+    const responses = await exchangeChunks(client, [encoded.subarray(0, split), encoded.subarray(split)]);
+    expect(responses[0]).toMatchObject({ id: 1, result: { structuredContent: { kind: 'accepted' } } });
+    expect(client.sent).toEqual([{ bindingId: null, body: 'hello 🌍' }]);
+  });
+
+  it('stops an idle server when aborted', async () => {
+    const input = new Readable({ read() {} });
+    const output = new WritableCapture();
+    const abort = new AbortController();
+    const running = runMcpServer({ input, output, send: new SendService(fakeClient()), signal: abort.signal });
+    abort.abort();
+    await expect(running).resolves.toBeUndefined();
   });
 
   it('bounds an unterminated frame and resumes at the next newline', async () => {
@@ -119,7 +149,7 @@ function fakeClient(): AgentClientPort & {
     }),
     async connect() { return { kind: 'unavailable' as const }; },
     async status() {
-      return { v: 1 as const, connected: false, binding: null, route: 'unknown', sourceCursor: null };
+      return { v: 1 as const, connected: false, binding: null, route: 'unknown' as const, sourceCursor: null };
     },
     async send(input: Parameters<AgentClientPort['send']>[0]) {
       client.sent.push({ bindingId: input.bindingId, body: input.body });
@@ -130,6 +160,10 @@ function fakeClient(): AgentClientPort & {
 }
 
 async function exchange(client: AgentClientPort, requests: readonly Request[]): Promise<Response[]> {
+  return exchangeChunks(client, requests.map(item => `${JSON.stringify(item)}\n`));
+}
+
+async function exchangeChunks(client: AgentClientPort, chunks: readonly (string | Buffer)[]): Promise<Response[]> {
   let stdout = '';
   const output = new Writable({
     write(chunk, _encoding, callback) {
@@ -138,7 +172,7 @@ async function exchange(client: AgentClientPort, requests: readonly Request[]): 
     },
   });
   await runMcpServer({
-    input: Readable.from(requests.map(item => `${JSON.stringify(item)}\n`)),
+    input: Readable.from(chunks),
     output,
     send: new SendService(client),
   });

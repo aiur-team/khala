@@ -46,7 +46,9 @@ payloads or capabilities.
 `khala mcp-serve` speaks newline-delimited JSON-RPC on stdin/stdout and exposes
 exactly one tool, `khala_send`, with `{ message, bindingId? }`. Unknown tools,
 unknown arguments, and unheld bindings are refused. Results contain only the
-stable client transaction ID and outcome, never the submitted message.
+stable client transaction ID and outcome, never the submitted message. Omitting
+`bindingId` selects the current binding. An `outcome_unknown` result must not be
+retried because the message may already have been accepted.
 
 ## Composition boundary
 

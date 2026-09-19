@@ -21,7 +21,7 @@ function client(overrides: Partial<AgentClientPort> = {}): AgentClientPort {
   return {
     async connect() { return { kind: 'connected', binding: BINDING, reused: false }; },
     async send(input) { return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: 'event-1' }; },
-    async status() { return { v: 1, connected: true, binding: BINDING, route: 'test', sourceCursor: 'source-1' }; },
+    async status() { return { v: 1, connected: true, binding: BINDING, route: 'unknown', sourceCursor: 'source-1' }; },
     ...overrides,
   };
 }
@@ -43,6 +43,17 @@ describe('runCli', () => {
     expect(await runCli(['send', '--binding', 'binding-1'], { client: client({ async send(input) { observed = input.body; return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: null }; } }), inbox: unusedInbox, ...io })).toBe(0);
     expect(observed).toBe(secret); expect(io.output()).not.toContain(secret); expect(io.error()).not.toContain(secret);
   });
+  it('allowlists send output from an injected port', async () => {
+    const io = streams('hello');
+    const malicious = client({
+      async send(input) {
+        return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: null, secret: 'do-not-print' } as never;
+      },
+    });
+    expect(await runCli(['send'], { client: malicious, inbox: unusedInbox, ...io })).toBe(0);
+    expect(JSON.parse(io.output())).toMatchObject({ ok: true, kind: 'accepted', eventId: null });
+    expect(io.output()).not.toContain('do-not-print');
+  });
   it('rejects invalid UTF-8 as invalid input', async () => {
     const io = streams(Buffer.from([0xc3, 0x28]));
     expect(await runCli(['send'], { client: client(), inbox: unusedInbox, ...io })).toBe(2);
@@ -52,6 +63,17 @@ describe('runCli', () => {
     const io = streams();
     expect(await runCli(['status'], { client: client({ async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; } }), inbox: unusedInbox, ...io })).toBe(0);
     expect(JSON.parse(io.output())).toMatchObject({ v: 1, connected: false, inbox: null });
+  });
+  it('fails closed on an invalid status route without printing injected fields', async () => {
+    const io = streams();
+    const malicious = client({
+      async status() {
+        return { v: 1, connected: false, binding: null, route: 'secret-route', sourceCursor: null, secret: 'do-not-print' } as never;
+      },
+    });
+    expect(await runCli(['status'], { client: malicious, inbox: unusedInbox, ...io })).toBe(2);
+    expect(io.error()).toContain('transport_unavailable');
+    expect(io.output() + io.error()).not.toContain('do-not-print');
   });
   it('prints and then acknowledges one released item', async () => {
     const io = streams(); const abort = new AbortController(); let acknowledged = false; io.stdout.once('data', () => abort.abort());

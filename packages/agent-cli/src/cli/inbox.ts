@@ -53,7 +53,7 @@ export async function openInbox(options: OpenInboxOptions): Promise<Inbox> {
   await ensurePrivateDirectory(bindingsDirectory);
   const bindingDirectory = path.join(
     bindingsDirectory,
-    createHash('sha256').update(validated.bindingId).digest('base64url'),
+    createHash('sha256').update(JSON.stringify([validated.bindingId, validated.generation])).digest('base64url'),
   );
   await ensurePrivateDirectory(bindingDirectory);
   const inboxPath = path.join(bindingDirectory, INBOX_FILE);
@@ -108,6 +108,7 @@ class FileInbox implements Inbox {
         await handle.close().catch(() => undefined);
       }
       if (failed) {
+        this.#known = null;
         await recoverTrailingWrite(this.#inboxPath);
         throw new CliError('storage_failed');
       }

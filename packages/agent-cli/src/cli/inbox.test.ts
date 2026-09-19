@@ -78,7 +78,7 @@ describe('durable inbox', () => {
     await first.enqueue(delivery());
     const item = await first.readNext();
     await first.acknowledge(item!);
-    const bindingDirectory = createHash('sha256').update(bindingId).digest('base64url');
+    const bindingDirectory = createHash('sha256').update(JSON.stringify([bindingId, 3])).digest('base64url');
     fs.appendFileSync(path.join(directory, 'bindings', bindingDirectory, 'inbox.jsonl'), '{"v":1,"releaseId":"partial');
 
     const restarted = await openInbox({ stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 });
@@ -118,6 +118,23 @@ describe('durable inbox', () => {
     });
     await inbox.enqueue(delivery({ bindingId: hostile }));
     expect(fs.existsSync(path.join(directory, 'outside'))).toBe(false);
+  });
+
+  it('isolates cursor and records between binding generations', async () => {
+    const directory = stateDirectory();
+    const prior = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    await prior.enqueue(delivery());
+    const item = await prior.readNext();
+    await prior.acknowledge(item!);
+
+    const current = await openInbox({
+      stateDirectory: directory, bindingId, generation: 4, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    expect(await current.readNext()).toBeNull();
+    expect(await current.status()).toMatchObject({ generation: 4, cursor: { offset: 0, releaseId: null } });
+    await expect(current.enqueue(delivery({ generation: 4 }))).resolves.toBe('appended');
   });
 
   it('allows only one listener for a binding and releases ownership cleanly', async () => {
