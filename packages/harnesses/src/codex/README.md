@@ -1,8 +1,8 @@
-# Codex harness adapter (KHA-118)
+# Codex harness adapter (KHA-118, KHA-150)
 
 `createCodexHarness(deps): HarnessPort` from `@khala/harnesses/codex/index`. It
-implements only the route [KHA-104](../../../../docs/evidence/codex.md) proved and
-imports the KHA-106 contracts from `@khala/contracts/delivery/index`.
+selects one evidence-backed route during `inspect` and imports the KHA-106 contracts
+from `@khala/contracts/delivery/index`.
 
 ## Support row
 
@@ -11,11 +11,13 @@ imports the KHA-106 contracts from `@khala/contracts/delivery/index`.
 | Harness | `codex` (codex-cli) |
 | Exact version | `0.154.0`, Linux x64. Any other version is reported `unsupported` until it has its own proof run; semver does not promote it. |
 | Provider restrictions | None observed. The proof used the fixture's own model, which was left unchanged. |
-| Route | Khala starts `codex app-server --listen unix://<owner-only dir>/…sock` in the thread's workdir and resumes a dormant thread there (`thread/resume`, no overrides). Delivery is a separate connection on that listener calling `thread/queue/add` with `clientUserMessageId = releaseId`. The thread's native `cwd` must equal the host's workdir. |
-| Required agent setup | None by the human. The host (KHA-133) starts the app-server and resumes the thread. A thread already running in a TUI, `codex exec`, an IDE or another app-server is **not** supported: attaching to it is unproven, and a second writer is refused. |
+| Route A: native CLI | For a thread Khala did not start, approved bytes are appended to the KHA-148 local inbox and `codex queue --thread <sessionId> --message <opaque release notification>` wakes the existing thread. [KHA-146](../../../../docs/evidence/codex-native-cli.md#queue-idle) proved the notification route. `--message -` and `@-` are literals, so payload bytes never go to the CLI. |
+| Route B: hosted app-server | Khala starts `codex app-server --listen unix://<owner-only dir>/…sock` in the thread's workdir and resumes a dormant thread there (`thread/resume`, no overrides). Delivery calls `thread/queue/add` with `clientUserMessageId = releaseId`. The thread's native `cwd` must equal the host's workdir. [KHA-104](../../../../docs/evidence/codex.md) proves this route. |
+| Selection | A matching entry in the Khala host registry selects route B. Otherwise an exact-version Linux x64 native inspection may select route A. The decision is held for that immutable binding generation; `submit` never switches routes. |
+| Required agent setup | Route A uses the local `khala listen` inbox installed by KHA-148. Route B needs no human setup; the host starts the app-server and resumes the thread. |
 | Busy behaviour | `queue`. Delivery waits for the running turn, then runs as a new turn. `turn/steer` is unproven and never called. |
-| Observable receipts | `transport_written` (a flushed write reported by the client port, or a native reply), `harness_queued` (the correlated `queuedSubmission`, or the entry in `thread/queue/list`), `context_consumed` (a `userMessage` notification whose `clientId` is the release ID), `completed` (that turn's `turn/completed` with status `completed`), `outcome_unknown`, `failed`. `context_consumed` and `completed` come only from the receipt tracker's live notifications. The contract fixture lists the same kinds except `transport_written`, which is the connector's own observation. |
-| Reconciliation | `while_queued`: `thread/queue/list` matched on the release ID. Thread history is never read. A release that has left the queue reconciles to `null`. |
+| Observable receipts | Route A: `harness_queued`, `outcome_unknown`, `failed`. Route B: `transport_written`, `harness_queued`, `context_consumed`, `completed`, `outcome_unknown`, `failed`; consumption and completion come only from the receipt tracker's live notifications. |
+| Reconciliation | Route A is `unsupported`: the CLI exposes no queryable release ID, so `null` never authorizes a resend. Route B is `while_queued` through `thread/queue/list`. |
 | Cancellation | Not advertised. |
 
 ## Ports
@@ -32,6 +34,12 @@ The adapter imports no socket, SDK or storage implementation. Composition suppli
   absolute workdir it started the executor in, its `codex --version`, and whether its
   executor holds the thread's writer lock now. The adapter trusts that lock report; the
   only native ownership signal it checks is a `notLoaded` thread.
+- Route A additionally takes `nativeCli: CodexNativeCliPort` and
+  `nativeInbox: CodexNativeInboxPort` together. The CLI port reports installed version,
+  platform, architecture, session presence and the binding generation consumed by
+  `khala listen`, then runs adapter-owned argv. A binding mismatch fails closed before
+  the inbox is written. The inbox port accepts the exact KHA-148 delivery shape.
+  Supplying only one is a type error.
 - `codec: ReleaseCodecPort`, the KHA-119 envelope codec. It checks the payload digest
   and the approved event references before anything is sent.
 - `clock`, and `evidence: EvidenceSink` (KHA-115) for intermediate observations.
@@ -53,6 +61,10 @@ same listener to receipts. Duplicate and out-of-order events yield each receipt 
   cannot be read completely, the submit is refused. Concurrent submits of one release
   share one dispatch. A release whose `queue/add` may have reached the listener is never
   added again by the same process; a later submit reports `outcome_unknown`.
+- **At most one native notification per release per process.** Route A appends the
+  payload before spawning the CLI. A duplicate or uncertain inbox append, non-zero
+  process exit, timeout, disconnect or malformed success is `outcome_unknown`; none is
+  retried by the adapter.
 - **Deduplication after consumption belongs to the connector (KHA-121).** A consumed
   release has left the queue, and the adapter does not read history, so after a restart
   it cannot tell a consumed release from one never sent. The durable claim must stop that
@@ -64,8 +76,9 @@ same listener to receipts. Duplicate and out-of-order events yield each receipt 
   submit.
 - **Only the released bytes are sent.** They must hash to the job's `payloadDigest`,
   pass the codec, and be valid UTF-8 text within the limits.
-  Nothing is prepended. The payload travels only in the request body: never in process
-  arguments, receipts, endpoints, errors or logs.
+  Nothing is prepended. Route A copies them into the local inbox and puts only the
+  release ID in `argv`; route B puts them only in the request body. Payload bytes never
+  appear in process arguments, receipts, endpoints, errors or logs.
 - **The durable native queue.** An entry still queued when the host exits is consumed
   by whichever executor loads the thread next. The host owner (KHA-133) must drain or
   delete its own pending entries before releasing an executor. It must also treat a
@@ -73,7 +86,7 @@ same listener to receipts. Duplicate and out-of-order events yield each receipt 
 
 ## Evidence status
 
-The tests run the adapter against `FakeAppServer`, which models the native behaviour
-KHA-104 observed. That is component evidence only. Live same-session verification
-needs KHA-133's WebSocket client and host, and an operator-designated disposable
-thread (see `experiments/codex/README.md`). G-HARNESSES remains open.
+The tests run route B against `FakeAppServer` and route A against fake CLI and durable
+inbox ports. Both routes pass the neutral conformance suite. These are component tests;
+the support claims come from the KHA-104 and KHA-146 live evidence linked above, not
+from the fakes.
