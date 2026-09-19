@@ -17,6 +17,7 @@
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
   },
   "dependencies": {
+    "@netlify/blobs": "11.1.0",
     "@khala/contracts": "workspace:*",
     "oauth4webapi": "3.8.8"
   },

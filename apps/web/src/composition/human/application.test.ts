@@ -223,6 +223,37 @@ describe('createHumanApplication', () => {
     expect(app.getSnapshot()).toMatchObject({ phase: 'unavailable', source: 'device', context: null });
   });
 
+  it('does not publish ready when revocation follows activation before rendering', async () => {
+    let notify: (view: DeviceView) => void = () => undefined;
+    const identity: IdentityPort = {
+      current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),
+      beginSignIn: vi.fn(),
+      signOut: vi.fn(),
+    };
+    const ensureResult = deferred<Awaited<ReturnType<DevicePort['ensureReady']>>>();
+    const device = fakeDevice({
+      ensureReady: vi.fn(() => ensureResult.promise),
+      observe(listener) {
+        notify = listener;
+        return () => undefined;
+      },
+    });
+    const app = application(identity, device);
+    await eventually(() => expect(app.getSnapshot().phase).toBe('initializing_device'));
+
+    ensureResult.resolve(ok(readyDevice(alice)));
+    await Promise.resolve();
+    notify({
+      deviceId: readyDevice(alice).deviceId,
+      state: 'revoked',
+      generation: 2,
+      reason: 'revoked_by_owner',
+    });
+
+    await eventually(() => expect(app.getSnapshot().phase).toBe('unavailable'));
+    expect(app.getSnapshot()).toMatchObject({ source: 'device', reason: 'revoked_by_owner', retryable: false });
+  });
+
   it('clears the active context synchronously and contains a rejected device stop on dispose', async () => {
     const identity: IdentityPort = {
       current: vi.fn().mockResolvedValue({ kind: 'signed_in', principal: alice }),

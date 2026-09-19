@@ -1,6 +1,7 @@
 import {
   decodeDeviceId,
   decodeRoomId,
+  type AdmissionPolicy,
   type AuthPrincipal,
 } from '@khala/contracts/messaging/index';
 import {
@@ -11,18 +12,23 @@ import {
 } from '../../auth/index';
 import type { AdmissionService } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
+import type { MatrixSessionIssuer } from './matrix';
+import { createProductionHumanServiceLoader } from './production';
 
 export const ME_PATH = '/api/human/me';
 export const LOGOUT_PATH = '/api/human/auth/logout';
 export const SHARE_PATH = '/api/human/invitations/share';
 export const INSPECT_PATH = '/api/human/invitations/inspect';
 export const ADMIT_PATH = '/api/human/invitations/admit';
+export const MATRIX_SESSION_PATH = '/api/human/messaging/session';
 
 export type HumanHandlerServices = Readonly<{
   /** Request-scoped authentication service backed by the validated runtime configuration. */
   auth: AuthService;
   /** Request-scoped admission service whose IdentityPort is bound to this request. */
   admission: AdmissionService;
+  /** Server-side Matrix login boundary. Tokens leave only through its authenticated route. */
+  messaging?: MatrixSessionIssuer;
 }>;
 
 export type LoadHumanServices = (
@@ -111,6 +117,19 @@ const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 function identifier(value: unknown): string | null {
   return typeof value === 'string' && IDENTIFIER.test(value) ? value : null;
+}
+
+function admissionPolicy(value: unknown): AdmissionPolicy | null {
+  if (!isPlainObject(value) || value.v !== 1 || typeof value.kind !== 'string' || typeof value.history !== 'string') return null;
+  if (value.kind === 'link' && (value.history === 'none' || value.history === 'full')
+    && hasExactKeys(value, ['v', 'kind', 'history'])) {
+    return { v: 1, kind: 'link', history: value.history };
+  }
+  if (value.kind === 'named_email' && value.history === 'none' && typeof value.email === 'string'
+    && hasExactKeys(value, ['v', 'kind', 'email', 'history'])) {
+    return { v: 1, kind: 'named_email', email: value.email, history: 'none' };
+  }
+  return null;
 }
 
 function responseForOperationFailure(
@@ -241,11 +260,13 @@ export function createHumanHandlers(loadServices: LoadHumanServices): readonly R
         const authority = await authorized(auth, request);
         if (isResponse(authority)) return authority;
         const value = await readJsonObject(request);
-        if (value === null || !hasExactKeys(value, ['operationId', 'roomId'])) return json(400, { code: 'invalid_request' });
+        if (value === null || !(hasExactKeys(value, ['operationId', 'roomId'])
+          || hasExactKeys(value, ['operationId', 'roomId', 'policy']))) return json(400, { code: 'invalid_request' });
         const operationId = identifier(value.operationId);
         const roomId = decodeRoomId(value.roomId);
-        if (operationId === null || !roomId.ok) return json(400, { code: 'invalid_request' });
-        const result = await admission.share({ operationId, roomId: roomId.value });
+        const policy = value.policy === undefined ? undefined : admissionPolicy(value.policy);
+        if (operationId === null || !roomId.ok || policy === null) return json(400, { code: 'invalid_request' });
+        const result = await admission.share({ operationId, roomId: roomId.value, ...(policy ? { policy } : {}) });
         return result.kind === 'ok' ? json(200, result) : responseForOperationFailure(result);
       }),
     },
@@ -282,6 +303,21 @@ export function createHumanHandlers(loadServices: LoadHumanServices): readonly R
         return result.kind === 'ok' ? json(200, result) : responseForOperationFailure(result);
       }),
     },
+    {
+      path: MATRIX_SESSION_PATH,
+      methods: post,
+      handle: request => withServices(request, async ({ auth, messaging }) => {
+        if (!messaging) return unavailable('feature_unavailable');
+        const authority = await authorized(auth, request);
+        if (isResponse(authority)) return authority;
+        const value = await readJsonObject(request);
+        if (value === null || !hasExactKeys(value, ['deviceId'])) return json(400, { code: 'invalid_request' });
+        const deviceId = decodeDeviceId(value.deviceId);
+        if (!deviceId.ok) return json(400, { code: 'invalid_request' });
+        const result = await messaging.issue(authority, deviceId.value);
+        return result.kind === 'ok' ? json(200, { session: result.session }) : unavailable();
+      }),
+    },
   ]);
 }
 
@@ -296,6 +332,8 @@ function withCookies(response: Response, cookies: readonly string[]): Response {
  * Runtime discovery entry point. KHA-132 deliberately fails closed until the
  * deployment composition owner injects the validated Matrix/OIDC services.
  */
+const loadProductionServices = createProductionHumanServiceLoader();
+
 export function registerHumanHandlers(): readonly RouteRegistration[] {
-  return createHumanHandlers(() => null);
+  return createHumanHandlers(loadProductionServices);
 }

@@ -162,12 +162,16 @@ export function createHumanApplication(
       setSnapshot(unavailableSnapshot(activePath, 'device', reason));
       return;
     }
-    if (result.value.state !== 'ready' || result.value.deviceId === null) {
+    // Reconcile with an observer notification that may have arrived after the
+    // activation promise settled but before this continuation ran. Otherwise a
+    // revocation in that window would be overwritten by the stale ready value.
+    const deviceView = deviceSession.current() ?? result.value;
+    if (deviceView.state !== 'ready' || deviceView.deviceId === null) {
       setSnapshot(unavailableSnapshot(
         activePath,
         'device',
-        result.value.reason ?? `device_${result.value.state}`,
-        result.value.state !== 'revoked',
+        deviceView.reason ?? `device_${deviceView.state}`,
+        deviceView.state !== 'revoked',
       ));
       return;
     }
@@ -177,9 +181,9 @@ export function createHumanApplication(
     const context: HumanRouteContext = {
       ...ports,
       path: activePath,
-      generation: result.value.generation,
+      generation: deviceView.generation,
       principal: identity.principal,
-      deviceView: result.value as HumanRouteContext['deviceView'],
+      deviceView: deviceView as HumanRouteContext['deviceView'],
       registerDisposer(disposer) {
         if (routeScope !== scope) {
           try { disposer(); } catch { /* The route already ended. */ }

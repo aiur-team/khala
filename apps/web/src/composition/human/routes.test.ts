@@ -19,10 +19,10 @@ describe('createHumanRouteCodec', () => {
   });
 
   test('rejects foreign origins, reserved API paths and malformed identifiers', () => {
-    expect(codec.parse('https://evil.example/join?invite=invite_1')).toEqual({ kind: 'not_found', path: '/' });
-    expect(codec.parse('/api/human/auth/callback')).toEqual({ kind: 'not_found', path: '/' });
-    expect(codec.parse('/join?invite=')).toEqual({ kind: 'not_found', path: '/' });
-    expect(codec.parse('/rooms/%00')).toEqual({ kind: 'not_found', path: '/' });
+    expect(codec.parse('https://evil.example/join?invite=invite_1')).toEqual({ kind: 'not_found', path: '/join?invite=invite_1' });
+    expect(codec.parse('/api/human/auth/callback')).toEqual({ kind: 'not_found', path: '/api/human/auth/callback' });
+    expect(codec.parse('/join?invite=')).toEqual({ kind: 'not_found', path: '/join?invite=' });
+    expect(codec.parse('/rooms/%00')).toEqual({ kind: 'not_found', path: '/rooms/%00' });
   });
 
   test('validates the injected origin and base path', () => {

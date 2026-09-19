@@ -18,6 +18,7 @@ export type DeviceActivation = OperationResult<DeviceView, DeviceRejection>;
 
 export interface HumanDeviceSession {
   ensureReady(principal: AuthPrincipal): Promise<DeviceActivation>;
+  current(): DeviceView | null;
   subscribe(listener: (view: DeviceView) => void): Disposer;
   release(): Promise<void>;
   dispose(): Promise<void>;
@@ -38,6 +39,7 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
   let principal: AuthPrincipal | null = null;
   let ready: DeviceActivation | null = null;
   let activeGeneration: number | null = null;
+  let currentView: DeviceView | null = null;
   let inFlight: InFlight | null = null;
   let activationAbort: AbortController | null = null;
   let disposed = false;
@@ -47,6 +49,7 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
   const removeDeviceObserver = device.observe(view => {
     if (disposed || ownerId === null || activeGeneration === null || view.generation < activeGeneration) return;
     activeGeneration = view.generation;
+    currentView = view;
     for (const listener of listeners) listener(view);
   });
 
@@ -67,6 +70,7 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
     const signal = activationAbort.signal;
     ready = null;
     activeGeneration = null;
+    currentView = null;
 
     const entry: InFlight = {
       principal: requestedPrincipal,
@@ -86,6 +90,7 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
         if (isReady(result)) {
           ready = result;
           activeGeneration = result.value.generation;
+          currentView = result.value;
         }
         return result;
       })(),
@@ -106,12 +111,15 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
     principal = null;
     ready = null;
     activeGeneration = null;
+    currentView = null;
     inFlight = null;
     if (heldLease) await stopSafely();
   }
 
   return {
     ensureReady,
+
+    current: () => currentView,
 
     subscribe(listener) {
       if (disposed) return () => undefined;

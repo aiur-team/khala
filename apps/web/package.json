@@ -49,16 +49,25 @@
     "./features/recovery/ports": "./src/features/recovery/ports.ts",
     "./features/recovery/recovery.css": "./src/features/recovery/recovery.css",
     "./features/*": "./src/features/*.ts",
+    "./composition/human/application": "./src/composition/human/application.ts",
+    "./composition/human/browser-api": "./src/composition/human/browser-api.ts",
+    "./composition/human/capabilities": "./src/composition/human/capabilities.ts",
+    "./composition/human/device-session": "./src/composition/human/device-session.ts",
+    "./composition/human/mount": "./src/composition/human/mount.tsx",
+    "./composition/human/room-journal": "./src/composition/human/room-journal.ts",
+    "./composition/human/routes": "./src/composition/human/routes.ts",
     "./composition/*": "./src/composition/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
-    "build": "node ../../scripts/package-task.mjs build",
+    "build": "vite build",
     "test": "vitest run --config ../../vitest.config.ts",
     "test:browser": "node --import tsx --test 'src/**/*.browser.spec.ts'"
   },
   "dependencies": {
     "@khala/contracts": "workspace:*",
+    "@khala/messaging": "workspace:*",
+    "matrix-js-sdk": "42.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

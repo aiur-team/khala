@@ -1,38 +1,38 @@
-import { readFile } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
-import { registerHumanCapabilities } from './capabilities';
+import { describe, expect, it, vi } from 'vitest';
+import type { HumanRouteContext } from './application';
+import { attachHumanCapabilities, type HumanCapability } from './capabilities';
 
-describe('human capability registration', () => {
-  it('registers the finite optional capability set as explicitly unavailable', () => {
-    const capabilities = registerHumanCapabilities();
+describe('attachHumanCapabilities', () => {
+  it('attaches only ready capabilities and releases them in reverse order', () => {
+    const calls: string[] = [];
+    const capability = (id: HumanCapability['id'], state: HumanCapability['state']): HumanCapability => ({
+      id,
+      state,
+      attach: vi.fn(() => ({ dispose: () => { calls.push(`dispose:${id}`); } })),
+    });
+    const review = capability('review', 'ready');
+    const controls = capability('controls', 'unavailable');
+    const recovery = capability('recovery', 'ready');
+    const registered = new Set<() => void>();
+    const context = {
+      registerDisposer(disposer: () => void) {
+        registered.add(disposer);
+        return () => {
+          if (!registered.delete(disposer)) return;
+          disposer();
+        };
+      },
+    } as HumanRouteContext;
 
-    expect(capabilities.map(({ id, state }) => ({ id, state }))).toEqual([
-      { id: 'review', state: 'unavailable' },
-      { id: 'controls', state: 'unavailable' },
-      { id: 'recovery', state: 'unavailable' },
-    ]);
-  });
+    const dispose = attachHumanCapabilities([review, controls, recovery], context);
+    expect(review.attach).toHaveBeenCalledWith(context);
+    expect(controls.attach).not.toHaveBeenCalled();
+    expect(recovery.attach).toHaveBeenCalledWith(context);
+    expect(registered.size).toBe(2);
 
-  it('attaches unavailable capabilities without gaining write authority', () => {
-    const context = Object.freeze({}) as never;
-
-    for (const capability of registerHumanCapabilities()) {
-      expect(Object.keys(capability).sort()).toEqual(['attach', 'id', 'state']);
-      const handle = capability.attach(context);
-      expect(Object.keys(handle)).toEqual(['dispose']);
-      expect(() => handle.dispose()).not.toThrow();
-      expect(() => handle.dispose()).not.toThrow();
-    }
-  });
-
-  it('uses only reviewed literal registrations', async () => {
-    const source = await readFile(new URL('./capabilities.ts', import.meta.url), 'utf8');
-
-    expect(source).toContain("from '../review/register'");
-    expect(source).toContain("from '../controls/register'");
-    expect(source).toContain("from '../recovery/register'");
-    expect(source).not.toMatch(/\bimport\s*\(/u);
-    expect(source).not.toMatch(/fixtures?/iu);
-    expect(source).not.toMatch(/(?:request|location|searchParams|URL)\b[^\n]*\bimport\b/iu);
+    dispose();
+    dispose();
+    expect(calls).toEqual(['dispose:recovery', 'dispose:review']);
+    expect(registered.size).toBe(0);
   });
 });

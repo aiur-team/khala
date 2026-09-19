@@ -11,6 +11,7 @@ import { createJoinController } from '../../features/join/controller';
 import { JoinScreen } from '../../features/join/JoinScreen';
 import type { JoinView } from '../../features/join/model';
 import type { HumanApplicationHandle, HumanRouteContext } from './application';
+import { attachHumanCapabilities, registerHumanCapabilities, type HumanCapability } from './capabilities';
 import type { HumanRoute, HumanRouteCodec } from './routes';
 
 export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'room' }>) => ReactNode;
@@ -22,6 +23,7 @@ export type HumanApplicationScreenProps = Readonly<{
   mode?: ShellMode;
   navigateExternal?: (url: string) => void;
   renderRoom?: HumanRoomRenderer;
+  capabilities?: readonly HumanCapability[];
 }>;
 
 export type MountKhalaContentOptions = HumanApplicationScreenProps & Readonly<{ target: Element }>;
@@ -65,12 +67,14 @@ function JoinRoute({ context, routes, navigateExternal }: {
   return <JoinScreen view={view} onSignIn={() => void controller.signIn()} onRetry={() => controller.retry()} />;
 }
 
-function ReadyRoute({ context, routes, renderRoom, navigateExternal }: {
+function ReadyRoute({ context, routes, renderRoom, navigateExternal, capabilities }: {
   context: HumanRouteContext;
   routes: HumanRouteCodec;
   renderRoom?: HumanRoomRenderer;
   navigateExternal: (url: string) => void;
+  capabilities: readonly HumanCapability[];
 }) {
+  useEffect(() => attachHumanCapabilities(capabilities, context), [capabilities, context]);
   const route = routes.parse(context.path);
   switch (route.kind) {
     case 'create':
@@ -105,6 +109,7 @@ export function HumanApplicationScreen({
   mode = 'hosted-content',
   navigateExternal = url => globalThis.location?.assign(url),
   renderRoom,
+  capabilities = registerHumanCapabilities(),
 }: HumanApplicationScreenProps) {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
   const [theme, setTheme] = useState<ThemeChoice>(() => resolveInitialTheme(
@@ -127,6 +132,7 @@ export function HumanApplicationScreen({
         context={snapshot.context}
         routes={routes}
         navigateExternal={navigateExternal}
+        capabilities={capabilities}
         {...(renderRoom ? { renderRoom } : {})}
       />
     );

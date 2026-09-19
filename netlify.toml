@@ -11,7 +11,8 @@
 [build.environment]
   NODE_VERSION = "22.23.2"
   PNPM_VERSION = "10.34.5"
-  # Never set at this scope: server secrets (OIDC_CLIENT_SECRET, CONTROL_STATE_NAMESPACE).
+  # Never set at this scope: server secrets (OIDC/MATRIX/INVITATION secrets,
+  # CONTROL_STATE_NAMESPACE).
   # Those live in Netlify's per-context environment variable store, not this file.
 
 [functions]
@@ -59,11 +60,10 @@
   [headers.values]
     X-Frame-Options = "DENY"
     Referrer-Policy = "same-origin"
-    # Baseline, SDK-agnostic policy. `wasm-unsafe-eval` and `worker-src blob:`
-    # are here because the messaging SDK's crypto runs as WASM in a worker;
-    # exact allowed origins are finalized once KHA-141/143 pick the SDK build
-    # (see docs/plans/2026-09-16-kha-131-netlify-deployment-plan.md).
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+    # Matrix crypto runs as WASM in a worker. `connect-src https:` permits the
+    # operator-configured Railway homeserver; Netlify cannot interpolate its
+    # per-context PUBLIC_HOMESERVER_ORIGIN into this static header.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
 
 [context.production]
   [context.production.environment]

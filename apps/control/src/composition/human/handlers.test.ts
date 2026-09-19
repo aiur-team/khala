@@ -8,6 +8,7 @@ import {
   INSPECT_PATH,
   LOGOUT_PATH,
   ME_PATH,
+  MATRIX_SESSION_PATH,
   SHARE_PATH,
   createHumanHandlers,
   registerHumanHandlers,
@@ -27,6 +28,7 @@ const principal: AuthPrincipal = {
 function services(overrides: {
   auth?: Partial<AuthService>;
   admission?: Partial<AdmissionService>;
+  messaging?: HumanHandlerServices['messaging'];
 } = {}): HumanHandlerServices {
   return {
     auth: {
@@ -55,6 +57,7 @@ function services(overrides: {
       revoke: vi.fn(async () => ({ kind: 'ok' as const, value: null })),
       ...overrides.admission,
     } as AdmissionService,
+    ...(overrides.messaging ? { messaging: overrides.messaging } : {}),
   };
 }
 
@@ -90,6 +93,7 @@ describe('human handler registration', () => {
       [SHARE_PATH, ['POST']],
       [INSPECT_PATH, ['GET']],
       [ADMIT_PATH, ['POST']],
+      [MATRIX_SESSION_PATH, ['POST']],
     ]);
     expect(new Set(shape.map(([path]) => path)).size).toBe(shape.length);
     expect(registrations.every(({ path }) => path.startsWith('/api/human/') && !path.includes('*'))).toBe(true);
@@ -104,7 +108,7 @@ describe('human handler registration', () => {
     expect(await body(response)).toMatchObject({ code: 'not_found' });
   });
 
-  it('keeps the production registrations explicitly unavailable until a live loader is supplied', async () => {
+  it('keeps production registrations fail-closed when deployment services are unavailable', async () => {
     for (const registration of registerHumanHandlers()) {
       const response = await registration.handle(request(registration.path, {
         method: registration.methods[0]!,
@@ -112,7 +116,7 @@ describe('human handler registration', () => {
       }));
       expect(response.status, registration.path).toBe(503);
       expect(response.headers.get('cache-control'), registration.path).toBe('no-store');
-      expect(await body(response), registration.path).toEqual({ code: 'feature_unavailable' });
+      expect(await body(response), registration.path).toEqual({ code: 'unavailable' });
     }
   });
 
@@ -208,11 +212,41 @@ describe('admission route handlers', () => {
     expect(share.status).toBe(200);
     expect(state.admission.share).toHaveBeenCalledWith({ operationId: 'operation_1', roomId: 'room_1' as RoomId });
 
+    const policy = { v: 1 as const, kind: 'named_email' as const, email: 'bob@example.test', history: 'none' as const };
+    const policyShare = await route(registrations, SHARE_PATH).handle(request(SHARE_PATH, {
+      method: 'POST', body: JSON.stringify({ operationId: 'operation_policy', roomId: 'room_1', policy }),
+    }));
+    expect(policyShare.status).toBe(200);
+    expect(state.admission.share).toHaveBeenLastCalledWith({ operationId: 'operation_policy', roomId: 'room_1' as RoomId, policy });
+
     const admit = await route(registrations, ADMIT_PATH).handle(request(ADMIT_PATH, {
       method: 'POST', body: JSON.stringify({ operationId: 'operation_2', inviteRef: 'invite_1', deviceId: 'device_1' }),
     }));
     expect(admit.status).toBe(200);
     expect(state.admission.admit).toHaveBeenCalledWith({ operationId: 'operation_2', inviteRef: 'invite_1', deviceId: 'device_1' as DeviceId });
+  });
+
+  it('mints a Matrix session only after mutation authorization', async () => {
+    const issue = vi.fn(async () => ({
+      kind: 'ok' as const,
+      session: {
+        homeserverOrigin: 'https://matrix.example.test',
+        userId: '@alice:matrix.example.test',
+        accessToken: 'device-token',
+        deviceId: 'device_1' as DeviceId,
+        publishedFingerprint: null,
+      },
+    }));
+    const state = services({ messaging: { issue } });
+    const registrations = createHumanHandlers(async () => state);
+
+    const response = await route(registrations, MATRIX_SESSION_PATH).handle(request(MATRIX_SESSION_PATH, {
+      method: 'POST', body: JSON.stringify({ deviceId: 'device_1' }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(issue).toHaveBeenCalledWith(principal, 'device_1');
+    expect(await body(response)).toMatchObject({ session: { accessToken: 'device-token', deviceId: 'device_1' } });
   });
 
   it('authenticates inspection and maps dependency failures to finite unavailable responses', async () => {

@@ -49,7 +49,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
   const createPath = () => `${base}/`;
   const joinRoot = `${base}/join`;
   const roomsRoot = `${base}/rooms/`;
-  const notFound = (): HumanRoute => ({ kind: 'not_found', path: createPath() });
+  const notFound = (path: string): HumanRoute => ({ kind: 'not_found', path });
 
   function joinPath(inviteRef: string): string {
     const candidate = `${joinRoot}?invite=${encodeURIComponent(inviteRef)}`;
@@ -69,29 +69,34 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     try {
       parsed = new URL(location, origin);
     } catch {
-      return notFound();
+      return notFound(location);
     }
-    if (parsed.origin !== origin || parsed.username || parsed.password) return notFound();
+    const requestedPath = `${parsed.pathname}${parsed.search}`;
+    if (parsed.origin !== origin || parsed.username || parsed.password) return notFound(requestedPath);
     if (parsed.pathname === createPath() && parsed.search === '') return { kind: 'create', path: createPath() };
     if (parsed.pathname === joinRoot) {
       const decoded = parseJoinLocation(parsed.href);
-      if ('error' in decoded) return notFound();
-      return { kind: 'join', path: joinPath(decoded.inviteRef), inviteRef: decoded.inviteRef };
+      if ('error' in decoded) return notFound(requestedPath);
+      try {
+        return { kind: 'join', path: joinPath(decoded.inviteRef), inviteRef: decoded.inviteRef };
+      } catch {
+        return notFound(requestedPath);
+      }
     }
     if (parsed.pathname.startsWith(roomsRoot) && !parsed.search) {
       const encoded = parsed.pathname.slice(roomsRoot.length);
-      if (!encoded || encoded.includes('/')) return notFound();
+      if (!encoded || encoded.includes('/')) return notFound(requestedPath);
       let raw: string;
       try {
         raw = decodeURIComponent(encoded);
       } catch {
-        return notFound();
+        return notFound(requestedPath);
       }
       const decoded = decodeRoomId(raw);
-      if (!decoded.ok) return notFound();
+      if (!decoded.ok) return notFound(requestedPath);
       return { kind: 'room', path: roomPath(decoded.value), roomId: decoded.value };
     }
-    return notFound();
+    return notFound(requestedPath);
   }
 
   return {

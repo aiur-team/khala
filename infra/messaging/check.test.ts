@@ -10,6 +10,7 @@ const validEnvironment = (overrides: Record<string, string> = {}): Record<string
   KHALA_STATE_NAMESPACE: 'khala-preview',
   KHALA_MATRIX_SERVER_NAME: 'matrix.preview.test',
   KHALA_MATRIX_PUBLIC_ORIGIN: 'https://matrix.preview.test',
+  KHALA_MATRIX_REGISTRATION_SHARED_SECRET: 'registration-secret-with-more-than-32-bytes',
   KHALA_MATRIX_CHECK_ORIGIN: 'https://matrix.preview.test',
   KHALA_ALLOW_INSECURE_LOOPBACK: 'false',
   KHALA_DB_HOST: 'postgres',
@@ -31,6 +32,7 @@ test('rejects missing secrets, placeholders and mixed environment identity', () 
   const cases: Array<[Record<string, string>, string]> = [
     [validEnvironment({ KHALA_DB_PASSWORD: '' }), 'missing-input'],
     [validEnvironment({ KHALA_DB_PASSWORD: 'replace-with-secret' }), 'weak-database-secret'],
+    [validEnvironment({ KHALA_MATRIX_REGISTRATION_SHARED_SECRET: 'short' }), 'weak-registration-secret'],
     [validEnvironment({ KHALA_MATRIX_SERVER_NAME: 'matrix.example.invalid' }), 'invalid-server-name'],
     [validEnvironment({ KHALA_STATE_NAMESPACE: 'khala-production' }), 'invalid-state-namespace'],
     [validEnvironment({ KHALA_MATRIX_PUBLIC_ORIGIN: 'http://matrix.preview.test' }), 'insecure-origin'],
@@ -154,6 +156,7 @@ test('rejects a template with an unresolved unknown token', () => {
   const templateWithUnknownToken = [
     '__KHALA_MATRIX_SERVER_NAME__',
     '__KHALA_MATRIX_PUBLIC_ORIGIN__',
+    '__KHALA_MATRIX_REGISTRATION_SHARED_SECRET__',
     '__KHALA_DB_HOST__',
     '__KHALA_DB_PORT__',
     '__KHALA_DB_USER__',
@@ -175,6 +178,7 @@ test('renders the shipped template with registration, federation and URL preview
   const rendered = await readFile(target, 'utf8');
   assert.match(rendered, /^enable_registration: false$/m);
   assert.match(rendered, /^enable_registration_without_verification: false$/m);
+  assert.match(rendered, /^registration_shared_secret: "registration-secret-with-more-than-32-bytes"$/m);
   assert.match(rendered, /^url_preview_enabled: false$/m);
   assert.match(rendered, /^federation_domain_whitelist: \[\]$/m);
   assert.match(rendered, /names: \[client\]/);
