@@ -1,8 +1,10 @@
 import type { Readable, Writable } from 'node:stream';
+import type { BindingId } from '@khala/contracts/delivery/index';
 import { CliError, cliErrorCode } from './errors.js';
 import type { Inbox, InboxItem } from './inbox.js';
 import { MAX_SEND_BYTES, SendService } from './send.js';
 import type { AgentClientPort } from './types.js';
+import { validBindingArgument } from './validation.js';
 import { runMcpServer } from '../mcp/server.js';
 
 export type CliDependencies = Readonly<{
@@ -78,13 +80,10 @@ async function mcp(args: readonly string[], deps: CliDependencies): Promise<numb
   return 0;
 }
 
-function optionalBinding(args: readonly string[]): string | null {
+function optionalBinding(args: readonly string[]): BindingId | null {
   if (args.length === 0) return null;
-  if (args.length !== 2 || args[0] !== '--binding' || !validIdentifier(args[1])) throw new CliError('invalid_arguments');
+  if (args.length !== 2 || args[0] !== '--binding' || !validBindingArgument(args[1])) throw new CliError('invalid_arguments');
   return args[1]!;
-}
-function validIdentifier(value: string | undefined): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,512}$/.test(value);
 }
 function validLink(value: string | undefined): value is string {
   if (typeof value !== 'string') return false;
@@ -102,7 +101,9 @@ export async function readStdin(input: Readable, limit: number): Promise<string>
     if (size > limit) throw new CliError('invalid_input');
     chunks.push(bytes);
   }
-  const body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+  let body: string;
+  try { body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
+  catch { throw new CliError('invalid_input'); }
   if (body.length === 0 || body.includes('\u0000')) throw new CliError('invalid_input');
   return body;
 }

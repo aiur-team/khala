@@ -1,12 +1,14 @@
 import type { Readable, Writable } from 'node:stream';
+import type { BindingId } from '@khala/contracts/delivery/index';
 import { cliErrorCode } from '../cli/errors.js';
-import type { SendService } from '../cli/send.js';
+import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import type { SendResult } from '../cli/types.js';
-import { validIdentifier } from '../cli/validation.js';
+import { plainObject, validBindingArgument } from '../cli/validation.js';
 
 const JSON_RPC_VERSION = '2.0';
 const MCP_PROTOCOL_VERSION = '2025-03-26';
 const TOOL_NAME = 'khala_send';
+const MAX_FRAME_BYTES = MAX_SEND_BYTES + 16_384;
 
 type JsonRpcId = string | number | null;
 
@@ -31,18 +33,32 @@ export type McpServerOptions = Readonly<{
 export async function runMcpServer(options: McpServerOptions): Promise<void> {
   const { input, output, send: sends, signal } = options;
   let buffered = '';
+  let discarding = false;
   for await (const chunk of input) {
     if (signal?.aborted) break;
-    buffered += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+    let text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+    if (discarding) {
+      const boundary = text.indexOf('\n');
+      if (boundary === -1) continue;
+      text = text.slice(boundary + 1);
+      discarding = false;
+    }
+    buffered += text;
     let newline = buffered.indexOf('\n');
     while (newline !== -1) {
       const line = buffered.slice(0, newline).replace(/\r$/, '');
       buffered = buffered.slice(newline + 1);
-      if (line.trim().length > 0) await processLine(line, output, sends);
+      if (Buffer.byteLength(line) > MAX_FRAME_BYTES) await writeResponse(output, failure(null, -32600, 'Invalid Request'));
+      else if (line.trim().length > 0) await processLine(line, output, sends);
       newline = buffered.indexOf('\n');
     }
+    if (Buffer.byteLength(buffered) > MAX_FRAME_BYTES) {
+      buffered = '';
+      discarding = true;
+      await writeResponse(output, failure(null, -32600, 'Invalid Request'));
+    }
   }
-  if (buffered.trim().length > 0) await processLine(buffered.replace(/\r$/, ''), output, sends);
+  if (!discarding && buffered.trim().length > 0) await processLine(buffered.replace(/\r$/, ''), output, sends);
 }
 
 async function processLine(line: string, output: Writable, sends: SendService): Promise<void> {
@@ -54,13 +70,13 @@ async function processLine(line: string, output: Writable, sends: SendService): 
     return;
   }
 
-  const notification = isRecord(message) && !Object.hasOwn(message, 'id');
+  const notification = plainObject(message) && !Object.hasOwn(message, 'id');
   const response = await handleMessage(message, sends);
   if (!notification) await writeResponse(output, response);
 }
 
 async function handleMessage(message: unknown, sends: SendService): Promise<JsonRpcResponse> {
-  if (!isRecord(message) || !hasOnly(message, ['jsonrpc', 'id', 'method', 'params'])
+  if (!plainObject(message) || !hasOnly(message, ['jsonrpc', 'id', 'method', 'params'])
     || message.jsonrpc !== JSON_RPC_VERSION || typeof message.method !== 'string') {
     return failure(requestId(message), -32600, 'Invalid Request');
   }
@@ -90,15 +106,15 @@ async function handleMessage(message: unknown, sends: SendService): Promise<Json
 }
 
 async function callTool(id: JsonRpcId, params: unknown, sends: SendService): Promise<JsonRpcResponse> {
-  if (!isRecord(params) || !hasOnly(params, ['name', 'arguments']) || params.name !== TOOL_NAME
-    || !isRecord(params.arguments) || !hasOnly(params.arguments, ['message', 'bindingId'])
+  if (!plainObject(params) || !hasOnly(params, ['name', 'arguments']) || params.name !== TOOL_NAME
+    || !plainObject(params.arguments) || !hasOnly(params.arguments, ['message', 'bindingId'])
     || typeof params.arguments.message !== 'string') {
     return failure(id, -32602, 'Invalid params');
   }
 
-  let bindingId: string | null = null;
+  let bindingId: BindingId | null = null;
   if (Object.hasOwn(params.arguments, 'bindingId')) {
-    if (!validIdentifier(params.arguments.bindingId)) return failure(id, -32602, 'Invalid params');
+    if (!validBindingArgument(params.arguments.bindingId)) return failure(id, -32602, 'Invalid params');
     bindingId = params.arguments.bindingId;
   }
 
@@ -116,7 +132,13 @@ async function callTool(id: JsonRpcId, params: unknown, sends: SendService): Pro
   });
 }
 
-function toolDefinition(): unknown {
+type McpToolDefinition = Readonly<{
+  name: typeof TOOL_NAME;
+  description: string;
+  inputSchema: Readonly<{ type: 'object'; properties: Readonly<Record<string, unknown>>; required: readonly string[]; additionalProperties: false }>;
+}>;
+
+function toolDefinition(): McpToolDefinition {
   return {
     name: TOOL_NAME,
     description: 'Send a message to a Khala room through a binding held by this agent.',
@@ -144,14 +166,14 @@ function publicResult(result: SendResult): Record<string, string | null> {
 
 function validInitializeParams(value: unknown): value is { protocolVersion?: string } {
   if (value === undefined) return true;
-  if (!isRecord(value) || !hasOnly(value, ['protocolVersion', 'capabilities', 'clientInfo'])) return false;
+  if (!plainObject(value) || !hasOnly(value, ['protocolVersion', 'capabilities', 'clientInfo'])) return false;
   if (Object.hasOwn(value, 'protocolVersion') && typeof value.protocolVersion !== 'string') return false;
-  if (Object.hasOwn(value, 'capabilities') && !isRecord(value.capabilities)) return false;
-  return !Object.hasOwn(value, 'clientInfo') || isRecord(value.clientInfo);
+  if (Object.hasOwn(value, 'capabilities') && !plainObject(value.capabilities)) return false;
+  return !Object.hasOwn(value, 'clientInfo') || plainObject(value.clientInfo);
 }
 
 function emptyParams(value: unknown): boolean {
-  return value === undefined || (isRecord(value) && Object.keys(value).length === 0);
+  return value === undefined || (plainObject(value) && Object.keys(value).length === 0);
 }
 
 function success(id: JsonRpcId, result: unknown): JsonRpcResponse {
@@ -163,17 +185,13 @@ function failure(id: JsonRpcId, code: number, message: string): JsonRpcResponse 
 }
 
 function requestId(message: unknown): JsonRpcId {
-  if (!isRecord(message) || !Object.hasOwn(message, 'id') || !validId(message.id)) return null;
+  if (!plainObject(message) || !Object.hasOwn(message, 'id') || !validId(message.id)) return null;
   return message.id;
 }
 
 function validId(value: unknown): value is JsonRpcId {
   return value === null || typeof value === 'string'
     || (typeof value === 'number' && Number.isFinite(value));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function hasOnly(value: Record<string, unknown>, allowed: readonly string[]): boolean {

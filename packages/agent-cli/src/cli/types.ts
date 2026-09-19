@@ -19,7 +19,7 @@ export type AgentStatus = Readonly<{
 }>;
 export interface AgentClientPort {
   connect(link: string): Promise<ConnectResult>;
-  send(input: Readonly<{ bindingId: string | null; clientTxnId: string; body: string }>): Promise<SendResult>;
+  send(input: Readonly<{ bindingId: BindingId | null; clientTxnId: string; body: string }>): Promise<SendResult>;
   status(): Promise<AgentStatus>;
 }
 export type InboxDelivery = Readonly<{

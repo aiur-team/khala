@@ -1,13 +1,17 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { decodeSessionBinding } from '@khala/contracts/delivery/index';
 import { runCli } from './app.js';
 import type { Inbox } from './inbox.js';
 import type { AgentClientPort } from './types.js';
 
-const BINDING = { v: 1, bindingId: 'binding-1', ownerId: 'owner-1', deviceId: 'device-1', harness: 'codex',
-  sessionId: 'session-1', generation: 0 } as unknown as SessionBinding;
-function streams(input = '') {
+const decodedBinding = decodeSessionBinding({
+  v: 1, bindingId: 'binding-1', ownerId: 'owner-1', agentParticipantId: 'agent-1', deviceId: 'device-1',
+  harness: 'codex', sessionId: 'session-1', generation: 0,
+});
+if (!decodedBinding.ok) throw new Error('invalid binding fixture');
+const BINDING = decodedBinding.value;
+function streams(input: string | Buffer = '') {
   const stdin = new PassThrough(); stdin.end(input);
   const stdout = new PassThrough(); const stderr = new PassThrough(); let out = ''; let err = '';
   stdout.on('data', chunk => { out += String(chunk); }); stderr.on('data', chunk => { err += String(chunk); });
@@ -39,6 +43,11 @@ describe('runCli', () => {
     expect(await runCli(['send', '--binding', 'binding-1'], { client: client({ async send(input) { observed = input.body; return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: null }; } }), inbox: unusedInbox, ...io })).toBe(0);
     expect(observed).toBe(secret); expect(io.output()).not.toContain(secret); expect(io.error()).not.toContain(secret);
   });
+  it('rejects invalid UTF-8 as invalid input', async () => {
+    const io = streams(Buffer.from([0xc3, 0x28]));
+    expect(await runCli(['send'], { client: client(), inbox: unusedInbox, ...io })).toBe(2);
+    expect(io.error()).toContain('invalid_input');
+  });
   it('prints disconnected status without opening an inbox', async () => {
     const io = streams();
     expect(await runCli(['status'], { client: client({ async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; } }), inbox: unusedInbox, ...io })).toBe(0);
@@ -50,10 +59,10 @@ describe('runCli', () => {
       events: [], payloadDigest: `sha256:${'0'.repeat(64)}`, payloadBase64: 'cmVsZWFzZWQ=', receivedAt: '2026-09-19T12:00:00Z' },
       payload: new TextEncoder().encode('released'), nextOffset: 10 };
     let first = true;
-    const inbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async release() {} }; },
+    const inbox: Inbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async release() {} }; },
       async readNext() { if (first) { first = false; return item; } return null; },
       async acknowledge() { acknowledged = true; },
-      async status() { return { bindingId: BINDING.bindingId, generation: 0, cursor: { v: 1 as const, offset: 0, releaseId: null } }; } } as Inbox;
+      async status() { return { bindingId: BINDING.bindingId, generation: 0, cursor: { v: 1 as const, offset: 0, releaseId: null } }; } };
     expect(await runCli(['listen'], { client: client(), inbox: async () => inbox, signal: abort.signal, ...io })).toBe(0);
     expect(acknowledged).toBe(true); expect(JSON.parse(io.output())).toMatchObject({ releaseId: 'release-1', payloadBase64: 'cmVsZWFzZWQ=' });
   });

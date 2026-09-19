@@ -3,10 +3,11 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
-import type { BindingId } from '@khala/contracts/delivery/index';
+import readline from 'node:readline';
+import type { BindingId, EventRef } from '@khala/contracts/delivery/index';
 import { CliError } from './errors.js';
 import type { InboxCursor, InboxDelivery, InboxRecord } from './types.js';
-import { plainObject, validDigest, validEventRef, validIdentifier } from './validation.js';
+import { plainObject, validDigest, validEventRef, validIdentifier, validUtcTimestamp } from './validation.js';
 
 const INBOX_FILE = 'inbox.jsonl';
 const CURSOR_FILE = 'cursor.json';
@@ -38,6 +39,7 @@ export type OpenInboxOptions = Readonly<{
   bindingId: string;
   generation: number;
   maxPayloadBytes: number;
+  maxSelectionEvents: number;
 }>;
 
 type ValidatedOptions = Omit<OpenInboxOptions, 'bindingId'> & Readonly<{ bindingId: BindingId }>;
@@ -49,16 +51,20 @@ export async function openInbox(options: OpenInboxOptions): Promise<Inbox> {
   await ensurePrivateDirectory(stateDirectory);
   const bindingsDirectory = path.join(stateDirectory, 'bindings');
   await ensurePrivateDirectory(bindingsDirectory);
-  const bindingDirectory = path.join(bindingsDirectory, validated.bindingId);
+  const bindingDirectory = path.join(
+    bindingsDirectory,
+    createHash('sha256').update(validated.bindingId).digest('base64url'),
+  );
   await ensurePrivateDirectory(bindingDirectory);
   const inboxPath = path.join(bindingDirectory, INBOX_FILE);
   await ensurePrivateFile(inboxPath);
   await recoverTrailingWrite(inboxPath);
-  const known = await loadKnown(inboxPath, validated);
   const cursorPath = path.join(bindingDirectory, CURSOR_FILE);
   const socketPath = await listenerSocketPath(bindingDirectory);
-  return new FileInbox(validated, bindingDirectory, inboxPath, cursorPath, socketPath, known);
+  return new FileInbox(validated, { bindingDirectory, inboxPath, cursorPath, socketPath });
 }
+
+type InboxPaths = Readonly<{ bindingDirectory: string; inboxPath: string; cursorPath: string; socketPath: string }>;
 
 class FileInbox implements Inbox {
   readonly #options: ValidatedOptions;
@@ -66,32 +72,29 @@ class FileInbox implements Inbox {
   readonly #inboxPath: string;
   readonly #cursorPath: string;
   readonly #socketPath: string;
-  readonly #known: Map<string, string>;
+  #known: Map<string, string> | null = null;
   #writes: Promise<void> = Promise.resolve();
 
   constructor(
     options: ValidatedOptions,
-    bindingDirectory: string,
-    inboxPath: string,
-    cursorPath: string,
-    socketPath: string,
-    known: Map<string, string>,
+    paths: InboxPaths,
   ) {
     this.#options = options;
-    this.#bindingDirectory = bindingDirectory;
-    this.#inboxPath = inboxPath;
-    this.#cursorPath = cursorPath;
-    this.#socketPath = socketPath;
-    this.#known = known;
+    this.#bindingDirectory = paths.bindingDirectory;
+    this.#inboxPath = paths.inboxPath;
+    this.#cursorPath = paths.cursorPath;
+    this.#socketPath = paths.socketPath;
   }
 
   async enqueue(delivery: InboxDelivery): Promise<'appended' | 'duplicate'> {
     return this.#serial(async () => {
       const record = recordFromDelivery(delivery, this.#options);
       const encoded = JSON.stringify(record);
-      const previous = this.#known.get(record.releaseId);
+      const fingerprint = recordFingerprint(encoded);
+      const known = this.#known ??= await loadKnown(this.#inboxPath, this.#options);
+      const previous = known.get(record.releaseId);
       if (previous !== undefined) {
-        if (previous !== encoded) throw new CliError('invalid_input');
+        if (previous !== fingerprint) throw new CliError('invalid_input');
         return 'duplicate';
       }
       const handle = await openNoFollow(this.#inboxPath, fs.constants.O_WRONLY | fs.constants.O_APPEND);
@@ -108,7 +111,7 @@ class FileInbox implements Inbox {
         await recoverTrailingWrite(this.#inboxPath);
         throw new CliError('storage_failed');
       }
-      this.#known.set(record.releaseId, encoded);
+      known.set(record.releaseId, fingerprint);
       return 'appended';
     });
   }
@@ -171,7 +174,9 @@ class FileInbox implements Inbox {
 function validateOptions(options: OpenInboxOptions): ValidatedOptions {
   if (!validIdentifier(options.bindingId) || !Number.isSafeInteger(options.generation) || options.generation < 0
     || !Number.isSafeInteger(options.maxPayloadBytes) || options.maxPayloadBytes < 1
-    || options.maxPayloadBytes > 64 * 1024 * 1024) throw new CliError('invalid_input');
+    || options.maxPayloadBytes > 64 * 1024 * 1024
+    || !Number.isSafeInteger(options.maxSelectionEvents) || options.maxSelectionEvents < 1
+    || options.maxSelectionEvents > 10_000) throw new CliError('invalid_input');
   return { ...options, bindingId: options.bindingId as BindingId };
 }
 
@@ -251,14 +256,14 @@ async function recoverTrailingWrite(filename: string): Promise<void> {
 
 async function loadKnown(filename: string, options: ValidatedOptions): Promise<Map<string, string>> {
   try {
-    const text = await fsp.readFile(filename, 'utf8');
     const known = new Map<string, string>();
-    for (const line of text.split('\n')) {
-      if (line.length === 0) continue;
+    const lines = readline.createInterface({ input: fs.createReadStream(filename, { encoding: 'utf8' }), crlfDelay: Infinity });
+    for await (const line of lines) {
       const record = decodeRecord(line, options).record;
+      const fingerprint = recordFingerprint(line);
       const previous = known.get(record.releaseId);
-      if (previous !== undefined && previous !== line) throw new CliError('storage_failed');
-      known.set(record.releaseId, line);
+      if (previous !== undefined && previous !== fingerprint) throw new CliError('storage_failed');
+      known.set(record.releaseId, fingerprint);
     }
     return known;
   } catch (error) {
@@ -267,13 +272,18 @@ async function loadKnown(filename: string, options: ValidatedOptions): Promise<M
   }
 }
 
+function recordFingerprint(encoded: string): string {
+  return createHash('sha256').update(encoded).digest('hex');
+}
+
 function recordFromDelivery(delivery: InboxDelivery, options: ValidatedOptions): InboxRecord {
   if (delivery === null || typeof delivery !== 'object' || delivery.v !== 1
     || delivery.bindingId !== options.bindingId || delivery.generation !== options.generation
     || !validIdentifier(delivery.releaseId) || !Array.isArray(delivery.events) || delivery.events.length === 0
+    || delivery.events.length > options.maxSelectionEvents
     || !(delivery.payload instanceof Uint8Array) || delivery.payload.byteLength > options.maxPayloadBytes
     || !validDigest(delivery.payloadDigest) || digest(delivery.payload) !== delivery.payloadDigest
-    || !validTimestamp(delivery.receivedAt)) {
+    || !validUtcTimestamp(delivery.receivedAt)) {
     throw new CliError('invalid_input');
   }
   for (const event of delivery.events) if (!validEventRef(event)) throw new CliError('invalid_input');
@@ -299,12 +309,26 @@ function decodeRecord(line: string, options: ValidatedOptions): { record: InboxR
   if (!plainObject(value)) throw new CliError('storage_failed');
   const keys = ['v', 'releaseId', 'bindingId', 'generation', 'events', 'payloadDigest', 'payloadBase64', 'receivedAt'];
   if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) throw new CliError('storage_failed');
-  const record = value as unknown as InboxRecord;
-  if (record.v !== 1 || record.bindingId !== options.bindingId || record.generation !== options.generation
-    || !validIdentifier(record.releaseId) || !Array.isArray(record.events) || record.events.length === 0
-    || !validDigest(record.payloadDigest) || typeof record.payloadBase64 !== 'string'
-    || !validTimestamp(record.receivedAt)) throw new CliError('storage_failed');
-  for (const event of record.events) if (!validEventRef(event)) throw new CliError('storage_failed');
+  if (value.v !== 1 || value.bindingId !== options.bindingId || value.generation !== options.generation
+    || !validIdentifier(value.releaseId) || !Array.isArray(value.events) || value.events.length === 0
+    || value.events.length > options.maxSelectionEvents
+    || !validDigest(value.payloadDigest) || typeof value.payloadBase64 !== 'string'
+    || !validUtcTimestamp(value.receivedAt)) throw new CliError('storage_failed');
+  const events: EventRef[] = [];
+  for (const event of value.events) {
+    if (!validEventRef(event)) throw new CliError('storage_failed');
+    events.push(event);
+  }
+  const record: InboxRecord = {
+    v: 1,
+    releaseId: value.releaseId,
+    bindingId: options.bindingId,
+    generation: options.generation,
+    events,
+    payloadDigest: value.payloadDigest,
+    payloadBase64: value.payloadBase64,
+    receivedAt: value.receivedAt,
+  };
   const payload = decodeBase64(record.payloadBase64);
   if (payload === null || payload.byteLength > options.maxPayloadBytes || digest(payload) !== record.payloadDigest) {
     throw new CliError('storage_failed');
@@ -359,12 +383,13 @@ async function readCursor(filename: string): Promise<InboxCursor> {
   }
   try {
     const value: unknown = JSON.parse(text);
-    if (!plainObject(value) || Object.keys(value).length !== 3 || value.v !== 1
-      || !Number.isSafeInteger(value.offset) || (value.offset as number) < 0
-      || !(value.releaseId === null || validIdentifier(value.releaseId))) {
+    if (!plainObject(value) || Object.keys(value).length !== 3 || value.v !== 1) {
       throw new CliError('storage_failed');
     }
-    return value as unknown as InboxCursor;
+    const { offset, releaseId } = value;
+    if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0
+      || !(releaseId === null || validIdentifier(releaseId))) throw new CliError('storage_failed');
+    return { v: 1, offset, releaseId };
   } catch (error) {
     if (error instanceof CliError) throw error;
     throw new CliError('storage_failed');
@@ -452,9 +477,4 @@ function decodeBase64(value: string): Uint8Array | null {
   if (value.length === 0 || value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return null;
   const decoded = Buffer.from(value, 'base64');
   return decoded.toString('base64') === value ? new Uint8Array(decoded) : null;
-}
-
-function validTimestamp(value: unknown): value is string {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
-    && !Number.isNaN(Date.parse(value));
 }

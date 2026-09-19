@@ -80,7 +80,29 @@ describe('MCP server', () => {
     expect(JSON.stringify(responses)).not.toContain(secret);
     expect(JSON.stringify(responses)).not.toContain('payload-secret');
   });
+
+  it('bounds an unterminated frame and resumes at the next newline', async () => {
+    const client = fakeClient();
+    const oversized = `{"jsonrpc":"2.0","id":1,"method":"ping","pad":"${'x'.repeat(90_000)}`;
+    const output = new WritableCapture();
+    await runMcpServer({
+      input: Readable.from([oversized, `\n${JSON.stringify(request(2, 'ping', {}))}\n`]),
+      output,
+      send: new SendService(client),
+    });
+    const responses = output.lines();
+    expect(responses).toMatchObject([{ error: { code: -32600 } }, { id: 2, result: {} }]);
+  });
 });
+
+class WritableCapture extends Writable {
+  value = '';
+  override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    this.value += chunk.toString();
+    callback();
+  }
+  lines(): Response[] { return this.value.trim().split('\n').map(line => JSON.parse(line) as Response); }
+}
 
 function request(id: number, method: string, params?: unknown): Request {
   return { jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) };
