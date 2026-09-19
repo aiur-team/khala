@@ -195,6 +195,8 @@ describe('view fixtures', () => {
   it('lists every evidence route and approval outcome', () => {
     expect(views.valid.map(view => view.name)).toEqual(expect.arrayContaining([
       'Claude 2.1.276 no-setup route is unsupported',
+      'Codex native CLI queue notification is tested',
+      'agent-installed listener remains unsupported',
       'Codex executor Khala did not start is unknown',
       'unproven generic harness is unknown',
       'disconnect after a possible submission is outcome_unknown',
