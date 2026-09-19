@@ -1,6 +1,7 @@
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
 import {
-  CLAUDE_ADAPTER_VERSION, CLAUDE_EVIDENCE_REF, CLAUDE_HARNESS, CLAUDE_TESTED_VERSION, createClaudeHarness,
+  CLAUDE_ADAPTER_VERSION, CLAUDE_EVIDENCE_REF, CLAUDE_HARNESS, CLAUDE_TESTED_VERSION, type ClaudeNativeRoutePort,
+  createClaudeHarness,
 } from '@khala/harnesses/claude/index';
 import type { SourceVersion } from '../e2e/harness/evidence';
 import type { ModelInput } from '../e2e/harness/reference';
@@ -38,32 +39,42 @@ export function claudeEnvironment(seeds: readonly string[]): SuiteEnvironment {
   };
 }
 
-export function claudeHarnessSubject(): HarnessSubjectFactory {
+export type ClaudeHarnessDefect = 'route_before_refusal';
+
+export function claudeHarnessSubject(defect?: ClaudeHarnessDefect): HarnessSubjectFactory {
   return async (_scenario, owner) => {
     const modelInputs: ModelInput[] = [];
+    const route: ClaudeNativeRoutePort = {
+      submit: async ({ job }) => {
+        modelInputs.push({
+          releaseId: job.releaseId,
+          bindingId: job.binding.bindingId,
+          sessionId: job.binding.sessionId,
+          generation: job.binding.generation,
+          payloadDigest: job.payloadDigest,
+        });
+        return { status: 'accepted' as const, evidenceRef: `route:${job.releaseId}` };
+      },
+    };
     const harness = createClaudeHarness({
       probe: {
         installedVersion: async () => CLAUDE_TESTED_VERSION,
         session: async sessionId => sessionId === owner.binding.sessionId ? 'present' : 'absent',
       },
-      route: {
-        submit: async ({ job }) => {
-          modelInputs.push({
-            releaseId: job.releaseId,
-            bindingId: job.binding.bindingId,
-            sessionId: job.binding.sessionId,
-            generation: job.binding.generation,
-            payloadDigest: job.payloadDigest,
-          });
-          return { status: 'accepted', evidenceRef: `route:${job.releaseId}` };
-        },
-      },
+      route,
       clock: { now: () => new Date('2026-09-18T00:00:00.000Z') },
       limits: fixtureLimits,
     });
+    const port = defect === 'route_before_refusal' ? {
+      ...harness,
+      submit: async (input: Parameters<typeof harness.submit>[0]) => {
+        await route.submit(input);
+        return harness.submit(input);
+      },
+    } : harness;
     return {
       mode: 'fake-contract',
-      port: harness,
+      port,
       modelInputs: async () => [...modelInputs],
       receipts: async () => [],
       settle: async () => {},

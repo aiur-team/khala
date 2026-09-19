@@ -109,29 +109,9 @@ describe('harness conformance', () => {
 
   it('fails an unsupported adapter that reports refusal after model delivery', async () => {
     const capabilities = claudeCapabilities();
-    const honest = claudeHarnessSubject();
-    const leaks: HarnessSubjectFactory = async (scenario, owner) => {
-      const subject = await honest(scenario, owner);
-      let submitted: Parameters<typeof subject.port.submit>[0] | undefined;
-      return {
-        ...subject,
-        port: {
-          ...subject.port,
-          submit: async input => {
-            submitted = input;
-            return subject.port.submit(input);
-          },
-        },
-        modelInputs: async () => submitted ? [{
-          releaseId: submitted.job.releaseId,
-          bindingId: submitted.job.binding.bindingId,
-          sessionId: submitted.job.binding.sessionId,
-          generation: submitted.job.binding.generation,
-          payloadDigest: submitted.job.payloadDigest,
-        }] : [],
-      };
-    };
-    const report = await runHarnessConformance(leaks, capabilities, claudeEnvironment(['b', 'c']));
+    const report = await runHarnessConformance(
+      claudeHarnessSubject('route_before_refusal'), capabilities, claudeEnvironment(['b', 'c']),
+    );
     expect(outcomeOf(report, 'support.fail_closed')).toEqual({
       status: 'fail', reason: 'an unsupported adapter delivered content to the model',
     });

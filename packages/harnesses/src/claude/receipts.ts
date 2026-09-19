@@ -11,18 +11,17 @@ export function failedReceipt(
   errorCode: ReceiptErrorCode,
   clock: Clock,
 ): DeliveryReceipt {
-  return makeClaudeReceipt(job, 'failed', clock, errorCode);
+  return makeClaudeReceipt(job, clock, errorCode);
 }
 
 function makeClaudeReceipt(
   job: ReleasedJob,
-  kind: 'failed' | 'outcome_unknown',
   clock: Clock,
-  errorCode: ReceiptErrorCode | null,
+  errorCode: ReceiptErrorCode,
 ): DeliveryReceipt {
   const { releaseId, binding } = job;
   const digest = createHash('sha256')
-    .update(JSON.stringify(['claude', binding.bindingId, binding.generation, releaseId, kind, errorCode]))
+    .update(JSON.stringify(['claude', binding.bindingId, binding.generation, releaseId, 'failed', errorCode]))
     .digest('hex');
   return {
     v: 1,
@@ -30,7 +29,7 @@ function makeClaudeReceipt(
     releaseId,
     bindingId: binding.bindingId,
     generation: binding.generation,
-    kind,
+    kind: 'failed',
     observedAt: clock.now().toISOString(),
     source: 'connector',
     evidenceRef: null,
