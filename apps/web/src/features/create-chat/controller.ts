@@ -1,6 +1,6 @@
-import type { ContentLimits, Disposer, MessageContent, OperationResult, RoomId } from '@khala/contracts/messaging/index';
+import type { AdmissionPolicy, ContentLimits, Disposer, MessageContent, OperationResult, RoomId } from '@khala/contracts/messaging/index';
 import { decodeWith, displayText } from '@khala/contracts/messaging/decode';
-import { INITIAL_VIEW, type CreateChatView, type IntroDraft } from './model';
+import { INITIAL_VIEW, type AdmissionPolicyChoice, type CreateChatView, type IntroDraft } from './model';
 import type { CreateChatPorts } from './ports';
 
 type JournalPorts = Pick<CreateChatPorts, 'room' | 'admission' | 'limits'>;
@@ -12,6 +12,8 @@ export interface CreateChatController {
   getView(): CreateChatView;
   subscribe(listener: (view: CreateChatView) => void): Disposer;
   setTitle(title: string): void;
+  setAdmissionPolicy(policy: AdmissionPolicyChoice): void;
+  setNamedEmail(email: string): void;
   addIntro(): void;
   updateIntro(localId: string, body: string): void;
   removeIntro(localId: string): void;
@@ -48,6 +50,18 @@ function validateIntroBody(body: string, limits: ContentLimits): string | null {
   return null;
 }
 
+// Keep this local pre-check aligned with the authoritative normalization in
+// apps/control/src/invitations/policy.ts.
+const EMAIL = /^[^\s@]+@[^\s@]+$/;
+
+function selectedPolicy(view: CreateChatView): AdmissionPolicy {
+  if (view.admissionPolicy === 'link_full_history') return { v: 1, kind: 'link', history: 'full' };
+  if (view.admissionPolicy === 'named_no_history') {
+    return { v: 1, kind: 'named_email', email: view.namedEmail.trim(), history: 'none' };
+  }
+  return { v: 1, kind: 'link', history: 'none' };
+}
+
 export function createChatController(
   ports: JournalPorts,
   options: Readonly<{ createId?: () => string }> = {},
@@ -64,6 +78,7 @@ export function createChatController(
   let batchId: string | null = null;
   let frozenIntros: readonly MessageContent[] | null = null;
   let shareOperationId: string | null = null;
+  let frozenPolicy: AdmissionPolicy | null = null;
   let pendingStep: PendingStep = null;
 
   function notify(): void {
@@ -178,7 +193,8 @@ export function createChatController(
     view = { ...view, shareUrl: null };
     const roomId = view.roomId as RoomId;
     shareOperationId ??= createId();
-    await runStep('share', () => ports.admission.share({ operationId: shareOperationId!, roomId }), value => {
+    frozenPolicy ??= selectedPolicy(view);
+    await runStep('share', () => ports.admission.share({ operationId: shareOperationId!, roomId, policy: frozenPolicy! }), value => {
       view = { ...view, shareUrl: value.shareUrl };
       setPhase('ready');
     });
@@ -194,6 +210,14 @@ export function createChatController(
 
     setTitle(title) {
       applyEdit(current => ({ ...current, title, titleError: null }));
+    },
+
+    setAdmissionPolicy(admissionPolicy) {
+      applyEdit(current => ({ ...current, admissionPolicy, namedEmailError: null }));
+    },
+
+    setNamedEmail(namedEmail) {
+      applyEdit(current => ({ ...current, namedEmail, namedEmailError: null }));
     },
 
     addIntro() {
@@ -230,13 +254,15 @@ export function createChatController(
       if (disposed || view.phase !== 'editing') return;
       const title = view.title.trim();
       const titleError = validateTitle(title, ports.limits);
+      const namedEmail = view.namedEmail.trim();
+      const namedEmailError = view.admissionPolicy === 'named_no_history' && !EMAIL.test(namedEmail) ? 'email_invalid' : null;
       const intros: readonly IntroDraft[] = view.intros.map(intro => ({ ...intro, error: validateIntroBody(intro.body, ports.limits) }));
-      if (titleError !== null || intros.some(intro => intro.error !== null)) {
-        view = { ...view, title, titleError, intros };
+      if (titleError !== null || namedEmailError !== null || intros.some(intro => intro.error !== null)) {
+        view = { ...view, title, titleError, namedEmail, namedEmailError, intros };
         notify();
         return;
       }
-      view = { ...view, title, titleError: null, intros };
+      view = { ...view, title, titleError: null, namedEmail, namedEmailError: null, intros };
       // Double submit is a no-op: phase leaves 'editing' before the first await,
       // and operationId is only ever assigned once per room.
       if (view.roomId !== null) {

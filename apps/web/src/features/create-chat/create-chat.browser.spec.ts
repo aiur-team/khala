@@ -38,6 +38,10 @@ test('CreateChatScreen completes an unnamed chat with two intros and keeps submi
     await titleField.waitFor();
     await titleField.focus();
 
+    // The non-default choice is carried through the screen and controller to
+    // the injected admission implementation without translation.
+    await page.getByLabel('Anyone with the link can read messages sent before they joined').check();
+
     // Add two introduction messages, in order.
     const addIntro = page.getByRole('button', { name: 'Add introduction message' });
     await addIntro.click();
@@ -80,6 +84,7 @@ test('CreateChatScreen completes an unnamed chat with two intros and keeps submi
     const shareUrlField = page.getByLabel('Chat link');
     await shareUrlField.waitFor({ timeout: 10_000 });
     assert.equal(await shareUrlField.inputValue(), 'https://khala.aiur.team/i/harness');
+    assert.equal(await page.locator('#policy-log').textContent(), JSON.stringify({ v: 1, kind: 'link', history: 'full' }));
 
     const copyButton = page.getByRole('button', { name: 'Copy link' });
     await copyButton.click();
