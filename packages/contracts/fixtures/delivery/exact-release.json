@@ -131,7 +131,7 @@
     "errorCode": null
   },
   "capabilities": {
-    "v": 1,
+    "v": 2,
     "harness": "codex",
     "version": "0.154.0",
     "adapterVersion": "probe-driver@9a28af84",

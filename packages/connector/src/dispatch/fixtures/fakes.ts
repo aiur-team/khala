@@ -137,7 +137,7 @@ export function capabilities(
   overrides: Partial<HarnessCapabilities> = {},
 ): HarnessCapabilities {
   return {
-    v: 1,
+    v: 2,
     harness: 'codex',
     version: '0.154.0',
     adapterVersion: 'test-adapter',

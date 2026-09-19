@@ -14,7 +14,7 @@ describe('inspect', () => {
     const capabilities = await harness.inspect(binding());
     expect(decodeHarnessCapabilities(capabilities)).toEqual({ ok: true, value: capabilities });
     expect(capabilities).toEqual({
-      v: 1, harness: 'codex', version: '0.154.0', adapterVersion: 'khala-hosted-queue-1', support: 'tested',
+      v: 2, harness: 'codex', version: '0.154.0', adapterVersion: 'khala-hosted-queue-1', support: 'tested',
       existingSession: 'khala_hosted_resume', immediateNotification: 'khala_hosted_idle', busy: 'queue',
       receiptEvidence: ['transport_written', 'harness_queued', 'context_consumed', 'completed', 'outcome_unknown', 'failed'],
       reconcileByReleaseId: 'while_queued', limits, evidenceRef: 'docs/evidence/codex.md',

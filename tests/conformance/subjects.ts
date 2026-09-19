@@ -29,7 +29,7 @@ export const fixtureLimits: DeliveryLimits = unwrap(decodeDeliveryLimits(exact.l
  */
 export function fakeCapabilities(busy: HarnessCapabilities['busy']): HarnessCapabilities {
   return unwrap(decodeHarnessCapabilities({
-    v: 1,
+    v: 2,
     harness: 'fake-reference',
     version: '0',
     adapterVersion: 'tests-e2e-harness',

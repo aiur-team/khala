@@ -3,7 +3,7 @@
 
 import {
   type Decoded, type DeliveryLimits, array, decodeWith, elementField, fail, identifier, literal, nullable,
-  object, readDeliveryLimits, version,
+  object, readDeliveryLimits,
 } from './decode';
 import type { SessionBinding } from './binding';
 import type { ReleaseId } from './ids';
@@ -46,7 +46,7 @@ export const IMMEDIATE_NOTIFICATION_SUPPORT = [
 export const RECONCILE_SUPPORT = ['unknown', 'unsupported', 'while_queued'] as const;
 
 export type HarnessCapabilities = Readonly<{
-  v: 1;
+  v: 2;
   harness: string;
   version: string;
   adapterVersion: string;
@@ -98,7 +98,8 @@ export function decodeHarnessCapabilities(input: unknown): Decoded<HarnessCapabi
       'limits',
       'evidenceRef',
     ]);
-    const v = version(r.field('v'), r.at('v'));
+    const v = r.field('v');
+    if (v !== 2) fail(r.at('v'), 'invalid_version');
     const evidenceValues = array(r.field('receiptEvidence'), r.at('receiptEvidence'));
     const seen = new Set<ReceiptKind>();
     const receiptEvidence = evidenceValues.map((value, index) => {

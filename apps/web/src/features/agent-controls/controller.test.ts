@@ -56,7 +56,7 @@ function snapshot(overrides: Partial<AgentControlsSnapshot> = {}): AgentControls
     binding: BINDING,
     bindingStatus: 'active',
     capabilities: {
-      v: 1,
+      v: 2,
       harness: 'codex',
       version: '1.0.0',
       adapterVersion: '1.0.0',
@@ -156,7 +156,7 @@ describe('createAgentControlsController — initial state', () => {
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot({
       capabilities: {
-        v: 1, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'unsupported',
+        v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'unsupported',
         existingSession: 'unknown', immediateNotification: 'unknown', busy: 'unknown', receiptEvidence: [],
         reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: null,
       },
@@ -172,7 +172,7 @@ describe('createAgentControlsController — initial state', () => {
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot({
       capabilities: {
-        v: 1, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
+        v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
         existingSession: 'unsupported', immediateNotification: 'unknown', busy: 'unknown', receiptEvidence: [],
         reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: 'evidence-1',
       },
@@ -187,7 +187,7 @@ describe('createAgentControlsController — initial state', () => {
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot({
       capabilities: {
-        v: 1, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
+        v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
         existingSession: 'unknown', immediateNotification: 'unknown', busy: 'unknown', receiptEvidence: [],
         reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: 'evidence-1',
       },

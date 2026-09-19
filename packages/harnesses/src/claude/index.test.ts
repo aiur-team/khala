@@ -58,7 +58,7 @@ const harness = (probe: ClaudeNativeProbe, withLimits: DeliveryLimits = limits) 
 
 describe('claudeCapabilities', () => {
   it('reports the tested version exactly as the contract fixture records it', () => {
-    const row = views.valid.find(view => view.name.startsWith('Claude 2.1.276'))!.input as { limits: unknown };
+    const row = views.valid.find(view => view.input.adapterVersion === 'no-setup-route')!.input as { limits: unknown };
     const fixtureLimits = unwrap(decodeDeliveryLimits(row.limits));
     expect(claudeCapabilities(CLAUDE_TESTED_VERSION, fixtureLimits)).toEqual(row);
   });

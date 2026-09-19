@@ -49,24 +49,40 @@ describe('HarnessCapabilities', () => {
       existingSession: 'native_cli_queue',
       immediateNotification: 'native_cli_queue',
       busy: 'queue',
-      receiptEvidence: ['harness_queued', 'outcome_unknown', 'failed'],
+      receiptEvidence: ['harness_queued', 'context_consumed', 'outcome_unknown', 'failed'],
       reconcileByReleaseId: 'unsupported',
-      evidenceRef: 'docs/evidence/codex-native-cli.md',
+      evidenceRef: 'docs/evidence/codex-native-cli.md#queue-idle',
     });
     expect(decodeHarnessCapabilities({ ...(nativeQueue as Record<string, unknown>), evidenceRef: null }))
       .toEqual({ ok: false, code: 'invalid_field', field: 'evidenceRef' });
   });
 
   it('keeps the KHA-145 agent-installed listener fail-closed without live proof', () => {
-    expect(route('agent-installed-listener')).toMatchObject({
+    expect(route('generic-agent-installed-listener')).toMatchObject({
+      harness: 'generic-agent-listener',
+      version: 'unproven',
       support: 'unsupported',
       existingSession: 'agent_installed_listener',
       immediateNotification: 'agent_installed_listener',
       busy: 'unknown',
       receiptEvidence: ['transport_written', 'outcome_unknown', 'failed'],
       reconcileByReleaseId: 'unsupported',
-      evidenceRef: 'docs/evidence/claude-native-cli.md',
+      evidenceRef: null,
     });
+  });
+
+  it('keeps every Claude capability row off unproven native routes', () => {
+    const claudeRoutes = capabilityViews.filter(view => view.input.harness === 'claude');
+    expect(claudeRoutes.length).toBeGreaterThan(0);
+    for (const view of claudeRoutes) {
+      expect(['unknown', 'unsupported']).toContain(view.input.existingSession);
+      expect(['unknown', 'unsupported']).toContain(view.input.immediateNotification);
+    }
+  });
+
+  it('rejects the v1 capabilities envelope after the v2 route expansion', () => {
+    expect(decodeHarnessCapabilities({ ...exact.capabilities, v: 1 }))
+      .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
   });
 
   it('keeps the Claude session and every foreign or generic route out of support claims', () => {

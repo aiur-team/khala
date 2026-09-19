@@ -118,13 +118,14 @@ fractional or unsafe values.
 
 Decoders are total: they return `{ ok: false, code, field }` and never echo input.
 Decoders reject unknown fields, so the browser, control functions and connector deploy
-in lockstep for a given contract version. Additive evidence-scope members do not bump
-`HarnessCapabilities.v`: older consumers already reject an unknown member closed, while
-the record shape and meaning stay unchanged. Every envelope carries `v` (`EventRef`,
+in lockstep for a given contract version. Every envelope carries `v` (`EventRef`,
 `SessionBinding`, `ApprovalCommand`, `PolicySetCommand`, `PolicyAck`, `ReleasedJob`,
 `DeliveryReceipt` and `HarnessCapabilities`); incompatible shape or semantic changes
 bump its `v`. A bump is a reviewed change on both producer and consumer. `EventRef` and
 `SessionBinding` mirror the messaging shapes and bump together with them.
+
+`HarnessCapabilities` is currently v2. Its route vocabulary widened from v1, so v1 is
+rejected rather than being reinterpreted under the newer delivery semantics.
 
 ## Open product gates
 

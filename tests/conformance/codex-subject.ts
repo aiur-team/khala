@@ -29,7 +29,7 @@ const FAKE_EPOCH_MS = Date.UTC(2026, 8, 18);
 /** The capability record the adapter must report for a healthy tested host, stated independently. */
 export function codexCapabilities(): HarnessCapabilities {
   return {
-    v: 1,
+    v: 2,
     harness: CODEX_HARNESS,
     version: CODEX_VERSION,
     adapterVersion: CODEX_ADAPTER_VERSION,

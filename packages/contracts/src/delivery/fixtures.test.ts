@@ -207,6 +207,28 @@ describe('view fixtures', () => {
       'ambiguous approval keeps its operation',
     ]));
   });
+
+  it('resolves every tested capability evidence reference and Markdown anchor', () => {
+    const tested = [exact.capabilities, ...views.valid
+      .filter(view => view.decoder === 'capabilities')
+      .map(view => view.input)]
+      .filter(capabilities => capabilities.support === 'tested');
+
+    for (const capabilities of tested) {
+      const evidenceRef = capabilities.evidenceRef;
+      expect(evidenceRef, `${capabilities.harness} tested evidence`).toBeTypeOf('string');
+      const [path, anchor] = (evidenceRef as string).split('#');
+      const evidenceUrl = new URL(`../../../../${path}`, import.meta.url);
+      const markdown = readFileSync(evidenceUrl, 'utf8');
+      if (anchor === undefined) continue;
+
+      const headings = [...markdown.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gm)]
+        .map(([, heading]) => heading!.toLowerCase().trim()
+          .replace(/[^\p{L}\p{N}\s-]/gu, '')
+          .replace(/\s+/g, '-'));
+      expect(headings, `${path}#${anchor}`).toContain(anchor);
+    }
+  });
 });
 
 describe('public surface', () => {
