@@ -1,0 +1,19 @@
+{
+  "name": "@khala/agent-skill",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./capabilities": "./src/capabilities.ts",
+    "./listen/*": "./src/listen/*.ts",
+    "./listen/fixtures/*": null
+  },
+  "scripts": {
+    "typecheck": "node ../../scripts/package-task.mjs typecheck",
+    "build": "node ../../scripts/package-task.mjs build",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@khala/contracts": "workspace:*"
+  }
+}
