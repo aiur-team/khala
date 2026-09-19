@@ -9,17 +9,24 @@ import {
 import { type DeliveryReceipt, RECEIPT_ERROR_CODES, RECEIPT_KINDS, decodeDeliveryReceipt } from './receipts';
 
 const capabilityViews = views.valid.filter(view => view.decoder === 'capabilities');
-const route = (name: string): unknown => capabilityViews.find(view => view.name.startsWith(name))!.input;
+const route = (adapterVersion: string): unknown => {
+  const view = capabilityViews.find(candidate => candidate.input.adapterVersion === adapterVersion);
+  if (view === undefined) throw new Error(`missing capability fixture: ${adapterVersion}`);
+  return view.input;
+};
 
 describe('HarnessCapabilities', () => {
   it('has no boolean capability: each is unknown, unsupported or evidence-scoped', () => {
     for (const values of [EXISTING_SESSION_SUPPORT, IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT]) {
       expect(values.slice(0, 2)).toEqual(['unknown', 'unsupported']);
-      expect(values).toHaveLength(3);
     }
-    expect(EXISTING_SESSION_SUPPORT[2]).toBe('khala_hosted_resume');
-    expect(IMMEDIATE_NOTIFICATION_SUPPORT[2]).toBe('khala_hosted_idle');
-    expect(RECONCILE_SUPPORT[2]).toBe('while_queued');
+    expect(EXISTING_SESSION_SUPPORT).toEqual([
+      'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener',
+    ]);
+    expect(IMMEDIATE_NOTIFICATION_SUPPORT).toEqual([
+      'unknown', 'unsupported', 'khala_hosted_idle', 'native_cli_queue', 'agent_installed_listener',
+    ]);
+    expect(RECONCILE_SUPPORT).toEqual(['unknown', 'unsupported', 'while_queued']);
   });
 
   it('claims for the proven Codex route only what KHA-104 observed', () => {
@@ -35,10 +42,53 @@ describe('HarnessCapabilities', () => {
     });
   });
 
+  it('pins the KHA-146 native queue to tested notification-only support', () => {
+    const nativeQueue = route('native-cli-notification');
+    expect(nativeQueue).toMatchObject({
+      support: 'tested',
+      existingSession: 'native_cli_queue',
+      immediateNotification: 'native_cli_queue',
+      busy: 'queue',
+      receiptEvidence: ['harness_queued', 'context_consumed', 'outcome_unknown', 'failed'],
+      reconcileByReleaseId: 'unsupported',
+      evidenceRef: 'docs/evidence/codex-native-cli.md#queue-idle',
+    });
+    expect(decodeHarnessCapabilities({ ...(nativeQueue as Record<string, unknown>), evidenceRef: null }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'evidenceRef' });
+  });
+
+  it('keeps the KHA-145 agent-installed listener fail-closed without live proof', () => {
+    expect(route('generic-agent-installed-listener')).toMatchObject({
+      harness: 'generic-agent-listener',
+      version: 'unproven',
+      support: 'unsupported',
+      existingSession: 'agent_installed_listener',
+      immediateNotification: 'agent_installed_listener',
+      busy: 'unknown',
+      receiptEvidence: ['transport_written', 'outcome_unknown', 'failed'],
+      reconcileByReleaseId: 'unsupported',
+      evidenceRef: null,
+    });
+  });
+
+  it('keeps every Claude capability row off unproven native routes', () => {
+    const claudeRoutes = capabilityViews.filter(view => view.input.harness === 'claude');
+    expect(claudeRoutes.length).toBeGreaterThan(0);
+    for (const view of claudeRoutes) {
+      expect(['unknown', 'unsupported']).toContain(view.input.existingSession);
+      expect(['unknown', 'unsupported']).toContain(view.input.immediateNotification);
+    }
+  });
+
+  it('rejects the v1 capabilities envelope after the v2 route expansion', () => {
+    expect(decodeHarnessCapabilities({ ...exact.capabilities, v: 1 }))
+      .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
+  });
+
   it('keeps the Claude session and every foreign or generic route out of support claims', () => {
-    expect(route('Claude')).toMatchObject({ support: 'unsupported', existingSession: 'unsupported' });
-    for (const name of ['Codex executor Khala did not start', 'unproven generic harness']) {
-      expect(route(name)).toMatchObject({
+    expect(route('no-setup-route')).toMatchObject({ support: 'unsupported', existingSession: 'unsupported' });
+    for (const adapterVersion of ['foreign-executor', 'unimplemented']) {
+      expect(route(adapterVersion)).toMatchObject({
         support: 'unsupported',
         existingSession: 'unknown',
         immediateNotification: 'unknown',

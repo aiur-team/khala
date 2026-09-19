@@ -195,6 +195,8 @@ describe('view fixtures', () => {
   it('lists every evidence route and approval outcome', () => {
     expect(views.valid.map(view => view.name)).toEqual(expect.arrayContaining([
       'Claude 2.1.276 no-setup route is unsupported',
+      'Codex native CLI queue notification is tested',
+      'agent-installed listener remains unsupported',
       'Codex executor Khala did not start is unknown',
       'unproven generic harness is unknown',
       'disconnect after a possible submission is outcome_unknown',
@@ -204,6 +206,28 @@ describe('view fixtures', () => {
       'changed selected content',
       'ambiguous approval keeps its operation',
     ]));
+  });
+
+  it('resolves every tested capability evidence reference and Markdown anchor', () => {
+    const tested = [exact.capabilities, ...views.valid
+      .filter(view => view.decoder === 'capabilities')
+      .map(view => view.input)]
+      .filter(capabilities => capabilities.support === 'tested');
+
+    for (const capabilities of tested) {
+      const evidenceRef = capabilities.evidenceRef;
+      expect(evidenceRef, `${capabilities.harness} tested evidence`).toBeTypeOf('string');
+      const [path, anchor] = (evidenceRef as string).split('#');
+      const evidenceUrl = new URL(`../../../../${path}`, import.meta.url);
+      const markdown = readFileSync(evidenceUrl, 'utf8');
+      if (anchor === undefined) continue;
+
+      const headings = [...markdown.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gm)]
+        .map(([, heading]) => heading!.toLowerCase().trim()
+          .replace(/[^\p{L}\p{N}\s-]/gu, '')
+          .replace(/\s+/g, '-'));
+      expect(headings, `${path}#${anchor}`).toContain(anchor);
+    }
   });
 });
 

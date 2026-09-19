@@ -70,7 +70,7 @@
     { "name": "reconcile after consumption claim", "decoder": "capabilities", "base": "capabilities", "set": { "reconcileByReleaseId": "always" }, "error": { "code": "invalid_field", "field": "reconcileByReleaseId" } },
     { "name": "tested support without evidence", "decoder": "capabilities", "base": "capabilities", "set": { "evidenceRef": null }, "error": { "code": "invalid_field", "field": "evidenceRef" } },
     { "name": "capabilities without an envelope version", "decoder": "capabilities", "base": "capabilities", "remove": ["v"], "error": { "code": "invalid_field", "field": "v" } },
-    { "name": "capabilities unknown envelope version", "decoder": "capabilities", "base": "capabilities", "set": { "v": 2 }, "error": { "code": "invalid_version", "field": "v" } },
+    { "name": "capabilities old envelope version", "decoder": "capabilities", "base": "capabilities", "set": { "v": 1 }, "error": { "code": "invalid_version", "field": "v" } },
     { "name": "busy behavior omitted", "decoder": "capabilities", "base": "capabilities", "remove": ["busy"], "error": { "code": "invalid_field", "field": "busy" } },
     { "name": "invented busy behavior", "decoder": "capabilities", "base": "capabilities", "set": { "busy": "interrupt" }, "error": { "code": "invalid_field", "field": "busy" } },
     { "name": "duplicate receipt evidence", "decoder": "capabilities", "base": "capabilities", "set": { "receiptEvidence": ["completed", "completed"] }, "error": { "code": "invalid_field", "field": "receiptEvidence[1]" } },

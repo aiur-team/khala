@@ -24,7 +24,7 @@ const DESCRIPTOR = {
 };
 const SESSION = { harness: 'codex', sessionId: 'thread-existing-b', generation: 3 };
 const CAPABILITIES: HarnessCapabilities = {
-  v: 1, harness: 'codex', version: '1.0.0', adapterVersion: '1', support: 'experimental', existingSession: 'khala_hosted_resume',
+  v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1', support: 'experimental', existingSession: 'khala_hosted_resume',
   immediateNotification: 'khala_hosted_idle', busy: 'queue', receiptEvidence: [], reconcileByReleaseId: 'unknown',
   limits: { maxPayloadBytes: 1024, maxBatchItems: 1 } as never, evidenceRef: null,
 };
@@ -170,6 +170,8 @@ describe('bootstrapAgent', () => {
       [{ kind: 'unsupported' }, 'unsupported_harness'],
       [{ kind: 'missing' }, 'harness_session_missing'],
       [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'unknown' } }, 'unsupported_harness'],
+      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'native_cli_queue' } }, 'unsupported_harness'],
+      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'agent_installed_listener' } }, 'unsupported_harness'],
       [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, support: 'unsupported' } }, 'unsupported_harness'],
       [{ kind: 'verified', session: { ...SESSION, sessionId: 'thread-someone-else' }, capabilities: CAPABILITIES }, 'unsupported_harness'],
     ] as const) {

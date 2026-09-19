@@ -4,19 +4,12 @@
 
 import { createHash } from 'node:crypto';
 import {
-  type DeliveryReceipt, type ReceiptErrorCode, type ReceiptId, type ReceiptKind, type ReleasedJob, type ReleaseId,
-  type SessionBinding, sameSessionBinding,
+  type Clock, type DeliveryReceipt, type EvidenceSink, type ReceiptErrorCode, type ReceiptId, type ReceiptKind,
+  type ReleasedJob, type ReleaseId, type SessionBinding, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
 import { isRecord, withDeadline } from './native';
 
-export interface Clock {
-  now(): Date;
-}
-
-/** Durable store for intermediate observations; KHA-115 owns the implementation. */
-export interface EvidenceSink {
-  record(receipt: DeliveryReceipt): Promise<void>;
-}
+export type { Clock, EvidenceSink } from '@khala/contracts/delivery/index';
 
 /** Native fact each harness-sourced receipt kind is backed by. */
 export const EVIDENCE = {

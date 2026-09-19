@@ -66,11 +66,22 @@ and absent), or a value naming the proven scope:
 | Capability | Evidence-scoped value | Meaning |
 | --- | --- | --- |
 | `existingSession` | `khala_hosted_resume` | A dormant session resumed inside a host Khala started keeps its identity. Attaching to a session another process is running is not covered. |
+| `existingSession` | `native_cli_queue` | A harness-native CLI queues into a session Khala did not start. The capability record's evidence scopes the supported harness and version. |
+| `existingSession` | `agent_installed_listener` | The agent starts a listener inside its session trust boundary. The route remains unsupported until a capability record cites live proof. |
 | `immediateNotification` | `khala_hosted_idle` | An idle session in a Khala-started host starts a turn for a queued release without a human prompt. Busy handling is `busy`. |
+| `immediateNotification` | `native_cli_queue` | A harness-native CLI accepts a notification without a human prompt. Acceptance does not promise immediate model consumption. |
+| `immediateNotification` | `agent_installed_listener` | An agent-installed listener accepts a notification without a human prompt; busy behavior remains a separate fact. |
 | `reconcileByReleaseId` | `while_queued` | A submission can be found by release ID only while still queued. Deduplication after consumption belongs to the connector. |
 
 The fixtures distinguish current evidence:
 
+- Codex CLI `0.154.0` is `tested` for `native_cli_queue` as a notification-only
+  route into a live or dormant TUI thread. KHA-146 found no stdin payload form and no
+  release-ID reconciliation, so released bytes still use the Khala-hosted app-server
+  route and reconciliation is `unsupported`.
+- `agent_installed_listener` names the generic listener route, but KHA-145 only proved
+  its socket frame against a synthetic listener. The fixture is therefore
+  `unsupported`; it does not claim live delivery into a Claude session.
 - Codex app-server `0.154.0` is `tested` only for a Khala-hosted resumed dormant thread
   using the observed queue route (`khala_hosted_resume`, `khala_hosted_idle`,
   `while_queued`). A Codex executor Khala did not start is `unknown` on every capability.
@@ -87,6 +98,10 @@ does not prove harness acceptance; harness acceptance does not prove context con
 completion does not attest task correctness. A disconnect after possible submission is
 `outcome_unknown`, never implicit retry permission. `HarnessPort` deliberately has no
 universal cancellation operation.
+
+`Clock` and `EvidenceSink` are shared delivery contracts exported from
+`@khala/contracts/delivery/index`. Harness adapters may re-export them for compatibility,
+but must not declare adapter-specific copies.
 
 A receipt `errorCode` comes from the closed `RECEIPT_ERROR_CODES` list and never carries
 free text. Only `failed` and `outcome_unknown` receipts carry a code, and `failed` always
@@ -105,10 +120,12 @@ Decoders are total: they return `{ ok: false, code, field }` and never echo inpu
 Decoders reject unknown fields, so the browser, control functions and connector deploy
 in lockstep for a given contract version. Every envelope carries `v` (`EventRef`,
 `SessionBinding`, `ApprovalCommand`, `PolicySetCommand`, `PolicyAck`, `ReleasedJob`,
-`DeliveryReceipt` and `HarnessCapabilities`), and any change to an envelope's shape or
-closed vocabulary bumps its `v`. A bump is a reviewed change on both producer and
-consumer. `EventRef` and `SessionBinding` mirror the messaging shapes and bump together
-with them.
+`DeliveryReceipt` and `HarnessCapabilities`); incompatible shape or semantic changes
+bump its `v`. A bump is a reviewed change on both producer and consumer. `EventRef` and
+`SessionBinding` mirror the messaging shapes and bump together with them.
+
+`HarnessCapabilities` is currently v2. Its route vocabulary widened from v1, so v1 is
+rejected rather than being reinterpreted under the newer delivery semantics.
 
 ## Open product gates
 

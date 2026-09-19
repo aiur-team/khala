@@ -36,6 +36,7 @@ export {
   decodeDeliveryReceipt,
 } from './receipts';
 export {
-  type HarnessCapabilities, type HarnessPort, BUSY_BEHAVIORS, EXISTING_SESSION_SUPPORT, HARNESS_SUPPORT,
-  IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT, decodeHarnessCapabilities,
+  type Clock, type EvidenceSink, type HarnessCapabilities, type HarnessPort, BUSY_BEHAVIORS,
+  EXISTING_SESSION_SUPPORT, HARNESS_SUPPORT, IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT,
+  decodeHarnessCapabilities,
 } from './harness';

@@ -3,7 +3,7 @@
 
 import {
   type Decoded, type DeliveryLimits, array, decodeWith, elementField, fail, identifier, literal, nullable,
-  object, readDeliveryLimits, version,
+  object, readDeliveryLimits,
 } from './decode';
 import type { SessionBinding } from './binding';
 import type { ReleaseId } from './ids';
@@ -19,16 +19,25 @@ export const BUSY_BEHAVIORS = ['queue', 'steer', 'reject', 'unknown'] as const;
 
 /**
  * `khala_hosted_resume`: a dormant session resumed inside a host Khala started keeps
- * its identity (KHA-104 Codex evidence). Attaching to a session another process is
- * already running is not covered by this value.
+ * its identity (KHA-104 Codex evidence). `native_cli_queue` reaches a session Khala
+ * did not start through the harness CLI (KHA-146 Codex evidence).
+ * `agent_installed_listener` is a listener the agent starts inside its session trust
+ * boundary; the capability's support and evidence fields still determine whether a
+ * particular adapter may claim it.
  */
-export const EXISTING_SESSION_SUPPORT = ['unknown', 'unsupported', 'khala_hosted_resume'] as const;
+export const EXISTING_SESSION_SUPPORT = [
+  'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener',
+] as const;
 
 /**
  * `khala_hosted_idle`: an idle session in a Khala-started host begins a turn for a
- * queued release without a human prompt. Busy handling is described by `busy`.
+ * queued release without a human prompt. Native queues and agent-installed listeners
+ * can accept a notification without a human prompt. Busy handling is described by
+ * `busy`; acceptance does not by itself prove immediate model consumption.
  */
-export const IMMEDIATE_NOTIFICATION_SUPPORT = ['unknown', 'unsupported', 'khala_hosted_idle'] as const;
+export const IMMEDIATE_NOTIFICATION_SUPPORT = [
+  'unknown', 'unsupported', 'khala_hosted_idle', 'native_cli_queue', 'agent_installed_listener',
+] as const;
 
 /**
  * `while_queued`: the harness can find a submission by release ID only while it is
@@ -37,7 +46,7 @@ export const IMMEDIATE_NOTIFICATION_SUPPORT = ['unknown', 'unsupported', 'khala_
 export const RECONCILE_SUPPORT = ['unknown', 'unsupported', 'while_queued'] as const;
 
 export type HarnessCapabilities = Readonly<{
-  v: 1;
+  v: 2;
   harness: string;
   version: string;
   adapterVersion: string;
@@ -50,6 +59,15 @@ export type HarnessCapabilities = Readonly<{
   limits: DeliveryLimits;
   evidenceRef: string | null;
 }>;
+
+export interface Clock {
+  now(): Date;
+}
+
+/** Durable store for intermediate delivery observations. */
+export interface EvidenceSink {
+  record(receipt: DeliveryReceipt): Promise<void>;
+}
 
 /**
  * `submit` and `reconcile` accept only a verified `ReleasedJob`, produced by
@@ -80,7 +98,8 @@ export function decodeHarnessCapabilities(input: unknown): Decoded<HarnessCapabi
       'limits',
       'evidenceRef',
     ]);
-    const v = version(r.field('v'), r.at('v'));
+    const v = r.field('v');
+    if (v !== 2) fail(r.at('v'), 'invalid_version');
     const evidenceValues = array(r.field('receiptEvidence'), r.at('receiptEvidence'));
     const seen = new Set<ReceiptKind>();
     const receiptEvidence = evidenceValues.map((value, index) => {

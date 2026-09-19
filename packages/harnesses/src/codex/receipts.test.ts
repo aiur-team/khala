@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { decodeDeliveryReceipt } from '@khala/contracts/delivery/index';
 import { describe, expect, it } from 'vitest';
 import { binding, clock, job } from './fakes';
@@ -17,6 +18,14 @@ function tracker() {
 }
 
 describe('receipt ids', () => {
+  it('re-exports shared evidence contracts instead of redeclaring them', () => {
+    const source = readFileSync(new URL('./receipts.ts', import.meta.url), 'utf8');
+    expect(source).toContain(
+      "export type { Clock, EvidenceSink } from '@khala/contracts/delivery/index';",
+    );
+    expect(source).not.toMatch(/export interface (Clock|EvidenceSink)/);
+  });
+
   it('are stable per release, generation, kind and error code, and bounded in size', () => {
     const id = (j = job(), kind: 'completed' | 'failed' = 'completed', code: 'timeout' | 'stale_binding' | null = null) =>
       receiptIdFor(j, kind, code);

@@ -20,7 +20,7 @@ export const CLAUDE_TESTED_VERSION = '2.1.276';
 export function claudeCapabilities(installedVersion: string | null, limits: DeliveryLimits): HarnessCapabilities {
   const tested = installedVersion === CLAUDE_TESTED_VERSION;
   const report = decodeHarnessCapabilities({
-    v: 1,
+    v: 2,
     harness: CLAUDE_HARNESS,
     version: installedVersion ?? 'unknown',
     adapterVersion: CLAUDE_ADAPTER_VERSION,

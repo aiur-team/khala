@@ -141,7 +141,7 @@ export async function probeBinding(binding: SessionBinding, deps: ProbeDeps): Pr
 /** The KHA-104 route: a dormant thread resumed in a Khala-started app-server, queue delivery. */
 export function testedCapabilities(version: string, limits: DeliveryLimits): HarnessCapabilities {
   return {
-    v: 1,
+    v: 2,
     harness: CODEX_HARNESS,
     version,
     adapterVersion: CODEX_ADAPTER_VERSION,
@@ -160,7 +160,7 @@ export function testedCapabilities(version: string, limits: DeliveryLimits): Har
 /** Anything off the proven route: no capability is claimed. */
 export function unsupportedCapabilities(version: string, limits: DeliveryLimits): HarnessCapabilities {
   return {
-    v: 1,
+    v: 2,
     harness: CODEX_HARNESS,
     version,
     adapterVersion: CODEX_ADAPTER_VERSION,

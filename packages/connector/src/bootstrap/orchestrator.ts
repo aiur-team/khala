@@ -90,7 +90,7 @@ export async function bootstrapAgent(input: BootstrapInput, ports: BootstrapPort
   const { capabilities } = inspected;
   if (session.harness !== input.session.harness || session.sessionId !== input.session.sessionId
     || capabilities.harness !== session.harness || capabilities.support === 'unsupported'
-    || capabilities.existingSession === 'unsupported' || capabilities.existingSession === 'unknown') {
+    || capabilities.existingSession !== 'khala_hosted_resume') {
     return blocked('unsupported_harness');
   }
   // The binding is immutable: a new generation needs the owner's rebinding flow, not a reconnect.

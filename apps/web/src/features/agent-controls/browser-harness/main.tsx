@@ -55,7 +55,7 @@ function currentSnapshot(): AgentControlsSnapshot {
     },
     bindingStatus: 'active',
     capabilities: {
-      v: 1,
+      v: 2,
       harness: 'codex',
       version: '1.0.0',
       adapterVersion: '1.0.0',
