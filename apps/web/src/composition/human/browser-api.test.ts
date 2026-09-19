@@ -58,6 +58,16 @@ describe('createHumanBrowserApi', () => {
     expect(await malformed.identity.current()).toEqual({ kind: 'unavailable', retryable: true });
   });
 
+  it('bounds every control request with a finite timeout', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+    }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch, timeoutMs: 5 });
+
+    expect(await api.identity.current()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it('builds only same-origin sign-in navigation', async () => {
     const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch: vi.fn() });
     expect(await api.identity.beginSignIn('/join?invite=invite_1')).toEqual({
@@ -125,5 +135,29 @@ describe('createHumanBrowserApi', () => {
     expect(fetch.mock.calls[1]?.[0]).toBe(`${origin}/api/human/messaging/session`);
     expect(fetch.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ deviceId: 'KH_WEB_1' }));
     expect(JSON.stringify(fetch.mock.calls)).not.toContain('password');
+  });
+
+  it('decodes server-authoritative Matrix participant mappings', async () => {
+    const userId = '@khala_b3duZXJfYm9i:matrix.example.test';
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, {
+        participants: [{
+          matrixUserId: userId,
+          participantId: 'human_1234',
+          ownerId: 'owner_bob',
+          displayName: userId,
+        }],
+      }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+
+    const participants = await api.participants.resolve([userId]);
+    expect(participants?.get(userId)).toEqual({
+      participantId: 'human_1234',
+      kind: 'human',
+      ownerId: 'owner_bob',
+      displayName: userId,
+      deviceIds: [],
+    });
   });
 });

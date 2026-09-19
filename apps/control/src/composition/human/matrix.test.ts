@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import type { AuthPrincipal, DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, ControlRecord, ControlStore, DeviceId, JsonValue, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import { createMatrixHumanServices } from './matrix';
 
 const registrationSecret = 'registration-secret-with-more-than-32-bytes';
@@ -18,12 +18,45 @@ function json(status: number, value: unknown): Response {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 }
 
-function services(fetch: typeof globalThis.fetch) {
+function memoryStore(): ControlStore {
+  const records = new Map<string, ControlRecord>();
+  let revision = 0;
+  return {
+    async read<T extends JsonValue>(key: string) {
+      const record = records.get(key);
+      return record ? { kind: 'record' as const, record: record as ControlRecord<T> } : { kind: 'absent' as const };
+    },
+    async compareAndSet<T extends JsonValue>(input: Parameters<ControlStore['compareAndSet']>[0]) {
+      const current = records.get(input.key) ?? null;
+      if ((current?.revision ?? null) !== input.expectedRevision) {
+        return { kind: 'conflict' as const, current: current as ControlRecord<T> | null };
+      }
+      const record = {
+        key: input.key,
+        revision: `r${++revision}`,
+        operationId: input.operationId,
+        value: input.next.value,
+        expiresAt: input.next.expiresAt,
+      } as ControlRecord<T>;
+      records.set(input.key, record);
+      return { kind: 'applied' as const, record };
+    },
+    async resolve<T extends JsonValue>({ key, operationId }: { key: string; operationId: string }) {
+      const record = records.get(key);
+      return record?.operationId === operationId
+        ? { kind: 'applied' as const, record: record as ControlRecord<T> }
+        : { kind: 'not_applied' as const };
+    },
+  };
+}
+
+function services(fetch: typeof globalThis.fetch, store = memoryStore()) {
   return createMatrixHumanServices({
     homeserverOrigin: 'https://matrix.example.test',
     serverName: 'matrix.example.test',
     registrationSharedSecret: registrationSecret,
     passwordDerivationSecret: passwordSecret,
+    store,
     fetch,
   });
 }
@@ -37,7 +70,7 @@ describe('createMatrixHumanServices', () => {
       if (url.pathname === '/_synapse/admin/v1/register') {
         const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
         expect(request.admin).toBe(false);
-        expect(request.username).toMatch(/^khala_[a-f0-9]{40}$/u);
+        expect(request.username).toBe(`khala_${Buffer.from(principal.ownerId).toString('base64url')}`);
         expect(request).not.toHaveProperty('ownerId');
         const expected = createHmac('sha1', registrationSecret)
           .update('nonce_1\0').update(String(request.username)).update('\0')
@@ -51,7 +84,7 @@ describe('createMatrixHumanServices', () => {
 
     expect(await matrix.directory.lookup(principal.ownerId)).toEqual({ kind: 'absent' });
     expect(await matrix.directory.create(principal.ownerId)).toMatchObject({
-      kind: 'created', accountId: expect.stringMatching(/^@khala_[a-f0-9]{40}:matrix\.example\.test$/u),
+      kind: 'created', accountId: `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test`,
     });
   });
 
@@ -92,6 +125,8 @@ describe('createMatrixHumanServices', () => {
   it('joins an admitted no-history participant without claiming historical keys', async () => {
     const roomId = '!room:matrix.example.test' as RoomId;
     let joined = false;
+    let sharing = true;
+    const membershipWrites: string[] = [];
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname.endsWith('/login')) {
@@ -100,16 +135,27 @@ describe('createMatrixHumanServices', () => {
         return json(200, { user_id: identifier.user, access_token: 'control-token', device_id: request.device_id });
       }
       if (url.pathname.includes('/state/m.room.member/')) {
-        return joined ? json(200, { membership: 'join' }) : json(404, { errcode: 'M_NOT_FOUND' });
+        return sharing || joined ? json(200, { membership: 'join' }) : json(404, { errcode: 'M_NOT_FOUND' });
       }
       if (url.pathname.includes('/_matrix/client/v3/join/')) {
+        membershipWrites.push('join');
         joined = true;
         return json(200, { room_id: roomId });
+      }
+      if (url.pathname.endsWith('/invite')) {
+        membershipWrites.push('invite');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          user_id: `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test`,
+        });
+        return json(200, {});
       }
       if (url.pathname.includes('/state/m.room.name/')) return json(200, { name: 'Shared room' });
       throw new Error(`unexpected request ${url.pathname}`);
     });
     const matrix = services(fetch);
+    const creator = { ...principal, ownerId: 'owner_creator' as OwnerId, providerSubject: 'creator' };
+    expect(await matrix.authority.canShare({ principal: creator, roomId })).toBe('allowed');
+    sharing = false;
     const request = {
       operationId: 'admit_1',
       roomId,
@@ -124,5 +170,17 @@ describe('createMatrixHumanServices', () => {
       room: { roomId, title: 'Shared room', membership: 'joined', revision: `matrix:${roomId}` },
       historyReady: true,
     });
+    expect(membershipWrites).toEqual(['invite', 'join']);
+  });
+
+  it('resolves only canonical local participant accounts', async () => {
+    const matrix = services(vi.fn());
+    const userId = `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test`;
+    const result = await matrix.sessions.resolveParticipants([userId]);
+    expect(result).toMatchObject({
+      kind: 'ok',
+      participants: [{ matrixUserId: userId, ownerId: principal.ownerId, displayName: userId }],
+    });
+    expect(await matrix.sessions.resolveParticipants(['@khala_bad:elsewhere.test'])).toEqual({ kind: 'unavailable' });
   });
 });

@@ -21,6 +21,7 @@ export const SHARE_PATH = '/api/human/invitations/share';
 export const INSPECT_PATH = '/api/human/invitations/inspect';
 export const ADMIT_PATH = '/api/human/invitations/admit';
 export const MATRIX_SESSION_PATH = '/api/human/messaging/session';
+export const MATRIX_PARTICIPANTS_PATH = '/api/human/messaging/participants';
 
 export type HumanHandlerServices = Readonly<{
   /** Request-scoped authentication service backed by the validated runtime configuration. */
@@ -266,6 +267,7 @@ export function createHumanHandlers(loadServices: LoadHumanServices): readonly R
         const roomId = decodeRoomId(value.roomId);
         const policy = value.policy === undefined ? undefined : admissionPolicy(value.policy);
         if (operationId === null || !roomId.ok || policy === null) return json(400, { code: 'invalid_request' });
+        if (policy?.history === 'full') return json(503, { code: 'history_unavailable' });
         const result = await admission.share({ operationId, roomId: roomId.value, ...(policy ? { policy } : {}) });
         return result.kind === 'ok' ? json(200, result) : responseForOperationFailure(result);
       }),
@@ -316,6 +318,22 @@ export function createHumanHandlers(loadServices: LoadHumanServices): readonly R
         if (!deviceId.ok) return json(400, { code: 'invalid_request' });
         const result = await messaging.issue(authority, deviceId.value);
         return result.kind === 'ok' ? json(200, { session: result.session }) : unavailable();
+      }),
+    },
+    {
+      path: MATRIX_PARTICIPANTS_PATH,
+      methods: post,
+      handle: request => withServices(request, async ({ auth, messaging }) => {
+        if (!messaging) return unavailable('feature_unavailable');
+        const authority = await authorized(auth, request);
+        if (isResponse(authority)) return authority;
+        const value = await readJsonObject(request);
+        if (value === null || !hasExactKeys(value, ['userIds']) || !Array.isArray(value.userIds)
+          || value.userIds.length > 100 || value.userIds.some(userId => typeof userId !== 'string' || userId.length > 255)) {
+          return json(400, { code: 'invalid_request' });
+        }
+        const result = await messaging.resolveParticipants(value.userIds as string[]);
+        return result.kind === 'ok' ? json(200, { participants: result.participants }) : unavailable();
       }),
     },
   ]);

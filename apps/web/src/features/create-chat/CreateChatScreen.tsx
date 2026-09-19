@@ -9,6 +9,7 @@ export interface CreateChatScreenProps {
   ports: CreateChatPorts;
   /** Injected for tests and for hosts that supply their own clipboard bridge. */
   onCopyShareLink?: (shareUrl: string) => Promise<CopyResult>;
+  onOpenRoom?: (roomId: string) => void;
   /** Test-only seam: a pre-built controller (for example one already driven to a target phase). */
   controller?: CreateChatController;
 }
@@ -25,7 +26,7 @@ const BUSY_MESSAGE: Partial<Record<CreateChatView['phase'], string>> = {
   resolving: RESOLVING_MESSAGE,
 };
 
-export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, controller: injectedController }: CreateChatScreenProps) {
+export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, onOpenRoom, controller: injectedController }: CreateChatScreenProps) {
   const ownController = useMemo(() => createChatController(ports), [ports]);
   const controller = injectedController ?? ownController;
   const [view, setView] = useState<CreateChatView>(() => controller.getView());
@@ -284,6 +285,11 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
           <button type="button" onClick={handleCopy}>
             Copy link
           </button>
+          {view.roomId && onOpenRoom ? (
+            <button type="button" onClick={() => onOpenRoom(view.roomId!)}>
+              Open chat
+            </button>
+          ) : null}
           <p role="status">
             {copyStatus === 'copied' ? 'Link copied.' : copyStatus === 'denied' ? 'Copy failed — select and copy the link above.' : ''}
           </p>

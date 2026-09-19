@@ -198,6 +198,7 @@ test('accepts healthy client and closed registration/admin boundaries', async ()
     if (url.pathname === '/_matrix/client/versions') return response(200, { versions: ['v1.11'] });
     if (url.pathname.startsWith('/_matrix/client/v3/profile/')) return response(404, { errcode: 'M_NOT_FOUND' });
     if (url.pathname === '/_matrix/client/v3/register') return response(403, { errcode: 'M_FORBIDDEN' });
+    if (url.pathname === '/_synapse/admin/v1/register') return response(200, { nonce: 'one-time-nonce' });
     if (url.pathname === '/_synapse/admin/v2/users') return response(401, { errcode: 'M_MISSING_TOKEN' });
     return response(404);
   };
@@ -205,7 +206,7 @@ test('accepts healthy client and closed registration/admin boundaries', async ()
   assert.equal(seen[0], '/health');
   assert.equal(seen[1], '/_matrix/client/versions');
   assert.match(seen[2]!, /^\/_matrix\/client\/v3\/profile\/%40__khala_boundary_/);
-  assert.deepEqual(seen.slice(3), ['/_matrix/client/v3/register', '/_synapse/admin/v2/users']);
+  assert.deepEqual(seen.slice(3), ['/_matrix/client/v3/register', '/_synapse/admin/v1/register', '/_synapse/admin/v2/users']);
 });
 
 test('fails closed when registration, admin or database boundaries are wrong', async () => {
@@ -214,6 +215,7 @@ test('fails closed when registration, admin or database boundaries are wrong', a
     if (url.pathname === '/_matrix/client/versions') return response(200, { versions: ['v1.11'] });
     if (url.pathname.startsWith('/_matrix/client/v3/profile/')) return response(profileStatus);
     if (url.pathname === '/_matrix/client/v3/register') return response(registrationStatus);
+    if (url.pathname === '/_synapse/admin/v1/register') return response(200, { nonce: 'one-time-nonce' });
     return response(adminStatus);
   });
   await assert.rejects(scenario(200, 401), (error: unknown) => error instanceof CheckError && error.code === 'registration-not-rejected');
@@ -222,6 +224,19 @@ test('fails closed when registration, admin or database boundaries are wrong', a
   await assert.rejects(scenario(403, 200), (error: unknown) => error instanceof CheckError && error.code === 'admin-not-rejected');
   await assert.rejects(scenario(403, 500), (error: unknown) => error instanceof CheckError && error.code === 'admin-not-rejected');
   await assert.rejects(scenario(403, 401, 503), (error: unknown) => error instanceof CheckError && error.code === 'database-unavailable');
+});
+
+test('requires the shared-secret registration ingress used by Netlify', async () => {
+  const scenario = (sharedSecretResponse: Response) => probeBoundary('https://matrix.preview.test/', async (url: URL) => {
+    if (url.pathname === '/health') return new Response('OK', { status: 200 });
+    if (url.pathname === '/_matrix/client/versions') return response(200, { versions: ['v1.11'] });
+    if (url.pathname.startsWith('/_matrix/client/v3/profile/')) return response(404, { errcode: 'M_NOT_FOUND' });
+    if (url.pathname === '/_matrix/client/v3/register') return response(403, { errcode: 'M_FORBIDDEN' });
+    if (url.pathname === '/_synapse/admin/v1/register') return sharedSecretResponse;
+    return response(401, { errcode: 'M_MISSING_TOKEN' });
+  });
+  await assert.rejects(scenario(response(404)), (error: unknown) => error instanceof CheckError && error.code === 'registration-ingress-unavailable');
+  await assert.rejects(scenario(response(200, {})), (error: unknown) => error instanceof CheckError && error.code === 'registration-ingress-unavailable');
 });
 
 test('rejects a non-200 health response and pins every request to non-redirecting fetch', async () => {

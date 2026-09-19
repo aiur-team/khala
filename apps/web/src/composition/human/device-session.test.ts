@@ -25,19 +25,20 @@ const ready: DeviceView = {
 };
 
 function fakeDevice() {
+  let current = ready;
   let listener: (view: DeviceView) => void = () => undefined;
   const ensureReady = vi.fn(async () => ok(ready));
   const stop = vi.fn(async () => undefined);
   const port: DevicePort = {
     ensureReady,
-    current: () => ready,
+    current: () => current,
     observe(next) {
       listener = next;
       return () => { listener = () => undefined; };
     },
     stop,
   };
-  return { port, ensureReady, stop, emit: (view: DeviceView) => listener(view) };
+  return { port, ensureReady, stop, emit: (view: DeviceView) => { current = view; listener(view); } };
 }
 
 describe('createHumanDeviceSession', () => {
@@ -63,6 +64,25 @@ describe('createHumanDeviceSession', () => {
 
     device.emit(revoked);
 
+    expect(session.current()).toEqual(revoked);
+  });
+
+  it('does not overwrite a revocation that arrived before ensureReady settled', async () => {
+    const device = fakeDevice();
+    let settle!: (value: ReturnType<typeof ok<DeviceView>>) => void;
+    device.ensureReady.mockImplementationOnce(() => new Promise(resolve => { settle = resolve; }));
+    const session = createHumanDeviceSession(device.port);
+    const activation = session.ensureReady(alice);
+    const revoked: DeviceView = {
+      deviceId: ready.deviceId,
+      state: 'revoked',
+      generation: 2,
+      reason: 'revoked_by_owner',
+    };
+    device.emit(revoked);
+    settle(ok(ready));
+
+    expect(await activation).toEqual({ kind: 'unavailable', retryable: true });
     expect(session.current()).toEqual(revoked);
   });
 

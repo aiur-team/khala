@@ -23,3 +23,10 @@ validation, bounded bodies, and sanitized errors. Human handlers own domain
 authentication and authorization. Both layers return disposables or
 request-scoped resources to their owner rather than creating process-global
 device or messaging clients.
+
+Production rooms are invite-only. Admission authenticates the invitation's
+creator account to issue the Matrix invite before the admitted account joins.
+The browser participant-mapping route accepts only canonical accounts derived
+by this server's owner-to-Matrix mapping; it does not trust a sender, room event,
+or request body to assert an owner ID. Full-history links fail explicitly until
+the crypto adapter can prove historical-key disclosure.

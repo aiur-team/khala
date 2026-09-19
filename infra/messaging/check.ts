@@ -210,6 +210,19 @@ export async function probeBoundary(origin: string, fetchImpl: FetchLike = fetch
   if (registration.status >= 500) throw new CheckError('database-unavailable');
   if (registration.status !== 403) throw new CheckError('registration-not-rejected');
 
+  const sharedSecretRegistration = await request(fetchImpl, origin, '/_synapse/admin/v1/register', {
+    headers: { accept: 'application/json' },
+  });
+  let sharedSecretBody;
+  try {
+    sharedSecretBody = await sharedSecretRegistration.json();
+  } catch {
+    throw new CheckError('registration-ingress-unavailable');
+  }
+  if (sharedSecretRegistration.status !== 200 || typeof sharedSecretBody.nonce !== 'string' || sharedSecretBody.nonce.length === 0) {
+    throw new CheckError('registration-ingress-unavailable');
+  }
+
   const admin = await request(fetchImpl, origin, '/_synapse/admin/v2/users');
   await discardBody(admin);
   if (![401, 403].includes(admin.status)) throw new CheckError('admin-not-rejected');

@@ -47,7 +47,7 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
   const listeners = new Set<(view: DeviceView) => void>();
 
   const removeDeviceObserver = device.observe(view => {
-    if (disposed || ownerId === null || activeGeneration === null || view.generation < activeGeneration) return;
+    if (disposed || ownerId === null || activeGeneration !== null && view.generation < activeGeneration) return;
     activeGeneration = view.generation;
     currentView = view;
     for (const listener of listeners) listener(view);
@@ -88,9 +88,12 @@ export function createHumanDeviceSession(device: DevicePort): HumanDeviceSession
         }
         if (disposed || requestedEpoch !== epoch) return unavailable();
         if (isReady(result)) {
-          ready = result;
-          activeGeneration = result.value.generation;
-          currentView = result.value;
+          const latest = device.current();
+          const settled = latest.generation >= result.value.generation ? latest : result.value;
+          currentView = settled;
+          activeGeneration = settled.generation;
+          ready = settled.state === 'ready' && settled.deviceId !== null ? { kind: 'ok', value: settled } : null;
+          if (ready === null) return unavailable();
         }
         return result;
       })(),

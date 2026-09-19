@@ -51,6 +51,7 @@ export function createProductionHumanServiceLoader(dependencies: ProductionHuman
       serverName: env.matrixServerName,
       registrationSharedSecret: env.matrixRegistrationSharedSecret,
       passwordDerivationSecret: env.matrixPasswordDerivationSecret,
+      store,
       ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
     });
     const oidc = createOidcClient({

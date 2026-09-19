@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AuthPrincipal, DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../../auth/index';
 import type { AdmissionService } from '../../invitations/index';
 import { createGateway } from '../../runtime/handler';
@@ -9,6 +9,7 @@ import {
   LOGOUT_PATH,
   ME_PATH,
   MATRIX_SESSION_PATH,
+  MATRIX_PARTICIPANTS_PATH,
   SHARE_PATH,
   createHumanHandlers,
   registerHumanHandlers,
@@ -94,6 +95,7 @@ describe('human handler registration', () => {
       [INSPECT_PATH, ['GET']],
       [ADMIT_PATH, ['POST']],
       [MATRIX_SESSION_PATH, ['POST']],
+      [MATRIX_PARTICIPANTS_PATH, ['POST']],
     ]);
     expect(new Set(shape.map(([path]) => path)).size).toBe(shape.length);
     expect(registrations.every(({ path }) => path.startsWith('/api/human/') && !path.includes('*'))).toBe(true);
@@ -219,6 +221,17 @@ describe('admission route handlers', () => {
     expect(policyShare.status).toBe(200);
     expect(state.admission.share).toHaveBeenLastCalledWith({ operationId: 'operation_policy', roomId: 'room_1' as RoomId, policy });
 
+    const unavailableHistory = await route(registrations, SHARE_PATH).handle(request(SHARE_PATH, {
+      method: 'POST',
+      body: JSON.stringify({
+        operationId: 'operation_history',
+        roomId: 'room_1',
+        policy: { v: 1, kind: 'link', history: 'full' },
+      }),
+    }));
+    expect(unavailableHistory.status).toBe(503);
+    expect(await body(unavailableHistory)).toEqual({ code: 'history_unavailable' });
+
     const admit = await route(registrations, ADMIT_PATH).handle(request(ADMIT_PATH, {
       method: 'POST', body: JSON.stringify({ operationId: 'operation_2', inviteRef: 'invite_1', deviceId: 'device_1' }),
     }));
@@ -237,7 +250,7 @@ describe('admission route handlers', () => {
         publishedFingerprint: null,
       },
     }));
-    const state = services({ messaging: { issue } });
+    const state = services({ messaging: { issue, resolveParticipants: vi.fn(async () => ({ kind: 'unavailable' as const })) } });
     const registrations = createHumanHandlers(async () => state);
 
     const response = await route(registrations, MATRIX_SESSION_PATH).handle(request(MATRIX_SESSION_PATH, {
@@ -247,6 +260,32 @@ describe('admission route handlers', () => {
     expect(response.status).toBe(200);
     expect(issue).toHaveBeenCalledWith(principal, 'device_1');
     expect(await body(response)).toMatchObject({ session: { accessToken: 'device-token', deviceId: 'device_1' } });
+  });
+
+  it('returns only server-resolved Matrix participant identities', async () => {
+    const userId = '@khala_owner:matrix.example.test';
+    const resolveParticipants = vi.fn(async () => ({
+      kind: 'ok' as const,
+      participants: [{
+        matrixUserId: userId,
+        participantId: 'human_1' as ParticipantId,
+        ownerId: principal.ownerId,
+        displayName: userId,
+      }],
+    }));
+    const state = services({ messaging: {
+      issue: vi.fn(async () => ({ kind: 'unavailable' as const })),
+      resolveParticipants,
+    } });
+    const registrations = createHumanHandlers(async () => state);
+
+    const response = await route(registrations, MATRIX_PARTICIPANTS_PATH).handle(request(MATRIX_PARTICIPANTS_PATH, {
+      method: 'POST', body: JSON.stringify({ userIds: [userId] }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(resolveParticipants).toHaveBeenCalledWith([userId]);
+    expect(await body(response)).toMatchObject({ participants: [{ matrixUserId: userId, ownerId: principal.ownerId }] });
   });
 
   it('authenticates inspection and maps dependency failures to finite unavailable responses', async () => {

@@ -11,6 +11,7 @@ import type {
   Disposer,
   IdentityPort,
   IdentityState,
+  ParticipantView,
   RoomPort,
 } from '@khala/contracts/messaging/index';
 import { createHumanDeviceSession } from './device-session';
@@ -21,6 +22,8 @@ export interface HumanApplicationPorts {
   readonly room: RoomPort;
   readonly admission: AdmissionPort;
   readonly limits: ContentLimits;
+  /** Authenticated participant mapping supplied by the live messaging adapter. */
+  readonly participant?: () => ParticipantView | null;
 }
 
 export interface HumanRouteContext extends HumanApplicationPorts {

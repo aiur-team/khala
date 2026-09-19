@@ -1,9 +1,12 @@
 import { createHash, createHmac } from 'node:crypto';
+import { decodeOwnerId } from '@khala/contracts/messaging/index';
 import type {
   AuthPrincipal,
   CallOptions,
+  ControlStore,
   DeviceId,
   OwnerId,
+  ParticipantId,
   RoomId,
   RoomSummary,
 } from '@khala/contracts/messaging/index';
@@ -24,6 +27,7 @@ export type MatrixHumanOptions = Readonly<{
   serverName: string;
   registrationSharedSecret: string;
   passwordDerivationSecret: string;
+  store: ControlStore;
   fetch?: Fetch;
   timeoutMs?: number;
 }>;
@@ -41,7 +45,18 @@ export interface MatrixSessionIssuer {
     Readonly<{ kind: 'ok'; session: MatrixBrowserSession }>
     | Readonly<{ kind: 'unavailable' }>
   >;
+  resolveParticipants(userIds: readonly string[], options?: CallOptions): Promise<
+    Readonly<{ kind: 'ok'; participants: readonly MatrixParticipant[] }>
+    | Readonly<{ kind: 'unavailable' }>
+  >;
 }
+
+export type MatrixParticipant = Readonly<{
+  matrixUserId: string;
+  participantId: ParticipantId;
+  ownerId: OwnerId;
+  displayName: string;
+}>;
 
 export type MatrixHumanServices = Readonly<{
   directory: MessagingAccountDirectory;
@@ -72,7 +87,7 @@ function requireSecret(value: string, name: string): string {
 }
 
 function localpart(ownerId: OwnerId): string {
-  return `khala_${createHash('sha256').update(ownerId).digest('hex').slice(0, 40)}`;
+  return `khala_${Buffer.from(ownerId, 'utf8').toString('base64url')}`;
 }
 
 function safeObject(value: unknown): Record<string, unknown> | null {
@@ -95,7 +110,62 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   const fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const timeoutMs = options.timeoutMs ?? 10_000;
 
+  type RoomAuthorityRecord = Readonly<{ v: 1; roomId: string; ownerId: string }>;
+  const authorityKey = (roomId: RoomId) => `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`;
+  const validAuthority = (value: unknown, roomId: RoomId): value is RoomAuthorityRecord => {
+    const record = safeObject(value);
+    return record?.v === 1 && record.roomId === roomId && typeof record.ownerId === 'string' && decodeOwnerId(record.ownerId).ok;
+  };
+  async function rememberAuthority(roomId: RoomId, ownerId: OwnerId, call?: CallOptions): Promise<boolean> {
+    const key = authorityKey(roomId);
+    try {
+      const current = await options.store.read<RoomAuthorityRecord>(key, call);
+      if (current.kind === 'record') return validAuthority(current.record.value, roomId);
+      if (current.kind !== 'absent') return false;
+      const value: RoomAuthorityRecord = { v: 1, roomId, ownerId };
+      const written = await options.store.compareAndSet({
+        key,
+        expectedRevision: null,
+        operationId: `matrix.room-authority.claim.${createHash('sha256').update(roomId).update('\0').update(ownerId).digest('hex')}`,
+        next: { value, expiresAt: null },
+      }, call);
+      if (written.kind === 'applied') return true;
+      if (written.kind === 'conflict' && written.current) return validAuthority(written.current.value, roomId);
+      if (written.kind === 'outcome_unknown') {
+        const reconciled = await options.store.read<RoomAuthorityRecord>(key, call);
+        return reconciled.kind === 'record' && validAuthority(reconciled.record.value, roomId);
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+  async function roomAuthority(roomId: RoomId, call?: CallOptions): Promise<OwnerId | null> {
+    try {
+      const current = await options.store.read<RoomAuthorityRecord>(authorityKey(roomId), call);
+      if (current.kind !== 'record' || !validAuthority(current.record.value, roomId)) return null;
+      return current.record.value.ownerId as OwnerId;
+    } catch {
+      return null;
+    }
+  }
+
   const accountId = (ownerId: OwnerId) => `@${localpart(ownerId)}:${serverName}`;
+  const participantFor = (userId: string): MatrixParticipant | null => {
+    const suffix = `:${serverName}`;
+    if (!userId.startsWith('@khala_') || !userId.endsWith(suffix)) return null;
+    const encoded = userId.slice('@khala_'.length, -suffix.length);
+    let candidate: string;
+    try { candidate = Buffer.from(encoded, 'base64url').toString('utf8'); } catch { return null; }
+    const owner = decodeOwnerId(candidate);
+    if (!owner.ok || accountId(owner.value) !== userId) return null;
+    return {
+      matrixUserId: userId,
+      participantId: `human_${createHash('sha256').update(userId).digest('hex').slice(0, 40)}` as ParticipantId,
+      ownerId: owner.value,
+      displayName: userId,
+    };
+  };
   const password = (ownerId: OwnerId) => createHmac('sha256', passwordSecret)
     .update('khala-matrix-password-v1\0')
     .update(ownerId)
@@ -223,6 +293,13 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         },
       };
     },
+    async resolveParticipants(userIds) {
+      if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return { kind: 'unavailable' };
+      const participants = userIds.map(participantFor);
+      return participants.every((participant): participant is MatrixParticipant => participant !== null)
+        ? { kind: 'ok', participants }
+        : { kind: 'unavailable' };
+    },
   };
 
   const controlDevice = (ownerId: OwnerId) => `KHALA_CONTROL_${createHash('sha256').update(ownerId).digest('hex').slice(0, 24)}` as DeviceId;
@@ -265,7 +342,9 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   const authority: InvitationAuthority = {
     async canShare({ principal, roomId }, call) {
       const result = await membership(principal, roomId, call);
-      if (result.kind === 'joined') return 'allowed';
+      if (result.kind === 'joined') {
+        return await rememberAuthority(roomId, principal.ownerId, call) ? 'allowed' : 'unavailable';
+      }
       return result.kind === 'absent' ? 'forbidden' : 'unavailable';
     },
   };
@@ -288,12 +367,31 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     inspectMembership: (input, call) => membership(input.principal, input.roomId, call),
     lookup,
     async admit(input, call): Promise<GatewayAdmission> {
+      // Full-history disclosure requires an explicit crypto key-transfer proof.
+      // The selected production adapter does not have that proof yet, so reject
+      // the policy before changing membership instead of leaving it ambiguous.
+      if (input.history === 'full') return { kind: 'forbidden' };
       const current = await lookup(input, call);
       if (current.kind === 'joined') return current;
       if (current.kind === 'unavailable' || current.kind === 'outcome_unknown') return current;
+      const creatorOwnerId = await roomAuthority(input.roomId, call);
+      if (creatorOwnerId === null) return { kind: 'unavailable' };
+      const creatorSession = await login(creatorOwnerId, controlDevice(creatorOwnerId), call);
       const session = await authenticated(input.principal, call);
-      if (session === null) return { kind: 'unavailable' };
+      if (creatorSession === null || session === null) return { kind: 'unavailable' };
       try {
+        const invitation = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(input.roomId)}/invite`, {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${creatorSession.accessToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ user_id: session.userId }),
+        }, call);
+        if (invitation.status === 403) return { kind: 'forbidden' };
+        if (invitation.status >= 500) return { kind: 'outcome_unknown' };
+        if (![200, 409].includes(invitation.status)) return { kind: 'unavailable' };
         const response = await request(`/_matrix/client/v3/join/${encodeURIComponent(input.roomId)}`, {
           method: 'POST',
           headers: {

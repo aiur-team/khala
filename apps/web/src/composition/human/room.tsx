@@ -1,5 +1,4 @@
 import { useEffect, useMemo } from 'react';
-import type { ParticipantId, ParticipantView } from '@khala/contracts/messaging/index';
 import { createRoomController } from '../../features/room/controller';
 import type { RoomUiPort } from '../../features/room/ports';
 import { RoomScreen } from '../../features/room/RoomScreen';
@@ -34,13 +33,14 @@ function HumanRoom({ context, roomId }: {
     timeline.dispose();
     room.dispose();
   }, [room, timeline]);
-  const viewer: ParticipantView = {
-    participantId: context.principal.ownerId as unknown as ParticipantId,
-    kind: 'human',
-    ownerId: context.principal.ownerId,
-    displayName: context.principal.verifiedEmail,
-    deviceIds: [context.deviceView.deviceId],
-  };
+  const viewer = context.participant?.() ?? null;
+  if (viewer === null) {
+    return (
+      <Panel heading="Conversation unavailable">
+        <p role="alert">Participant attribution is unavailable for this session.</p>
+      </Panel>
+    );
+  }
 
   return (
     <RoomScreen

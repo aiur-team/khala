@@ -22,6 +22,7 @@ export type HumanApplicationScreenProps = Readonly<{
   routes: HumanRouteCodec;
   mode?: ShellMode;
   navigateExternal?: (url: string) => void;
+  navigateRoute?: (path: string) => void;
   renderRoom?: HumanRoomRenderer;
   capabilities?: readonly HumanCapability[];
 }>;
@@ -45,10 +46,11 @@ function statusContent(snapshot: ReturnType<HumanApplicationHandle['getSnapshot'
   }
 }
 
-function JoinRoute({ context, routes, navigateExternal }: {
+function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
   context: HumanRouteContext;
   routes: HumanRouteCodec;
   navigateExternal: (url: string) => void;
+  navigateRoute: (path: string) => void;
 }) {
   const controller = useMemo(() => createJoinController({
     identity: context.identity,
@@ -64,14 +66,22 @@ function JoinRoute({ context, routes, navigateExternal }: {
     controller.start(context.path);
   }, [context.path, controller]);
 
-  return <JoinScreen view={view} onSignIn={() => void controller.signIn()} onRetry={() => controller.retry()} />;
+  return (
+    <JoinScreen
+      view={view}
+      onSignIn={() => void controller.signIn()}
+      onRetry={() => controller.retry()}
+      onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))}
+    />
+  );
 }
 
-function ReadyRoute({ context, routes, renderRoom, navigateExternal, capabilities }: {
+function ReadyRoute({ context, routes, renderRoom, navigateExternal, navigateRoute, capabilities }: {
   context: HumanRouteContext;
   routes: HumanRouteCodec;
   renderRoom?: HumanRoomRenderer;
   navigateExternal: (url: string) => void;
+  navigateRoute: (path: string) => void;
   capabilities: readonly HumanCapability[];
 }) {
   useEffect(() => attachHumanCapabilities(capabilities, context), [capabilities, context]);
@@ -80,11 +90,11 @@ function ReadyRoute({ context, routes, renderRoom, navigateExternal, capabilitie
     case 'create':
       return (
         <KhalaPageFrame model={{ title: 'Khala', description: 'Create a private room and share its link.', labelledBy: 'khala-create-title' }}>
-          <CreateChatScreen ports={context} />
+          <CreateChatScreen ports={context} onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />
         </KhalaPageFrame>
       );
     case 'join':
-      return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} />;
+      return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
     case 'room':
       return renderRoom ? renderRoom(context, route) : (
         <KhalaPageFrame model={{ title: 'Room unavailable', labelledBy: 'khala-room-unavailable' }}>
@@ -108,6 +118,7 @@ export function HumanApplicationScreen({
   routes,
   mode = 'hosted-content',
   navigateExternal = url => globalThis.location?.assign(url),
+  navigateRoute = path => application.navigate(path),
   renderRoom,
   capabilities = registerHumanCapabilities(),
 }: HumanApplicationScreenProps) {
@@ -132,6 +143,7 @@ export function HumanApplicationScreen({
         context={snapshot.context}
         routes={routes}
         navigateExternal={navigateExternal}
+        navigateRoute={navigateRoute}
         capabilities={capabilities}
         {...(renderRoom ? { renderRoom } : {})}
       />

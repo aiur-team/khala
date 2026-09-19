@@ -30,3 +30,9 @@ an old generation must never regain a DOM listener or subscription.
 The standalone mount owns Khala chrome. A host-content mount owns only route
 content and follows the same authentication and disposal rules, so a future
 Aiur host does not create duplicate chrome or alternate authority semantics.
+
+The Matrix adapter accepts timeline attribution only after the same-origin
+control API maps a canonical local Matrix account to its authenticated Khala
+owner and participant ID. It then matches the event's claimed Ed25519 key to a
+Matrix device ID. A missing mapping or key match fails closed; sender strings
+and display names never become owner authority.

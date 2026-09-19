@@ -26,14 +26,17 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     const roomId = roomText.replace(/^Room:\s*/u, '');
     expect(roomId).not.toBe('');
 
-    await bob.goto(`${environment.appOrigin}/rooms/${encodeURIComponent(roomId)}`);
-    await expect(bob.getByText(intro)).toBeVisible();
+    await bob.getByRole('button', { name: 'Open chat' }).click();
+    await expect(bob).toHaveURL(`${environment.appOrigin}/rooms/${encodeURIComponent(roomId)}`);
+    // The current product default is link admission with no earlier history.
+    await expect(bob.getByText(intro)).toHaveCount(0);
     const reply = syntheticCanary('reply');
     await bob.getByLabel('Message').fill(reply);
     await bob.getByRole('button', { name: 'Send' }).click();
     await expect(bob.getByText(reply)).toBeVisible();
 
-    await alice.goto(`${environment.appOrigin}/rooms/${encodeURIComponent(roomId)}`);
+    await alice.getByRole('button', { name: 'Open chat' }).click();
+    await expect(alice).toHaveURL(`${environment.appOrigin}/rooms/${encodeURIComponent(roomId)}`);
     await expect(alice.getByText(reply)).toBeVisible();
     await expect(alice.getByText(intro)).toBeVisible();
 
@@ -43,7 +46,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     expect(JSON.stringify(rawEvents)).not.toContain(reply);
 
     await bob.reload({ waitUntil: 'networkidle' });
-    await expect(bob.getByText(intro)).toBeVisible();
+    await expect(bob.getByText(intro)).toHaveCount(0);
     await expect(bob.getByText(reply)).toBeVisible();
   } finally {
     await Promise.all([aliceContext.close(), bobContext.close()]);

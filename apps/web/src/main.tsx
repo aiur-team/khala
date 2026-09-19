@@ -28,12 +28,18 @@ const decodedLimits = decodeContentLimits({
 if (!decodedLimits.ok) throw new Error('invalid Matrix content limits');
 
 const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value });
-const matrix = createMatrixBrowserPorts({ identity: api.identity, credentials: api.credentials, limits: decodedLimits.value });
+const matrix = createMatrixBrowserPorts({
+  identity: api.identity,
+  credentials: api.credentials,
+  participants: api.participants,
+  limits: decodedLimits.value,
+});
 const application = createHumanApplication({
   identity: api.identity,
   device: matrix.device,
   room: matrix.room,
   admission: api.admission,
+  participant: matrix.participant,
   limits: decodedLimits.value,
 }, { initialPath: `${location.pathname}${location.search}` });
 const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
@@ -44,6 +50,10 @@ const mounted = mountKhalaContent({
   routes,
   mode: 'standalone',
   renderRoom: renderHumanRoom,
+  navigateRoute(path) {
+    history.pushState(null, '', path);
+    application.navigate(path);
+  },
 });
 
 const onPopState = () => application.navigate(`${location.pathname}${location.search}`);

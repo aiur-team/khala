@@ -3,7 +3,9 @@
 This suite is the non-fixture acceptance proof for KHA-132. It uses two isolated
 browser contexts, two disposable OAuth identities, the deployed Khala control
 routes, and the deployed Synapse/PostgreSQL environment. A pass records encrypted
-raw Matrix events while both humans see the decrypted, attributed conversation.
+raw Matrix events while both humans see attributed messages allowed by admission:
+the default joiner sees content from admission onward, while the creator retains
+their earlier introduction history.
 
 `KHALA_E2E_DISPOSABLE_ENV` must be an absolute path to a secret-free JSON
 descriptor. Secrets stay in separately named environment variables:

@@ -3,6 +3,7 @@ import {
   decodeAuthPrincipal,
   decodeDeviceId,
   decodeInviteState,
+  decodeParticipantView,
   decodeShareGrant,
   isSameOriginReturnPath,
   sameProviderIdentity,
@@ -15,6 +16,7 @@ import {
   type IdentityPort,
   type IdentityState,
   type OperationResult,
+  type ParticipantView,
 } from '@khala/contracts/messaging/index';
 import type { CredentialSource } from '@khala/messaging/browser-device/index';
 
@@ -25,6 +27,7 @@ const SHARE_PATH = '/api/human/invitations/share';
 const INSPECT_PATH = '/api/human/invitations/inspect';
 const ADMIT_PATH = '/api/human/invitations/admit';
 const MATRIX_SESSION_PATH = '/api/human/messaging/session';
+const MATRIX_PARTICIPANTS_PATH = '/api/human/messaging/participants';
 
 type Fetch = typeof globalThis.fetch;
 
@@ -33,6 +36,7 @@ export type HumanBrowserApiOptions = Readonly<{
   homeserverOrigin: string;
   limits: ContentLimits;
   fetch?: Fetch;
+  timeoutMs?: number;
   deviceIds?: Readonly<{ get(ownerId: string): string | null; put(ownerId: string, deviceId: string): void }>;
 }>;
 
@@ -40,6 +44,9 @@ export type HumanBrowserApi = Readonly<{
   identity: IdentityPort;
   admission: AdmissionPort;
   credentials: CredentialSource;
+  participants: Readonly<{
+    resolve(userIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, ParticipantView> | null>;
+  }>;
 }>;
 
 function exactHttpsOrigin(value: string): string {
@@ -101,6 +108,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
   const origin = exactHttpsOrigin(options.origin);
   const configuredHomeserverOrigin = exactHttpsOrigin(options.homeserverOrigin);
   const request = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const timeoutMs = options.timeoutMs ?? 10_000;
   let csrfToken: string | null = null;
   const deviceIds = options.deviceIds ?? {
     get: (ownerId: string) => globalThis.localStorage.getItem(`khala.matrix.device.v1:${ownerId}`),
@@ -109,13 +117,17 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
 
   const identityUnavailable = (): IdentityState => ({ kind: 'unavailable', retryable: true });
 
+  function requestSignal(signal?: AbortSignal): AbortSignal {
+    return AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]);
+  }
+
   async function readCurrent(signal?: AbortSignal): Promise<IdentityState> {
     try {
       const response = await request(`${origin}${ME_PATH}`, {
         method: 'GET',
         credentials: 'same-origin',
         headers: { accept: 'application/json' },
-        ...(signal ? { signal } : {}),
+        signal: requestSignal(signal),
       });
       if (response.status === 401) {
         csrfToken = null;
@@ -148,7 +160,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
           'x-khala-csrf': csrfToken!,
         },
         body: JSON.stringify(body),
-        ...(signal ? { signal } : {}),
+        signal: requestSignal(signal),
       });
     } catch {
       return null;
@@ -199,7 +211,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
           method: 'GET',
           credentials: 'same-origin',
           headers: { accept: 'application/json' },
-          ...(callOptions?.signal ? { signal: callOptions.signal } : {}),
+          signal: requestSignal(callOptions?.signal),
         });
         if (response.status === 401) return 'auth_required';
         if (response.status !== 200) return 'unavailable';
@@ -263,5 +275,30 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     },
   };
 
-  return { identity, admission, credentials };
+  const participants = {
+    async resolve(userIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, ParticipantView> | null> {
+      if (userIds.length > 100 || new Set(userIds).size !== userIds.length) return null;
+      const response = await mutation(MATRIX_PARTICIPANTS_PATH, { userIds }, signal);
+      if (response === null || response.status !== 200) return null;
+      const envelope = await jsonObject(response);
+      if (envelope === null || !hasExactKeys(envelope, ['participants']) || !Array.isArray(envelope.participants)) return null;
+      const resolved = new Map<string, ParticipantView>();
+      for (const value of envelope.participants) {
+        if (!isObject(value) || !hasExactKeys(value, ['matrixUserId', 'participantId', 'ownerId', 'displayName'])
+          || typeof value.matrixUserId !== 'string') return null;
+        const participant = decodeParticipantView({
+          participantId: value.participantId,
+          kind: 'human',
+          ownerId: value.ownerId,
+          displayName: value.displayName,
+          deviceIds: [],
+        }, options.limits);
+        if (!participant.ok || resolved.has(value.matrixUserId)) return null;
+        resolved.set(value.matrixUserId, participant.value);
+      }
+      return resolved.size === userIds.length && userIds.every(userId => resolved.has(userId)) ? resolved : null;
+    },
+  };
+
+  return { identity, admission, credentials, participants };
 }
