@@ -9,10 +9,10 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import {
-  type ApprovalResult, type BindingId, type CommandId, type DeliveryLimits, type DeliveryReceipt, type EventId,
+  type ApprovalCommand, type ApprovalResult, type BindingId, type CommandId, type DeliveryLimits, type DeliveryReceipt, type EventId,
   type EventRef, type OwnerId, type ReleaseId, type ReleasedJob, type RoomId, type SessionBinding,
-  type UnverifiedReleasedJob, decodeApprovalResult, decodeDeliveryReceipt, decodeEventRef, decodeReleasedJob,
-  decodeSessionBinding, sameEventRef, sameSessionBinding,
+  type UnverifiedReleasedJob, decodeApprovalCommand, decodeApprovalResult, decodeDeliveryReceipt, decodeEventRef,
+  decodeReleasedJob, decodeSessionBinding, sameEventRef, sameSessionBinding, verifyReleasedJob,
 } from '@khala/contracts/delivery/index';
 import { decodeWith, identifier, utcTimestamp, utf8Length } from '@khala/contracts/delivery/decode';
 import {
@@ -86,6 +86,8 @@ export type CommandRecord = Readonly<{
   ownerId: OwnerId;
   commandId: CommandId;
   inputDigest: string;
+  /** Exact approval input. Null only for a command migrated from the v1 schema. */
+  command: ApprovalCommand | null;
   result: ApprovalResult;
 }>;
 
@@ -252,7 +254,8 @@ function readRevision(db: DatabaseSync): number {
   return Number(row.value);
 }
 
-function bumpRevision(db: DatabaseSync): number {
+/** @internal Shared by storage adapters that must invalidate approval snapshots. */
+export function bumpRevision(db: DatabaseSync): number {
   const next = readRevision(db) + 1;
   db.prepare("UPDATE meta SET value = ? WHERE key = 'ledger_revision'").run(String(next));
   return next;
@@ -668,11 +671,17 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
   };
 
   const readCommand = (ownerId: OwnerId, commandId: CommandId): CommandRecord | null => {
-    const row = db.prepare('SELECT input_digest, result FROM commands WHERE owner_id = ? AND command_id = ?')
-      .get(ownerId, commandId) as { input_digest: string; result: string } | undefined;
+    const row = db.prepare(`SELECT input_digest, approval_command, result FROM commands
+      WHERE owner_id = ? AND command_id = ?`).get(ownerId, commandId) as
+      | { input_digest: string; approval_command: string | null; result: string }
+      | undefined;
     if (!row) return null;
     const result = parseOrCorrupt<ApprovalResult>(row.result, input => decodeApprovalResult(input, limits));
-    return { ownerId, commandId, inputDigest: row.input_digest, result };
+    const command = row.approval_command === null
+      ? null
+      : parseOrCorrupt<ApprovalCommand>(row.approval_command, input => decodeApprovalCommand(input, limits));
+    if (command !== null && command.commandId !== commandId) throw new StorageError('corrupt');
+    return { ownerId, commandId, inputDigest: row.input_digest, command, result };
   };
 
   const readRelease = (releaseId: ReleaseId): StoredRelease | null => {
@@ -769,7 +778,11 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
     putRelease: guarded(({ command, job: input, payload, expectedLedgerRevision }: Parameters<LedgerTx['putRelease']>[0]): ReleaseResult => {
       const job = canonical(input, value => decodeReleasedJob(value, limits));
       const result = canonical(command.result, value => decodeApprovalResult(value, limits));
-      if (!/^sha256:[0-9a-f]{64}$/.test(command.inputDigest) || !(payload instanceof Uint8Array)) {
+      const approval = command.command === null
+        ? null
+        : canonical(command.command, value => decodeApprovalCommand(value, limits));
+      if (!/^sha256:[0-9a-f]{64}$/.test(command.inputDigest) || !(payload instanceof Uint8Array)
+        || approval === null || approval.commandId !== command.commandId) {
         throw new StorageError('invalid_input');
       }
       // A retry of the same command replays its committed outcome, whatever release ID
@@ -778,7 +791,8 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
       if (existing !== null) {
         return existing.inputDigest === command.inputDigest ? { kind: 'duplicate' } : { kind: 'conflict', code: 'idempotency_conflict' };
       }
-      if (command.commandId !== job.approval.commandId || command.ownerId !== job.binding.ownerId) {
+      if (command.commandId !== job.approval.commandId || command.ownerId !== job.binding.ownerId
+        || !verifyReleasedJob(job, approval).ok) {
         return { kind: 'conflict', code: 'command_mismatch' };
       }
       // Revocation outranks every other answer: a revoked recipient is never released to.
@@ -807,8 +821,10 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
       }
 
       const revision = bumpRevision(db);
-      db.prepare('INSERT INTO commands (owner_id, command_id, input_digest, result) VALUES (?, ?, ?, ?)')
-        .run(command.ownerId, command.commandId, command.inputDigest, JSON.stringify(result));
+      db.prepare(`INSERT INTO commands (owner_id, command_id, input_digest, approval_command, result)
+        VALUES (?, ?, ?, ?, ?)`).run(
+        command.ownerId, command.commandId, command.inputDigest, JSON.stringify(approval), JSON.stringify(result),
+      );
       insertPayload(db, job.payloadRef, payload);
       db.prepare(`INSERT INTO releases (release_id, owner_id, command_id, payload_ref, job, ledger_revision)
         VALUES (?, ?, ?, ?, ?, ?)`).run(job.releaseId, command.ownerId, command.commandId, job.payloadRef, JSON.stringify(job), revision);
