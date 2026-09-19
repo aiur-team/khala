@@ -72,9 +72,9 @@ describe('CreateChatScreen initial render', () => {
   it('offers all three admission policies and defaults to a no-history link', () => {
     const html = renderToStaticMarkup(<CreateChatScreen ports={fakePorts()} />);
     expect(html).toContain('<legend>Who can join from this link?</legend>');
-    expect(html).toContain('checked="" value="link_no_history"');
-    expect(html).toContain('value="named_no_history"');
-    expect(html).toContain('value="link_full_history"');
+    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="link_no_history")(?=[^>]*\bchecked="")[^>]*>/);
+    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="named_no_history")[^>]*>/);
+    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="link_full_history")[^>]*>/);
   });
 
   it('disables submit while readiness is still being checked, and shows no share link or error yet', () => {

@@ -182,7 +182,7 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
               checked={view.admissionPolicy === 'link_full_history'}
               onChange={() => controller.setAdmissionPolicy('link_full_history')}
             />
-            Anyone with the link, including earlier history
+            Anyone with the link can read messages sent before they joined
           </label>
         </fieldset>
 

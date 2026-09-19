@@ -1,5 +1,4 @@
 import type {
-  AdmissionPolicy,
   AuthPrincipal,
   CompareAndSetInput,
   ControlRecord,
@@ -20,7 +19,6 @@ export const ORIGIN = 'https://khala.aiur.team';
 export const SECRET = 's'.repeat(32);
 export const ROOM_ID = 'room_1' as RoomId;
 export const DEVICE_ID = 'device_1' as DeviceId;
-export const LINK_NO_HISTORY: AdmissionPolicy = { v: 1, kind: 'link', history: 'none' };
 
 export const principal = (owner = 'owner_1', email = 'ada@example.test'): AuthPrincipal => ({
   v: 1,

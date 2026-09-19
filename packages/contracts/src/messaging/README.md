@@ -160,9 +160,9 @@ fails with `invalid_limits` rather than allowing unbounded input.
 
 Decoders reject unknown fields. The browser and the connector therefore deploy in
 lockstep for a given contract version. Every envelope with a `v` field (`AuthPrincipal`,
-`SessionBinding`, `EventRef`, `UnavailableEventRef`, `MessageContent` and
-`UnavailableContent`) bumps `v` on any change to its shape, and a bump is a reviewed
-change on both producer and consumer. `SessionBinding` carries `v` because the delivery
+`SessionBinding`, `EventRef`, `UnavailableEventRef`, `MessageContent`,
+`UnavailableContent` and `AdmissionPolicy`) bumps `v` on any change to its shape,
+and a bump is a reviewed change on both producer and consumer. `SessionBinding` carries `v` because the delivery
 domain mirrors it. `UnavailableEventRef` is a new type, not a change to `EventRef`'s
 shape, so `EventRef` keeps `v: 1`.
 

@@ -50,6 +50,8 @@ function validateIntroBody(body: string, limits: ContentLimits): string | null {
   return null;
 }
 
+// Keep this local pre-check aligned with the authoritative normalization in
+// apps/control/src/invitations/policy.ts.
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
 function selectedPolicy(view: CreateChatView): AdmissionPolicy {

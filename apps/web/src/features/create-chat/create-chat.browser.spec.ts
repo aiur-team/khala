@@ -40,7 +40,7 @@ test('CreateChatScreen completes an unnamed chat with two intros and keeps submi
 
     // The non-default choice is carried through the screen and controller to
     // the injected admission implementation without translation.
-    await page.getByLabel('Anyone with the link, including earlier history').check();
+    await page.getByLabel('Anyone with the link can read messages sent before they joined').check();
 
     // Add two introduction messages, in order.
     const addIntro = page.getByRole('button', { name: 'Add introduction message' });

@@ -24,8 +24,8 @@ the local operation journal in `controller.ts`.
 
 The admission choice is per link and defaults to anyone with the link seeing
 events from their admission forward. The other choices restrict the link to a
-named email or allow anyone with the link to receive earlier history. The
-controller freezes the selected policy with the share operation so retries send
+named email or allow anyone with the link to read messages sent before they
+joined. The controller freezes the selected policy with the share operation so retries send
 the same operation ID and policy.
 
 KHA132 supplies the production ports (backed by the selected messaging SDK)

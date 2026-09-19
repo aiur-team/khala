@@ -42,7 +42,7 @@ export type AdmissionPolicy =
 
 export interface AdmissionPort {
   share(
-    input: Readonly<{ operationId: string; roomId: RoomId; policy: AdmissionPolicy }>,
+    input: Readonly<{ operationId: string; roomId: RoomId; policy?: AdmissionPolicy }>,
     options?: CallOptions,
   ): Promise<OperationResult<ShareGrant, AdmissionRejection>>;
   inspect(inviteRef: string, options?: CallOptions): Promise<InviteState>;
