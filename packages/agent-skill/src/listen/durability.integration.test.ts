@@ -1,19 +1,17 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  decodeSessionBinding,
-  type EventRef,
-} from '@khala/contracts/delivery/index';
-import { runCli } from '../../../agent-cli/src/cli/app.js';
-import { openInbox } from '../../../agent-cli/src/cli/inbox.js';
-import type { AgentClientPort, InboxDelivery } from '../../../agent-cli/src/cli/types.js';
-import { createListenerSupervisor, type ListenerProcessPort } from './supervisor.js';
+import { decodeSessionBinding, type EventRef } from '@khala/contracts/delivery/index';
+import { openInbox } from '@khala/agent-cli/cli/inbox';
+import type { InboxDelivery } from '@khala/agent-cli/cli/types';
+import { nodeListenerProcess } from './node-process.js';
 
 const roots: string[] = [];
+const listenerFixture = fileURLToPath(new URL('./fixtures/listener-child.ts', import.meta.url));
 const decodedBinding = decodeSessionBinding({
   v: 1,
   bindingId: 'binding-1',
@@ -55,55 +53,35 @@ function delivery(releaseId: string, body: string): InboxDelivery {
   };
 }
 
-function client(): AgentClientPort {
-  return {
-    async connect() { return { kind: 'connected', binding, reused: true }; },
-    async send(input) { return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: null }; },
-    async status() {
-      return { v: 1, connected: true, binding, route: 'agent_installed_listener', sourceCursor: 'source-1' };
-    },
-  };
+function childArguments(directory: string): string[] {
+  return ['--import', 'tsx', listenerFixture, directory, binding.bindingId];
 }
 
-function cliProcess(directory: string): ListenerProcessPort {
-  return {
-    async run(input) {
-      const stdin = new PassThrough();
-      stdin.end();
-      const code = await runCli(input.args, {
-        client: client(),
-        inbox: (bindingId, generation) => openInbox({
-          stateDirectory: directory,
-          bindingId,
-          generation,
-          maxPayloadBytes: 1024,
-          maxSelectionEvents: 32,
-        }),
-        stdin,
-        stdout: input.stdout,
-        stderr: input.stderr,
-        signal: input.signal,
-      });
-      return { code, signal: input.signal.aborted ? 'SIGTERM' : null, errorCode: null };
-    },
-  };
+function capture() {
+  const stream = new PassThrough();
+  let text = '';
+  stream.on('data', chunk => { text += String(chunk); });
+  return { stream, text: () => text };
 }
 
-async function listenOnce(supervisor: ReturnType<typeof createListenerSupervisor>): Promise<string> {
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
+async function listenOnce(directory: string): Promise<string> {
+  const stdout = capture();
+  const stderr = capture();
   const abort = new AbortController();
-  let output = '';
-  let error = '';
-  stderr.on('data', chunk => { error += String(chunk); });
-  stdout.on('data', chunk => {
-    output += String(chunk);
-    if (output.includes('\n')) abort.abort();
+  stdout.stream.on('data', () => abort.abort());
+  const args = childArguments(directory);
+  expect(JSON.stringify(args)).not.toContain('released-');
+  expect(JSON.stringify(args)).not.toContain('pending-secret');
+  const exit = await nodeListenerProcess.run({
+    command: process.execPath,
+    args,
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    signal: abort.signal,
   });
-  const handle = supervisor.start({ bindingId: binding.bindingId, stdout, stderr, signal: abort.signal });
-  await handle.completion;
-  expect(error).toBe('');
-  return output;
+  expect(exit).toMatchObject({ errorCode: null });
+  expect(stderr.text()).toBe('');
+  return stdout.text();
 }
 
 afterEach(() => {
@@ -111,8 +89,17 @@ afterEach(() => {
 });
 
 describe('fallback listener with the durable CLI', () => {
-  it('delivers backlog across restarts with no duplicate, no gap, and no pending content', async () => {
+  it('delivers backlog across child-process restarts with no duplicate, gap, or pending content', async () => {
     const directory = stateDirectory();
+    const fixtureLedger = {
+      pending: [{ eventId: 'pending-1', body: 'pending-secret' }],
+      released: [
+        { releaseId: 'release-1', body: 'released-one' },
+        { releaseId: 'release-2', body: 'released-two' },
+      ],
+    } as const;
+    expect(fixtureLedger.pending.map(item => item.body)).toContain('pending-secret');
+
     const inbox = await openInbox({
       stateDirectory: directory,
       bindingId: binding.bindingId,
@@ -120,13 +107,13 @@ describe('fallback listener with the durable CLI', () => {
       maxPayloadBytes: 1024,
       maxSelectionEvents: 32,
     });
-    await expect(inbox.enqueue(delivery('release-1', 'released-one'))).resolves.toBe('appended');
-    const supervisor = createListenerSupervisor({ process: cliProcess(directory) });
+    const [firstRelease, secondRelease] = fixtureLedger.released;
+    await expect(inbox.enqueue(delivery(firstRelease.releaseId, firstRelease.body))).resolves.toBe('appended');
 
-    const first = await listenOnce(supervisor);
-    await expect(inbox.enqueue(delivery('release-1', 'released-one'))).resolves.toBe('duplicate');
-    await expect(inbox.enqueue(delivery('release-2', 'released-two'))).resolves.toBe('appended');
-    const second = await listenOnce(supervisor);
+    const first = await listenOnce(directory);
+    await expect(inbox.enqueue(delivery(firstRelease.releaseId, firstRelease.body))).resolves.toBe('duplicate');
+    await expect(inbox.enqueue(delivery(secondRelease.releaseId, secondRelease.body))).resolves.toBe('appended');
+    const second = await listenOnce(directory);
 
     expect([JSON.parse(first), JSON.parse(second)].map(item => item.releaseId)).toEqual(['release-1', 'release-2']);
     expect(first + second).not.toContain('pending-secret');
@@ -137,5 +124,48 @@ describe('fallback listener with the durable CLI', () => {
       maxPayloadBytes: 1024,
       maxSelectionEvents: 32,
     }).then(current => current.status())).cursor.releaseId).toBe('release-2');
+  });
+
+  it('surfaces the real CLI cross-process listener lock as structured listener_busy', async () => {
+    const directory = stateDirectory();
+    const inbox = await openInbox({
+      stateDirectory: directory,
+      bindingId: binding.bindingId,
+      generation: binding.generation,
+      maxPayloadBytes: 1024,
+      maxSelectionEvents: 32,
+    });
+    await inbox.enqueue(delivery('release-lock', 'released-lock'));
+
+    const firstOutput = capture();
+    const firstError = capture();
+    const firstAbort = new AbortController();
+    const first = nodeListenerProcess.run({
+      command: process.execPath,
+      args: childArguments(directory),
+      stdout: firstOutput.stream,
+      stderr: firstError.stream,
+      signal: firstAbort.signal,
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('listener fixture did not start')), 5_000);
+        firstOutput.stream.once('data', () => { clearTimeout(timer); resolve(); });
+      });
+      const secondError = capture();
+      const second = await nodeListenerProcess.run({
+        command: process.execPath,
+        args: childArguments(directory),
+        stdout: new PassThrough(),
+        stderr: secondError.stream,
+        signal: new AbortController().signal,
+      });
+      expect(second).toEqual({ code: 2, signal: null, errorCode: 'listener_busy' });
+      expect(secondError.text()).toBe('{"ok":false,"error":"listener_busy"}\n');
+    } finally {
+      firstAbort.abort();
+      await expect(first).resolves.toMatchObject({ errorCode: null });
+    }
+    expect(firstError.text()).toBe('');
   });
 });

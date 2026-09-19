@@ -97,6 +97,10 @@ importers:
       '@khala/contracts':
         specifier: workspace:*
         version: link:../contracts
+    devDependencies:
+      '@khala/agent-cli':
+        specifier: workspace:*
+        version: link:../agent-cli
 
   packages/connector:
     dependencies:

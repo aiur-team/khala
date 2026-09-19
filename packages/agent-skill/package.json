@@ -3,10 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": { "khala-fallback": "./dist/main.js" },
   "exports": {
     "./capabilities": "./src/capabilities.ts",
-    "./listen/*": "./src/listen/*.ts",
-    "./listen/fixtures/*": null
+    "./listen/*": "./src/listen/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
@@ -15,5 +15,8 @@
   },
   "dependencies": {
     "@khala/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@khala/agent-cli": "workspace:*"
   }
 }

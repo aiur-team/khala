@@ -14,7 +14,7 @@ describe('fallback skill capabilities', () => {
       support: 'experimental',
       existingSession: 'agent_installed_listener',
       immediateNotification: 'agent_installed_listener',
-      busy: 'queue',
+      busy: 'unknown',
       receiptEvidence: [],
       reconcileByReleaseId: 'unsupported',
       limits: { maxPayloadBytes: 65_536, maxSelectionEvents: 32 },

@@ -16,7 +16,7 @@ export function fallbackSkillCapabilities(harness: string, limits: DeliveryLimit
     support: 'experimental',
     existingSession: 'agent_installed_listener',
     immediateNotification: 'agent_installed_listener',
-    busy: 'queue',
+    busy: 'unknown',
     receiptEvidence: [],
     reconcileByReleaseId: 'unsupported',
     limits,

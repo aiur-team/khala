@@ -2,6 +2,8 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ListenerBusyError,
+  ListenerSpawnError,
+  ListenerTerminalError,
   createListenerSupervisor,
   type ListenerProcessInput,
   type ListenerProcessPort,
@@ -91,6 +93,24 @@ describe('listener supervisor', () => {
     expect(retries).toEqual([]);
   });
 
+  it('treats every other structured CLI error as terminal', async () => {
+    const retries: ListenerRetry[] = [];
+    let calls = 0;
+    const supervisor = createListenerSupervisor({
+      process: { run() { calls += 1; return Promise.resolve({
+        code: 2, signal: null, errorCode: 'not_connected',
+      }); } },
+      onRetry: retry => { retries.push(retry); },
+    });
+    const handle = supervisor.start({ stdout: new PassThrough(), stderr: new PassThrough() });
+
+    await expect(handle.completion).rejects.toMatchObject({
+      name: 'ListenerTerminalError', code: 'not_connected',
+    } satisfies Partial<ListenerTerminalError>);
+    expect(calls).toBe(1);
+    expect(retries).toEqual([]);
+  });
+
   it('retries a spawn failure without exposing the thrown error', async () => {
     const retries: ListenerRetry[] = [];
     let calls = 0;
@@ -112,6 +132,23 @@ describe('listener supervisor', () => {
     expect(JSON.stringify(retries)).not.toContain('secret process detail');
     handle.stop();
     await handle.completion;
+  });
+
+  it('bounds consecutive spawn failures without exposing process details', async () => {
+    const retries: ListenerRetry[] = [];
+    let calls = 0;
+    const supervisor = createListenerSupervisor({
+      process: { run() { calls += 1; throw new Error(`secret-${calls}`); } },
+      maxSpawnFailures: 3,
+      sleep: async () => undefined,
+      onRetry: retry => { retries.push(retry); },
+    });
+    const handle = supervisor.start({ stdout: new PassThrough(), stderr: new PassThrough() });
+
+    await expect(handle.completion).rejects.toBeInstanceOf(ListenerSpawnError);
+    expect(calls).toBe(3);
+    expect(retries).toHaveLength(2);
+    expect(JSON.stringify(retries)).not.toContain('secret');
   });
 
   it('does not reconnect after cancellation', async () => {
