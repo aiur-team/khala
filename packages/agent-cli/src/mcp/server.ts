@@ -1,6 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import type { BindingId } from '@khala/contracts/delivery/index';
+import { CliError } from '../cli/errors.js';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import type { SendResult } from '../cli/types.js';
 import { plainObject, validBindingArgument } from '../cli/validation.js';
@@ -122,7 +123,13 @@ async function callTool(id: JsonRpcId, params: unknown, sends: SendService): Pro
     bindingId = params.arguments.bindingId;
   }
 
-  const result: SendResult = await sends.send(params.arguments.message, bindingId);
+  let result: SendResult;
+  try {
+    result = await sends.send(params.arguments.message, bindingId);
+  } catch (error) {
+    if (error instanceof CliError && error.code === 'invalid_input') return failure(id, -32602, 'Invalid params');
+    throw error;
+  }
   const safe = publicResult(result);
   return success(id, {
     content: [{ type: 'text', text: JSON.stringify(safe) }],
@@ -135,7 +142,6 @@ type McpToolDefinition = Readonly<{
   name: typeof TOOL_NAME;
   description: string;
   inputSchema: Readonly<{ type: 'object'; properties: Readonly<Record<string, unknown>>; required: readonly string[]; additionalProperties: false }>;
-  outputSchema: Readonly<{ type: 'object'; properties: Readonly<Record<string, unknown>>; required: readonly string[] }>;
 }>;
 
 function toolDefinition(): McpToolDefinition {
@@ -150,16 +156,6 @@ function toolDefinition(): McpToolDefinition {
       },
       required: ['message'],
       additionalProperties: false,
-    },
-    outputSchema: {
-      type: 'object',
-      properties: {
-        kind: { enum: ['accepted', 'refused', 'outcome_unknown'] },
-        clientTxnId: { type: 'string' },
-        eventId: { type: ['string', 'null'] },
-        code: { type: 'string' },
-      },
-      required: ['kind', 'clientTxnId'],
     },
   };
 }

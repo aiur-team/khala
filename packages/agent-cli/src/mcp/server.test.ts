@@ -66,6 +66,16 @@ describe('MCP server', () => {
     expect(JSON.stringify(responses)).not.toContain('secret-b');
   });
 
+  it('returns invalid params for an empty message without stopping the server', async () => {
+    const client = fakeClient();
+    const responses = await exchange(client, [
+      request(1, 'tools/call', { name: 'khala_send', arguments: { message: '' } }),
+      request(2, 'ping', {}),
+    ]);
+    expect(responses).toMatchObject([{ id: 1, error: { code: -32602 } }, { id: 2, result: {} }]);
+    expect(client.sent).toEqual([]);
+  });
+
   it('does not answer notifications and never exposes thrown error messages', async () => {
     const secret = 'transport leaked the message';
     const client = fakeClient();
