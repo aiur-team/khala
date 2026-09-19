@@ -1,7 +1,15 @@
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it, vi } from 'vitest';
 import { main } from './main.js';
 import type { ListenerProcessInput, ListenerProcessPort } from './listen/supervisor.js';
+
+const execFileAsync = promisify(execFile);
 
 function capture() {
   const stream = new PassThrough();
@@ -76,5 +84,59 @@ describe('khala-fallback executable', () => {
 
     expect(code).toBe(2);
     expect(stderr.output()).toBe('{"ok":false,"error":"listener_busy"}\n');
+  });
+
+  it.each([
+    ['not_connected', 'not_connected'],
+    ['storage_failed', 'storage_failed'],
+  ] as const)('preserves the structured %s terminal code', async (errorCode, expected) => {
+    const stderr = capture();
+    const code = await main(['listen', '--binding', 'binding-1'], {
+      stdout: new PassThrough(),
+      stderr: stderr.stream,
+      signal: new AbortController().signal,
+      process: { async run() { return { code: 2, signal: null, errorCode }; } },
+    });
+
+    expect(code).toBe(2);
+    expect(stderr.output()).toBe(`${JSON.stringify({ ok: false, error: expected })}\n`);
+  });
+
+  it('reports a bounded spawn failure with its stable code', async () => {
+    vi.useFakeTimers();
+    const stderr = capture();
+    try {
+      const completion = main(['listen', '--binding', 'binding-1'], {
+        stdout: new PassThrough(),
+        stderr: stderr.stream,
+        signal: new AbortController().signal,
+        process: { async run() { throw new Error('private spawn detail'); } },
+      });
+      await vi.runAllTimersAsync();
+
+      await expect(completion).resolves.toBe(2);
+      expect(stderr.output()).toBe('{"ok":false,"error":"listener_spawn_failed"}\n');
+      expect(stderr.output()).not.toContain('private spawn detail');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs through a package-style symlink without requiring a prebuilt dist', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'khala-fallback-bin-'));
+    const executable = path.join(directory, 'khala-fallback');
+    const source = fileURLToPath(new URL('./bin.ts', import.meta.url));
+    await symlink(source, executable);
+
+    try {
+      await expect(execFileAsync(process.execPath, ['--import', 'tsx', executable], {
+        cwd: fileURLToPath(new URL('..', import.meta.url)),
+      })).rejects.toMatchObject({
+        code: 2,
+        stderr: '{"ok":false,"error":"invalid_arguments"}\n',
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

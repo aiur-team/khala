@@ -1,16 +1,15 @@
-#!/usr/bin/env node
-import path from 'node:path';
 import type { Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
 import { listenerBindingId } from './listen/binding-id.js';
 import { nodeListenerProcess } from './listen/node-process.js';
 import {
-  ListenerBusyError,
+  ListenerSpawnError,
+  ListenerTerminalError,
   createListenerSupervisor,
   type ListenerProcessPort,
+  type ListenerProcessError,
 } from './listen/supervisor.js';
 
-type FallbackError = 'invalid_arguments' | 'listener_busy' | 'listener_failed';
+type FallbackError = ListenerProcessError | 'listener_spawn_failed' | 'listener_failed';
 
 export type FallbackRuntime = Readonly<{
   stdout: Writable;
@@ -41,7 +40,9 @@ export async function main(
     await handle.completion;
     return 0;
   } catch (error) {
-    return fail(runtime.stderr, error instanceof ListenerBusyError ? 'listener_busy' : 'listener_failed');
+    if (error instanceof ListenerTerminalError) return fail(runtime.stderr, error.code);
+    if (error instanceof ListenerSpawnError) return fail(runtime.stderr, error.code);
+    return fail(runtime.stderr, 'listener_failed');
   }
 }
 
@@ -55,7 +56,7 @@ function fail(stderr: Writable, error: FallbackError): number {
   return 2;
 }
 
-async function processMain(): Promise<number> {
+export async function processMain(): Promise<number> {
   const abort = new AbortController();
   const stop = () => abort.abort();
   process.once('SIGINT', stop);
@@ -70,8 +71,4 @@ async function processMain(): Promise<number> {
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
   }
-}
-
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.exitCode = await processMain();
 }

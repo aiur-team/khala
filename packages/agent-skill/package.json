@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": { "khala-fallback": "./dist/main.js" },
+  "bin": { "khala-fallback": "./dist/bin.js" },
   "exports": {
     "./capabilities": "./src/capabilities.ts",
     "./listen/*": "./src/listen/*.ts"

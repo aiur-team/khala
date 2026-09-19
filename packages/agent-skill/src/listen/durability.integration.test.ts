@@ -71,7 +71,6 @@ async function listenOnce(directory: string): Promise<string> {
   stdout.stream.on('data', () => abort.abort());
   const args = childArguments(directory);
   expect(JSON.stringify(args)).not.toContain('released-');
-  expect(JSON.stringify(args)).not.toContain('pending-secret');
   const exit = await nodeListenerProcess.run({
     command: process.execPath,
     args,
@@ -89,16 +88,12 @@ afterEach(() => {
 });
 
 describe('fallback listener with the durable CLI', () => {
-  it('delivers backlog across child-process restarts with no duplicate, gap, or pending content', async () => {
+  it('delivers released backlog across child-process restarts with no duplicate or gap', async () => {
     const directory = stateDirectory();
-    const fixtureLedger = {
-      pending: [{ eventId: 'pending-1', body: 'pending-secret' }],
-      released: [
-        { releaseId: 'release-1', body: 'released-one' },
-        { releaseId: 'release-2', body: 'released-two' },
-      ],
-    } as const;
-    expect(fixtureLedger.pending.map(item => item.body)).toContain('pending-secret');
+    const released = [
+      { releaseId: 'release-1', body: 'released-one' },
+      { releaseId: 'release-2', body: 'released-two' },
+    ] as const;
 
     const inbox = await openInbox({
       stateDirectory: directory,
@@ -107,7 +102,7 @@ describe('fallback listener with the durable CLI', () => {
       maxPayloadBytes: 1024,
       maxSelectionEvents: 32,
     });
-    const [firstRelease, secondRelease] = fixtureLedger.released;
+    const [firstRelease, secondRelease] = released;
     await expect(inbox.enqueue(delivery(firstRelease.releaseId, firstRelease.body))).resolves.toBe('appended');
 
     const first = await listenOnce(directory);
@@ -116,7 +111,6 @@ describe('fallback listener with the durable CLI', () => {
     const second = await listenOnce(directory);
 
     expect([JSON.parse(first), JSON.parse(second)].map(item => item.releaseId)).toEqual(['release-1', 'release-2']);
-    expect(first + second).not.toContain('pending-secret');
     expect((await openInbox({
       stateDirectory: directory,
       bindingId: binding.bindingId,

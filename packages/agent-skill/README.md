@@ -43,4 +43,6 @@ The fallback executable is a runnable supervision surface, but delivery still
 depends on an installed `khala` CLI with a live runtime composition. This
 package proves lifecycle behavior and packaging, not that a provider route is
 live. It therefore reports `support: "experimental"` with no fabricated
-evidence reference.
+evidence reference. Excluding pending events before they reach the released
+inbox belongs to the upstream release/composition boundary in KHA-153; this
+package does not prove that invariant.
