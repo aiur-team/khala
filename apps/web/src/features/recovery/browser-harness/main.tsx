@@ -7,7 +7,12 @@ import type { NavigationItem } from '../../../shell/types';
 import { RecoveryPanel } from '../RecoveryPanel';
 import type { RecoveryController } from '../controller';
 import { projectRecoveryView } from '../model';
-import { createFakeRecoveryPorts, roomId, type SyntheticRevocationOutcome } from './fake-recovery-port';
+import {
+  createFakeRecoveryPorts,
+  roomId,
+  type SyntheticClosureOutcome,
+  type SyntheticRevocationOutcome,
+} from './fake-recovery-port';
 
 const navigation: NavigationItem[] = [{ id: 'recovery', label: 'Recovery', href: '#recovery', current: true }];
 const fake = createFakeRecoveryPorts();
@@ -53,6 +58,7 @@ declare global {
   interface Window {
     __recoveryHarness: {
       setRevocationOutcome: (outcome: SyntheticRevocationOutcome) => void;
+      setClosureOutcome: (outcome: SyntheticClosureOutcome) => void;
       emitUnchanged: () => void;
       setMounted: (mounted: boolean) => void;
       activateControllerReplacementProbe: () => void;
@@ -65,6 +71,7 @@ declare global {
 
 window.__recoveryHarness = {
   setRevocationOutcome: fake.setRevocationOutcome,
+  setClosureOutcome: fake.setClosureOutcome,
   emitUnchanged: fake.emitUnchanged,
   setMounted: mounted => setPanelMounted?.(mounted),
   activateControllerReplacementProbe: () => setProbeController?.(oldProbeController),

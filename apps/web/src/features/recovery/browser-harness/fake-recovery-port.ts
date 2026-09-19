@@ -48,11 +48,13 @@ const device: DeviceView = {
 };
 
 export type SyntheticRevocationOutcome = 'complete' | 'propagating' | 'unknown';
+export type SyntheticClosureOutcome = 'complete' | 'failed' | 'unknown';
 
 export function createFakeRecoveryPorts() {
   let stored: RecoveryOperationReference | null = null;
   const listeners = new Set<() => void>();
   let revocationOutcome: SyntheticRevocationOutcome = 'complete';
+  let closureOutcome: SyntheticClosureOutcome = 'complete';
   let promptCount = 0;
   let revokeCount = 0;
   let closeCount = 0;
@@ -127,6 +129,10 @@ export function createFakeRecoveryPorts() {
     async closeRoom(input): Promise<OperationResult<ClosureStatus, ClosureRejection>> {
       closeCount += 1;
       lastClosureOperationId = input.operationId;
+      if (closureOutcome === 'unknown') return outcomeUnknown(input.operationId);
+      if (closureOutcome === 'failed') {
+        return ok({ operationId: input.operationId, state: 'failed', reason: 'dependency_unavailable' });
+      }
       return ok({ operationId: input.operationId, state: 'complete', reason: null });
     },
     async inspectClosure(operationId) {
@@ -147,6 +153,9 @@ export function createFakeRecoveryPorts() {
     ports,
     setRevocationOutcome(outcome: SyntheticRevocationOutcome) {
       revocationOutcome = outcome;
+    },
+    setClosureOutcome(outcome: SyntheticClosureOutcome) {
+      closureOutcome = outcome;
     },
     emitUnchanged() {
       listeners.forEach(listener => listener());

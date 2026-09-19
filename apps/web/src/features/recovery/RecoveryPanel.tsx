@@ -1,7 +1,6 @@
 import {
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -183,21 +182,25 @@ function ConsequenceList({ consequences }: { consequences: ClosureConsequences }
   );
 }
 
-export function RecoveryPanel({
-  ports,
+function ClosureLimits() {
+  return (
+    <>
+      <p>Copies already delivered to participants or models cannot be recalled.</p>
+      <p>Service retention is governed separately; closure promises no retention window or global erasure.</p>
+    </>
+  );
+}
+
+type RecoveryPanelContentProps = Omit<RecoveryPanelProps, 'ports' | 'controller'> & {
+  controller: RecoveryController;
+};
+
+function RecoveryPanelContent({
   config,
   onClosureComplete,
-  controller: injectedController,
-}: RecoveryPanelProps) {
-  const ownController = useMemo(
-    () => (injectedController ? null : createRecoveryController(ports, config)),
-    [ports, config.roomId, config.roomRevision, config.createOperationId, injectedController],
-  );
-  const controller = injectedController ?? ownController!;
-  const closureNavigation = useRef({ controller, operationId: null as string | null });
-  if (closureNavigation.current.controller !== controller) {
-    closureNavigation.current = { controller, operationId: null };
-  }
+  controller,
+}: RecoveryPanelContentProps) {
+  const completedClosures = useRef(new WeakMap<RecoveryController, string>());
   const view = useSyncExternalStore(controller.subscribe, controller.getView, controller.getView);
   const [selection, setSelection] = useState<Selection | null>(null);
   const selectionTrigger = useRef<HTMLButtonElement | null>(null);
@@ -208,17 +211,12 @@ export function RecoveryPanel({
     setSelection(null);
   }, [config.roomId, config.roomRevision, controller]);
 
-  useEffect(() => () => {
-    if (ownController) ownController.dispose();
-  }, [ownController]);
-
   useEffect(() => {
-    if (closureNavigation.current.controller !== controller) return;
     if (view.operation.kind !== 'closure' || view.operation.state !== 'complete') return;
-    if (closureNavigation.current.operationId === view.operation.operationId) return;
-    closureNavigation.current.operationId = view.operation.operationId;
+    if (completedClosures.current.get(controller) === view.operation.operationId) return;
+    completedClosures.current.set(controller, view.operation.operationId);
     onClosureComplete();
-  }, [onClosureComplete, view.operation]);
+  }, [controller, onClosureComplete, view.operation]);
 
   const history = HISTORY_PRESENTATION[view.history];
   const busy = operationIsPending(view.operation);
@@ -283,8 +281,14 @@ export function RecoveryPanel({
       {view.operation.kind === 'closure' && view.closure ? (
         <div className="recovery-panel__confirmation">
           <h3>Room {view.closure.roomId}</h3>
-          <ConsequenceList consequences={view.closure.consequences} />
-          <p>Service retention is governed separately; closure promises no retention window or global erasure.</p>
+          {view.operation.state === 'failed' || view.operation.state === 'outcome_unknown' ? (
+            <ClosureLimits />
+          ) : (
+            <>
+              <ConsequenceList consequences={view.closure.consequences} />
+              <p>Service retention is governed separately; closure promises no retention window or global erasure.</p>
+            </>
+          )}
         </div>
       ) : null}
 
@@ -328,7 +332,7 @@ export function RecoveryPanel({
       {view.identityState !== 'signed_in'
       || (view.operation.kind === 'idle' && view.allowedActions.length === 0 && view.recoveryUnavailableReason === null) ? (
         <p className="recovery-panel__unavailable" role="note">
-          Recovery and destructive actions are unavailable for the current account and capability context.
+          Room actions are unavailable for the current account and capability context.
           {view.closure?.unavailableReason ? ` Closure: ${humanize(view.closure.unavailableReason)}.` : ''}
         </p>
       ) : null}
@@ -376,4 +380,69 @@ export function RecoveryPanel({
       ) : null}
     </Panel>
   );
+}
+
+function OwnedRecoveryPanel({
+  ports,
+  config,
+  onClosureComplete,
+}: Omit<RecoveryPanelProps, 'controller'>) {
+  const [owned, setOwned] = useState<Readonly<{
+    controller: RecoveryController;
+    ports: RecoveryPorts;
+    roomId: RecoveryControllerConfig['roomId'];
+    roomRevision: number;
+    createOperationId: RecoveryControllerConfig['createOperationId'];
+  }> | null>(null);
+
+  useEffect(() => {
+    const nextController = createRecoveryController(ports, config);
+    setOwned({
+      controller: nextController,
+      ports,
+      roomId: config.roomId,
+      roomRevision: config.roomRevision,
+      createOperationId: config.createOperationId,
+    });
+    return () => nextController.dispose();
+  }, [ports, config.roomId, config.roomRevision, config.createOperationId]);
+
+  const controller = owned !== null
+    && owned.ports === ports
+    && owned.roomId === config.roomId
+    && owned.roomRevision === config.roomRevision
+    && owned.createOperationId === config.createOperationId
+    ? owned.controller
+    : null;
+
+  if (controller === null) {
+    return <Panel heading="Recovery and room access"><p role="status">Loading room access…</p></Panel>;
+  }
+
+  return (
+    <RecoveryPanelContent
+      config={config}
+      onClosureComplete={onClosureComplete}
+      controller={controller}
+    />
+  );
+}
+
+export function RecoveryPanel({
+  ports,
+  config,
+  onClosureComplete,
+  controller,
+}: RecoveryPanelProps) {
+  if (controller) {
+    return (
+      <RecoveryPanelContent
+        config={config}
+        onClosureComplete={onClosureComplete}
+        controller={controller}
+      />
+    );
+  }
+
+  return <OwnedRecoveryPanel ports={ports} config={config} onClosureComplete={onClosureComplete} />;
 }

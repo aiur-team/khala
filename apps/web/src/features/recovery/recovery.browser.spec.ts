@@ -82,6 +82,18 @@ test('closure confirmation dispatches once and navigates once', { timeout: 90_00
   });
 });
 
+test('failed and unknown closure outcomes do not navigate', { timeout: 90_000 }, async () => {
+  for (const outcome of ['failed', 'unknown'] as const) {
+    await withHarness(async page => {
+      await page.evaluate(value => window.__recoveryHarness.setClosureOutcome(value), outcome);
+      await page.getByRole('button', { name: 'Close room' }).click();
+      await page.getByRole('button', { name: 'Confirm room closure' }).press('Enter');
+      await page.getByText(outcome === 'failed' ? 'Closure failed' : 'Closure outcome unknown', { exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => window.__recoveryHarness.getClosureCompleteCount()), 0);
+    });
+  }
+});
+
 test('controller replacement ignores a stale closure completion emitted during rerender', { timeout: 90_000 }, async () => {
   await withHarness(async page => {
     await page.evaluate(() => window.__recoveryHarness.activateControllerReplacementProbe());

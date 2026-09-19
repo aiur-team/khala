@@ -152,7 +152,8 @@ describe('RecoveryPanel state facts', () => {
     }));
 
     expect(html).toContain('Signed out');
-    expect(html).toContain('Recovery and destructive actions are unavailable');
+    expect(html).toContain('Recovery is not available.');
+    expect(html).toContain('Room actions are unavailable');
     expect(html).toContain('>Close room<');
     expect(html).toContain('disabled=""');
   });
@@ -223,14 +224,33 @@ describe('RecoveryPanel operation states', () => {
     [operation('revocation', 'partial'), 'Revocation partially complete'],
     [operation('revocation', 'failed'), 'Revocation failed'],
     [operation('closure', 'partial'), 'Closure partially complete'],
+    [operation('closure', 'failed'), 'Closure failed'],
+    [operation('closure', 'complete'), 'Closure complete'],
   ] as const)('renders an operation as %s honestly', (currentOperation, label) => {
     const html = render(view({ operation: currentOperation, allowedActions: [] }));
     expect(html).toContain(label);
+    if (currentOperation.kind === 'closure' && currentOperation.state === 'failed') {
+      expect(html).toMatch(/status-badge--critical[^>]*>Closure failed/);
+      expect(html).not.toMatch(/status-badge--positive[^>]*>Closure failed/);
+    }
     if (
       (currentOperation.kind === 'recovery' && currentOperation.state === 'restoring')
       || (currentOperation.kind === 'revocation' && currentOperation.state === 'propagating')
       || (currentOperation.kind === 'revocation' && currentOperation.state === 'partial')
       || (currentOperation.kind === 'closure' && currentOperation.state === 'partial')
     ) expect(html).toContain('Inspect operation');
+  });
+
+  it('does not present future closure consequences after closure fails', () => {
+    const html = render(view({
+      operation: operation('closure', 'failed'),
+      allowedActions: [],
+    }));
+
+    expect(html).toContain('Closure failed');
+    expect(html).toContain('Copies already delivered to participants or models cannot be recalled.');
+    expect(html).not.toContain('New messages will stop.');
+    expect(html).not.toContain('The room will be removed from your view.');
+    expect(html).not.toContain('Local cleanup will be requested on your devices.');
   });
 });
