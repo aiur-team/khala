@@ -3,6 +3,7 @@ import { EvidenceError, requireEvidence } from '../e2e/harness/evidence';
 import { FAULTS } from '../e2e/harness/faults';
 import { type AdapterDefect, type ConnectorDefect, createFakeHarnessAdapter } from '../e2e/harness/reference';
 import { type ScenarioDriver, createScenarioHarness } from '../e2e/harness/scenario';
+import { claudeCapabilities, claudeEnvironment, claudeHarnessSubject } from './claude-subject';
 import { fakeCapabilities, fakeEnvironment, fakeHarnessSubject, fixtureLimits, referenceDeliverySubject } from './subjects';
 import {
   type ConformanceReport, type DeliverySubjectFactory, type HarnessSubjectFactory, acceptLiveHarness, authoredEvent, outcomeOf, releaseFor,
@@ -72,6 +73,47 @@ describe('harness conformance', () => {
     const report = await runHarnessConformance(fakeHarnessSubject(unclaimed), unclaimed, fakeEnvironment(['b', 'c']));
     expect(outcomeOf(report, 'receipt.consumption_is_observed')).toEqual({
       status: 'fail', reason: 'adapter emitted context_consumed receipts its capabilities do not claim',
+    });
+  });
+
+  it('fails an unsupported adapter whose refusal is not harness_unavailable', async () => {
+    const capabilities = claudeCapabilities();
+    const honest = claudeHarnessSubject();
+    const weakened: HarnessSubjectFactory = async (scenario, owner) => {
+      const subject = await honest(scenario, owner);
+      return {
+        ...subject,
+        port: {
+          ...subject.port,
+          submit: async ({ job }) => ({
+            v: 1,
+            receiptId: `receipt-${job.releaseId}` as never,
+            releaseId: job.releaseId,
+            bindingId: job.binding.bindingId,
+            generation: job.binding.generation,
+            kind: 'failed',
+            observedAt: '2026-09-18T00:00:00.000Z',
+            source: 'harness',
+            evidenceRef: null,
+            errorCode: 'session_unavailable',
+          }),
+        },
+      };
+    };
+    const report = await runHarnessConformance(weakened, capabilities, claudeEnvironment(['b', 'c']));
+    expect(outcomeOf(report, 'support.fail_closed')).toEqual({
+      status: 'fail',
+      reason: 'an unsupported adapter returned failed (session_unavailable), expected failed (harness_unavailable)',
+    });
+  });
+
+  it('fails an unsupported adapter that reports refusal after model delivery', async () => {
+    const capabilities = claudeCapabilities();
+    const report = await runHarnessConformance(
+      claudeHarnessSubject('route_before_refusal'), capabilities, claudeEnvironment(['b', 'c']),
+    );
+    expect(outcomeOf(report, 'support.fail_closed')).toEqual({
+      status: 'fail', reason: 'an unsupported adapter delivered content to the model',
     });
   });
 
