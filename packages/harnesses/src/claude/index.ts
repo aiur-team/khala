@@ -1,36 +1,36 @@
-// Claude harness adapter (KHA-117). KHA-103 found no Claude route that meets the
-// no-setup contract, so this adapter fails closed: it reports the evidence-pinned
-// capabilities and refuses every submission. It never starts, resumes, restarts or
-// messages Claude, and released bytes never leave this module.
+// Claude harness adapter (KHA-117, amended by KHA-149). KHA-145 proved neither
+// native candidate meets the existing-session contract, so this adapter keeps one
+// injected route seam but fails closed before invoking it.
 
-import { createHash } from 'node:crypto';
 import {
-  type BindingId, type DeliveryLimits, type DeliveryReceipt, type HarnessPort, type ReceiptErrorCode,
-  type SessionBinding, sameSessionBinding, validatePayloadBytes,
+  type BindingId, type Clock, type DeliveryLimits, type DeliveryReceipt, type HarnessPort, type ReleaseId,
 } from '@khala/contracts/delivery/index';
 import { CLAUDE_HARNESS, claudeCapabilities } from './capabilities';
-import type { ClaudeNativeProbe, ClaudeSessionState } from './native';
-import { failedReceipt } from './receipts';
+import type { ClaudeNativeProbe, ClaudeNativeRoutePort } from './native-cli';
+import { unknownReceipt } from './receipts';
+import { type InspectedClaudeBinding, submitRelease } from './transport';
 
 export {
   CLAUDE_ADAPTER_VERSION, CLAUDE_EVIDENCE_REF, CLAUDE_HARNESS, CLAUDE_TESTED_VERSION, claudeCapabilities,
 } from './capabilities';
-export type { ClaudeNativeProbe, ClaudeSessionState } from './native';
+export type {
+  ClaudeNativeProbe, ClaudeNativeRouteOutcome, ClaudeNativeRoutePort, ClaudeRouteSubmission, ClaudeSessionState,
+} from './native-cli';
 
 export type ClaudeHarnessDeps = Readonly<{
   probe: ClaudeNativeProbe;
-  clock: () => Date;
+  route: ClaudeNativeRoutePort;
+  clock: Clock;
   /** From configuration or the capability record; the adapter has no default. */
   limits: DeliveryLimits;
 }>;
-
-type Inspected = Readonly<{ binding: SessionBinding; session: ClaudeSessionState }>;
 
 export function createClaudeHarness(deps: ClaudeHarnessDeps): HarnessPort {
   const { probe, clock, limits } = deps;
   // The binding each ID was last inspected at. Losing this map on restart only
   // forces a fresh inspection; it never permits a send.
-  const inspected = new Map<BindingId, Inspected>();
+  const inspected = new Map<BindingId, InspectedClaudeBinding>();
+  const submitting = new Map<ReleaseId, Promise<DeliveryReceipt>>();
   let closed = false;
 
   return {
@@ -47,18 +47,13 @@ export function createClaudeHarness(deps: ClaudeHarnessDeps): HarnessPort {
     async notify() {},
 
     async submit({ job, payload }) {
-      const fail = (code: ReceiptErrorCode): DeliveryReceipt => failedReceipt(job, code, clock());
-      if (closed) return fail('harness_unavailable');
-      const current = inspected.get(job.binding.bindingId);
-      if (!current) return fail('session_unavailable');
-      if (!sameSessionBinding(current.binding, job.binding)) return fail('stale_binding');
-      if (current.session !== 'present') return fail('session_unavailable');
-      const bytes = validatePayloadBytes(payload, limits);
-      if (!bytes.ok) return fail(bytes.code === 'limit_exceeded' ? 'limit_exceeded' : 'payload_digest_mismatch');
-      if (sha256(bytes.value) !== job.payloadDigest) return fail('payload_digest_mismatch');
-      // Every check passed, but KHA-103 proved no delivery route. Refuse rather than
-      // launch a replacement session or ask the owner for setup.
-      return fail('harness_unavailable');
+      const pending = submitting.get(job.releaseId);
+      if (pending) return pending;
+      if (closed) return unknownReceipt(job, clock);
+      const work = submitRelease(deps, inspected.get(job.binding.bindingId), job, payload)
+        .finally(() => submitting.delete(job.releaseId));
+      submitting.set(job.releaseId, work);
+      return work;
     },
 
     // Reconciliation by release ID is unsupported. `null` means "no evidence" and
@@ -72,8 +67,4 @@ export function createClaudeHarness(deps: ClaudeHarnessDeps): HarnessPort {
       inspected.clear();
     },
   };
-}
-
-function sha256(bytes: Uint8Array): string {
-  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }

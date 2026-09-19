@@ -3,17 +3,34 @@
 
 import { createHash } from 'node:crypto';
 import type {
-  DeliveryReceipt, ReceiptErrorCode, ReceiptId, ReleasedJob,
+  Clock, DeliveryReceipt, ReceiptErrorCode, ReceiptId, ReleasedJob,
 } from '@khala/contracts/delivery/index';
 
-/**
- * A `failed` receipt observed by the adapter itself. Its source is `connector`
- * because there is no native harness response to cite.
- */
-export function failedReceipt(job: ReleasedJob, errorCode: ReceiptErrorCode, observedAt: Date): DeliveryReceipt {
+export function failedReceipt(
+  job: ReleasedJob,
+  errorCode: ReceiptErrorCode,
+  clock: Clock,
+): DeliveryReceipt {
+  return makeClaudeReceipt(job, 'failed', clock, errorCode);
+}
+
+export function unknownReceipt(
+  job: ReleasedJob,
+  clock: Clock,
+  errorCode: ReceiptErrorCode | null = null,
+): DeliveryReceipt {
+  return makeClaudeReceipt(job, 'outcome_unknown', clock, errorCode);
+}
+
+function makeClaudeReceipt(
+  job: ReleasedJob,
+  kind: 'failed' | 'outcome_unknown',
+  clock: Clock,
+  errorCode: ReceiptErrorCode | null,
+): DeliveryReceipt {
   const { releaseId, binding } = job;
   const digest = createHash('sha256')
-    .update(JSON.stringify(['claude', binding.bindingId, binding.generation, releaseId, 'failed', errorCode]))
+    .update(JSON.stringify(['claude', binding.bindingId, binding.generation, releaseId, kind, errorCode]))
     .digest('hex');
   return {
     v: 1,
@@ -21,8 +38,8 @@ export function failedReceipt(job: ReleasedJob, errorCode: ReceiptErrorCode, obs
     releaseId,
     bindingId: binding.bindingId,
     generation: binding.generation,
-    kind: 'failed',
-    observedAt: observedAt.toISOString(),
+    kind,
+    observedAt: clock.now().toISOString(),
     source: 'connector',
     evidenceRef: null,
     errorCode,

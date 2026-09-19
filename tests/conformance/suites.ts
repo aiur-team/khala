@@ -319,6 +319,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
     {
       name: 'session.identity_preserved',
       async run(context) {
+        if (capabilities.support === 'unsupported') skip('native delivery support is unsupported');
         const { owner, subject } = subjectOf(context, 0);
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'identity');
         const returned = await subject.port.submit({ job, payload: event.payload });
@@ -342,6 +343,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
     {
       name: 'payload.exact_digest',
       async run(context) {
+        if (capabilities.support === 'unsupported') skip('native delivery support is unsupported');
         const { owner, subject } = subjectOf(context, 0);
         const peer = subjectOf(context, 1).owner;
         const { job, event } = firstRelease(owner, peer, 'digest');
@@ -400,6 +402,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
     {
       name: 'receipt.consumption_is_observed',
       async run(context) {
+        if (capabilities.support === 'unsupported') skip('native delivery support is unsupported');
         // Submissions run even when consumption is unclaimed, so an adapter that emits
         // unclaimed context_consumed receipts fails instead of skipping.
         const { owner, subject } = subjectOf(context, 0);
@@ -433,6 +436,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
     {
       name: 'fault.disconnect_after_write',
       async run(context) {
+        if (capabilities.support === 'unsupported') skip('native delivery support is unsupported');
         const { owner, subject } = subjectOf(context, 0);
         await inject(context, subject, owner, 'disconnect_after_write');
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'unknown');
@@ -449,6 +453,7 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
     {
       name: 'fault.session_exit',
       async run(context) {
+        if (capabilities.support === 'unsupported') skip('native delivery support is unsupported');
         const { owner, subject } = subjectOf(context, 0);
         await inject(context, subject, owner, 'session_exit');
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'exit');
@@ -484,6 +489,21 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
       },
     },
   ];
+
+  if (capabilities.support === 'unsupported') {
+    checks.splice(1, 0, {
+      name: 'support.fail_closed',
+      async run(context) {
+        const { owner, subject } = subjectOf(context, 0);
+        await subject.port.inspect(owner.binding);
+        const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'unsupported');
+        const receipt = await subject.port.submit({ job, payload: event.payload });
+        ensure(receipt.kind === 'failed', `an unsupported adapter reported ${receipt.kind}`);
+        await subject.settle();
+        ensure((await inputsFor(subject, job)).length === 0, 'an unsupported adapter delivered content to the model');
+      },
+    });
+  }
 
   // Receipt kinds the capability record does not claim are reported as explicit
   // skips so a report never implies evidence it lacks.

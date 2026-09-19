@@ -7,7 +7,8 @@ import {
 import exact from '../../../contracts/fixtures/delivery/exact-release.json';
 import views from '../../../contracts/fixtures/delivery/views.json';
 import {
-  CLAUDE_TESTED_VERSION, type ClaudeNativeProbe, type ClaudeSessionState, claudeCapabilities, createClaudeHarness,
+  CLAUDE_ADAPTER_VERSION, CLAUDE_EVIDENCE_REF, CLAUDE_TESTED_VERSION, type ClaudeNativeProbe,
+  type ClaudeNativeRoutePort, type ClaudeSessionState, claudeCapabilities, createClaudeHarness,
 } from './index';
 
 const unwrap = <T>(decoded: { ok: true; value: T } | { ok: false; field: string }): T => {
@@ -19,7 +20,7 @@ const limits = unwrap(decodeDeliveryLimits(exact.limits));
 const text = 'released: please confirm release-nonce-7';
 const payload = new TextEncoder().encode(text);
 const digest = `sha256:${createHash('sha256').update(payload).digest('hex')}`;
-const clock = () => new Date('2026-09-18T10:00:00.000Z');
+const clock = { now: () => new Date('2026-09-18T10:00:00.000Z') };
 
 function claudeBinding(generation = 0): SessionBinding {
   return unwrap(decodeSessionBinding({ ...exact.binding, harness: 'claude', sessionId: 'session-b', generation }));
@@ -53,14 +54,29 @@ function fakeProbe(session: ClaudeSessionState = 'present', version: string | nu
   return { probe, calls };
 }
 
-const harness = (probe: ClaudeNativeProbe, withLimits: DeliveryLimits = limits) =>
-  createClaudeHarness({ probe, clock, limits: withLimits });
+function fakeRoute() {
+  const calls: unknown[] = [];
+  const route: ClaudeNativeRoutePort = {
+    async submit(input) {
+      calls.push(input);
+      return { status: 'not_sent' };
+    },
+  };
+  return { route, calls };
+}
+
+const harness = (
+  probe: ClaudeNativeProbe,
+  withLimits: DeliveryLimits = limits,
+  route: ClaudeNativeRoutePort = fakeRoute().route,
+) => createClaudeHarness({ probe, route, clock, limits: withLimits });
 
 describe('claudeCapabilities', () => {
   it('reports the tested version exactly as the contract fixture records it', () => {
-    const row = views.valid.find(view => view.input.adapterVersion === 'no-setup-route')!.input as { limits: unknown };
+    const row = views.valid.find(view => view.input.adapterVersion === CLAUDE_ADAPTER_VERSION)!.input as { limits: unknown };
     const fixtureLimits = unwrap(decodeDeliveryLimits(row.limits));
     expect(claudeCapabilities(CLAUDE_TESTED_VERSION, fixtureLimits)).toEqual(row);
+    expect(row).toMatchObject({ evidenceRef: CLAUDE_EVIDENCE_REF });
   });
 
   it('never promotes an untested version by semver', () => {
@@ -71,7 +87,7 @@ describe('claudeCapabilities', () => {
         existingSession: 'unknown',
         immediateNotification: 'unknown',
         busy: 'unknown',
-        receiptEvidence: [],
+        receiptEvidence: ['outcome_unknown', 'failed'],
         reconcileByReleaseId: 'unknown',
         evidenceRef: null,
       });
@@ -101,7 +117,8 @@ describe('createClaudeHarness', () => {
 
   it('refuses a verified, matching release because no route is proven (AE2)', async () => {
     const { probe, calls } = fakeProbe();
-    const adapter = harness(probe);
+    const native = fakeRoute();
+    const adapter = harness(probe, limits, native.route);
     await adapter.inspect(claudeBinding());
     calls.length = 0;
     const receipt = await adapter.submit({ job: releasedJob(), payload });
@@ -112,6 +129,19 @@ describe('createClaudeHarness', () => {
     expect(unwrap(decodeDeliveryReceipt(receipt))).toEqual(receipt);
     // Submission touches no native surface at all.
     expect(calls).toEqual([]);
+    expect(native.calls).toEqual([]);
+  });
+
+  it('joins concurrent submits without reaching the rejected native route', async () => {
+    const native = fakeRoute();
+    const adapter = harness(fakeProbe().probe, limits, native.route);
+    await adapter.inspect(claudeBinding());
+    const [first, second] = await Promise.all([
+      adapter.submit({ job: releasedJob(), payload }),
+      adapter.submit({ job: releasedJob(), payload }),
+    ]);
+    expect(first).toEqual(second);
+    expect(native.calls).toEqual([]);
   });
 
   it.each([
@@ -148,6 +178,22 @@ describe('createClaudeHarness', () => {
     expect((await adapter.submit({ job: releasedJob(), payload })).errorCode).toBe('limit_exceeded');
   });
 
+  it('checks binding state before size and digest', async () => {
+    const small = unwrap(decodeDeliveryLimits({ maxSelectionEvents: 2, maxPayloadBytes: 8 }));
+    const tampered = new TextEncoder().encode(`${text} + pending: unreviewed text`);
+
+    const stale = harness(fakeProbe().probe, small);
+    await stale.inspect(claudeBinding(1));
+    expect((await stale.submit({ job: releasedJob(), payload: tampered })).errorCode).toBe('stale_binding');
+
+    const absent = harness(fakeProbe().probe, small);
+    expect((await absent.submit({ job: releasedJob(), payload: tampered })).errorCode).toBe('session_unavailable');
+
+    const oversized = harness(fakeProbe().probe, small);
+    await oversized.inspect(claudeBinding());
+    expect((await oversized.submit({ job: releasedJob(), payload: tampered })).errorCode).toBe('limit_exceeded');
+  });
+
   it('keeps receipts content-free and their IDs stable across restarts', async () => {
     const first = harness(fakeProbe().probe);
     const second = harness(fakeProbe().probe);
@@ -175,7 +221,9 @@ describe('createClaudeHarness', () => {
     const adapter = harness(fakeProbe().probe);
     await adapter.inspect(claudeBinding());
     await adapter.close();
-    expect((await adapter.submit({ job: releasedJob(), payload })).errorCode).toBe('harness_unavailable');
+    expect(await adapter.submit({ job: releasedJob(), payload })).toMatchObject({
+      kind: 'outcome_unknown', errorCode: null,
+    });
     await expect(adapter.inspect(claudeBinding())).rejects.toThrow('closed');
   });
 });

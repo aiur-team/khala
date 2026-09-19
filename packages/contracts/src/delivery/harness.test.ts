@@ -86,7 +86,9 @@ describe('HarnessCapabilities', () => {
   });
 
   it('keeps the Claude session and every foreign or generic route out of support claims', () => {
-    expect(route('no-setup-route')).toMatchObject({ support: 'unsupported', existingSession: 'unsupported' });
+    expect(route('native-route-unavailable-1')).toMatchObject({
+      support: 'unsupported', existingSession: 'unsupported', evidenceRef: 'docs/evidence/claude-native-cli.md',
+    });
     for (const adapterVersion of ['foreign-executor', 'unimplemented']) {
       expect(route(adapterVersion)).toMatchObject({
         support: 'unsupported',
