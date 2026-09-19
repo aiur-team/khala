@@ -69,6 +69,14 @@ describe('CreateChatScreen initial render', () => {
     expect(html).toContain('>Add introduction message<');
   });
 
+  it('offers all three admission policies and defaults to a no-history link', () => {
+    const html = renderToStaticMarkup(<CreateChatScreen ports={fakePorts()} />);
+    expect(html).toContain('<legend>Who can join from this link?</legend>');
+    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="link_no_history")(?=[^>]*\bchecked="")[^>]*>/);
+    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="named_no_history")[^>]*>/);
+    expect(html).toMatch(/<input(?=[^>]*\btype="radio")(?=[^>]*\bvalue="link_full_history")[^>]*>/);
+  });
+
   it('disables submit while readiness is still being checked, and shows no share link or error yet', () => {
     const html = renderToStaticMarkup(<CreateChatScreen ports={fakePorts()} />);
     expect(html).toContain('type="submit" disabled=""');
@@ -83,6 +91,20 @@ describe('CreateChatScreen initial render', () => {
 });
 
 describe('CreateChatScreen with a pre-driven controller', () => {
+  it('shows an email field and validation error for the named-recipient policy', () => {
+    const controller = createChatController({
+      room: { create: vi.fn(), prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
+      admission: { share: vi.fn(), inspect: vi.fn(), admit: vi.fn() },
+      limits: LIMITS,
+    });
+    controller.setAdmissionPolicy('named_no_history');
+    controller.submit();
+
+    const html = renderToStaticMarkup(<CreateChatScreen ports={fakePorts()} controller={controller} />);
+    expect(html).toContain('for="create-chat-policy-email"');
+    expect(html).toContain('Enter a valid email address.');
+  });
+
   it('names every intro row by position and disables move-up on the first, move-down on the last', () => {
     const controller = createChatController({
       room: { create: vi.fn(), prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },

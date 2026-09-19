@@ -87,6 +87,50 @@ describe('createChatController', () => {
     ]);
   });
 
+  it.each([
+    ['link_no_history', null, { v: 1, kind: 'link', history: 'none' }],
+    ['named_no_history', 'coworker@example.test', { v: 1, kind: 'named_email', email: 'coworker@example.test', history: 'none' }],
+    ['link_full_history', null, { v: 1, kind: 'link', history: 'full' }],
+  ] as const)('passes the selected %s policy to admission.share unchanged', async (choice, email, policy) => {
+    const create = vi.fn().mockResolvedValue(ok(ROOM));
+    const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
+    const controller = createChatController(
+      { room: fakeRoomPort({ create }), admission: fakeAdmissionPort({ share }), limits: LIMITS },
+      { createId: makeCreateId() },
+    );
+    controller.setAdmissionPolicy(choice);
+    if (email) controller.setNamedEmail(email);
+
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
+
+    expect(share).toHaveBeenCalledWith({ operationId: expect.any(String), roomId: ROOM_ID, policy });
+  });
+
+  it('defaults new chats to a link with no earlier history', () => {
+    const controller = createChatController(
+      { room: fakeRoomPort(), admission: fakeAdmissionPort(), limits: LIMITS },
+      { createId: makeCreateId() },
+    );
+
+    expect(controller.getView().admissionPolicy).toBe('link_no_history');
+  });
+
+  it('validates the named recipient before creating the room', () => {
+    const create = vi.fn().mockResolvedValue(ok(ROOM));
+    const controller = createChatController(
+      { room: fakeRoomPort({ create }), admission: fakeAdmissionPort(), limits: LIMITS },
+      { createId: makeCreateId() },
+    );
+    controller.setAdmissionPolicy('named_no_history');
+    controller.setNamedEmail('not-an-email');
+
+    controller.submit();
+
+    expect(controller.getView().namedEmailError).toBe('email_invalid');
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('does not call create twice on a double submit', async () => {
     let resolveCreate!: (value: ReturnType<RoomPort['create']> extends Promise<infer T> ? T : never) => void;
     const create = vi.fn(
@@ -200,6 +244,7 @@ describe('createChatController', () => {
     await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
     expect(create).toHaveBeenCalledTimes(1);
     expect(share.mock.calls[0]![0].operationId).toBe(share.mock.calls[1]![0].operationId);
+    expect(share.mock.calls[0]![0].policy).toEqual(share.mock.calls[1]![0].policy);
   });
 
   it('skips the intro step and shares directly when there are no drafted introductions', async () => {

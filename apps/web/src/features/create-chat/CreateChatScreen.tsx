@@ -136,6 +136,56 @@ export function CreateChatScreen({ ports, onCopyShareLink = copyShareLink, contr
           ) : null}
         </div>
 
+        <fieldset className="create-chat__policy" disabled={!editable}>
+          <legend>Who can join from this link?</legend>
+          <label>
+            <input
+              type="radio"
+              name="create-chat-admission-policy"
+              value="link_no_history"
+              checked={view.admissionPolicy === 'link_no_history'}
+              onChange={() => controller.setAdmissionPolicy('link_no_history')}
+            />
+            Anyone with the link, from when they join
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="create-chat-admission-policy"
+              value="named_no_history"
+              checked={view.admissionPolicy === 'named_no_history'}
+              onChange={() => controller.setAdmissionPolicy('named_no_history')}
+            />
+            Only a named email, from when they join
+          </label>
+          {view.admissionPolicy === 'named_no_history' ? (
+            <div className="create-chat__field create-chat__policy-email">
+              <label htmlFor="create-chat-policy-email">Invitee email</label>
+              <input
+                id="create-chat-policy-email"
+                type="email"
+                value={view.namedEmail}
+                aria-invalid={view.namedEmailError !== null}
+                aria-describedby={view.namedEmailError !== null ? 'create-chat-policy-email-error' : undefined}
+                onChange={event => controller.setNamedEmail(event.target.value)}
+              />
+              {view.namedEmailError !== null ? (
+                <p role="alert" id="create-chat-policy-email-error">Enter a valid email address.</p>
+              ) : null}
+            </div>
+          ) : null}
+          <label>
+            <input
+              type="radio"
+              name="create-chat-admission-policy"
+              value="link_full_history"
+              checked={view.admissionPolicy === 'link_full_history'}
+              onChange={() => controller.setAdmissionPolicy('link_full_history')}
+            />
+            Anyone with the link can read messages sent before they joined
+          </label>
+        </fieldset>
+
         <fieldset className="create-chat__intros">
           <legend>Introduction messages</legend>
           <ol className="create-chat__intro-list">
