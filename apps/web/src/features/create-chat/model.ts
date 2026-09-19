@@ -6,6 +6,8 @@ import type { RoomId } from '@khala/contracts/messaging/index';
  */
 export type IntroDraft = Readonly<{ localId: string; body: string; error: string | null }>;
 
+export type AdmissionPolicyChoice = 'link_no_history' | 'named_no_history' | 'link_full_history';
+
 export type CreateChatPhase =
   | 'editing'
   | 'creating'
@@ -21,6 +23,9 @@ export type CreateChatView = Readonly<{
   /** Local validation code for the title field, distinct from `errorCode`. */
   titleError: string | null;
   intros: readonly IntroDraft[];
+  admissionPolicy: AdmissionPolicyChoice;
+  namedEmail: string;
+  namedEmailError: string | null;
   roomId: RoomId | null;
   shareUrl: string | null;
   errorCode: string | null;
@@ -31,6 +36,9 @@ export const INITIAL_VIEW: CreateChatView = {
   title: '',
   titleError: null,
   intros: [],
+  admissionPolicy: 'link_no_history',
+  namedEmail: '',
+  namedEmailError: null,
   roomId: null,
   shareUrl: null,
   errorCode: null,

@@ -124,7 +124,7 @@ which the transport deduplicates.
 | `IdentityPort` | KHA-110 |
 | `DevicePort` | KHA-111 |
 | `RoomPort` | KHA-112 |
-| `AdmissionPort` | KHA-113 |
+| `AdmissionPort` | KHA-113; each `share` call carries its immutable per-link admission policy |
 | `RevocationPort` | KHA-128 |
 | `RecoveryPort` | KHA-129 |
 | `ControlStore` | Specified here, persistence adapter supplied by KHA-131 |
@@ -160,9 +160,9 @@ fails with `invalid_limits` rather than allowing unbounded input.
 
 Decoders reject unknown fields. The browser and the connector therefore deploy in
 lockstep for a given contract version. Every envelope with a `v` field (`AuthPrincipal`,
-`SessionBinding`, `EventRef`, `UnavailableEventRef`, `MessageContent` and
-`UnavailableContent`) bumps `v` on any change to its shape, and a bump is a reviewed
-change on both producer and consumer. `SessionBinding` carries `v` because the delivery
+`SessionBinding`, `EventRef`, `UnavailableEventRef`, `MessageContent`,
+`UnavailableContent` and `AdmissionPolicy`) bumps `v` on any change to its shape,
+and a bump is a reviewed change on both producer and consumer. `SessionBinding` carries `v` because the delivery
 domain mirrors it. `UnavailableEventRef` is a new type, not a change to `EventRef`'s
 shape, so `EventRef` keeps `v: 1`.
 

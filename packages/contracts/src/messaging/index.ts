@@ -33,7 +33,7 @@ export {
   DEVICE_REASONS, decodeDeviceView,
 } from './devices';
 export {
-  type Admission, type AdmissionPort, type AdmissionRejection, type InviteState, type ShareGrant,
+  type Admission, type AdmissionPolicy, type AdmissionPort, type AdmissionRejection, type InviteState, type ShareGrant,
   decodeAdmission, decodeInviteState, decodeShareGrant,
 } from './admission';
 export {
