@@ -43,6 +43,11 @@
     "./features/room/controller": "./src/features/room/controller.ts",
     "./features/room/ports": "./src/features/room/ports.ts",
     "./features/room/room.css": "./src/features/room/room.css",
+    "./features/recovery/RecoveryPanel": "./src/features/recovery/RecoveryPanel.tsx",
+    "./features/recovery/controller": "./src/features/recovery/controller.ts",
+    "./features/recovery/model": "./src/features/recovery/model.ts",
+    "./features/recovery/ports": "./src/features/recovery/ports.ts",
+    "./features/recovery/recovery.css": "./src/features/recovery/recovery.css",
     "./features/*": "./src/features/*.ts",
     "./composition/*": "./src/composition/*.ts"
   },

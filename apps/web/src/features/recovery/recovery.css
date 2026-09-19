@@ -1,0 +1,95 @@
+/* Recovery panel layout. Shell token and primitive styles are composed by the host. */
+
+.recovery-panel__facts,
+.recovery-panel__actions,
+.recovery-panel__confirmation-actions,
+.recovery-panel__operation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.recovery-panel__facts {
+  margin-bottom: 0.75rem;
+}
+
+.recovery-panel__facts .status-badge {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.recovery-panel__history-note,
+.recovery-panel__unavailable,
+.recovery-panel__operation p {
+  overflow-wrap: anywhere;
+}
+
+.recovery-panel__history-note,
+.recovery-panel__unavailable {
+  color: var(--khala-ink-muted);
+}
+
+.recovery-panel__operation {
+  min-height: 1.5rem;
+  margin: 0.75rem 0;
+}
+
+.recovery-panel__operation p {
+  margin: 0.45rem 0;
+}
+
+.recovery-panel__operation-id {
+  color: var(--khala-ink-muted);
+  font-family: var(--khala-font-mono);
+  font-size: 0.8rem;
+}
+
+.recovery-panel__actions,
+.recovery-panel__operation-actions {
+  margin-top: 0.75rem;
+}
+
+.recovery-panel__confirmation {
+  min-width: 0;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--khala-status-caution);
+  border-radius: var(--khala-panel-radius);
+}
+
+.recovery-panel__confirmation h3 {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+
+.recovery-panel__consequences {
+  padding-inline-start: 1.25rem;
+}
+
+.recovery-panel__consequences li {
+  margin-block: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 30rem) {
+  .recovery-panel__actions,
+  .recovery-panel__confirmation-actions,
+  .recovery-panel__operation-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .recovery-panel__actions button,
+  .recovery-panel__confirmation-actions button,
+  .recovery-panel__operation-actions button {
+    width: 100%;
+    white-space: normal;
+  }
+
+  .recovery-panel__confirmation {
+    padding: 0.75rem;
+  }
+}
