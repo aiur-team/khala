@@ -1,0 +1,60 @@
+import { PassThrough } from 'node:stream';
+import { describe, expect, it } from 'vitest';
+import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { runCli } from './app.js';
+import type { Inbox } from './inbox.js';
+import type { AgentClientPort } from './types.js';
+
+const BINDING = { v: 1, bindingId: 'binding-1', ownerId: 'owner-1', deviceId: 'device-1', harness: 'codex',
+  sessionId: 'session-1', generation: 0 } as unknown as SessionBinding;
+function streams(input = '') {
+  const stdin = new PassThrough(); stdin.end(input);
+  const stdout = new PassThrough(); const stderr = new PassThrough(); let out = ''; let err = '';
+  stdout.on('data', chunk => { out += String(chunk); }); stderr.on('data', chunk => { err += String(chunk); });
+  return { stdin, stdout, stderr, output: () => out, error: () => err };
+}
+function client(overrides: Partial<AgentClientPort> = {}): AgentClientPort {
+  return {
+    async connect() { return { kind: 'connected', binding: BINDING, reused: false }; },
+    async send(input) { return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: 'event-1' }; },
+    async status() { return { v: 1, connected: true, binding: BINDING, route: 'test', sourceCursor: 'source-1' }; },
+    ...overrides,
+  };
+}
+function unusedInbox(): Promise<Inbox> { throw new Error('inbox should not be opened'); }
+
+describe('runCli', () => {
+  it('connects with a validated HTTPS link', async () => {
+    const io = streams();
+    expect(await runCli(['connect', 'https://chat.example/i/abc'], { client: client(), inbox: unusedInbox, ...io })).toBe(0);
+    expect(JSON.parse(io.output())).toMatchObject({ ok: true, binding: { bindingId: 'binding-1' } });
+  });
+  it('rejects malformed links before invoking the client', async () => {
+    let called = false; const io = streams();
+    expect(await runCli(['connect', 'javascript:alert(1)'], { client: client({ async connect() { called = true; return { kind: 'unavailable' }; } }), inbox: unusedInbox, ...io })).toBe(2);
+    expect(called).toBe(false); expect(io.error()).toContain('invalid_link');
+  });
+  it('reads send content from stdin and never echoes it', async () => {
+    const secret = 'message-visible-only-on-stdin'; let observed = ''; const io = streams(secret);
+    expect(await runCli(['send', '--binding', 'binding-1'], { client: client({ async send(input) { observed = input.body; return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: null }; } }), inbox: unusedInbox, ...io })).toBe(0);
+    expect(observed).toBe(secret); expect(io.output()).not.toContain(secret); expect(io.error()).not.toContain(secret);
+  });
+  it('prints disconnected status without opening an inbox', async () => {
+    const io = streams();
+    expect(await runCli(['status'], { client: client({ async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; } }), inbox: unusedInbox, ...io })).toBe(0);
+    expect(JSON.parse(io.output())).toMatchObject({ v: 1, connected: false, inbox: null });
+  });
+  it('prints and then acknowledges one released item', async () => {
+    const io = streams(); const abort = new AbortController(); let acknowledged = false; io.stdout.once('data', () => abort.abort());
+    const item = { record: { v: 1 as const, releaseId: 'release-1', bindingId: BINDING.bindingId, generation: 0,
+      events: [], payloadDigest: `sha256:${'0'.repeat(64)}`, payloadBase64: 'cmVsZWFzZWQ=', receivedAt: '2026-09-19T12:00:00Z' },
+      payload: new TextEncoder().encode('released'), nextOffset: 10 };
+    let first = true;
+    const inbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async release() {} }; },
+      async readNext() { if (first) { first = false; return item; } return null; },
+      async acknowledge() { acknowledged = true; },
+      async status() { return { bindingId: BINDING.bindingId, generation: 0, cursor: { v: 1 as const, offset: 0, releaseId: null } }; } } as Inbox;
+    expect(await runCli(['listen'], { client: client(), inbox: async () => inbox, signal: abort.signal, ...io })).toBe(0);
+    expect(acknowledged).toBe(true); expect(JSON.parse(io.output())).toMatchObject({ releaseId: 'release-1', payloadBase64: 'cmVsZWFzZWQ=' });
+  });
+});

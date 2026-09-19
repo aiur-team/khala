@@ -1,0 +1,22 @@
+{
+  "name": "@khala/agent-cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "khala": "./dist/cli/main.js" },
+  "exports": {
+    "./cli/*": "./src/cli/*.ts",
+    "./composition/*": "./src/composition/*.ts",
+    "./mcp/*": "./src/mcp/*.ts",
+    "./fixtures/*": null
+  },
+  "scripts": {
+    "typecheck": "node ../../scripts/package-task.mjs typecheck",
+    "build": "node ../../scripts/package-task.mjs build",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@khala/connector": "workspace:*",
+    "@khala/contracts": "workspace:*"
+  }
+}

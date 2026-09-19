@@ -1,0 +1,126 @@
+import { Readable, Writable } from 'node:stream';
+import { describe, expect, it } from 'vitest';
+import { SendService } from '../cli/send.js';
+import type { AgentClientPort } from '../cli/types.js';
+import { runMcpServer } from './server.js';
+
+type Request = Readonly<Record<string, unknown>>;
+type Response = Readonly<{
+  jsonrpc: '2.0';
+  id: string | number | null;
+  result?: Readonly<{
+    protocolVersion?: string;
+    tools?: readonly Readonly<{ name: string; inputSchema: Readonly<{ additionalProperties: boolean }> }>[];
+    structuredContent?: Readonly<Record<string, unknown>>;
+    isError?: boolean;
+  }>;
+  error?: Readonly<{ code: number; message: string }>;
+}>;
+
+describe('MCP server', () => {
+  it('initializes, lists exactly khala_send, pings and sends through SendService', async () => {
+    const client = fakeClient();
+    const responses = await exchange(client, [
+      request(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test' } }),
+      request(2, 'ping', {}),
+      request(3, 'tools/list', {}),
+      request(4, 'tools/call', { name: 'khala_send', arguments: { message: 'hello', bindingId: 'binding-1' } }),
+    ]);
+
+    expect(responses[0]).toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26' } });
+    expect(responses[1]).toEqual({ jsonrpc: '2.0', id: 2, result: {} });
+    expect(responses[2]).toMatchObject({
+      result: { tools: [{ name: 'khala_send', inputSchema: { additionalProperties: false } }] },
+    });
+    expect(client.sent).toEqual([{ bindingId: 'binding-1', body: 'hello' }]);
+    expect(responses[3]).toMatchObject({ id: 4, result: { structuredContent: { kind: 'accepted', eventId: 'event-1' } } });
+  });
+
+  it('reports a held-binding refusal without echoing message content', async () => {
+    const secret = 'do not repeat this secret';
+    const client = fakeClient();
+    client.onSend = async input => ({ kind: 'refused', code: 'binding_not_held', clientTxnId: input.clientTxnId });
+
+    const [response] = await exchange(client, [
+      request(1, 'tools/call', { name: 'khala_send', arguments: { message: secret, bindingId: 'other-binding' } }),
+    ]);
+
+    expect(response).toMatchObject({
+      id: 1,
+      result: { isError: true, structuredContent: { kind: 'refused', code: 'binding_not_held' } },
+    });
+    expect(JSON.stringify(response)).not.toContain(secret);
+  });
+
+  it('refuses unknown tools and unknown fields before calling the send port', async () => {
+    const client = fakeClient();
+    const responses = await exchange(client, [
+      request(1, 'tools/call', { name: 'other_tool', arguments: { message: 'secret-a' } }),
+      request(2, 'tools/call', { name: 'khala_send', arguments: { message: 'secret-b', extra: true } }),
+      { ...request(3, 'tools/list', {}), extra: true },
+    ]);
+
+    expect(responses.map(response => response.error?.code)).toEqual([-32602, -32602, -32600]);
+    expect(client.sent).toEqual([]);
+    expect(JSON.stringify(responses)).not.toContain('secret-a');
+    expect(JSON.stringify(responses)).not.toContain('secret-b');
+  });
+
+  it('does not answer notifications and never exposes thrown error messages', async () => {
+    const secret = 'transport leaked the message';
+    const client = fakeClient();
+    client.onSend = async () => { throw new Error(secret); };
+    const responses = await exchange(client, [
+      { jsonrpc: '2.0', method: 'ping', params: {} },
+      request(1, 'tools/call', { name: 'khala_send', arguments: { message: 'payload-secret' } }),
+    ]);
+
+    expect(responses).toHaveLength(1);
+    expect(responses[0]).toMatchObject({ id: 1, result: { isError: true, structuredContent: { code: 'storage_failed' } } });
+    expect(JSON.stringify(responses)).not.toContain(secret);
+    expect(JSON.stringify(responses)).not.toContain('payload-secret');
+  });
+});
+
+function request(id: number, method: string, params?: unknown): Request {
+  return { jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) };
+}
+
+function fakeClient(): AgentClientPort & {
+  sent: Array<{ bindingId: string | null; body: string }>;
+  onSend: AgentClientPort['send'];
+} {
+  const client = {
+    sent: [] as Array<{ bindingId: string | null; body: string }>,
+    onSend: async (input: Parameters<AgentClientPort['send']>[0]) => ({
+      kind: 'accepted' as const, clientTxnId: input.clientTxnId, eventId: 'event-1',
+    }),
+    async connect() { return { kind: 'unavailable' as const }; },
+    async status() {
+      return { v: 1 as const, connected: false, binding: null, route: 'unknown', sourceCursor: null };
+    },
+    async send(input: Parameters<AgentClientPort['send']>[0]) {
+      client.sent.push({ bindingId: input.bindingId, body: input.body });
+      return client.onSend(input);
+    },
+  };
+  return client;
+}
+
+async function exchange(client: AgentClientPort, requests: readonly Request[]): Promise<Response[]> {
+  let stdout = '';
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      stdout += chunk.toString();
+      callback();
+    },
+  });
+  await runMcpServer({
+    input: Readable.from(requests.map(item => `${JSON.stringify(item)}\n`)),
+    output,
+    send: new SendService(client),
+  });
+  return stdout.trim().length === 0
+    ? []
+    : stdout.trim().split('\n').map(line => JSON.parse(line) as Response);
+}
