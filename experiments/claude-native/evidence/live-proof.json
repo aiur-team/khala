@@ -6,7 +6,7 @@
     "sessionId": "118f6a23-92a8-4f67-824c-58e012149e88",
     "workdir": "/home/everdred/.aiur/workspaces/aiur-team/khala/101/.khala-disposable/claude-native-target",
     "requestedWorkdir": "/home/everdred/.cache/khala-disposable/claude-native-target",
-    "fallbackReason": "The managed workspace sandbox could read but could not write the operator-created home-cache directory. The operator explicitly authorized this workspace-local fallback.",
+    "fallbackReason": "The managed workspace sandbox could read but could not write the operator-created home-cache directory. A runtime instruction supplied the workspace-local fallback; no durable GitHub confirmation existed at run time, and PR #117 review confirmed it after the fact.",
     "mode": "fresh --session-id"
   },
   "hostedArgs": [
@@ -74,6 +74,11 @@
     "negativeToken": {
       "liveAttempted": false,
       "reason": "The agent-child command was denied before execution, so the designated session exposed no child socket route to test. Offline tests reject malformed tokens and a token/socket registry bound to another session before connecting."
+    },
+    "routeA": {
+      "liveAttempted": false,
+      "result": "not_exercised",
+      "reason": "The hosted target had no session registry entry, messaging socket, or child token; denial of its child command does not refute the interactive/background route."
     }
   },
   "receiptCeiling": {
@@ -81,5 +86,17 @@
     "afterDisconnect": ["transport_written", "outcome_unknown"],
     "nativeChildSocket": []
   },
-  "recommendation": "neither qualifies"
+  "contractMapping": {
+    "existingSession": "unsupported",
+    "immediateNotification": "unsupported"
+  },
+  "limitations": {
+    "channelsExercised": false,
+    "rawStreamsRetained": false,
+    "perCaseTimestampsRetained": false,
+    "exitCodesAndSignalsRetained": false,
+    "inventoryIsCuratedProvenance": true,
+    "cleanShutdownResumeTested": false
+  },
+  "recommendation": "keep native support fail-closed"
 }

@@ -3,8 +3,8 @@
 KHA-145 feasibility evidence for the route an agent-installed Khala client should use with Claude Code. The
 probe is under `experiments/claude-native/`.
 
-**Conclusion: neither candidate qualifies as a native existing-session route.** Route A could not start its child
-under the non-interactive permission policy. Route B delivered and acknowledged messages while its hosted process
+**Conclusion: no candidate is proven as a native existing-session route.** Route A was not exercised because the
+designated hosted target exposed no session registry, messaging socket, or child token. Route B delivered and acknowledged messages while its hosted process
 was alive, including a release written during a tool call, but an interrupted process was not resumable and its
 pending release had no acknowledgement. Downstream native capability records must remain `unsupported`; KHA-149
 may cite this document as rejection evidence, not as evidence for `support: "tested"`.
@@ -18,10 +18,13 @@ are in `experiments/claude-native/evidence/inventory.json`; sanitized live obser
 
 ## Target and consent
 
-The Executor authorized one fresh disposable session. The managed sandbox could not write the prepared
-`~/.cache/khala-disposable/claude-native-target`, so the explicitly authorized fallback was used:
+The durable issue comment authorized one fresh disposable session at
+`~/.cache/khala-disposable/claude-native-target`. The managed sandbox could not write that prepared directory, so
+the runtime instruction's workspace-local fallback was used:
 `/home/everdred/.aiur/workspaces/aiur-team/khala/101/.khala-disposable/claude-native-target`. Its UUID was
-`118f6a23-92a8-4f67-824c-58e012149e88`. No existing or non-disposable session was attached or messaged.
+`118f6a23-92a8-4f67-824c-58e012149e88`. The fallback was still fresh and disposable, and no existing or
+non-disposable session was attached or messaged. There was no durable GitHub confirmation of the fallback at run
+time; PR #117's review confirms after the fact that the workspace path was acceptable.
 
 The first hosted process used `--session-id`; the later process used `--resume` only against that exact UUID and
 workdir. The child-socket command was never executed: the session's permission system denied it before launch, so
@@ -31,10 +34,10 @@ workdir. The child-socket command was never executed: the session's permission s
 
 | Route | Installed surface (2.1.276) | Offline result | Live result |
 | --- | --- | --- | --- |
-| A: agent-started child posts to `CLAUDE_CODE_MESSAGING_SOCKET` | Binary debug template accepts an auth JSON line using `CLAUDE_CODE_MESSAGING_TOKEN`, followed by a user-message JSON line. | Exact frame, one-write behavior, target/registry/ancestry binding, secret redaction and wrong-session refusal pass against a synthetic Unix socket. | **Does not qualify.** The child inspection/launch command required approval and `--permission-prompts none` denied it automatically. There was no live socket, token, acceptance, delivery or consumption observation. |
+| A: agent-started child posts to `CLAUDE_CODE_MESSAGING_SOCKET` | Binary debug template accepts an auth JSON line using `CLAUDE_CODE_MESSAGING_TOKEN`, followed by a user-message JSON line. | Exact frame, one-write behavior, target/registry/ancestry binding, secret redaction and wrong-session refusal pass against a synthetic Unix socket. | **Not exercised.** The hosted `claude -p --permission-prompts none` target had no registry entry, socket, or token, so it could not represent the interactive/background session this route requires. The denied child command does not refute Route A. |
 | B: Khala-hosted streaming session | `claude -p --session-id <uuid> ... --replay-user-messages --permission-prompts none --verbose`; the harness also pins the equivalent `--resume` form. | Stream JSON and receipt classifiers are pinned. | **Useful only while alive; does not qualify as an existing-session route.** Idle and busy writes were replayed and consumed. Duplicates were consumed twice. A pending write at forced disconnect was unacknowledged, and `--resume` then returned `No conversation found with session ID`. |
 
-**Recommendation: neither qualifies.** Route A misses the zero-approval bar and was not live-proven. Route B does
+**Recommendation: keep native support fail-closed.** Route A was not live-proven. Route B does
 not deliver into an unchanged pre-existing working session, is absent from `claude agents --json`, and did not
 survive the required disconnect/resume case. KHA-149 should remain fail-closed and route Claude through the generic
 agent-installed fallback owned by KHA-151.
@@ -67,7 +70,7 @@ after level 1 without a stronger receipt, the result is `outcome_unknown` and th
 - **Idle:** `IDLE-NONCE-7F3A` was written, replayed, echoed by the assistant and followed by a successful result. The stronger earlier-process private-marker criterion was not verified.
 - **Busy:** while `Bash sleep 12` was running, a second release was written. It was replayed, queued, and consumed after the tool completed; the assistant returned both nonces.
 - **Disconnect:** during `Bash sleep 20`, a pending release was written to stdin and the process was interrupted before its replay event. The only honest receipt is `outcome_unknown`; no resend was attempted.
-- **Backlog/reconnect:** restarting with `--resume` against the same UUID returned `No conversation found with session ID`. The pending release was not delivered and nothing reconnected automatically.
+- **Backlog/reconnect:** after the hosted process was forcibly interrupted with SIGKILL, restarting with `--resume` against the same UUID returned `No conversation found with session ID`. The pending release was not delivered and nothing reconnected automatically. Because this was not a clean shutdown, clean-shutdown resume behavior remains unproven.
 - **Duplicate:** two identical inputs produced two replay events and two completed results. There is no harness deduplication.
 - **Permission:** zero human approvals. A safe sleep was allowed, while the child-inspection command was denied automatically and never executed.
 - **Negative token:** no live Route A socket existed, so a real wrong-token exchange was not possible. Offline tests reject malformed tokens and a registry/session mismatch before connection. This remains explicitly unverified live.
@@ -76,12 +79,22 @@ after level 1 without a stronger receipt, the result is `outcome_unknown` and th
 `~/.claude/sessions/<pid>.json` entry existed. Consequently the live `status` field could not be used to distinguish
 idle from busy for Route B.
 
+The hidden channels mechanism was not exercised. The live observations are sanitized, hand-curated summaries;
+raw stream excerpts, per-case timestamps, process exit codes, and signals were not retained, so the booleans must
+not be treated as independently replayable telemetry. `inventory.json` is likewise a curated provenance record,
+not the literal output shape of `probe --inventory`.
+
+In the current [closed contract vocabulary](../../packages/contracts/src/delivery/harness.ts#L18-L31), this evidence
+maps to `existingSession: "unsupported"` and `immediateNotification: "unsupported"`; it does not justify a new
+union member.
+
 ## Validation
 
 ```sh
 npm --prefix experiments/claude-native ci
 npm --prefix experiments/claude-native test
 npm --prefix experiments/claude-native run typecheck
+npm --prefix experiments/claude-native run verify:evidence
 npm --prefix experiments/claude-native run probe -- --help
 npm --prefix experiments/claude-native run probe -- --inventory
 ```

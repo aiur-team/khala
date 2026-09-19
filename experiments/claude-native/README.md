@@ -13,9 +13,9 @@ The durable result and route recommendation live in
 
 ## Result
 
-The 2.1.276 live proof recommends neither route. The hosted stream accepted idle and busy messages while alive,
-but did not resume after interruption. Starting the child route required an approval surface the hosted session
-did not have. See the durable evidence document and `evidence/live-proof.json`; do not infer support from the
+The 2.1.276 live proof keeps native support fail-closed. The hosted stream accepted idle and busy messages while
+alive, but did not resume after forced interruption. The child route was not exercised because this hosted target
+had no session registry, messaging socket, or child token. See the durable evidence document and `evidence/live-proof.json`; do not infer support from the
 presence of the probe.
 
 ## Offline validation
@@ -26,6 +26,7 @@ This package does not touch root manifests and uses Node's built-in test runner.
 npm --prefix experiments/claude-native ci
 npm --prefix experiments/claude-native test
 npm --prefix experiments/claude-native run typecheck
+npm --prefix experiments/claude-native run verify:evidence
 npm --prefix experiments/claude-native run probe -- --help
 npm --prefix experiments/claude-native run probe -- --inventory
 ```

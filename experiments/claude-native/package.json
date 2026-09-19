@@ -7,7 +7,8 @@
   "scripts": {
     "probe": "node probe.ts",
     "test": "node --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:evidence": "node verify.ts"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
