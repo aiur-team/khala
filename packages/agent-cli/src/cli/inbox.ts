@@ -12,6 +12,7 @@ import { plainObject, validDigest, validEventRef, validIdentifier, validUtcTimes
 const INBOX_FILE = 'inbox.jsonl';
 const CURSOR_FILE = 'cursor.json';
 const SOCKET_FILE = 'listener.sock';
+const LISTENER_LOCK_FILE = 'listener.lock';
 const RECORD_OVERHEAD_BYTES = 1024 * 1024;
 
 export type InboxItem = Readonly<{
@@ -61,10 +62,17 @@ export async function openInbox(options: OpenInboxOptions): Promise<Inbox> {
   await recoverTrailingWrite(inboxPath);
   const cursorPath = path.join(bindingDirectory, CURSOR_FILE);
   const socketPath = await listenerSocketPath(bindingDirectory);
-  return new FileInbox(validated, { bindingDirectory, inboxPath, cursorPath, socketPath });
+  const listenerLockPath = path.join(bindingDirectory, LISTENER_LOCK_FILE);
+  return new FileInbox(validated, { bindingDirectory, inboxPath, cursorPath, socketPath, listenerLockPath });
 }
 
-type InboxPaths = Readonly<{ bindingDirectory: string; inboxPath: string; cursorPath: string; socketPath: string }>;
+type InboxPaths = Readonly<{
+  bindingDirectory: string;
+  inboxPath: string;
+  cursorPath: string;
+  socketPath: string;
+  listenerLockPath: string;
+}>;
 
 class FileInbox implements Inbox {
   readonly #options: ValidatedOptions;
@@ -72,6 +80,8 @@ class FileInbox implements Inbox {
   readonly #inboxPath: string;
   readonly #cursorPath: string;
   readonly #socketPath: string;
+  readonly #listenerLockPath: string;
+  // TODO(KHA-153): compact acknowledged records once live composition defines retention.
   #known: Map<string, string> | null = null;
   #writes: Promise<void> = Promise.resolve();
 
@@ -84,6 +94,7 @@ class FileInbox implements Inbox {
     this.#inboxPath = paths.inboxPath;
     this.#cursorPath = paths.cursorPath;
     this.#socketPath = paths.socketPath;
+    this.#listenerLockPath = paths.listenerLockPath;
   }
 
   async enqueue(delivery: InboxDelivery): Promise<'appended' | 'duplicate'> {
@@ -118,12 +129,19 @@ class FileInbox implements Inbox {
   }
 
   async acquireListener(): Promise<Readonly<{ release(): Promise<void> }>> {
-    let server = await listen(this.#socketPath);
-    if (server === null) {
-      if (await socketIsLive(this.#socketPath)) throw new CliError('listener_busy');
-      await removeStaleSocket(this.#socketPath);
+    const lock = await acquireListenerLock(this.#listenerLockPath);
+    let server: net.Server | null = null;
+    try {
       server = await listen(this.#socketPath);
-      if (server === null) throw new CliError('listener_busy');
+      if (server === null) {
+        if (await socketIsLive(this.#socketPath)) throw new CliError('listener_busy');
+        await removeStaleSocket(this.#socketPath);
+        server = await listen(this.#socketPath);
+        if (server === null) throw new CliError('listener_busy');
+      }
+    } catch (error) {
+      await lock.release();
+      throw error;
     }
     let released = false;
     return {
@@ -131,9 +149,18 @@ class FileInbox implements Inbox {
         if (released) return;
         released = true;
         await new Promise<void>(resolve => server!.close(() => resolve()));
-        await fsp.unlink(this.#socketPath).catch(error => {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new CliError('storage_failed');
-        });
+        let failed = false;
+        try {
+          await fsp.unlink(this.#socketPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') failed = true;
+        }
+        try {
+          await lock.release();
+        } catch {
+          failed = true;
+        }
+        if (failed) throw new CliError('storage_failed');
       },
     };
   }
@@ -418,6 +445,117 @@ async function writeCursorAtomic(filename: string, directory: string, cursor: In
   } finally {
     await handle?.close().catch(() => undefined);
     await fsp.unlink(temporary).catch(() => undefined);
+  }
+}
+
+type ListenerLockRecord = Readonly<{ v: 1; pid: number; token: string }>;
+
+async function acquireListenerLock(filename: string): Promise<Readonly<{ release(): Promise<void> }>> {
+  const record: ListenerLockRecord = { v: 1, pid: process.pid, token: randomUUID() };
+  while (true) {
+    if (createListenerLock(filename, record)) {
+      let released = false;
+      return {
+        release: async () => {
+          if (released) return;
+          const current = await readListenerLock(filename);
+          if (current.pid !== record.pid || current.token !== record.token) throw new CliError('storage_failed');
+          try {
+            await fsp.unlink(filename);
+          } catch {
+            throw new CliError('storage_failed');
+          }
+          released = true;
+        },
+      };
+    }
+    const existing = await readListenerLock(filename);
+    if (processIsLive(existing.pid)) throw new CliError('listener_busy');
+    await quarantineStaleListenerLock(filename, existing);
+  }
+}
+
+function createListenerLock(filename: string, record: ListenerLockRecord): boolean {
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    fs.writeFileSync(descriptor, JSON.stringify(record) + '\n', 'utf8');
+    fs.fsyncSync(descriptor);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    if (descriptor !== null) {
+      try {
+        fs.unlinkSync(filename);
+      } catch {
+        // The original storage failure remains authoritative.
+      }
+    }
+    throw new CliError('storage_failed');
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+async function readListenerLock(filename: string): Promise<ListenerLockRecord> {
+  try {
+    const stat = await fsp.lstat(filename);
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0
+      || (uid !== null && stat.uid !== uid)) throw new CliError('storage_failed');
+    const handle = await openNoFollow(filename, fs.constants.O_RDONLY);
+    let text: string;
+    try {
+      text = await handle.readFile('utf8');
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+    const value: unknown = JSON.parse(text);
+    if (!plainObject(value) || Object.keys(value).length !== 3 || value.v !== 1
+      || !Number.isSafeInteger(value.pid) || typeof value.pid !== 'number' || value.pid < 1
+      || typeof value.token !== 'string' || !validIdentifier(value.token)) throw new CliError('storage_failed');
+    return { v: 1, pid: value.pid, token: value.token };
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    throw new CliError('storage_failed');
+  }
+}
+
+function processIsLive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
+    throw new CliError('storage_failed');
+  }
+}
+
+async function quarantineStaleListenerLock(filename: string, stale: ListenerLockRecord): Promise<void> {
+  const quarantine = `${filename}.stale-${randomUUID()}`;
+  try {
+    await fsp.rename(filename, quarantine);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw new CliError('storage_failed');
+  }
+  try {
+    const moved = await readListenerLock(quarantine);
+    if (moved.pid !== stale.pid || moved.token !== stale.token || processIsLive(moved.pid)) {
+      try {
+        await fsp.link(quarantine, filename);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new CliError('storage_failed');
+      }
+      throw new CliError('listener_busy');
+    }
+  } finally {
+    await fsp.unlink(quarantine).catch(() => undefined);
   }
 }
 

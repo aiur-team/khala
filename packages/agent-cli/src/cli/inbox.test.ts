@@ -27,6 +27,11 @@ function stateDirectory(): string {
   return path.join(parent, 'state');
 }
 
+function bindingDirectory(directory: string, generation = 3): string {
+  const digest = createHash('sha256').update(JSON.stringify([bindingId, generation])).digest('base64url');
+  return path.join(directory, 'bindings', digest);
+}
+
 function delivery(overrides: Partial<InboxDelivery> = {}): InboxDelivery {
   return {
     v: 1,
@@ -137,15 +142,67 @@ describe('durable inbox', () => {
     await expect(current.enqueue(delivery({ generation: 4 }))).resolves.toBe('appended');
   });
 
-  it('allows only one listener for a binding and releases ownership cleanly', async () => {
+  it('rejects a generation directory that is not owner-only', async () => {
+    const directory = stateDirectory();
+    const generationDirectory = bindingDirectory(directory);
+    fs.mkdirSync(generationDirectory, { recursive: true, mode: 0o700 });
+    fs.chmodSync(generationDirectory, 0o755);
+
+    await expect(openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    })).rejects.toEqual(new CliError('storage_failed'));
+  });
+
+  it('allows only one concurrent listener for a binding and releases ownership cleanly', async () => {
     const directory = stateDirectory();
     const first = await openInbox({ stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 });
     const second = await openInbox({ stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 });
-    const held = await first.acquireListener();
+    const attempts = await Promise.allSettled([first.acquireListener(), second.acquireListener()]);
+    const acquired = attempts.filter(result => result.status === 'fulfilled');
+    const rejected = attempts.filter(result => result.status === 'rejected');
 
-    await expect(second.acquireListener()).rejects.toEqual(new CliError('listener_busy'));
-    await held.release();
+    expect(acquired).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toEqual(new CliError('listener_busy'));
+    await (acquired[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof first.acquireListener>>>).value.release();
     const replacement = await second.acquireListener();
     await replacement.release();
+  });
+
+  it('recovers an atomic listener lock left by a dead process', async () => {
+    const directory = stateDirectory();
+    const inbox = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    const lockPath = path.join(bindingDirectory(directory), 'listener.lock');
+    fs.writeFileSync(lockPath, JSON.stringify({ v: 1, pid: 2_147_483_647, token: 'stale-owner' }) + '\n', { mode: 0o600 });
+    fs.chmodSync(lockPath, 0o600);
+
+    const held = await inbox.acquireListener();
+    expect(JSON.parse(fs.readFileSync(lockPath, 'utf8'))).toMatchObject({ v: 1, pid: process.pid });
+    await held.release();
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('falls back to the private tmp socket root when the canonical path is too long', async () => {
+    const directory = path.join(stateDirectory(), 'x'.repeat(120));
+    const generationDirectory = bindingDirectory(directory);
+    const directSocket = path.join(generationDirectory, 'listener.sock');
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+    const fallbackSocket = path.join(
+      '/tmp',
+      `.khala-agent-cli-${uid}`,
+      `${createHash('sha256').update(generationDirectory).digest('hex').slice(0, 32)}.sock`,
+    );
+    expect(Buffer.byteLength(directSocket)).toBeGreaterThanOrEqual(100);
+    const inbox = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+
+    const held = await inbox.acquireListener();
+    expect(fs.existsSync(directSocket)).toBe(false);
+    expect(fs.existsSync(fallbackSocket)).toBe(true);
+    await held.release();
+    expect(fs.existsSync(fallbackSocket)).toBe(false);
   });
 });

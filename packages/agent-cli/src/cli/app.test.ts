@@ -64,6 +64,28 @@ describe('runCli', () => {
     expect(await runCli(['status'], { client: client({ async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; } }), inbox: unusedInbox, ...io })).toBe(0);
     expect(JSON.parse(io.output())).toMatchObject({ v: 1, connected: false, inbox: null });
   });
+  it('fails listen closed when disconnected without opening an inbox', async () => {
+    let opened = false;
+    const io = streams();
+    const inbox = async () => { opened = true; return await unusedInbox(); };
+    expect(await runCli(['listen'], {
+      client: client({
+        async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
+      }),
+      inbox,
+      ...io,
+    })).toBe(2);
+    expect(io.error()).toContain('not_connected');
+    expect(opened).toBe(false);
+  });
+  it('fails listen closed for a binding not held without opening an inbox', async () => {
+    let opened = false;
+    const io = streams();
+    const inbox = async () => { opened = true; return await unusedInbox(); };
+    expect(await runCli(['listen', '--binding', 'binding-2'], { client: client(), inbox, ...io })).toBe(2);
+    expect(io.error()).toContain('binding_not_held');
+    expect(opened).toBe(false);
+  });
   it('fails closed on an invalid status route without printing injected fields', async () => {
     const io = streams();
     const malicious = client({
@@ -74,6 +96,16 @@ describe('runCli', () => {
     expect(await runCli(['status'], { client: malicious, inbox: unusedInbox, ...io })).toBe(2);
     expect(io.error()).toContain('transport_unavailable');
     expect(io.output() + io.error()).not.toContain('do-not-print');
+  });
+  it('reports unexpected failures as internal errors', async () => {
+    const io = streams();
+    expect(await runCli(['status'], {
+      client: client({ async status() { throw new Error('unexpected'); } }),
+      inbox: unusedInbox,
+      ...io,
+    })).toBe(2);
+    expect(JSON.parse(io.error())).toEqual({ ok: false, error: 'internal_error' });
+    expect(io.error()).not.toContain('unexpected');
   });
   it('prints and then acknowledges one released item', async () => {
     const io = streams(); const abort = new AbortController(); let acknowledged = false; io.stdout.once('data', () => abort.abort());

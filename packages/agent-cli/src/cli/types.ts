@@ -1,11 +1,12 @@
-import type { BindingId, EventRef, SessionBinding } from '@khala/contracts/delivery/index';
+import type { BindingId, EventRef, HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
 
 export const CLI_ERROR_CODES = [
   'invalid_arguments', 'invalid_link', 'invalid_input', 'not_connected', 'binding_not_held',
-  'listener_busy', 'storage_failed', 'transport_unavailable', 'outcome_unknown',
+  'listener_busy', 'storage_failed', 'transport_unavailable', 'outcome_unknown', 'internal_error',
 ] as const;
 export type CliErrorCode = (typeof CLI_ERROR_CODES)[number];
 
+// Mirrors the connector bootstrap BLOCKED_CODES without importing its runtime implementation.
 export const CONNECT_REFUSAL_CODES = [
   'invalid_request', 'invalid_link', 'untrusted_origin', 'link_unavailable', 'unsupported_descriptor',
   'harness_session_missing', 'unsupported_harness', 'ownership_required', 'admission_denied',
@@ -16,10 +17,19 @@ export const SEND_REFUSAL_CODES = [
   'invalid_input', 'not_connected', 'binding_not_held', 'storage_failed', 'transport_unavailable',
 ] as const;
 export type SendRefusalCode = (typeof SEND_REFUSAL_CODES)[number];
-export const AGENT_ROUTES = [
-  'unknown', 'unavailable', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener',
-] as const;
-export type AgentRoute = (typeof AGENT_ROUTES)[number];
+
+// The CLI reports contract `unsupported` as `unavailable`: both fail closed, while
+// `unavailable` describes the installed component before live composition exists.
+type AgentRouteFromContract<Route extends string> = Route extends 'unsupported' ? 'unavailable' : Route;
+export type AgentRoute = AgentRouteFromContract<HarnessCapabilities['existingSession']>;
+const AGENT_ROUTE_MEMBERS = {
+  unknown: true,
+  unavailable: true,
+  khala_hosted_resume: true,
+  native_cli_queue: true,
+  agent_installed_listener: true,
+} as const satisfies Record<AgentRoute, true>;
+export const AGENT_ROUTES = Object.freeze(Object.keys(AGENT_ROUTE_MEMBERS)) as readonly AgentRoute[];
 
 export type ConnectResult =
   | Readonly<{ kind: 'connected'; binding: SessionBinding; reused: boolean }>

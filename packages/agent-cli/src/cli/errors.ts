@@ -5,5 +5,5 @@ export class CliError extends Error {
   constructor(code: CliErrorCode) { super(code); this.name = 'CliError'; this.code = code; }
 }
 export function cliErrorCode(error: unknown): CliErrorCode {
-  return error instanceof CliError ? error.code : 'storage_failed';
+  return error instanceof CliError ? error.code : 'internal_error';
 }
