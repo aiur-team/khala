@@ -13,7 +13,7 @@ from `@khala/contracts/delivery/index`.
 | Provider restrictions | None observed. The proof used the fixture's own model, which was left unchanged. |
 | Route A: native CLI | For a thread Khala did not start, approved bytes are appended to the KHA-148 local inbox and `codex queue --thread <sessionId> --message <opaque release notification>` wakes the existing thread. [KHA-146](../../../../docs/evidence/codex-native-cli.md#queue-idle) proved the notification route. `--message -` and `@-` are literals, so payload bytes never go to the CLI. |
 | Route B: hosted app-server | Khala starts `codex app-server --listen unix://<owner-only dir>/…sock` in the thread's workdir and resumes a dormant thread there (`thread/resume`, no overrides). Delivery calls `thread/queue/add` with `clientUserMessageId = releaseId`. The thread's native `cwd` must equal the host's workdir. [KHA-104](../../../../docs/evidence/codex.md) proves this route. |
-| Selection | A matching entry in the Khala host registry selects route B. Otherwise an exact-version Linux x64 native inspection may select route A. The decision is held for that immutable binding generation; `submit` never switches routes. |
+| Selection | A matching entry in the Khala host registry selects route B. Otherwise an exact-version Linux x64 native inspection may select route A. A positive decision is held for that immutable binding generation; unsupported and failed inspections are re-probed. `submit` never switches routes. |
 | Required agent setup | Route A uses the local `khala listen` inbox installed by KHA-148. Route B needs no human setup; the host starts the app-server and resumes the thread. |
 | Busy behaviour | `queue`. Delivery waits for the running turn, then runs as a new turn. `turn/steer` is unproven and never called. |
 | Observable receipts | Route A: `harness_queued`, `outcome_unknown`, `failed`. Route B: `transport_written`, `harness_queued`, `context_consumed`, `completed`, `outcome_unknown`, `failed`; consumption and completion come only from the receipt tracker's live notifications. |
@@ -38,8 +38,12 @@ The adapter imports no socket, SDK or storage implementation. Composition suppli
   `nativeInbox: CodexNativeInboxPort` together. The CLI port reports installed version,
   platform, architecture, session presence and the binding generation consumed by
   `khala listen`, then runs adapter-owned argv. A binding mismatch fails closed before
-  the inbox is written. The inbox port accepts the exact KHA-148 delivery shape.
-  Supplying only one is a type error.
+  the inbox is written. The CLI runner must spawn without a shell, pass no
+  message-bearing environment variables, keep child stderr out of receipts and logs,
+  and terminate the child when the adapter deadline or an external abort is reached;
+  `withDeadline` only races the returned promise. The inbox port accepts the exact
+  KHA-148 delivery shape. Supplying only one is a type error. When these native ports
+  are supplied, `submit` before a successful `inspect` fails closed.
 - `codec: ReleaseCodecPort`, the KHA-119 envelope codec. It checks the payload digest
   and the approved event references before anything is sent.
 - `clock`, and `evidence: EvidenceSink` (KHA-115) for intermediate observations.
@@ -64,7 +68,10 @@ same listener to receipts. Duplicate and out-of-order events yield each receipt 
 - **At most one native notification per release per process.** Route A appends the
   payload before spawning the CLI. A duplicate or uncertain inbox append, non-zero
   process exit, timeout, disconnect or malformed success is `outcome_unknown`; none is
-  retried by the adapter.
+  retried by the adapter. Composition spawns the CLI without a shell or message-bearing
+  environment variables, never copies its stderr into receipts or logs, and terminates
+  it at the adapter deadline or on abort rather than relying on `withDeadline` to stop
+  the child.
 - **Deduplication after consumption belongs to the connector (KHA-121).** A consumed
   release has left the queue, and the adapter does not read history, so after a restart
   it cannot tell a consumed release from one never sent. The durable claim must stop that

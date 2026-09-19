@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { binding, clock, deadlines, FakeAppServer, FakeCodec, FakeHosts, job, limits, payload, RecordingSink } from './fakes';
+import {
+  binding, clock, deadlines, FakeAppServer, FakeCodec, FakeHosts, job, limits, never, payload, RecordingSink,
+} from './fakes';
 import { createCodexHarness } from './index';
 import type {
-  CodexNativeCliOutcome, CodexNativeCliPort, CodexNativeInboxDelivery, CodexNativeInboxPort,
+  CodexNativeCliInspection, CodexNativeCliOutcome, CodexNativeCliPort, CodexNativeInboxDelivery,
+  CodexNativeInboxPort,
 } from './native-cli';
 
 class FakeNativeCli implements CodexNativeCliPort {
-  inspection = {
-    version: '0.154.0', session: 'present' as const, bindingId: 'bind-b-1', generation: 0,
+  inspection: CodexNativeCliInspection = {
+    version: '0.154.0', session: 'present', bindingId: 'bind-b-1', generation: 0,
     platform: 'linux', arch: 'x64',
   };
-  outcome: CodexNativeCliOutcome = { status: 'queued', queueId: 'queue-native-1' };
+  outcome: CodexNativeCliOutcome | Promise<CodexNativeCliOutcome> = { status: 'queued', queueId: 'queue-native-1' };
   readonly inspected: string[] = [];
   readonly argv: string[][] = [];
 
@@ -110,6 +113,19 @@ describe('Codex native CLI route selection', () => {
     expect(selected.cli.inspected).toEqual(['session-b', 'session-b']);
   });
 
+  it('re-probes an unsupported result and can select a route after the native session appears', async () => {
+    const selected = nativeHarness();
+    selected.cli.inspection = { ...selected.cli.inspection, session: 'absent' };
+
+    await expect(selected.harness.inspect(binding())).resolves.toMatchObject({ support: 'unsupported' });
+
+    selected.cli.inspection = { ...selected.cli.inspection, session: 'present' };
+    await expect(selected.harness.inspect(binding())).resolves.toMatchObject({
+      support: 'tested', existingSession: 'native_cli_queue',
+    });
+    expect(selected.cli.inspected).toEqual(['session-b', 'session-b']);
+  });
+
   it('keeps a Khala-hosted executor on route B even when the native CLI can see it', async () => {
     const selected = nativeHarness();
     selected.hosts.host = new FakeHosts().host;
@@ -202,6 +218,32 @@ describe('Codex native CLI notification delivery', () => {
       kind: 'outcome_unknown', errorCode,
     });
     await expect(selected.harness.submit({ job: job(), payload: payload() })).resolves.toMatchObject({
+      kind: 'outcome_unknown',
+    });
+    expect(selected.inbox.deliveries).toHaveLength(1);
+    expect(selected.cli.argv).toHaveLength(1);
+  });
+
+  it('times out a never-settling native run and never notifies the release twice', async () => {
+    const selected = nativeHarness();
+    selected.cli.outcome = never<CodexNativeCliOutcome>();
+    const shortDeadlineHarness = createCodexHarness({
+      client: selected.server,
+      hosts: selected.hosts,
+      codec: new FakeCodec(),
+      clock,
+      evidence: new RecordingSink(),
+      limits,
+      deadlines: { ...deadlines, callMs: 5 },
+      nativeCli: selected.cli,
+      nativeInbox: selected.inbox,
+    });
+    await shortDeadlineHarness.inspect(binding());
+
+    await expect(shortDeadlineHarness.submit({ job: job(), payload: payload() })).resolves.toMatchObject({
+      kind: 'outcome_unknown', errorCode: 'timeout',
+    });
+    await expect(shortDeadlineHarness.submit({ job: job(), payload: payload() })).resolves.toMatchObject({
       kind: 'outcome_unknown',
     });
     expect(selected.inbox.deliveries).toHaveLength(1);

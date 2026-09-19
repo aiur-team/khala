@@ -1,6 +1,9 @@
 // Place approved bytes in the local Khala inbox, then use `codex queue` only
 // for an opaque notification: its stdin-like message values are literals, so
-// released bytes must never enter argv.
+// released bytes must never enter argv. Composition must spawn without a shell,
+// pass no message-bearing environment variables, suppress child stderr from
+// receipts and logs, and terminate the child at its deadline or on abort; the
+// adapter's withDeadline call only stops awaiting the run promise.
 
 import type { DeliveryReceipt, ReleasedJob, SessionBinding } from '@khala/contracts/delivery/index';
 import { sameSessionBinding } from '@khala/contracts/delivery/index';
@@ -29,7 +32,9 @@ export type CodexNativeCliOutcome =
 
 /**
  * Composition owns process discovery and execution. The adapter owns the exact argv,
- * so tests can prove that released bytes are absent from it.
+ * so tests can prove that released bytes are absent from it. The runner must spawn
+ * without a shell, avoid message-bearing environment variables, keep child stderr out
+ * of receipts and logs, and terminate the child when its deadline or abort fires.
  */
 export interface CodexNativeCliPort {
   inspect(sessionId: string): Promise<CodexNativeCliInspection>;

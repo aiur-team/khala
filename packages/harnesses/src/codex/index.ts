@@ -54,7 +54,7 @@ export type CodexHarnessDeps = CodexHarnessBaseDeps & (
 type SelectedRoute = Readonly<{
   binding: SessionBinding;
   capabilities: HarnessCapabilities;
-  route: 'hosted' | 'native' | 'unsupported';
+  route: 'hosted' | 'native';
 }>;
 
 export function createCodexHarness(deps: CodexHarnessDeps): HarnessPort {
@@ -88,24 +88,18 @@ export function createCodexHarness(deps: CodexHarnessDeps): HarnessPort {
         return capabilities;
       }
       if (!nativeDeps || probe.reason !== 'no_host') {
-        const capabilities = unsupportedCapabilities('unknown', deps.limits);
-        selected.set(binding.bindingId, { binding, capabilities, route: 'unsupported' });
-        return capabilities;
+        return unsupportedCapabilities('unknown', deps.limits);
       }
       const native = await track(probeNativeCli(binding, nativeDeps));
       if (!native.ok) {
-        const capabilities = unsupportedNativeCliCapabilities('unknown', deps.limits);
-        selected.set(binding.bindingId, { binding, capabilities, route: 'unsupported' });
-        return capabilities;
+        return unsupportedNativeCliCapabilities('unknown', deps.limits);
       }
       if (
         !TESTED_CODEX_VERSIONS.includes(native.version)
         || native.platform !== 'linux'
         || native.arch !== 'x64'
       ) {
-        const capabilities = unsupportedNativeCliCapabilities(native.version, deps.limits);
-        selected.set(binding.bindingId, { binding, capabilities, route: 'unsupported' });
-        return capabilities;
+        return unsupportedNativeCliCapabilities(native.version, deps.limits);
       }
       const capabilities = nativeCliCapabilities(native.version, deps.limits);
       selected.set(binding.bindingId, { binding, capabilities, route: 'native' });
