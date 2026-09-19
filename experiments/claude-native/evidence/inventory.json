@@ -1,0 +1,20 @@
+{
+  "recordedAt": "2026-09-18T21:31:13.972Z",
+  "platform": "Linux 7.1.4-arch1-1 x86_64 GNU/Linux",
+  "node": "v24.18.0",
+  "version": "2.1.276 (Claude Code)",
+  "versionSha256": "sha256:e8c1f7980c28d97dbe4fc40da741cf8536751f8c8636a29e31c5626429846a66",
+  "helpSha256": "sha256:ae85d661e9c086f05637ebcd868f5702b477ff6e55e2e65b8ada7807cd51a4b6",
+  "relevantSurfaceSummary": [
+    "--include-hook-events",
+    "--input-format <format>: stream-json (realtime streaming input)",
+    "--output-format <format>: stream-json (realtime streaming)",
+    "--replay-user-messages: re-emit stdin user messages on stdout for acknowledgement"
+  ],
+  "binaryFrameTemplate": [
+    "{\"type\":\"auth\",\"token\":\"<CLAUDE_CODE_MESSAGING_TOKEN>\"}",
+    "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}"
+  ],
+  "binaryFrameSource": "The installed 2.1.276 executable's [uds-messaging] debug injection example; token value omitted.",
+  "packageLockSha256": "sha256:957e0b7b25e94d2d01a85c2af869bdf08d3bf417b9f0ff5b1f9e315e651721e1"
+}
