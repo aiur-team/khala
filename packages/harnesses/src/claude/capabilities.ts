@@ -28,7 +28,7 @@ export function claudeCapabilities(installedVersion: string | null, limits: Deli
     immediateNotification: tested ? 'unsupported' : 'unknown',
     busy: 'unknown',
     // These are connector-side refusal/uncertainty outcomes, not native support claims.
-    receiptEvidence: ['outcome_unknown', 'failed'],
+    receiptEvidence: ['failed'],
     reconcileByReleaseId: tested ? 'unsupported' : 'unknown',
     limits,
     evidenceRef: tested ? CLAUDE_EVIDENCE_REF : null,

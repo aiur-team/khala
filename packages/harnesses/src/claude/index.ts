@@ -7,7 +7,7 @@ import {
 } from '@khala/contracts/delivery/index';
 import { CLAUDE_HARNESS, claudeCapabilities } from './capabilities';
 import type { ClaudeNativeProbe, ClaudeNativeRoutePort } from './native-cli';
-import { unknownReceipt } from './receipts';
+import { failedReceipt } from './receipts';
 import { type InspectedClaudeBinding, submitRelease } from './transport';
 
 export {
@@ -49,7 +49,7 @@ export function createClaudeHarness(deps: ClaudeHarnessDeps): HarnessPort {
     async submit({ job, payload }) {
       const pending = submitting.get(job.releaseId);
       if (pending) return pending;
-      if (closed) return unknownReceipt(job, clock);
+      if (closed) return failedReceipt(job, 'harness_unavailable', clock);
       const work = submitRelease(deps, inspected.get(job.binding.bindingId), job, payload)
         .finally(() => submitting.delete(job.releaseId));
       submitting.set(job.releaseId, work);

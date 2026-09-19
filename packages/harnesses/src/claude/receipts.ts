@@ -14,14 +14,6 @@ export function failedReceipt(
   return makeClaudeReceipt(job, 'failed', clock, errorCode);
 }
 
-export function unknownReceipt(
-  job: ReleasedJob,
-  clock: Clock,
-  errorCode: ReceiptErrorCode | null = null,
-): DeliveryReceipt {
-  return makeClaudeReceipt(job, 'outcome_unknown', clock, errorCode);
-}
-
 function makeClaudeReceipt(
   job: ReleasedJob,
   kind: 'failed' | 'outcome_unknown',

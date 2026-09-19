@@ -307,6 +307,8 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
   ];
   const inputsFor = async (subject: HarnessSubject, job: ReleasedJob) => (await subject.modelInputs()).filter(input => input.releaseId === job.releaseId);
 
+  // Delivery-success and fault checks skip unsupported adapters because
+  // support.fail_closed exclusively owns their no-delivery invariant.
   const checks: Check<HarnessSubject>[] = [
     {
       name: 'capabilities.declared',
@@ -498,7 +500,8 @@ function harnessChecks(capabilities: HarnessCapabilities, limits: DeliveryLimits
         await subject.port.inspect(owner.binding);
         const { job, event } = firstRelease(owner, subjectOf(context, 1).owner, 'unsupported');
         const receipt = await subject.port.submit({ job, payload: event.payload });
-        ensure(receipt.kind === 'failed', `an unsupported adapter reported ${receipt.kind}`);
+        ensure(receipt.kind === 'failed' && receipt.errorCode === 'harness_unavailable',
+          `an unsupported adapter returned ${receipt.kind} (${receipt.errorCode}), expected failed (harness_unavailable)`);
         await subject.settle();
         ensure((await inputsFor(subject, job)).length === 0, 'an unsupported adapter delivered content to the model');
       },

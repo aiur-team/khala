@@ -3,6 +3,7 @@ import {
   CLAUDE_ADAPTER_VERSION, CLAUDE_EVIDENCE_REF, CLAUDE_HARNESS, CLAUDE_TESTED_VERSION, createClaudeHarness,
 } from '@khala/harnesses/claude/index';
 import type { SourceVersion } from '../e2e/harness/evidence';
+import type { ModelInput } from '../e2e/harness/reference';
 import { controlsFor, fixtureLimits } from './subjects';
 import type { HarnessSubjectFactory, SuiteEnvironment } from './suites';
 
@@ -16,7 +17,7 @@ export function claudeCapabilities(): HarnessCapabilities {
     existingSession: 'unsupported',
     immediateNotification: 'unsupported',
     busy: 'unknown',
-    receiptEvidence: ['outcome_unknown', 'failed'],
+    receiptEvidence: ['failed'],
     reconcileByReleaseId: 'unsupported',
     limits: fixtureLimits,
     evidenceRef: CLAUDE_EVIDENCE_REF,
@@ -39,13 +40,23 @@ export function claudeEnvironment(seeds: readonly string[]): SuiteEnvironment {
 
 export function claudeHarnessSubject(): HarnessSubjectFactory {
   return async (_scenario, owner) => {
+    const modelInputs: ModelInput[] = [];
     const harness = createClaudeHarness({
       probe: {
         installedVersion: async () => CLAUDE_TESTED_VERSION,
         session: async sessionId => sessionId === owner.binding.sessionId ? 'present' : 'absent',
       },
       route: {
-        submit: async () => { throw new Error('unsupported Claude route was invoked'); },
+        submit: async ({ job }) => {
+          modelInputs.push({
+            releaseId: job.releaseId,
+            bindingId: job.binding.bindingId,
+            sessionId: job.binding.sessionId,
+            generation: job.binding.generation,
+            payloadDigest: job.payloadDigest,
+          });
+          return { status: 'accepted', evidenceRef: `route:${job.releaseId}` };
+        },
       },
       clock: { now: () => new Date('2026-09-18T00:00:00.000Z') },
       limits: fixtureLimits,
@@ -53,7 +64,7 @@ export function claudeHarnessSubject(): HarnessSubjectFactory {
     return {
       mode: 'fake-contract',
       port: harness,
-      modelInputs: async () => [],
+      modelInputs: async () => [...modelInputs],
       receipts: async () => [],
       settle: async () => {},
       faults: [],

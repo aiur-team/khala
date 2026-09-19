@@ -23,7 +23,7 @@ leave the adapter. A mock-only test pass is component evidence, not a support cl
 | Route | None. The child messaging-socket candidate was not live-proven. The hosted stream delivered only while its process was alive and failed the disconnect/resume requirement |
 | Required agent setup | Use the generic agent-installed fallback; native delivery is unavailable |
 | Busy behavior | `unknown`. The hosted-stream probe accepted a write during a tool call, but that rejected candidate does not establish native-route behavior |
-| Observable receipts | Native: none. The adapter emits content-free connector-side `failed` receipts, or `outcome_unknown` after closure; it never claims native acceptance or consumption |
+| Observable receipts | Native: none. The adapter emits content-free connector-side `failed` receipts; it never claims native acceptance or consumption |
 | Reconciliation | `unsupported`. `reconcile` returns `null`, which never licenses a resubmit |
 | Cancellation | Not advertised |
 
@@ -33,8 +33,9 @@ These checks run in order. Each returns a content-free `failed` receipt with a
 closed error code and a stable ID derived from binding, generation, release and
 outcome:
 
-1. The adapter is closed: `outcome_unknown`, because closure may race a caller that
-   lost its in-process result. No route is retried.
+1. The adapter is closed: `failed` with `harness_unavailable`, because this adapter
+   never dispatches and closure is therefore a certain pre-send refusal. An existing
+   in-process submission for the same release is still joined before this check.
 2. The binding was never inspected, or the session is absent or not owned: `session_unavailable`.
 3. The binding differs from the one inspected, for example an older generation: `stale_binding`.
 4. The payload is over `maxPayloadBytes`: `limit_exceeded`.

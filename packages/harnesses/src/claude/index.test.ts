@@ -87,7 +87,7 @@ describe('claudeCapabilities', () => {
         existingSession: 'unknown',
         immediateNotification: 'unknown',
         busy: 'unknown',
-        receiptEvidence: ['outcome_unknown', 'failed'],
+        receiptEvidence: ['failed'],
         reconcileByReleaseId: 'unknown',
         evidenceRef: null,
       });
@@ -134,13 +134,21 @@ describe('createClaudeHarness', () => {
 
   it('joins concurrent submits without reaching the rejected native route', async () => {
     const native = fakeRoute();
-    const adapter = harness(fakeProbe().probe, limits, native.route);
+    let nowCalls = 0;
+    const countingClock = {
+      now() {
+        nowCalls += 1;
+        return new Date('2026-09-18T10:00:00.000Z');
+      },
+    };
+    const adapter = createClaudeHarness({ probe: fakeProbe().probe, route: native.route, clock: countingClock, limits });
     await adapter.inspect(claudeBinding());
     const [first, second] = await Promise.all([
       adapter.submit({ job: releasedJob(), payload }),
       adapter.submit({ job: releasedJob(), payload }),
     ]);
     expect(first).toEqual(second);
+    expect(nowCalls).toBe(1);
     expect(native.calls).toEqual([]);
   });
 
@@ -217,12 +225,12 @@ describe('createClaudeHarness', () => {
     expect(calls).toEqual([]);
   });
 
-  it('refuses everything after close', async () => {
+  it('refuses everything after close with a certain pre-send failure', async () => {
     const adapter = harness(fakeProbe().probe);
     await adapter.inspect(claudeBinding());
     await adapter.close();
     expect(await adapter.submit({ job: releasedJob(), payload })).toMatchObject({
-      kind: 'outcome_unknown', errorCode: null,
+      kind: 'failed', errorCode: 'harness_unavailable',
     });
     await expect(adapter.inspect(claudeBinding())).rejects.toThrow('closed');
   });
