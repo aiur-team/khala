@@ -3,6 +3,7 @@
 // process arguments, receipts, logs or errors.
 
 import { createHash } from 'node:crypto';
+import { isUtf8 } from 'node:buffer';
 import {
   type DeliveryLimits, type DeliveryReceipt, type ReceiptErrorCode, type ReleasedJob, type ReleaseId,
   validatePayloadBytes,
@@ -38,15 +39,21 @@ export type AttemptedReleases = Set<ReleaseId>;
 // sent re-encode to exactly the released bytes.
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
-export async function submitRelease(
-  deps: SubmitDeps,
-  attempted: AttemptedReleases,
+export type VerifiedReleasePayload =
+  | Readonly<{ ok: true; bytes: Uint8Array }>
+  | Readonly<{ ok: false; receipt: DeliveryReceipt }>;
+
+/** Shared validation for every Codex route before released bytes leave the adapter. */
+export async function verifyReleasePayload(
+  deps: Pick<SubmitDeps, 'clock' | 'codec' | 'deadlines' | 'limits'>,
   job: ReleasedJob,
   payload: Uint8Array,
-): Promise<DeliveryReceipt> {
+): Promise<VerifiedReleasePayload> {
   const target = { releaseId: job.releaseId, binding: job.binding };
-  const failed = (errorCode: ReceiptErrorCode) =>
-    makeReceipt(target, 'failed', deps.clock, { source: 'connector', errorCode });
+  const failed = (errorCode: ReceiptErrorCode): VerifiedReleasePayload => ({
+    ok: false,
+    receipt: makeReceipt(target, 'failed', deps.clock, { source: 'connector', errorCode }),
+  });
 
   const bytes = validatePayloadBytes(payload, deps.limits);
   if (!bytes.ok) return failed(bytes.code === 'limit_exceeded' ? 'limit_exceeded' : 'payload_digest_mismatch');
@@ -58,14 +65,26 @@ export async function submitRelease(
   } catch {
     verdict = 'error';
   }
-  // Unverifiable bytes are refused like mismatched ones: only approved content is sent.
   if (verdict !== 'ok') return failed('payload_digest_mismatch');
-  let text: string;
-  try {
-    text = decoder.decode(bytes.value);
-  } catch {
-    return failed('harness_rejected');
-  }
+  if (!isUtf8(bytes.value)) return failed('harness_rejected');
+  return { ok: true, bytes: bytes.value };
+}
+
+export async function submitRelease(
+  deps: SubmitDeps,
+  attempted: AttemptedReleases,
+  job: ReleasedJob,
+  payload: Uint8Array,
+): Promise<DeliveryReceipt> {
+  const target = { releaseId: job.releaseId, binding: job.binding };
+  const failed = (errorCode: ReceiptErrorCode) =>
+    makeReceipt(target, 'failed', deps.clock, { source: 'connector', errorCode });
+
+  const verified = await verifyReleasePayload(deps, job, payload);
+  if (!verified.ok) return verified.receipt;
+  // UTF-8 validity was checked above. Route B alone needs a string for JSON-RPC;
+  // route A keeps the bytes binary in its inbox.
+  const text = decoder.decode(verified.bytes);
 
   const probe = await probeBinding(job.binding, deps);
   if (!probe.ok) {

@@ -15,6 +15,7 @@ export type { Clock, EvidenceSink } from '@khala/contracts/delivery/index';
 export const EVIDENCE = {
   queued: 'codex:thread/queue/add.queuedSubmission.clientUserMessageId',
   listed: 'codex:thread/queue/list.clientUserMessageId',
+  nativeQueued: 'codex:queue.accepted',
   consumed: 'codex:userMessage.clientId',
   completed: 'codex:turn/completed',
 } as const;
