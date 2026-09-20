@@ -11,6 +11,7 @@ import type { OwnershipMethod } from './descriptor';
 import type {
   BootstrapPorts, OperationRecord, SessionClaim, VerifiedSession,
 } from './ports';
+import { admitsExistingSessionRoute } from '../route-admission';
 
 export type BootstrapInput = Readonly<{
   chatUrl: string;
@@ -89,8 +90,7 @@ export async function bootstrapAgent(input: BootstrapInput, ports: BootstrapPort
   const session = inspected.session;
   const { capabilities } = inspected;
   if (session.harness !== input.session.harness || session.sessionId !== input.session.sessionId
-    || capabilities.harness !== session.harness || capabilities.support === 'unsupported'
-    || capabilities.existingSession !== 'khala_hosted_resume') {
+    || !admitsExistingSessionRoute(capabilities, session.harness, ports.allowExperimentalAgentListener ?? false)) {
     return blocked('unsupported_harness');
   }
   // The binding is immutable: a new generation needs the owner's rebinding flow, not a reconnect.

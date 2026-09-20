@@ -4,6 +4,7 @@
 
 import { decodeWith, utcTimestamp } from '@khala/contracts/delivery/decode';
 import type { HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
+import { admitsExistingSessionRoute } from '../route-admission';
 import type { BlockCode, DispatchPolicy, DispatchRecord, DispatchTx } from './types';
 
 const POLICY_KEYS = ['armedAt', 'busy', 'expiresAt', 'maxConcurrentJobs', 'maxJobsPerCausalRoot', 'paused', 'version'];
@@ -37,15 +38,19 @@ export function expired(policy: DispatchPolicy, now: Date): boolean {
 }
 
 /**
- * Whether the harness route may receive this binding's job at all. Delivery must resume the existing
- * session (KD1) on a supported route for the bound harness, and the route's busy behavior must be
- * known not to steer a turn already running.
+ * Whether the harness route may receive this binding's job at all. Tested native delivery must
+ * resume the existing session (KD1) for the bound harness, with busy behavior known not to steer a
+ * running turn. The agent-installed listener is separately guarded by an explicit experimental opt-in.
  */
-export function supportedRoute(capabilities: HarnessCapabilities, binding: SessionBinding): boolean {
-  return capabilities.support !== 'unsupported'
-    && capabilities.existingSession === 'khala_hosted_resume'
-    && capabilities.harness === binding.harness
-    && (capabilities.busy === 'queue' || capabilities.busy === 'reject');
+export function supportedRoute(
+  capabilities: HarnessCapabilities,
+  binding: SessionBinding,
+  allowExperimentalAgentListener = false,
+): boolean {
+  if (!admitsExistingSessionRoute(capabilities, binding.harness, allowExperimentalAgentListener)) return false;
+  return capabilities.existingSession === 'agent_installed_listener'
+    || capabilities.busy === 'queue'
+    || capabilities.busy === 'reject';
 }
 
 /**

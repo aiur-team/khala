@@ -1,20 +1,77 @@
+import type { ReceiptKind } from '@khala/contracts/delivery/index';
+import { decodeRoomId, type RoomId } from '@khala/contracts/messaging/ids';
 import type { RouteRegistration } from '../../runtime/handler';
+
+export type AgentAuthorization = 'allowed' | 'unauthenticated' | 'forbidden';
+export type AgentStatusSnapshot = Readonly<{
+  generation: number;
+  agents: readonly Readonly<{
+    participantId: string;
+    displayName: string;
+    ownerDisplayName: string;
+    connection: 'connected' | 'stale' | 'offline' | 'unknown';
+    routeLabel: string;
+    lastReceipt: Readonly<{ kind: ReceiptKind; observedAt: string }> | null;
+    installCommand: string;
+  }>[];
+}>;
+
+export type AgentHandlerDependencies = Readonly<{
+  authorize(request: Request, roomId: RoomId): Promise<AgentAuthorization>;
+  status: Readonly<{ snapshot(roomId: RoomId, signal: AbortSignal): Promise<AgentStatusSnapshot> }>;
+}>;
+
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
 
 const unavailableStatus: RouteRegistration = Object.freeze({
   path: '/api/agent/status',
   methods: Object.freeze(['GET']),
   async handle() {
-    return new Response(JSON.stringify({ code: 'feature_unavailable' }), {
-      status: 503,
-      headers: {
-        'content-type': 'application/json',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      },
-    });
+    return json(503, { code: 'feature_unavailable' });
   },
 });
 
-export function registerAgentHandlers(): readonly RouteRegistration[] {
-  return Object.freeze([unavailableStatus]);
+function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
+  return {
+    generation: snapshot.generation,
+    agents: snapshot.agents.map(agent => ({
+      participantId: agent.participantId,
+      displayName: agent.displayName,
+      ownerDisplayName: agent.ownerDisplayName,
+      connection: agent.connection,
+      routeLabel: agent.routeLabel,
+      lastReceipt: agent.lastReceipt === null ? null : {
+        kind: agent.lastReceipt.kind,
+        observedAt: agent.lastReceipt.observedAt,
+      },
+      installCommand: agent.installCommand,
+    })),
+  };
+}
+
+export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): readonly RouteRegistration[] {
+  if (!dependencies) return Object.freeze([unavailableStatus]);
+  const status: RouteRegistration = Object.freeze({
+    path: '/api/agent/status',
+    methods: Object.freeze(['GET']),
+    async handle(request) {
+      const rawRoomId = new URL(request.url).searchParams.get('roomId');
+      const room = decodeRoomId(rawRoomId);
+      if (!room.ok) return json(400, { code: 'invalid_request' });
+      const authorization = await dependencies.authorize(request, room.value);
+      if (authorization === 'unauthenticated') return json(401, { code: 'unauthenticated' });
+      if (authorization !== 'allowed') return json(403, { code: 'forbidden' });
+      return json(200, project(await dependencies.status.snapshot(room.value, request.signal)));
+    },
+  });
+  return Object.freeze([status]);
 }

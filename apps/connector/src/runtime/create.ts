@@ -1,4 +1,4 @@
-import type { SessionBinding } from '@khala/contracts/delivery/index';
+import type { HarnessCapabilities, HarnessPort, SessionBinding } from '@khala/contracts/delivery/index';
 import {
   CONNECTOR_CAPABILITY_IDS,
   type ConnectorCapability,
@@ -33,8 +33,17 @@ export interface RuntimeSubscriptionPort {
   stop(): Promise<void>;
 }
 
+export type RuntimeHarnessInspection = Readonly<{
+  state: 'ready' | 'unsupported' | 'unknown';
+  capabilities?: HarnessCapabilities | null;
+  routeId?: string | null;
+  reason?: 'route_changed' | 'stale_generation' | 'selection_unavailable' | 'closed';
+}>;
+
 export interface RuntimeHarnessPort {
-  inspect(): Promise<Readonly<{ state: 'ready' | 'unsupported' | 'unknown' }>>;
+  inspect(): Promise<RuntimeHarnessInspection>;
+  /** The exact adapter admitted by the latest inspection, for dispatcher composition. */
+  selected?(): HarnessPort | null;
   close(): Promise<void>;
 }
 
@@ -100,11 +109,12 @@ function readinessErrorCode(
   subscription: ReturnType<RuntimeSubscriptionPort['state']>,
   controls: EffectiveControls | undefined,
   harness: 'ready' | 'unsupported' | 'unknown',
+  harnessReason: RuntimeHarnessInspection['reason'] | undefined,
   unavailableCapability: ConnectorCapabilityId | undefined,
 ): string | null {
   if (subscription !== 'ready') return `subscription_${subscription}`;
   if (controls?.state !== 'ready') return `controls_${controls?.state ?? 'unknown'}`;
-  if (harness !== 'ready') return `harness_${harness}`;
+  if (harness !== 'ready') return harnessReason ? `harness_${harnessReason}` : `harness_${harness}`;
   if (unavailableCapability) return `capability_${unavailableCapability}_unavailable`;
   return null;
 }
@@ -119,6 +129,7 @@ export function createConnectorRuntime(
     prerequisites: initialPrerequisites(),
     effectivePolicyVersion: null,
     errorCode: null,
+    harnessCapabilities: null,
   });
   let storage: RuntimeStoragePort | undefined;
   let device: RuntimeDevicePort | undefined;
@@ -130,6 +141,7 @@ export function createConnectorRuntime(
   const startedCapabilities = new Set<ConnectorCapability>();
   let controls: EffectiveControls | undefined;
   let harnessState: 'ready' | 'unsupported' | 'unknown' = 'unknown';
+  let harnessReason: RuntimeHarnessInspection['reason'] | undefined;
   let startPromise: Promise<void> | undefined;
   let stopPromise: Promise<void> | undefined;
   let transition = Promise.resolve();
@@ -153,7 +165,7 @@ export function createConnectorRuntime(
       ...config.requiredCapabilities.filter(id => id !== 'controls'),
     ];
     const unavailableCapabilityId = requiredCapabilityIds.find(id => capabilityState.get(id) !== 'ready');
-    const errorCode = readinessErrorCode(subscriptionState, controls, harnessState, unavailableCapabilityId);
+    const errorCode = readinessErrorCode(subscriptionState, controls, harnessState, harnessReason, unavailableCapabilityId);
     const ready = errorCode === null;
     dispatcher?.setEnabled(ready);
     const capabilityPrerequisites: Partial<Record<RuntimePrerequisite, PrerequisiteState>> = {};
@@ -236,6 +248,7 @@ export function createConnectorRuntime(
     if (activeStorage) await attempt(() => activeStorage.close());
     controls = undefined;
     harnessState = 'unknown';
+    harnessReason = undefined;
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, 'connector runtime teardown failed');
   };
@@ -270,9 +283,11 @@ export function createConnectorRuntime(
 
     if (!harness) harness = await factories.openHarness(activeBinding);
     if (stopRequested) return;
-    harnessState = (await harness.inspect()).state;
+    const inspection = await harness.inspect();
+    harnessState = inspection.state;
+    harnessReason = inspection.reason;
     if (stopRequested) return;
-    update({}, { harness: harnessState });
+    update({ harnessCapabilities: inspection.capabilities ?? null }, { harness: harnessState });
     if (activeSubscription.state() !== 'ready' || harnessState !== 'ready') {
       await reevaluate();
       return;
@@ -318,6 +333,7 @@ export function createConnectorRuntime(
       prerequisites: initialPrerequisites(),
       effectivePolicyVersion: null,
       errorCode: null,
+      harnessCapabilities: null,
     });
     try {
       storage = await factories.openStorage();
@@ -402,6 +418,7 @@ export function createConnectorRuntime(
             binding: null,
             effectivePolicyVersion: null,
             errorCode: terminalTeardownFailure ? 'teardown_failed' : null,
+            harnessCapabilities: null,
           },
           initialPrerequisites(),
         );

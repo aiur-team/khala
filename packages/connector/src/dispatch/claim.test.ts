@@ -261,11 +261,55 @@ describe('eligibility and transactional claim', () => {
   });
 
   describe('harness route', () => {
+    it('submits through a tested native CLI queue route with evidence', async () => {
+      const w = await world();
+      w.harness.route = { existingSession: 'native_cli_queue', immediateNotification: 'native_cli_queue' };
+      const dispatcher = w.dispatcher();
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1']);
+    });
+
+    it('submits through the experimental agent listener only with an explicit opt-in', async () => {
+      const w = await world();
+      w.harness.route = {
+        support: 'experimental',
+        existingSession: 'agent_installed_listener',
+        immediateNotification: 'agent_installed_listener',
+        busy: 'unknown',
+        evidenceRef: null,
+      };
+      const dispatcher = w.dispatcher({ allowExperimentalAgentListener: true });
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1']);
+    });
+
+    it('refuses the experimental agent listener without the opt-in', async () => {
+      const w = await world();
+      w.harness.route = {
+        support: 'experimental',
+        existingSession: 'agent_installed_listener',
+        immediateNotification: 'agent_installed_listener',
+        busy: 'unknown',
+        evidenceRef: null,
+      };
+      const dispatcher = w.dispatcher();
+      const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
+      await dispatcher.enqueue(job);
+      await dispatcher.idle();
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'harness_unsupported' });
+      expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
+    });
+
     it.each([
       ['a route that steers a running turn', { busy: 'steer' }],
       ['a route with unknown busy behavior', { busy: 'unknown' }],
       ['an unsupported route', { support: 'unsupported' }],
+      ['an experimental native route', { support: 'experimental' }],
       ['a route that cannot resume the existing session', { existingSession: 'unknown' }],
+      ['a route without immediate notification', { immediateNotification: 'unknown' }],
       ['a route for another harness', { harness: 'claude' }],
       ['a malformed capability report', null],
       ['a tested route with no evidence, which the decoder rejects', { evidenceRef: null }],

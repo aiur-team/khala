@@ -1,4 +1,4 @@
-import type { SessionBinding } from '@khala/contracts/delivery/index';
+import type { HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
 
 export const RUNTIME_PREREQUISITES = [
   'storage',
@@ -21,6 +21,8 @@ export type RuntimeStatus = Readonly<{
   phase: RuntimePhase;
   prerequisites: Readonly<Record<RuntimePrerequisite, PrerequisiteState>>;
   effectivePolicyVersion: number | null;
+  /** Content-free report for the exact route selected for this binding generation. */
+  harnessCapabilities: HarnessCapabilities | null;
   errorCode: string | null;
 }>;
 

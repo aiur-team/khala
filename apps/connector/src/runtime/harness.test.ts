@@ -52,7 +52,7 @@ describe('runtime harness adapter', () => {
     const harness = realHarness(admitted);
     const adapter = createRuntimeHarnessAdapter(binding, harness);
 
-    await expect(adapter.inspect()).resolves.toEqual({ state: 'ready' });
+    await expect(adapter.inspect()).resolves.toMatchObject({ state: 'ready' });
     expect(harness.inspect).toHaveBeenCalledWith(binding);
 
     await adapter.close();
@@ -65,10 +65,10 @@ describe('runtime harness adapter', () => {
       support: 'experimental',
     }));
 
-    await expect(adapter.inspect()).resolves.toEqual({ state: 'unknown' });
+    await expect(adapter.inspect()).resolves.toMatchObject({ state: 'unknown' });
   });
 
-  it('does not admit tested native CLI queue support', async () => {
+  it('admits tested native CLI queue support', async () => {
     const adapter = createRuntimeHarnessAdapter(binding, realHarness({
       ...admitted,
       adapterVersion: 'native-cli-notification',
@@ -78,7 +78,13 @@ describe('runtime harness adapter', () => {
       evidenceRef: 'docs/evidence/codex-native-cli.md',
     }));
 
-    await expect(adapter.inspect()).resolves.toEqual({ state: 'unknown' });
+    await expect(adapter.inspect()).resolves.toMatchObject({
+      state: 'ready',
+      capabilities: {
+        support: 'tested',
+        existingSession: 'native_cli_queue',
+      },
+    });
   });
 
   it('reports an explicitly unsupported route as unsupported', async () => {
@@ -92,7 +98,7 @@ describe('runtime harness adapter', () => {
       reconcileByReleaseId: 'unsupported',
     }));
 
-    await expect(adapter.inspect()).resolves.toEqual({ state: 'unsupported' });
+    await expect(adapter.inspect()).resolves.toMatchObject({ state: 'unsupported' });
   });
 
   it('maps malformed capability reports to unknown', async () => {
@@ -102,6 +108,6 @@ describe('runtime harness adapter', () => {
       pendingPlaintext: 'must not escape through status',
     }));
 
-    await expect(adapter.inspect()).resolves.toEqual({ state: 'unknown' });
+    await expect(adapter.inspect()).resolves.toMatchObject({ state: 'unknown' });
   });
 });

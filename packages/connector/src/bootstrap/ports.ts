@@ -158,6 +158,8 @@ export type BootstrapPorts = Readonly<{
   devices: ConnectorDevicePort;
   sessions: SessionInspectionPort;
   operations: BootstrapOperationStore;
+  /** Explicit opt-in for the unproven agent-installed listener fallback. Defaults to false. */
+  allowExperimentalAgentListener?: boolean;
   /** Trusted local time in epoch milliseconds. */
   clock?: () => number;
 }>;

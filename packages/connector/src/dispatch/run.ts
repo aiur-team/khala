@@ -109,6 +109,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     const attemptId = deps.newId('attempt');
     const claimed = await ledger.transact(tx => claim(tx, {
       job, capabilities, now: deps.clock.now(), attemptId, workerId: deps.workerId,
+      allowExperimentalAgentListener: deps.allowExperimentalAgentListener ?? false,
     }));
     if (claimed.kind !== 'claimed') return;
 

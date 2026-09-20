@@ -24,9 +24,9 @@ const DESCRIPTOR = {
 };
 const SESSION = { harness: 'codex', sessionId: 'thread-existing-b', generation: 3 };
 const CAPABILITIES: HarnessCapabilities = {
-  v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1', support: 'experimental', existingSession: 'khala_hosted_resume',
+  v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1', support: 'tested', existingSession: 'khala_hosted_resume',
   immediateNotification: 'khala_hosted_idle', busy: 'queue', receiptEvidence: [], reconcileByReleaseId: 'unknown',
-  limits: { maxPayloadBytes: 1024, maxBatchItems: 1 } as never, evidenceRef: null,
+  limits: { maxPayloadBytes: 1024, maxBatchItems: 1 } as never, evidenceRef: 'docs/evidence/codex.md',
 };
 
 function bindingFor(deviceId: string, generation = 3): SessionBinding {
@@ -118,6 +118,53 @@ describe('bootstrapAgent', () => {
     expect(counts).toMatchObject({ reserve: 1, prove: 1, redeem: 1, activate: 1 });
   });
 
+  it('admits a tested native CLI queue route with evidence', async () => {
+    const { ports, counts } = harness({
+      inspect: () => ({
+        kind: 'verified',
+        session: SESSION,
+        capabilities: { ...CAPABILITIES, existingSession: 'native_cli_queue', immediateNotification: 'native_cli_queue' },
+      }),
+    });
+    expect(await bootstrapAgent(INPUT, ports)).toMatchObject({ kind: 'connected' });
+    expect(counts).toMatchObject({ reserve: 1, prove: 1, redeem: 1, activate: 1 });
+  });
+
+  it('admits the experimental agent listener only with an explicit opt-in', async () => {
+    const listener: HarnessCapabilities = {
+      ...CAPABILITIES,
+      support: 'experimental',
+      existingSession: 'agent_installed_listener',
+      immediateNotification: 'agent_installed_listener',
+      busy: 'unknown',
+      evidenceRef: null,
+    };
+    const { ports, counts } = harness({
+      inspect: () => ({ kind: 'verified', session: SESSION, capabilities: listener }),
+    });
+    expect(await bootstrapAgent(INPUT, { ...ports, allowExperimentalAgentListener: true })).toMatchObject({ kind: 'connected' });
+    expect(counts).toMatchObject({ reserve: 1, prove: 1, redeem: 1, activate: 1 });
+  });
+
+  it('refuses the experimental agent listener by default', async () => {
+    const { ports, counts } = harness({
+      inspect: () => ({
+        kind: 'verified',
+        session: SESSION,
+        capabilities: {
+          ...CAPABILITIES,
+          support: 'experimental',
+          existingSession: 'agent_installed_listener',
+          immediateNotification: 'agent_installed_listener',
+          busy: 'unknown',
+          evidenceRef: null,
+        },
+      }),
+    });
+    expect(await bootstrapAgent(INPUT, ports)).toEqual({ kind: 'blocked', code: 'unsupported_harness' });
+    expect(counts).toMatchObject({ reserve: 0, prove: 0, redeem: 0 });
+  });
+
   it('AE1: a retry after a lost response returns the recorded binding without admitting again', async () => {
     const { ports, counts } = harness();
     const first = await bootstrapAgent(INPUT, ports);
@@ -170,9 +217,10 @@ describe('bootstrapAgent', () => {
       [{ kind: 'unsupported' }, 'unsupported_harness'],
       [{ kind: 'missing' }, 'harness_session_missing'],
       [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'unknown' } }, 'unsupported_harness'],
-      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'native_cli_queue' } }, 'unsupported_harness'],
-      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'agent_installed_listener' } }, 'unsupported_harness'],
       [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, support: 'unsupported' } }, 'unsupported_harness'],
+      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, support: 'experimental' } }, 'unsupported_harness'],
+      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, evidenceRef: null } }, 'unsupported_harness'],
+      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, immediateNotification: 'unknown' } }, 'unsupported_harness'],
       [{ kind: 'verified', session: { ...SESSION, sessionId: 'thread-someone-else' }, capabilities: CAPABILITIES }, 'unsupported_harness'],
     ] as const) {
       const { ports, counts } = harness({ inspect: () => inspection as SessionInspection });

@@ -137,6 +137,8 @@ export type DispatchDeps = Readonly<{
   newId(kind: 'attempt' | 'receipt'): string;
   /** Identifies this dispatcher process in the records it claims. */
   workerId: string;
+  /** Explicit opt-in for the unproven agent-installed listener fallback. Defaults to false. */
+  allowExperimentalAgentListener?: boolean;
   /** Called with an error a background pass could not handle; the job stays as persisted. */
   onError?: (error: unknown) => void;
 }>;

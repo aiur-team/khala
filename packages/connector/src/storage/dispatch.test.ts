@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { BindingId, CausalRootId, DeviceId, ReleaseId } from '@khala/contracts/delivery/index';
 import { queuedRecord } from '../dispatch/claim';
 import { testPolicy } from '../dispatch/fixtures/fakes';
@@ -21,6 +21,20 @@ import { SCHEMA_VERSION } from './schema';
 
 const opened: ConnectorStorage[] = [];
 const scratch: string[] = [];
+const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');
+const getgid = Object.getOwnPropertyDescriptor(process, 'getgid');
+
+beforeAll(() => {
+  // The managed test workspace has synthetic ancestor ownership. Path ownership
+  // is covered by open.test.ts; this suite exercises durable dispatch semantics.
+  Object.defineProperty(process, 'getuid', { configurable: true, value: undefined });
+  Object.defineProperty(process, 'getgid', { configurable: true, value: undefined });
+});
+
+afterAll(() => {
+  if (getuid) Object.defineProperty(process, 'getuid', getuid);
+  if (getgid) Object.defineProperty(process, 'getgid', getgid);
+});
 
 afterEach(async () => {
   await Promise.all(opened.splice(0).map(storage => storage.close()));
@@ -193,6 +207,24 @@ describe('durable dispatch storage', () => {
     expect(await dispatch.payloads.read('missing-payload', 4)).toBeNull();
   });
 
+  it('does not expose a pending payload before a release row exists', async () => {
+    const { state, storage } = await fresh();
+    const pending = pendingInput('event-pending-only', 'pending plaintext');
+    expect(await storage.persistPending(pending)).toEqual({ kind: 'inserted' });
+
+    await storage.close();
+    const db = new DatabaseSync(path.join(state, LEDGER_FILE), { readOnly: true });
+    const row = db.prepare('SELECT payload_ref FROM pending WHERE event_id = ?')
+      .get(pending.event.eventId) as { payload_ref: string } | undefined;
+    db.close();
+    expect(row).toBeDefined();
+
+    const reopened = await openConnectorStorage({ directory: state, mode: 'existing', limits });
+    opened.push(reopened);
+    const dispatch = createConnectorDispatchStorage(reopened);
+    await expect(dispatch.payloads.read(row!.payload_ref, limits.maxPayloadBytes)).resolves.toBeNull();
+  });
+
   it('migrates a v1 ledger without losing pending or release state', async () => {
     const { state, storage } = await fresh();
     await storage.persistPending(pendingInput('event-migrate', 'preserve me'));
@@ -207,6 +239,7 @@ describe('durable dispatch storage', () => {
 
     const db = new DatabaseSync(path.join(state, LEDGER_FILE));
     db.exec(`
+      DROP TABLE harness_route_selections;
       DROP TABLE dispatch_sequence;
       DROP TABLE dispatch_causal_counts;
       DROP TABLE dispatch_records;

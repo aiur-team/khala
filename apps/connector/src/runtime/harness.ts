@@ -1,5 +1,6 @@
 import {
   decodeHarnessCapabilities,
+  type HarnessCapabilities,
   type HarnessPort,
   type SessionBinding,
 } from '@khala/contracts/delivery/index';
@@ -7,30 +8,45 @@ import type { RuntimeHarnessPort } from './create';
 
 /**
  * Projects one real harness route into the runtime's content-free readiness view.
- * Only the evidence-backed hosted-resume route may make dispatch eligible.
+ * Any tested, evidence-backed existing-session route may make dispatch eligible.
  */
 export function createRuntimeHarnessAdapter(
   binding: SessionBinding,
   harness: HarnessPort,
 ): RuntimeHarnessPort {
+  let selected: HarnessPort | null = null;
   return {
     async inspect() {
       const decoded = decodeHarnessCapabilities(await harness.inspect(binding));
-      if (!decoded.ok) return { state: 'unknown' };
+      if (!decoded.ok) {
+        selected = null;
+        return { state: 'unknown', capabilities: null };
+      }
 
       const capabilities = decoded.value;
       if (capabilities.support === 'unsupported' || capabilities.existingSession === 'unsupported') {
-        return { state: 'unsupported' };
+        selected = null;
+        return { state: 'unsupported', capabilities };
       }
       if (
         capabilities.support === 'tested'
-        && capabilities.existingSession === 'khala_hosted_resume'
+        && isDeliverableRoute(capabilities)
         && capabilities.harness === binding.harness
       ) {
-        return { state: 'ready' };
+        selected = harness;
+        return { state: 'ready', capabilities };
       }
-      return { state: 'unknown' };
+      selected = null;
+      return { state: 'unknown', capabilities };
     },
+    selected: () => selected,
     close: () => harness.close(),
   };
+}
+
+export function isDeliverableRoute(capabilities: HarnessCapabilities): boolean {
+  return capabilities.existingSession !== 'unknown'
+    && capabilities.existingSession !== 'unsupported'
+    && capabilities.immediateNotification !== 'unknown'
+    && capabilities.immediateNotification !== 'unsupported';
 }
