@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   decodeDeliveryLimits, type DeliveryReceipt,
   type DeviceId,
@@ -22,6 +23,7 @@ import {
   openConnectorStorage,
   type ConnectorStorage,
 } from '../../../../packages/connector/src/storage/open';
+import { LEDGER_FILE } from '../../../../packages/connector/src/storage/leases';
 import { sha256Digest } from '../../../../packages/connector/src/storage/payloads';
 import { createClaudeHarness } from '../../../../packages/harnesses/src/claude/index';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -285,6 +287,17 @@ describe('real storage runtime composition', () => {
         .toMatchObject({ state: 'accepted' });
       await first.stop();
 
+      const db = new DatabaseSync(path.join(state, LEDGER_FILE), { readOnly: true });
+      let pendingPayloadRefs: string[];
+      try {
+        pendingPayloadRefs = (db.prepare('SELECT payload_ref FROM pending ORDER BY payload_ref').all() as {
+          payload_ref: string;
+        }[]).map(row => row.payload_ref);
+      } finally {
+        db.close();
+      }
+      expect(pendingPayloadRefs).toHaveLength(2);
+
       const restarted = createConnectorRuntime({ requiredCapabilities: [] }, factories);
       await restarted.start();
       expect(restarted.status()).toMatchObject({ phase: 'ready', binding });
@@ -298,6 +311,12 @@ describe('real storage runtime composition', () => {
         .toMatchObject({ state: 'outcome_unknown' });
       expect(await createConnectorDispatchStorage(storage!).ledger.transact(tx => tx.record(acceptedJob.releaseId)))
         .toMatchObject({ state: 'accepted' });
+      const restartedDispatch = createConnectorDispatchStorage(storage!);
+      for (const payloadRef of pendingPayloadRefs) {
+        expect(await storage!.ledger.transaction(tx => tx.readPayloadReferences(payloadRef)))
+          .toEqual({ pending: 1, releases: 0 });
+        expect(await restartedDispatch.payloads.read(payloadRef, 1024)).toBeNull();
+      }
       await restarted.stop();
     } finally {
       if (getuid) Object.defineProperty(process, 'getuid', getuid);
