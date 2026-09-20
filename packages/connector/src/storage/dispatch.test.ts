@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { BindingId, CausalRootId, ReleaseId } from '@khala/contracts/delivery/index';
+import type { BindingId, CausalRootId, DeviceId, ReleaseId } from '@khala/contracts/delivery/index';
 import { queuedRecord } from '../dispatch/claim';
 import { testPolicy } from '../dispatch/fixtures/fakes';
 import type { DispatchRecord } from '../dispatch/types';
@@ -74,6 +74,19 @@ function hasCommandIdLeadingIndex(state: string): boolean {
 }
 
 describe('durable dispatch storage', () => {
+  it('fences dispatch adapters after a device identity conflict', async () => {
+    const { storage } = await fresh();
+    const identity = { deviceId: 'device_connector_b' as DeviceId, fingerprint: 'device-fingerprint-1' };
+    expect(await storage.bindDeviceIdentity(identity)).toEqual({ kind: 'bound' });
+    expect(await storage.bindDeviceIdentity({ ...identity, fingerprint: 'device-fingerprint-2' }))
+      .toEqual({ kind: 'conflict', code: 'identity_mismatch' });
+
+    const dispatch = createConnectorDispatchStorage(storage);
+    await expect(dispatch.ledger.transact(tx => tx.nextSeq()))
+      .rejects.toMatchObject({ code: 'identity_mismatch' });
+    await expect(dispatch.reconciliationReleaseIds()).rejects.toMatchObject({ code: 'identity_mismatch' });
+  });
+
   it('persists every DispatchTx value in queue order across restart', async () => {
     const { state, storage } = await fresh();
     let dispatch = createConnectorDispatchStorage(storage);

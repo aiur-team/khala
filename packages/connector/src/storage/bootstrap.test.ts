@@ -113,6 +113,18 @@ describe('bootstrap persistence', () => {
     })).toEqual({ kind: 'bound' });
   });
 
+  it('fences bootstrap adapters after a device identity conflict', async () => {
+    const { storage } = await fresh();
+    const identity = { deviceId: 'device_connector_b' as DeviceId, fingerprint: 'device-fingerprint-1' };
+    expect(await storage.bindDeviceIdentity(identity)).toEqual({ kind: 'bound' });
+    expect(await storage.bindDeviceIdentity({ ...identity, fingerprint: 'device-fingerprint-2' }))
+      .toEqual({ kind: 'conflict', code: 'identity_mismatch' });
+
+    await expect(createBootstrapOperationStore(storage).load('bootstrap-operation-1'))
+      .rejects.toMatchObject({ code: 'identity_mismatch' });
+    await expect(loadOrCreateBootstrapSigner(storage)).rejects.toMatchObject({ code: 'identity_mismatch' });
+  });
+
   it('rejects malformed stored operation state without returning its contents', async () => {
     const { storage } = await fresh();
     const store = createBootstrapOperationStore(storage);

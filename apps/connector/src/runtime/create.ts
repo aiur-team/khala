@@ -48,7 +48,6 @@ export type BootstrapResult = Readonly<{ binding: SessionBinding }>;
 export type ConnectorRuntimeConfig = Readonly<{
   requiredCapabilities: readonly ConnectorCapabilityId[];
   clock?: () => number;
-  protectedDependencies?: Readonly<Partial<Record<ConnectorCapabilityId, unknown>>>;
 }>;
 
 export interface ConnectorRuntimeFactories {
@@ -135,6 +134,7 @@ export function createConnectorRuntime(
   let stopPromise: Promise<void> | undefined;
   let transition = Promise.resolve();
   let stopRequested = false;
+  let terminalTeardownFailure: Readonly<{ error: unknown }> | undefined;
 
   const update = (changes: Partial<RuntimeStatus>, prerequisites?: Partial<RuntimeStatus['prerequisites']>) => {
     current = copyStatus({
@@ -181,6 +181,25 @@ export function createConnectorRuntime(
     const pending = transition.then(task, task);
     transition = pending.catch(() => undefined);
     return pending;
+  };
+
+  const recordReadinessFailure = (error: unknown): void => {
+    if (current.phase === 'stopping' || current.phase === 'stopped') return;
+    dispatcher?.setEnabled(false);
+    if (error instanceof RuntimePrerequisiteError) {
+      update(
+        { phase: 'degraded', errorCode: error.code },
+        { [error.prerequisite]: error.state, dispatch: 'blocked' },
+      );
+      return;
+    }
+    update({ phase: 'degraded', errorCode: 'readiness_failed' }, { dispatch: 'blocked' });
+  };
+
+  const scheduleReadinessBarrier = (): void => {
+    dispatcher?.setEnabled(false);
+    update({}, { dispatch: 'blocked' });
+    void enqueueTransition(runReadinessBarrier).catch(recordReadinessFailure);
   };
 
   const teardown = async (): Promise<void> => {
@@ -277,10 +296,8 @@ export function createConnectorRuntime(
         ledger: activeStorage,
         dispatcher,
         clock: config.clock ?? Date.now,
-        protectedDependencies: config.protectedDependencies ?? {},
         prerequisiteChanged: () => {
-          dispatcher?.setEnabled(false);
-          void enqueueTransition(runReadinessBarrier);
+          scheduleReadinessBarrier();
         },
       }));
     }
@@ -319,8 +336,7 @@ export function createConnectorRuntime(
       update({}, { subscription: subscription.state() });
       unsubscribe = subscription.onStateChange(state => {
         update({}, { subscription: state });
-        dispatcher?.setEnabled(false);
-        void enqueueTransition(runReadinessBarrier);
+        scheduleReadinessBarrier();
       });
       if (subscription.state() !== 'ready') {
         update({ phase: 'degraded', errorCode: `subscription_${subscription.state()}` });
@@ -335,14 +351,18 @@ export function createConnectorRuntime(
       update({ phase: 'stopping' });
       try {
         await teardown();
+      } catch (teardownError) {
+        terminalTeardownFailure = { error: teardownError };
+        throw teardownError;
       } finally {
-        update({ phase: 'stopped' });
+        update({ phase: 'stopped', errorCode: terminalTeardownFailure ? 'teardown_failed' : null });
       }
       throw error;
     }
   };
 
   const start = (): Promise<void> => {
+    if (terminalTeardownFailure) return Promise.reject(terminalTeardownFailure.error);
     if (stopPromise) {
       const activeStop = stopPromise;
       return activeStop.then(start);
@@ -360,7 +380,11 @@ export function createConnectorRuntime(
 
   const stop = (): Promise<void> => {
     if (stopPromise) return stopPromise;
-    if (current.phase === 'stopped' && !startPromise) return Promise.resolve();
+    if (current.phase === 'stopped' && !startPromise) {
+      return terminalTeardownFailure === undefined
+        ? Promise.resolve()
+        : Promise.reject(terminalTeardownFailure.error);
+    }
     stopRequested = true;
     update({ phase: 'stopping' });
     const pending = (async () => {
@@ -368,9 +392,17 @@ export function createConnectorRuntime(
       await transition;
       try {
         await teardown();
+      } catch (error) {
+        terminalTeardownFailure = { error };
+        throw error;
       } finally {
         update(
-          { phase: 'stopped', binding: null, effectivePolicyVersion: null, errorCode: null },
+          {
+            phase: 'stopped',
+            binding: null,
+            effectivePolicyVersion: null,
+            errorCode: terminalTeardownFailure ? 'teardown_failed' : null,
+          },
           initialPrerequisites(),
         );
       }

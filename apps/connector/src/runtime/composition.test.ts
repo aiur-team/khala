@@ -2,19 +2,27 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  decodeDeliveryLimits,
+  decodeDeliveryLimits, type DeliveryReceipt,
   type DeviceId,
+  type HarnessPort,
   type SessionBinding,
 } from '@khala/contracts/delivery/index';
+import { capabilities, receipt, testPolicy } from '../../../../packages/connector/src/dispatch/fixtures/fakes';
+import { createDispatcher } from '../../../../packages/connector/src/dispatch/run';
+import type { Dispatcher, DispatchLedger } from '../../../../packages/connector/src/dispatch/types';
 import {
   createBootstrapOperationStore,
   loadOrCreateBootstrapSigner,
 } from '../../../../packages/connector/src/storage/bootstrap';
 import { createConnectorDispatchStorage } from '../../../../packages/connector/src/storage/dispatch';
 import {
+  approval, commandRecord, content, eventRef, pendingInput, release,
+} from '../../../../packages/connector/src/storage/fixtures/fakes';
+import {
   openConnectorStorage,
   type ConnectorStorage,
 } from '../../../../packages/connector/src/storage/open';
+import { sha256Digest } from '../../../../packages/connector/src/storage/payloads';
 import { createClaudeHarness } from '../../../../packages/harnesses/src/claude/index';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { unavailableCapability, type ConnectorCapability } from './capabilities';
@@ -67,6 +75,12 @@ describe('real storage runtime composition', () => {
       let storage: ConnectorStorage | undefined;
       const signerThumbprints: string[] = [];
       const eligibility: boolean[] = [];
+      const submittedPayloads: Uint8Array[] = [];
+      let submissions = 0;
+      let reconciliations = 0;
+      let failPersistence = 0;
+      let nextId = 0;
+      let activeDispatcher: Dispatcher | undefined;
 
       const factories: ConnectorRuntimeFactories = {
         async openStorage() {
@@ -120,12 +134,55 @@ describe('real storage runtime composition', () => {
         },
         async openDispatcher() {
           const dispatch = createConnectorDispatchStorage(storage!);
+          const ledger: DispatchLedger = {
+            async transact(work) {
+              if (failPersistence > 0) {
+                failPersistence -= 1;
+                throw new Error('injected receipt persistence failure');
+              }
+              return dispatch.ledger.transact(work);
+            },
+          };
+          const harness: HarnessPort = {
+            async inspect() {
+              return capabilities('queue', { harness: binding.harness });
+            },
+            async notify() {},
+            async submit(input): Promise<DeliveryReceipt> {
+              submissions += 1;
+              submittedPayloads.push(input.payload.slice());
+              // Native acceptance succeeded, but both receipt persistence and the
+              // fallback unknown marker fail as if the process died at this boundary.
+              failPersistence = 2;
+              return receipt(input.job, 'harness_queued');
+            },
+            async reconcile() {
+              reconciliations += 1;
+              return null;
+            },
+            async close() {},
+          };
+          activeDispatcher = createDispatcher({
+            ledger,
+            harness,
+            approvals: dispatch.approvals,
+            payloads: dispatch.payloads,
+            digest: async bytes => sha256Digest(bytes),
+            clock: { now: () => new Date('2026-09-19T12:00:00.000Z') },
+            newId: kind => `${kind}-runtime-${++nextId}`,
+            workerId: 'worker-runtime-1',
+          });
           return {
             async reconcilePending() {
-              expect(await dispatch.reconciliationReleaseIds()).toEqual([]);
+              for (const releaseId of await dispatch.reconciliationReleaseIds()) {
+                await activeDispatcher!.reconcile(releaseId);
+              }
             },
-            setEnabled(enabled) { eligibility.push(enabled); },
-            async stop() {},
+            setEnabled(enabled) {
+              eligibility.push(enabled);
+              if (enabled) activeDispatcher!.wake();
+            },
+            stop: () => activeDispatcher!.stop(),
           };
         },
         registerCapabilities: () => [
@@ -138,6 +195,43 @@ describe('real storage runtime composition', () => {
       const first = createConnectorRuntime({ requiredCapabilities: [] }, factories);
       await first.start();
       expect(first.status()).toMatchObject({ phase: 'ready', binding });
+
+      const dispatch = createConnectorDispatchStorage(storage!);
+      expect(await dispatch.applyEffectivePolicy({
+        binding,
+        policy: testPolicy({ version: 1, armedAt: 1 }),
+      })).toEqual({ kind: 'applied' });
+      const body = 'approved synthetic runtime payload';
+      const event = eventRef('event-runtime-1', body);
+      await storage!.persistPending({
+        ...pendingInput('event-runtime-1', body),
+        key: {
+          roomId: event.roomId,
+          eventId: event.eventId,
+          recipientBindingId: binding.bindingId,
+          recipientGeneration: binding.generation,
+        },
+      });
+      const command = {
+        ...approval('approve-runtime-1', [event]),
+        bindingId: binding.bindingId,
+        expectedBindingGeneration: binding.generation,
+      };
+      const payload = content(body);
+      const job = release(command, binding, payload, 'release-runtime-1');
+      const revision = await storage!.ledger.transaction(tx => tx.ledgerRevision());
+      expect(await storage!.ledger.transaction(tx => tx.putRelease({
+        command: { ...commandRecord(command, job.releaseId), ownerId: binding.ownerId },
+        job,
+        payload,
+        expectedLedgerRevision: revision,
+      }))).toEqual({ kind: 'committed' });
+      expect(await activeDispatcher!.enqueue(job)).toBe('queued');
+      await activeDispatcher!.idle();
+      expect(submissions).toBe(1);
+      expect(submittedPayloads).toEqual([payload]);
+      expect(await dispatch.ledger.transact(tx => tx.record(job.releaseId)))
+        .toMatchObject({ state: 'dispatching' });
       await first.stop();
 
       const restarted = createConnectorRuntime({ requiredCapabilities: [] }, factories);
@@ -146,6 +240,10 @@ describe('real storage runtime composition', () => {
       expect(signerThumbprints).toHaveLength(2);
       expect(new Set(signerThumbprints).size).toBe(1);
       expect(eligibility.filter(Boolean)).toHaveLength(2);
+      expect(submissions).toBe(1);
+      expect(reconciliations).toBe(1);
+      expect(await createConnectorDispatchStorage(storage!).ledger.transact(tx => tx.record(job.releaseId)))
+        .toMatchObject({ state: 'outcome_unknown' });
       await restarted.stop();
     } finally {
       if (getuid) Object.defineProperty(process, 'getuid', getuid);

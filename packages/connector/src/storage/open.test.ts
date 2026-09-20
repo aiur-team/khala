@@ -362,6 +362,7 @@ describe('openConnectorStorage', () => {
     expect(await storage.bindDeviceIdentity({ ...identity, fingerprint: 'fp_2' })).toEqual({ kind: 'conflict', code: 'identity_mismatch' });
     await expect(storage.readCursor('s')).rejects.toMatchObject({ code: 'identity_mismatch' });
     await expect(storage.bindDeviceIdentity(identity)).rejects.toMatchObject({ code: 'identity_mismatch' });
+    await expect(recoverConnectorStorage(storage)).rejects.toMatchObject({ code: 'identity_mismatch' });
     await storage.close();
     const reopened = await open(state, 'existing');
     expect(await reopened.bindDeviceIdentity(identity)).toEqual({ kind: 'matched' });

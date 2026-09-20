@@ -244,6 +244,39 @@ describe('createConnectorRuntime', () => {
     expect(events.filter(event => event.endsWith('.start'))).toEqual([]);
   });
 
+  it('reports a classified reconnect failure and keeps dispatch blocked', async () => {
+    const events: string[] = [];
+    const factories = recordingFactories(events);
+    let state: 'ready' | 'offline' = 'ready';
+    let notify: ((next: 'ready' | 'offline') => void) | undefined;
+    let controlsLoads = 0;
+    factories.openSubscription = async () => ({
+      state: () => state,
+      onStateChange(listener) { notify = listener; return () => undefined; },
+      stop: async () => undefined,
+    });
+    factories.loadControls = async () => {
+      controlsLoads += 1;
+      if (controlsLoads > 1) throw new RuntimePrerequisiteError('controls', 'offline', 'controls_unavailable');
+      return { state: 'ready', version: 7 };
+    };
+    const runtime = createConnectorRuntime({ requiredCapabilities: [] }, factories);
+    await runtime.start();
+
+    state = 'offline';
+    notify?.(state);
+    await vi.waitFor(() => expect(runtime.status().phase).toBe('degraded'));
+    state = 'ready';
+    notify?.(state);
+    await vi.waitFor(() => expect(runtime.status().errorCode).toBe('controls_unavailable'));
+
+    expect(runtime.status()).toMatchObject({
+      phase: 'degraded',
+      prerequisites: { controls: 'offline', dispatch: 'blocked' },
+    });
+    expect(events.at(-1)).toBe('dispatch.enabled:false');
+  });
+
   it('requires the controls capability even when it is not configured explicitly', async () => {
     const events: string[] = [];
     const factories = recordingFactories(events);
@@ -331,6 +364,9 @@ describe('createConnectorRuntime', () => {
       'storage.close',
     ]);
     expect(runtime.status().phase).toBe('stopped');
+    expect(runtime.status().errorCode).toBe('teardown_failed');
+    await expect(runtime.start()).rejects.toThrow('recovery close failed');
+    expect(events.filter(event => event === 'device.bind')).toHaveLength(0);
   });
 
   it('waits for an in-flight stop before coalescing a fresh start', async () => {

@@ -66,7 +66,8 @@ const count = (value: unknown): number => (value as { n: number }).n;
  */
 export async function recoverConnectorStorage(storage: ConnectorStorage): Promise<RecoveryReport> {
   const internals = storageInternals.get(storage);
-  if (!internals || !internals.isOpen()) throw new StorageError('closed');
+  if (!internals) throw new StorageError('closed');
+  internals.assertUsable();
   try {
     return inspect(internals.ctx.db);
   } catch (error) {

@@ -675,6 +675,17 @@ describe('release refusals', () => {
       .toEqual({ kind: 'conflict', code: 'invalid_command_result' });
   });
 
+  it('refuses a release whose embedded approval provenance differs from its command', async () => {
+    const { put, command, job } = await releasable();
+    const record = commandRecord(command, job.releaseId);
+    const mismatched = {
+      ...record,
+      command: { ...command, expectedPolicyVersion: command.expectedPolicyVersion + 1 },
+    };
+
+    expect(await put({ command: mismatched })).toEqual({ kind: 'conflict', code: 'command_mismatch' });
+  });
+
   it('refuses a job whose event reference differs from the pending record', async () => {
     const { put, payload } = await releasable();
     const changed = { ...eventRef('event_7', 'please review'), authorDeviceId: 'device_z' as DeviceId };

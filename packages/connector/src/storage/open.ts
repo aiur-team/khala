@@ -79,7 +79,11 @@ export interface ConnectorStorage {
 }
 
 /** @internal Exposes the underlying connection to recovery in this directory. */
-export const storageInternals = new WeakMap<ConnectorStorage, { ctx: LedgerContext; isOpen: () => boolean }>();
+export const storageInternals = new WeakMap<ConnectorStorage, {
+  ctx: LedgerContext;
+  isOpen: () => boolean;
+  assertUsable: () => void;
+}>();
 
 export async function openConnectorStorage(options: ConnectorStorageOptions): Promise<ConnectorStorage> {
   const { maxBytes } = options;
@@ -206,7 +210,7 @@ export async function openConnectorStorage(options: ConnectorStorageOptions): Pr
       db.close();
     },
   };
-  storageInternals.set(storage, { ctx, isOpen: () => open });
+  storageInternals.set(storage, { ctx, isOpen: () => open, assertUsable: guard });
   return storage;
 }
 

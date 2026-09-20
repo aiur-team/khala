@@ -25,7 +25,6 @@ export interface ConnectorCapabilityContext {
   readonly ledger: RuntimeLedgerPort;
   readonly dispatcher: RuntimeDispatcherPort;
   readonly clock: () => number;
-  readonly protectedDependencies: Readonly<Partial<Record<ConnectorCapabilityId, unknown>>>;
   prerequisiteChanged(id: ConnectorCapabilityId): void;
 }
 

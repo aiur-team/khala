@@ -12,13 +12,18 @@ const context = {
     stop: async () => undefined,
   },
   clock: () => 0,
-  protectedDependencies: {},
   prerequisiteChanged: () => undefined,
 } satisfies ConnectorCapabilityContext;
 
+const dependencies = {
+  review: {},
+  controls: {},
+  recovery: {},
+} as const;
+
 describe('connector capability registry', () => {
   it('has one finite unavailable placeholder for every feature', () => {
-    const capabilities = registerConnectorCapabilities(context);
+    const capabilities = registerConnectorCapabilities(context, dependencies);
 
     expect(capabilities.map(capability => [capability.id, capability.state])).toEqual([
       ['review', 'unavailable'],
@@ -28,7 +33,7 @@ describe('connector capability registry', () => {
   });
 
   it('rejects duplicate or missing registrations', () => {
-    const capabilities = registerConnectorCapabilities(context);
+    const capabilities = registerConnectorCapabilities(context, dependencies);
 
     expect(() => validateCapabilityRegistry(capabilities.slice(0, 2))).toThrow(/missing capability: recovery/);
     expect(() => validateCapabilityRegistry([...capabilities, capabilities[0]!])).toThrow(/duplicate capability: review/);

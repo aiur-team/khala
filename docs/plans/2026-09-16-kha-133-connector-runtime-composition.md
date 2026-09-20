@@ -154,14 +154,17 @@ interface ConnectorCapabilityContext {
   readonly ledger: RuntimeLedgerPort;
   readonly dispatcher: RuntimeDispatcherPort;
   readonly clock: () => number;
-  readonly protectedDependencies: Readonly<Partial<
-    Record<ConnectorCapabilityId, unknown>
-  >>;
   prerequisiteChanged(id: ConnectorCapabilityId): void;
+}
+
+interface ConnectorCapabilityDependencies {
+  readonly review: ReviewCapabilityDependencies;
+  readonly controls: ControlsCapabilityDependencies;
+  readonly recovery: RecoveryCapabilityDependencies;
 }
 ```
 
-`registerReview`, `registerControls`, and `registerRecovery` each accept `ConnectorCapabilityContext` and return exactly one matching handle. Controls is required for global dispatch readiness in this base runtime. Unavailable review or recovery blocks only that feature's readiness until its owning ticket replaces the placeholder; feature stop closes only its own observers.
+The finite registry passes each `registerReview`, `registerControls`, and `registerRecovery` function its own typed dependency object alongside `ConnectorCapabilityContext`; there is no untyped service locator. Each function returns exactly one matching handle. Controls is required for global dispatch readiness in this base runtime. Unavailable review or recovery blocks only that feature's readiness until its owning ticket replaces the placeholder; feature stop closes only its own observers.
 
 ```mermaid
 flowchart TB

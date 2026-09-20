@@ -19,7 +19,8 @@ const OPERATION_KEYS = ['binding', 'deviceId', 'fingerprint', 'operationId', 'ph
 
 function context(storage: ConnectorStorage) {
   const internals = storageInternals.get(storage);
-  if (!internals || !internals.isOpen()) throw new StorageError('closed');
+  if (!internals) throw new StorageError('closed');
+  internals.assertUsable();
   return internals.ctx;
 }
 
