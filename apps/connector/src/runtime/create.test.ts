@@ -121,6 +121,28 @@ describe('createConnectorRuntime', () => {
     expect(events).not.toContain('dispatch.enabled:true');
   });
 
+  it.each(['route_changed', 'stale_generation', 'selection_unavailable'] as const)(
+    'keeps %s harness selection fail-closed',
+    async reason => {
+      const events: string[] = [];
+      const factories = recordingFactories(events);
+      factories.openHarness = async () => ({
+        inspect: async () => ({ state: 'unknown', reason }),
+        close: async () => undefined,
+      });
+      const runtime = createConnectorRuntime({ requiredCapabilities: [] }, factories);
+
+      await runtime.start();
+
+      expect(runtime.status()).toMatchObject({
+        phase: 'degraded',
+        errorCode: `harness_${reason}`,
+        prerequisites: { harness: 'unknown', dispatch: 'blocked' },
+      });
+      expect(events).not.toContain('dispatch.enabled:true');
+    },
+  );
+
   it.each(['blocked', 'unknown'] as const)(
     'keeps %s controls degraded and never enables dispatch',
     async state => {
