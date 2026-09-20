@@ -31,6 +31,7 @@ import {
   type ConnectorRuntimeFactories,
   type RuntimeStoragePort,
 } from './create';
+import { createRuntimeHarnessAdapter } from './harness';
 
 const decodedLimits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
 if (!decodedLimits.ok) throw new Error('invalid test limits');
@@ -76,11 +77,14 @@ describe('real storage runtime composition', () => {
       const signerThumbprints: string[] = [];
       const eligibility: boolean[] = [];
       const submittedPayloads: Uint8Array[] = [];
+      const submittedReleaseIds: string[] = [];
       let submissions = 0;
       let reconciliations = 0;
       let failPersistence = 0;
       let nextId = 0;
       let activeDispatcher: Dispatcher | undefined;
+      const unknownReleaseId = 'release-runtime-unknown';
+      const acceptedReleaseId = 'release-runtime-accepted';
 
       const factories: ConnectorRuntimeFactories = {
         async openStorage() {
@@ -151,9 +155,12 @@ describe('real storage runtime composition', () => {
             async submit(input): Promise<DeliveryReceipt> {
               submissions += 1;
               submittedPayloads.push(input.payload.slice());
-              // Native acceptance succeeded, but both receipt persistence and the
-              // fallback unknown marker fail as if the process died at this boundary.
-              failPersistence = 2;
+              submittedReleaseIds.push(input.job.releaseId);
+              if (input.job.releaseId === unknownReleaseId) {
+                // Native acceptance succeeded, but both receipt persistence and the
+                // fallback unknown marker fail as if the process died at this boundary.
+                failPersistence = 2;
+              }
               return receipt(input.job, 'harness_queued');
             },
             async reconcile() {
@@ -174,7 +181,12 @@ describe('real storage runtime composition', () => {
           });
           return {
             async reconcilePending() {
-              for (const releaseId of await dispatch.reconciliationReleaseIds()) {
+              const releaseIds = await dispatch.reconciliationReleaseIds();
+              // On restart, an accepted record coexists with the ambiguous record.
+              // Pin the exact candidates before delegation so accepted work can
+              // never be re-reconciled by a widened storage query.
+              if (opens > 1) expect(releaseIds).toEqual([unknownReleaseId]);
+              for (const releaseId of releaseIds) {
                 await activeDispatcher!.reconcile(releaseId);
               }
             },
@@ -201,10 +213,12 @@ describe('real storage runtime composition', () => {
         binding,
         policy: testPolicy({ version: 1, armedAt: 1 }),
       })).toEqual({ kind: 'applied' });
-      const body = 'approved synthetic runtime payload';
-      const event = eventRef('event-runtime-1', body);
+      const pendingSentinel = 'pending plaintext must never reach the harness';
+      const pendingPlaintext = content(pendingSentinel);
+      const releasedPayload = content('authenticated released runtime payload');
+      const event = eventRef('event-runtime-1', pendingSentinel);
       await storage!.persistPending({
-        ...pendingInput('event-runtime-1', body),
+        ...pendingInput('event-runtime-1', pendingSentinel),
         key: {
           roomId: event.roomId,
           eventId: event.eventId,
@@ -217,21 +231,58 @@ describe('real storage runtime composition', () => {
         bindingId: binding.bindingId,
         expectedBindingGeneration: binding.generation,
       };
-      const payload = content(body);
-      const job = release(command, binding, payload, 'release-runtime-1');
+      const job = release(command, binding, releasedPayload, unknownReleaseId);
       const revision = await storage!.ledger.transaction(tx => tx.ledgerRevision());
       expect(await storage!.ledger.transaction(tx => tx.putRelease({
         command: { ...commandRecord(command, job.releaseId), ownerId: binding.ownerId },
         job,
-        payload,
+        payload: releasedPayload,
         expectedLedgerRevision: revision,
       }))).toEqual({ kind: 'committed' });
       expect(await activeDispatcher!.enqueue(job)).toBe('queued');
       await activeDispatcher!.idle();
       expect(submissions).toBe(1);
-      expect(submittedPayloads).toEqual([payload]);
+      expect(submittedPayloads).toEqual([releasedPayload]);
+      expect(submittedPayloads).not.toContainEqual(pendingPlaintext);
       expect(await dispatch.ledger.transact(tx => tx.record(job.releaseId)))
         .toMatchObject({ state: 'dispatching' });
+
+      const acceptedPendingBody = 'second pending plaintext must remain connector-local';
+      const acceptedEvent = eventRef('event-runtime-accepted', acceptedPendingBody);
+      await storage!.persistPending({
+        ...pendingInput('event-runtime-accepted', acceptedPendingBody),
+        key: {
+          roomId: acceptedEvent.roomId,
+          eventId: acceptedEvent.eventId,
+          recipientBindingId: binding.bindingId,
+          recipientGeneration: binding.generation,
+        },
+      });
+      const acceptedCommand = {
+        ...approval('approve-runtime-accepted', [acceptedEvent]),
+        bindingId: binding.bindingId,
+        expectedBindingGeneration: binding.generation,
+      };
+      const acceptedPayload = content('authenticated accepted runtime payload');
+      const acceptedJob = release(acceptedCommand, binding, acceptedPayload, acceptedReleaseId);
+      const acceptedRevision = await storage!.ledger.transaction(tx => tx.ledgerRevision());
+      expect(await storage!.ledger.transaction(tx => tx.putRelease({
+        command: {
+          ...commandRecord(acceptedCommand, acceptedJob.releaseId),
+          ownerId: binding.ownerId,
+        },
+        job: acceptedJob,
+        payload: acceptedPayload,
+        expectedLedgerRevision: acceptedRevision,
+      }))).toEqual({ kind: 'committed' });
+      expect(await activeDispatcher!.enqueue(acceptedJob)).toBe('queued');
+      await activeDispatcher!.idle();
+      expect(submissions).toBe(2);
+      expect(submittedPayloads).toEqual([releasedPayload, acceptedPayload]);
+      expect(submittedPayloads).not.toContainEqual(pendingPlaintext);
+      expect(submittedPayloads).not.toContainEqual(content(acceptedPendingBody));
+      expect(await dispatch.ledger.transact(tx => tx.record(acceptedJob.releaseId)))
+        .toMatchObject({ state: 'accepted' });
       await first.stop();
 
       const restarted = createConnectorRuntime({ requiredCapabilities: [] }, factories);
@@ -240,10 +291,13 @@ describe('real storage runtime composition', () => {
       expect(signerThumbprints).toHaveLength(2);
       expect(new Set(signerThumbprints).size).toBe(1);
       expect(eligibility.filter(Boolean)).toHaveLength(2);
-      expect(submissions).toBe(1);
+      expect(submissions).toBe(2);
+      expect(submittedReleaseIds.filter(releaseId => releaseId === acceptedReleaseId)).toHaveLength(1);
       expect(reconciliations).toBe(1);
       expect(await createConnectorDispatchStorage(storage!).ledger.transact(tx => tx.record(job.releaseId)))
         .toMatchObject({ state: 'outcome_unknown' });
+      expect(await createConnectorDispatchStorage(storage!).ledger.transact(tx => tx.record(acceptedJob.releaseId)))
+        .toMatchObject({ state: 'accepted' });
       await restarted.stop();
     } finally {
       if (getuid) Object.defineProperty(process, 'getuid', getuid);
@@ -274,13 +328,7 @@ describe('real storage runtime composition', () => {
         async stop() {},
       }),
       loadControls: async () => ({ state: 'ready', version: 1 }),
-      openHarness: async () => ({
-        async inspect() {
-          const capabilities = await adapter.inspect(claudeBinding);
-          return { state: capabilities.support === 'unsupported' ? 'unsupported' : 'ready' };
-        },
-        close: () => adapter.close(),
-      }),
+      openHarness: async () => createRuntimeHarnessAdapter(claudeBinding, adapter),
       openDispatcher: async () => ({
         async reconcilePending() {},
         setEnabled() {},
