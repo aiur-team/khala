@@ -7,15 +7,31 @@ or migrates it, and **no operation here is atomic with an SDK write**.
 
 ```ts
 import { openConnectorStorage } from '@khala/connector/storage/open';
+import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
+import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { recoverConnectorStorage } from '@khala/connector/storage/recovery';
 
 const storage = await openConnectorStorage({ directory, mode: 'existing', limits });
+await storage.bindDeviceIdentity(recoveredDeviceIdentity);
+const bootstrap = await createBootstrapPersistence(storage);
+const dispatch = createConnectorDispatchStorage(storage);
 const report = await recoverConnectorStorage(storage);
 ```
 
 - `mode: 'create'` is for first bootstrap only. Every later start uses `'existing'`,
   so lost state is `missing_state` and never silently becomes a fresh identity.
   `bindDeviceIdentity` then refuses a different SDK device or key fingerprint.
+- Bind the recovered SDK identity before creating normal ledger state. Bootstrap
+  operation rows and the PKCS8 Ed25519 proof key deliberately do not count as
+  adoptable state, so a crash in the narrow pre-bind window can reopen and bind the
+  same recovered SDK device instead of failing with `identity_unbound`.
+- `createBootstrapPersistence(storage)` returns the durable operation CAS and a
+  constrained proof signer. Private key bytes stay inside storage. Operation retries
+  keep their original fingerprint, device and admitted binding.
+- `createConnectorDispatchStorage(storage)` supplies the durable KHA-121 ledger,
+  decoded approval lookup, bounded released-payload reader, effective-policy write
+  seam and restart reconciliation IDs. Only trusted controls composition calls
+  `applyEffectivePolicy` after authenticating provenance.
 - `persistPending` / `persistUnavailable` → `commitCursor` is the ingestion order. An
   event is durably stored, as content or as an unavailable placeholder, before the
   application cursor may move past it. Both take the `streamId` that observed the event.
@@ -74,6 +90,10 @@ KHA-101 after KHA-142; swapping it touches only this directory.
 | Cursor never advances optimistically | Compare-and-set on a durable revision | `ledger.test.ts`, `crash.test.ts` |
 | New generation adopts nothing | Records stay keyed by their generation; releasing them under a new binding is refused and they are reported as stale | `ledger.test.ts` |
 | Release is all or nothing | Command outcome, payload and job commit in one transaction, re-checked against revocation, binding, pending references, digest and ledger revision | `ledger.test.ts`, `crash.test.ts` (kill inside the transaction) |
+| Bootstrap identity survives restart | One owner-only PKCS8 Ed25519 key plus per-operation CAS rows; every read decodes and checks immutable operation identity | `bootstrap.test.ts` |
+| Effective policy is exact and monotonic | Policy writes require the exact current binding generation, reject terminal revocation and stale/conflicting versions, and replay an exact duplicate idempotently | `dispatch.test.ts` |
+| Dispatch intent never rolls back to queued | Records, sequence allocation and causal counters commit in one synchronous transaction; dispatching/unknown records are enumerated for reconciliation only | `dispatch.test.ts` |
+| Only durable approvals and bounded release bytes dispatch | The exact decoded `ApprovalCommand` is journalled with a release; migrated commands return unavailable. Payload reads return at most the requested bound plus one byte | `dispatch.test.ts` |
 | Unknown outcome stays unknown | Recovery lists a release with any dispatch evidence (`dispatching`, `transport_written`, `harness_queued`, `context_consumed` or `outcome_unknown`, correlated or not) as `outcomeUnknownReleases` (never resubmit), apart from `undispatchedReleases` | `crash.test.ts`, `ledger.test.ts` |
 
 `busy_timeout=0` and `synchronous=FULL` are set explicitly and asserted in `open.test.ts`.
@@ -108,10 +128,7 @@ inside the ledger, and removing rows or files is not secure erasure.
   sharing. The headless-Chromium alternative keeps its crypto store in IndexedDB. No
   substrate is selected, so the SDK-advanced-before-pending window has no proven
   recovery primitive. KHA-116/133 must not assume one.
-- `claimDispatch`, `readEffectivePolicy` and `deletePayloadIfUnreferenced` wait for
-  the `EffectivePolicy`/`BudgetReservation` records and error unions from KHA-120/121
-  and retention policy from KHA-130. `readPayloadReferences` already exposes the
-  reference counts KHA-130 needs.
-- `putRelease` does not yet re-check the effective policy version. The ledger-revision
-  compare-and-set covers any ledger change since the snapshot, and the policy check is
-  added once the policy record lives in this ledger.
+- `deletePayloadIfUnreferenced` still waits for retention policy from KHA-130.
+  `readPayloadReferences` exposes the reference counts KHA-130 needs.
+- Human control authentication and policy construction remain composition concerns;
+  storage accepts only the already-authenticated, contract-valid effective policy.

@@ -104,6 +104,7 @@ export function commandRecord(command: ApprovalCommand, releaseId: string, input
     ownerId,
     commandId: command.commandId,
     inputDigest,
+    command,
     result: { ok: true as const, releaseIds: [releaseId as ReleaseId] },
   };
 }

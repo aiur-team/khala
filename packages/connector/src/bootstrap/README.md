@@ -78,9 +78,9 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `sessions: SessionInspectionPort` | Harness adapters (KHA-117/118) over KHA-103/104 evidence |
 | `ownership` | `createLoopbackOwnership({ signer, openBrowser })`. `openBrowser` comes from the harness adapter |
 | `admission` | `createHttpAdmission({ signer })` |
-| `signer` | `createProofSigner(ed25519PrivateKey)`. KHA-115 persists the key owner-only |
+| `signer` | KHA-133 `createBootstrapPersistence(storage)` restores one owner-only PKCS8 Ed25519 key and returns its `ProofSigner` |
 | `devices: ConnectorDevicePort` | Messaging device lifecycle (G-SUBSTRATE). `reserve` must be stable per operation, and re-activating resumes. `activate` receives the adapter capability; each request under it needs a fresh proof from `signer` with `ath` |
-| `operations: BootstrapOperationStore` | KHA-115 durable storage, compare-and-set by revision |
+| `operations: BootstrapOperationStore` | KHA-133 `createBootstrapPersistence(storage)` durable per-operation compare-and-set |
 
 The HTTP clients send `Origin: <service origin>` on POSTs, which the control gateway requires
 on state-changing requests. Authority comes from the proof and grant, never that header.
