@@ -29,7 +29,9 @@ printf '%s' '<reply>' | khala send --binding '<binding-id>'
 
 If the exact Codex version, session ownership, platform, or binding generation
 does not match the evidence record, the native route fails closed and the panel
-offers the Khala skill fallback.
+offers the Khala skill fallback only when the operator composition explicitly
+sets `allowExperimentalAgentListener: true`. The default is false, so an
+unproven installed listener is never selected or admitted implicitly.
 
 ## Claude Code
 
@@ -43,7 +45,8 @@ khala-fallback listen --binding '<binding-id>'
 
 Claude Code in default permission mode requires one human approval to start this
 long-running listener. The fallback is reported as experimental
-`agent_installed_listener`, not as a native route.
+`agent_installed_listener`, not as a native route, and requires the same explicit
+operator opt-in.
 
 ## Other harnesses
 

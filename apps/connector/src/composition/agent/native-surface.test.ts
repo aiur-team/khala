@@ -1,36 +1,29 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from 'vitest';
 import {
   decodeDeliveryLimits,
   type DeliveryReceipt,
   type HarnessCapabilities,
   type HarnessPort,
-  type ReleasedJob,
-  type SessionBinding,
-} from '../../../packages/contracts/src/delivery/index';
-import type { RoomId } from '../../../packages/contracts/src/messaging/ids';
-import { createRuntimeHarnessSelection } from '../../../apps/connector/src/composition/agent/harnesses';
-import { createAgentPresenceSource, agentInstallCommand } from '../../../apps/connector/src/composition/agent/presence';
+} from '@khala/contracts/delivery/index';
+import type { RoomId } from '@khala/contracts/messaging/ids';
+import {
+  makeRelease,
+  seed,
+  testPolicy,
+  world,
+} from '../../../../../packages/connector/src/dispatch/fixtures/fakes';
+import { createRuntimeHarnessSelection } from './harnesses';
+import { createAgentPresenceSource, agentInstallCommand } from './presence';
 import {
   createConnectorRuntime,
   type ConnectorRuntimeFactories,
-} from '../../../apps/connector/src/runtime/create';
-import { unavailableCapability } from '../../../apps/connector/src/runtime/capabilities';
-import { registerAgentHandlers } from '../../../apps/control/src/composition/agent/handlers';
-import { createRoomUiPort } from '../../../apps/web/src/composition/human/room';
+} from '../../runtime/create';
+import { unavailableCapability } from '../../runtime/capabilities';
+import { registerAgentHandlers } from '../../../../control/src/composition/agent/handlers';
+import { createRoomUiPort } from '../../../../web/src/composition/human/agent-presence';
 
 const decodedLimits = decodeDeliveryLimits({ maxSelectionEvents: 32, maxPayloadBytes: 65_536 });
 if (!decodedLimits.ok) throw new Error('invalid limits');
-
-const binding = {
-  v: 1,
-  bindingId: 'binding-integration-1',
-  ownerId: 'owner-integration-1',
-  agentParticipantId: 'agent-integration-1',
-  deviceId: 'device-integration-1',
-  harness: 'codex',
-  sessionId: 'session-integration-1',
-  generation: 2,
-} as SessionBinding;
 
 const capabilities: HarnessCapabilities = {
   v: 2,
@@ -47,23 +40,32 @@ const capabilities: HarnessCapabilities = {
   evidenceRef: 'docs/evidence/codex-native-cli.md#queue-idle',
 };
 
-const consumed = {
-  v: 1,
-  receiptId: 'receipt-integration-1',
-  releaseId: 'release-integration-1',
-  bindingId: binding.bindingId,
-  generation: binding.generation,
-  kind: 'context_consumed',
-  observedAt: '2026-09-19T12:00:00.000Z',
-  source: 'harness',
-  evidenceRef: 'userMessage:release-integration-1',
-  errorCode: null,
-} as DeliveryReceipt;
-
 test('selected native capability delivers exact released bytes and reaches room presence without pending content', async () => {
   const pendingPlaintext = 'pending plaintext must never reach an agent-facing surface';
   const releasedBytes = new TextEncoder().encode('approved release bytes');
+  const dispatchWorld = await world(testPolicy(), ['binding-integration-1']);
+  const release = dispatchWorld.add(makeRelease({
+    releaseId: 'release-integration-1',
+    bindingId: 'binding-integration-1',
+    generation: 2,
+    payload: releasedBytes,
+  }));
+  const { binding } = release.job;
+  await dispatchWorld.ledger.transact(tx => tx.setBinding({ binding, revoked: false }));
+  const consumed = {
+    v: 1,
+    receiptId: 'receipt-integration-1',
+    releaseId: release.job.releaseId,
+    bindingId: binding.bindingId,
+    generation: binding.generation,
+    kind: 'context_consumed',
+    observedAt: '2026-09-19T12:00:00.000Z',
+    source: 'harness',
+    evidenceRef: 'userMessage:release-integration-1',
+    errorCode: null,
+  } as DeliveryReceipt;
   let delivered: Uint8Array | null = null;
+  let dispatcherIdle: () => Promise<void> = async () => undefined;
   const nativeHarness: HarnessPort = {
     async inspect() { return capabilities; },
     async notify() {},
@@ -75,16 +77,7 @@ test('selected native capability delivers exact released bytes and reaches room 
     { routeId: 'codex-native', harness: nativeHarness },
   ], { record: async () => 'stored' });
   await expect(selected.inspect()).resolves.toMatchObject({ state: 'ready', routeId: 'codex-native' });
-  const job = {
-    v: 1,
-    releaseId: consumed.releaseId,
-    binding,
-    policyVersion: 4,
-    events: [],
-    payloadRef: 'ledger:release/integration-1',
-    payloadDigest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
-    causalRootId: 'root-integration-1',
-  } as unknown as ReleasedJob;
+  await seed(dispatchWorld.ledger, release.job);
   const factories: ConnectorRuntimeFactories = {
     openStorage: async () => ({ async close() {} }),
     openDevice: async () => ({ fingerprint: 'fixture-device', async close() {} }),
@@ -95,17 +88,19 @@ test('selected native capability delivers exact released bytes and reaches room 
       onStateChange: () => () => undefined,
       async stop() {},
     }),
-    loadControls: async () => ({ state: 'ready', version: 4 }),
+    loadControls: async () => ({ state: 'ready', version: testPolicy().version }),
     openHarness: async () => selected,
-    openDispatcher: async ({ harness }) => ({
-      async reconcilePending() {
-        const adapter = harness.selected?.();
-        if (!adapter) throw new Error('selected_harness_unavailable');
-        await adapter.submit({ job, payload: releasedBytes });
-      },
-      setEnabled() {},
-      async stop() {},
-    }),
+    openDispatcher: async ({ harness }) => {
+      const adapter = harness.selected?.();
+      if (!adapter) throw new Error('selected_harness_unavailable');
+      const dispatcher = dispatchWorld.dispatcher({ harness: adapter });
+      dispatcherIdle = () => dispatcher.idle();
+      return {
+        async reconcilePending() {},
+        setEnabled(enabled) { if (enabled) dispatcher.wake(); },
+        async stop() { await dispatcher.stop(); },
+      };
+    },
     registerCapabilities: () => [
       { id: 'controls', state: 'ready', async start() {}, async stop() {} },
       unavailableCapability('review'),
@@ -114,6 +109,7 @@ test('selected native capability delivers exact released bytes and reaches room 
   };
   const runtime = createConnectorRuntime({ requiredCapabilities: [] }, factories);
   await runtime.start();
+  await dispatcherIdle();
 
   expect(delivered).toEqual(releasedBytes);
   expect(runtime.status()).toMatchObject({

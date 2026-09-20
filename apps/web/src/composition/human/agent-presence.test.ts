@@ -1,6 +1,6 @@
 import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import { describe, expect, it, vi } from 'vitest';
-import { createRoomUiPort } from './room';
+import { createRoomUiPort } from './agent-presence';
 
 describe('human room composition', () => {
   it('decodes presence and keeps install commands out of the public agent snapshot', async () => {
@@ -49,6 +49,25 @@ describe('human room composition', () => {
           lastReceipt: null,
           installCommand: 'khala connect link',
           payload: 'pending plaintext',
+        }],
+      })),
+    });
+
+    await expect(port.agents('room-1' as RoomId, new AbortController().signal)).rejects.toThrow('invalid_agent_status');
+  });
+
+  it('rejects an invalid connection state', async () => {
+    const port = createRoomUiPort({
+      fetch: async () => new Response(JSON.stringify({
+        generation: 1,
+        agents: [{
+          participantId: 'agent-1',
+          displayName: 'Agent',
+          ownerDisplayName: 'Owner',
+          connection: 'connecting',
+          routeLabel: 'Codex CLI',
+          lastReceipt: null,
+          installCommand: 'khala connect link',
         }],
       })),
     });

@@ -16,21 +16,28 @@ describe('registerAgentHandlers', () => {
   });
 
   it('authorizes and returns the content-free room presence snapshot', async () => {
+    const sourceSnapshot = {
+      generation: 4,
+      internalGenerationNote: 'must not escape',
+      agents: [{
+        participantId: 'agent-1',
+        displayName: 'Build agent',
+        ownerDisplayName: 'Owner',
+        connection: 'connected' as const,
+        routeLabel: 'Codex CLI',
+        lastReceipt: {
+          kind: 'context_consumed' as const,
+          observedAt: '2026-09-19T12:00:00.000Z',
+          internalEvidence: 'must not escape',
+        },
+        installCommand: "khala connect 'https://khala.example/room/link'",
+        pendingPlaintext: 'must not escape',
+      }],
+    };
     const registrations = registerAgentHandlers({
       authorize: async () => 'allowed',
       status: {
-        snapshot: async () => ({
-          generation: 4,
-          agents: [{
-            participantId: 'agent-1',
-            displayName: 'Build agent',
-            ownerDisplayName: 'Owner',
-            connection: 'connected',
-            routeLabel: 'Codex CLI',
-            lastReceipt: { kind: 'context_consumed', observedAt: '2026-09-19T12:00:00.000Z' },
-            installCommand: "khala connect 'https://khala.example/room/link'",
-          }],
-        }),
+        snapshot: async () => sourceSnapshot,
       },
     });
 
@@ -40,9 +47,17 @@ describe('registerAgentHandlers', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
-    expect(await response.json()).toMatchObject({
+    expect(await response.json()).toEqual({
       generation: 4,
-      agents: [{ participantId: 'agent-1', routeLabel: 'Codex CLI' }],
+      agents: [{
+        participantId: 'agent-1',
+        displayName: 'Build agent',
+        ownerDisplayName: 'Owner',
+        connection: 'connected',
+        routeLabel: 'Codex CLI',
+        lastReceipt: { kind: 'context_consumed', observedAt: '2026-09-19T12:00:00.000Z' },
+        installCommand: "khala connect 'https://khala.example/room/link'",
+      }],
     });
   });
 

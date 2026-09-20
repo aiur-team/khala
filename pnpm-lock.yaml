@@ -38,6 +38,9 @@ importers:
 
   apps/connector:
     dependencies:
+      '@khala/connector':
+        specifier: workspace:*
+        version: link:../../packages/connector
       '@khala/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

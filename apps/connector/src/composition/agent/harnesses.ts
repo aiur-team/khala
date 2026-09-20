@@ -1,12 +1,17 @@
 import {
   decodeHarnessCapabilities,
-  type BindingId,
   type HarnessCapabilities,
   type HarnessPort,
   type SessionBinding,
 } from '@khala/contracts/delivery/index';
+import type { HarnessSelectionStore } from '@khala/connector/storage/harness-selection';
 import type { RuntimeHarnessInspection, RuntimeHarnessPort } from '../../runtime/create';
 import { isDeliverableRoute } from '../../runtime/harness';
+
+export {
+  createHarnessSelectionStore,
+  type HarnessSelectionStore,
+} from '@khala/connector/storage/harness-selection';
 
 export type HarnessCandidate = Readonly<{
   routeId: string;
@@ -15,17 +20,14 @@ export type HarnessCandidate = Readonly<{
   fallback?: boolean;
 }>;
 
-export interface HarnessSelectionStore {
-  record(selection: Readonly<{
-    bindingId: BindingId;
-    generation: number;
-    routeId: string;
-  }>): Promise<'stored' | 'matched' | 'route_changed' | 'stale_generation'>;
-}
-
 export interface RuntimeHarnessSelection extends RuntimeHarnessPort {
   selected(): HarnessPort | null;
 }
+
+export type RuntimeHarnessSelectionOptions = Readonly<{
+  /** Explicit operator opt-in for the unproven installed-listener fallback. */
+  allowExperimentalAgentListener?: boolean;
+}>;
 
 function usable(capabilities: HarnessCapabilities, binding: SessionBinding, fallback: boolean): boolean {
   if (capabilities.harness !== binding.harness || !isDeliverableRoute(capabilities)) return false;
@@ -45,6 +47,7 @@ export function createRuntimeHarnessSelection(
   binding: SessionBinding,
   candidates: readonly HarnessCandidate[],
   selections: HarnessSelectionStore,
+  options: RuntimeHarnessSelectionOptions = {},
 ): RuntimeHarnessSelection {
   let selected: HarnessPort | null = null;
   let closed = false;
@@ -94,9 +97,12 @@ export function createRuntimeHarnessSelection(
     async inspect() {
       if (closed) return { state: 'unknown', capabilities: null, routeId: null, reason: 'closed' };
       selected = null;
+      const allowed = options.allowExperimentalAgentListener === true
+        ? candidates
+        : candidates.filter(candidate => candidate.fallback !== true);
       const ordered = [
-        ...candidates.filter(candidate => candidate.fallback !== true),
-        ...candidates.filter(candidate => candidate.fallback === true),
+        ...allowed.filter(candidate => candidate.fallback !== true),
+        ...allowed.filter(candidate => candidate.fallback === true),
       ];
       for (const candidate of ordered) {
         const result = await inspectCandidate(candidate);
