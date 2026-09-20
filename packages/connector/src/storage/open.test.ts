@@ -11,7 +11,7 @@ import { binding, limits, pendingInput, scratchDirectory } from './fixtures/fake
 import { LEDGER_FILE, assertOpenedFile, pinLedgerFile } from './leases';
 import { type ConnectorStorage, openConnectorStorage, storageInternals } from './open';
 import { recoverConnectorStorage } from './recovery';
-import { APPLICATION_ID } from './schema';
+import { APPLICATION_ID, SCHEMA_VERSION } from './schema';
 
 const opened: ConnectorStorage[] = [];
 const scratch: string[] = [];
@@ -334,7 +334,7 @@ describe('openConnectorStorage', () => {
     const { state, file } = await closedLedger();
     rewrite(file, 'PRAGMA user_version = 0');
     expect(await openError(state, 'existing')).toBe('corrupt');
-    rewrite(file, `PRAGMA user_version = 1; PRAGMA application_id = ${APPLICATION_ID}`);
+    rewrite(file, `PRAGMA user_version = ${SCHEMA_VERSION}; PRAGMA application_id = ${APPLICATION_ID}`);
     await open(state, 'existing');
   });
 

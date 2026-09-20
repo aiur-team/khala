@@ -339,6 +339,7 @@ export function createConnectorDispatchStorage(storage: ConnectorStorage): Conne
         const id = requireIdentifier(commandId);
         const ctx = context(storage);
         return runTransaction(ctx, () => {
+          // The ledger has a single owner, so command_id uniquely selects its approval.
           const rows = ctx.db.prepare('SELECT approval_command FROM commands WHERE command_id = ? LIMIT 2')
             .all(id) as { approval_command: string | null }[];
           if (rows.length !== 1 || rows[0]!.approval_command === null) return null;
@@ -372,6 +373,8 @@ export function createConnectorDispatchStorage(storage: ConnectorStorage): Conne
 
     async reconciliationReleaseIds() {
       const ctx = context(storage);
+      // Accepted outcomes are known and await later observation; only ambiguous
+      // dispatching or outcome_unknown records require restart reconciliation.
       return runTransaction(ctx, () =>
         (ctx.db.prepare(`SELECT record FROM dispatch_records
           WHERE state IN ('dispatching', 'outcome_unknown') ORDER BY seq`).all() as { record: string }[])

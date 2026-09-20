@@ -121,6 +121,25 @@ describe('createConnectorRuntime', () => {
     expect(events).not.toContain('dispatch.enabled:true');
   });
 
+  it.each(['blocked', 'unknown'] as const)(
+    'keeps %s controls degraded and never enables dispatch',
+    async state => {
+      const events: string[] = [];
+      const factories = recordingFactories(events);
+      factories.loadControls = async () => ({ state, version: null });
+      const runtime = createConnectorRuntime({ requiredCapabilities: [] }, factories);
+
+      await runtime.start();
+
+      expect(runtime.status()).toMatchObject({
+        phase: 'degraded',
+        errorCode: `controls_${state}`,
+        prerequisites: { controls: 'blocked', dispatch: 'blocked' },
+      });
+      expect(events).not.toContain('dispatch.enabled:true');
+    },
+  );
+
   it('maps classified prerequisite failures to content-free degraded status', async () => {
     const factories = recordingFactories([]);
     factories.openStorage = async () => {
