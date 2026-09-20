@@ -145,7 +145,7 @@ describe('runtime harness selection', () => {
     const runtime = createRuntimeHarnessSelection(binding, [
       { routeId: 'khala-skill', harness: fallback, fallback: true },
       { routeId: 'codex-native', harness: native },
-    ], selections);
+    ], selections, { allowExperimentalAgentListener: true });
 
     await expect(runtime.inspect()).resolves.toMatchObject({ state: 'ready', routeId: 'codex-native' });
     expect(runtime.selected()).toBe(native);
@@ -157,6 +157,26 @@ describe('runtime harness selection', () => {
       generation: binding.generation,
       routeId: 'codex-native',
     });
+  });
+
+  it('refuses an installed-listener fallback misreported as tested', async () => {
+    const fallback = harness(capabilities({
+      existingSession: 'agent_installed_listener',
+      immediateNotification: 'agent_installed_listener',
+      busy: 'unknown',
+    }));
+    const selections = store();
+    const runtime = createRuntimeHarnessSelection(binding, [
+      { routeId: 'khala-skill', harness: fallback, fallback: true },
+    ], selections, { allowExperimentalAgentListener: true });
+
+    await expect(runtime.inspect()).resolves.toEqual({
+      state: 'unsupported',
+      capabilities: null,
+      routeId: null,
+    });
+    expect(fallback.inspect).toHaveBeenCalledOnce();
+    expect(selections.record).not.toHaveBeenCalled();
   });
 
   it('refuses a route change within one binding generation', async () => {

@@ -32,7 +32,7 @@ export type RuntimeHarnessSelectionOptions = Readonly<{
 function usable(capabilities: HarnessCapabilities, binding: SessionBinding, fallback: boolean): boolean {
   if (capabilities.harness !== binding.harness || !isDeliverableRoute(capabilities)) return false;
   if (fallback) {
-    return (capabilities.support === 'tested' || capabilities.support === 'experimental')
+    return capabilities.support === 'experimental'
       && capabilities.existingSession === 'agent_installed_listener';
   }
   return capabilities.support === 'tested';

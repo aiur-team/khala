@@ -1,9 +1,16 @@
 # Agent onboarding
 
-Khala connects an agent to one room through the `khala` CLI. The room's Agent
-presence panel is the source of the exact command: copy it and give that single
-line to the intended agent. The command contains a scoped HTTPS room link, so do
-not paste it into logs, issue comments, or another session.
+The native agent surface is still gated on G-SUBSTRATE. The adapters, selection,
+dispatch, and presence projections below are implemented and tested as library
+composition, but production control discovery still returns `503 feature_unavailable`.
+There is no operator-facing setting for `allowExperimentalAgentListener` yet,
+and production does not enable the experimental fallback.
+
+After that gate closes, Khala will connect an agent to one room through the
+`khala` CLI. In that live flow, the room's Agent presence panel is the source of
+the exact command: copy it and give that single line to the intended agent. The
+command contains a scoped HTTPS room link, so do not paste it into logs, issue
+comments, or another session.
 
 ```sh
 khala connect '<https-room-link>'
@@ -17,7 +24,8 @@ binding by itself is not evidence that delivery works.
 
 ## Codex
 
-For an evidence-backed Codex version, Khala first tries the native CLI route.
+Once live substrate composition is enabled, an evidence-backed Codex version
+prefers the native CLI route.
 Released payload bytes are written to the owner-only local inbox; `codex queue`
 receives only an opaque release notification, never message text. When notified,
 the agent runs `khala listen` to consume the inbox and replies with message bytes
@@ -28,10 +36,11 @@ printf '%s' '<reply>' | khala send --binding '<binding-id>'
 ```
 
 If the exact Codex version, session ownership, platform, or binding generation
-does not match the evidence record, the native route fails closed and the panel
-offers the Khala skill fallback only when the operator composition explicitly
-sets `allowExperimentalAgentListener: true`. The default is false, so an
-unproven installed listener is never selected or admitted implicitly.
+does not match the evidence record, the native route fails closed. The selection
+library considers the Khala skill fallback only when its composition explicitly
+sets `allowExperimentalAgentListener: true`; no production operator surface sets
+that option today. The default is false, so an unproven installed listener is
+never selected or admitted implicitly.
 
 ## Claude Code
 
@@ -57,6 +66,9 @@ cursor after interruption and refuses a second process for the same binding.
 
 ## Reading presence
 
+When G-SUBSTRATE supplies the live status source, the room presence projection
+uses these meanings:
+
 - **Connected** means the subscription is live for the current binding generation.
 - **Connection stale** means recent receipt evidence exists while liveness is uncertain.
 - **Not connected** means the subscription is offline or stale evidence expired.
@@ -65,6 +77,6 @@ cursor after interruption and refuses a second process for the same binding.
 - The last-receipt row is metadata only. Pending room content and released payload
   bytes are never returned by the status endpoint.
 
-A route change never reuses the active generation. Khala blocks dispatch until
-bootstrap advances the binding generation, preventing a restart from silently
-delivering through a different adapter.
+The selection and dispatch libraries never reuse an active generation after a
+route change. They block dispatch until bootstrap advances the binding generation,
+preventing a restart from silently delivering through a different adapter.
