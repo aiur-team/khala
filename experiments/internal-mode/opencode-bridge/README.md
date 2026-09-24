@@ -14,8 +14,15 @@ preflights from the repository root:
 
 ```sh
 test "$(opencode --version)" = "1.17.10"
+opencode models deepseek
 opencode models deepseek | rg -x 'deepseek/deepseek-flash'
 ```
+
+The model assertion passed for the recorded proof. During final review, a fresh
+OpenCode data directory instead listed `deepseek/deepseek-v4-flash`,
+`deepseek/deepseek-v4-flash-vision-exp`, and `deepseek/deepseek-v4-pro`; the
+recorded model was absent. An exact replay therefore currently stops at this
+preflight. Do not substitute another model and call it the same proof.
 
 Then start the pinned model with the experiment directory as the project root:
 
