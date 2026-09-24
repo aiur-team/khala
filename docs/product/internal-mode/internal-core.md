@@ -8,7 +8,7 @@ the unmerged web-composition dependency was inspected at PR #120 head
 
 ## Summary
 
-Use one owner process per open channel. It owns a purpose-built SQLite channel log,
+Use one owner process for the single active internal channel per OS user. It owns a purpose-built SQLite channel log,
 adapts that log to both `RoomSubstrate` and `SubscriptionSource`, serves a
 separate local browser bundle over authenticated loopback HTTP, and is started by
 `khala internal`. This preserves the existing `RoomSubstrate`,
@@ -25,9 +25,19 @@ carve-out.
 | Data plane | One append-only local channel log is the source for both `RoomSubstrate` timeline reads and connector replay. Connector ledgers remain separate stores. |
 | Browser boundary | Keep `createRoomService` in the browser. Add an HTTP `RoomSubstrate` client and SSE content-free wakeups; recover pending browser operations with PR #120's durable `RoomJournal`. |
 | Process boundary | A dedicated internal-mode composition owns SQLite, local identity/device mappings, server lifecycle, and future local automation. Hosted compositions never import it. |
-| Authentication | Generate cryptographically random credentials on every start. The launcher prepares and prints a fragment-token bootstrap URL, which exchanges the fragment for an HttpOnly host-only human cookie and replaces the URL; automatic browser handoff is enabled only for an environment profile proven by `browser-handoff-spike`. Each agent first reads a discovery-only capability from its own 0600 descriptor, then receives a rotated binding capability after the D11 human grant, so the server derives attribution instead of trusting request data. |
+| Authentication | Generate cryptographically random credentials on every start. The launcher prepares and prints a fragment-token bootstrap URL, which exchanges the fragment for an HttpOnly host-only human cookie and replaces the URL; automatic browser handoff is enabled only for an environment profile proven by `browser-handoff-spike`. User-installed clients read only the current loopback origin and launch-scoped transport credential from one 0600 runtime descriptor. Channel binding is separate: the user-started session requests access through `channel-access-journal`, and `channel-access-inbox` records the human grant before the server issues participant-scoped authority. |
 | Lifecycle | `khala internal` creates a channel; `--resume <channel-id>` reopens it. Export and delete are explicit offline-safe operations over the same storage API. |
 | Delivery | This area supplies the durable source and composition seam only. Harness listening modes and reply delivery remain owned by their E09 research areas. |
+
+### Binding decisions after the initial research pass
+
+| Decision | Effect on this design |
+|---|---|
+| User-owned agent process (E09 21–24) | Khala never launches, hosts, wraps, interrupts, or kills Codex, Claude, or OpenCode. The user starts the interactive CLI and points it at a channel URL, or asks it to create a channel through the agent CLI/MCP command. Every delivery mode targets that same user-started session. |
+| Access and creation | `/khala join` accepts a channel URL and delegates request/grant persistence to `channel-access-journal` and `channel-access-inbox`. `khala channels create` / `khala_create_channel` works without an internal descriptor: it reuses the hosted browser-consent/loopback-return pattern to obtain human confirmation, creates one hosted channel, and returns its URL. Other participants still require their own human grants. |
+| Stop terminology | The earlier phrase “ends agent sessions” means ending Khala channel bindings and delivery. The later user-owned-process decision forbids terminating or signaling the interactive CLI itself. |
+| Delivery security (E09 25) | Channel text is always framed as untrusted content. An optional setup hardening check may report the active profile, but no restricted profile gates delivery. |
+| Harness ownership (E09 26–30) | `claude-plugin` owns Claude hooks and the single plugin layout; `listening-mode-contract` owns capability evidence, including acknowledgement; receipts and delivery target the user's CLI session. Internal-core owns only the local transport, SQLite adapter, launcher, and agent-client composition. |
 
 ## Findings and evidence
 
@@ -65,15 +75,22 @@ carve-out.
 khala internal
   ├─ creates/opens ~/.local/share/khala/internal/<channel>/ (0700)
   ├─ opens room.sqlite + per-binding connector state (0600)
-  ├─ writes launch.json + one descriptor per agent (0600)
+  ├─ holds the root active-runtime lock
+  ├─ writes <channel>/launch.json + root active.json descriptor (0600)
   ├─ binds 127.0.0.1:4870, 4871, ...
-  └─ opens /__khala/bootstrap#token=<token>
+  └─ prints /__khala/bootstrap#token=<token>
+       (opens it only for a proven environment profile)
        │
        ├─ local browser entry (PR #120 composition, local ports)
        │    └─ HttpRoomSubstrate ── HTTP/SSE ── LocalRoomStore
        │                                      ├─ RoomSubstrate
        │                                      └─ SubscriptionSource × binding
-       └─ local server composition ── connector/policy/dispatcher/harness ports
+       └─ local server composition ── connector/policy/dispatcher ports
+
+user-started Codex / Claude / OpenCode
+  └─ installed MCP/plugin/skill reads descriptor path
+       ├─ /khala join <channel-url> ── access request + human grant
+       └─ khala send/read/status ── participant-scoped local API
 ```
 
 The server is the sole writer. SQLite calls are synchronous, so the composition
@@ -89,7 +106,7 @@ repository's cross-component boundary.
 
 | Concern | Design |
 |---|---|
-| Files | `<channel>/room.sqlite` plus SQLite companions, all 0600. Channel, connector, export-temporary, and launch-descriptor paths stay below the 0700 channel directory. The SQLite filename remains an internal `RoomSubstrate` detail. |
+| Files | `<channel>/room.sqlite` plus SQLite companions, all 0600. Channel, connector, export-temporary, and `launch.json` paths stay below the 0700 channel directory. One stable `active.json` runtime descriptor and active-runtime lock live under the 0700 internal root so setup never changes paths between channels. The SQLite filename remains an internal `RoomSubstrate` detail. |
 | Identity | Persist the human, agent participants, and device mapping as authenticated local composition data. Request bodies never choose attribution. |
 | Internal `RoomSubstrate` records | Persist `roomId`, creation `operationId` (unique), title, membership, and revision. Repeating an operation ID returns the same record; a conflicting title returns `operation_mismatch`. |
 | Events | Append a monotonic integer sequence, opaque event ID, author participant/device, `clientTxnId`, canonical message bytes, and `receivedAt`. A unique `(author_device_id, client_txn_id)` constraint makes send retry idempotent. |
@@ -105,15 +122,15 @@ repository's cross-component boundary.
 |---|---|
 | Bind | Listen only on the IPv4 literal `127.0.0.1`. Try 4870 upward only on `EADDRINUSE`; fail on every other bind error or when no port remains. Do not enable address reuse. |
 | Host | Before routing, require the exact selected authority `127.0.0.1:<port>`. Reject `localhost`, alternate loopback spellings, userinfo, forwarded-host overrides, and duplicate/ambiguous Host values. |
-| Bootstrap | Serve a minimal HTML document at `/__khala/bootstrap` that loads only the fixed same-origin script `/__khala/bootstrap.js`. The script reads the token from the URL fragment, POSTs it to the exact origin, and calls `location.replace(<encoded selected-channel path>)`. The server compares in constant time, sets the cookie, and invalidates the one-time bootstrap exchange. Fragments avoid token transmission in request targets, history replacement removes it from the visible URL, and both create and resume land on the launcher-selected channel rather than PR #120's create route. |
+| Bootstrap | Serve a minimal HTML document at `/__khala/bootstrap` that loads only the fixed same-origin script `/__khala/bootstrap.js`. The script reads the token from the URL fragment, POSTs it to the exact origin, and calls `location.replace(<encoded selected-channel path>)`. The server compares in constant time, sets the cookie, and invalidates the one-time bootstrap exchange. The printed URL is secret until redemption; give it a short monotonic-clock deadline, erase it after exchange or expiry, and require relaunch after expiry. Fragments avoid token transmission in request targets, history replacement removes it from the visible URL, and both create and resume land on the launcher-selected channel rather than PR #120's create route. |
 | Credential generation | Generate the human bootstrap token and every agent capability from at least 256 bits of Node cryptographic randomness, encode them as unpadded base64url, and fail closed if generation fails. Inject a deterministic generator only in tests. |
 | Browser cookie | Host-only, HttpOnly, `SameSite=Strict`, `Path=/`, and no `Domain`; it expires with the server. A `Secure` cookie cannot be used on plain HTTP, so use a local-only name rather than a misleading `__Host-` name. |
-| Agent descriptors | Keep the human bootstrap credential in `launch.json`; write one 0600 descriptor per agent context. Before grant it contains `{v, channelId, origin, discoveryCapability}` with list/request scope only; after grant, rotate it to `{v, channelId, origin, bindingId, capability}`. Bind each post-grant capability server-side to exactly one participant, device, and route set. Installed MCP/plugin entries receive only `--internal-descriptor <path>` and read the selected port and token from that runtime file; credentials are never embedded during setup. Never accept attribution from a body or caller-selected binding ID. Delete/invalidate all descriptors at shutdown and rotate every credential on resume. Modes isolate other OS users, not processes sharing the operator's uid; agents are trusted for local-file credential confidentiality in v1. |
+| Runtime descriptor and bindings | Enforce one active internal launcher per OS user with a root-level lock; port incrementing handles unrelated listeners, not a second Khala launcher. Keep the human bootstrap credential in `<channel>/launch.json`; atomically write the stable root-level 0600 `active.json` descriptor containing `{v, channelId, origin, transportCapability}` for installed local clients. Before grant, the descriptor permits transport discovery only. `/khala join <channel-url>` delegates the request and human grant to `channel-access-journal` and `channel-access-inbox`; after grant, atomically add `{grantRef, bindingId, bindingCapability}` so one-shot CLI calls and long-lived MCP/plugin clients can reopen the exact file for participant authority. Setup stores only `--internal-descriptor <stable-active-path>`, never a port or token. Participant capabilities are launch-scoped, stored server-side only as keyed hashes, compared in constant time, and all invalidated on shutdown/resume; on resume the launcher validates the durable grant before atomically writing freshly issued authority. Stop revokes the server generation and removes the binding fields. Never accept attribution from a body or caller-selected binding ID. Modes isolate other OS users, not processes sharing the operator's uid. |
 | Requests | Require the human cookie or a binding capability for every API and event stream, then authorize the route for that role. For state-changing browser requests, also require exact Origin and same-origin `Sec-Fetch-Site` when present. Set no CORS allowance. |
 | Browser handoff | Keep credentials out of `khala` command arguments, environment variables, request targets, logs, and process titles. A conventional default-browser opener may still expose the fragment URL in opener/browser argv; that secrecy is **unproven**. No v1 automatic browser handoff is supported until a real-process spike defines a reproducible environment profile—OS/process-visibility controls, opener implementation, and browser invocation path—and proves from a separate unprivileged OS user that the token is not observable, or selects a different handoff. The launcher still starts and prints the local URL for manual opening. |
 | CSP | `default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; worker-src 'none'`. The explicit `frame-ancestors` and `form-action` directives are required because they do not inherit all desired behavior from `default-src`; see [CSP Level 3](https://www.w3.org/TR/CSP/). |
 | Other headers | `Cache-Control: no-store` for HTML/API/token responses, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `X-Frame-Options: DENY`. |
-| Resource bounds | Authenticate and authorize before reading request bodies. Set finite header, body, handshake, request, and idle timeouts; cap unauthenticated connections and credential-scoped SSE streams; close excess/slow clients without disturbing established authorized clients. |
+| Resource bounds | Authenticate and authorize before reading request bodies. Set finite header, body, handshake, request, and idle timeouts; cap unauthenticated connections, per-capability authenticated requests, queued store operations, response-page size, and credential-scoped SSE streams. Reserve capacity for human control requests such as Stop; return a stable overload error and close excess/slow clients without disturbing established authorized clients. |
 | Static assets | Resolve only fixed manifest entries beneath one canonical bundle root. Reject absolute paths, encoded traversal, mixed-separator traversal, and symlink escapes before filesystem access. |
 | Logging | Log request ID, method, normalized route template, status, duration, and error code only. Never log request targets before normalization, headers, cookies, tokens, bodies, message digests, or SQLite values. |
 
@@ -144,26 +161,44 @@ server is unreachable; outcomes already marked `unknown` remain pending for
 journal reconciliation. After the retry budget or a clean server shutdown, show
 a stopped state with the stable channel ID and exact resume command.
 
+The local entry state matrix also covers authenticated initial load, an empty
+channel, send pending, definitive send failure with retry, unknown outcome
+awaiting journal reconciliation, and reconciled success. Each state names which
+controls remain enabled, preserves drafts without permitting blind duplicate
+sends, and announces async status/focus changes to assistive technology.
+
 ### Explicit agent reply path
 
-The launcher must compose the existing `khala send` and `khala_send` MCP
-surface with a local `AgentClientPort`; leaving
-`createUnavailableClient()` in that path makes deliberate replies impossible.
-Each binding receives one explicit `--internal-descriptor <path>` selection.
-The adapter opens only that file (no directory discovery), validates its owner,
-mode, version, binding, and exact origin, and uses its capability for local
-`status` and `send`; `connect` remains unavailable because the D11
-discovery/grant flow creates the binding before the bound descriptor is issued. The credential itself never enters argv or the
-environment. The launcher-provided MCP/skill introduction names the channel,
-participant, and deliberate channel-messaging purpose required by D3. Harness
-installation and listening-mode delivery remain owned by their dedicated
-research areas.
+The user starts Codex, Claude, or OpenCode; Khala never starts, hosts, wraps, or
+terminates that process. The installed MCP/plugin/skill composes the existing
+`khala send`, `khala_send`, read, and status surfaces with a local
+`AgentClientPort`; leaving `createUnavailableClient()` in that path makes
+deliberate replies impossible. `--internal-descriptor <path>` selects the one
+launch-scoped transport descriptor. The adapter opens only that file (no
+directory discovery), validates owner, mode, no-follow behavior, version, and
+exact origin, then uses it to reach the local server. The credential never
+enters argv, the environment, or setup configuration.
 
-The launcher does not create a binding merely because an agent has a descriptor.
-An unjoined agent receives only the discovery-only capability defined by
-room-discovery RD8, `internal-channel-discovery`; a binding is created after
-room-discovery RD4b, `channel-access-prompt`, records an explicit human grant.
-This is the D11 handoff, not a second admission path in the launcher.
+Transport access is not channel admission. `/khala join <channel-url>` creates
+an access request through `channel-access-journal`; `channel-access-inbox`
+records the human grant and causes the descriptor writer to add launch-scoped,
+participant-bound authority. Until then, the client cannot send or receive
+channel content. One-shot CLI calls reopen that exact file; long-lived clients
+re-read it on generation change, and the server still checks the active
+generation for every effect. The server derives attribution from that authority
+rather than a request body. Channel content delivered into the normal
+interactive session is explicitly framed as untrusted; an optional setup
+hardening check is informational and never a delivery prerequisite.
+
+The provider-neutral CLI also exposes `khala channels create` and
+`khala_create_channel` as a separate hosted operation that needs no internal
+descriptor or running local server. It reuses the existing agent-bootstrap
+shape: one-shot loopback return, PKCE/state, authenticated hosted browser
+consent, and bounded redemption. Confirmation creates one hosted channel and
+returns its URL; it does not admit other participants. The service operation
+and the thin CLI/MCP commands are separate implementation tickets. Harness
+installation, hooks, listening-mode delivery, receipts, and acknowledgement
+remain with their named E09 owners.
 
 `setup-cli-plan` must block on `authenticated-loopback-server` and install only
 the descriptor path. It may not snapshot a selected port or token into MCP or
@@ -173,7 +208,7 @@ plugin configuration.
 
 | Operation | Contract |
 |---|---|
-| Resume | `khala internal --resume <channel-id>` acquires exclusive ownership, validates the database, rotates launch credentials, starts the next available port, and restores the channel/roster/timeline. It never silently creates a missing or corrupt channel. |
+| Resume | `khala internal --resume <channel-id>` first acquires the root active-runtime lock, then acquires channel ownership, validates the database, rotates launch credentials, atomically selects the channel in `active.json`, starts the next available port, and restores the channel/roster/timeline. It refuses while another internal launcher is active and never silently creates a missing or corrupt channel. |
 | Markdown export | Read one consistent SQLite snapshot and render title/metadata plus messages in sequence order with timestamp and display name. Escape content so a message cannot become export structure. |
 | JSONL export | Emit a versioned metadata record followed by one versioned participant/channel/event record per line. Preserve canonical body text, IDs, authorship, timestamps, and order; never include launch tokens or connector secrets. |
 | Output safety | Write a 0600 temporary file beside the destination, fsync, and rename. Refuse an existing destination unless the caller explicitly opts to replace it. A failed export leaves channel state unchanged. |
@@ -207,7 +242,7 @@ behavior. This design owns only injection and non-leakage.
 | Real pipeline vs thin relay | Use the real `RoomSubstrate`/`SubscriptionSource`/policy/dispatcher pipeline. | More components, but no second delivery model and meaningful end-to-end evidence. |
 | Browser RoomService vs server RoomPort | Keep internal `RoomService` semantics in the browser, matching PR #120. | Requires HTTP/SSE substrate methods and a durable browser journal, but avoids duplicating those semantics. |
 | Store layout | Channel data and connector ledgers are separate files under one channel directory. | Export/delete can treat the channel directory as one unit while migrations and locks stay domain-owned. |
-| One process | One owner process manages the channel store and all bindings for an open channel. | Avoids cooperative SQLite writers; multi-process attachment is out of scope. |
+| One active internal channel | One Khala owner process and stable root descriptor select one active channel per OS user; user-owned CLI processes are external clients. | Avoids ambiguous descriptor selection and cooperative SQLite writers. Concurrent internal channels require a later broker/selector design; port incrementing still survives unrelated port collisions. |
 | Local identity | Use stable synthetic IDs and distinct participant/device IDs under one owner. | Existing viewer-relative labels may need local display-name treatment; no contract extension is assumed. |
 | Bootstrap fragment | The launcher may place the human launch token in a URL fragment long enough for the fixed bootstrap script to exchange it. | Avoids query/request logging, but environment-specific process-metadata secrecy remains unproven and gates automatic browser opening. |
 | Environment | v1 targets environments where Node 22, IPv4 loopback, private POSIX-like paths/modes, and a defined browser invocation path are supported. | Automatic opening is claimed only for the exact proven OS/process-visibility/opener/browser profile. Windows ACL/launcher behavior is **unproven** and must not be claimed by the first implementation. |
@@ -218,27 +253,31 @@ behavior. This design owns only injection and non-leakage.
 |---|---|
 | DNS rebinding or cross-site access to localhost | IPv4-literal bind, exact Host, exact Origin on mutations, SameSite cookie, per-launch token, no CORS. |
 | Token leakage | Fragment bootstrap, external script, immediate `location.replace`, 0600 descriptor, redacted logs, rotation on every launch. |
-| Caller-selected attribution | Separate per-binding capabilities and server-side capability-to-participant/device/route mapping prevent a client from choosing identity in its request body. This does not stop a same-uid process from stealing another descriptor. |
+| Caller-selected attribution | Access-grant-issued binding capabilities and server-side capability-to-participant/device/route mapping prevent a client from choosing identity in its request body. This does not stop a same-uid process from stealing the transport descriptor or another client's binding state. |
 | Duplicate or lost delivery after restart | Durable event log, unique transaction key, replay-stable cursors, commit-before-hint, connector cursor commit after ingest. |
 | Corruption or two launchers | Application/schema IDs, integrity checks, fail-closed open, one exclusive owner. |
 | Hosted automation opens accidentally | Explicit dependency injection plus source-graph, bundle-graph, and behavior tests. |
 | PR #120 changes composition exports | Block local web work on #41; consume public exports only and do not duplicate its root. |
 | Other E09 work writes the same CLI/UI files | Sequence shared-surface tickets and keep core contracts narrow; conflict notes below identify likely owners. |
 | Plaintext disclosure to the same OS user | State the threat limit. Modes protect against other users, not same-user processes or unrestricted agents. |
-| Same-user agent impersonation | v1 does not claim process isolation: an unrestricted agent sharing the operator's uid can copy another descriptor or `launch.json`. Describe per-binding capabilities as API attribution controls, not a sandbox boundary; run autonomous harnesses in the separately specified restricted workspaces. |
+| Same-user client impersonation | v1 does not claim process isolation: a process sharing the operator's uid can copy the runtime descriptor or another client's binding state. Describe capabilities as API attribution controls, not a sandbox boundary. Channel text is untrusted in every normal interactive session; optional setup hardening is reporting, not a gate. |
 | Unbounded persistent history exhausts disk | v1 deliberately has no retention or turn quota. Surface `SQLITE_FULL`/filesystem exhaustion as a durable write failure, stop further automated sends, and keep export/delete/recovery available where reads still succeed; do not claim this design prevents a same-uid process from consuming disk directly. |
 
 ## Non-goals
 
-- Matrix, Synapse, OAuth, invitations, sharing, recovery, revocation protocol, or
-  encryption for internal channels.
-- LAN/remote binding, TLS, multi-user hosting, daemon/service installation, or
-  multiple writer processes.
+- Matrix, Synapse, OAuth, invitations, sharing, recovery, a general participant
+  or membership revocation protocol, or encryption for internal channels.
+  `stop-control` still owns terminal local binding revocation.
+- LAN/remote binding, TLS, multi-user hosting, daemon/service installation,
+  multiple writer processes, or multiple simultaneously active internal channels
+  for one OS user.
+- Starting, hosting, wrapping, interrupting, or terminating Codex, Claude, or
+  OpenCode; the user's own interactive CLI session is the only agent process.
 - Harness-specific steer/sync/async delivery, turn capture, Claude/OpenCode
-  plugins, MCP piggybacking, read receipts, channel discovery, or Make external.
+  plugins, MCP piggybacking, acknowledgement, read receipts, or Make external.
 - At-rest encryption or secure erase.
 - A turn limit. Pause and wake policy belongs to `listening-mode-contract`;
-  session Stop and launcher shutdown are specified separately below.
+  binding Stop and launcher shutdown are specified separately below.
 
 ## Ticket contracts
 
@@ -260,7 +299,7 @@ tests, not a second end-to-end suite.
 | Acceptance criteria | Restart preserves channels/events/roster and the canonical listening mode; repeated `(deviceId, clientTxnId)` returns one event; timeline and subscription pages obey cursor contracts; own filtered events advance a binding cursor; the mode adapter passes the shared port suite; corruption/newer schema/second owner fail closed; 0700/0600 and no-follow rules hold. One integration test drives the same real store through `createRoomService` and `startSubscription` using only public contracts. |
 | Tests | Real SQLite contract suites for all three ports; crash/reopen replay; concurrent open refusal; corrupt/foreign/newer schema; mode and symlink attacks. **Wrong-implementation test:** send the same transaction twice across restart and assert one SQLite event and one replayed source event. |
 | Blocked by | `listening-mode-contract`. |
-| Conflict risk | `internal-channel-discovery`, `listening-mode-dispatch`, and `make-external` consume store APIs. They must use exported adapters rather than add direct schema readers. |
+| Conflict risk | `channel-access-journal`, `channel-access-inbox`, `listening-mode-dispatch`, and `make-external` consume store APIs. They must use exported adapters rather than add direct schema readers. |
 
 ### 2. Authenticated loopback server and browser bridge
 
@@ -270,12 +309,12 @@ tests, not a second end-to-end suite.
 | Title | Serve internal channels safely on loopback |
 | Complexity | `complexity:4` |
 | Scope | Node HTTP server; 4870-upward binding; exact Host/Origin/credential enforcement; fragment bootstrap and cookie; injected human/binding credentials; manifest-only static assets rooted beneath the local bundle; bounded JSON endpoints, connection/time limits, and credential-scoped SSE hints; strict headers and content-free logs. |
-| Out of scope | Browser components, descriptor creation, automation, harness spawning, LAN access, daemonization. |
-| Files/packages | `apps/internal/package.json`, `apps/internal/src/server/**` (new), browser-safe HTTP adapter under `packages/messaging/src/local/http/**`, `scripts/check-boundaries.mjs`, and colocated integration tests. |
+| Out of scope | Browser components, descriptor creation, automation, agent-process lifecycle, LAN access, daemonization. |
+| Files/packages | `apps/internal/package.json`, `apps/internal/src/server/**` (new), `scripts/check-boundaries.mjs`, and colocated server integration tests. |
 | Acceptance criteria | With 4870 occupied, bind 4871 on `127.0.0.1`; bootstrap yields a host-only HttpOnly cookie, cleans the URL, and lands on the selected channel; agent routes derive participant/device from binding capabilities; APIs require credentials plus browser mutation Origin checks; SSE carries hints only; CSP has no inline/eval/worker exception; logs contain no content or credentials. The caller supplies credentials and assets. |
-| Tests | Real HTTP tests for occupied ports, Host variants, wrong tokens, cross-origin mutations, bootstrap replay, bounds, slow/incomplete requests, excess connections/streams, static absolute/encoded/mixed-separator/symlink escapes, headers, SSE reconnect, and sanitized errors; one browser navigation completes the external-script fragment exchange under the declared CSP. **Wrong-implementation test:** send a valid-token mutation with `Host: localhost:<port>` or a hostile Origin and assert rejection before the body or store is read. |
+| Tests | Real HTTP tests for occupied ports, Host variants, wrong tokens, cross-origin mutations, bootstrap replay/expiry, bounds, slow/incomplete requests, excess connections/streams, static absolute/encoded/mixed-separator/symlink escapes, headers, SSE reconnect, and sanitized errors; one browser navigation completes only the external-script fragment exchange under the declared CSP. **Wrong-implementation test:** send a valid-token mutation with `Host: localhost:<port>` or a hostile Origin and assert rejection before the body or store is read. |
 | Blocked by | `local-sqlite-channel-store`. |
-| Conflict risk | `setup-cli-plan`, `internal-channel-discovery`, and `make-external` may consume endpoints. This ticket owns the versioned local API, not descriptors or the final web bundle. |
+| Conflict risk | `setup-cli-plan`, `channel-access-journal`, `channel-access-inbox`, and `make-external` may consume endpoints. This ticket owns the versioned local API, not descriptors or the final web bundle. |
 
 ### 3. Local web entry over the hosted composition
 
@@ -284,13 +323,13 @@ tests, not a second end-to-end suite.
 | Slug | `local-web-entry` |
 | Title | Compose the hosted channel UI for internal mode |
 | Complexity | `complexity:3` |
-| Scope | Add a separate local Vite entry/config and bundle; reuse the `human-flow-composition` application/mount/internal `room` port; add a generic private-create seam; supply local identity/device/admission/route ports and authenticated `HttpRoomSubstrate`; render reconnecting/stopped/auth-failed states; hide sign-in, share, join, and recovery. |
+| Scope | Add a separate local Vite entry/config and bundle; reuse the `human-flow-composition` application/mount/internal `room` port; add a generic private-create seam; supply local identity/device/admission/route ports and authenticated `HttpRoomSubstrate`; render initial-loading, empty, send-pending/failure/unknown/reconciled, reconnecting, stopped, and auth-failed states; hide sign-in, share, join, and recovery. |
 | Out of scope | Rebuilding shared UI, Matrix changes, discovery approval UI, Stop control, hosted entry changes beyond reusable exports. |
-| Files/packages | `apps/web/src/internal/**`, `apps/web/vite.internal.config.*`, public composition exports in `apps/web/package.json`, `apps/web/src/composition/human/**` only for a generic extension seam, and local-entry browser tests. |
-| Acceptance criteria | Create/open/send/observe works against the loopback server; create and resume land directly on the selected channel; reload preserves operation identities; auth failure is terminal; transport loss preserves state and reconnects before stopped guidance; there is no sign-in/share/join/recovery route or control; hosted build/share behavior is unchanged; distinct agents retain display attribution. |
-| Tests | Component tests for local ports, private-create mode, connection states, and route codec; focused browser navigation against real HTTP; hosted/local build comparison. **Wrong-implementation test:** navigate to `/join?...` and assert not-found with no Join or Sign-in UI, then inspect the local asset graph for recovery/Matrix entry imports. |
+| Files/packages | `apps/web/src/internal/**`, browser-safe `HttpRoomSubstrate` under `packages/messaging/src/local/http/**`, `apps/web/vite.internal.config.*`, public composition exports in `apps/web/package.json`, `apps/web/src/composition/human/**` only for a generic extension seam, and local-entry adapter/browser tests. |
+| Acceptance criteria | Create/open/send/observe works against the loopback server; create and resume land directly on the selected channel; reload preserves operation identities; initial load and empty timeline are distinct; pending/failed/unknown/reconciled sends expose safe controls and status; auth failure is terminal; transport loss preserves state and reconnects before stopped guidance; async state changes are announced; there is no sign-in/share/join/recovery route or control; hosted build/share behavior is unchanged; distinct agents retain display attribution. |
+| Tests | Component tests for local ports, private-create mode, the full interaction-state matrix, accessibility announcements/focus, and route codec; focused browser navigation against real HTTP; hosted/local build comparison. **Wrong-implementation test:** navigate to `/join?...` and assert not-found with no Join or Sign-in UI, then inspect the local asset graph for recovery/Matrix entry imports. |
 | Blocked by | `authenticated-loopback-server`, `channel-terminology`, `human-flow-composition`. |
-| Conflict risk | `listening-mode-ui`, `read-receipts`, `channel-access-prompt`, and `stop-control` touch channel panels. Keep their ports as injected capabilities and do not implement their UI here. |
+| Conflict risk | `listening-mode-ui`, `read-receipts`, `channel-access-inbox`, and `stop-control` touch channel panels. Keep their ports as injected capabilities and do not implement their UI here. |
 
 ### 4. Persistent resume, export, and delete operations
 
@@ -305,7 +344,7 @@ tests, not a second end-to-end suite.
 | Acceptance criteria | Resume refuses missing/corrupt state; exports are deterministic and exclude secrets; interrupted export leaves no visible partial output; running channels cannot be deleted; deletion removes only the named channel and reports the no-secure-erase boundary. |
 | Tests | Restart fixture; Markdown escaping; JSONL round-trip/order; existing-output refusal; partial-write fault; symlink/tombstone/delete failure. **Wrong-implementation test:** export a message containing headings/fences/newlines and assert it remains content rather than document structure. |
 | Blocked by | `local-sqlite-channel-store`. |
-| Conflict risk | `internal-channel-discovery` may own listing UX and `make-external` may consume export records. Publish versioned lifecycle APIs; implement neither feature here. |
+| Conflict risk | `channel-access-inbox` may consume channel summaries and `make-external` may consume export records. Publish versioned lifecycle APIs; implement neither feature here. |
 
 ### 5. Local-only automation authority and build fence
 
@@ -314,8 +353,8 @@ tests, not a second end-to-end suite.
 | Slug | `local-automation-fence` |
 | Title | Fence internal automation from hosted compositions |
 | Complexity | `complexity:3` |
-| Scope | Refactor automatic-release authority into an injected dependency with the hosted provider closed; add an internal-only bounded provider; enforce import/bundle boundaries; enforce the limits and pause/wake contract selected by `listening-mode-contract`. |
-| Out of scope | Choosing causal/job limits, harness delivery mechanics, steer/sync/async implementation, reply capture, read receipts. |
+| Scope | Refactor automatic-release authority into an injected dependency with the hosted provider closed; add an internal-only bounded provider; enforce import/bundle boundaries; enforce the limits and pause/wake contract selected by `listening-mode-contract`. The provider releases work only toward user-started sessions through owner-supplied adapters. |
+| Out of scope | Choosing causal/job limits, agent-process launch/control, harness delivery mechanics, steer/sync/async implementation, reply capture, acknowledgement, read receipts, or a restricted-profile delivery gate. |
 | Files/packages | `packages/policy/src/trust/{automatic,gate}.ts` and tests; local provider under `apps/internal/src/composition/**`; hosted/internal composition tests; `scripts/check-boundaries.mjs`; build graph assertion. |
 | Acceptance criteria | Hosted automatic release remains `automation_gated`; internal release requires an explicit bounded provider; shared loop/budget checks and pause/wake precedence hold; hosted server/browser artifacts contain no local provider dependency. |
 | Tests | Policy unit matrix; hosted/internal composition integration; dependency-graph and bundle-marker checks. **Wrong-implementation test:** build/evaluate hosted `auto` policy and assert it holds; fail if a global default or hosted import opens the gate. |
@@ -327,32 +366,62 @@ tests, not a second end-to-end suite.
 | Field | Contract |
 |---|---|
 | Slug | `local-agent-client` |
-| Title | Select a local `AgentClientPort` from a runtime descriptor |
+| Title | Connect a user-started agent session to the local server |
 | Complexity | `complexity:3` |
-| Scope | Define the browser-neutral versioned descriptor value contract; add `--internal-descriptor <path>`; securely read and validate the exact 0600 file at runtime; select a local `AgentClientPort` for `send`, `status`, and `mcp-serve`; keep `connect` unavailable; ensure installed MCP/plugin entries store only the descriptor path and never a port/token. Discovery-only descriptors have list/request scope and no send/receive until the D11 grant produces a binding descriptor. |
-| Out of scope | Creating channels, writing descriptors, launching the server/browser, setup installation, harness delivery, admission decisions. |
-| Files/packages | Pure value schema/decoder in `packages/contracts/src/internal/descriptor.ts` with its package export/tests; secure descriptor writer under `apps/internal/src/descriptor/write.ts`; new `packages/agent-cli/src/composition/internal.ts` owns exact-file reading, mode/owner/no-follow checks, decoding, and tests; new focused CLI/MCP modules plus minimal registrations in the real shared files `packages/agent-cli/src/cli/app.ts`, `packages/agent-cli/src/cli/main.ts`, `packages/agent-cli/src/cli/types.ts`, and `packages/agent-cli/src/mcp/server.ts`. |
-| Acceptance criteria | The option opens only the named file; validates owner/mode/no-follow/version/origin/binding; the package imports only the pure contracts export and never `apps/internal`; credentials never enter argv/environment/config; binding A cannot select B; `khala send` and `khala_send` use server-derived attribution; an unjoined agent cannot send or receive and can only use the discovery capability; unrelated commands do not load internal client modules. |
-| Tests | Descriptor owner/mode/symlink/version/origin cases; CLI/MCP selection parity; send/status success; cross-binding rejection; discovery-only denial; shared-file registration tests. **Wrong-implementation test:** point binding A at a copied descriptor for B and assert the server rejects A's route/attribution attempt. |
-| Blocked by | `authenticated-loopback-server`, `channel-access-prompt`, `internal-channel-discovery`. |
+| Scope | Define the browser-neutral versioned descriptor contract with transport-only and granted-binding states; add `--internal-descriptor <path>`; securely re-read and validate the exact 0600 file at runtime; select a local `AgentClientPort` for `send`, `read`, `status`, and `mcp-serve`; ensure installed MCP/plugin entries store only the descriptor path and never a port/token. Delegate `/khala join <channel-url>` request/grant state to `channel-access-journal` and `channel-access-inbox`; accept participant-scoped authority only from that grant. Frame delivered channel text as untrusted in the user's normal interactive session. |
+| Out of scope | Creating channels, writing descriptors, launching the server/browser or any agent process, setup installation, hooks/plugins, listening-mode delivery, admission policy, restricted-profile enforcement. |
+| Files/packages | Pure value schema/decoder in `packages/contracts/src/internal/descriptor.ts` with its package export/tests; new `packages/agent-cli/src/composition/internal.ts` owns exact-file reading, mode/owner/no-follow checks, decoding, and tests; new focused CLI/MCP modules plus minimal registrations in the real shared files `packages/agent-cli/src/cli/app.ts`, `packages/agent-cli/src/cli/main.ts`, `packages/agent-cli/src/cli/types.ts`, and `packages/agent-cli/src/mcp/server.ts`. |
+| Acceptance criteria | The option opens only the named file and validates owner/mode/no-follow/version/origin; the package imports only the pure contracts export and never `apps/internal`; credentials never enter argv/environment/config; a transport-only descriptor cannot read or send channel content; a granted descriptor carries only launch-scoped authority backed by a durable grant; separate CLI calls and long-lived clients observe rotation/revocation; a granted client uses server-derived attribution; `/khala join` accepts a channel URL and uses the shared request/grant services; channel content carries the untrusted-content frame in every mode; optional hardening status is visible but never blocks delivery; unrelated commands do not load internal client modules. Khala never launches or controls the CLI process. |
+| Tests | Descriptor owner/mode/symlink/version/origin/state cases; CLI/MCP selection parity; pre-grant denial; post-grant calls from fresh processes; shutdown/resume rotation from a durable grant; Stop field removal and old-capability rejection; cross-binding rejection; untrusted-frame preservation; optional-hardening off/on parity; shared-file registration tests. **Wrong-implementation test:** retain an old granted descriptor across Stop or resume and assert every channel read/send is rejected. |
+| Blocked by | `authenticated-loopback-server`, `channel-access-inbox`, `channel-access-journal`, `listening-mode-pull`. |
 | Conflict risk | Highest in the four shared `agent-cli` files with `mcp-inbox-batch`, `mcp-result-piggyback`, `listening-mode-pull`, and `setup-cli-plan`; add modules and keep each registration diff minimal. |
 
-### 7. `khala internal` launcher
+### 7. Human-confirmed hosted channel-create operation
+
+| Field | Contract |
+|---|---|
+| Slug | `confirmed-agent-channel-create` |
+| Title | Confirm an agent-requested hosted channel in the human browser |
+| Complexity | `complexity:3` |
+| Scope | Add a hosted create-request/authorize/redeem operation modeled on the existing agent-bootstrap consent flow: accept bounded title/intro intent plus PKCE/state/loopback return; authenticate the human in the browser; show the exact request; require confirm or reject; invoke the hosted browser composition's existing channel-create service with a stable operation ID; record its outcome; return the channel URL to the loopback client. |
+| Out of scope | CLI/MCP registration, starting or hosting an agent, local internal-server startup, admitting other participants, auto-confirmation, or changing the shared D11 access flow. |
+| Files/packages | New `apps/control/src/composition/agent/channel-create/**` request/outcome handlers and tests; focused confirmation route/components under `apps/web/src/features/create-chat/agent-request/**`; a narrow extension in the hosted human composition to invoke its existing channel-create service; reuse the existing agent-bootstrap proof/state/loopback conventions. |
+| Acceptance criteria | The authorize page requires the signed-in human, exact Origin/fetch metadata/CSRF on confirmation, bounded unexpired state and PKCE-bound loopback return; rejection/cancel/expiry creates nothing; confirmation creates exactly one channel for an idempotent operation and returns only its URL; requested other participants receive no membership; keyboard and screen-reader users can inspect, confirm, or reject with focus restoration and announced outcomes; narrow viewports preserve request details/actions. |
+| Tests | Descriptor/request validation; signed-out return; Origin/fetch/CSRF; PKCE/state/redirect binding; confirm/reject/cancel/expiry; idempotent retry/outcome-unknown reconciliation; title/intro bounds; other-participant non-admission; keyboard/focus/announcement/narrow viewport. **Wrong-implementation test:** redeem a confirmed operation twice and assert one channel exists, then request another participant and assert no membership was granted. |
+| Blocked by | `human-flow-composition`. |
+| Conflict risk | High with hosted create-chat UI and `channel-access-journal`/`channel-access-inbox`. Reuse their public ports and keep this operation limited to initial channel creation, never participant admission. |
+
+### 8. Agent channel-create CLI and MCP commands
+
+| Field | Contract |
+|---|---|
+| Slug | `agent-channel-create` |
+| Title | Add confirmed channel creation to the user-started agent CLI |
+| Complexity | `complexity:3` |
+| Scope | Add `khala channels create` and `khala_create_channel` as thin clients of `confirmed-agent-channel-create`; start a one-shot loopback return, generate PKCE/state, open or print the hosted confirmation URL, redeem the bounded result, and return the created channel URL to the same user-started CLI/MCP session. Work with no internal descriptor or local server. |
+| Out of scope | Hosted create semantics, auto-confirmation, admitting other participants, launching/hosting/wrapping an agent, starting `khala internal`, or a new reply-to protocol. |
+| Files/packages | New focused modules/tests under `packages/agent-cli/src/cli/channels/**`, `packages/agent-cli/src/mcp/channels/**`, and `packages/agent-cli/src/composition/channel-create/**`; minimal registrations in `packages/agent-cli/src/cli/app.ts`, `packages/agent-cli/src/cli/main.ts`, `packages/agent-cli/src/cli/types.ts`, and `packages/agent-cli/src/mcp/server.ts`; CLI reference docs. |
+| Acceptance criteria | A fresh user-started CLI with no internal descriptor can request creation; browser confirmation or printed-URL fallback reaches the authenticated human; rejection/cancel/expiry is terminal; confirmation returns one channel URL; CLI and MCP results match; no agent process is launched or signaled; requested participants remain unadmitted. |
+| Tests | No-descriptor CLI/MCP parity; loopback occupied-port fallback; state/PKCE/timeout/cancel; opener failure with printed URL; terminal rejection; successful URL return; shared-file registration. **Wrong-implementation test:** unset the internal descriptor, confirm through the hosted fake, and require success while a fake process-spawner records zero agent launches. |
+| Blocked by | `confirmed-agent-channel-create`, `mcp-result-piggyback`, `setup-cli-plan`. |
+| Conflict risk | Highest in the four shared `agent-cli` registration files with `mcp-inbox-batch`, `mcp-result-piggyback`, `listening-mode-pull`, and setup work; add new modules and keep registration edits minimal. |
+
+### 9. `khala internal` server launcher
 
 | Field | Contract |
 |---|---|
 | Slug | `internal-launcher` |
-| Title | Launch and resume an internal channel |
-| Complexity | `complexity:4` |
-| Scope | Add `internal` create/resume/export/delete routing through a lazy delegated entry; start/stop the owner process; write/rotate/invalidate `launch.json` and per-agent 0600 runtime descriptors; inject the local bundle and credentials into the server; print the stable channel ID, exact resume command, and manual local URL; request browser opening only for environment profiles proven by `browser-handoff-spike`. Consume D11 discovery/grant outputs—never infer or silently create an agent binding. |
-| Out of scope | `--internal-descriptor` client behavior, setup/plugin installation, browser-handoff proof, full fake/live acceptance, daemon/service operation, discovery/admission policy. |
-| Files/packages | New `apps/internal/src/launcher/**` and `apps/internal/src/composition/**`; new `packages/agent-cli/src/cli/internal.ts` and tests; minimal command/type/delegation registrations in `packages/agent-cli/src/cli/app.ts`, `packages/agent-cli/src/cli/main.ts`, and `packages/agent-cli/src/cli/types.ts`; package/build metadata and CLI reference docs. |
-| Acceptance criteria | Bare command creates a channel; `--resume <channel-id>` restores it with all credentials rotated; export/delete delegate to lifecycle services; port fallback is visible without secrets; failure to open a browser prints the manual URL and does not abort launch; no binding exists before the explicit D11 human grant; SIGINT/SIGTERM invalidates descriptors, closes stores/server, and makes the local URL unreachable. |
-| Tests | Focused argument, signal, descriptor-write, and opener-failure unit tests, plus one launcher smoke that create→server readiness→shutdown→resume reaches the real server/store without a fake harness or live model. **Wrong-implementation test:** start with a discovery-only agent and assert launch creates no binding/send capability before the recorded human grant. |
-| Blocked by | `authenticated-loopback-server`, `channel-access-prompt`, `internal-channel-discovery`, `internal-channel-lifecycle`, `local-agent-client`, `local-web-entry`. |
+| Title | Launch and resume the internal channel server |
+| Complexity | `complexity:3` |
+| Scope | Add `internal` create/resume/export/delete routing through a lazy delegated entry; enforce the root active-runtime lock; start/stop only the local owner server; write/rotate/invalidate `<channel>/launch.json` and the stable root 0600 `active.json` runtime descriptor; inject the local bundle and credentials into the server; print the stable channel ID, exact resume command, descriptor path, and manual local URL; request browser opening only for environment profiles proven by `browser-handoff-spike`. |
+| Out of scope | Starting, hosting, wrapping, interrupting, or killing an agent CLI; channel binding/admission; `--internal-descriptor` client behavior; setup/plugin installation; browser-handoff proof; full fake/live acceptance; daemon/service operation. |
+| Files/packages | New `apps/internal/src/launcher/**`, `apps/internal/src/composition/**`, and `apps/internal/src/descriptor/write.ts`; new `packages/agent-cli/src/cli/internal.ts` and tests; minimal command/type/delegation registrations in `packages/agent-cli/src/cli/app.ts`, `packages/agent-cli/src/cli/main.ts`, and `packages/agent-cli/src/cli/types.ts`; package/build metadata and CLI reference docs. |
+| Acceptance criteria | Bare command creates a channel and starts only the server; `--resume <channel-id>` restores it with launch credentials rotated; a second launcher for the same OS user is refused even on another free port; export/delete delegate to lifecycle services; port fallback is visible without secrets; failure to open a browser prints the manual URL and does not abort launch; no agent process or channel binding is created; SIGINT/SIGTERM invalidates/removes `active.json`, releases both locks, closes store/server, and makes the local URL unreachable without signaling user-owned CLIs. |
+| Tests | Focused argument, root/channel lock, signal, atomic descriptor-write, stale-active recovery, and opener-failure unit tests, plus one launcher smoke that create→server readiness→shutdown→resume reaches the real server/store without a fake harness or live model. **Wrong-implementation test:** hold one active launcher, start a second with a free port, and assert it is refused without changing `active.json` or signaling a separately started CLI. |
+| Blocked by | `authenticated-loopback-server`, `internal-channel-lifecycle`, `local-web-entry`. |
 | Conflict risk | High in the shared CLI registration files with `setup-cli-plan`; the delegated module owns behavior while root edits stay minimal. `acceptance` owns all broader fake/live journeys. |
 
-### 8. Browser handoff process-metadata spike
+### 10. Browser handoff process-metadata spike
 
 | Field | Contract |
 |---|---|
@@ -361,26 +430,26 @@ tests, not a second end-to-end suite.
 | Complexity | `complexity:2` |
 | Scope | Build real-process evidence for explicit environment profiles covering OS/process-visibility controls, opener implementation, and browser invocation path while transferring the fragment credential; inspect launcher, opener, and browser argv/process metadata from a separate unprivileged OS user. Either prove the token is not observable or select and prove a safer handoff. Publish the supported-environment matrix and a narrow opener adapter contract. |
 | Out of scope | Blocking `khala internal`, server authentication redesign, UI behavior, claiming untested Windows/desktop support. |
-| Files/packages | `experiments/internal-mode/internal-core/browser-handoff/**` for the proof; follow-up adapter/tests under `apps/internal/src/launcher/browser-handoff/**` only for environment profiles the proof passes. |
+| Files/packages | `experiments/internal-mode/internal-core/browser-handoff/**` for the proof report, reproducible harness, supported-environment matrix, and narrow adapter contract only. |
 | Acceptance criteria | Each supported environment profile has repeatable cross-user evidence covering all three process layers and a redacted report; automatic opening stays disabled when the runtime profile cannot be established or differs from the proof. Regardless of result, launcher fallback continues to print the local URL for manual opening, so launch itself is not blocked on this spike. |
-| Tests | Environment-profile process-inspection harness run from a separate unprivileged user, with a unique canary and negative-control leak; adapter unit tests only after that exact profile passes. **Wrong-implementation test:** pass the canary URL directly as opener argv and require the harness to detect and fail the leak. |
+| Tests | Environment-profile process-inspection harness run from a separate unprivileged user, with a unique canary and negative-control leak. **Wrong-implementation test:** pass the canary URL directly as opener argv and require the harness to detect and fail the leak. |
 | Blocked by | `authenticated-loopback-server`. |
 | Conflict risk | Low with `internal-launcher`: the launcher exposes an opener seam and fallback now, but does not claim auto-open support until this spike proves it. |
 
-### 9. Session Stop control and server lifetime
+### 11. Binding Stop control and server lifetime
 
 | Field | Contract |
 |---|---|
 | Slug | `stop-control` |
-| Title | Stop agent sessions without stopping the local channel server |
+| Title | Stop channel delivery without controlling user agent processes |
 | Complexity | `complexity:3` |
-| Scope | Add the internal UI Stop control and authenticated server endpoint that terminate all active agent sessions/delivery while leaving the owner server, channel timeline, and browser view running. The accessible flow confirms that every agent session—not the channel server—will stop; disables repeat submission during teardown; reports success with a link into the existing D11 replacement-session flow; and reports partial/error outcomes with remaining sessions plus retry. Keep launcher-process shutdown as the only normal server stop. |
-| Out of scope | Implementing a second discovery/grant flow, pause/wake semantics, hard-cancel behavior, deleting channel state, browser close as server authority, daemon/service management. |
-| Files/packages | `apps/web/src/internal/controls/StopControl.tsx` and tests; `apps/internal/src/server/stop/**`, `apps/internal/src/composition/session-control/**`, and focused HTTP/composition tests. |
-| Acceptance criteria | Human-cookie-authorized Stop requires confirmation, ends agent sessions and delivery, rejects their old binding capabilities, and leaves the timeline/API/browser usable; a partial teardown names remaining active sessions without claiming success and permits retry; replacement sessions invoke `internal-channel-discovery` and `channel-access-prompt` unchanged while the server stays up; closing the browser alone changes nothing. Closing the launcher stops the server and makes the URL unreachable; only then does `khala internal --resume <channel-id>` restart it with rotated credentials and the preserved channel. |
-| Tests | Confirmation, disabled/in-progress, success, partial/error/retry, keyboard/focus/announcement states; Host/Origin/human-role endpoint checks; multi-agent session teardown; post-Stop timeline read; launcher shutdown reachability. **Wrong-implementation test:** click Stop and assert agent calls fail while the human timeline endpoint still returns the channel; fail if the server/store is closed. |
-| Blocked by | `authenticated-loopback-server`, `channel-access-prompt`, `internal-channel-discovery`, `internal-launcher`, `listening-mode-contract`, `local-web-entry`. |
-| Conflict risk | High with listening-mode UI/session controls; this ticket owns only terminal session Stop and the server endpoint, while `listening-mode-contract` owns pause/wake. |
+| Scope | Add the internal UI Stop control and authenticated server endpoint that revoke active channel bindings and stop further Khala delivery while leaving user-started CLI processes, the owner server, channel timeline, and browser view running. Establish a per-binding revocation generation/barrier: authorized effects revalidate it at commit, and Stop succeeds only after earlier effects drain or fail. The accessible flow says exactly that; disables repeat submission; reports success with a link into the shared replacement access flow; and reports partial/error outcomes with remaining bindings plus retry. Keep launcher-process shutdown as the only normal server stop. |
+| Out of scope | Starting, interrupting, signaling, or killing agent processes; implementing a second access request/grant flow; pause/wake semantics; hard-cancel behavior; deleting channel state; browser close as server authority; daemon/service management. |
+| Files/packages | `apps/web/src/internal/controls/StopControl.tsx` and tests; `apps/internal/src/server/stop/**`, `apps/internal/src/composition/binding-control/**`, and focused HTTP/composition tests. |
+| Acceptance criteria | Human-cookie-authorized Stop requires confirmation, revokes binding capabilities and delivery, rejects pre-barrier effects that have not committed, removes granted binding fields from the runtime descriptor, explicitly leaves user-owned CLI processes alone, and leaves timeline/API/browser usable; a partial teardown names remaining active bindings without claiming success and permits retry; replacement clients use `channel-access-journal` and `channel-access-inbox` unchanged while the server stays up; closing the browser alone changes nothing. `internal-launcher` separately owns server shutdown/resume behavior. |
+| Tests | Confirmation, disabled/in-progress, success, partial/error/retry, keyboard/focus/announcement states; Host/Origin/human-role endpoint checks; multi-binding revocation; deterministic Stop-versus-send commit race; post-Stop timeline read; external CLI process liveness. **Wrong-implementation test:** click Stop during a blocked send and assert the send cannot commit after Stop reports success, while both the independently started CLI process and human timeline endpoint remain alive. |
+| Blocked by | `authenticated-loopback-server`, `channel-access-inbox`, `channel-access-journal`, `internal-launcher`, `listening-mode-contract`, `local-web-entry`. |
+| Conflict risk | High with listening-mode UI controls; this ticket owns only terminal binding revocation and the server endpoint, while `listening-mode-contract` owns pause/wake and harness owners deliver into the user-started session. |
 
 ## Recommended order
 
@@ -388,9 +457,11 @@ tests, not a second end-to-end suite.
 2. Land `internal-channel-lifecycle` and `authenticated-loopback-server` in parallel.
 3. Land `local-web-entry` after `human-flow-composition` and `channel-terminology`.
 4. Land `local-automation-fence` after the shared limits and pause/wake contract.
-5. Land `local-agent-client` after `channel-access-prompt` and
-   `internal-channel-discovery` freeze the D11 grant/discovery seams.
-6. Land `internal-launcher`; `browser-handoff-spike` may proceed independently
+5. Land `local-agent-client` after `channel-access-journal`,
+   `channel-access-inbox`, and `listening-mode-pull` freeze the D11 and read seams.
+6. Land `confirmed-agent-channel-create` after `human-flow-composition`, then
+   `agent-channel-create` after it and the shared agent-cli setup chain.
+7. Land `internal-launcher`; `browser-handoff-spike` may proceed independently
    and never blocks the printed-URL fallback.
-7. Land `stop-control`, then hand the composed system to `acceptance` for the
+8. Land `stop-control`, then hand the composed system to `acceptance` for the
    full fake-harness and live runs.
