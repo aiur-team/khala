@@ -43,6 +43,11 @@ describe('splash page prompt', () => {
 });
 
 describe('splash page constraints', () => {
+  test('advertises both agent-readable guides from the document head', () => {
+    expect(html).toMatch(/<link rel="alternate" type="text\/plain" href="\/llms\.txt"/);
+    expect(html).toMatch(/<link rel="alternate" type="text\/markdown" href="\/AGENTS\.md"/);
+  });
+
   test('loads no script or stylesheet from another origin', () => {
     for (const [, src] of html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)) expect(src).toMatch(/^\.?\//);
     expect(html).not.toMatch(/<link[^>]+rel="stylesheet"[^>]+href="https?:/);
