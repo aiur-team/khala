@@ -1,14 +1,14 @@
 {
   "recordedAt": "2026-09-24T22:22:00Z",
   "host": {
-    "hostname": "orangekid",
+    "hostname": "<executor-host>",
     "kernel": "Linux 7.1.4-arch1-1",
     "architecture": "x86_64"
   },
   "claude": {
     "versionOutput": "2.1.282 (Claude Code)",
-    "launcher": "/home/everdred/.local/bin/claude",
-    "resolvedBinary": "/home/everdred/.local/share/claude/versions/2.1.282",
+    "launcher": "~/.local/bin/claude",
+    "resolvedBinary": "~/.local/share/claude/versions/2.1.282",
     "sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
     "bytes": 238767288,
     "installedMtime": "2026-09-24T12:02:48.098888445-07:00",

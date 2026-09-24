@@ -38,10 +38,10 @@ The complete machine-readable inventory is [`inventory.json`](../../../experimen
 
 | Item | Observation |
 |---|---|
-| Host | `orangekid`, Linux `7.1.4-arch1-1`, x86_64 |
+| Host | `<executor-host>`, Linux `7.1.4-arch1-1`, x86_64 |
 | CLI | `2.1.282 (Claude Code)` |
-| Launcher | `/home/everdred/.local/bin/claude` |
-| Resolved binary | `/home/everdred/.local/share/claude/versions/2.1.282` |
+| Launcher | `~/.local/bin/claude` |
+| Resolved binary | `~/.local/share/claude/versions/2.1.282` |
 | SHA-256 | `3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3` |
 | Embedded build | `2026-09-24T03:59:36Z`, git `88e628ac87357ab077f78e21f78aee6156f01ab3` |
 | Authentication/policy | First-party Claude Max login; no managed settings file found. This does not prove an organization would enable channels. |
