@@ -58,6 +58,15 @@ separate namespace on the production site.
 
 ## Routing
 
+The site root `/` alone is force-rewritten to the public splash page,
+`apps/web/dist/landing/index.html`, built by the last step of
+`pnpm --filter @khala/web build` (`apps/web/vite.landing.config.mjs`, source in
+`apps/web/src/landing/`). It owns its own output directory and never writes
+`dist/index.html` or `dist/assets`, so it cannot collide with the app entry.
+The rule sits after `/api/*` and before the SPA fallback, and it needs
+`force = true` because Netlify otherwise serves an existing `dist/index.html`
+at `/` without consulting the rule.
+
 `/api/*` rewrites to the generated control function before the SPA fallback is
 considered, so a reload on a deep link (e.g. a shared chat room) serves
 `index.html` while an API error stays a structured JSON response — never HTML.
