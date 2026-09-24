@@ -134,7 +134,7 @@ Mode support comes only from `HarnessCapabilities`. Configuration does not promo
 
 | Risk | Treatment |
 |---|---|
-| Automatically delivered peer content can steer a tool-capable model. | Visibly delimit it as untrusted Khala content and require the restricted profile/capability policy owned by setup. Outbound actions remain approval-gated or deny-by-default. |
+| Automatically delivered peer content can steer a tool-capable model. | Visibly delimit it as untrusted Khala content. Setup may report an optional restricted profile as hardening, but delivery never depends on that profile. Outbound actions remain approval-gated or deny-by-default. |
 | Hook contracts or hidden channel gates change after 2.1.282. | Pin tested capability evidence by version; setup probes and fails closed instead of assuming compatibility. |
 | `Stop` continuation loops. | Never pull or return context when `stop_hook_active=true`; test the second Stop. |
 | Bounded idle watcher expires. | Surface watcher health and timeout. Do not promise indefinite wake; a later prompt rearms it. |
@@ -192,14 +192,14 @@ Dependencies are ticket slugs, not issue numbers. These contracts reuse the shar
 | **blocked-by** | `claude-interactive-session-adapter`, `channel-discovery-contract`, `channel-listing-cli`, `channel-access-cli`, `channel-terminology` |
 | **conflict risk** | Medium at the shared agent skill and channel terminology seams. |
 
-### Contract 4 — Claude setup and capability attestation
+### Contract 4 — Claude setup and capability reporting
 
 | Field | Contract |
 |---|---|
 | **slug** | `setup-cli-claude-interactive` |
-| **title** | Install and attest the Claude interactive integration |
+| **title** | Install and report the Claude interactive integration |
 | **complexity** | **4** |
-| **scope** | Detect supported Claude versions; install/remove the plugin and `/khala` control together; configure the shared MCP endpoint; attest the restricted profile; publish tested/unsupported modes through `HarnessCapabilities`; provide status and rollback. Never launch Claude. |
+| **scope** | Detect supported Claude versions; install/remove the plugin and `/khala` control together; configure the shared MCP endpoint; report an optional restricted profile as hardening without gating delivery on it; publish tested/unsupported modes through `HarnessCapabilities`; provide status and rollback. Never launch Claude. |
 | **out of scope** | Owning an agent process, auto-joining a channel, a PTY wrapper, bypassing organization policy, or promoting experimental direct channels by configuration alone. |
 | **files** | Setup CLI provider module and tests, packaged plugin installation metadata, capability fixtures, concise operator documentation in `website/docs-app/`. |
 | **acceptance** | Install is idempotent and preserves unrelated Claude settings; removal restores only setup-owned entries; unsupported versions fail closed; configured-but-unproven modes remain unavailable; status identifies version/session support and watcher limits; existing user sessions are never killed or replaced. |
