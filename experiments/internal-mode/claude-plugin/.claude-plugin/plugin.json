@@ -1,0 +1,8 @@
+{
+  "name": "khala-hook-probe",
+  "description": "Interactive Claude Code hook behavior probe for Khala research",
+  "version": "0.0.0",
+  "author": {
+    "name": "Khala"
+  }
+}
