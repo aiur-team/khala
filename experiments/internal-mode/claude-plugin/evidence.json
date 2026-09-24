@@ -1,0 +1,39 @@
+{
+  "capturedAt": "2026-09-24T20:14:23Z",
+  "platform": "Linux x86_64 interactive TTY",
+  "claudeCodeVersion": "2.1.282",
+  "pluginValidation": "claude plugin validate --strict: pass",
+  "sessionIdentity": {
+    "exactIdCommitted": false,
+    "distinctSessionIdsObserved": 1,
+    "cwd": "experiments/internal-mode/claude-plugin"
+  },
+  "observations": [
+    {
+      "hook": "PostToolUse",
+      "result": "sync additionalContext consumed after Bash result",
+      "marker": "post-tool-delivered-140"
+    },
+    {
+      "hook": "Stop",
+      "result": "additionalContext continued the completed turn; next Stop had stop_hook_active=true",
+      "marker": "stop-delivered-140"
+    },
+    {
+      "hook": "UserPromptSubmit asyncRewake",
+      "result": "exit 2 after the first Stop woke the idle session under the same session ID and a new prompt ID",
+      "marker": "rewake-delivered-140"
+    },
+    {
+      "surface": "plugin skill dispatcher",
+      "result": "literal /khala join invoked the plugin-packaged khala skill and forwarded join through $ARGUMENTS",
+      "marker": "KHPLUG-COMMAND join"
+    }
+  ],
+  "limitations": [
+    "One interactive session and one successful run per behavior; this is not a minimum-version claim.",
+    "The rename probe proves exclusive claim only; it deletes after reading and is not the crash-safe acknowledgement design proposed for production.",
+    "The sandbox made Claude transcript persistence read-only; hook execution and TTY delivery still completed.",
+    "No hard mid-tool interrupt was tested; steer remains next-tool-boundary delivery for this plugin design."
+  ]
+}
