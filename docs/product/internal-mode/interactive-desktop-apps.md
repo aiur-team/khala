@@ -34,8 +34,11 @@ delivery. The app/version/account-policy tuple is part of the harness identity.
 A route becomes **Proven** only when the raw evidence records the delivery timing,
 model-visible context, process/session census, and batch acknowledgement described in
 the [proof record](../../../experiments/interactive-cli/desktop-apps/README.md). Until
-then, `HarnessCapabilities.support` remains `unsupported`, with `evidenceRef: null` and
-the investigated facts reported as `unknown` or `unsupported` rather than guessed.
+then, every app-mode `ModeSupport` in `HarnessCapabilities` (owned by
+[`listening-mode-contract`](./listening-modes.md)) reports `unknown` with a reason and
+no evidence reference, and `acknowledgement` reports `unknown`. No cell was inspected
+in a live session, so none is a proven negative; `unsupported` is reserved for a cell
+whose exact-version experiment shows the boundary is absent.
 
 ## Native surface inventory
 
@@ -85,11 +88,11 @@ candidate text is the recommended first route to test, not a support claim.
 
 - `steer`: test Cursor `postToolUse` and Codex `PostToolUse` first. Drain after the
   completed tool, never terminate the running tool, and keep hard abort behind a
-  separate explicit capability and owner grant. Claude app shapes remain unsupported
-  unless a future version exposes and proves an equivalent boundary.
+  separate explicit capability and owner grant. Claude app shapes stay `unknown`: no
+  equivalent boundary is documented, and none has been inspected in a live session.
 - `sync` (default): test Cursor `stop.followup_message` and Codex `Stop` continuation.
   A bounded follow-up must not create an infinite self-wake loop. Claude app shapes
-  remain unsupported unless an evidence-backed end-turn primitive appears.
+  stay `unknown` until a live session shows whether an end-turn primitive exists.
 - `async`: expose exactly one bounded, ordered `khala_read` operation through local or
   remote MCP. This is the portable app route and the only recommended Claude route.
 
@@ -100,8 +103,11 @@ starting a Khala-hosted agent or treating notification as delivery.
 
 ## Shared delivery and safety contract
 
-1. A channel URL identifies a channel. An agent may list channels or ask to create one,
-   but D11 human confirmation is required before that agent is admitted.
+1. A channel URL identifies a channel. An agent may list channels, request to join, or
+   ask to create one through `channel-agent-listing`, `channel-access-cli-mcp`, and
+   `channel-create-cli-mcp`, and inspect or change its own mode through
+   `listening-mode-agent-controls`. D11 human confirmation is required before that
+   agent is admitted. App routes reuse those operations and add none of their own.
 2. Each delivery is one bounded, ordered `mcp-inbox-batch` containing stable event
    identities and an opaque batch token. The receiver performs no independent dedup.
 3. Fetching does not acknowledge. The next authenticated Khala call presents the batch
@@ -110,7 +116,7 @@ starting a Khala-hosted agent or treating notification as delivery.
 4. Payload bytes travel in the authenticated request body, hook stdin, or MCP result.
    They never appear in argv, URLs, environment variables, process titles, or logs.
 5. Receipts remain progressive: transport or hook acceptance is not model-context
-   consumption. A `tested` capability must link exact-version raw evidence.
+   consumption. A `proven` cell must link exact-version raw evidence.
 6. Only the user's existing app session may consume the batch. Background-agent,
    app-server, Agents API, or second-cloud-task success is a wrong implementation.
 
@@ -133,7 +139,7 @@ For each exact app shape, capture a fresh evidence directory under
    opt-in, payload bytes appear in argv/logs, events reorder, or capability support is
    broader than the evidence tuple.
 
-The current negative record is at
+The current record of uninspected, Blocked cells is at
 [`experiments/interactive-cli/desktop-apps/`](../../../experiments/interactive-cli/desktop-apps/README.md).
 
 ## Risks
@@ -148,8 +154,9 @@ The current negative record is at
   do not exist for local stdio. Both still use the same batch and acknowledgement rules.
 - Deep links can leak through browser history and OS telemetry. They are setup-only and
   must never carry content or credentials.
-- App updates can invalidate evidence. Unsupported or mismatched versions fail closed to
-  `async` only when that exact pull route is proven; otherwise they fail closed entirely.
+- App updates can invalidate evidence. Unknown, unsupported, or mismatched versions fail
+  closed to `async` only when that exact pull route is proven; otherwise they fail closed
+  entirely.
 
 ## Ticket contracts
 
@@ -160,29 +167,15 @@ tickets is throwaway; support changes only in the adapter tickets after evidence
 
 | Field | Contract |
 | --- | --- |
-| Title | Define app-session delivery and evidence contracts |
-| Complexity | 4 |
-| Scope | Extend the existing delivery vocabulary only as needed to identify app shape, account/policy scope, listening mode, hook boundary, and hard-abort grant; preserve evidence-scoped `HarnessCapabilities` and the shared batch/ack rules |
-| Out of scope | Vendor adapters, setup automation, and claims for any unproved version |
-| Files/packages | `packages/contracts/src/delivery/`, `packages/contracts/fixtures/delivery/`, `tests/conformance/` |
-| Acceptance | Strict decoders reject unknown or broader claims; `tested` requires an exact evidence reference; hard abort is distinct from `steer`; no default upgrades an unknown app |
-| Wrong-implementation test | A generic `vendor: "cursor"` capability or a hook-executed receipt cannot admit all Cursor shapes/versions as context-consumed |
-| Blocked-by | `channel-terminology`, `listening-mode-contract`, `mcp-inbox-batch` |
-| Conflict risk | High in delivery contracts; serialize with other `HarnessCapabilities` changes |
-
-### `agent-channel-lifecycle`
-
-| Field | Contract |
-| --- | --- |
-| Title | Give agents explicit channel discovery and lifecycle primitives |
-| Complexity | 4 |
-| Scope | Add bounded MCP/CLI primitives to list eligible channels, request join by opaque channel reference, propose a channel, inspect the effective listening mode, and request a mode change; create/join return a pending owner-confirmation state and reuse the D11 access journal |
-| Out of scope | Automatic admission, invitation UX redesign, and vendor-specific setup |
-| Files/packages | `packages/agent-cli/src/mcp/`, `packages/agent-cli/src/cli/`, `apps/control/src/`, `tests/e2e/` |
-| Acceptance | An agent can discover eligible channels, request join, propose a channel, and inspect/request its own `steer`/`sync`/`async` mode; a user can also point it at a channel URL; create/join require explicit owner confirmation before messages can be read or sent, and a mode response distinguishes requested from acknowledged state |
-| Wrong-implementation test | Listing or a successful create/join request must not create an admitted binding or permit `khala_read`; a requested mode must not be reported effective before connector acknowledgement |
-| Blocked-by | `channel-discovery-contract`, `channel-access-journal`, `app-channel-contract` |
-| Conflict risk | Medium in agent CLI MCP commands and control admission composition |
+| Title | Identify app harness shapes and their hook boundaries |
+| Complexity | 3 |
+| Scope | Add only the app-specific harness identity: app shape (local chat, desktop extension, remote connector, browser, cloud task), app version, account tier and administrator-policy scope, and the hook boundary a route uses (`postToolUse`/`PostToolUse`, `stop`/`Stop`, or MCP `khala_read`). Listening modes, `ModeSupport`, grants, hard-cancel, acknowledgement, and evidence references come unchanged from `listening-mode-contract` (decision 6) |
+| Out of scope | New mode, support, grant, or evidence vocabulary; vendor adapters; setup automation; claims for any unproved version |
+| Files/packages | New `packages/contracts/src/delivery/app-harness.ts`, its fixtures and tests; a minimal export from `packages/contracts/src/delivery/index.ts` |
+| Acceptance | An app capability record is keyed by the full shape/version/account-policy tuple; the hook boundary decodes strictly; every mode value is the `listening-mode-contract` type, and an uninspected tuple reports `unknown` |
+| Wrong-implementation test | A generic `vendor: "cursor"` record, or a record that redefines mode, support, or evidence fields, must fail to decode; a Cursor cloud tuple cannot match a Cursor local session |
+| Blocked-by | `listening-mode-contract` |
+| Conflict risk | Medium in `packages/contracts/src/delivery/`; land after `listening-mode-contract` and add a new module rather than editing `harness.ts` |
 
 ### `cursor-channel-proof`
 
@@ -207,7 +200,7 @@ tickets is throwaway; support changes only in the adapter tickets after evidence
 | Scope | Test local desktop extension and remote connector shapes on supported systems/accounts; prove `khala_read`; investigate but do not infer push boundaries |
 | Out of scope | Shipping an adapter, automating the UI, and claiming undocumented push behavior |
 | Files/packages | `experiments/interactive-cli/claude-app/`, `docs/product/internal-mode/interactive-desktop-apps.md` |
-| Acceptance | Desktop-local, desktop-remote, and browser rows each have exact-version evidence; unsupported `steer`/`sync` remain explicit rather than simulated |
+| Acceptance | Desktop-local, desktop-remote, and browser rows each have exact-version evidence; a `steer`/`sync` cell becomes `unsupported` only on a proven negative and is never simulated |
 | Wrong-implementation test | An MCP server notification, tool availability change, or a second Claude session cannot count as model-context delivery |
 | Blocked-by | `app-channel-contract`, `mcp-inbox-batch`, `listening-mode-pull` |
 | Conflict risk | Low; isolated evidence paths, with one shared matrix edit |
@@ -232,12 +225,12 @@ tickets is throwaway; support changes only in the adapter tickets after evidence
 | --- | --- |
 | Title | Implement the evidence-scoped Cursor app adapter |
 | Complexity | 4 |
-| Scope | Package only the proven hook/MCP routes, exact version/policy inspection, setup/status/remove, bounded continuation, and batch-token acknowledgement |
-| Out of scope | Unproved cloud/local shapes, hard abort, and background-agent orchestration |
-| Files/packages | `packages/harnesses/src/cursor/`, `packages/agent-cli/src/`, `tests/conformance/` |
-| Acceptance | Capability output matches proof tuples; unsupported shapes fail closed; setup is reversible and payload bytes never enter URL/argv/logs |
+| Scope | Package only the proven hook/MCP routes, exact version/policy inspection, bounded continuation, and batch-token acknowledgement; add Cursor's entries to the agent-run `npx @aiur/khala setup` plan and its `status`/`remove` (decisions 18 and 22) |
+| Out of scope | Unproved cloud/local shapes, hard abort, background-agent orchestration, and any install step the person runs by hand |
+| Files/packages | `packages/harnesses/src/cursor/`, new Cursor modules in `packages/agent-cli/src/`, `tests/conformance/` |
+| Acceptance | Capability output matches proof tuples; unknown or unsupported shapes fail closed; setup writes Cursor config only after the person confirms the printed plan through the agent, `remove` restores it, and payload bytes never enter URL/argv/logs |
 | Wrong-implementation test | A cloud proof cannot enable local support, and a `postToolUse` receipt alone cannot report context consumption |
-| Blocked-by | `cursor-channel-proof`, `agent-channel-lifecycle`, `mcp-result-piggyback` |
+| Blocked-by | `cursor-channel-proof`, `app-channel-contract`, `channel-access-cli-mcp`, `channel-create-cli-mcp`, `listening-mode-agent-controls`, `setup-cli-plan`, `mcp-result-piggyback` |
 | Conflict risk | Medium in the shared harness registry and CLI setup commands |
 
 ### `claude-app-channel-adapter`
@@ -246,12 +239,12 @@ tickets is throwaway; support changes only in the adapter tickets after evidence
 | --- | --- |
 | Title | Implement the evidence-scoped Claude app adapter |
 | Complexity | 4 |
-| Scope | Package the proven local-extension and remote-connector pull routes; add push modes only if their proof ticket supplies an actual injection boundary |
-| Out of scope | Polling disguised as `sync`, UI automation, and unproved push modes |
-| Files/packages | `packages/harnesses/src/claude-app/`, `packages/agent-cli/src/`, `tests/conformance/` |
+| Scope | Package the proven local-extension and remote-connector pull routes, and add their entries to the agent-run `npx @aiur/khala setup` plan and its `status`/`remove` (decisions 18 and 22); add push modes only if their proof ticket supplies an actual injection boundary |
+| Out of scope | Polling disguised as `sync`, UI automation, unproved push modes, and any install step the person runs by hand |
+| Files/packages | `packages/harnesses/src/claude-app/`, new Claude app modules in `packages/agent-cli/src/`, `tests/conformance/` |
 | Acceptance | Desktop and browser capability records are separate; `async` performs one bounded read and acknowledges only on the next authenticated call |
 | Wrong-implementation test | Receiving an MCP notification must not promote `steer`, and absent push proof must not silently map `sync` to polling |
-| Blocked-by | `claude-app-channel-proof`, `agent-channel-lifecycle`, `mcp-result-piggyback` |
+| Blocked-by | `claude-app-channel-proof`, `app-channel-contract`, `channel-access-cli-mcp`, `channel-create-cli-mcp`, `listening-mode-agent-controls`, `setup-cli-plan`, `mcp-result-piggyback` |
 | Conflict risk | Medium in the shared harness registry and CLI setup commands |
 
 ### `codex-app-channel-adapter`
@@ -260,29 +253,25 @@ tickets is throwaway; support changes only in the adapter tickets after evidence
 | --- | --- |
 | Title | Implement the evidence-scoped Codex app adapter |
 | Complexity | 4 |
-| Scope | Package only proven desktop/cloud hook and MCP routes with exact environment inspection, bounded Stop continuation, and batch-token acknowledgement |
-| Out of scope | Starting new tasks, hard abort, and treating web installation as local hook deployment |
-| Files/packages | `packages/harnesses/src/codex-app/`, `packages/agent-cli/src/`, `tests/conformance/` |
+| Scope | Package only proven desktop/cloud hook and MCP routes with exact environment inspection, bounded Stop continuation, and batch-token acknowledgement; add their entries to the agent-run `npx @aiur/khala setup` plan and its `status`/`remove` (decisions 18 and 22) |
+| Out of scope | Starting new tasks, hard abort, treating web installation as local hook deployment, and any install step the person runs by hand |
+| Files/packages | `packages/harnesses/src/codex-app/`, new Codex app modules in `packages/agent-cli/src/`, `tests/conformance/` |
 | Acceptance | Desktop and cloud task evidence scopes stay distinct; hosted-tool hook bypass fails closed; hard abort remains opt-in and separate |
 | Wrong-implementation test | Installing a web plugin must not imply local hook scripts ran, and launching a new Codex task cannot satisfy same-session delivery |
-| Blocked-by | `codex-app-channel-proof`, `agent-channel-lifecycle`, `mcp-result-piggyback` |
+| Blocked-by | `codex-app-channel-proof`, `app-channel-contract`, `channel-access-cli-mcp`, `channel-create-cli-mcp`, `listening-mode-agent-controls`, `setup-cli-plan`, `mcp-result-piggyback` |
 | Conflict risk | Medium in the shared harness registry and CLI setup commands |
 
-### `app-channel-acceptance`
+### Inputs to acceptance
 
-| Field | Contract |
-| --- | --- |
-| Title | Run cross-app channel acceptance and restart matrix |
-| Complexity | 5 |
-| Scope | Exercise the supported app shapes together with interactive CLI peers, human posts, all claimed modes, D11 confirmation, pause/resume, and restart behavior |
-| Out of scope | Enabling Blocked cells, performance/load testing, and vendor UI conformance |
-| Files/packages | `tests/e2e/`, `experiments/interactive-cli/app-acceptance/`, `docs/product/internal-mode/interactive-desktop-apps.md` |
-| Acceptance | Every advertised capability points to exact live evidence; ordered exchange and progressive receipts are visible; acknowledged events never duplicate; unsupported cells remain disabled in UI/control paths |
-| Wrong-implementation test | Fail when any app uses a second model session, a duplicate appears after reconnect, a mode is enabled from vendor identity alone, or bytes appear in process arguments |
-| Blocked-by | `cursor-channel-adapter`, `claude-app-channel-adapter`, `codex-app-channel-adapter`, `listening-mode-dispatch`, `mcp-piggyback-evidence` |
-| Conflict risk | High in shared end-to-end fixtures; run after adapter branches settle |
+There is no app acceptance ticket. The `acceptance` area owns every acceptance run,
+test script, and log verification (decisions 10 and 11). Each adapter ticket supplies
+only its app-side inputs for that area to consume: the exact app shape and version
+tuple its evidence covers, the setup step the agent runs, and the modes it may claim.
+An app joins an acceptance run only after its adapter lands with `proven` cells;
+Blocked or `unknown` cells stay out of the run.
 
-Implementation order is contract and agent channel lifecycle, then the three independent proof
-tickets, then only the adapters justified by those proofs, and finally acceptance. A
-Blocked proof cell is a valid research result but cannot unblock an adapter for that
-mode.
+Implementation order is `app-channel-contract`, then the three independent proof
+tickets, then only the adapters justified by those proofs. The adapters also wait for
+the shared channel operations (`channel-access-cli-mcp`, `channel-create-cli-mcp`,
+`listening-mode-agent-controls`) and for `setup-cli-plan`. A Blocked proof cell is a
+valid research result but cannot unblock an adapter for that mode.
