@@ -36,19 +36,42 @@ export function createFlowField(): { redraw: () => void } {
   function buildObstacles(): void {
     const canvasRect = surface.getBoundingClientRect();
     obstacles = [...document.querySelectorAll<HTMLElement>('.keepout')].flatMap(element => {
-      const rect = element.getBoundingClientRect();
-      if (!rect.width) return [];
-      const isLogo = element.classList.contains('logo');
-      const halfWidth = rect.width / 2 + (isLogo ? 3 : 9);
-      const halfHeight = rect.height / 2 + (isLogo ? 1 : 6);
-      return [{
-        cx: rect.left - canvasRect.left + rect.width / 2,
-        cy: rect.top - canvasRect.top + rect.height / 2,
-        hx: halfWidth,
-        hy: halfHeight,
-        r: Math.min(halfWidth, halfHeight) * (isLogo ? 0.95 : 0.55),
-      }];
+      // `.hug` text keeps out only the ink of each rendered line, not the
+      // (wider) block box, so the backing hugs wrapped text closely.
+      const rects = element.classList.contains('hug') ? lineRects(element) : [element.getBoundingClientRect()];
+      return rects.flatMap(rect => obstacleFor(element, rect, canvasRect));
     });
+  }
+
+  function lineRects(element: HTMLElement): DOMRect[] {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const byLine = new Map<number, DOMRect>();
+    for (const rect of range.getClientRects()) {
+      if (!rect.width) continue;
+      const key = Math.round(rect.top);
+      const seen = byLine.get(key);
+      byLine.set(key, seen
+        ? new DOMRect(Math.min(seen.left, rect.left), Math.min(seen.top, rect.top),
+          Math.max(seen.right, rect.right) - Math.min(seen.left, rect.left),
+          Math.max(seen.bottom, rect.bottom) - Math.min(seen.top, rect.top))
+        : rect);
+    }
+    return byLine.size ? [...byLine.values()] : [element.getBoundingClientRect()];
+  }
+
+  function obstacleFor(element: HTMLElement, rect: DOMRect, canvasRect: DOMRect): Obstacle[] {
+    if (!rect.width) return [];
+    const isLogo = element.classList.contains('logo');
+    const halfWidth = rect.width / 2 + (isLogo ? 3 : 9);
+    const halfHeight = rect.height / 2 + (isLogo ? 1 : 6);
+    return [{
+      cx: rect.left - canvasRect.left + rect.width / 2,
+      cy: rect.top - canvasRect.top + rect.height / 2,
+      hx: halfWidth,
+      hy: halfHeight,
+      r: Math.min(halfWidth, halfHeight) * (isLogo ? 0.95 : 0.55),
+    }];
   }
 
   function buildLines(): void {
