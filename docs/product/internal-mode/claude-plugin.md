@@ -116,7 +116,7 @@ and should not be claimed.
 | Mode | Automatic hook behavior | Proven support |
 |---|---|---|
 | `steer` | Synchronous `PostToolUse` drain; `Stop` is the idle fallback. | Next-tool-boundary delivery proven. Hard mid-tool interruption is unproven and out of v1. |
-| `sync` (default) | `Stop` drains before Claude idles. A `UserPromptSubmit` `asyncRewake` watcher can resume a recently idle session when a release arrives. | Stop continuation and one bounded idle wake proven. Indefinite idle wake is unproven. |
+| `sync` (default) | Synchronous `PostToolUse` drain; `Stop` is the idle fallback. A `UserPromptSubmit` `asyncRewake` watcher can resume a recently idle session when a release arrives. | Next-tool-boundary delivery proven; Stop continuation and one bounded idle wake proven. Indefinite idle wake is unproven. |
 | `async` | Automatic hooks do not drain. The agent invokes `/khala read`. | CLI design only; depends on the one-shot drain. |
 
 Mode changes are session-scoped and must be visible in status/`who`. A mode
@@ -129,17 +129,21 @@ the implementation ticket must choose one spelling shared by all harnesses.
 
 | Event | Action | Guard/failure behavior |
 |---|---|---|
-| `UserPromptSubmit` | Mark the session active; replace any older watcher with exactly one bounded `asyncRewake` watcher for non-`async` mode. The watcher observes pending state without claiming it and may exit 2 only after the session is idle. | Exit 0 on timeout or cancellation. Report watcher state; never promise an indefinite listener. The content-free two-step path is a production requirement that still needs an installed-version proof. |
-| `PostToolUse` | In `steer`, invoke the synchronous one-shot drain and return framed `additionalContext`. | Empty drain returns no output. Transport failure is diagnostic context, never fabricated chat content. |
+| `UserPromptSubmit` | Mark the session active; replace any older watcher with exactly one bounded `asyncRewake` watcher for non-`async` mode. The watcher observes pending state without claiming it and may exit 2 only after the session is idle. | Cancellation of the older watcher must leave exactly one active watcher. Exit 0 on timeout or cancellation. Report watcher state; never promise an indefinite listener. The content-free two-step path is a production requirement that still needs an installed-version proof. |
+| `PostToolUse` | In `steer` or `sync`, invoke the synchronous one-shot drain and return framed `additionalContext`. | Empty drain returns no output. `steer` and `sync` share next-tool-boundary behavior until hard-interrupt steer is proven. Transport failure is diagnostic context, never fabricated chat content. |
 | `Stop` | For `steer` or `sync`, make one drain attempt before marking the session idle and return `additionalContext` if non-empty. Once idle, a watcher that observes a later release exits 2 with a fixed marker; the following `Stop` drains it. | If `stop_hook_active=true`, return empty. This prevents a self-sustaining stop loop. |
 | `SessionEnd` | Remove ephemeral watcher/session state; durable inbox state remains. | Cleanup must not acknowledge unread releases. |
 
 Room text is untrusted data. The hook must JSON-encode and visibly delimit it as
 Khala content; it must never interpolate it into shell source, argv, environment
 variables, errors, status, or logs. Automatic `steer` and `sync` delivery must be
-enabled only under a verified restricted Claude profile: writes confined to the
-approved worktree/scratch area, with approval retained for shell and network
-actions. If that profile cannot be verified, advertise only `async`.
+enabled only under a verified restricted Claude profile: reads and writes are
+confined to explicit approved worktree/scratch roots, and every outbound
+tool/channel (including shell, network, and structured MCP such as
+`khala_send`) is deny-by-default or requires human approval when acting on
+automatically injected content. This restriction does not block an explicit,
+user-authored `/khala send`. If that profile cannot be verified, advertise only
+`async`.
 
 ### Slash dispatcher
 
@@ -241,7 +245,7 @@ Tests:
 | Field | Contract |
 |---|---|
 | **complexity** | **3** |
-| **scope** | Add a distributable Claude plugin manifest and hook runtime for `PostToolUse`, `Stop`, `UserPromptSubmit` + `asyncRewake`, and cleanup. Use Contract 1's transactional drain writer with the hook `session_id` so acknowledgement follows the final event-specific JSON write; implement the mode mapping and safe context framing above. |
+| **scope** | Add a distributable Claude plugin manifest and hook runtime for `PostToolUse`, `Stop`, `UserPromptSubmit` + `asyncRewake`, and cleanup. Use Contract 1's transactional drain writer with the hook `session_id` so acknowledgement follows the final event-specific JSON write; implement the mode mapping and safe context framing above. Gate automatic delivery on the restricted profile: reads/writes use only explicit approved roots, and automatically injected content has deny-by-default or human-approved outbound tools/channels, including `khala_send`; explicit user-authored `/khala send` remains available. |
 | **out of scope** | CLI transport/inbox ownership, hard mid-tool abort, slash-command installation, participant listing, or generic harness support. |
 | **files/packages touched** | New `packages/claude-plugin/` manifest, hooks, runtime, tests, and README; workspace/package metadata if required. No production import from `experiments/`. |
 | **blocked-by** | Contract 1 and E09 #139. Integration testing also needs E09 #138's local runtime and #143's restricted-profile setup contract. |
@@ -250,8 +254,10 @@ Tests:
 Acceptance criteria:
 
 - `claude plugin validate --strict` passes on the supported installed version.
-- `steer` drains after `PostToolUse`; `sync` drains at `Stop`; `async` never
-  auto-drains. `Stop` is empty when `stop_hook_active=true`.
+- `steer` and default `sync` drain after `PostToolUse`; `Stop` is the idle
+  fallback for both; `async` never auto-drains. Until hard-interrupt steer is
+  proven, both automatic modes have next-tool-boundary behavior. `Stop` is
+  empty when `stop_hook_active=true`.
 - Each boundary injects the bounded batch available at claim time, preserving
   order; overflow remains queued for the next eligible boundary.
 - A queued release inside the configured watcher window wakes an idle
@@ -261,8 +267,11 @@ Acceptance criteria:
 - Capability/status says “next tool boundary” for `steer` and does not claim a
   hard interrupt or indefinite idle wake.
 - Automatic `steer`/`sync` is available only when the runtime verifies the
-  restricted filesystem/tool profile; an unrestricted session exposes only
-  `async`.
+  restricted profile: reads and writes are limited to explicit approved roots,
+  and automatically injected content cannot use any outbound tool/channel,
+  including `khala_send`, without deny-by-default enforcement or human
+  approval. An unrestricted session exposes only `async`; an explicit
+  user-authored `/khala send` remains legitimate.
 - Supported setup from #143 provisions and validates that profile, and a newly
   configured session starts in effective `sync` without manual permission
   reconfiguration.
@@ -273,6 +282,10 @@ Tests:
   one cwd with distinct session IDs, race drains, and assert zero cross-session
   delivery. A cwd-keyed implementation must fail.
 - Race two matching hooks for one session; only one injects the release.
+- **Wrong-implementation test:** submit a second prompt while a non-`async`
+  watcher is active; assert it cancels the old watcher, leaves exactly one,
+  never exits 2 before `Stop` marks the session idle, and one later release
+  produces exactly one wake followed by one drain.
 - Cover empty drain, runtime unavailable, malformed release, `stop_hook_active`, and
   payloads containing shell syntax, JSON delimiters, and prompt-injection text.
 - Installed-version TTY test: observe `PostToolUse` delivery, one `Stop`
@@ -281,9 +294,12 @@ Tests:
   release bytes.
 - Let the watcher time out, verify no false support claim, then rearm with a new
   prompt and prove a subsequent wake.
-- Inject hostile peer text under automatic delivery and prove it cannot write
-  outside the allowed worktree/scratch area, make a network request, or mutate
-  Khala policy without approval. The same profile absent must force `async`.
+- Inject hostile peer text containing an out-of-scope sentinel secret under
+  automatic delivery and attempt to read or write outside approved roots and
+  exfiltrate the sentinel through network/shell and structured MCP (including
+  `khala_send`); prove no sentinel bytes leave without human approval. The same
+  profile absent must force `async`, while an explicit user-authored
+  `/khala send` remains allowed.
 
 ### Contract 3 — Bound-session `/khala send` and `/khala read`
 
