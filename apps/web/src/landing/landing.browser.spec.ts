@@ -24,7 +24,7 @@ const FEATURE_TITLES = [
 const LISTENING_MODES_COPY = 'steer interrupts, sync (default) waits for the current turn, async checks when ready.';
 
 async function buttonColors(page: Page): Promise<{ label: string; background: string; color: string }[]> {
-  return page.locator('button, .button').evaluateAll(nodes => nodes.map(node => {
+  return page.locator('button:not(.banner-close), .button').evaluateAll(nodes => nodes.map(node => {
     const style = getComputedStyle(node);
     return { label: node.getAttribute('aria-label') ?? node.textContent?.trim() ?? '', background: style.backgroundColor, color: style.color };
   }));
@@ -65,6 +65,9 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
 
     const banner = page.getByRole('complementary', { name: 'Project announcement' });
     const dismissBanner = page.getByRole('button', { name: 'Dismiss announcement' });
+    // The dismiss matches aiur.team: transparent, muted icon, SVG not a text glyph.
+    assert.equal(await dismissBanner.evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
+    assert.equal(await dismissBanner.locator('svg').count(), 1);
     assert.equal(await banner.isVisible(), true);
     const lineField = await page.evaluate(() => {
       const bannerRect = document.querySelector('#aiurBanner')!.getBoundingClientRect();
@@ -112,9 +115,10 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     // The prompt is not live yet: greyed out, copy disabled, "Coming soon" over it.
     const copy = page.getByRole('button', { name: 'Copy the prompt' });
     assert.equal(await copy.isDisabled(), true, 'copy is disabled while the prompt is not live');
-    assert.equal((await page.locator('#prompt-soon').innerText()).trim().toLowerCase(), 'coming soon');
+    assert.equal((await page.locator('#prompt-soon').innerText()).trim(), 'Coming soon.');
+    assert.match(await page.locator('.install-box').evaluate(node => getComputedStyle(node).filter), /blur/);
     assert.equal(await page.locator('.install-box').getAttribute('aria-disabled'), 'true');
-    assert.ok(Number(await page.locator('.install-box').evaluate(node => getComputedStyle(node).opacity)) < 0.6, 'prompt is greyed out');
+    assert.ok(Number(await page.locator('.install-box').evaluate(node => getComputedStyle(node).opacity)) < 0.5, 'prompt is greyed out');
 
     // Top-right controls exist and the Docs link points at the quick start.
     assert.equal(await page.getByRole('link', { name: 'Docs' }).getAttribute('href'), 'https://aiur.team/docs/khala/quick-start');
