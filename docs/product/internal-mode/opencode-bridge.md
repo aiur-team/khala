@@ -35,7 +35,7 @@ message body beyond fixed proof markers is retained here.
 
 | Capability | Method and observation | Result |
 |---|---|---|
-| Exact installation | `opencode --version`; inspected the experiment lockfile and local SDK types. | OpenCode, plugin, and SDK `1.17.10`; proven. |
+| Exact installation | `opencode --version`; inspected the locally installed package metadata and SDK types. | OpenCode, plugin, and SDK `1.17.10`; proven locally. The retained proof itself imports no packages and pins the OpenCode binary version. |
 | DeepSeek catalog | `opencode models deepseek`, then `/provider`. | `deepseek/deepseek-flash` and `deepseek/deepseek-v4-pro` were available; the active proof model was `deepseek/deepseek-flash` (displayed as “DeepSeek V4.1 Flash”). |
 | Configuration drift | A request using configured `deepseek/deepseek-v4-flash` returned `ProviderModelNotFoundError` and suggested the two catalog entries above. | Acceptance must record the resolved provider/model and fail clearly on stale configuration. |
 | Session API, idle | Created a session, posted a session-addressed message, and read the session messages. | DeepSeek replied exactly `SYNC-DEEPSEEK-OK`; proven. |
