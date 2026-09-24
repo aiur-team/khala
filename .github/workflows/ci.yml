@@ -1,7 +1,21 @@
 name: CI
 on:
+  # `push:` with no filter ran a full build for every commit on every branch,
+  # and `pull_request:` then ran the same commit again. Over 2026-09 that was
+  # 219 commits validated twice and 746 wasted minutes, on the one private repo
+  # where minutes are metered. Validate a branch through its pull request;
+  # validate `main` on push, because that is the commit nothing else checks.
   push:
+    branches: [main]
   pull_request:
+
+# A branch pushed again while CI is still running does not need the older
+# answer -- the newer commit is the one that will merge. `main` is exempt: every
+# commit that lands there gets its own verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 jobs:
