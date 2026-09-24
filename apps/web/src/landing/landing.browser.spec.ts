@@ -13,6 +13,15 @@ const configFile = join(here, '../../vite.landing.config.mjs');
 const EXACT_PROMPT = "I'd like to connect you with another agent. Open a channel: https://khala.aiur.team";
 const BUTTON_BLUE = 'rgb(31, 87, 196)';
 const WHITE = 'rgb(255, 255, 255)';
+const FEATURE_TITLES = [
+  'Multiplayer',
+  'End-to-end encrypted',
+  'Listening modes',
+  'Internal chat',
+  'Weigh in',
+  'Aiur Support',
+];
+const LISTENING_MODES_COPY = 'steer interrupts, sync (default) waits for the current turn, async checks when ready.';
 
 async function buttonColors(page: Page): Promise<{ label: string; background: string; color: string }[]> {
   return page.locator('button, .button').evaluateAll(nodes => nodes.map(node => {
@@ -53,6 +62,46 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     page.on('console', message => { if (message.type() === 'error') failures.push(message.text()); });
     page.on('response', response => { if (response.status() >= 400) failures.push(`${response.status()} ${response.url()}`); });
     await page.goto(url);
+
+    const banner = page.getByRole('complementary', { name: 'Project announcement' });
+    const dismissBanner = page.getByRole('button', { name: 'Dismiss announcement' });
+    assert.equal(await banner.isVisible(), true);
+    const lineField = await page.evaluate(() => {
+      const bannerRect = document.querySelector('#aiurBanner')!.getBoundingClientRect();
+      const fieldRect = document.querySelector('#field')!.getBoundingClientRect();
+      return { bannerBottom: bannerRect.bottom, fieldTop: fieldRect.top };
+    });
+    assert.ok(Math.abs(lineField.bannerBottom - lineField.fieldTop) <= 1, 'line field starts flush below the banner');
+    await dismissBanner.focus();
+    assert.equal(await dismissBanner.evaluate(node => node.matches(':focus-visible')), true);
+    await page.keyboard.press('Enter');
+    assert.equal(await banner.isHidden(), true);
+    await page.reload();
+    assert.equal(await banner.isHidden(), true, 'dismissal persists without revealing the banner');
+
+    assert.deepEqual(await page.locator('.feature-card h3').allTextContents(), FEATURE_TITLES);
+    assert.equal((await page.locator('.feature-card').nth(2).locator('p').innerText()).trim(), LISTENING_MODES_COPY);
+    assert.equal((await page.locator('.features-intro').innerText()).trim(), 'Encrypted chat for humans and their agents.');
+    assert.equal((await page.locator('.features-signoff').innerText()).trim(), 'Hailing frequencies open.');
+    assert.equal(await page.locator('.features-signoff .open').textContent(), 'open');
+    assert.equal(await page.getByRole('link', { name: 'Aiur', exact: true }).first().getAttribute('href'), 'https://aiur.team/');
+    assert.equal(await page.locator('.what').innerText(), 'Multi-model, multi-machine agent messaging protocol');
+    assert.equal(await page.getByText('Explore features', { exact: true }).count(), 0);
+    assert.equal((await page.locator('#scrollcue').innerText()).trim(), 'SCROLL');
+    await page.waitForFunction(() => (document.querySelector<HTMLCanvasElement>('#field')?.width ?? 0) > 0);
+    await page.evaluate(() => window.scrollTo(0, 100));
+    assert.equal(await page.locator('#scrollcue').evaluate(node => node.classList.contains('gone')), true);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    assert.equal(await page.getByRole('heading', { name: 'Built around' }).count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'Plain limits' }).count(), 0);
+    assert.equal((await page.locator('footer').innerText()).trim(), 'built with Aiur');
+
+    const faviconHrefs = ['/landing/favicon.ico', '/landing/favicon-32x32.png', '/landing/favicon-16x16.png', '/landing/apple-touch-icon.png'];
+    const faviconResponses = await Promise.all(faviconHrefs.map(href => page.request.get(new URL(href, url).toString())));
+    faviconResponses.forEach((response, index) => {
+      const href = faviconHrefs[index]!;
+      assert.equal(response.ok(), true, `${href} resolves`);
+    });
 
     // The hero prompt is exact and is the only h1-level promise on the page.
     assert.equal(await page.locator('#agentPrompt').textContent(), EXACT_PROMPT);
@@ -116,6 +165,34 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     assert.equal(await darkPage.evaluate(() => document.documentElement.hasAttribute('data-theme')), false);
     await darkContext.close();
 
+    const blockedStorageContext = await browser.newContext({ viewport: { width: 1024, height: 800 }, colorScheme: 'light' });
+    await blockedStorageContext.addInitScript(() => {
+      Storage.prototype.getItem = () => { throw new Error('blocked'); };
+      Storage.prototype.setItem = () => { throw new Error('blocked'); };
+    });
+    const blockedStoragePage = await blockedStorageContext.newPage();
+    await blockedStoragePage.goto(url);
+    const blockedBanner = blockedStoragePage.getByRole('complementary', { name: 'Project announcement' });
+    assert.equal(await blockedBanner.isVisible(), true, 'blocked storage leaves the banner available');
+    await blockedStoragePage.getByRole('button', { name: 'Dismiss announcement' }).click();
+    assert.equal(await blockedBanner.isHidden(), true, 'banner remains dismissible when storage is blocked');
+    await blockedStorageContext.close();
+
+    const deniedStorageContext = await browser.newContext({ viewport: { width: 1024, height: 800 }, colorScheme: 'light' });
+    await deniedStorageContext.addInitScript(() => {
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get: () => { throw new Error('denied'); },
+      });
+    });
+    const deniedStoragePage = await deniedStorageContext.newPage();
+    await deniedStoragePage.goto(url);
+    const deniedBanner = deniedStoragePage.getByRole('complementary', { name: 'Project announcement' });
+    assert.equal(await deniedBanner.isVisible(), true, 'denied storage getter leaves the banner available');
+    await deniedStoragePage.getByRole('button', { name: 'Dismiss announcement' }).click();
+    assert.equal(await deniedBanner.isHidden(), true, 'banner remains dismissible when the storage getter is denied');
+    await deniedStorageContext.close();
+
     // Phone widths: no horizontal scroll, and the prompt and copy stay reachable.
     for (const [width, height] of [[390, 844], [360, 780]] as const) {
       await page.setViewportSize({ width, height });
@@ -126,6 +203,13 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
       );
       assert.equal(await copy.isVisible(), true, `${width}px: copy button visible`);
       assert.equal(await page.getByRole('link', { name: 'Docs' }).isVisible(), true, `${width}px: Docs visible`);
+      if (width === 390) {
+        assert.equal(
+          await page.locator('.features').evaluate(node => getComputedStyle(node).gridTemplateColumns.split(' ').length),
+          1,
+          '390px: feature cards collapse to one column',
+        );
+      }
     }
 
     assert.deepEqual(failures, [], 'no page or console errors');
