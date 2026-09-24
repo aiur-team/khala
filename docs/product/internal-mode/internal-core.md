@@ -96,10 +96,10 @@ repository's cross-component boundary.
 |---|---|
 | Bind | Listen only on the IPv4 literal `127.0.0.1`. Try 4870 upward only on `EADDRINUSE`; fail on every other bind error or when no port remains. Do not enable address reuse. |
 | Host | Before routing, require the exact selected authority `127.0.0.1:<port>`. Reject `localhost`, alternate loopback spellings, userinfo, forwarded-host overrides, and duplicate/ambiguous Host values. |
-| Bootstrap | Serve a fixed external script at `/__khala/bootstrap`. It reads the token from the URL fragment, POSTs it to the exact origin, and calls `location.replace(<encoded selected-room path>)`. The server compares in constant time, sets the cookie, and invalidates the one-time bootstrap exchange. Fragments avoid token transmission in request targets, history replacement removes it from the visible URL, and both create and resume land on the launcher-selected room rather than PR #120's create route. |
+| Bootstrap | Serve a minimal HTML document at `/__khala/bootstrap` that loads only the fixed same-origin script `/__khala/bootstrap.js`. The script reads the token from the URL fragment, POSTs it to the exact origin, and calls `location.replace(<encoded selected-room path>)`. The server compares in constant time, sets the cookie, and invalidates the one-time bootstrap exchange. Fragments avoid token transmission in request targets, history replacement removes it from the visible URL, and both create and resume land on the launcher-selected room rather than PR #120's create route. |
 | Credential generation | Generate the human bootstrap token and every agent capability from at least 256 bits of Node cryptographic randomness, encode them as unpadded base64url, and fail closed if generation fails. Inject a deterministic generator only in tests. |
 | Browser cookie | Host-only, HttpOnly, `SameSite=Strict`, `Path=/`, and no `Domain`; it expires with the server. A `Secure` cookie cannot be used on plain HTTP, so use a local-only name rather than a misleading `__Host-` name. |
-| Agent descriptors | Keep the human bootstrap credential in `launch.json`; write one separate 0600 descriptor per binding with `{v, chatId, origin, bindingId, capability}`. Bind each capability server-side to exactly one participant, device, and route set. Never accept attribution from a body or caller-selected binding ID. Delete/invalidate all descriptors at shutdown and rotate every credential on resume. |
+| Agent descriptors | Keep the human bootstrap credential in `launch.json`; write one separate 0600 descriptor per binding with `{v, chatId, origin, bindingId, capability}`. Bind each capability server-side to exactly one participant, device, and route set. Never accept attribution from a body or caller-selected binding ID. Delete/invalidate all descriptors at shutdown and rotate every credential on resume. Modes isolate other OS users, not processes sharing the operator's uid; agents are trusted for local-file credential confidentiality in v1. |
 | Requests | Require the human cookie or a binding capability for every API and event stream, then authorize the route for that role. For state-changing browser requests, also require exact Origin and same-origin `Sec-Fetch-Site` when present. Set no CORS allowance. |
 | Browser handoff | Keep credentials out of `khala` command arguments, environment variables, request targets, logs, and process titles. A conventional default-browser opener may still expose the fragment URL in opener/browser argv; that secrecy is **unproven**. No v1 platform is supported until a real-process spike inspects launcher, opener, and browser command lines and proves other OS users cannot observe the token, or selects a different handoff. |
 | CSP | `default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; worker-src 'none'`. The explicit `frame-ancestors` and `form-action` directives are required because they do not inherit all desired behavior from `default-src`; see [CSP Level 3](https://www.w3.org/TR/CSP/). |
@@ -132,6 +132,20 @@ last timeline, draft, and journaled operations. Sending is disabled while the
 server is unreachable; outcomes already marked `unknown` remain pending for
 journal reconciliation. After the retry budget or a clean server shutdown, show
 a stopped state with the stable chat ID and exact resume command.
+
+### Explicit agent reply path
+
+The launcher must compose the existing `khala send` and `khala_send` MCP
+surface with a local `AgentClientPort`; leaving
+`createUnavailableClient()` in that path makes deliberate replies impossible.
+Each binding receives one explicit `--internal-descriptor <path>` selection.
+The adapter opens only that file (no directory discovery), validates its owner,
+mode, version, binding, and exact origin, and uses its capability for local
+`status` and `send`; `connect` remains unavailable because the launcher
+already created the binding. The credential itself never enters argv or the
+environment. The launcher-provided MCP/skill introduction names the room,
+participant, and deliberate-chat purpose required by D3. Harness installation
+and listening-mode delivery remain owned by their dedicated research areas.
 
 ### Resume, export, and delete
 
@@ -182,13 +196,14 @@ behavior. This design owns only injection and non-leakage.
 |---|---|
 | DNS rebinding or cross-site access to localhost | IPv4-literal bind, exact Host, exact Origin on mutations, SameSite cookie, per-launch token, no CORS. |
 | Token leakage | Fragment bootstrap, external script, immediate `location.replace`, 0600 descriptor, redacted logs, rotation on every launch. |
-| Agent impersonation | Separate per-binding capabilities; server-side capability-to-participant/device/route mapping; no caller-selected attribution. |
+| Caller-selected attribution | Separate per-binding capabilities and server-side capability-to-participant/device/route mapping prevent a client from choosing identity in its request body. This does not stop a same-uid process from stealing another descriptor. |
 | Duplicate or lost delivery after restart | Durable event log, unique transaction key, replay-stable cursors, commit-before-hint, connector cursor commit after ingest. |
 | Corruption or two launchers | Application/schema IDs, integrity checks, fail-closed open, one exclusive owner. |
 | Hosted automation opens accidentally | Explicit dependency injection plus source-graph, bundle-graph, and behavior tests. |
 | PR #120 changes composition exports | Block local web work on #41; consume public exports only and do not duplicate its root. |
 | Other E09 work writes the same CLI/UI files | Sequence shared-surface tickets and keep core contracts narrow; conflict notes below identify likely owners. |
 | Plaintext disclosure to the same OS user | State the threat limit. Modes protect against other users, not same-user processes or unrestricted agents. |
+| Same-user agent impersonation | v1 does not claim process isolation: an unrestricted agent sharing the operator's uid can copy another descriptor or `launch.json`. Describe per-binding capabilities as API attribution controls, not a sandbox boundary; run autonomous harnesses in the separately specified restricted workspaces. |
 
 ## Non-goals
 
@@ -228,7 +243,7 @@ behavior. This design owns only injection and non-leakage.
 | Out of scope | Browser components, automation, harness spawning, LAN access, daemonization. |
 | Files/packages | New `apps/internal/src/server/**`, `apps/internal/package.json`, browser HTTP adapter in `packages/messaging/src/local/http/**` if it can remain browser-safe, `scripts/check-boundaries.mjs`, integration tests. |
 | Acceptance criteria | With 4870 occupied, bind 4871 on `127.0.0.1`; bootstrap yields a host-only HttpOnly cookie, cleans the URL, and lands on the injected selected-room path; agent routes derive participant/device from distinct binding capabilities; APIs require credentials plus browser mutation Origin checks; SSE carries hints only; CSP has no inline/eval/worker exception; logs contain no message or credential material. The server accepts credentials and assets from its caller; it does not create descriptors or own the final web bundle. |
-| Tests | Real HTTP tests for occupied ports, non-loopback/Host variants, missing/wrong token, cross-origin mutations, bootstrap replay, body bounds, headers, SSE reconnect, and sanitized errors. **Wrong-implementation test:** send a valid-token mutation with `Host: localhost:<port>` or a hostile Origin and assert rejection before the handler/store is called. |
+| Tests | Real HTTP tests for occupied ports, non-loopback/Host variants, missing/wrong token, cross-origin mutations, bootstrap replay, body bounds, headers, SSE reconnect, and sanitized errors; one browser navigation must load the bootstrap HTML plus external script and complete fragment-to-cookie exchange under the declared CSP. **Wrong-implementation test:** send a valid-token mutation with `Host: localhost:<port>` or a hostile Origin and assert rejection before the handler/store is called. |
 | Blocked by | `local-sqlite-room-store`. |
 | Conflict risk | `setup-cli`, `room-discovery`, and `make-external` may add or consume endpoints. Reserve the versioned local API here; the launcher ticket alone owns descriptor files. |
 
@@ -280,11 +295,11 @@ behavior. This design owns only injection and non-leakage.
 |---|---|
 | Title | Launch and resume an internal chat |
 | Complexity | `complexity:4` |
-| Scope | Add `internal` create/resume/export/delete routing to the existing `@khala/agent-cli`-owned `khala` binary through a lazy delegated entry; own process shutdown; generate/rotate the human token and per-binding capabilities; atomically write/invalidate their 0600 descriptors; inject credentials and the local web bundle into the server; open the default browser only on proven platforms; wire fake bindings for deterministic CI; add core Playwright/e2e coverage. |
+| Scope | Add `internal` create/resume/export/delete routing to the existing `@khala/agent-cli`-owned `khala` binary through a lazy delegated entry; own process shutdown; generate/rotate the human token and per-binding capabilities; atomically write/invalidate their 0600 descriptors; add `--internal-descriptor <path>` composition for a local `AgentClientPort` used by `send` and `mcp-serve`; inject credentials and the local web bundle into the server; open the default browser only on proven platforms; wire fake bindings for deterministic CI; add core Playwright/e2e coverage. |
 | Out of scope | `npx khala setup`, harness-specific plugin installation, live model acceptance, daemon/service operation, room discovery UI. |
-| Files/packages | `packages/agent-cli/src/cli/internal*.ts` as a lightweight lazy delegate; `apps/internal/src/composition/**`; package/build metadata; `tests/e2e/internal/**`; CLI reference docs when implemented. Unrelated agent CLI commands must not load browser/server modules. |
-| Acceptance criteria | Bare command creates and opens a chat; every successful create/resume prints the stable chat ID and exact redaction-safe resume command; `--resume` restores it with all-new credentials; per-binding descriptors cannot authorize another binding's routes or attribution; port fallback is visible without leaking secrets; SIGINT/SIGTERM invalidates descriptors, stops delivery, and closes stores/server; export/delete delegate to lifecycle services; fake human + two fake agents survive restart without duplicate delivery. Platform support additionally requires a real-process proof that the fragment credential is not visible in launcher/opener/browser argv to another OS user; otherwise browser handoff stays explicitly unsupported. |
-| Tests | CLI dependency-injected unit tests for arguments/browser failures/signals; real-process browser-handoff/process-inspection smoke test per supported platform; fake-harness e2e with human interjection, pause/resume, restart, and Playwright timeline. **Wrong-implementation test:** run, send one event, kill after durable ingest but before cursor acknowledgement, resume, and assert the event is delivered once rather than lost or duplicated. |
+| Files/packages | `packages/agent-cli/src/cli/internal*.ts` as a lightweight lazy delegate; local client selection under `packages/agent-cli/src/composition/**`; `apps/internal/src/composition/**`; package/build metadata; `tests/e2e/internal/**`; CLI reference docs when implemented. Unrelated agent CLI commands must not load browser/server modules. |
+| Acceptance criteria | Bare command creates and opens a chat; every successful create/resume prints the stable chat ID and exact redaction-safe resume command; `--resume` restores it with all-new credentials; presenting binding A's descriptor cannot authorize binding B's routes or attribution (same-uid descriptor theft remains an explicit v1 threat limit); each agent's `khala_send` reaches the shared browser timeline through the real local `AgentClientPort`; the local introduction names the room, participant, and deliberate-chat purpose; port fallback is visible without leaking secrets; SIGINT/SIGTERM invalidates descriptors, stops delivery, and closes stores/server; export/delete delegate to lifecycle services; fake human + two fake agents survive restart without duplicate delivery. Platform support additionally requires a real-process proof that the fragment credential is not visible in launcher/opener/browser argv to another OS user; otherwise browser handoff stays explicitly unsupported. |
+| Tests | CLI dependency-injected unit tests for arguments/browser failures/signals and descriptor validation; two real local client/MCP instances selected by distinct descriptors, with send/status, server-derived attribution, cross-binding rejection, and browser-timeline assertions; real-process browser-handoff/process-inspection smoke test per supported platform; fake-harness e2e with human interjection, pause/resume, restart, and Playwright timeline. **Wrong-implementation test:** run, send one event, kill after durable ingest but before cursor acknowledgement, resume, and assert the event is delivered once rather than lost or duplicated. |
 | Blocked by | `authenticated-loopback-server`, `local-web-entry`, `internal-chat-lifecycle`, `local-automation-fence`; `listening-modes` for the fake mode matrix. |
 | Conflict risk | `setup-cli` owns setup/status/remove, and `acceptance` owns live Aiur/model runs. Keep launcher verbs and CI fakes here; defer installation and live tickets to those contracts. |
 
