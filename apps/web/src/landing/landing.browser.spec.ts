@@ -24,7 +24,7 @@ const FEATURE_TITLES = [
 const LISTENING_MODES_COPY = 'steer interrupts, sync (default) waits for the current turn, async checks when ready.';
 
 async function buttonColors(page: Page): Promise<{ label: string; background: string; color: string }[]> {
-  return page.locator('button, .button').evaluateAll(nodes => nodes.map(node => {
+  return page.locator('button:not(.banner-close), .button').evaluateAll(nodes => nodes.map(node => {
     const style = getComputedStyle(node);
     return { label: node.getAttribute('aria-label') ?? node.textContent?.trim() ?? '', background: style.backgroundColor, color: style.color };
   }));
@@ -65,6 +65,9 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
 
     const banner = page.getByRole('complementary', { name: 'Project announcement' });
     const dismissBanner = page.getByRole('button', { name: 'Dismiss announcement' });
+    // The dismiss matches aiur.team: transparent, muted icon, SVG not a text glyph.
+    assert.equal(await dismissBanner.evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
+    assert.equal(await dismissBanner.locator('svg').count(), 1);
     assert.equal(await banner.isVisible(), true);
     const lineField = await page.evaluate(() => {
       const bannerRect = document.querySelector('#aiurBanner')!.getBoundingClientRect();
