@@ -115,13 +115,17 @@ type ListeningModeView = ListeningModeControl & {
 - Admission creates `requested: "sync"`; there is no room-wide default switch.
 - Trusted connector composition creates a non-decodable
   `AgentBindingAuthority` bound to the authenticated `bindingId` and
-  `generation`. Agent mode-change and pull ports require it and reject target or
-  generation mismatches. The human owner may change any binding under D10.
-  Both submit `expectedVersion` so simultaneous changes cannot silently
-  overwrite one another.
+  `generation`. Agent mode-query, mode-change, and pull ports require it and
+  reject target or generation mismatches. The human owner may change any
+  binding under D10. Both submit `expectedVersion` so simultaneous changes
+  cannot silently overwrite one another.
 - Experimental-route and hard-cancellation grants are separate, off by default,
   and scoped to the exact binding, route, harness version, and capability
-  evidence. A version or route change invalidates them.
+  evidence. `SetListeningMode` accepts either `AgentBindingAuthority` or
+  `OwnerAuthority`; separate `GrantExperimentalRoute` and `GrantHardCancel`
+  commands require server-constructed `OwnerAuthority` and the browser CSRF
+  boundary. Agent authority cannot mint, alter, revoke, or reuse either grant.
+  A version or route change invalidates them.
 - A mode change governs releases that have not been claimed. A claimed attempt
   carries `modeAtClaim` and finishes under that snapshot.
 - `HarnessCapabilities` is the single evidence authority. Per-mode support is a
@@ -166,10 +170,11 @@ the exact active binding.
 The row renders `Requested: steer · Effective: waiting` when a stored choice is
 not currently usable. Runtime failures add a durable, non-green delivery state;
 they do not mutate the selector. Humans and agents use the same versioned
-command, but the existing owner-only policy port must not be reused as the
-agent's authority boundary. Enabling an experimental route never enables hard
-cancellation: that has its own warning and per-route confirmation describing
-partial tool effects, and remains off by default.
+mode command, but only the owner-only grant commands can record either consent.
+The existing owner-only policy port must not be reused as the agent's authority
+boundary. Enabling an experimental route never enables hard cancellation: that
+has its own warning and per-route confirmation describing partial tool effects,
+and remains off by default.
 
 ## `steer` proof spikes
 
@@ -258,11 +263,11 @@ sized for one agent and one PR.
 | --- | --- |
 | Title | Add versioned per-binding listening-mode control and authority |
 | Complexity | `complexity:4` |
-| Scope | Add `ListeningMode`, versioned control keyed by binding/generation, default `sync`, separate experimental and hard-cancel grants, derived mode support in `HarnessCapabilities`, agent/owner commands, authority objects, codecs, and events. |
+| Scope | Add `ListeningMode`, versioned control keyed by binding/generation, default `sync`, separate owner-only experimental and hard-cancel grant commands, derived mode support in `HarnessCapabilities`, agent/owner mode commands, authority objects, codecs, and events. |
 | Out of scope | Dispatcher timing, harness calls, UI, read receipts, admission, trust, and SQLite persistence. |
 | Files/packages | `packages/contracts/src/delivery/{harness,commands,events}.ts`, fixtures/tests; trusted connector composition authority types. Keep immutable `binding.ts` unchanged. |
-| Acceptance | A replacement binding starts at `sync`; uninspected versions report `unknown`; support is derived, not stored twice; `AgentBindingAuthority` is non-decodable and generation-bound; stale writes conflict; grants invalidate on route/version change. |
-| Tests | Contract/codec, cross-binding, stale-generation, stale-version, and grant-invalidation tests. **Wrong-implementation test:** creating a control record with `steer` as its initial value or using authority from a prior generation must fail. |
+| Acceptance | A replacement binding starts at `sync`; uninspected versions report `unknown`; support is derived, not stored twice; `AgentBindingAuthority` is non-decodable and generation-bound; stale writes conflict; only server-constructed `OwnerAuthority` can issue or revoke grants; grants invalidate on route/version change. |
+| Tests | Contract/codec, cross-binding, stale-generation, stale-version, grant-authority, and grant-invalidation tests. **Wrong-implementation test:** creating a control record with `steer` as its initial value, using authority from a prior generation, or issuing either grant with `AgentBindingAuthority` must fail. |
 | Blocked-by | None. |
 | Conflict risk | High with #138 persistence schema and #145 receipt/event vocabulary; #138 owns the later SQLite adapter, and this contract must not change receipt semantics. |
 
@@ -364,14 +369,30 @@ sized for one agent and one PR.
 | Blocked-by | `listening-mode-contract`; harness route tickets provide real capability fixtures, but fakes allow parallel UI work. |
 | Conflict risk | Medium with #138 local UI composition and #145 receipt labels; add a separate listening section and reuse neither receipt copy nor owner-only policy authority for agent commands. |
 
+### 9. `listening-mode-agent-controls`
+
+| Field | Contract |
+| --- | --- |
+| Title | Expose listening-mode inspection and mutation to the bound agent |
+| Complexity | `complexity:3` |
+| Scope | Add CLI and MCP operations plus skill guidance that read the exact-binding `ListeningModeView` and submit `SetListeningMode { requested, expectedVersion }` under injected `AgentBindingAuthority`. Return the updated view or typed conflict/refusal with actionable support reasons. |
+| Out of scope | Experimental-route or hard-cancel grant mutation, owner UI, async release pull, room-wide defaults, and harness delivery. |
+| Files/packages | `packages/agent-cli/src/{cli,mcp,composition}/`, `packages/agent-skill/{SKILL.md,src/capabilities.ts}`, listening-mode application ports and tests. |
+| Acceptance | The agent can inspect requested/effective/support state, change only its own active binding, refresh after a version conflict, and observe requested/effective divergence without a false delivery claim; neither operation exposes owner authority or grant commands. |
+| Tests | CLI/MCP/skill contract tests for query, successful mutation, support reasons, typed conflict/refusal, and composition-injected authority. **Wrong-implementation test:** an agent request targeting another binding or carrying a stale generation/version must fail, and agent authority must not reach either grant command. |
+| Blocked-by | `listening-mode-contract`. |
+| Conflict risk | High with `listening-mode-pull` and #141 MCP capability discovery; share authentication/composition and capability vocabulary, but keep mode control distinct from release acknowledgement. |
+
 ## Integration order
 
-1. Land `listening-mode-contract` and allow UI work against fakes.
+1. Land `listening-mode-contract`, then allow UI and agent-control work against
+   fakes.
 2. Land `listening-mode-dispatch` after `internal-core`; land
    `listening-mode-pull` after `internal-core` and `mcp-piggyback` settle the
    storage/result contracts.
 3. Run harness tickets in parallel, consuming `claude-plugin` and
    `opencode-bridge` rather than duplicating them.
-4. Finish `listening-mode-ui` against real capability projections, then let
-   #147/`acceptance` compose the proven cells. Unproven cells remain
-   disabled and are not waived to make the end-to-end suite green.
+4. Finish `listening-mode-ui` and `listening-mode-agent-controls` against real
+   capability projections, then let #147/`acceptance` compose the proven cells.
+   Unproven cells remain disabled and are not waived to make the end-to-end
+   suite green.
