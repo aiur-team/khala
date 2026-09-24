@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 type Mode = "steer" | "sync" | "async";
@@ -28,6 +28,7 @@ if (!root) throw new Error("KHALA_FIXTURE_DIR is required");
 const inboxPath = join(root, "inbox.json");
 const modePath = join(root, "mode");
 const logPath = join(root, "events.jsonl");
+const lockPath = join(root, "inbox.lock");
 
 async function stdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -53,6 +54,30 @@ async function batch(): Promise<Batch | undefined> {
   }
 }
 
+async function withLock<T>(operation: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    try {
+      const handle = await open(lockPath, "wx", 0o600);
+      try {
+        return await operation();
+      } finally {
+        await handle.close();
+        await unlink(lockPath).catch(() => undefined);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || Date.now() >= deadline) throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+    }
+  }
+}
+
+async function writeBatch(current: Batch): Promise<void> {
+  const temporary = `${inboxPath}.${process.pid}.${Date.now()}.new`;
+  await writeFile(temporary, `${JSON.stringify(current, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, inboxPath);
+}
+
 function context(current: Batch): string {
   const bridge = process.argv[1];
   return [
@@ -69,15 +94,14 @@ async function enqueue(): Promise<void> {
   if (!parsed.token || !parsed.body) throw new Error("token and body are required");
   await mkdir(root!, { recursive: true, mode: 0o700 });
   await writeFile(modePath, `${parsed.mode}\n`, { mode: 0o600 });
-  const temporary = `${inboxPath}.new`;
   const value: Batch = { token: parsed.token, body: parsed.body, arrivedAt: new Date().toISOString() };
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, inboxPath);
+  await withLock(() => writeBatch(value));
   await log({ event: "batch_arrived", mode: parsed.mode, token: parsed.token });
 }
 
 async function hook(): Promise<void> {
   const input = JSON.parse(await stdin()) as HookInput;
+  if (!input.session_id || !input.turn_id) throw new Error("hook requires session_id and turn_id");
   const selected = await mode();
   const current = await batch();
   await log({
@@ -91,59 +115,73 @@ async function hook(): Promise<void> {
   });
   if (!current || current.acknowledgedAt) return;
 
-  const alreadyOfferedThisTurn =
-    current.offeredSession === input.session_id && current.offeredTurn === input.turn_id;
+  const claim = async (route: string): Promise<Batch | undefined> => withLock(async () => {
+    const latest = await batch();
+    if (!latest || latest.acknowledgedAt ||
+        (latest.offeredSession === input.session_id && latest.offeredTurn === input.turn_id)) return undefined;
+    latest.offeredAt ??= new Date().toISOString();
+    latest.offeredSession = input.session_id;
+    latest.offeredTurn = input.turn_id;
+    await writeBatch(latest);
+    await log({ event: "delivered", route, token: latest.token });
+    return latest;
+  });
 
-  const markOffered = async (route: string): Promise<void> => {
-    current.offeredAt ??= new Date().toISOString();
-    current.offeredSession = input.session_id;
-    current.offeredTurn = input.turn_id;
-    await writeFile(inboxPath, `${JSON.stringify(current, null, 2)}\n`, { mode: 0o600 });
-    await log({ event: "delivered", route, token: current.token });
+  const deliver = async (route: string, output: (claimed: Batch) => unknown): Promise<boolean> => {
+    const claimed = await claim(route);
+    if (!claimed) return false;
+    process.stdout.write(JSON.stringify(output(claimed)));
+    return true;
   };
 
-  if (selected === "steer" && input.hook_event_name === "PreToolUse" && !alreadyOfferedThisTurn) {
-    await markOffered("PreToolUse");
-    process.stdout.write(JSON.stringify({ decision: "block", reason: context(current) }));
+  if (selected === "steer" && input.hook_event_name === "PreToolUse") {
+    await deliver("PreToolUse", (claimed) => ({ decision: "block", reason: context(claimed) }));
     return;
   }
 
-  if (selected === "steer" && input.hook_event_name === "PostToolUse" && !alreadyOfferedThisTurn) {
-    await markOffered("PostToolUse");
-    process.stdout.write(JSON.stringify({
+  if (selected === "steer" && input.hook_event_name === "PostToolUse") {
+    await deliver("PostToolUse", (claimed) => ({
       hookSpecificOutput: {
         hookEventName: "PostToolUse",
-        additionalContext: context(current)
+        additionalContext: context(claimed)
       }
     }));
     return;
   }
 
-  if (selected === "steer" && input.hook_event_name === "Stop" && !input.stop_hook_active && !alreadyOfferedThisTurn) {
-    await markOffered("Stop");
-    process.stdout.write(JSON.stringify({ decision: "block", reason: context(current) }));
+  if (selected === "steer" && input.hook_event_name === "Stop" && !input.stop_hook_active) {
+    await deliver("Stop", (claimed) => ({ decision: "block", reason: context(claimed) }));
     return;
   }
 
-  if (selected === "sync" && input.hook_event_name === "Stop" && !input.stop_hook_active && !alreadyOfferedThisTurn) {
-    await markOffered("Stop");
-    process.stdout.write(JSON.stringify({ decision: "block", reason: context(current) }));
+  if (selected === "sync" && input.hook_event_name === "Stop" && !input.stop_hook_active) {
+    await deliver("Stop", (claimed) => ({ decision: "block", reason: context(claimed) }));
     return;
   }
 
-  if (selected === "sync" && input.hook_event_name === "UserPromptSubmit" && !alreadyOfferedThisTurn) {
-    await markOffered("UserPromptSubmit");
-    process.stdout.write(JSON.stringify({
+  if (selected === "sync" && input.hook_event_name === "UserPromptSubmit") {
+    await deliver("UserPromptSubmit", (claimed) => ({
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        additionalContext: context(current)
+        additionalContext: context(claimed)
       }
     }));
   }
 }
 
 async function read(): Promise<void> {
-  const current = await batch();
+  const [session, turn] = process.argv.slice(3);
+  if (!session || !turn) throw new Error("read requires session and turn IDs");
+  const current = await withLock(async () => {
+    const latest = await batch();
+    if (!latest || latest.acknowledgedAt ||
+        (latest.offeredSession === session && latest.offeredTurn === turn)) return undefined;
+    latest.offeredAt ??= new Date().toISOString();
+    latest.offeredSession = session;
+    latest.offeredTurn = turn;
+    await writeBatch(latest);
+    return latest;
+  });
   await log({ event: "agent_read", token: current?.token, pending: Boolean(current && !current.acknowledgedAt) });
   if (!current || current.acknowledgedAt) {
     process.stdout.write(JSON.stringify({ messages: [] }));
@@ -154,13 +192,14 @@ async function read(): Promise<void> {
 
 async function ack(token: string | undefined): Promise<void> {
   if (!token) throw new Error("ack requires a token");
-  const current = await batch();
-  if (!current || current.token !== token) throw new Error("batch token mismatch");
-  const duplicate = Boolean(current.acknowledgedAt);
-  if (!duplicate) {
+  const duplicate = await withLock(async () => {
+    const current = await batch();
+    if (!current || current.token !== token) throw new Error("batch token mismatch");
+    if (current.acknowledgedAt) return true;
     current.acknowledgedAt = new Date().toISOString();
-    await writeFile(inboxPath, `${JSON.stringify(current, null, 2)}\n`, { mode: 0o600 });
-  }
+    await writeBatch(current);
+    return false;
+  });
   await log({ event: "acknowledged", token, duplicate });
 }
 
@@ -170,5 +209,5 @@ switch (command) {
   case "hook": await hook(); break;
   case "read": await read(); break;
   case "ack": await ack(argument); break;
-  default: throw new Error("usage: bridge.ts <enqueue|hook|read|ack> [token]");
+  default: throw new Error("usage: bridge.ts <enqueue|hook|read SESSION TURN|ack TOKEN>");
 }

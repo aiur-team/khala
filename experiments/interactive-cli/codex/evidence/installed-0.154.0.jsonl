@@ -1,3 +1,7 @@
+{"at":"2026-09-24T22:13:32.064Z","event":"batch_arrived","mode":"steer","token":"batch-steer-0154"}
+{"at":"2026-09-24T22:16:04.682Z","event":"hook","hookEvent":"UserPromptSubmit","mode":"steer","token":"batch-steer-0154","pending":true}
+{"at":"2026-09-24T22:16:12.116Z","event":"hook","hookEvent":"PreToolUse","mode":"steer","token":"batch-steer-0154","pending":true,"toolName":"Bash"}
+{"at":"2026-09-24T22:16:12.117Z","event":"delivered","route":"PreToolUse","token":"batch-steer-0154"}
 {"at":"2026-09-24T22:18:00.455Z","event":"batch_arrived","mode":"steer","token":"steer-post-0154"}
 {"at":"2026-09-24T22:18:02.442Z","event":"hook","hookEvent":"PostToolUse","mode":"steer","token":"steer-post-0154","pending":true,"toolName":"Bash"}
 {"at":"2026-09-24T22:18:02.443Z","event":"delivered","route":"PostToolUse","token":"steer-post-0154"}

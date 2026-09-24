@@ -9,7 +9,9 @@ The two live PTY runs covered the installed 0.154.0 and then-current npm 0.156.1
 versions. The raw, selected JSONL events are in [`evidence/`](evidence/), and
 [`live-run.json`](evidence/live-run.json) pairs arrivals with observed delivery
 and acknowledgement timestamps. Message bodies were sent to `enqueue` on
-stdin. No message body was placed in process argv and hard abort was disabled.
+stdin. [`argv-safety.json`](evidence/argv-safety.json) records a live `/proc`
+capture of the adapter command line and environment while the stdin pipe held a
+unique marker; neither contained the marker. Hard abort was disabled.
 
 ## Reproduce the deterministic checks
 

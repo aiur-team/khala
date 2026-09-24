@@ -9,6 +9,7 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
+    "capture:argv": "node capture-argv.ts evidence/argv-safety.json",
     "verify:evidence": "node verify.ts evidence/live-run.json"
   },
   "devDependencies": {
