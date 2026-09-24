@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "khala-proof": {
+      "command": "node",
+      "args": [
+        "/home/everdred/.aiur/workspaces/aiur-team/khala/165/experiments/interactive-cli/claude/channel/server.mjs"
+      ],
+      "env": {
+        "KHALA_CHANNEL_PORT": "8789",
+        "KHALA_CHANNEL_LOG": "/home/everdred/.aiur/workspaces/aiur-team/khala/165/experiments/interactive-cli/claude/runs/channel-run/events.jsonl"
+      }
+    }
+  }
+}

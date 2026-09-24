@@ -1,0 +1,8 @@
+{
+  "name": "khala-interactive-proof",
+  "description": "Throwaway Claude Code hook probe for the interactive CLI evidence run",
+  "version": "0.0.1",
+  "author": {
+    "name": "Aiur"
+  }
+}
