@@ -127,7 +127,7 @@ History uses a versioned manifest plus bounded chunks so a lost response can rec
 | Old history wakes agents or creates receipts | Exclude imported records from `SubscriptionSource`, pending delivery, and read-receipt projection. |
 | Split brain during cutover | Freeze only at commit, verify the source revision, and atomically persist the authoritative external link before unfreezing or finishing. |
 | Agent identity drift | Snapshot session ID/generation, re-run evidence-backed inspection, and surface stale/revoked/unsupported outcomes. |
-| Source requirements change before PR #136 lands | Re-check this document against PR #136's merged SHA before implementation tickets are promoted. |
+| Source requirements drift after this baseline | Re-check this document against the current requirements and survey before implementation tickets are promoted. |
 
 ## Non-goals
 
