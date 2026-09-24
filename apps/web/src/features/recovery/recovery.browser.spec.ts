@@ -29,7 +29,7 @@ async function withHarness(
     });
     const page = await browser.newPage({ viewport });
     await page.goto(server.resolvedUrls!.local[0]!);
-    await page.getByRole('heading', { name: 'Recovery and room access' }).waitFor();
+    await page.getByRole('heading', { name: 'Recovery and channel access' }).waitFor();
     await run(page);
   } finally {
     await browser?.close();
@@ -72,8 +72,8 @@ test('unknown revocation inspects the original operation identity', { timeout: 9
 
 test('closure confirmation dispatches once and navigates once', { timeout: 90_000 }, async () => {
   await withHarness(async page => {
-    await page.getByRole('button', { name: 'Close room' }).click();
-    await page.getByRole('button', { name: 'Confirm room closure' }).press('Enter');
+    await page.getByRole('button', { name: 'Close channel' }).click();
+    await page.getByRole('button', { name: 'Confirm channel closure' }).press('Enter');
     await page.getByText('Closure complete', { exact: true }).waitFor();
     const audit = await page.evaluate(() => window.__recoveryHarness.getAudit());
     assert.equal(audit.closeCount, 1);
@@ -86,8 +86,8 @@ test('failed and unknown closure outcomes do not navigate', { timeout: 90_000 },
   for (const outcome of ['failed', 'unknown'] as const) {
     await withHarness(async page => {
       await page.evaluate(value => window.__recoveryHarness.setClosureOutcome(value), outcome);
-      await page.getByRole('button', { name: 'Close room' }).click();
-      await page.getByRole('button', { name: 'Confirm room closure' }).press('Enter');
+      await page.getByRole('button', { name: 'Close channel' }).click();
+      await page.getByRole('button', { name: 'Confirm channel closure' }).press('Enter');
       await page.getByText(outcome === 'failed' ? 'Closure failed' : 'Closure outcome unknown', { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => window.__recoveryHarness.getClosureCompleteCount()), 0);
     });
@@ -110,13 +110,13 @@ test('controller replacement ignores a stale closure completion emitted during r
 
 test('keyboard cancel closes confirmation and restores focus without dispatching', { timeout: 90_000 }, async () => {
   await withHarness(async page => {
-    const trigger = page.getByRole('button', { name: 'Close room' });
+    const trigger = page.getByRole('button', { name: 'Close channel' });
     await trigger.focus();
     await page.keyboard.press('Enter');
     await page.getByRole('button', { name: 'Cancel' }).press('Enter');
 
-    await page.waitForFunction(() => document.activeElement?.textContent === 'Close room');
-    assert.equal(await page.getByRole('button', { name: 'Confirm room closure' }).count(), 0);
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Close channel');
+    assert.equal(await page.getByRole('button', { name: 'Confirm channel closure' }).count(), 0);
     assert.equal((await page.evaluate(() => window.__recoveryHarness.getAudit())).closeCount, 0);
     assert.equal(await page.evaluate(() => window.__recoveryHarness.getClosureCompleteCount()), 0);
   });
@@ -129,11 +129,11 @@ test('U4 390px and 320px at 200% text keep consequences and actions complete wit
   ]) {
     await withHarness(async page => {
       if (layout.scale === 2) await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
-      await page.getByRole('button', { name: 'Close room' }).click();
-      const confirmation = page.locator('.recovery-panel__confirmation').filter({ hasText: 'Close room room_synthetic?' });
+      await page.getByRole('button', { name: 'Close channel' }).click();
+      const confirmation = page.locator('.recovery-panel__confirmation').filter({ hasText: 'Close channel room_synthetic?' });
       await confirmation.getByText('Copies already delivered to participants or models cannot be recalled.').waitFor();
       await confirmation.getByText(/no retention window or global erasure/).waitFor();
-      await confirmation.getByRole('button', { name: 'Confirm room closure' }).waitFor();
+      await confirmation.getByRole('button', { name: 'Confirm channel closure' }).waitFor();
       await confirmation.getByRole('button', { name: 'Cancel' }).waitFor();
 
       const metrics = await page.evaluate(() => ({

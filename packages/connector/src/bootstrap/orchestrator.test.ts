@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/messaging/index';
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
-import { type BootstrapInput, bootstrapAgent } from './orchestrator';
+import { type BootstrapInput, bootstrapAgent, operationFingerprint } from './orchestrator';
 import type {
   AdapterCapability, AdmissionOutcome, BootstrapPorts, DeviceActivation, OperationRecord, OwnershipOutcome, SessionInspection,
 } from './ports';
@@ -14,9 +14,14 @@ import { AUTHORIZE_PATH, REDEEM_PATH, TOKEN_PATH } from './descriptor';
 const ORIGIN = 'https://khala.example';
 const T0 = Date.parse('2026-09-18T12:00:00Z');
 const INPUT: BootstrapInput = {
-  chatUrl: `${ORIGIN}/i/room-invite`,
+  channelUrl: `${ORIGIN}/i/room-invite`,
   session: { harness: 'codex', sessionId: 'thread-existing-b', workdir: '/work/b' },
   operationId: 'bootstrap-b-1',
+};
+const LEGACY_INPUT: BootstrapInput = {
+  chatUrl: INPUT.channelUrl,
+  session: INPUT.session,
+  operationId: INPUT.operationId,
 };
 const DESCRIPTOR = {
   v: 1 as const, invite: 'room-invite', methods: ['loopback-browser-v1' as const],
@@ -110,6 +115,28 @@ function harness(overrides: {
 }
 
 describe('bootstrapAgent', () => {
+  it('preserves the established fingerprint bytes for canonical and legacy links', () => {
+    expect(operationFingerprint(INPUT)).toBe('VQzXYp6ofh66QHUcN6dN4_qDqVGpB3u8lY1iBKEayWg');
+    expect(operationFingerprint(LEGACY_INPUT)).toBe(operationFingerprint(INPUT));
+  });
+
+  it('accepts the legacy chatUrl input and normalizes it for discovery', async () => {
+    const { ports } = harness();
+    let discovered = '';
+    const result = await bootstrapAgent(LEGACY_INPUT, {
+      ...ports,
+      discovery: {
+        async resolve(channelUrl) {
+          discovered = channelUrl;
+          return { kind: 'resolved', origin: ORIGIN, descriptor: DESCRIPTOR };
+        },
+      },
+    });
+
+    expect(result).toMatchObject({ kind: 'connected' });
+    expect(discovered).toBe(INPUT.channelUrl);
+  });
+
   it('connects the existing session through its own device after ownership and admission', async () => {
     const { ports, counts, records } = harness();
     const result = await bootstrapAgent(INPUT, ports);
@@ -209,7 +236,7 @@ describe('bootstrapAgent', () => {
     await bootstrapAgent(INPUT, ports);
     const other = { ...INPUT, session: { ...INPUT.session, sessionId: 'thread-other' } };
     expect(await bootstrapAgent(other, ports)).toEqual({ kind: 'blocked', code: 'operation_conflict' });
-    expect(await bootstrapAgent({ ...INPUT, chatUrl: `${ORIGIN}/i/other` }, ports)).toEqual({ kind: 'blocked', code: 'operation_conflict' });
+    expect(await bootstrapAgent({ ...INPUT, channelUrl: `${ORIGIN}/i/other` }, ports)).toEqual({ kind: 'blocked', code: 'operation_conflict' });
   });
 
   it('reports an unsupported or missing harness before any owner-facing step', async () => {
@@ -339,6 +366,8 @@ describe('bootstrapAgent', () => {
       { ...INPUT, session: { ...INPUT.session, harness: 'Codex!' } },
       { ...INPUT, session: { ...INPUT.session, sessionId: 'a\nb' } },
       { ...INPUT, session: { ...INPUT.session, workdir: '' } },
+      { ...INPUT, chatUrl: INPUT.channelUrl } as unknown as BootstrapInput,
+      { session: INPUT.session, operationId: INPUT.operationId } as unknown as BootstrapInput,
     ]) {
       expect(await bootstrapAgent(bad, ports)).toEqual({ kind: 'blocked', code: 'invalid_request' });
     }

@@ -12,7 +12,7 @@ The session spawned parallel protocol, substrate, identity/trust, and E2EE resea
 
 ## Current direction
 
-Later user decisions supersede early recommendations: TypeScript application code; prefer Netlify Functions/Blobs but consider Railway if OSS reuse saves substantial development; connector-gated review is accepted; attach pub/sub to the existing working agent session across model vendors; inherit Aiur branding; OAuth → optionally named chat → share link, with no human connector setup. Read [hosting pros and cons](11-hosting-tradeoffs.md), [product decisions](../product/decisions.md), and the current synthesis rather than treating the recovered reports as chosen architecture.
+Later user decisions supersede early recommendations: TypeScript application code; prefer Netlify Functions/Blobs but consider Railway if OSS reuse saves substantial development; connector-gated review is accepted; attach pub/sub to the existing working agent session across model vendors; inherit Aiur branding; OAuth → optionally named channel → share link, with no human connector setup. Read [hosting pros and cons](11-hosting-tradeoffs.md), [product decisions](../product/decisions.md), and the current synthesis rather than treating the recovered reports as chosen architecture.
 
 ## Current research coverage
 

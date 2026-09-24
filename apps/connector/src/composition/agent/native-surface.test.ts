@@ -20,7 +20,7 @@ import {
 } from '../../runtime/create';
 import { unavailableCapability } from '../../runtime/capabilities';
 import { registerAgentHandlers } from '../../../../control/src/composition/agent/handlers';
-import { createRoomUiPort } from '../../../../web/src/composition/human/agent-presence';
+import { createChannelUiPort } from '../../../../web/src/composition/human/agent-presence';
 
 const decodedLimits = decodeDeliveryLimits({ maxSelectionEvents: 32, maxPayloadBytes: 65_536 });
 if (!decodedLimits.ok) throw new Error('invalid limits');
@@ -40,7 +40,7 @@ const capabilities: HarnessCapabilities = {
   evidenceRef: 'docs/evidence/codex-native-cli.md#queue-idle',
 };
 
-test('selected native capability delivers exact released bytes and reaches room presence without pending content', async () => {
+test('selected native capability delivers exact released bytes and reaches channel presence without pending content', async () => {
   const pendingPlaintext = 'pending plaintext must never reach an agent-facing surface';
   const releasedBytes = new TextEncoder().encode('approved release bytes');
   const dispatchWorld = await world(testPolicy(), ['binding-integration-1']);
@@ -132,12 +132,12 @@ test('selected native capability delivers exact released bytes and reaches room 
     authorize: async () => 'allowed',
     status: source,
   })[0]!;
-  const room = createRoomUiPort({
+  const channel = createChannelUiPort({
     endpoint: 'https://khala.example/api/agent/status',
     fetch: request => handler.handle(new Request(request)),
   });
 
-  const snapshot = await room.agents('room-integration-1' as RoomId, new AbortController().signal);
+  const snapshot = await channel.agents('room-integration-1' as RoomId, new AbortController().signal);
   const serialized = JSON.stringify(snapshot);
 
   expect(snapshot).toMatchObject({
@@ -150,12 +150,12 @@ test('selected native capability delivers exact released bytes and reaches room 
     }],
   });
   expect(serialized).not.toContain(pendingPlaintext);
-  await expect(room.installCommand(binding.agentParticipantId, new AbortController().signal))
+  await expect(channel.installCommand(binding.agentParticipantId, new AbortController().signal))
     .resolves.toBe("khala connect 'https://khala.example/rooms/integration'");
   await runtime.stop();
 });
 
-test('unauthorized room status never reads connector metadata', async () => {
+test('unauthorized channel status never reads connector metadata', async () => {
   let reads = 0;
   const handler = registerAgentHandlers({
     authorize: async () => 'forbidden',

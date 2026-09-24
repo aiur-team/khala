@@ -19,7 +19,7 @@ Humans read and contribute to a live conversation with explicit human/agent owne
 
 Authority: current user decisions override the approved ticket scope, which overrides technical recommendations. Scope source is `docs/product/tickets/KHA-123.md`; global requirements: R01, R02, R12, R14. Planning snapshot: Khala `6d4694173eff9b0832f4c3a2cdb90b4281fcccd9` with approved ticket proposal at `d625c19`. Dependency tickets: KHA-101, KHA-105, KHA-107. This plan changes Khala only; sibling Aiur/Archon are read-only design references.
 
-Stop condition: No product blocker for plain text/code. Media and historical access follow upstream capabilities; missing history is not rendered as an empty room.
+Stop condition: No product blocker for plain text/code. Media and historical access follow upstream capabilities; missing history is not rendered as an empty channel.
 
 ---
 
@@ -63,7 +63,7 @@ This ticket does not redefine shared contracts, implement sibling-owned services
 
 ### Outstanding questions
 
-No product blocker for plain text/code. Media and historical access follow upstream capabilities; missing history is not rendered as an empty room.
+No product blocker for plain text/code. Media and historical access follow upstream capabilities; missing history is not rendered as an empty channel.
 
 ---
 
@@ -73,7 +73,7 @@ Product Contract unchanged. Implementation details below do not settle questions
 
 ### Technical decisions and dependency ports
 
-- KTD1. SDK history and ordering remain owned by `RoomPort`; the UI projects `TimelinePage`, `TimelineItem`, `ParticipantView`, `EventRef` and `SendState` from105. Do not build a parallel event log or invent global sequence numbers.
+- KTD1. SDK history and ordering remain owned by `ChannelPort`; the UI projects `TimelinePage`, `TimelineItem`, `ParticipantView`, `EventRef` and `SendState` from105. Do not build a parallel event log or invent global sequence numbers.
 - KTD2. `createTimelineController` owns immutable cached snapshots for `useSyncExternalStore`; drafts, scroll anchor and pagination request state stay local. A room/account generation fences late callbacks, and dispose unsubscribes exactly once.
 - KTD3. Message identity is `ref.eventId`, local pending identity is `clientTxnId`; one acknowledged event replaces its local echo. Edits are new referenced events, not mutable approved bytes. Participant kind/owner come from verified projection, never message body text.
 - KTD4. Begin with safe text/code rendering and integrate only the parser/sanitizer pinned by143. Disable raw HTML and remote-image/media fetches; sanitize links and rendered attributes. Do not adopt a whole assistant UI kit that assumes one human and one bot or silently calls model APIs.
@@ -93,14 +93,14 @@ Actual items use105 types, omitted here to avoid duplicating the contract. A wor
 
 ```mermaid
 flowchart TB
-  SDK[RoomPort timeline and observer] --> C[Generation-fenced controller]
+  SDK[ChannelPort timeline and observer] --> C[Generation-fenced controller]
   C --> R[Attributed safe renderer]
   C --> P[Page cursor and reader anchor]
-  D[Local human draft] --> S[RoomPort send]
+  D[Local human draft] --> S[ChannelPort send]
   S --> C
 ```
 
-Timeline rows follow Aiur `AgentLogModal` title/timestamp/body hierarchy inside a route panel. The main conversation remains chronological; role/owner label and authored content are visually distinct from system banners. Pending review state is per binding, provided by review composition, not a room-wide approved badge. Connection loss may leave readable stale history with a banner; it is not evidence that pending sends failed. Missing keys render an unavailable-content placeholder with recovery navigation rather than dropping the item and implying an empty room.
+Timeline rows follow Aiur `AgentLogModal` title/timestamp/body hierarchy inside a route panel. The main conversation remains chronological; role/owner label and authored content are visually distinct from system banners. Pending review state is per binding, provided by review composition, not a room-wide approved badge. Connection loss may leave readable stale history with a banner; it is not evidence that pending sends failed. Missing keys render an unavailable-content placeholder with recovery navigation rather than dropping the item and implying an empty channel.
 
 Pagination preserves the visible event anchor after prepend, and new messages increment a visible jump-to-latest count when the reader is away from the end. Loading images is excluded initially, avoiding asynchronous height changes from external resources. Local sent messages may bring the composer context into view; incoming content never steals focus. A long transcript uses bounded pages and proven windowing only if required; do not introduce virtualization before scroll/assistive-tech acceptance evidence.
 

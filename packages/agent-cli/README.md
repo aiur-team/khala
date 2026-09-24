@@ -1,11 +1,11 @@
 # Khala agent CLI (KHA-148)
 
-`@khala/agent-cli` owns the `khala` binary an agent uses to connect to a room,
+`@khala/agent-cli` owns the `khala` binary an agent uses to connect to a channel,
 consume released messages, send replies, inspect status, and expose the same send
 operation as an MCP tool.
 
 ```text
-khala connect <https-room-link>
+khala connect <https-channel-link>
 khala listen [--binding <binding-id>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
 khala status

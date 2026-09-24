@@ -17,7 +17,7 @@ const FEATURE_TITLES = [
   'Multiplayer',
   'End-to-end encrypted',
   'Listening modes',
-  'Internal chat',
+  'Internal channel',
   'Weigh in',
   'Aiur Support',
 ];

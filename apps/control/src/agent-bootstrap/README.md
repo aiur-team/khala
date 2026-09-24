@@ -41,9 +41,9 @@ The redeem response is `{ binding, adapter_capability: { token, token_type: 'DPo
   refused). Its RFC 7638 thumbprint must equal the bound `jkt`. It is checked with `node:crypto` for
   signature, exact `htm`/`htu`, `iat` within 60 s (5 s skew), `ath` on redeem and capability use (and
   none on the token call), and each `jti` is recorded once for 120 s.
-- **Binding.** There is one binding per owner and room. The same session, generation, device and agent
+- **Binding.** There is one binding per owner and channel. The same session, generation, device and agent
   participant get the same binding back. Any other session or generation is `409 binding_conflict`.
-  That check runs before admission, so a conflicting device never joins the room.
+  That check runs before admission, so a conflicting device never joins the channel.
 - **Revocation.** A revoked binding is never revived. Re-bootstrapping at or below the revoked generation is
   `409 binding_revoked`, before admission. A session at a later generation gets a new binding ID with
   its own capability.
@@ -69,7 +69,7 @@ The redeem response is `{ binding, adapter_capability: { token, token_type: 'DPo
 | `inviteFromLink(url)` | KHA-132 route codec (the share-link vocabulary is not fixed here) |
 | `admissionFor(request)` | Request-scoped KHA-105 `AdmissionPort` for the signed-in owner (only `inspect` is used) |
 | `admissionPolicy` | **G-ADMISSION.** It is required and has no default. It decides whether a signed-in holder of the link may bind an agent |
-| `agents: AgentAdmissionPort` | `room(invite)` resolves the room with no side effects. `admit` adds the owner's agent participant, with this device, to that room, idempotently per (scoped) operation ID (KHA-113 / G-SUBSTRATE) |
+| `agents: AgentAdmissionPort` | `room(invite)` resolves the channel's compatibility-sensitive room record with no side effects. `admit` adds the owner's agent participant, with this device, to that channel, idempotently per (scoped) operation ID (KHA-113 / G-SUBSTRATE) |
 | `clock`, `random` | Trusted time and a CSPRNG |
 
 The gateway (`runtime/handler.ts`) requires `Origin` on POSTs. The connector sends the service's

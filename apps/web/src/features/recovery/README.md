@@ -1,7 +1,7 @@
 # Recovery UI composition handoff
 
 `RecoveryPanel` and `createRecoveryController` are the production display and
-lifecycle boundary for recovery, revocation, and room closure. KHA-136 should
+lifecycle boundary for recovery, revocation, and channel closure. KHA-136 should
 adapt real SDK operations to `RecoveryPorts`; it must not replace the panel's
 state semantics.
 

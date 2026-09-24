@@ -147,7 +147,7 @@ type McpToolDefinition = Readonly<{
 function toolDefinition(): McpToolDefinition {
   return {
     name: TOOL_NAME,
-    description: 'Send a message through a binding held by this agent. An omitted bindingId uses the current binding. Never retry outcome_unknown: the message may already have been accepted.',
+    description: 'Send a message to the Khala channel through a binding held by this agent. An omitted bindingId uses the current binding. Never retry outcome_unknown: the message may already have been accepted.',
     inputSchema: {
       type: 'object',
       properties: {

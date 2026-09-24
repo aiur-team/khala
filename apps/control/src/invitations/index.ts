@@ -10,7 +10,7 @@ import type {
   InviteState,
   OperationResult,
   RoomId,
-  RoomSummary,
+  ChannelSummary,
   ShareGrant,
   TrustedClock,
 } from '@khala/contracts/messaging/index';
@@ -35,13 +35,13 @@ export interface InvitationAuthority {
 }
 
 export type GatewayAdmission =
-  | Readonly<{ kind: 'joined'; room: RoomSummary; historyReady: boolean }>
+  | Readonly<{ kind: 'joined'; room: ChannelSummary; historyReady: boolean }>
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'outcome_unknown' }>
   | Readonly<{ kind: 'forbidden' }>;
 
 export type GatewayLookup =
-  | Readonly<{ kind: 'joined'; room: RoomSummary; historyReady: boolean }>
+  | Readonly<{ kind: 'joined'; room: ChannelSummary; historyReady: boolean }>
   | Readonly<{ kind: 'absent' }>
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'outcome_unknown' }>;

@@ -11,7 +11,7 @@ The 53 executable issues (#10–53 and #101–109) are direct members of root #1
 | KHA-E01 | [#2](https://github.com/aiur-team/khala/issues/2) | Validate feasibility and ownership |
 | KHA-E02 | [#3](https://github.com/aiur-team/khala/issues/3) | Establish workspace and contracts |
 | KHA-E03 | [#4](https://github.com/aiur-team/khala/issues/4) | Operate reusable hosting |
-| KHA-E04 | [#5](https://github.com/aiur-team/khala/issues/5) | Deliver human encrypted chat |
+| KHA-E04 | [#5](https://github.com/aiur-team/khala/issues/5) | Deliver a human encrypted channel |
 | KHA-E05 | [#6](https://github.com/aiur-team/khala/issues/6) | Attach existing working agents |
 | KHA-E06 | [#7](https://github.com/aiur-team/khala/issues/7) | Control peer delivery |
 | KHA-E07 | [#8](https://github.com/aiur-team/khala/issues/8) | Recover and revoke safely |
@@ -20,14 +20,14 @@ The 53 executable issues (#10–53 and #101–109) are direct members of root #1
 | KHA-102 | [#11](https://github.com/aiur-team/khala/issues/11) | Prove OSS backend hosting fit |
 | KHA-103 | [#12](https://github.com/aiur-team/khala/issues/12) | Prove Claude existing-session attachment |
 | KHA-104 | [#13](https://github.com/aiur-team/khala/issues/13) | Prove Codex existing-session attachment |
-| KHA-105 | [#14](https://github.com/aiur-team/khala/issues/14) | Define identity, room and messaging ports |
+| KHA-105 | [#14](https://github.com/aiur-team/khala/issues/14) | Define identity, channel and messaging ports |
 | KHA-106 | [#15](https://github.com/aiur-team/khala/issues/15) | Define approval and harness ports |
 | KHA-107 | [#16](https://github.com/aiur-team/khala/issues/16) | Build Aiur-branded shell |
 | KHA-108 | [#17](https://github.com/aiur-team/khala/issues/17) | Package messaging service deployment |
 | KHA-109 | [#18](https://github.com/aiur-team/khala/issues/18) | Prove backend restore and upgrades |
 | KHA-110 | [#19](https://github.com/aiur-team/khala/issues/19) | Implement OAuth identity mapping |
 | KHA-111 | [#20](https://github.com/aiur-team/khala/issues/20) | Implement browser encrypted device lifecycle |
-| KHA-112 | [#21](https://github.com/aiur-team/khala/issues/21) | Implement room and intro commands |
+| KHA-112 | [#21](https://github.com/aiur-team/khala/issues/21) | Implement channel and intro commands |
 | KHA-113 | [#22](https://github.com/aiur-team/khala/issues/22) | Implement invitation admission |
 | KHA-114 | [#23](https://github.com/aiur-team/khala/issues/23) | Implement agent-operated link bootstrap |
 | KHA-115 | [#24](https://github.com/aiur-team/khala/issues/24) | Persist connector keys and inbox |
@@ -37,7 +37,7 @@ The 53 executable issues (#10–53 and #101–109) are direct members of root #1
 | KHA-119 | [#28](https://github.com/aiur-team/khala/issues/28) | Implement exact approval release |
 | KHA-120 | [#29](https://github.com/aiur-team/khala/issues/29) | Implement trust and re-arm transitions |
 | KHA-121 | [#30](https://github.com/aiur-team/khala/issues/30) | Implement bounded model dispatch |
-| KHA-122 | [#31](https://github.com/aiur-team/khala/issues/31) | Build create-chat and intro composer |
+| KHA-122 | [#31](https://github.com/aiur-team/khala/issues/31) | Build create-channel and intro composer |
 | KHA-123 | [#32](https://github.com/aiur-team/khala/issues/32) | Build attributed live timeline |
 | KHA-124 | [#33](https://github.com/aiur-team/khala/issues/33) | Build OAuth entry and invitation journey |
 | KHA-125 | [#34](https://github.com/aiur-team/khala/issues/34) | Build recipient review UI |
@@ -47,7 +47,7 @@ The 53 executable issues (#10–53 and #101–109) are direct members of root #1
 | KHA-129 | [#38](https://github.com/aiur-team/khala/issues/38) | Implement encrypted recovery |
 | KHA-130 | [#39](https://github.com/aiur-team/khala/issues/39) | Implement retention and local cleanup |
 | KHA-131 | [#40](https://github.com/aiur-team/khala/issues/40) | Package Netlify web and functions |
-| KHA-132 | [#41](https://github.com/aiur-team/khala/issues/41) | Wire real human create/share/chat flow |
+| KHA-132 | [#41](https://github.com/aiur-team/khala/issues/41) | Wire real human create/share/channel flow |
 | KHA-133 | [#42](https://github.com/aiur-team/khala/issues/42) | Wire existing-session agent connection |
 | KHA-134 | [#43](https://github.com/aiur-team/khala/issues/43) | Wire human approval to model delivery |
 | KHA-135 | [#44](https://github.com/aiur-team/khala/issues/44) | Wire trust, pause and status acknowledgments |
@@ -67,5 +67,5 @@ The 53 executable issues (#10–53 and #101–109) are direct members of root #1
 | KHA-149 | [#106](https://github.com/aiur-team/khala/issues/106) | Implement the Claude native route |
 | KHA-150 | [#107](https://github.com/aiur-team/khala/issues/107) | Implement the Codex native CLI route |
 | KHA-151 | [#108](https://github.com/aiur-team/khala/issues/108) | Build the Khala fallback skill |
-| KHA-152 | [#103](https://github.com/aiur-team/khala/issues/103) | Build the room page and agent presence panel |
+| KHA-152 | [#103](https://github.com/aiur-team/khala/issues/103) | Build the channel page and agent presence panel |
 | KHA-153 | [#109](https://github.com/aiur-team/khala/issues/109) | Compose the native agent surface |

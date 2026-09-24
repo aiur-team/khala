@@ -1,5 +1,5 @@
 ---
-title: "KHA-112 Implement room and intro commands - Plan"
+title: "KHA-112 Implement channel and intro commands - Plan"
 type: feat
 date: 2026-09-16
 topic: room-intro-commands
@@ -11,11 +11,11 @@ execution: code
 origin: docs/product/tickets/KHA-112.md
 ---
 
-# KHA-112 Implement room and intro commands - Plan
+# KHA-112 Implement channel and intro commands - Plan
 
 ## Goal Capsule
 
-Deliver implement room and intro commands. Authority: latest user decisions, then `docs/product/decisions.md`, the approved scope card, and this contract. Dependencies: KHA-101, KHA-105. Product trace: R01, R03, R14. Open launch gates: G-SUBSTRATE; merged105; history disclosure policy belongs to113.
+Deliver channel and intro commands. Authority: latest user decisions, then `docs/product/decisions.md`, the approved scope card, and this contract. Dependencies: KHA-101, KHA-105. Product trace: R01, R03, R14. Open launch gates: G-SUBSTRATE; merged105; history disclosure policy belongs to113.
 
 Implementation belongs to the assigned ticket worker after gates clear. Root dependency changes, integration wiring, tracker publication and executor startup remain with their named owners. This artifact does not claim runtime proof.
 
@@ -25,7 +25,7 @@ Implementation belongs to the assigned ticket worker after gates clear. Root dep
 
 ### Summary
 
-Create a chat with an optional name as the signed-in human. This ticket covers the bounded outcome in `docs/product/tickets/KHA-112.md`.
+Create a channel with an optional name as the signed-in human. This ticket covers the bounded outcome in `docs/product/tickets/KHA-112.md`.
 
 ### Problem Frame
 
@@ -33,9 +33,9 @@ A multi-message introduction crosses several remote writes; a single optimistic 
 
 ### Requirements
 
-- R1. Create a chat with an optional name as the signed-in human.
+- R1. Create a channel with an optional name as the signed-in human.
 - R2. Queue one or several introductory messages with human or delegated-agent authorship preserved.
-- R3. Retries preserve room/message intent and reconcile partial acceptance without duplicate introductions.
+- R3. Retries preserve channel/message intent and reconcile partial acceptance without duplicate introductions.
 - R4. Expose encrypted timeline and participant projection through owned messaging ports.
 
 ### Actors and flow
@@ -47,7 +47,7 @@ F1. An authorised actor requests this ticket's operation; the owning module vali
 ### Acceptance Examples
 
 - AE1. An intro batch with two accepted items resumes its unresolved third using its original transaction identity, without resending the first two. Covers R1, R2.
-- AE2. A lost room-create response remains outcome_unknown until reconciliation; retry does not blindly create another room. Covers R3, R4.
+- AE2. A lost channel-create response remains outcome_unknown until reconciliation; retry does not blindly create another channel. Covers R3, R4.
 
 ### Key Decisions
 
@@ -74,7 +74,7 @@ Planning baseline: Khala `6d4694173eff9b0832f4c3a2cdb90b4281fcccd9`; inspected A
 
 ### Key Technical Decisions
 
-- KTD1. `createRoomService` implements RoomPort over selected SDK operations; SDK history remains the source of encrypted events. No Blobs duplicate transcript. Inputs carry stable operation/client transaction IDs before any effect.
+- KTD1. `createChannelService` implements ChannelPort over selected SDK operations; SDK history remains the source of encrypted events. No Blobs duplicate transcript. Inputs carry stable operation/client transaction IDs before any effect.
 - KTD2. Room creation and intro publication are separate outcomes. Some messaging APIs deduplicate event send transactions but not room creation; do not claim universal create idempotency. KHA-102/105 must supply the lookup/reconciliation mechanism. An unknown create result remains unknown until resolved rather than creating another room.
 - KTD3. Intro batches are ordered immutable selections with per-item acceptance. There is no all-or-nothing SDK multi-event transaction assumed. A retry sends only unresolved items with their original transaction IDs and bytes; accepted items stay accepted.
 - KTD4. Preserve human versus agent attribution and owner binding; a delegated agent may prepare/send authorised intro content but does not gain room creation authority through this ticket. Text bodies stay exact per105 digest encoding. Room titles are metadata: no promise of encrypted room names unless selected SDK support proves it.
@@ -84,14 +84,14 @@ Planning baseline: Khala `6d4694173eff9b0832f4c3a2cdb90b4281fcccd9`; inspected A
 ```mermaid
 flowchart TB
   H[Human create request] --> C[Create operation journal]
-  C --> R[Resolved encrypted room]
+  C --> R[Resolved encrypted channel]
   R --> B[Immutable intro batch]
   B --> I[Per-item SDK send with txn ID]
   I --> A[Accepted ref or explicit unknown]
   A --> T[Timeline reconciliation]
 ```
 
-Factory input: authenticated owner view, DevicePort readiness, SDK room adapter, local operation journal and clock. Exports `createRoomService` from owned index. Observe returns disposer; timeline projection merges local transaction with remote event ID without a second visible copy. Events missing decryption keys remain unavailable placeholders rather than blank messages or unsafe raw SDK exceptions. A room membership revocation stops new sends; it does not rewrite already accepted entries.
+Factory input: authenticated owner view, DevicePort readiness, SDK room adapter, local operation journal and clock. Exports `createChannelService` from owned index. Observe returns disposer; timeline projection merges local transaction with remote event ID without a second visible copy. Events missing decryption keys remain unavailable placeholders rather than blank messages or unsafe raw SDK exceptions. A room membership revocation stops new sends; it does not rewrite already accepted entries.
 
 ### Risks
 
@@ -102,9 +102,9 @@ Device/account changes during an outstanding batch must not retarget it. Intro c
 
 ## Implementation Units
 
-### U1. Create room with recoverable operation identity
+### U1. Create channel with recoverable operation identity
 
-**Goal:** Create room with recoverable operation identity. **Requirements:** R1–R4; F1; applicable KTDs below. **Dependencies:** upstream tickets in Goal Capsule. **Files:** `packages/messaging/src/rooms/{create,journal}.ts`, `create.test.ts`.
+**Goal:** Create channel with recoverable operation identity. **Requirements:** R1–R4; F1; applicable KTDs below. **Dependencies:** upstream tickets in Goal Capsule. **Files:** `packages/messaging/src/channels/{create,journal}.ts`, `create.test.ts`.
 
 **Approach:** Persist intent before invoking SDK; reconcile success/unknown using approved substrate semantics.
 
@@ -112,15 +112,15 @@ Device/account changes during an outstanding batch must not retarget it. Intro c
 
 **Test scenarios:**
 
-- Covers AE1: named and null-title rooms return proper summary.
-- Create response loss does not cause blind duplicate room.
+- Covers AE1: named and null-title channels return proper summary.
+- Create response loss does not cause a blind duplicate channel.
 - Same operationId with another owner/title rejected.
 
 **Verification:** The listed scenarios pass in the owned tests; record the observed result and relevant version/generation. A mocked result proves only module behavior, not a provider capability.
 
 ### U2. Commit and resume intro batches
 
-**Goal:** Commit and resume intro batches. **Requirements:** R1–R4; F1; applicable KTDs below. **Dependencies:** U1. **Files:** `packages/messaging/src/rooms/intro.ts`, `intro.test.ts`.
+**Goal:** Commit and resume intro batches. **Requirements:** R1–R4; F1; applicable KTDs below. **Dependencies:** U1. **Files:** `packages/messaging/src/channels/intro.ts`, `intro.test.ts`.
 
 **Approach:** Freeze batch ID, item order, actor and body digests; maintain per-item accepted refs.
 
@@ -136,7 +136,7 @@ Device/account changes during an outstanding batch must not retarget it. Intro c
 
 ### U3. Project timeline and sends
 
-**Goal:** Project timeline and sends. **Requirements:** R1–R4; F1; applicable KTDs below. **Dependencies:** U2. **Files:** `packages/messaging/src/rooms/{timeline,send}.ts`, `timeline.test.ts`, `send.test.ts`.
+**Goal:** Project timeline and sends. **Requirements:** R1–R4; F1; applicable KTDs below. **Dependencies:** U2. **Files:** `packages/messaging/src/channels/{timeline,send}.ts`, `timeline.test.ts`, `send.test.ts`.
 
 **Approach:** Map SDK events/local echoes into105 views and preserve opaque pagination cursors.
 
@@ -150,9 +150,9 @@ Device/account changes during an outstanding batch must not retarget it. Intro c
 
 **Verification:** The listed scenarios pass in the owned tests; record the observed result and relevant version/generation. A mocked result proves only module behavior, not a provider capability.
 
-### U4. Publish RoomPort adapter
+### U4. Publish ChannelPort adapter
 
-**Goal:** Publish RoomPort adapter. **Requirements:** R1–R4; F1; applicable KTDs below. **Dependencies:** U3. **Files:** `packages/messaging/src/rooms/index.ts`, `service.test.ts`, `README.md`.
+**Goal:** Publish ChannelPort adapter. **Requirements:** R1–R4; F1; applicable KTDs below. **Dependencies:** U3. **Files:** `packages/messaging/src/channels/index.ts`, `service.test.ts`, `README.md`.
 
 **Approach:** Wire lifecycle/readiness internally; expose no SDK client to UI callers.
 
@@ -174,7 +174,7 @@ After101: `pnpm --filter @khala/messaging typecheck`, `pnpm --filter @khala/mess
 
 ## Definition of Done
 
-Create, intro and timeline results retain narrow meanings; per-item retries preserve identity; named/unnamed UX and agent authorship are supported; no agent room-creation permission is invented. Remove abandoned-attempt code and temporary credentials; leave evidence free of message bodies, raw tokens and private keys. Do not change sibling implementations to make this ticket pass; return component defects to the named owner.
+Create, intro and timeline results retain narrow meanings; per-item retries preserve identity; named/unnamed UX and agent authorship are supported; no agent channel-creation permission is invented. Remove abandoned-attempt code and temporary credentials; leave evidence free of message bodies, raw tokens and private keys. Do not change sibling implementations to make this ticket pass; return component defects to the named owner.
 
 ### Dispatch condition
 
