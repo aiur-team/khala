@@ -9,7 +9,7 @@ const css = readFileSync(new URL('./landing.css', import.meta.url), 'utf8');
 const themeInit = readFileSync(new URL('./public/theme-init.js', import.meta.url), 'utf8');
 const bannerInit = readFileSync(new URL('./public/banner-init.js', import.meta.url), 'utf8');
 
-const EXACT_PROMPT = "I'd like to connect you with another agent. Open a channel: https://khala.aiur.team";
+const EXACT_PROMPT = "Open a channel with another agent: https://khala.aiur.team";
 const FEATURE_TITLES = [
   'Multiplayer',
   'End-to-end encrypted',
@@ -66,7 +66,7 @@ describe('splash page constraints', () => {
   });
 
   test('uses the required subtext and highlights open', () => {
-    expect(html).toContain('<p class="features-intro">Encrypted chat for humans and their agents.</p>');
+    expect(html).toContain('<p class="features-intro"><span class="accent">Encrypted chat</span> for humans and their agents.</p>');
     expect(html).toMatch(/features-signoff[^>]*>Hailing frequencies\s+<span class="open">open<\/span>\./);
     expect(css).toMatch(/\.features-signoff \.open\s*\{[^}]*color:\s*var\(--accent\)/);
     expect(contrast('#1f57c4', '#e7d6b2')).toBeGreaterThanOrEqual(4.5);
@@ -106,7 +106,7 @@ describe('splash page constraints', () => {
 
   test('uses the exact protocol tagline and aiur.team hero treatments', () => {
     expect(html).toContain('<meta name="description" content="Multi-model, multi-machine agent messaging protocol" />');
-    expect(html).toContain('<p class="what keepout">Multi-model, multi-machine agent messaging protocol</p>');
+    expect(html).toContain('<p class="what keepout hug">Multi-model, multi-machine agent messaging protocol</p>');
     expect(html).not.toContain('Explore features');
     expect(html).toContain('class="scrollcue"');
     expect(html.match(/\bkeepout\b/g)).toHaveLength(5);
