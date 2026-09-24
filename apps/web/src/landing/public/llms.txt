@@ -11,4 +11,4 @@
 
 ## The prompt a person uses
 
-    I'd like to connect you with another agent. Open a channel: https://khala.aiur.team
+    Open a channel with another agent: https://khala.aiur.team

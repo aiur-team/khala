@@ -10,7 +10,7 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 const here = dirname(fileURLToPath(import.meta.url));
 // The production splash build config, with only the output directory redirected.
 const configFile = join(here, '../../vite.landing.config.mjs');
-const EXACT_PROMPT = "I'd like to connect you with another agent. Open a channel: https://khala.aiur.team";
+const EXACT_PROMPT = "Open a channel with another agent: https://khala.aiur.team";
 const BUTTON_BLUE = 'rgb(31, 87, 196)';
 const WHITE = 'rgb(255, 255, 255)';
 const FEATURE_TITLES = [
@@ -24,7 +24,7 @@ const FEATURE_TITLES = [
 const LISTENING_MODES_COPY = 'steer interrupts, sync (default) waits for the current turn, async checks when ready.';
 
 async function buttonColors(page: Page): Promise<{ label: string; background: string; color: string }[]> {
-  return page.locator('button, .button').evaluateAll(nodes => nodes.map(node => {
+  return page.locator('button:not(.banner-close), .button').evaluateAll(nodes => nodes.map(node => {
     const style = getComputedStyle(node);
     return { label: node.getAttribute('aria-label') ?? node.textContent?.trim() ?? '', background: style.backgroundColor, color: style.color };
   }));
@@ -65,6 +65,9 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
 
     const banner = page.getByRole('complementary', { name: 'Project announcement' });
     const dismissBanner = page.getByRole('button', { name: 'Dismiss announcement' });
+    // The dismiss matches aiur.team: transparent, muted icon, SVG not a text glyph.
+    assert.equal(await dismissBanner.evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
+    assert.equal(await dismissBanner.locator('svg').count(), 1);
     assert.equal(await banner.isVisible(), true);
     const lineField = await page.evaluate(() => {
       const bannerRect = document.querySelector('#aiurBanner')!.getBoundingClientRect();
@@ -90,7 +93,8 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     assert.equal((await page.locator('#scrollcue').innerText()).trim(), 'SCROLL');
     await page.waitForFunction(() => (document.querySelector<HTMLCanvasElement>('#field')?.width ?? 0) > 0);
     await page.evaluate(() => window.scrollTo(0, 100));
-    assert.equal(await page.locator('#scrollcue').evaluate(node => node.classList.contains('gone')), true);
+    // The scroll event is dispatched asynchronously after scrollTo.
+    await page.waitForFunction(() => document.querySelector('#scrollcue')?.classList.contains('gone') === true, undefined, { timeout: 2000 });
     await page.evaluate(() => window.scrollTo(0, 0));
     assert.equal(await page.getByRole('heading', { name: 'Built around' }).count(), 0);
     assert.equal(await page.getByRole('heading', { name: 'Plain limits' }).count(), 0);
@@ -108,27 +112,13 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1);
     assert.equal(await page.getByRole('main').count(), 1);
 
-    // Pointer copy puts exactly the prompt on the clipboard and says so.
+    // The prompt is not live yet: greyed out, copy disabled, "Coming soon" over it.
     const copy = page.getByRole('button', { name: 'Copy the prompt' });
-    await copy.click();
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), EXACT_PROMPT);
-    assert.equal((await copy.innerText()).trim(), 'Copied');
-    assert.equal(await page.locator('#copyStatus').textContent(), 'Prompt copied to the clipboard');
-
-    // Keyboard copy: Tab reaches the button, it shows a focus ring, Enter copies.
-    await page.evaluate(() => navigator.clipboard.writeText(''));
-    await page.locator('body').focus();
-    let reached = false;
-    for (let i = 0; i < 10 && !reached; i += 1) {
-      await page.keyboard.press('Tab');
-      reached = await copy.evaluate(node => node === document.activeElement);
-    }
-    assert.ok(reached, 'Tab reaches the copy button');
-    assert.equal(await copy.evaluate(node => node.matches(':focus-visible')), true);
-    assert.equal(await copy.evaluate(node => getComputedStyle(node).outlineStyle), 'solid');
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.querySelector('#copyStatus')?.textContent !== '');
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), EXACT_PROMPT);
+    assert.equal(await copy.isDisabled(), true, 'copy is disabled while the prompt is not live');
+    assert.equal((await page.locator('#prompt-soon').innerText()).trim(), 'Coming soon.');
+    assert.match(await page.locator('.install-box').evaluate(node => getComputedStyle(node).filter), /blur/);
+    assert.equal(await page.locator('.install-box').getAttribute('aria-disabled'), 'true');
+    assert.ok(Number(await page.locator('.install-box').evaluate(node => getComputedStyle(node).opacity)) < 0.5, 'prompt is greyed out');
 
     // Top-right controls exist and the Docs link points at the quick start.
     assert.equal(await page.getByRole('link', { name: 'Docs' }).getAttribute('href'), 'https://aiur.team/docs/khala/quick-start');
@@ -139,7 +129,7 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     // runs with reduced motion, so parking the pointer ends hover at once.
     await page.mouse.move(0, 0);
     const lightButtons = await buttonColors(page);
-    assert.ok(lightButtons.length >= 4, 'Docs, theme toggle, Copy and the call to action');
+    assert.ok(lightButtons.length >= 3, 'Docs, theme toggle, Copy and the call to action');
     for (const button of lightButtons) assert.deepEqual([button.label, button.background, button.color], [button.label, BUTTON_BLUE, WHITE]);
     const lightBackground = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
