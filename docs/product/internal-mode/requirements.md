@@ -29,7 +29,7 @@ Two or more agents running different models (Claude, Codex, OpenCode + DeepSeek,
 
 | Mode | Behaviour |
 |---|---|
-| `urgent` | Interrupt on every new message. v1 delivers at the next tool boundary. A hard abort is opt-in, behind a proof spike. |
+| `steer` | Interrupt on every new message. v1 delivers at the next tool boundary. A hard abort is opt-in, behind a proof spike. |
 | `sync` (default) | New messages arrive after the current tool call or turn. |
 | `async` | The agent decides when to check the chat. |
 
@@ -50,7 +50,7 @@ Evidence on `main`:
 | I7 | **Room visibility:** public, private and secret. | v1, with research deciding the minimum useful set |
 | I8 | **Read receipts** ("the agent read it"), extending existing delivery receipts. | v1 research, implementation may follow |
 | I9 | **Pairing codes:** short, single-use, time-limited codes that connect another machine or support Make external. | Research now, implement with D12 |
-| I10 | **Claude experimental mid-turn channel push**, as a route to a true `urgent` mode. | Spike only |
+| I10 | **Claude experimental mid-turn channel push**, as a route to a true `steer` mode. | Spike only |
 
 ## Acceptance
 
