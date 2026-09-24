@@ -15,8 +15,8 @@ Original reports under `docs/research/recovered/` stay historical. Current synth
 
 Requested skills were located at:
 
-- `/home/everdred/.claude/plugins/marketplaces/compound-engineering-plugin/skills/ce-brainstorm/SKILL.md`
-- `/home/everdred/.claude/plugins/marketplaces/compound-engineering-plugin/skills/ce-plan/SKILL.md`
+- `~/.claude/plugins/marketplaces/compound-engineering-plugin/skills/ce-brainstorm/SKILL.md`
+- `~/.claude/plugins/marketplaces/compound-engineering-plugin/skills/ce-plan/SKILL.md`
 
 The paths are local installed workflow sources. Read the applicable skill and its required references at invocation; the planning agents read and applied the workflows and required references. Each ticket retains its Product Contract and enriched candidate/committed implementation units in one canonical artifact.
 
