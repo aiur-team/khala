@@ -4,7 +4,7 @@
 // "Copied": the line is selected instead so a keyboard copy still works.
 
 /** The exact prompt the splash hands a visitor to paste into their own agent. */
-export const AGENT_PROMPT = "I'd like to connect you with another agent. Open a channel: https://khala.aiur.team";
+export const AGENT_PROMPT = "Open a channel with another agent: https://khala.aiur.team";
 
 /** Writes text to the system clipboard; rejects on denial. */
 export type ClipboardWriter = (text: string) => Promise<void>;
