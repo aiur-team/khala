@@ -2,11 +2,11 @@
 
 Recorded 2026-09-16 from explicit operator messages. Recheck live state before launch.
 
-- Khala workspace: `/home/everdred/github/everdred/khala`.
-- Shared Aiur development checkout: `/home/everdred/github/everdred/aiur`.
+- Khala workspace: `~/github/everdred/khala`.
+- Shared Aiur development checkout: `~/github/everdred/aiur`.
 - Peer executor reply thread: `01a0ab56-2ff8-75f2-be6f-00f4fd78147c`. The earlier all-zero placeholder must never be used.
 - Authorized communication: `codex queue --thread 01a0ab56-2ff8-75f2-be6f-00f4fd78147c --message '...'` for defect reports and launch/build/restart coordination.
-- Peer reports its daemon at localhost:4000 and tailnet endpoint `https://orangekid.tailee0e71.ts.net:4001`, fleet ceiling 16, global pause lifted. These are reported state, not authority to change that fleet.
+- Peer reports its daemon at localhost:4000 and tailnet endpoint `https://<executor-host>.<tailnet>.ts.net:4001`, fleet ceiling 16, global pause lifted. These are reported state, not authority to change that fleet.
 - Intended Khala dashboard: localhost:4002. Observed unbound during coordination; recheck before launch. This is not yet a configured or running service.
 - Observed shared release stamp: source SHA `1f618cddf601a0b6d79bc1197579746b7584a64c`, `dirty=yes`, built `2026-09-16T15:34:29Z`. Source checkout HEAD matched at inspection. Dirty stamp means SHA alone does not fully identify built contents.
 - Notify the peer of intended port and actual stamped build before launch. Coordinate any shared-release rebuild or restart before running a shim action that could rebuild it automatically.
@@ -46,7 +46,7 @@ Read-only `AIUR_SKIP_BUILD=1 ../aiur/scripts/aiurdev __identity` resolved Khala 
 
 ## Launched Khala — 2026-09-16 19:22 UTC
 
-Planning/reviews pushed at `82002248db1715ec8b122fdd27c024e0f9274353`. Khala daemon launched with `AIUR_SKIP_BUILD=1` on localhost4002, verified key95978a6838 and owner `orangekid-95978a6838`. Listener reports26bindings; current Codex thread `01a0ab55-86a3-73d2-955d-d0e2139d0f53` has a host-local notification relay plus durable Executor consumption. No shared rebuild or peer-config mutation occurred.
+Planning/reviews pushed at `82002248db1715ec8b122fdd27c024e0f9274353`. Khala daemon launched with `AIUR_SKIP_BUILD=1` on localhost4002, verified key95978a6838 and owner `<executor-host>-95978a6838`. Listener reports26bindings; current Codex thread `01a0ab55-86a3-73d2-955d-d0e2139d0f53` has a host-local notification relay plus durable Executor consumption. No shared rebuild or peer-config mutation occurred.
 
 GitHub materialization: root1, epics2–9, leaves10–53; native hierarchy/dependencies re-read. Six initial admitted leaves:10,11,12,13,50,51. Remaining38 carry paused overlay until dependency/readiness gates resolve. Session cap6 fits measured capacity; peer dashboard read showed0running at19:15 UTC. Recheck actual fleet before changing capacity.
 

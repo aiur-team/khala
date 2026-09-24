@@ -18,7 +18,7 @@ docker compose -p khala-backend-spike -f experiments/backend/compose.yaml config
 
 If the host's `/tmp` user quota is exhausted, set `TMPDIR` to an existing private
 directory on a filesystem with space (the recorded capture used
-`TMPDIR=/home/everdred/.cache node experiments/backend/check.ts --proof`).
+`TMPDIR=~/.cache node experiments/backend/check.ts --proof`).
 
 `test` runs real services, not mocks. Each run creates an unpredictable project
 name, refuses existing project resources, generates fresh database and registration
