@@ -433,6 +433,7 @@ a {
   letter-spacing: -0.015em;
 }
 
+.features-intro .accent,
 .features-signoff .open {
   color: var(--accent);
 }
@@ -593,4 +594,35 @@ a {
   }
 
   .scrollcue .chev { animation: none; }
+}
+
+/* ---- Prompt: not live yet ---- */
+
+.prompt-frame {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  max-width: min(100%, 44rem);
+}
+
+.install-box.is-soon {
+  opacity: 0.42;
+  filter: grayscale(1);
+  pointer-events: none;
+  user-select: none;
+}
+
+.coming-soon {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg);
+  pointer-events: none;
 }
