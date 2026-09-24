@@ -125,7 +125,7 @@ export function createFakeReviewPort() {
       access = 'revoked';
       notify();
     },
-    /** Simulates the dependency backing the view becoming unreachable without touching `pending` — unlike `revoke`, the items stay in the model (R4's "not that the room is empty"). */
+    /** Simulates the dependency backing the view becoming unreachable without touching `pending` — unlike `revoke`, the items stay in the model (R4's "not that the channel is empty"). */
     goUnavailable() {
       access = 'unavailable';
       notify();

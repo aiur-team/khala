@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AdmissionPort, ContentLimits, RoomId, ChannelPort, ChannelSummary, SendState } from '@khala/contracts/messaging/index';
 import { decodeContentLimits, ok, rejected, unavailable } from '@khala/contracts/messaging/index';
-import { createChannelController } from './controller';
+import { createCreateChannelController } from './controller';
 
 const ROOM_ID = 'room_1' as RoomId;
 const CHANNEL: ChannelSummary = { roomId: ROOM_ID, title: null, membership: 'joined', revision: 'rev_1' };
@@ -62,13 +62,13 @@ function makeCreateId() {
   return () => `id_${(counter += 1)}`;
 }
 
-describe('createChannelController', () => {
+describe('createCreateChannelController', () => {
   it('maps an unnamed title to null and preserves intro order and body bytes', async () => {
     const create = vi.fn().mockResolvedValue(ok(CHANNEL));
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeChannelPort({ create, prepareIntro: vi.fn().mockResolvedValue(ok([sendState('t1', 'accepted'), sendState('t2', 'accepted')])) });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.addIntro();
     controller.addIntro();
@@ -94,7 +94,7 @@ describe('createChannelController', () => {
   ] as const)('passes the selected %s policy to admission.share unchanged', async (choice, email, policy) => {
     const create = vi.fn().mockResolvedValue(ok(CHANNEL));
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
-    const controller = createChannelController(
+    const controller = createCreateChannelController(
       { room: fakeChannelPort({ create }), admission: fakeAdmissionPort({ share }), limits: LIMITS },
       { createId: makeCreateId() },
     );
@@ -108,7 +108,7 @@ describe('createChannelController', () => {
   });
 
   it('defaults new chats to a link with no earlier history', () => {
-    const controller = createChannelController(
+    const controller = createCreateChannelController(
       { room: fakeChannelPort(), admission: fakeAdmissionPort(), limits: LIMITS },
       { createId: makeCreateId() },
     );
@@ -118,7 +118,7 @@ describe('createChannelController', () => {
 
   it('validates the named recipient before creating the channel', () => {
     const create = vi.fn().mockResolvedValue(ok(CHANNEL));
-    const controller = createChannelController(
+    const controller = createCreateChannelController(
       { room: fakeChannelPort({ create }), admission: fakeAdmissionPort(), limits: LIMITS },
       { createId: makeCreateId() },
     );
@@ -141,7 +141,7 @@ describe('createChannelController', () => {
     );
     const room = fakeChannelPort({ create: create as unknown as ChannelPort['create'] });
     const admission = fakeAdmissionPort();
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     controller.submit();
@@ -161,7 +161,7 @@ describe('createChannelController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeChannelPort({ create, prepareIntro });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.addIntro();
     controller.addIntro();
@@ -190,7 +190,7 @@ describe('createChannelController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeChannelPort({ create, prepareIntro, resumeIntro });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.addIntro();
     controller.updateIntro(controller.getView().intros[0]!.localId, 'Hello there.');
@@ -214,7 +214,7 @@ describe('createChannelController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeChannelPort({ create });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
@@ -234,7 +234,7 @@ describe('createChannelController', () => {
     const share = vi.fn().mockResolvedValueOnce(unavailable()).mockResolvedValueOnce(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeChannelPort({ create });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
@@ -253,7 +253,7 @@ describe('createChannelController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeChannelPort({ create, prepareIntro });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
@@ -265,7 +265,7 @@ describe('createChannelController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeChannelPort({ create });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('failed'));
@@ -282,7 +282,7 @@ describe('createChannelController', () => {
     const create = vi.fn(() => new Promise(resolve => (resolveCreate = resolve)));
     const room = fakeChannelPort({ create: create as unknown as ChannelPort['create'] });
     const admission = fakeAdmissionPort();
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.submit();
     controller.dispose();
@@ -298,7 +298,7 @@ describe('createChannelController', () => {
     const prepareIntro = vi.fn();
     const room = fakeChannelPort({ create, prepareIntro });
     const admission = fakeAdmissionPort();
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.addIntro();
     controller.addIntro();
@@ -320,14 +320,14 @@ describe('createChannelController', () => {
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
     const room = fakeChannelPort({ create });
     const admission = fakeAdmissionPort({ share });
-    const controller = createChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
+    const controller = createCreateChannelController({ room, admission, limits: LIMITS }, { createId: makeCreateId() });
 
     controller.setTitle('  Hi  ');
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
     expect(create).toHaveBeenCalledWith({ operationId: expect.any(String), title: 'Hi' });
 
-    const controller2 = createChannelController({ room: fakeChannelPort(), admission: fakeAdmissionPort(), limits: LIMITS }, { createId: makeCreateId() });
+    const controller2 = createCreateChannelController({ room: fakeChannelPort(), admission: fakeAdmissionPort(), limits: LIMITS }, { createId: makeCreateId() });
     controller2.setTitle('x'.repeat(LIMITS.maxRoomTitleBytes + 1));
     controller2.submit();
     expect(controller2.getView().phase).toBe('editing');
@@ -340,7 +340,7 @@ describe('createChannelController', () => {
     ['a control character', 'Pay\u0007roll'],
   ])('rejects a title containing %s locally, before any create call', (_label, title) => {
     const create = vi.fn().mockResolvedValue(ok(CHANNEL));
-    const controller = createChannelController(
+    const controller = createCreateChannelController(
       { room: fakeChannelPort({ create }), admission: fakeAdmissionPort(), limits: LIMITS },
       { createId: makeCreateId() },
     );
@@ -354,7 +354,7 @@ describe('createChannelController', () => {
   it('keeps ZWJ, which emoji sequences need, as a valid title', async () => {
     const create = vi.fn().mockResolvedValue(ok(CHANNEL));
     const share = vi.fn().mockResolvedValue(ok({ inviteRef: 'invite_1', shareUrl: 'https://khala.aiur.team/i/1', expiresAt: null }));
-    const controller = createChannelController(
+    const controller = createCreateChannelController(
       { room: fakeChannelPort({ create }), admission: fakeAdmissionPort({ share }), limits: LIMITS },
       { createId: makeCreateId() },
     );

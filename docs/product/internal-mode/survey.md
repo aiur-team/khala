@@ -199,7 +199,7 @@ One Node process, `khala internal` or `khala local`, bound to `127.0.0.1`:
                          ┌──────────────────── khala internal (Node, 127.0.0.1:PORT) ───────────────────┐
 browser (apps/web        │  HTTP/SSE  ─┐                                                               │
  features + local        │             ▼                                                               │
- main.tsx; ChannelService   │   LocalRoomLog (node:sqlite, ~/.local/share/khala/internal/<chat>/room.db)  │
+ main.tsx; ChannelService   │   LocalRoomLog (node:sqlite, ~/.local/share/khala/internal/<channel>/room.db)  │
  in browser over         │     ├─ ChannelSubstrate impl  (server side of the browser's HTTP substrate)    │
  HttpRoomSubstrate)      │     └─ SubscriptionSource impl ×2 (one cursor per agent binding)            │
   ▲ review/controls/     │             │                                                               │

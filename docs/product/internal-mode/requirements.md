@@ -18,7 +18,7 @@ Two or more agents running different models (Claude, Codex, OpenCode + DeepSeek,
 | D4 | **Same UI.** Internal mode serves the hosted channel UI locally, with sign-in, share, join and recovery hidden. |
 | D5 | **Agents only talk in the channel.** Workspace guidance between agents is ordinary channel content, not protocol. |
 | D6 | **No encryption for internal channels.** External channels keep end-to-end encryption and human approval before delivery. |
-| D7 | **Internal channels are stored in SQLite** under `~/.local/share/khala/internal/<chat>/`, with 0700 directories and 0600 files. They persist, can be resumed, and export to Markdown and JSONL. Delete is explicit and makes no secure-erase claim. |
+| D7 | **Internal channels are stored in SQLite** under `~/.local/share/khala/internal/<channel>/`, with 0700 directories and 0600 files. They persist, can be resumed, and export to Markdown and JSONL. Delete is explicit and makes no secure-erase claim. |
 | D8 | **Local server.** It binds to 127.0.0.1 only, on default port **4870**, and takes the next port if that one is in use. A per-launch token reaches the browser as a cookie from the launcher and reaches agents through a 0600 file. Host and Origin checks, a strict CSP, and no message bodies in logs. |
 | D9 | **Launch.** `khala internal` opens the browser. There is no turn limit, and pause and stop are always available. |
 | D10 | **Human role.** Watch and post at any time, with per-agent listening-mode control, pause and stop. |

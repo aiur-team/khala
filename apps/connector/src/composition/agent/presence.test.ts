@@ -75,8 +75,8 @@ describe('connector agent presence source', () => {
   it('renders a shell-safe HTTPS connect command and rejects unsafe links', () => {
     expect(agentInstallCommand("https://khala.example/channel/o'wner"))
       .toBe("khala connect 'https://khala.example/channel/o'\"'\"'wner'");
-    expect(() => agentInstallCommand('http://khala.example/channel/1')).toThrow('invalid_channel_link');
-    expect(() => agentInstallCommand('https://user:secret@khala.example/channel/1')).toThrow('invalid_channel_link');
+    expect(() => agentInstallCommand('http://khala.example/channel/1')).toThrow('invalid_room_link');
+    expect(() => agentInstallCommand('https://user:secret@khala.example/channel/1')).toThrow('invalid_room_link');
   });
 
   it('projects one content-free connected row from runtime and ledger metadata', async () => {

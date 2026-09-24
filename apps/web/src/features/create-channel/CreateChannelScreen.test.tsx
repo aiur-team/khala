@@ -18,7 +18,7 @@ import type {
 } from '@khala/contracts/messaging/index';
 import { decodeContentLimits } from '@khala/contracts/messaging/index';
 import { CreateChannelScreen } from './CreateChannelScreen';
-import { createChannelController } from './controller';
+import { createCreateChannelController } from './controller';
 import type { CreateChannelPorts } from './ports';
 
 function pendingPromise<T>(): Promise<T> {
@@ -92,7 +92,7 @@ describe('CreateChannelScreen initial render', () => {
 
 describe('CreateChannelScreen with a pre-driven controller', () => {
   it('shows an email field and validation error for the named-recipient policy', () => {
-    const controller = createChannelController({
+    const controller = createCreateChannelController({
       room: { create: vi.fn(), prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
       admission: { share: vi.fn(), inspect: vi.fn(), admit: vi.fn() },
       limits: LIMITS,
@@ -106,7 +106,7 @@ describe('CreateChannelScreen with a pre-driven controller', () => {
   });
 
   it('names every intro row by position and disables move-up on the first, move-down on the last', () => {
-    const controller = createChannelController({
+    const controller = createCreateChannelController({
       room: { create: vi.fn(), prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
       admission: { share: vi.fn(), inspect: vi.fn(), admit: vi.fn() },
       limits: LIMITS,
@@ -129,7 +129,7 @@ describe('CreateChannelScreen with a pre-driven controller', () => {
 
   it('attaches the error to an alert and offers retry once a rejection lands', async () => {
     const create = vi.fn().mockResolvedValue({ kind: 'rejected', code: 'invalid_request' });
-    const controller = createChannelController({
+    const controller = createCreateChannelController({
       room: { create, prepareIntro: vi.fn(), resumeIntro: vi.fn(), send: vi.fn(), timeline: vi.fn(), observe: vi.fn(() => () => {}) },
       admission: { share: vi.fn(), inspect: vi.fn(), admit: vi.fn() },
       limits: LIMITS,

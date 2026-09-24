@@ -65,7 +65,7 @@ function selectedPolicy(view: CreateChannelView): AdmissionPolicy {
   return { v: 1, kind: 'link', history: 'none' };
 }
 
-export function createChannelController(
+export function createCreateChannelController(
   ports: JournalPorts,
   options: Readonly<{ createId?: () => string }> = {},
 ): CreateChannelController {
@@ -293,5 +293,5 @@ export function createChannelController(
   };
 }
 
-/** @deprecated Use `createChannelController`. Kept through the first tagged release containing #163. */
-export const createChatController = createChannelController;
+/** @deprecated Use `createCreateChannelController`. Kept through the first tagged release containing #163. */
+export const createChatController = createCreateChannelController;

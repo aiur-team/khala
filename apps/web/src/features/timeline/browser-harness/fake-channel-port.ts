@@ -36,7 +36,7 @@ export function createFakeChannelPort() {
   const history: TimelineItem[] = [];
   for (let i = 0; i < 40; i += 1) history.push(makeItem(`hist_${i}`, i % 5 === 0 ? agent : alice, `Historical message ${i}`));
   let recent: TimelineItem[] = [
-    makeItem('recent_1', alice, 'Welcome to the harness room.'),
+    makeItem('recent_1', alice, 'Welcome to the harness channel.'),
     makeItem(
       'recent_2',
       agent,
@@ -52,7 +52,7 @@ export function createFakeChannelPort() {
 
   function currentSnapshot(): ChannelSnapshot {
     return {
-      room: { roomId, title: 'Harness room', membership, revision: 'rev_1' },
+      room: { roomId, title: 'Harness channel', membership, revision: 'rev_1' },
       items: recent,
       snapshotRevision: `rev_${recent.length}`,
       generation,

@@ -37,7 +37,7 @@ under a `fixtures/` path).
 
 ## Setup and disposal
 
-`CreateChannelScreen` owns its `createChannelController` instance via `useMemo` and
+`CreateChannelScreen` owns its `createCreateChannelController` instance via `useMemo` and
 disposes it on unmount. A pre-built controller can be injected through the
 (test-only) `controller` prop — used by `CreateChannelScreen.test.tsx` to render
 the screen at a specific, already-driven phase without waiting on real ports.

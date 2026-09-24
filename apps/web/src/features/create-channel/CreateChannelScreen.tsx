@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Panel } from '../../shell/Panel';
-import { createChannelController, type CreateChannelController } from './controller';
+import { createCreateChannelController, type CreateChannelController } from './controller';
 import type { CreateChannelView } from './model';
 import type { CreateChannelPorts } from './ports';
 import { copyShareLink, type CopyResult } from './share-link';
@@ -29,7 +29,7 @@ const BUSY_MESSAGE: Partial<Record<CreateChannelView['phase'], string>> = {
 };
 
 export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, controller: injectedController }: CreateChannelScreenProps) {
-  const ownController = useMemo(() => createChannelController(ports), [ports]);
+  const ownController = useMemo(() => createCreateChannelController(ports), [ports]);
   const controller = injectedController ?? ownController;
   const [view, setView] = useState<CreateChannelView>(() => controller.getView());
   const [readiness, setReadiness] = useState<Readiness>({ kind: 'checking' });

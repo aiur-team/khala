@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AdmissionPort, ContentLimits, RoomId, ChannelPort, ChannelSummary, SendState } from '@khala/contracts/messaging/index';
 import { decodeContentLimits, ok, outcomeUnknown } from '@khala/contracts/messaging/index';
-import { createChannelController } from './controller';
+import { createCreateChannelController } from './controller';
 
 const LIMITS: ContentLimits = (() => {
   const decoded = decodeContentLimits({ maxBodyBytes: 4096, maxDisplayNameBytes: 64, maxRoomTitleBytes: 128 });
@@ -58,7 +58,7 @@ function fakePorts(roomOverrides: Partial<ChannelPort> = {}, admissionOverrides:
 describe('create-channel operation journal fixtures', () => {
   it('two pending intros resolve to a "resolving" state distinct from ready', async () => {
     const ports = fakePorts({ prepareIntro: vi.fn().mockResolvedValue(ok([sendState('t1', 'pending'), sendState('t2', 'pending')])) });
-    const controller = createChannelController(ports);
+    const controller = createCreateChannelController(ports);
     controller.addIntro();
     controller.addIntro();
     const [first, second] = controller.getView().intros;
@@ -73,7 +73,7 @@ describe('create-channel operation journal fixtures', () => {
     const ports = fakePorts({
       prepareIntro: vi.fn().mockResolvedValue(ok([sendState('t1', 'accepted'), sendState('t2', 'outcome_unknown')])),
     });
-    const controller = createChannelController(ports);
+    const controller = createCreateChannelController(ports);
     controller.addIntro();
     controller.addIntro();
     const [first, second] = controller.getView().intros;
@@ -86,7 +86,7 @@ describe('create-channel operation journal fixtures', () => {
 
   it('a fully failed intro item surfaces as "failed" with an error code, distinct from "resolving"', async () => {
     const ports = fakePorts({ prepareIntro: vi.fn().mockResolvedValue(ok([sendState('t1', 'failed')])) });
-    const controller = createChannelController(ports);
+    const controller = createCreateChannelController(ports);
     controller.addIntro();
     controller.updateIntro(controller.getView().intros[0]!.localId, 'Hello there.');
     controller.submit();
@@ -96,7 +96,7 @@ describe('create-channel operation journal fixtures', () => {
 
   it('an unknown outcome on share is "resolving" while retaining the created channel, distinct from "ready"', async () => {
     const ports = fakePorts({}, { share: vi.fn().mockResolvedValue(outcomeUnknown('op_1')) });
-    const controller = createChannelController(ports);
+    const controller = createCreateChannelController(ports);
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('resolving'));
     expect(controller.getView().roomId).toBe(ROOM_ID);
@@ -105,7 +105,7 @@ describe('create-channel operation journal fixtures', () => {
 
   it('an empty channel (no introductions) reaches "ready" without an intro step', async () => {
     const ports = fakePorts();
-    const controller = createChannelController(ports);
+    const controller = createCreateChannelController(ports);
     controller.submit();
     await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
     expect(ports.room.prepareIntro).not.toHaveBeenCalled();
