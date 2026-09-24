@@ -6,7 +6,7 @@ Status: research recommendation, 2026-09-24. Source requirements and survey are 
 
 Implement I2 as a package-local postprocessor for every valid Khala MCP `tools/call` result. It appends an oldest-first, bounded prefix of the held binding's already-released inbox records after the tool's normal content, writes one JSON-RPC response, and advances the durable inbox cursor only after that write succeeds.
 
-This is **near-sync only at Khala tool boundaries**. MCP cannot inject after tools owned by another server or wake an idle host. Until a pinned harness is live-proven to invoke a Khala tool at turn boundaries, MCP-only support must be advertised as `async`, not D2 `sync` or `steer`.
+This is **near-sync only at Khala tool boundaries**. MCP cannot inject after tools owned by another server or wake an idle host. Until a pinned harness is live-proven to invoke a Khala tool at turn boundaries, MCP-only support must be advertised as `async`, not D2 `sync` or `steer`. The route also remains restart-unsupported until a pinned receiver proves durable duplicate suppression; exposing the same `releaseId` twice is not suppression.
 
 The design preserves D3: the inbound bytes are deliberate room messages already released under the binding's manual or automatic policy; outbound chat still requires an explicit `khala_send` call. It does not capture assistant output, transcripts, or arbitrary tool output.
 
@@ -73,7 +73,9 @@ The oversized-head exception prevents permanent starvation while keeping the har
 5. After the writable callback succeeds, revalidate once more and atomically acknowledge through the final selected release. A write failure or detected lifecycle mismatch acknowledges nothing.
 6. If the write succeeded but cursor persistence failed, replay is allowed. Stable `releaseId` and digest identify the duplicate; loss or skip-ahead is never allowed.
 
-This is at-least-once handoff to the MCP transport, not exactly-once model consumption. Point-in-time status checks cannot close the final check-to-write race: a concurrent revoke may allow one response containing bytes that were already released to that generation, but it cannot redirect them to a new generation. Instant cancellation requires a separate lease primitive. The cursor acknowledgement must not synthesize `context_consumed`, `completed`, or an I8 read receipt. Existing route receipts remain unchanged.
+This is at-least-once handoff to the MCP transport, not exactly-once model consumption. A successful response write followed by failed cursor persistence can replay after restart; stable identity helps a receiver deduplicate but does not meet the fixed end-to-end acceptance requirement by itself. Product implementation and capability advertising therefore require pinned evidence of durable receiver-side suppression across that crash window. If the host exposes no acknowledgement or reconciliation mechanism, MCP piggyback remains unsupported for restart-safe delivery rather than weakening the acceptance criterion.
+
+Point-in-time status checks also cannot close the final check-to-write race: a concurrent revoke may allow one response containing bytes that were already released to that generation, but it cannot redirect them to a new generation. Instant cancellation requires a separate lease primitive. The cursor acknowledgement must not synthesize `context_consumed`, `completed`, or an I8 read receipt. Existing route receipts remain unchanged.
 
 ### D2 and D3 behavior
 
@@ -82,6 +84,7 @@ This is at-least-once handoff to the MCP transport, not exactly-once model consu
 | D2 `async` | Supported: the agent calls `khala_check` when it chooses. |
 | D2 `sync` | Unproven for MCP-only harnesses. It needs a pinned live proof that the host reliably invokes a Khala tool at the next turn/tool boundary. |
 | D2 `steer` | Unsupported: MCP tool results cannot inject at the next unrelated tool boundary, wake an idle host, or hard-abort an active tool. |
+| Restart acceptance | Unsupported until a pinned host durably suppresses a replay from the response-written/cursor-uncommitted crash window. Visible duplicate identity alone does not pass. |
 | D3 deliberate send | Preserved: only explicit `khala_send` publishes an agent message. Incoming releases are never automatically forwarded. |
 | Trust boundary | Only already-released inbox bytes may appear. Pending-review content, submitted send bodies, logs, errors, status, and diagnostics remain content-free. |
 
@@ -104,6 +107,7 @@ This is at-least-once handoff to the MCP transport, not exactly-once model consu
 | Concurrent consumers reorder or skip. | Reuse the listener lock for the MCP process lifetime. |
 | Long-lived MCP process drains an old generation after rebind. | Revalidate binding ID/generation before selection, before write, and before acknowledgement; fail closed on mismatch. Document the remaining check-to-write race for already-released bytes. Dynamic rotation is out of scope. |
 | Capability UI overclaims `sync`. | Gate advertising on pinned live evidence; default MCP-only route to `async`. |
+| A post-write cursor failure causes duplicate delivery or action after restart. | Require the format and end-to-end proofs to exercise the crash window and demonstrate durable receiver-side suppression. If they cannot, keep restart support and the MCP route's full acceptance status unsupported. |
 | Escaping expands the response beyond a payload-only estimate. | Measure the complete serialized UTF-8 line and test escaping-heavy/multibyte bodies. |
 | Unreleased plaintext leaks through an error path. | Canary tests across success, refused, protocol-error, status, log, and diagnostic surfaces. |
 | A released peer message prompt-injects a tool-capable host. | Treat labeling as defense in depth. The E09 setup/capability ticket must default unattended MCP-only participants to a read-only/sandboxed scratch workdir and require explicit operator opt-in for repository writes before advertising support. |
@@ -113,7 +117,7 @@ This is at-least-once handoff to the MCP transport, not exactly-once model consu
 - Product-code implementation in this research PR.
 - Piggybacking on tools owned by other MCP servers.
 - Idle wake, hard interrupt, or claiming `steer`/`sync` without live proof.
-- Exactly-once model consumption or I8 read receipts.
+- New Khala receipt semantics or a general exactly-once model-consumption guarantee. The fixed restart test still gates this route on evidenced receiver-side duplicate suppression.
 - Capturing or forwarding assistant output, transcripts, shell output, or arbitrary tool results.
 - Replacing native Claude hooks, Codex queue/app-server delivery, or OpenCode plugin push.
 - Adding a shared release decoder solely for prettier MCP output.
@@ -129,8 +133,8 @@ This is at-least-once handoff to the MCP transport, not exactly-once model consu
 | Scope | Use a minimal MCP fixture and Codex 0.154.0 to test the proposed delimited canonical release JSON before product implementation. Exercise ordered bodies, room and author provenance, stable `releaseId`/digest, replay identity, eight-release results, and an escaping-heavy maximum release. |
 | Out of scope | Durable inbox integration, product MCP changes, capability-registry edits, claiming idle wake or arbitrary-tool injection. |
 | Files/packages | `experiments/internal-mode/mcp-piggyback/`, `docs/evidence/mcp-piggyback-format.md`; no product package changes. |
-| Acceptance criteria | The pinned harness identifies room, author, ordered body text, and duplicate identity from content absent from its prompt; it accepts the 128 KiB soft boundary and one maximum-size oversized head without truncation; exact commands, versions, outputs, and negative claims are recorded. Failure blocks `mcp-result-piggyback` and requires a design amendment to use a strict shared decoder or a smaller evidenced bound. |
-| Tests | Automate the fixture transcript and evidence verifier. **Wrong implementation test:** replace the canonical payload with a static nonce-only result; verification fails because transport visibility does not prove provenance, ordering, duplicate recognition, or boundary-size usability. |
+| Acceptance criteria | The pinned harness identifies room, author, ordered body text, and duplicate identity from content absent from its prompt; it durably suppresses a repeated release across a forced server restart; it accepts the 128 KiB soft boundary and one maximum-size oversized head without truncation; exact commands, versions, outputs, and negative claims are recorded. Failure blocks `mcp-result-piggyback` and requires a design amendment to add a receiver acknowledgement/reconciliation mechanism, a strict shared decoder, or a smaller evidenced bound as applicable. |
+| Tests | Automate the fixture transcript and evidence verifier. **Wrong implementation test:** return the same stable `releaseId` after restart but allow it to enter model context twice; verification fails because duplicate visibility is not duplicate suppression. |
 | Blocked-by | None. |
 | Conflict risk | Low. It is isolated under `experiments/` and evidence docs, but its result constrains I4 setup/capability advertising and any other E09 MCP response-format research. |
 
@@ -171,8 +175,8 @@ This is at-least-once handoff to the MCP transport, not exactly-once model consu
 | Scope | Run a real MCP client and Codex 0.154.0 proof with a unique queued message; prove its room, author, and body enter the same agent context only after a Khala tool call; require an explicit `khala_send` response; record exact commands, inventory, outputs, and negative claims. Produce evidence for the setup/capability owner to consume. |
 | Out of scope | Capability-registry edits, promoting untested Codex versions, proving Claude/OpenCode, idle wake, arbitrary-tool injection, or product setup UX. |
 | Files/packages | `experiments/internal-mode/mcp-piggyback/`, `docs/evidence/mcp-piggyback.md`; no capability-registry or receipt schema changes. |
-| Acceptance criteria | A clean pinned run proves queued room/author/body context absent from the prompt and a deliberate peer-directed response via `khala_send`; a replay run proves stable duplicate identity; boundary cases from the format proof remain usable end to end; evidence states that idle wake and non-Khala tool boundaries remain unproven; no transcript or assistant-output capture is used. |
-| Tests | Automate the real-inbox protocol fixture and evidence verifier. **Wrong implementation test:** replace the queued inbox message with a static tool fixture; verification fails because it does not prove durable Khala delivery or deliberate reply behavior. |
+| Acceptance criteria | A clean pinned run proves queued room/author/body context absent from the prompt and a deliberate peer-directed response via `khala_send`; a forced response-written/cursor-uncommitted restart proves the repeated release is durably suppressed before model-visible delivery or action; boundary cases from the format proof remain usable end to end; evidence states that idle wake and non-Khala tool boundaries remain unproven; no transcript or assistant-output capture is used. |
+| Tests | Automate the real-inbox protocol fixture and evidence verifier. **Wrong implementation test:** replay the same stable `releaseId` after restart and merely show the ID to the model; verification fails unless the receiver suppresses the second delivery/action. |
 | Blocked-by | `mcp-result-piggyback`. |
 | Conflict risk | Medium with I4 setup and D2 capability-matrix research. This ticket owns only evidence; those areas consume it, enforce the sandbox/read-only default, and own advertised support. |
 
