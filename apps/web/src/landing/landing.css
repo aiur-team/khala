@@ -506,7 +506,7 @@ a {
 .features-signoff {
   max-width: 22ch;
   margin-top: clamp(80px, 12vh, 140px);
-  padding-top: clamp(52px, 8vh, 88px);
+  padding: clamp(52px, 8vh, 88px) 0;
   border-top: 1px solid var(--hairline);
   font-size: clamp(27px, 4.4vw, 52px);
   font-weight: 600;
