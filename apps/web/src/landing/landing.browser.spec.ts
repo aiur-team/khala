@@ -19,9 +19,9 @@ const FEATURE_TITLES = [
   'Listening modes',
   'Internal chat',
   'Weigh in',
-  'Aiur-native',
+  'Aiur Support',
 ];
-const LISTENING_MODES_COPY = 'steer interrupts on every new message. sync (the default) takes new messages after the current turn or tool. async lets the agent check when it chooses.';
+const LISTENING_MODES_COPY = 'steer interrupts, sync (default) waits for the current turn, async checks when ready.';
 
 async function buttonColors(page: Page): Promise<{ label: string; background: string; color: string }[]> {
   return page.locator('button, .button').evaluateAll(nodes => nodes.map(node => {
@@ -66,6 +66,12 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     const banner = page.getByRole('complementary', { name: 'Project announcement' });
     const dismissBanner = page.getByRole('button', { name: 'Dismiss announcement' });
     assert.equal(await banner.isVisible(), true);
+    const lineField = await page.evaluate(() => {
+      const bannerRect = document.querySelector('#aiurBanner')!.getBoundingClientRect();
+      const fieldRect = document.querySelector('#field')!.getBoundingClientRect();
+      return { bannerBottom: bannerRect.bottom, fieldTop: fieldRect.top };
+    });
+    assert.ok(Math.abs(lineField.bannerBottom - lineField.fieldTop) <= 1, 'line field starts flush below the banner');
     await dismissBanner.focus();
     assert.equal(await dismissBanner.evaluate(node => node.matches(':focus-visible')), true);
     await page.keyboard.press('Enter');
@@ -75,9 +81,17 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
 
     assert.deepEqual(await page.locator('.feature-card h3').allTextContents(), FEATURE_TITLES);
     assert.equal((await page.locator('.feature-card').nth(2).locator('p').innerText()).trim(), LISTENING_MODES_COPY);
-    assert.equal((await page.locator('.features-intro').innerText()).trim(), 'Hailing frequencies open.');
-    assert.equal(await page.locator('.features-intro .open').textContent(), 'open');
-    assert.equal((await page.locator('.features-signoff').innerText()).trim(), 'Encrypted chat for both humans and their agents.');
+    assert.equal((await page.locator('.features-intro').innerText()).trim(), 'Encrypted chat for humans and their agents.');
+    assert.equal((await page.locator('.features-signoff').innerText()).trim(), 'Hailing frequencies open.');
+    assert.equal(await page.locator('.features-signoff .open').textContent(), 'open');
+    assert.equal(await page.getByRole('link', { name: 'Aiur', exact: true }).first().getAttribute('href'), 'https://aiur.team/');
+    assert.equal(await page.locator('.what').innerText(), 'Multi-model, multi-machine agent messaging protocol');
+    assert.equal(await page.getByText('Explore features', { exact: true }).count(), 0);
+    assert.equal((await page.locator('#scrollcue').innerText()).trim(), 'SCROLL');
+    await page.waitForFunction(() => (document.querySelector<HTMLCanvasElement>('#field')?.width ?? 0) > 0);
+    await page.evaluate(() => window.scrollTo(0, 100));
+    assert.equal(await page.locator('#scrollcue').evaluate(node => node.classList.contains('gone')), true);
+    await page.evaluate(() => window.scrollTo(0, 0));
     assert.equal(await page.getByRole('heading', { name: 'Built around' }).count(), 0);
     assert.equal(await page.getByRole('heading', { name: 'Plain limits' }).count(), 0);
     assert.equal((await page.locator('footer').innerText()).trim(), 'built with Aiur');

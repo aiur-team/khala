@@ -16,9 +16,9 @@ const FEATURE_TITLES = [
   'Listening modes',
   'Internal chat',
   'Weigh in',
-  'Aiur-native',
+  'Aiur Support',
 ];
-const LISTENING_MODES_COPY = '<code>steer</code> interrupts on every new message. <code>sync</code> (the default) takes new messages after the current turn or tool. <code>async</code> lets the agent check when it chooses.';
+const LISTENING_MODES_COPY = '<code>steer</code> interrupts, <code>sync</code> (default) waits for the current turn, <code>async</code> checks when ready.';
 
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map(index => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
@@ -59,14 +59,16 @@ describe('splash page constraints', () => {
     const titles = [...featureSection.matchAll(/<h3>([^<]+)<\/h3>/g)].map(([, title]) => title);
     expect(titles).toEqual(FEATURE_TITLES);
     expect(featureSection.match(/class="feature-card/g)).toHaveLength(6);
-    expect(featureSection.match(/class="coming-soon"/g)).toHaveLength(2);
+    expect(featureSection).not.toContain('coming soon');
     expect(featureSection).toContain(LISTENING_MODES_COPY);
+    expect(featureSection).toContain('<h3>Aiur Support</h3>');
+    expect(featureSection).toContain('<a href="https://aiur.team/">Aiur</a>');
   });
 
   test('uses the required subtext and highlights open', () => {
-    expect(html).toMatch(/Hailing frequencies\s+<span class="open">open<\/span>\./);
-    expect(html).toContain('Encrypted chat for both humans and their agents.');
-    expect(css).toMatch(/\.features-intro \.open\s*\{[^}]*color:\s*var\(--accent\)/);
+    expect(html).toContain('<p class="features-intro">Encrypted chat for humans and their agents.</p>');
+    expect(html).toMatch(/features-signoff[^>]*>Hailing frequencies\s+<span class="open">open<\/span>\./);
+    expect(css).toMatch(/\.features-signoff \.open\s*\{[^}]*color:\s*var\(--accent\)/);
     expect(contrast('#1f57c4', '#e7d6b2')).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#2f86ff', '#1a1b1e')).toBeGreaterThanOrEqual(4.5);
   });
@@ -100,6 +102,17 @@ describe('splash page constraints', () => {
     for (const [, src] of html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)) expect(src).toMatch(/^\.?\//);
     expect(html).not.toMatch(/<link[^>]+rel="stylesheet"[^>]+href="https?:/);
     expect(css).not.toMatch(/@import\s+url\(\s*['"]?https?:/);
+  });
+
+  test('uses the exact protocol tagline and aiur.team hero treatments', () => {
+    expect(html).toContain('<meta name="description" content="Multi-model, multi-machine agent messaging protocol" />');
+    expect(html).toContain('<p class="what keepout">Multi-model, multi-machine agent messaging protocol</p>');
+    expect(html).not.toContain('Explore features');
+    expect(html).toContain('class="scrollcue"');
+    expect(html.match(/\bkeepout\b/g)).toHaveLength(5);
+    expect(css).toMatch(/#field\s*\{[^}]*top:\s*-50px/);
+    expect(css).toMatch(/\.scrollcue \.chev\s*\{[^}]*animation:\s*nudge/);
+    expect(css).toMatch(/prefers-reduced-motion:[\s\S]*\.scrollcue \.chev\s*\{\s*animation:\s*none/);
   });
 
   test('every button and button-styled link carries the shared button class', () => {

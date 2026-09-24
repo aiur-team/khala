@@ -26,6 +26,12 @@ The announcement text (`Introducing Aiur: AI Unit Runtime for Executors`),
 `site/index.html` at the Archon commit above. Their styling is adapted to the
 same vendored fonts and brand tokens already used by Khala's splash.
 
+The hero flow-field keepouts and animated scroll cue are adapted from
+`website/src/flowField.ts`, `website/src/styles.css`, `website/src/main.ts`, and
+`website/index.html` in `aiur-team/aiur` commit
+`0972f02977ecc77fbcce4ae30cae80aa2c879a18`. They are bundled into the landing
+build and make no external requests.
+
 ## Fonts
 
 Vendored under the SIL Open Font License 1.1 from the
