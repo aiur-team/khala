@@ -27,6 +27,21 @@
   status = 200
   force = true
 
+# Agent-readable files are emitted by the landing build under dist/landing.
+# Keep these exact root paths ahead of the SPA fallback so an agent receives
+# the requested text instead of index.html.
+[[redirects]]
+  from = "/llms.txt"
+  to = "/landing/llms.txt"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/AGENTS.md"
+  to = "/landing/AGENTS.md"
+  status = 200
+  force = true
+
 # The site root serves the public splash page, built separately into
 # apps/web/dist/landing by apps/web/vite.landing.config.mjs. It matches `/`
 # only, so /api/* above and every deep link below keep their routing. `force`
