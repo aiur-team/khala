@@ -1,0 +1,20 @@
+Host: Linux x86_64
+Date: 2026-09-24
+
+$ command -v codex
+/home/everdred/.local/share/mise/installs/node/lts/bin/codex
+
+$ codex --version
+codex-cli 0.154.0
+
+$ npm view @openai/codex version
+0.156.1
+
+$ npm exec --yes --package=@openai/codex@0.156.1 -- codex --version
+codex-cli 0.156.1
+
+Both versions expose codex queue --thread <THREAD_ID> --message <MESSAGE>.
+Neither exposes a stdin message option. Both report hooks stable/enabled, and
+the former steer, tui_app_server, remote_control, and send_async_message feature
+flags as removed. `codex app-server` starts a new server; no command advertises
+attaching a server/socket to an already-running local TUI.

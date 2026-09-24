@@ -1,0 +1,72 @@
+{
+  "host": "Linux x86_64, interactive PTY",
+  "date": "2026-09-24",
+  "versions": ["0.154.0", "0.156.1"],
+  "proofs": [
+    {
+      "version": "0.154.0",
+      "mode": "steer",
+      "status": "Proven",
+      "route": "PostToolUse",
+      "arrivedAt": "2026-09-24T22:18:00.455Z",
+      "observedAt": "2026-09-24T22:18:02.443Z",
+      "detail": "Batch arrived during a 20-second Bash sleep and was injected 1 ms after PostToolUse. A separate run proved PreToolUse block at 22:16:12.117Z."
+    },
+    {
+      "version": "0.154.0",
+      "mode": "sync",
+      "status": "Proven",
+      "route": "Stop",
+      "arrivedAt": "2026-09-24T22:19:07.197Z",
+      "observedAt": "2026-09-24T22:19:11.914Z",
+      "acknowledgedAt": "2026-09-24T22:19:19.118Z",
+      "detail": "PostToolUse at 22:19:09.109Z did not deliver; Stop delivered after the tool/turn."
+    },
+    {
+      "version": "0.154.0",
+      "mode": "async",
+      "status": "Proven",
+      "route": "explicit read",
+      "arrivedAt": "2026-09-24T22:19:58.106Z",
+      "observedAt": "2026-09-24T22:20:20.665Z",
+      "acknowledgedAt": "2026-09-24T22:20:24.146Z",
+      "detail": "UserPromptSubmit, PreToolUse and PostToolUse remained silent before the agent's explicit read."
+    },
+    {
+      "version": "0.156.1",
+      "mode": "steer",
+      "status": "Proven",
+      "route": "PreToolUse",
+      "arrivedAt": "2026-09-24T22:21:32.608Z",
+      "observedAt": "2026-09-24T22:22:09.244Z",
+      "acknowledgedAt": "2026-09-24T22:22:14.141Z",
+      "detail": "The next Bash call was blocked with the channel message; the live agent acknowledged and retried."
+    },
+    {
+      "version": "0.156.1",
+      "mode": "sync",
+      "status": "Proven",
+      "route": "UserPromptSubmit",
+      "arrivedAt": "2026-09-24T22:22:36.882Z",
+      "observedAt": "2026-09-24T22:22:47.739Z",
+      "acknowledgedAt": "2026-09-24T22:22:51.897Z",
+      "detail": "The next prompt boundary injected the pending batch and the live agent acknowledged it."
+    },
+    {
+      "version": "0.156.1",
+      "mode": "async",
+      "status": "Proven",
+      "route": "explicit read",
+      "arrivedAt": "2026-09-24T22:24:54.694Z",
+      "observedAt": "2026-09-24T22:25:41.931Z",
+      "acknowledgedAt": "2026-09-24T22:25:45.039Z",
+      "detail": "All lifecycle hooks stayed silent; the agent chose to read, reported ASYNC_READ_0156, and acknowledged."
+    }
+  ],
+  "safety": {
+    "messageBytesInArgv": false,
+    "hardAbortEnabled": false,
+    "acknowledgement": "batch token",
+    "sessionOwner": "user-started Codex TUI"
+  }
+}
