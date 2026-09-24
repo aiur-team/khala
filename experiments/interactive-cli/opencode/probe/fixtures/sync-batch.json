@@ -1,0 +1,14 @@
+{
+  "mode": "sync",
+  "batch": {
+    "token": "batch-sync-001",
+    "messages": [
+      {
+        "id": "message-sync-001",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "SYNC-NONCE-482: Call khala_send with response SYNC-ACK-482."
+      }
+    ]
+  }
+}
