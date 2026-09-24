@@ -598,16 +598,22 @@ a {
 
 /* ---- Prompt: not live yet ---- */
 
+/* The frame hugs the prompt box exactly, so the label centres on the box
+   itself (the box's own top margin moves onto the frame). */
 .prompt-frame {
   position: relative;
   display: flex;
-  justify-content: center;
   max-width: min(100%, 44rem);
+  margin-top: 10px;
+}
+
+.prompt-frame .install-box {
+  margin-top: 0;
 }
 
 .install-box.is-soon {
-  opacity: 0.42;
-  filter: grayscale(1);
+  opacity: 0.3;
+  filter: grayscale(1) blur(2.5px);
   pointer-events: none;
   user-select: none;
 }
@@ -615,14 +621,15 @@ a {
 .coming-soon {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: 13px;
+  font-family: var(--font-body);
+  font-size: clamp(16px, 2vw, 19px);
   font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  line-height: 1;
+  letter-spacing: 0.01em;
   color: var(--fg);
   pointer-events: none;
 }

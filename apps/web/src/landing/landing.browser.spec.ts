@@ -112,9 +112,10 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     // The prompt is not live yet: greyed out, copy disabled, "Coming soon" over it.
     const copy = page.getByRole('button', { name: 'Copy the prompt' });
     assert.equal(await copy.isDisabled(), true, 'copy is disabled while the prompt is not live');
-    assert.equal((await page.locator('#prompt-soon').innerText()).trim().toLowerCase(), 'coming soon');
+    assert.equal((await page.locator('#prompt-soon').innerText()).trim(), 'Coming soon.');
+    assert.match(await page.locator('.install-box').evaluate(node => getComputedStyle(node).filter), /blur/);
     assert.equal(await page.locator('.install-box').getAttribute('aria-disabled'), 'true');
-    assert.ok(Number(await page.locator('.install-box').evaluate(node => getComputedStyle(node).opacity)) < 0.6, 'prompt is greyed out');
+    assert.ok(Number(await page.locator('.install-box').evaluate(node => getComputedStyle(node).opacity)) < 0.5, 'prompt is greyed out');
 
     // Top-right controls exist and the Docs link points at the quick start.
     assert.equal(await page.getByRole('link', { name: 'Docs' }).getAttribute('href'), 'https://aiur.team/docs/khala/quick-start');
