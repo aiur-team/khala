@@ -1,6 +1,6 @@
 /**
- * Throwaway proof that an OpenCode server plugin can push a Khala-shaped
- * message into the active TUI after a session becomes idle.
+ * Throwaway proof that a plugin loaded by a person-started OpenCode TUI can
+ * push a Khala-shaped message after a session becomes idle.
  */
 export const KhalaProof = async ({ client, directory }) => {
   let delivered = false

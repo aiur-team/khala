@@ -4,6 +4,13 @@ Captured on `orangekid` on 2026-09-24. The OpenCode binary resolved through
 mise at the versioned path below. Secrets, session IDs, URLs, full prompts, and
 transcripts are omitted; fixed markers and state fields are retained verbatim.
 
+The session-addressed HTTP/SDK probes below created or addressed server
+sessions and did not retain evidence tying them to a person-started interactive
+TUI. They are secondary feasibility observations, not proof of an interactive
+listening mode. The real-plugin probe did run in a person-started TUI, but used
+directory-scoped append/submit and therefore proves neither target safety nor
+all three mode boundaries.
+
 ## Version inventory
 
 ```text
