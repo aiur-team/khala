@@ -19,7 +19,7 @@ needed for v1 and is not an approved default.
 ## Inventory
 
 The installed binary was
-`/home/everdred/.local/share/mise/installs/node/lts/bin/codex`, version 0.154.0.
+`~/.local/share/mise/installs/node/lts/bin/codex`, version 0.154.0.
 The npm registry offered 0.156.1, so the same proof was repeated with that
 package. Exact output is retained in
 [`inventory.txt`](../../../experiments/interactive-cli/codex/evidence/inventory.txt).

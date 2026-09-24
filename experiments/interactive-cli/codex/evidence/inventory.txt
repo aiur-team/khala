@@ -2,7 +2,7 @@ Host: Linux x86_64
 Date: 2026-09-24
 
 $ command -v codex
-/home/everdred/.local/share/mise/installs/node/lts/bin/codex
+~/.local/share/mise/installs/node/lts/bin/codex
 
 $ codex --version
 codex-cli 0.154.0
