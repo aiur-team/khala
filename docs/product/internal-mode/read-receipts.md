@@ -68,16 +68,16 @@ These remain a set of facts, not a state machine. `outcome_unknown` may coexist 
 
 ### Contract shape
 
-1. Define `DeliveryReceipt` v2 with `agent_acknowledged` and source `agent`. Keep v1 and v2 as an explicit discriminated union during rollout; the new kind/source are legal only in v2 and v1 is never reinterpreted as agent evidence.
+1. Define `DeliveryReceipt` v2 with `agent_acknowledged` and source `agent`. Keep v1 and v2 as an explicit discriminated union during rollout; the v2 decoder requires `agent_acknowledged` if and only if `source === 'agent'`, and v1 is never reinterpreted as agent evidence.
 2. Define `HarnessCapabilities` v3 with `acknowledgement: 'unknown' | 'unsupported' | 'explicit_agent_tool'`. Keep v2 and v3 decoding during rollout; an absent v2 field presents as unknown, and no producer emits v3 until its route is proven. This describes the exact route, never a boolean promise.
 3. Keep the receipt content-free and release-scoped: stable `receiptId`, `releaseId`, `bindingId`, generation, timestamp, source, and evidence reference. Do not add message bodies, model output, or free-text reasons.
-4. Add a closed acknowledgement result vocabulary: `recorded`, `already_recorded`, `unknown_release`, `not_delivered`, `invalid_ack_token`, `stale_binding`, `binding_revoked`, `storage_failed`, and `outcome_unknown`. A failed acknowledgement is an API result, not a false delivery receipt.
+4. Add a closed `AcknowledgementResult` v1 tagged union: `recorded` and `already_recorded` carry only the stable `receiptId`; refusals are `unknown_release`, `not_delivered`, `invalid_ack_token`, `stale_binding`, or `binding_revoked`; failures are `storage_failed` or `outcome_unknown` with an opaque reconciliation ID. A failed acknowledgement is an API result, not a false delivery receipt.
 5. Generate the stable receipt ID from `['agent', bindingId, generation, releaseId, 'agent_acknowledged']`. Repeats return the same fact; changed binding generation cannot acknowledge an earlier binding.
 6. Stage compatibility before production: RR1 teaches every consumer and store to preserve both versions but emits no new versions; RR2 may then write v2 acknowledgement receipts, and RR3-RR5 may advertise v3 only for proven routes. Persisted v1 rows remain v1 and require no lossy rewrite.
 
 ### Agent action and validation
 
-Expose the same operation as `khala acknowledge --release <id>` (token on stdin) and MCP tool `khala_acknowledge({releaseId, acknowledgementToken, bindingId?})`. RR2 creates a random, single-release acknowledgement token, stores only its digest, and includes the token inside the approved release envelope. It never appears in argv, logs, errors, receipts, or UI. Possession proves that the caller received that release envelope; it still does not prove comprehension.
+Expose the same operation as `khala acknowledge --release <id>` (token on stdin) and MCP tool `khala_acknowledge({releaseId, acknowledgementToken, bindingId?})`. RR2 defines a versioned agent-delivery envelope, separate from the canonical policy release payload, and adds the token only when materializing delivery to the bound agent. Existing delivery-envelope consumers retain v1 decoding; proven acknowledgement routes consume v2. The connector derives the token as fixed-length unpadded base64url over HMAC-SHA-256 of a canonical length-prefixed tuple `['khala-ack-v1', bindingId, generation, releaseId]`, using a persisted owner-only secret with at least 256 bits of entropy. The connector stores neither the token nor a separate digest; it can regenerate the same token after restart. Recipient-local private inboxes may persist the delivered v2 envelope. The token never appears in argv, Khala logs, errors, receipts, or UI. Possession proves that the caller received that delivery envelope; it still does not prove comprehension.
 
 Every acknowledgement request is authenticated through #138’s agent transport. The server derives the binding and generation from a server-held, binding-scoped principal or capability; an optional `bindingId` only selects among bindings already held by that authenticated principal and never grants authority. The trusted connector/local server records the fact only when all checks pass:
 
@@ -85,10 +85,12 @@ Every acknowledgement request is authenticated through #138’s agent transport.
 |---|---|
 | Caller holds the exact binding and generation. | Prevents one agent acknowledging for another or a revoked instance. |
 | `releaseId` belongs to that binding generation. | Prevents arbitrary receipt creation. |
-| The presented acknowledgement token matches the stored digest for that release and binding generation. | Correlates the action to possession of the released envelope and prevents an injected message from naming unrelated delivered backlog. |
-| At least one delivery fact exists (`transport_written`, `harness_queued`, or `context_consumed`). | Prevents acknowledgement before Khala attempted delivery; does not require stronger evidence unavailable to fallback routes. |
+| The canonical, length-bounded token matches the regenerated HMAC using fixed-length timing-safe comparison. | Correlates the action to possession of the delivered envelope and prevents an injected message from naming unrelated backlog. |
+| The release is committed for that binding generation; `not_delivered` is returned only when the connector positively knows its delivery envelope was never made available. | Allows a generic listener with no receipt evidence to acknowledge; absence of a delivery receipt is not evidence of non-delivery. |
 | Receipt insert is unique by stable receipt ID. | Makes repeats and reconnects idempotent. |
 | Request and response contain no content bytes. | Preserves the existing content-free receipt boundary. |
+
+The liveness, revocation, release ownership, token verification, authorization-before-idempotency lookup, and unique receipt insert run in one SQLite write transaction under the same revocation fence. A revocation that serializes first must prevent the insert; an acknowledgement that serializes first may commit its fact before revocation.
 
 The agent integration instructions say: acknowledge only after the release is present in the current working context; do not acknowledge unseen backlog; acknowledgement is optional and failure must not block the reply. An instruction cannot guarantee compliance, which is why the UI calls this an attestation.
 
@@ -99,6 +101,7 @@ The agent integration instructions say: acknowledge only after the release is pr
 - Render receipt facts as chips/list items per release rather than selecting one latest fact. Sort for presentation only; never derive a progress percentage.
 - For a one-event release, show evidence beside that message. For a multi-event release, show one release-evidence group and require every member row to link to it with “View release evidence”; never show a per-message checkmark.
 - In the agent panel, render capability `unknown` as “Acknowledgement support not verified,” `unsupported` as “Acknowledgement not supported,” and `explicit_agent_tool` with no receipt as no acknowledgement fact—not an error or unread status.
+- Carry that closed capability state through the connector presence snapshot, browser decoder, room port/controller, and panel; never derive it from `lastReceipt` or a route label.
 
 ### Alternatives and trade-offs
 
@@ -115,7 +118,8 @@ The agent integration instructions say: acknowledge only after the release is pr
 | Risk | Mitigation |
 |---|---|
 | Users interpret acknowledgement as comprehension. | Avoid “read,” document the boundary inline, and never use a double-check/read icon without the label. |
-| Prompt injection asks an agent to acknowledge unseen IDs. | Require the per-release token carried only in the release envelope plus binding-scoped authentication. This proves envelope possession, not attention or comprehension; keep the UI’s attestation caveat. |
+| Prompt injection asks an agent to acknowledge unseen IDs. | Require the per-release token carried only in the agent-delivery envelope plus binding-scoped authentication. This proves envelope possession, not attention or comprehension; keep the UI’s attestation caveat. |
+| Harness or provider transcripts retain a model-visible token. | Scope the HMAC token to one release and binding generation, keep it out of Khala observability surfaces, and do not promise deletion from third-party transcripts. |
 | Acknowledgement leaks activity in external rooms. | Owner-only internal UI in v1; #146 must make external disclosure an explicit policy. |
 | Batch receipts look message-specific. | Group by release and suppress per-message ticks for multi-event releases. |
 | Contract version causes partial deployment failures. | RR1 is a read-compatible consumer-first deployment that emits no v2/v3 values. Only later tickets produce the new versions after every deployed consumer can preserve them. |
@@ -140,9 +144,9 @@ The agent integration instructions say: acknowledge only after the release is pr
 | complexity | `3` |
 | scope | Define receipt v2 and capability v3, retain explicit legacy v1/v2 decoding, and update every store/consumer, fixture, exhaustive label, review and presence UI before any producer emits the new versions. |
 | out-of-scope | Producing acknowledgements; harness/plugin setup; external disclosure. |
-| files/packages | `packages/contracts/src/delivery/{receipts,harness,README,index}.ts`, `packages/contracts/fixtures/delivery/`, all capability consumers/producers in `packages/{harnesses,agent-skill}/` and `apps/connector/`, `packages/connector/src/{storage,dispatch}/`, contract/conformance tests, and every exhaustive receipt map in `apps/web/src/features/{review,room,agent-controls}/`. |
-| acceptance criteria | v1/v2 receipts and v2/v3 capabilities decode as explicit versions; v1 cannot carry the new kind/source and v2 capability absence presents as unknown; stored v1 receipt rows and embedded dispatch receipts survive restart unchanged; no production producer emits v2/v3 in this ticket; all consumers deploy before later producer tickets; UI follows the truthful labels, capability copy, accessible help, and release-group navigation above. |
-| tests | Per-version decoder/fixture failures and round trips; mixed-version storage restart; exhaustive capability/label compile tests; keyboard/name/description assertions; unknown/unsupported/supported-without-receipt views; one- and multi-event navigation; multiple unordered facts. **Wrong implementation must fail:** a v1 receipt carrying `agent_acknowledged`, a `completed`-only release rendered acknowledged/read, a later completion hiding context evidence, and loss or promotion of a stored v1 row. |
+| files/packages | `packages/contracts/src/delivery/{receipts,harness,README,index}.ts`, `packages/contracts/fixtures/delivery/`, all capability consumers/producers in `packages/{harnesses,agent-skill}/` and `apps/connector/`, `packages/connector/src/{storage,dispatch}/`, contract/conformance tests, the connector presence projection, and every receipt/capability consumer in `apps/web/src/{composition/human,features/{review,room,agent-controls}}/`. |
+| acceptance criteria | v1/v2 receipts and v2/v3 capabilities decode as explicit versions; v1 cannot carry the new kind/source; v2 enforces the bidirectional acknowledgement/agent-source invariant; v2 capability absence presents as unknown; stored v1 receipt rows and embedded dispatch receipts survive restart unchanged; no production producer emits v2/v3 in this ticket; all consumers deploy before later producer tickets; the closed capability state reaches the room panel; UI follows the truthful labels, capability copy, accessible help, and release-group navigation above. |
+| tests | Per-version decoder/fixture failures and round trips; invalid acknowledgement/source pairings; mixed-version storage restart; exhaustive capability/label compile tests; strict browser decoding and room integration for unknown/unsupported/supported-without-receipt; keyboard/name/description assertions; one- and multi-event navigation; multiple unordered facts. **Wrong implementation must fail:** a v1 or harness-sourced `agent_acknowledged`, an agent-sourced non-acknowledgement, a `completed`-only release rendered acknowledged/read, a later completion hiding context evidence, and loss or promotion of a stored v1 row. |
 | blocked-by | Listening-mode research #139; coordinate because both may version `HarnessCapabilities`. |
 | conflict risk | **High** with #139 in `packages/contracts/src/delivery/harness.ts`; **medium** with #138/#146 on room composition; low with #140/#142 if they consume rather than redefine the contract. |
 
@@ -151,11 +155,11 @@ The agent integration instructions say: acknowledge only after the release is pr
 | Field | Contract |
 |---|---|
 | complexity | `4` |
-| scope | Add a binding-scoped acknowledgement port, per-release acknowledgement tokens stored as digests, durable idempotent storage, authenticated local-server endpoint, CLI command, and `khala_acknowledge` MCP tool with closed results. |
+| scope | Add a binding-scoped acknowledgement port, owner-secret-derived per-release tokens, a versioned agent-delivery envelope, durable idempotent storage, authenticated local-server endpoint, CLI command, and `khala_acknowledge` MCP tool with a closed tagged result. |
 | out-of-scope | Automatic acknowledgement; harness-specific plugin installation; UI. |
-| files/packages | `packages/agent-cli/src/cli/{app,types}.ts`, `packages/agent-cli/src/mcp/server.ts`, `packages/connector/src/storage/` and its public facade, plus the local server/agent transport path selected by #138. |
-| acceptance criteria | #138’s authenticated agent identity determines the binding; only the exact live generation with the release’s acknowledgement token can acknowledge it; repeats return the original receipt; tokens/content are absent from argv, logs, errors, receipts, and UI; revoked/stale/unknown/bad-token requests produce closed results; `outcome_unknown` is not retried automatically. |
-| tests | CLI/MCP schemas, storage restart/idempotency, unauthenticated, forged-binding, stale, cross-binding, missing/wrong-token refusal, and secret-redaction assertions. **Wrong implementation must fail:** agent B acknowledging agent A’s `releaseId`, a superseded generation acknowledging its old release, and a prompt naming a previously delivered ID without its token must create no receipt. |
+| files/packages | Agent-delivery contracts/fixtures in `packages/contracts/src/delivery/`, delivery materialization in `packages/connector/src/dispatch/`, `packages/agent-cli/src/cli/{app,types,inbox}.ts`, `packages/agent-cli/src/mcp/server.ts`, `packages/connector/src/storage/` and its public facade, plus the local server/agent transport path selected by #138. |
+| acceptance criteria | #138’s authenticated agent identity determines the binding; the v2 delivery envelope carries a canonical HMAC-derived token without altering the canonical policy payload; v1 delivery remains decodable; token regeneration works after restart; only the exact live generation with the token can acknowledge it; all checks and insert share the revocation transaction; repeats return the original receipt; tokens/content are absent from argv, Khala logs, errors, receipts, and UI; revoked/stale/unknown/bad-token requests produce the tagged results; `outcome_unknown` is not retried automatically and exposes only its reconciliation ID. |
+| tests | CLI/MCP/result schemas; v1/v2 delivery codec and private-inbox restart; HMAC domain separation, canonical length/encoding, oversized-input refusal, and timing-safe comparison seam; storage restart/idempotency; generic-listener valid ack with no prior receipt; authorization-before-idempotency oracle checks; barrier-controlled acknowledgement/revocation in both orders; unauthenticated, forged-binding, stale, cross-binding, missing/wrong-token refusal, and secret-redaction assertions. **Wrong implementation must fail:** agent B acknowledging agent A’s `releaseId`, a superseded generation acknowledging its old release, a revoked binding winning the transaction race, and a prompt naming a previously delivered ID without its token must create no receipt. |
 | blocked-by | RR1; local server/SQLite design #138. |
 | conflict risk | **High** with #138 on endpoint/storage composition and #141 on MCP tool-result composition; medium with #143 setup packaging. |
 
@@ -206,8 +210,8 @@ The agent integration instructions say: acknowledge only after the release is pr
 | scope | Extend fake-harness CI and live Aiur acceptance to assert the evidence matrix and UI copy for Codex, Claude, OpenCode, and unsupported routes. |
 | out-of-scope | New harness routes, product implementation, external receipt disclosure. |
 | files/packages | `tests/conformance/`, `tests/e2e/`, internal-mode Playwright specs from #138, and live-ticket scripts/results from #147. |
-| acceptance criteria | CI covers no ack, valid ack, duplicate ack, cross-binding/stale refusal, unordered facts, batch releases, restart, and neutral unsupported UI; live runs report exact capability ceilings. |
-| tests | Fake harness and Playwright tests plus opt-in live tickets. **Wrong implementation must fail:** transport write, queue acceptance, inbox cursor advance, completed turn, or hook event alone must never satisfy the acknowledgement assertion. |
+| acceptance criteria | CI covers no ack, valid ack including the receipt-less generic listener, duplicate ack, cross-binding/stale/revoked refusal, unordered facts, batch releases, restart-before-delivery, and neutral unsupported UI; live runs report exact capability ceilings. |
+| tests | Fake harness and Playwright tests plus opt-in live tickets, including acknowledgement/revocation race barriers and v1/v2 delivery compatibility. **Wrong implementation must fail:** transport write, queue acceptance, inbox cursor advance, completed turn, hook event alone, or a token for another binding/generation must never satisfy the acknowledgement assertion. |
 | blocked-by | RR1-RR5; local mode #138; live acceptance #147. |
 | conflict risk | High with #147 in live scripts and #138 in Playwright composition; low elsewhere if it consumes public ports only. |
 
