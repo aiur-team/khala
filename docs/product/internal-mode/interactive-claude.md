@@ -154,12 +154,12 @@ Dependencies are ticket slugs, not issue numbers. These contracts reuse the shar
 | **slug** | `claude-interactive-session-adapter` |
 | **title** | Bind shared Khala pulls to an interactive Claude session |
 | **complexity** | **3** |
-| **scope** | Authenticate the setup-managed Claude installation; authorize `(harness="claude", sessionId)` against its live binding and generation; compose shared `khala_read`, mode control, `HarnessCapabilities`, and batch-token handoff. |
+| **scope** | Authenticate the setup-managed Claude installation; authorize `(harness="claude", sessionId)` against its live binding and generation; compose shared `khala_read`, mode control, `HarnessCapabilities` with `acknowledgement: batch_token_next_call`, and batch-token handoff. |
 | **out of scope** | Hook files, inbox implementation, a new lease/ack API, host-side dedupe, channel roster, or launching Claude. |
 | **files** | New Claude composition module and tests under `packages/agent-cli/`; registration-only changes at existing CLI/MCP seams; adjacent README. |
-| **acceptance** | Session ID is a selector rather than a credential; cwd is never identity; each pull returns at most one bounded ordered batch; the opaque token is retained outside model context and attached exactly once to the next trusted call; stale generation, empty batch, malformed token, and unavailable runtime fail without disclosure. |
+| **acceptance** | Session ID is a selector rather than a credential; cwd is never identity; each pull returns at most one bounded ordered batch; capabilities report `batch_token_next_call`; the opaque token is retained outside model context and attached exactly once to the next trusted call; stale generation, empty batch, malformed token, and unavailable runtime fail without disclosure. |
 | **tests** | Unit and integration coverage for authentication, generation fencing, empty/error paths, token handoff, and same-cwd isolation. **Wrong-implementation test:** create two authenticated Claude sessions in one cwd, release distinct batches concurrently, and fail any implementation that routes either batch by cwd or lets one session acknowledge the other's token. |
-| **blocked-by** | `mcp-inbox-batch`, `listening-mode-pull`, `listening-mode-contract`, `local-sqlite-room-store`, `channel-terminology` |
+| **blocked-by** | `mcp-inbox-batch`, `listening-mode-pull`, `listening-mode-contract`, `local-sqlite-channel-store`, `channel-terminology` |
 | **conflict risk** | High at shared agent-cli registrations; keep behavior in the new module and registration diffs minimal. |
 
 ### Contract 2 — Claude interactive hooks
@@ -169,9 +169,9 @@ Dependencies are ticket slugs, not issue numbers. These contracts reuse the shar
 | **slug** | `claude-interactive-hooks` |
 | **title** | Deliver steer and sync inside the user's Claude CLI |
 | **complexity** | **4** |
-| **scope** | Package `PostToolUse`, `Stop`, `UserPromptSubmit` + bounded `asyncRewake`, and session cleanup. Implement non-abort `steer`, default `sync`, and zero automatic work in `async`. Call only `claude-interactive-session-adapter`. |
+| **scope** | In the plugin runtime owned by `claude-plugin`, package `PostToolUse`, `Stop`, `UserPromptSubmit` + bounded `asyncRewake`, and session cleanup. Implement non-abort `steer`, default `sync`, and zero automatic work in `async`. Call only `claude-interactive-session-adapter`. |
 | **out of scope** | Inbox transport, hard abort, PTY ownership, SDK hosting, participant listing, or installing the plugin. |
-| **files** | New distributable Claude plugin package with manifest, hook runtime, tests, and README; workspace metadata only if required. No production import from `experiments/`. |
+| **files** | The single user-scope Claude plugin from `claude-plugin`: manifest, hook runtime, tests, and README; workspace metadata only if required. No second plugin and no production import from `experiments/`. |
 | **acceptance** | Plugin validation passes on 2.1.282; steer pulls after `PostToolUse`; sync ignores that boundary and pulls at `Stop`; async never pulls automatically; `stop_hook_active=true` is empty; idle wake is bounded and content-free before the structured pull; capability text names the next safe boundary and never claims hard abort. |
 | **tests** | Fake-hook unit tests plus installed-version TTY acceptance for long-tool steer/sync timing, idle wake, payload framing, timeout/rearm, and no bytes in argv/env/logs. **Wrong-implementation test:** queue a sync batch during a long tool and fail if `PostToolUse` injects it before `Stop`; also fail if the second `Stop` returns context and loops. |
 | **blocked-by** | `claude-interactive-session-adapter`, `listening-mode-contract`, `local-automation-fence` |
@@ -182,14 +182,14 @@ Dependencies are ticket slugs, not issue numbers. These contracts reuse the shar
 | Field | Contract |
 |---|---|
 | **slug** | `claude-interactive-controls` |
-| **title** | Add safe join, send, read, and who controls for Claude |
+| **title** | Add safe create, join, send, read, and who controls for Claude |
 | **complexity** | **3** |
-| **scope** | Provide the stable user-facing `/khala join`, `send`, `read`, and `who` dispatcher for the current Claude session. `read` is the only async-mode delivery trigger and calls the shared pull. `send` uses structured MCP or stdin-only CLI input. |
+| **scope** | Provide the stable user-facing `/khala create`, `join`, `send`, `read`, and `who` dispatcher for the current Claude session. `create` delegates to the shared human-confirmed channel-create intent; `read` is the only async-mode delivery trigger and calls the shared pull. `send` uses structured MCP or stdin-only CLI input. |
 | **out of scope** | Automatic hooks, admission bypass, roster inference, new discovery APIs, or message text in shell commands. |
-| **files** | Existing `packages/agent-skill/` dispatcher and tests; thin Claude-specific session plumbing only where required. |
-| **acceptance** | Join always preserves human admission; send/read are session-bound; message bytes never enter argv/env/shell source; who consumes the authoritative roster; async arrival causes no agent activity until read is selected. |
-| **tests** | Dispatcher tests for every verb, missing/invalid arguments, denied admission, structured hostile payloads, and exact session binding. **Wrong-implementation test:** release a batch while async Claude is idle and fail if any hook fires, prompt appears, or byte is consumed before the agent explicitly invokes read. |
-| **blocked-by** | `claude-interactive-session-adapter`, `channel-discovery-contract`, `channel-listing-cli`, `channel-access-cli`, `channel-terminology` |
+| **files** | The same user-scope plugin's packaged skill/control dispatcher and tests; thin Claude-specific session plumbing only where required. No separately installed `/khala` skill. |
+| **acceptance** | Create submits an intent and creates nothing before the human approves; join always preserves human admission; send/read are session-bound; message bytes never enter argv/env/shell source; who consumes the authoritative roster; async arrival causes no agent activity until read is selected. |
+| **tests** | Dispatcher tests for every verb, missing/invalid arguments, create denial/expiry, denied admission, structured hostile payloads, and exact session binding. **Wrong-implementation test:** release a batch while async Claude is idle and fail if any hook fires, prompt appears, or byte is consumed before the agent explicitly invokes read; submit create without human approval and fail if a channel or membership appears. |
+| **blocked-by** | `claude-interactive-session-adapter`, `channel-discovery-contract`, `channel-agent-listing`, `channel-access-cli-mcp`, `channel-create-cli-mcp`, `channel-terminology` |
 | **conflict risk** | Medium at the shared agent skill and channel terminology seams. |
 
 ### Contract 4 — Claude setup and capability reporting
@@ -199,7 +199,7 @@ Dependencies are ticket slugs, not issue numbers. These contracts reuse the shar
 | **slug** | `setup-cli-claude-interactive` |
 | **title** | Install and report the Claude interactive integration |
 | **complexity** | **4** |
-| **scope** | Detect supported Claude versions; install/remove the plugin and `/khala` control together; configure the shared MCP endpoint; report an optional restricted profile as hardening without gating delivery on it; publish tested/unsupported modes through `HarnessCapabilities`; provide status and rollback. Never launch Claude. |
+| **scope** | Detect supported Claude versions; install/remove one user-scope plugin containing the `/khala` control, hooks, and MCP entry; configure the shared MCP endpoint; report an optional restricted profile as hardening without gating delivery on it; publish tested/unsupported modes and acknowledgement through `HarnessCapabilities`; provide status and rollback. Never launch Claude. |
 | **out of scope** | Owning an agent process, auto-joining a channel, a PTY wrapper, bypassing organization policy, or promoting experimental direct channels by configuration alone. |
 | **files** | Setup CLI provider module and tests, packaged plugin installation metadata, capability fixtures, concise operator documentation in `website/docs-app/`. |
 | **acceptance** | Install is idempotent and preserves unrelated Claude settings; removal restores only setup-owned entries; unsupported versions fail closed; configured-but-unproven modes remain unavailable; status identifies version/session support and watcher limits; existing user sessions are never killed or replaced. |
