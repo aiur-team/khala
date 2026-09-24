@@ -7,7 +7,8 @@ configured DeepSeek provider consume it.
 Tested on 2026-09-24 with OpenCode, `@opencode-ai/plugin`, and
 `@opencode-ai/sdk` `1.17.10`. The proof source has no package imports, so a
 separate npm install is not required; OpenCode supplies the plugin client at
-runtime.
+runtime. Sanitized raw output and the versioned host path are retained in
+[`evidence.md`](evidence.md).
 
 From a clean checkout with DeepSeek credentials already configured, run these
 preflights from the repository root:
