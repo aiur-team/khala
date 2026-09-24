@@ -91,6 +91,11 @@ describe('splash page constraints', () => {
     expect(html).toMatch(/<footer[^>]*>[\s\S]*built with <a href="https:\/\/aiur\.team">Aiur<\/a>[\s\S]*<\/footer>/);
   });
 
+  test('advertises both agent-readable guides from the document head', () => {
+    expect(html).toMatch(/<link rel="alternate" type="text\/plain" href="\/llms\.txt"/);
+    expect(html).toMatch(/<link rel="alternate" type="text\/markdown" href="\/AGENTS\.md"/);
+  });
+
   test('loads no script or stylesheet from another origin', () => {
     for (const [, src] of html.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)) expect(src).toMatch(/^\.?\//);
     expect(html).not.toMatch(/<link[^>]+rel="stylesheet"[^>]+href="https?:/);

@@ -62,10 +62,32 @@ test('the site root alone is forced to the splash page, after /api/* and before 
   assert.ok(rootIndex < redirects.findIndex(entry => entry.from === '/*'), 'the splash rule must precede the SPA fallback');
 });
 
+test('agent-readable root files map to landing build assets before the SPA fallback', async () => {
+  const config = await readConfig();
+  const redirects = config.redirects ?? [];
+  const fallbackIndex = redirects.findIndex(entry => entry.from === '/*');
+  const expected = [
+    { from: '/llms.txt', to: '/landing/llms.txt', status: 200, force: true },
+    { from: '/AGENTS.md', to: '/landing/AGENTS.md', status: 200, force: true },
+  ];
+
+  for (const redirect of expected) {
+    const index = redirects.findIndex(entry => entry.from === redirect.from);
+    assert.notEqual(index, -1, `${redirect.from} needs an explicit redirect`);
+    assert.deepEqual(redirects[index], redirect);
+    assert.ok(index < fallbackIndex, `${redirect.from} must not reach the SPA fallback`);
+  }
+});
+
 test('the splash page build writes to the path the root redirect serves', async () => {
   const viteConfig = await readFile(resolve(repoRoot, 'apps/web/vite.landing.config.mjs'), 'utf8');
   assert.match(viteConfig, /base: '\/landing\/'/);
+  assert.match(viteConfig, /publicDir: `\$\{here\}\/src\/landing\/public`/);
   assert.match(viteConfig, /outDir: `\$\{here\}\/dist\/landing`/);
+  await Promise.all([
+    readFile(resolve(repoRoot, 'apps/web/src/landing/public/llms.txt'), 'utf8'),
+    readFile(resolve(repoRoot, 'apps/web/src/landing/public/AGENTS.md'), 'utf8'),
+  ]);
   const webPackage = JSON.parse(await readFile(resolve(repoRoot, 'apps/web/package.json'), 'utf8')) as { scripts: Record<string, string> };
   assert.match(webPackage.scripts.build ?? '', /vite build --config vite\.landing\.config\.mjs$/, 'the splash build runs last, so no earlier step can empty it');
 });
