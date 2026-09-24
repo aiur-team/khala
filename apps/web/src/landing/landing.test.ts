@@ -116,7 +116,11 @@ describe('splash page constraints', () => {
   });
 
   test('every button and button-styled link carries the shared button class', () => {
-    for (const [tag] of html.matchAll(/<button\b[^>]*>/g)) expect(tag).toMatch(/class="button\b/);
+    for (const [tag] of html.matchAll(/<button\b[^>]*>/g)) {
+      // The banner dismiss is a quiet icon, styled like aiur.team's, not a button.
+      if (tag.includes('banner-close')) continue;
+      expect(tag).toMatch(/class="button\b/);
+    }
     for (const [tag] of html.matchAll(/<a\b[^>]*class="[^"]*\b(?:cta|docs)\b[^"]*"[^>]*>/g)) expect(tag).toMatch(/class="button\b/);
   });
 
