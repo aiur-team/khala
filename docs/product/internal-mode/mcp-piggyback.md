@@ -8,7 +8,7 @@ Implement I2 as a package-local postprocessor for every valid Khala MCP `tools/c
 
 This is **near-sync only at Khala tool boundaries**. MCP cannot inject after tools owned by another server or wake an idle host. Until a pinned harness is live-proven to invoke a Khala tool at turn boundaries, MCP-only support must be advertised as `async`, not D2 `sync` or `steer`. The route also remains restart-unsupported until a pinned receiver proves durable duplicate suppression; exposing the same `releaseId` twice is not suppression.
 
-The design preserves D3: the inbound bytes are deliberate room messages already released under the binding's manual or automatic policy; outbound chat still requires an explicit `khala_send` call. It does not capture assistant output, transcripts, or arbitrary tool output.
+The design preserves D3: the inbound bytes are deliberate channel messages already released under the binding's manual or automatic policy; sending an outbound channel message still requires an explicit `khala_send` call. It does not capture assistant output, transcripts, or arbitrary tool output.
 
 ## Findings and evidence
 
@@ -19,7 +19,7 @@ The design preserves D3: the inbound bytes are deliberate room messages already 
 | The durable inbox deduplicates enqueue by `releaseId`, isolates binding generations, reads FIFO at one persisted cursor, and acknowledges only the current item. | `packages/agent-cli/src/cli/inbox.ts`; `packages/agent-cli/src/cli/inbox.test.ts` | proven in code/tests |
 | `khala listen` writes stdout before acknowledging, so a pre-ack crash may replay but must not lose the item. | `packages/agent-cli/src/cli/app.ts`; `packages/agent-cli/README.md` | proven in code |
 | The listener lock already enforces one inbox consumer per binding generation. MCP and `khala listen` must reuse it rather than race one cursor. | `packages/agent-cli/src/cli/inbox.ts` (`acquireListener`); lock tests in `inbox.test.ts` | proven in code/tests |
-| Released payloads are canonical UTF-8 JSON with ordered event rows containing room, event, author, device, digest, and deliberate body text. | `packages/policy/src/release/codec.ts`; `packages/policy/src/release/README.md` | proven in code/tests |
+| Released payloads are canonical UTF-8 JSON with ordered event rows containing channel identity (the internal `roomId`), event, author, device, digest, and deliberate body text. | `packages/policy/src/release/codec.ts`; `packages/policy/src/release/README.md` | proven in code/tests |
 | Delivery receipts are independent, content-free observations. `context_consumed` and `completed` need harness evidence; an inbox cursor write proves neither. | `packages/contracts/src/delivery/receipts.ts`; `packages/connector/src/storage/ledger.ts`; `packages/harnesses/src/codex/receipts.ts` | proven in code |
 | Codex 0.154.0 can configure MCP servers, and official OpenAI documentation says a model uses a tool result to continue. | Local `codex --version` and `codex mcp --help`; [OpenAI MCP server documentation](https://developers.openai.com/plugins/concepts/mcp-server) | CLI/docs only |
 | A black-box Codex nonce proof could not run: nested `codex exec --ephemeral` failed while initializing its in-process app-server with `Read-only file system`. | Local command on 2026-09-24 | **unproven** |
@@ -45,7 +45,7 @@ No `CONCEPTS.md` or `docs/solutions/` corpus exists on this branch or `origin/ma
 | Eligible responses | Every syntactically valid Khala `tools/call` result, including tool-level `isError` results. |
 | Ineligible responses | Notifications, JSON-RPC errors, invalid params, unknown tools, `initialize`, `ping`, and `tools/list`; these never consume inbox records. |
 | Primary result | Preserve the tool's existing content and `structuredContent` exactly. The primary content stays first. |
-| Piggyback content | Append one clearly delimited text content block per release. Include `releaseId` and `payloadDigest`, then the exact canonical UTF-8 release JSON. Label peer text as untrusted room-message data, never instructions or authority. |
+| Piggyback content | Append one clearly delimited text content block per release. Include `releaseId` and `payloadDigest`, then the exact canonical UTF-8 release JSON. Label peer text as untrusted channel-message data, never instructions or authority. |
 | Check boundary | Add `khala_check` with no arguments and a small primary result. It uses the same postprocessor; it is not a second read path. |
 | Empty inbox | Preserve the current response shape byte-for-byte; add no empty wrapper. |
 
@@ -102,7 +102,7 @@ Point-in-time status checks also cannot close the final check-to-write race: a c
 
 | Risk | Mitigation |
 |---|---|
-| A host treats peer text as instructions. | Delimit and type it as untrusted room-message data; keep D3 guidance in tool descriptions and setup prompts. |
+| A host treats peer text as instructions. | Delimit and type it as untrusted channel-message data; keep D3 guidance in tool descriptions and setup prompts. |
 | Cursor advances before bytes leave the server. | Batch peek plus atomic ack-through only after the writable callback; failure-injection tests. |
 | Concurrent consumers reorder or skip. | Reuse the listener lock for the MCP process lifetime. |
 | Long-lived MCP process drains an old generation after rebind. | Revalidate binding ID/generation before selection, before write, and before acknowledgement; fail closed on mismatch. Document the remaining check-to-write race for already-released bytes. Dynamic rotation is out of scope. |
@@ -130,10 +130,10 @@ Point-in-time status checks also cannot close the final check-to-write race: a c
 |---|---|
 | Slug | `mcp-piggyback-format-proof` |
 | Complexity | `complexity:2` |
-| Scope | Use a minimal MCP fixture and Codex 0.154.0 to test the proposed delimited canonical release JSON before product implementation. Exercise ordered bodies, room and author provenance, stable `releaseId`/digest, replay identity, eight-release results, and an escaping-heavy maximum release. |
+| Scope | Use a minimal MCP fixture and Codex 0.154.0 to test the proposed delimited canonical release JSON before product implementation. Exercise ordered bodies, channel and author provenance, stable `releaseId`/digest, replay identity, eight-release results, and an escaping-heavy maximum release. |
 | Out of scope | Durable inbox integration, product MCP changes, capability-registry edits, claiming idle wake or arbitrary-tool injection. |
 | Files/packages | `experiments/internal-mode/mcp-piggyback/`, `docs/evidence/mcp-piggyback-format.md`; no product package changes. |
-| Acceptance criteria | The pinned harness identifies room, author, ordered body text, and duplicate identity from content absent from its prompt; it durably suppresses a repeated release across a forced server restart; it accepts the 128 KiB soft boundary and one maximum-size oversized head without truncation; exact commands, versions, outputs, and negative claims are recorded. Failure blocks `mcp-result-piggyback` and requires a design amendment to add a receiver acknowledgement/reconciliation mechanism, a strict shared decoder, or a smaller evidenced bound as applicable. |
+| Acceptance criteria | The pinned harness identifies channel, author, ordered body text, and duplicate identity from content absent from its prompt; it durably suppresses a repeated release across a forced server restart; it accepts the 128 KiB soft boundary and one maximum-size oversized head without truncation; exact commands, versions, outputs, and negative claims are recorded. Failure blocks `mcp-result-piggyback` and requires a design amendment to add a receiver acknowledgement/reconciliation mechanism, a strict shared decoder, or a smaller evidenced bound as applicable. |
 | Tests | Automate the fixture transcript and evidence verifier. **Wrong implementation test:** return the same stable `releaseId` after restart but allow it to enter model context twice; verification fails because duplicate visibility is not duplicate suppression. |
 | Blocked-by | None. |
 | Conflict risk | Low. It is isolated under `experiments/` and evidence docs, but its result constrains I4 setup/capability advertising and any other E09 MCP response-format research. |
@@ -172,10 +172,10 @@ Point-in-time status checks also cannot close the final check-to-write race: a c
 |---|---|
 | Slug | `mcp-piggyback-evidence` |
 | Complexity | `complexity:2` |
-| Scope | Run a real MCP client and Codex 0.154.0 proof with a unique queued message; prove its room, author, and body enter the same agent context only after a Khala tool call; require an explicit `khala_send` response; record exact commands, inventory, outputs, and negative claims. Produce evidence for the setup/capability owner to consume. |
+| Scope | Run a real MCP client and Codex 0.154.0 proof with a unique queued message; prove its channel, author, and body enter the same agent context only after a Khala tool call; require an explicit `khala_send` response; record exact commands, inventory, outputs, and negative claims. Produce evidence for the setup/capability owner to consume. |
 | Out of scope | Capability-registry edits, promoting untested Codex versions, proving Claude/OpenCode, idle wake, arbitrary-tool injection, or product setup UX. |
 | Files/packages | `experiments/internal-mode/mcp-piggyback/`, `docs/evidence/mcp-piggyback.md`; no capability-registry or receipt schema changes. |
-| Acceptance criteria | A clean pinned run proves queued room/author/body context absent from the prompt and a deliberate peer-directed response via `khala_send`; a forced response-written/cursor-uncommitted restart proves the repeated release is durably suppressed before model-visible delivery or action; boundary cases from the format proof remain usable end to end; evidence states that idle wake and non-Khala tool boundaries remain unproven; no transcript or assistant-output capture is used. |
+| Acceptance criteria | A clean pinned run proves queued channel/author/body context absent from the prompt and a deliberate peer-directed response via `khala_send`; a forced response-written/cursor-uncommitted restart proves the repeated release is durably suppressed before model-visible delivery or action; boundary cases from the format proof remain usable end to end; evidence states that idle wake and non-Khala tool boundaries remain unproven; no transcript or assistant-output capture is used. |
 | Tests | Automate the real-inbox protocol fixture and evidence verifier. **Wrong implementation test:** replay the same stable `releaseId` after restart and merely show the ID to the model; verification fails unless the receiver suppresses the second delivery/action. |
 | Blocked-by | `mcp-result-piggyback`. |
 | Conflict risk | Medium with I4 setup and D2 capability-matrix research. This ticket owns only evidence; those areas consume it, enforce the sandbox/read-only default, and own advertised support. |
