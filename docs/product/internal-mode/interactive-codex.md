@@ -6,8 +6,9 @@ Status: research complete, 2026-09-24. Deliverable for E09 ticket #164.
 
 Codex can support `steer`, `sync` (default), and `async` in the user's own
 interactive TUI without Khala launching or hosting an agent. The recommended
-adapter is a user-installed Codex plugin whose native hooks call Khala's shared
-channel pull. The installed 0.154.0 and then-latest 0.156.1 were each exercised
+adapter is a setup-managed set of native Codex hooks plus the Khala MCP entry
+and skill; the hooks call Khala's shared channel pull. The installed 0.154.0
+and then-latest 0.156.1 were each exercised
 in a real PTY. All six version/mode cells are proven.
 
 This supersedes the hosted path in [`docs/evidence/codex.md`](../../evidence/codex.md):
@@ -31,7 +32,7 @@ package. Exact output is retained in
 | `app-server` / `--remote` | Starts or connects a separately hosted app-server. No command or observed socket attaches an app-server to the live local TUI; a second writer is rejected. | Excluded by the one-agent-process rule. |
 | MCP client | Tools and their results reach the model, but generic server-initiated notifications are client UI/protocol events rather than unsolicited model context. | Explicit `async` read and result piggyback only. |
 | SDK | Owns the agent/thread lifecycle. | Excluded by the one-agent-process rule. |
-| Plugins/skills | Package hooks and teach explicit channel operations inside the user-owned session. | Installation and `async` UX. |
+| Setup-managed hooks/skill | Install hooks and teach explicit channel operations inside the user-owned session; Codex has no separate plugin package. | Installation and `async` UX. |
 | Config reload / stdin / local IPC | No supported live config reload, message stdin, attach socket, or local IPC ingress was found. | Not a delivery route. |
 
 Official contracts: [Codex hooks](https://learn.chatgpt.com/docs/hooks),
@@ -59,8 +60,8 @@ and [`latest-0.156.1.jsonl`](../../../experiments/interactive-cli/codex/evidence
 
 The user starts Codex normally, then points that session at a Khala channel URL
 or asks it to create a channel. Creation and admission require human
-confirmation. Setup installs a Codex plugin and skill; Khala never starts
-Codex, an app-server, or an SDK agent.
+confirmation. Setup installs native hooks, the Khala MCP entry, and the skill;
+Khala never starts Codex, an app-server, or an SDK agent.
 
 ```text
 user-started Codex TUI
@@ -85,10 +86,11 @@ state and acknowledgement, and `listening-mode-pull` owns the public CLI/MCP
 read. The Codex adapter only resolves the verified live session and carries the
 opaque prior token into the next trusted Khala operation.
 
-Channel content is untrusted data. Frame it visibly, never interpolate it into
-shell source, argv, environment, logs, status, or error text, and gate automatic
-model-context delivery on the shared restricted capability profile. The live
-proof sent bodies to the bridge on stdin. If `codex queue` is used to wake an
+Channel content is untrusted data. Frame it visibly and never interpolate it
+into shell source, argv, environment, logs, status, or error text. Delivery uses
+the normal interactive session; an optional setup hardening check cannot gate a
+mode or change support state. The live proof sent bodies to the bridge on stdin.
+If `codex queue` is used to wake an
 idle TUI, its `--message` is a constant content-free notice; the hook performs
 the authenticated pull. Batch tokens are opaque transport state, not message
 bytes or proof that the model consumed the text.
@@ -125,12 +127,12 @@ check is exactly the `async` route, not a substitute for `steer` or `sync`.
 
 | Risk | Treatment |
 |---|---|
-| Hooks are not installed, trusted, or enabled. | Setup verifies exact installed artifacts and capability status; unsupported sessions advertise `unproven`, never silently downgrade. |
+| Hooks are not installed, trusted, or enabled. | Setup verifies exact installed artifacts and capability status; unsupported sessions advertise `unknown` or `unsupported` with a reason, never silently downgrade. |
 | A fixed `codex queue` wake duplicates or its process dies. | Treat it as notification only. Durable batch state and token acknowledgement remain authoritative. |
 | `Stop` delivery creates a continuation loop. | Never pull when `stop_hook_active=true`; deterministic tests cover the guard. |
 | Hook success is mistaken for model consumption. | Call it “offered”; retain the batch until the shared token is acknowledged on a subsequent trusted operation. |
 | Crash occurs after acting but before acknowledgement. | Reoffer on the next turn/restart. At-least-once delivery is safer than loss; operations carrying side effects need their own idempotency key. |
-| Channel text drives tools or egress. | Delimit it as untrusted and require the shared restricted capability profile for automatic injection. |
+| Channel text drives tools or egress. | Delimit it as untrusted structured user content; setup may report optional hardening without making it a delivery precondition. |
 | Codex changes hook JSON or semantics. | Setup tests the installed version, the supported-version matrix is explicit, and CI runs fixture contract tests. |
 | Two sessions share a cwd. | Bind by authenticated Codex session ID and Khala binding generation; cwd is metadata only. |
 
@@ -143,9 +145,9 @@ check is exactly the `async` route, not a substitute for `steer` or `sync`.
 | **slug** | `interactive-codex` |
 | **title** | Deliver all listening modes into a user-started Codex TUI |
 | **complexity** | **4** |
-| **scope** | Package native Codex hooks and the `/khala` skill; resolve the authenticated TUI session to its verified binding/generation; compose `listening-mode-pull`, `mcp-inbox-batch`, `HarnessCapabilities`, and shared mode control; implement the three boundary mappings above without launching Codex. |
-| **files/packages touched** | New Codex adapter/plugin package and focused tests; setup registration; capability declarations; concise package/setup documentation. Production must not import `experiments/`. |
-| **blocked-by** | `e09-shared-decisions`, `mcp-inbox-batch`, `listening-mode-pull`, `listening-mode-contract`, `channel-terminology`, and the shared restricted capability profile. |
+| **scope** | Package setup-managed native Codex hooks, the Khala MCP entry, and the skill; resolve the authenticated TUI session to its verified binding/generation; compose `listening-mode-pull`, `mcp-inbox-batch`, `HarnessCapabilities`, and shared mode control; implement the three boundary mappings above without launching Codex. |
+| **files/packages touched** | Codex adapter/hooks and focused tests; setup registration; MCP and skill registration; capability declarations; concise package/setup documentation. Production must not import `experiments/`. |
+| **blocked-by** | `mcp-inbox-batch`, `listening-mode-pull`, `listening-mode-contract`, `listening-mode-store`, and `channel-access-cli-mcp`. |
 
 Acceptance:
 
@@ -162,7 +164,8 @@ Acceptance:
   a later turn/restart. No host-side cursor, lease, inbox, or dedupe ledger is
   added.
 - Hard abort is disabled. Capability text says `steer` means “next tool
-  boundary,” and unsupported/unverified installations remain `unproven`.
+  boundary,” and unsupported/unverified installations remain `unsupported` or
+  `unknown` with a reason.
 - Installed-version fixture tests and a real PTY acceptance run cover every
   supported Codex version before it is advertised.
 
