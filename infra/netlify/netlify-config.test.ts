@@ -52,6 +52,24 @@ test('the SPA fallback serves index.html so a deep-link reload does not 404', as
   assert.deepEqual(fallback, { from: '/*', to: '/index.html', status: 200 });
 });
 
+test('the site root alone is forced to the splash page, after /api/* and before the SPA fallback', async () => {
+  const config = await readConfig();
+  const redirects = config.redirects ?? [];
+  const rootIndex = redirects.findIndex(entry => entry.from === '/');
+  assert.notEqual(rootIndex, -1);
+  assert.deepEqual(redirects[rootIndex], { from: '/', to: '/landing/index.html', status: 200, force: true });
+  assert.ok(redirects.findIndex(entry => entry.from === '/api/*') < rootIndex, 'the /api/* redirect must stay first');
+  assert.ok(rootIndex < redirects.findIndex(entry => entry.from === '/*'), 'the splash rule must precede the SPA fallback');
+});
+
+test('the splash page build writes to the path the root redirect serves', async () => {
+  const viteConfig = await readFile(resolve(repoRoot, 'apps/web/vite.landing.config.mjs'), 'utf8');
+  assert.match(viteConfig, /base: '\/landing\/'/);
+  assert.match(viteConfig, /outDir: `\$\{here\}\/dist\/landing`/);
+  const webPackage = JSON.parse(await readFile(resolve(repoRoot, 'apps/web/package.json'), 'utf8')) as { scripts: Record<string, string> };
+  assert.match(webPackage.scripts.build ?? '', /vite build --config vite\.landing\.config\.mjs$/, 'the splash build runs last, so no earlier step can empty it');
+});
+
 test('index.html and API responses are never cached', async () => {
   const config = await readConfig();
   assert.equal(headersFor(config, '/index.html')['Cache-Control'], 'no-store');

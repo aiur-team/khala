@@ -53,7 +53,7 @@
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
-    "build": "node ../../scripts/package-task.mjs build",
+    "build": "node ../../scripts/package-task.mjs build && vite build --config vite.landing.config.mjs",
     "test": "vitest run --config ../../vitest.config.ts",
     "test:browser": "node --import tsx --test 'src/**/*.browser.spec.ts'"
   },

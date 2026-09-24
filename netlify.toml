@@ -27,6 +27,17 @@
   status = 200
   force = true
 
+# The site root serves the public splash page, built separately into
+# apps/web/dist/landing by apps/web/vite.landing.config.mjs. It matches `/`
+# only, so /api/* above and every deep link below keep their routing. `force`
+# is required: without it Netlify serves an existing dist/index.html (the app
+# shell, once it exists) at `/` and never consults this rule.
+[[redirects]]
+  from = "/"
+  to = "/landing/index.html"
+  status = 200
+  force = true
+
 # Deep links into the SPA (e.g. a shared chat room URL) must reload the app
 # shell rather than 404ing. This rule only ever sees non-API paths because the
 # /api/* rule above already claimed them.
@@ -38,6 +49,11 @@
 # Static, content-hashed build output is safe to cache forever.
 [[headers]]
   for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/landing/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
