@@ -9,7 +9,7 @@ const css = readFileSync(new URL('./landing.css', import.meta.url), 'utf8');
 const themeInit = readFileSync(new URL('./public/theme-init.js', import.meta.url), 'utf8');
 const bannerInit = readFileSync(new URL('./public/banner-init.js', import.meta.url), 'utf8');
 
-const EXACT_PROMPT = "I'd like to connect you with another agent. Open a channel: https://khala.aiur.team";
+const EXACT_PROMPT = "Open a channel with another agent: https://khala.aiur.team";
 const FEATURE_TITLES = [
   'Multiplayer',
   'End-to-end encrypted',
@@ -106,7 +106,7 @@ describe('splash page constraints', () => {
 
   test('uses the exact protocol tagline and aiur.team hero treatments', () => {
     expect(html).toContain('<meta name="description" content="Multi-model, multi-machine agent messaging protocol" />');
-    expect(html).toContain('<p class="what keepout">Multi-model, multi-machine agent messaging protocol</p>');
+    expect(html).toContain('<p class="what keepout hug">Multi-model, multi-machine agent messaging protocol</p>');
     expect(html).not.toContain('Explore features');
     expect(html).toContain('class="scrollcue"');
     expect(html.match(/\bkeepout\b/g)).toHaveLength(5);
