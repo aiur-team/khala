@@ -100,7 +100,7 @@ whole route.
 
 ### Evidence inventory
 
-The local inventory on 2026-09-24 was collected on host `orangekid`:
+The local inventory on 2026-09-24 was collected on host `<executor-host>`:
 
 ```text
 codex --version     -> codex-cli 0.154.0
@@ -108,10 +108,10 @@ claude --version    -> 2.1.282 (Claude Code)
 opencode --version  -> 1.17.10
 ```
 
-The Executor host separately reports OpenCode 1.15.6. Evidence from `orangekid`
+The Executor host separately reports OpenCode 1.15.6. Evidence from `<executor-host>`
 must not be applied to that host/version without a pinned proof. The 1.17.10
 binary used here resolves to
-`/home/everdred/.local/share/mise/installs/opencode/1.17.10/opencode`.
+`~/.local/share/mise/installs/opencode/1.17.10/opencode`.
 
 | Evidence | What it proves | What it does not prove |
 | --- | --- | --- |
@@ -120,7 +120,7 @@ binary used here resolves to
 | [`docs/evidence/claude.md`](../../evidence/claude.md) | A secondary SDK-hosted Claude process consumes streaming input after a tool result. | Delivery into the user's own Claude Code CLI; the SDK-hosted process is not a product route. |
 | [`docs/evidence/claude-native-cli.md`](../../evidence/claude-native-cli.md) | Existing-session native support must remain fail-closed; the hosted stream worked only while alive. | A native `steer` or interactive `sync` route. |
 | [Claude hooks](https://code.claude.com/docs/en/hooks), [SDK streaming input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode), and [channels](https://code.claude.com/docs/en/channels-reference) | The documented hook lifecycle, SDK interrupt capability, and research-preview channel notification surface exist. | Khala's composed routes. Local 2.1.282 help did not expose the documented development-channel flags. |
-| [OpenCode server API](https://opencode.ai/docs/server/) and [plugin API](https://opencode.ai/docs/plugins/) | On `orangekid`, 1.17.10 documentation and retained OpenCode bridge evidence expose session-addressed non-abort `promptAsync`, abort, events, and plugin hooks. | Support on the Executor host's 1.15.6, delivery into the user's TUI, `sync`, or hard-cancel safety. |
+| [OpenCode server API](https://opencode.ai/docs/server/) and [plugin API](https://opencode.ai/docs/plugins/) | On `<executor-host>`, 1.17.10 documentation and retained OpenCode bridge evidence expose session-addressed non-abort `promptAsync`, abort, events, and plugin hooks. | Support on the Executor host's 1.15.6, delivery into the user's TUI, `sync`, or hard-cancel safety. |
 | [`packages/agent-skill/SKILL.md`](../../../packages/agent-skill/SKILL.md), [`capabilities.ts`](../../../packages/agent-skill/src/capabilities.ts), and [`server.ts`](../../../packages/agent-cli/src/mcp/server.ts) | The fallback listener is experimental; MCP currently exposes send but no read/pull tool. | A generic host interruption or safe-boundary callback. |
 
 ### Delivery matrix
