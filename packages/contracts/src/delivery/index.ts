@@ -49,3 +49,9 @@ export {
   EXISTING_SESSION_SUPPORT, HARNESS_SUPPORT, IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT,
   decodeHarnessCapabilities,
 } from './harness';
+export {
+  type AppHarness, type AppHarnessBoundaries, type AppHarnessIdentity, type AppHarnessRecord,
+  type AppHarnessShape, type AppHookBoundary,
+  APP_HARNESSES, APP_HARNESS_SHAPES, APP_HOOK_BOUNDARIES,
+  decodeAppHarnessRecord, sameAppHarnessIdentity,
+} from './app-harness';
