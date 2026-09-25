@@ -16,3 +16,7 @@ export {
   type PolicyFreshness,
   evaluateAutomaticRelease,
 } from './automatic';
+export {
+  type AutomationAuthority,
+  CLOSED_AUTOMATION,
+} from './gate';

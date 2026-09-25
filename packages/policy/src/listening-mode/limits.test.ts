@@ -19,15 +19,22 @@ describe('local listening-mode automation profile', () => {
       { root: 'human-message-1', depth: 1 },
       { root: 'human-message-1', depth: 2 },
     ];
-    expect(evaluateLocalAutomation(exchange)).toEqual({ decision: 'run', retained: exchange });
+    expect(evaluateLocalAutomation(exchange, LOCAL_AUTOMATION_LIMITS)).toEqual({ decision: 'run', retained: exchange });
   });
 
   it('stops a self-sustaining loop and lets a new human root start fresh', () => {
     const runaway = Array.from({ length: 10 }, (_, depth) => ({ root: 'loop-root', depth }));
-    expect(evaluateLocalAutomation(runaway)).toEqual({ decision: 'run', retained: runaway.slice(0, 3) });
+    expect(evaluateLocalAutomation(runaway, LOCAL_AUTOMATION_LIMITS)).toEqual({ decision: 'run', retained: runaway.slice(0, 3) });
 
     const nextHumanRoot = [{ root: 'human-message-2', depth: 0 }];
-    expect(evaluateLocalAutomation([...runaway, ...nextHumanRoot]).retained).toContainEqual(nextHumanRoot[0]);
+    expect(evaluateLocalAutomation([...runaway, ...nextHumanRoot], LOCAL_AUTOMATION_LIMITS).retained).toContainEqual(nextHumanRoot[0]);
+  });
+
+  it('drops a job at the causal depth bound even when the per-root cap has room', () => {
+    const limits = { ...LOCAL_AUTOMATION_LIMITS, maxJobsPerCausalRoot: 10 };
+    const chain = Array.from({ length: 5 }, (_, depth) => ({ root: 'human-message-1', depth }));
+
+    expect(evaluateLocalAutomation(chain, limits).retained).toEqual(chain.slice(0, 3));
   });
 
   it('waits when the only local worker slot is busy', () => {

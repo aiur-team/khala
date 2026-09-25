@@ -9,6 +9,12 @@ const builtins = new Set(builtinModules.map(name => name.replace(/^node:/, '')))
 const serverDependencies = /^(?:@matrix-org\/matrix-sdk-crypto-nodejs|better-sqlite3|sqlite3|keytar|@netlify\/blobs|server-only)(?:\/|$)/;
 const packageOf = name => name.split('/').slice(0, 2).join('/');
 const sourcePattern = /\.[cm]?[jt]sx?$/;
+const testPattern = /\.(test|spec)\.[cm]?[jt]sx?$/;
+// Local automation opens G-AUTOMATION. Only the internal composition may import it,
+// and no hosted graph may reach it by path or by the provider's stable marker.
+const LOCAL_AUTOMATION_MARKER = 'khala:local-automation-authority';
+const localAutomation = /^(?:apps\/internal\/src\/composition\/local-automation\/|packages\/policy\/src\/listening-mode\/limits\.[cm]?[jt]sx?$)/;
+const hostedRoot = /^apps\/(?:web|control|connector)\//;
 
 function filesBelow(directory) {
   if (!fs.existsSync(directory)) return [];
@@ -19,9 +25,11 @@ function filesBelow(directory) {
   });
 }
 
-export function checkBoundaries(root) {
+/** The resolved import graph of every source below apps/ and packages/, plus the files carrying the marker. */
+export function buildGraph(root) {
   root = path.resolve(root);
   const errors = new Set();
+  const marked = new Set();
   const sources = ['apps', 'packages'].flatMap(area => filesBelow(path.join(root, area)));
   const packages = new Map();
   for (const area of ['apps', 'packages']) {
@@ -42,7 +50,9 @@ export function checkBoundaries(root) {
       const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
       options = { ...options, ...ts.parseJsonConfigFileContent(loaded.config, ts.sys, path.dirname(configPath)).options };
     }
-    const ast = ts.createSourceFile(filename, fs.readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true);
+    const text = fs.readFileSync(filename, 'utf8');
+    if (text.includes(LOCAL_AUTOMATION_MARKER)) marked.add(relative);
+    const ast = ts.createSourceFile(filename, text, ts.ScriptTarget.Latest, true);
     const edges = [];
     function visit(node) {
       let literal;
@@ -83,8 +93,13 @@ export function checkBoundaries(root) {
     visit(ast);
     graph.set(relative, edges);
   }
+  return { graph, errors, marked };
+}
+
+export function checkBoundaries(root) {
+  const { graph, errors, marked } = buildGraph(root);
   for (const [origin, edges] of graph) {
-    if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(origin)) continue;
+    if (testPattern.test(origin)) continue;
     const owner = packageOf(origin);
     const composition = origin.includes('/composition/');
     for (const edge of edges) {
@@ -96,7 +111,8 @@ export function checkBoundaries(root) {
       }
       if (!edge.target) continue;
       const destination = packageOf(edge.target);
-      if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(edge.target) || edge.target.includes('/fixtures/')) errors.add(`${origin}: production cannot import tests or fixtures (${edge.specifier})`);
+      if (localAutomation.test(edge.target) && !origin.startsWith('apps/internal/src/composition/') && !localAutomation.test(origin)) errors.add(`${origin}: local automation is importable only from the internal composition (${edge.specifier})`);
+      if (testPattern.test(edge.target) || edge.target.includes('/fixtures/')) errors.add(`${origin}: production cannot import tests or fixtures (${edge.specifier})`);
       if (owner === 'packages/contracts') {
         if (destination !== owner) errors.add(`${origin}: contracts cannot import implementations (${edge.specifier})`);
         const fromDomain = origin.split('/')[3];
@@ -110,20 +126,26 @@ export function checkBoundaries(root) {
       if (fromFeature && toFeature && fromFeature !== toFeature) errors.add(`${origin}: sibling feature import (${edge.specifier})`);
     }
     const browser = origin.startsWith('apps/web/');
+    const hosted = hostedRoot.test(origin);
     const policy = origin.startsWith('packages/policy/');
-    if (!browser && !policy && owner !== 'packages/contracts') continue;
+    // Browser, policy and contracts graphs must stay pure; hosted server graphs only
+    // have to stay clear of local automation.
+    const pure = browser || policy || owner === 'packages/contracts';
+    if (!pure && !hosted) continue;
+    if (marked.has(origin) && hosted) errors.add(`${origin}: hosted source carries the local automation marker`);
     const seen = new Set();
     function walk(current, chain) {
       if (seen.has(current)) return;
       seen.add(current);
       for (const edge of graph.get(current) ?? []) {
         const trace = [...chain, edge.specifier].join(' -> ');
-        if (edge.computed) errors.add(`${origin}: unanalyzable import (${trace})`);
-        if (builtins.has(edge.specifier.replace(/^node:/, '')) || serverDependencies.test(edge.specifier)) errors.add(`${origin}: server-only dependency (${trace})`);
+        if (pure && edge.computed) errors.add(`${origin}: unanalyzable import (${trace})`);
+        if (pure && (builtins.has(edge.specifier.replace(/^node:/, '')) || serverDependencies.test(edge.specifier))) errors.add(`${origin}: server-only dependency (${trace})`);
         if (edge.target) {
           // Local modules outside the scanned roots cannot silently end traversal.
           // Third-party internals remain dependency-review scope, not this graph.
-          if (!graph.has(edge.target) && !edge.target.split('/').includes('node_modules')) errors.add(`${origin}: local module outside the checked graph (${trace})`);
+          if (pure && !graph.has(edge.target) && !edge.target.split('/').includes('node_modules')) errors.add(`${origin}: local module outside the checked graph (${trace})`);
+          if (hosted && (edge.target.startsWith('apps/internal/') || localAutomation.test(edge.target) || marked.has(edge.target))) errors.add(`${origin}: hosted graph reaches local automation (${trace})`);
           if (browser && /^(?:apps\/(?:control|connector)|packages\/(?:connector|harnesses))\//.test(edge.target)) errors.add(`${origin}: browser reaches owner/server code (${trace})`);
           if (policy && !edge.target.startsWith('packages/policy/') && !edge.target.startsWith('packages/contracts/')) errors.add(`${origin}: policy reaches I/O or implementation (${trace})`);
           walk(edge.target, [...chain, edge.specifier]);

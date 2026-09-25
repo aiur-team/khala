@@ -63,15 +63,28 @@ selection.
 ## G-AUTOMATION
 
 Budget, loop limit, human triggers and offline expectations are unresolved launch
-decisions. While the gate is open, every `auto` request is refused as
-`automation_gated` and every event is held as `automation_gated`, whatever the caller
-passes. The single seam is `approvedAutomation()` in `gate.ts`, which returns `null`;
-the gate decision fills it in. No caller can supply limits and none have a default.
+decisions for the hosted product. Automation authority is therefore an explicit
+dependency: `evaluatePolicyChange` and `evaluateAutomaticRelease` take an
+`AutomationAuthority` from server composition, and there is no global default. Hosted
+composition (`apps/connector/src/composition/controls/automation.ts`) injects
+`CLOSED_AUTOMATION`, whose `approvedAutomation()` returns `null`, so every hosted
+`auto` request is refused as `automation_gated` and every event is held as
+`automation_gated`. A raw config passed where the authority belongs stays closed.
 
-The automatic-release rules above describe behavior once the gate opens. Their tests
-mock the seam with example limits that are not approved values; `gate.test.ts` checks
-the real seam. `budgetRemaining` is supplied by the caller and not bounded here: who
-owns and caps that ledger is part of the G-AUTOMATION design. Real connector
+Only the internal app's local composition
+(`apps/internal/src/composition/local-automation/`) supplies a bounded authority, built
+from the explicitly injected `LOCAL_AUTOMATION_LIMITS`. It passes only
+`maxCausalDepth` into this module; the per-root job budget and the busy-worker wait sit
+on top, after these checks, so stop, pause, loop and budget holds always win.
+`scripts/check-boundaries.mjs` lets only the internal composition import that provider
+or the local limits profile, and fails if any web, control or connector graph reaches
+`apps/internal`, the profile, or the provider's `khala:local-automation-authority`
+marker.
+
+The automatic-release rules above describe behavior under a bounded authority. Their
+tests inject example limits that are not approved values; `gate.test.ts` checks the
+closed authority. `budgetRemaining` is supplied by the caller and not bounded here; the
+local provider derives it from its per-root ledger. Real connector
 acknowledgment and reconnect behavior are proven by KHA-135 and KHA-138, not by these
 unit tests. Test builders live in `packages/policy/test/trust/`, outside the exported
 and built `src/` tree.

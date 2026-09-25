@@ -1,7 +1,7 @@
 /**
  * The provisional local-only automation profile retained by the E09 listening-mode
- * experiment. Local composition injects this value explicitly. Hosted policy must
- * continue to obtain `null` from `approvedAutomation()` and must not import it.
+ * experiment. Only the internal app's local composition may import it, and it injects
+ * the value explicitly; hosted composition injects `CLOSED_AUTOMATION` instead.
  */
 export type LocalAutomationLimits = Readonly<{
   maxCausalDepth: number;
@@ -44,11 +44,11 @@ function validateLimits(limits: LocalAutomationLimits): void {
  *
  * When all local worker slots are occupied, local composition must wait before
  * scheduling further work. Otherwise, jobs beyond either causal limit are
- * omitted. This function intentionally has no hosted-policy dependency.
+ * omitted. Limits are always injected; there is no default profile.
  */
 export function evaluateLocalAutomation(
   jobs: readonly LocalAutomationJob[],
-  limits: LocalAutomationLimits = LOCAL_AUTOMATION_LIMITS,
+  limits: LocalAutomationLimits,
   activeJobs = 0,
 ): LocalAutomationEvaluation {
   validateLimits(limits);
