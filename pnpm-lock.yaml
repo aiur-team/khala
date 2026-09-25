@@ -61,6 +61,8 @@ importers:
         specifier: 4.20.6
         version: 4.20.6
 
+  apps/internal: {}
+
   apps/web:
     dependencies:
       '@khala/contracts':
