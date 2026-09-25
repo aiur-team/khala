@@ -6,12 +6,17 @@
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
-    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests",
+    "test:browser": "node --import tsx --test 'src/**/*.browser.spec.ts'"
   },
   "dependencies": {
     "@khala/connector": "workspace:*",
     "@khala/contracts": "workspace:*",
     "@khala/messaging": "workspace:*",
     "@khala/policy": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "tsx": "4.20.6"
   }
 }

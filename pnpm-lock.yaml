@@ -75,6 +75,13 @@ importers:
       '@khala/policy':
         specifier: workspace:*
         version: link:../../packages/policy
+    devDependencies:
+      '@playwright/test':
+        specifier: 1.63.0
+        version: 1.63.0
+      tsx:
+        specifier: 4.20.6
+        version: 4.20.6
 
   apps/web:
     dependencies:
