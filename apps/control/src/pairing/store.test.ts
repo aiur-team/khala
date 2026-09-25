@@ -489,6 +489,7 @@ describe('PairingStore approved result and internal grant redemption', () => {
     expect(first.value.grant).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(Buffer.from(first.value.grant, 'base64url')).toHaveLength(32);
     expect(await h.pairing.result(input)).toEqual(first);
+    expect(await h.pairing.result({ ...input, operationId: 'result_other' })).toEqual({ kind: 'invalid' });
     expect([...h.records.keys()].filter(key => key.startsWith('pairing.grant.'))).toHaveLength(1);
 
     h.setNow(Date.parse(first.value.expiresAt));
@@ -569,7 +570,7 @@ describe('PairingStore approved result and internal grant redemption', () => {
     expect(await h.pairing.result({
       requestHandle: created.requestHandle,
       receipt: winner.receipt,
-      operationId: 'result_after_spend',
+      operationId: 'result_1',
       jkt: JKT,
     })).toEqual({ kind: 'result', value: { v: 1, state: 'expired' } });
   });

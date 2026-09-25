@@ -40,6 +40,14 @@ export type PairingCreateRequest = Readonly<{
   operationId: string;
 }>;
 
+export type PairingCreateResult = Readonly<{
+  v: 1;
+  state: 'issued';
+  code: string;
+  requestHandle: string;
+  expiresAt: string;
+}>;
+
 export type PairingClaimRequest = Readonly<{
   v: 1;
   /** Ten uppercase Crockford Base32 symbols in the one accepted grouping. */
@@ -54,12 +62,21 @@ export type PairingClaimRequest = Readonly<{
   evidenceDigest: string;
 }>;
 
+export type PairingClaimResult = Readonly<{
+  v: 1;
+  state: 'pending';
+  requestHandle: string;
+  receipt: string;
+}>;
+
 export type PairingResultRequest = Readonly<{
   v: 1;
   requestHandle: string;
   /** Raw claim receipt; only its keyed digest may be retained. */
   receipt: string;
   operationId: string;
+  /** Claimant key thumbprint, used to validate DPoP before any store lookup. */
+  jkt: string;
 }>;
 
 export type PairingClaimProjection = Readonly<{
@@ -86,6 +103,9 @@ export type PairingOwnerProjection = Readonly<{
   claim: PairingClaimProjection | null;
   decidedAt: string | null;
 }>;
+
+export type PairingOwnerResult = PairingOwnerProjection & Readonly<{ revision: string }>;
+export type PairingDecisionResult = PairingOwnerResult;
 
 export type PairingDecisionRequest = Readonly<{
   v: 1;
@@ -122,6 +142,19 @@ export function decodePairingCreateRequest(input: unknown): Decoded<PairingCreat
   });
 }
 
+export function decodePairingCreateResult(input: unknown): Decoded<PairingCreateResult> {
+  return decodeWith(() => {
+    const r = object(input, '', ['v', 'state', 'code', 'requestHandle', 'expiresAt']);
+    return {
+      v: version(r.field('v'), r.at('v')),
+      state: literal(r.field('state'), r.at('state'), ['issued']),
+      code: readCanonicalCode(r.field('code'), r.at('code')),
+      requestHandle: readRequestHandle(r.field('requestHandle'), r.at('requestHandle')),
+      expiresAt: utcTimestamp(r.field('expiresAt'), r.at('expiresAt')),
+    };
+  });
+}
+
 export function decodePairingClaimRequest(input: unknown): Decoded<PairingClaimRequest> {
   return decodeWith(() => {
     const r = object(input, '', ['v', 'code', 'operationId', 'jkt', 'harness', 'sessionId', 'generation', 'deviceId', 'evidenceDigest']);
@@ -139,46 +172,45 @@ export function decodePairingClaimRequest(input: unknown): Decoded<PairingClaimR
   });
 }
 
+export function decodePairingClaimResult(input: unknown): Decoded<PairingClaimResult> {
+  return decodeWith(() => {
+    const r = object(input, '', ['v', 'state', 'requestHandle', 'receipt']);
+    return {
+      v: version(r.field('v'), r.at('v')),
+      state: literal(r.field('state'), r.at('state'), ['pending']),
+      requestHandle: readRequestHandle(r.field('requestHandle'), r.at('requestHandle')),
+      receipt: readDigest(r.field('receipt'), r.at('receipt')),
+    };
+  });
+}
+
 export function decodePairingResultRequest(input: unknown): Decoded<PairingResultRequest> {
   return decodeWith(() => {
-    const r = object(input, '', ['v', 'requestHandle', 'receipt', 'operationId']);
+    const r = object(input, '', ['v', 'requestHandle', 'receipt', 'operationId', 'jkt']);
     return {
       v: version(r.field('v'), r.at('v')),
       requestHandle: readRequestHandle(r.field('requestHandle'), r.at('requestHandle')),
       receipt: readDigest(r.field('receipt'), r.at('receipt')),
       operationId: identifier(r.field('operationId'), r.at('operationId')),
+      jkt: readDigest(r.field('jkt'), r.at('jkt')),
     };
   });
 }
 
 export function decodePairingOwnerProjection(input: unknown): Decoded<PairingOwnerProjection> {
+  return decodeWith(() => readOwnerProjection(input, '', OWNER_PROJECTION_FIELDS));
+}
+
+export function decodePairingOwnerResult(input: unknown): Decoded<PairingOwnerResult> {
   return decodeWith(() => {
-    const r = object(input, '', [
-      'v', 'requestHandle', 'state', 'channelId', 'origin', 'descriptorId', 'createdAt', 'expiresAt', 'claim', 'decidedAt',
-    ]);
-    const value: PairingOwnerProjection = {
-      v: version(r.field('v'), r.at('v')),
-      requestHandle: readRequestHandle(r.field('requestHandle'), r.at('requestHandle')),
-      state: literal(r.field('state'), r.at('state'), ['issued', 'claimed', 'approved', 'denied', 'expired']),
-      channelId: readId<'RoomId'>(r.field('channelId'), r.at('channelId')),
-      origin: readCanonicalOrigin(r.field('origin'), r.at('origin')),
-      descriptorId: identifier(r.field('descriptorId'), r.at('descriptorId')),
-      createdAt: utcTimestamp(r.field('createdAt'), r.at('createdAt')),
-      expiresAt: utcTimestamp(r.field('expiresAt'), r.at('expiresAt')),
-      claim: nullable(r.field('claim'), claim => readClaimProjection(claim, r.at('claim'))),
-      decidedAt: nullable(r.field('decidedAt'), decidedAt => utcTimestamp(decidedAt, r.at('decidedAt'))),
-    };
-    if (Date.parse(value.expiresAt) <= Date.parse(value.createdAt)) fail(r.at('expiresAt'), 'invalid_value');
-    if (value.decidedAt !== null
-      && (Date.parse(value.decidedAt) < Date.parse(value.createdAt) || Date.parse(value.decidedAt) >= Date.parse(value.expiresAt))) {
-      fail(r.at('decidedAt'), 'invalid_value');
-    }
-    const needsClaim = value.state === 'claimed' || value.state === 'approved' || value.state === 'denied';
-    if ((value.state === 'issued' && value.claim !== null) || (needsClaim && value.claim === null)) fail(r.at('claim'), 'mismatch');
-    const needsDecision = value.state === 'approved' || value.state === 'denied';
-    if (needsDecision !== (value.decidedAt !== null)) fail(r.at('decidedAt'), 'mismatch');
-    return value;
+    const projection = readOwnerProjection(input, '', OWNER_RESULT_FIELDS);
+    const r = object(input, '', OWNER_RESULT_FIELDS);
+    return { ...projection, revision: identifier(r.field('revision'), r.at('revision')) };
   });
+}
+
+export function decodePairingDecisionResult(input: unknown): Decoded<PairingDecisionResult> {
+  return decodePairingOwnerResult(input);
 }
 
 export function decodePairingDecisionRequest(input: unknown): Decoded<PairingDecisionRequest> {
@@ -281,6 +313,41 @@ function readClaimProjection(input: unknown, path: string): PairingClaimProjecti
     fingerprint: readDigest(r.field('fingerprint'), r.at('fingerprint')),
     verification: literal(r.field('verification'), r.at('verification'), ['connector_verified']),
   };
+}
+
+const OWNER_PROJECTION_FIELDS = [
+  'v', 'requestHandle', 'state', 'channelId', 'origin', 'descriptorId', 'createdAt', 'expiresAt', 'claim', 'decidedAt',
+] as const;
+const OWNER_RESULT_FIELDS = [...OWNER_PROJECTION_FIELDS, 'revision'] as const;
+
+function readOwnerProjection(
+  input: unknown,
+  path: string,
+  fields: readonly string[],
+): PairingOwnerProjection {
+  const r = object(input, path, fields);
+  const value: PairingOwnerProjection = {
+    v: version(r.field('v'), r.at('v')),
+    requestHandle: readRequestHandle(r.field('requestHandle'), r.at('requestHandle')),
+    state: literal(r.field('state'), r.at('state'), ['issued', 'claimed', 'approved', 'denied', 'expired']),
+    channelId: readId<'RoomId'>(r.field('channelId'), r.at('channelId')),
+    origin: readCanonicalOrigin(r.field('origin'), r.at('origin')),
+    descriptorId: identifier(r.field('descriptorId'), r.at('descriptorId')),
+    createdAt: utcTimestamp(r.field('createdAt'), r.at('createdAt')),
+    expiresAt: utcTimestamp(r.field('expiresAt'), r.at('expiresAt')),
+    claim: nullable(r.field('claim'), claim => readClaimProjection(claim, r.at('claim'))),
+    decidedAt: nullable(r.field('decidedAt'), decidedAt => utcTimestamp(decidedAt, r.at('decidedAt'))),
+  };
+  if (Date.parse(value.expiresAt) <= Date.parse(value.createdAt)) fail(r.at('expiresAt'), 'invalid_value');
+  if (value.decidedAt !== null
+    && (Date.parse(value.decidedAt) < Date.parse(value.createdAt) || Date.parse(value.decidedAt) >= Date.parse(value.expiresAt))) {
+    fail(r.at('decidedAt'), 'invalid_value');
+  }
+  const needsClaim = value.state === 'claimed' || value.state === 'approved' || value.state === 'denied';
+  if ((value.state === 'issued' && value.claim !== null) || (needsClaim && value.claim === null)) fail(r.at('claim'), 'mismatch');
+  const needsDecision = value.state === 'approved' || value.state === 'denied';
+  if (needsDecision !== (value.decidedAt !== null)) fail(r.at('decidedAt'), 'mismatch');
+  return value;
 }
 
 function readDigest(input: unknown, path: string): string {

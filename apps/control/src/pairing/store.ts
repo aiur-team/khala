@@ -159,6 +159,7 @@ type GrantRecord = Readonly<{
   recordType: 'pairing_grant';
   keyId: string;
   requestHandle: string;
+  resultOperationId: string;
   state: 'unspent' | 'spent' | 'expired';
   binding: GrantBinding;
   redemption: Readonly<{ operationId: string; authorization: PairingBootstrapAuthorization }> | null;
@@ -527,6 +528,7 @@ export function createPairingStore(deps: Readonly<{
       recordType: 'pairing_grant',
       keyId: secret.keyId,
       requestHandle: input.requestHandle,
+      resultOperationId: input.operationId,
       state: 'unspent',
       binding,
       redemption: null,
@@ -534,7 +536,7 @@ export function createPairingStore(deps: Readonly<{
     const issued = await write({
       key: grantKey(secret.digest),
       expectedRevision: null,
-      operationId: operation('grant-issue', input.requestHandle, current.envelope.revision),
+      operationId: operation('grant-issue', input.requestHandle, current.envelope.revision, input.operationId),
       next: permanent(grant),
     });
     if (issued.kind === 'unavailable' || issued.kind === 'operation_mismatch') return { kind: 'unavailable' };
@@ -545,6 +547,7 @@ export function createPairingStore(deps: Readonly<{
     if (authoritative === 'unavailable' || authoritative === 'absent' || !sameGrantBinding(authoritative.value, grant)) {
       return { kind: 'unavailable' };
     }
+    if (authoritative.value.resultOperationId !== input.operationId) return { kind: 'invalid' };
     if (authoritative.value.state !== 'unspent') return { kind: 'result', value: { v: 1, state: 'expired' } };
     return { kind: 'result', value: { v: 1, state: 'approved', grant: secret.value, expiresAt: grantExpiresAt } };
   }
@@ -773,9 +776,10 @@ function decodeDecision(input: JsonValue): StoredDecision | null {
 }
 
 function decodeGrant(input: JsonValue): GrantRecord | null {
-  if (!object(input) || !exactKeys(input, ['v', 'recordType', 'keyId', 'requestHandle', 'state', 'binding', 'redemption'])
+  if (!object(input) || !exactKeys(input, ['v', 'recordType', 'keyId', 'requestHandle', 'resultOperationId', 'state', 'binding', 'redemption'])
     || input.v !== 1 || input.recordType !== 'pairing_grant' || !text(input.keyId)
-    || !text(input.requestHandle) || !['unspent', 'spent', 'expired'].includes(String(input.state)) || !decodeBinding(input.binding)) return null;
+    || !text(input.requestHandle) || !text(input.resultOperationId)
+    || !['unspent', 'spent', 'expired'].includes(String(input.state)) || !decodeBinding(input.binding)) return null;
   const binding = input.binding as unknown as PairingBootstrapAuthorization;
   if (input.requestHandle !== binding.requestHandle
     || Date.parse(binding.expiresAt) - Date.parse(binding.approvedAt) !== PAIRING_GRANT_LIFETIME_MS) return null;

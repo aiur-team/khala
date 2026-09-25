@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   PAIRING_FAILURE_CODES,
   decodePairingApprovalResult,
+  decodePairingClaimResult,
   decodePairingClaimRequest,
+  decodePairingCreateResult,
   decodePairingCreateRequest,
+  decodePairingDecisionResult,
   decodePairingDecisionRequest,
   decodePairingFailure,
   decodePairingGrantRedemptionRequest,
   decodePairingOwnerProjection,
+  decodePairingOwnerResult,
   decodePairingResultRequest,
 } from './pairing';
 
@@ -33,8 +37,11 @@ describe('pairing request contracts', () => {
   it('round-trips exact version-one request, claim, result, decision, and redemption bodies', () => {
     expect(decodePairingCreateRequest(create)).toEqual({ ok: true, value: create });
     expect(decodePairingClaimRequest(claim)).toEqual({ ok: true, value: claim });
+    expect(decodePairingResultRequest({ v: 1, requestHandle: `pair_${digest}`, receipt: digest, operationId: 'result_1', jkt: digest })).toEqual({
+      ok: true, value: { v: 1, requestHandle: `pair_${digest}`, receipt: digest, operationId: 'result_1', jkt: digest },
+    });
     expect(decodePairingResultRequest({ v: 1, requestHandle: `pair_${digest}`, receipt: digest, operationId: 'result_1' })).toEqual({
-      ok: true, value: { v: 1, requestHandle: `pair_${digest}`, receipt: digest, operationId: 'result_1' },
+      ok: false, error: { path: 'jkt', code: 'missing_field' },
     });
     const decision = {
       v: 1, requestHandle: `pair_${digest}`, revision: 'revision_1', claimFingerprint: digest, decision: 'approve', operationId: 'decision_1',
@@ -66,6 +73,44 @@ describe('pairing request contracts', () => {
     expect(decodePairingClaimRequest({ ...claim, evidenceDigest: 'sha256:not-base64url' })).toEqual({
       ok: false, error: { path: 'evidenceDigest', code: 'invalid_value' },
     });
+  });
+});
+
+describe('pairing success result contracts', () => {
+  const created = {
+    v: 1, state: 'issued', code: '01234-56789', requestHandle: `pair_${digest}`, expiresAt: '2026-09-24T12:05:00Z',
+  };
+  const claimed = { v: 1, state: 'pending', requestHandle: `pair_${digest}`, receipt: digest };
+  const owner = { ...projection, revision: 'revision_1' };
+
+  it('round-trips exact create, claim, inspect, and decision results', () => {
+    expect(decodePairingCreateResult(created)).toEqual({ ok: true, value: created });
+    expect(decodePairingClaimResult(claimed)).toEqual({ ok: true, value: claimed });
+    expect(decodePairingOwnerResult(owner)).toEqual({ ok: true, value: owner });
+    expect(decodePairingDecisionResult(owner)).toEqual({ ok: true, value: owner });
+  });
+
+  it.each([
+    ['create', decodePairingCreateResult, { ...created, internal: 'secret' }],
+    ['claim', decodePairingClaimResult, { ...claimed, ownerId: 'owner_secret' }],
+    ['owner', decodePairingOwnerResult, { ...owner, receipt: digest }],
+    ['decision', decodePairingDecisionResult, { ...owner, revision: 'r2', providerRevision: 'secret' }],
+  ] as const)('rejects unknown fields from a %s result', (_name, decode, input) => {
+    expect(decode(input)).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  it.each([
+    ['create', decodePairingCreateResult, created],
+    ['claim', decodePairingClaimResult, claimed],
+    ['owner', decodePairingOwnerResult, owner],
+    ['decision', decodePairingDecisionResult, owner],
+  ] as const)('rejects unsupported versions from a %s result', (_name, decode, input) => {
+    expect(decode({ ...input, v: 2 })).toEqual({ ok: false, error: { path: 'v', code: 'unsupported_version' } });
+  });
+
+  it('requires the owner result revision while the projection remains revision-free', () => {
+    expect(decodePairingOwnerResult(projection)).toEqual({ ok: false, error: { path: 'revision', code: 'missing_field' } });
+    expect(decodePairingOwnerProjection(owner)).toEqual({ ok: false, error: { path: 'revision', code: 'unknown_field' } });
   });
 });
 
