@@ -25,7 +25,8 @@ succeeds without confirmation.
 There is no interactive terminal prompt and the person never runs an install
 step. `status` retains its existing connection fields and adds a nested
 `configuration` report; `--check` is the CI form that returns non-zero for
-drift, conflicts, or unsupported detected harnesses. `setup` and `remove` share
+drift, conflicts, pending Codex hook review, or unsupported detected harnesses.
+`setup` and `remove` share
 one deterministic planner, transaction journal, and rollback engine. A dry run
 uses the same plan but performs no Khala writes, lock creation, cache
 population, or telemetry. `npx` may populate its own cache before Khala starts;
@@ -97,7 +98,7 @@ do not replace that gate.
 | Harness | Documented integration surface | Design use |
 | --- | --- | --- |
 | Claude Code | [Plugins](https://code.claude.com/docs/en/plugins) can bundle skills, hooks, and MCP configuration. | Install the single producer-owned user-scope plugin containing the skill, hooks, and MCP entry. Snapshot every registry/config path the supported CLI version mutates. |
-| Codex | Codex exposes skill and MCP configuration surfaces in the inspected CLI. | Install the Khala skill, the native Khala hooks (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and the MCP entry. Codex needs no Khala plugin. Hook config entries are removed exactly, and the one-time hook-trust approval is recorded (decisions 31, 33). |
+| Codex | Codex exposes skill and MCP configuration surfaces in the inspected CLI. | Install the Khala skill, the native Khala hooks (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and the MCP entry. Codex needs no Khala plugin. Hook config entries are removed exactly, while hook trust remains owned by Codex and the person using its native review dialog. |
 | OpenCode | [Plugins](https://opencode.ai/docs/plugins), [skills](https://opencode.ai/docs/skills), and [MCP servers](https://opencode.ai/docs/mcp-servers) are configured separately; global skills live below `~/.config/opencode/skills`. | Install the producer-owned plugin and skill, and patch the MCP/config entry transactionally. |
 
 Vendor documentation proves supported concepts, not exact rollback behavior.
@@ -138,9 +139,10 @@ The object excludes file contents, tokens, credentials, and backup bytes.
 
 `khala status` preserves its existing top-level `v`, `connected`, `binding`,
 `route`, `sourceCursor`, and `inbox` fields and adds `configuration` with the
-same harness model. Component states are `absent`, `ready`, `drifted`,
-`conflict`, or `unsupported`. Executable presence, supported version,
-per-harness component states, and tested route support are separate facts.
+same harness model. Component states are `absent`, `ready`,
+`awaiting_hook_review`, `drifted`, `conflict`, or `unsupported`. Executable
+presence, supported version, per-harness component states, and tested route
+support are separate facts.
 
 | Exit | Meaning |
 | ---: | --- |
@@ -157,6 +159,7 @@ status remains informational; `--check` enforces the table below.
 | --- | --- | --- | --- |
 | No harness detected | `no_harness` / true | None; setup is a successful no-op | 0 / 0 |
 | Configured and effective | `ready` / true | Use the native route | 0 / 0 |
+| Codex hooks installed, native approval pending | `awaiting_hook_review` / false | The person reviews the hooks in Codex's native dialog; setup does not approve them | 0 / 3 |
 | Configured, current session ineffective | `configured_restart_required` / true | Use the named CLI fallback now; native route activates after restart | 0 / 3 |
 | Configured, effectiveness unproven | `configured_effect_unknown` / true | Use the named CLI fallback; do not claim native readiness | 0 / 3 |
 | Ready, optional Claude hardening absent | `ready` / true | Continue normally; report hardening as absent | 0 / 0 |
@@ -250,8 +253,8 @@ XDG, and PATH inputs.
 | Harness | Desired components | Producer dependency | Adapter constraint |
 | --- | --- | --- | --- |
 | Claude Code | One user-scope plugin containing the skill, hooks, and MCP entry | `claude-plugin-hooks`, `claude-plugin-dispatch`, `mcp-result-piggyback` | Delivery targets the normal user-started Claude session. Optional hardening is reported separately and never gates readiness. |
-| Codex | Khala skill, native hooks (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and MCP entry; no plugin | `mcp-result-piggyback`, `listening-mode-pull`, `interactive-codex` | Preserve existing config; route support remains a separate capability label. |
-| OpenCode | OpenCode plugin, global skill, and MCP entry | `opencode-session-bridge`, `opencode-delivery-contract`, `opencode-listening-routes`, `mcp-result-piggyback` | Use a guarded direct config edit for removal unless a tested exact vendor removal surface appears. |
+| Codex | Khala skill, native hooks (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and MCP entry; no plugin | `mcp-result-piggyback`, `listening-mode-pull`, `interactive-codex` | Preserve existing config; never write or remove `hooks.state` or `trusted_hash`; keep the installed hook command and path stable across upgrades; route support remains a separate capability label. |
+| OpenCode | OpenCode plugin, global skill, and MCP entry | `opencode-session-bridge`, `opencode-delivery-contract`, `mcp-result-piggyback` | Use a guarded direct config edit for removal unless a tested exact vendor removal surface appears. |
 
 The Claude producer-owned plugin ships in a versioned local Khala marketplace
 catalog inside the immutable payload. Its adapter models marketplace
@@ -300,6 +303,11 @@ pre-Khala preimage or absence marker from the active manifest; it replaces only
 the expected managed postimage and carries that baseline into the new manifest.
 Later removal therefore restores the user's state from before the first setup,
 not the prior Khala version.
+
+Codex upgrades retain the same installed hook command and path so a previously
+approved hook does not require review again. Setup and removal never write or
+delete Codex's native hook-trust records; only the person can change that trust
+through Codex's review dialog.
 
 When configuration requires a harness restart, the setup result reports both
 the deferred native route and the exact installed CLI route that is usable in
@@ -436,11 +444,11 @@ finishable by one agent in one PR.
 
 | Field | Contract |
 | --- | --- |
-| Scope | Detect/version Codex; inspect and plan global Khala skill, native hook config entries (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and MCP registration with no plugin or marketplace; record the one-time hook-trust approval; enumerate and test the complete mutation footprint; retain capability-honest route labels. |
+| Scope | Detect/version Codex; inspect and plan global Khala skill, native hook config entries (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and MCP registration with no plugin or marketplace; observe native hook approval without mutating its trust records; keep the installed hook command/path stable across upgrades; enumerate and test the complete mutation footprint; retain capability-honest route labels. |
 | Out of scope | Changing Codex notification/listening semantics, Codex login, project scope, or reimplementing the MCP server. |
 | Files/packages | New `packages/agent-cli/src/setup/adapters/codex.ts` and tests; packaged skill assets; support matrix docs. |
-| Acceptance | Codex 0.154.0 fixture has a proven skill + hooks + MCP plan (no plugin); hook entries are removed exactly and unrelated hooks survive byte-exact; the one-time hook-trust approval is recorded and removed with the entries; absent/unknown versions are distinct; existing unrelated config survives byte-exact setup/remove; MCP command success without the expected postimage is not ready; the installed entry reads port/token from the descriptor at runtime. |
-| Tests | Observe writes across clean, populated, and conflicting `.codex` trees; fake command runner; pre/post byte assertions. **Wrong implementation killer:** fake exit 0 while omitting the MCP postimage and assert setup fails and rolls back; also leave a hook entry behind on remove and assert the byte-exact preimage check fails. |
+| Acceptance | Codex 0.154.0 fixture has a proven skill + hooks + MCP plan (no plugin); hook entries are removed exactly and unrelated hooks survive byte-exact; setup, upgrade, and removal leave `hooks.state` and every `trusted_hash` byte unchanged; hook command/path identity survives upgrades; readiness remains false with `awaiting_hook_review` until the person approves through Codex's native dialog; absent/unknown versions are distinct; existing unrelated config survives byte-exact setup/remove; MCP command success without the expected postimage is not ready; the installed entry reads port/token from the descriptor at runtime. |
+| Tests | Observe writes across clean, populated, and conflicting `.codex` trees; fake command runner; pre/post byte assertions. **Wrong implementation killer:** seed sentinel `hooks.state`/`trusted_hash` bytes, run setup -> upgrade -> remove, and assert they never change; before simulated native approval assert `awaiting_hook_review`, false readiness, and bare/`--check` exits 0/3, then approve natively and assert ready without changing the installed hook command/path. Also fake exit 0 while omitting the MCP postimage and assert setup fails and rolls back; leave a hook entry behind on remove and assert the byte-exact preimage check fails. |
 | `blocked-by` | `setup-cli-transaction`, `mcp-result-piggyback`, `interactive-codex`. |
 | Conflict risk | **Medium** with MCP/listening producers and the shared Codex config; adapter owns lifecycle only and must not introduce a plugin manifest. |
 
@@ -459,7 +467,7 @@ finishable by one agent in one PR.
 | Files/packages | New `packages/agent-cli/src/setup/adapters/opencode.ts` and tests; packaged OpenCode asset references; support matrix docs. |
 | Acceptance | Version 1.17.10 fixture configures all three components; absent OpenCode creates nothing; comments/formatting and unrelated config bytes return exactly after removal; unsupported schema/version refuses safely; the installed entry reads port/token from the descriptor at runtime. |
 | Tests | Synthetic XDG config/skill roots with unusual formatting and sentinel secrets. **Wrong implementation killer:** remove via parse-and-reserialize and assert the final file differs from its byte-exact preimage, failing the test. |
-| `blocked-by` | `setup-cli-transaction`, `opencode-session-bridge`, `opencode-delivery-contract`, `opencode-listening-routes`, `mcp-result-piggyback`. |
+| `blocked-by` | `setup-cli-transaction`, `opencode-session-bridge`, `opencode-delivery-contract`, `mcp-result-piggyback`. |
 | Conflict risk | **Medium** with bridge packaging/config work; the adapter must consume, not duplicate, its plugin entrypoint. |
 
 ### 7. Gate setup release with cross-harness acceptance
