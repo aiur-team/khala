@@ -7,13 +7,13 @@ process is not the user's agent.
 
 ## Proof environment
 
-The run took place on `<executor-host>` on 2026-09-24. Home-directory prefixes
+The run took place on `orangekid` on 2026-09-24. Home-directory prefixes
 and the throwaway Basic-auth values are redacted; ports, executable identity,
 commands, status codes, and the failing request path are retained.
 
 ```text
 $ hostname
-<executor-host>
+orangekid
 $ command -v opencode
 ~/.local/share/mise/installs/opencode/1.17.10/opencode
 $ opencode --version

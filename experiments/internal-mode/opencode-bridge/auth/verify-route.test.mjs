@@ -17,6 +17,24 @@ test('admits an in-process plugin route', async () => {
   assert.equal(verifyRoute(record), record);
 });
 
+for (const [name, routeField, value] of [
+  ['transport', 'transport', 'embedded_server_http'],
+  ['client', 'client', 'external_companion'],
+  ['server', 'server', 'tui_embedded'],
+  ['external-client', 'externalClient', true],
+]) {
+  test(`rejects an in-process route with a spoofed ${name} field`, async () => {
+    const record = await load('in-process-plugin.json');
+    record.route[routeField] = value;
+    assert.throws(() => verifyRoute(record), /in-process plugin client/);
+  });
+}
+
+test('rejects a route that requires Khala to launch a server', async () => {
+  const record = await load('khala-launched-server.json');
+  assert.throws(() => verifyRoute(record), /Khala must not launch an OpenCode server/);
+});
+
 test('rejects an authenticated external embedded-server route', async () => {
   const record = await load('authenticated-external.json');
   assert.throws(() => verifyRoute(record), /in-process plugin client/);
