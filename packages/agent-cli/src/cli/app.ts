@@ -1,5 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import type { BindingId, SessionBinding } from '@khala/contracts/delivery/index';
+import { runClaudeCommand } from '../composition/claude-command.js';
+import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import { ReadOperation, sameHeldBinding } from '../composition/read.js';
 import { CliError, cliErrorCode } from './errors.js';
 import type { BatchInbox, InboxItem } from './inbox.js';
@@ -18,6 +20,7 @@ export type CliDependencies = Readonly<{
   client: AgentClientPort;
   inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
+  claude?: ClaudeSessionClient;
 }>;
 
 export async function runCli(argv: readonly string[], deps: CliDependencies): Promise<number> {
@@ -30,6 +33,7 @@ export async function runCli(argv: readonly string[], deps: CliDependencies): Pr
       case 'send': return await send(args, deps);
       case 'status': return await status(args, deps);
       case 'mcp-serve': return await mcp(args, deps);
+      case 'claude': return await runClaudeCommand(args, { ...deps, readStdin });
       default: throw new CliError('invalid_arguments');
     }
   } catch (error) {

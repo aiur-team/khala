@@ -1,0 +1,172 @@
+import { LISTENING_MODES, type ListeningMode } from '@khala/contracts/delivery/index';
+import { MAX_SEND_BYTES } from '../cli/send.js';
+import { plainObject, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
+import { readRuntimeDescriptor, type RuntimeDescriptorFailure } from './claude-descriptor.js';
+import {
+  CLAUDE_SESSION_REFUSALS, type ClaudeModeOutcome, type ClaudePendingOutcome,
+  type ClaudeReadOutcome, type ClaudeSendOutcome, type ClaudeSessionAdapter, type ClaudeSessionRefusal,
+} from './claude-session.js';
+
+/** The local server route that mounts `handleClaudeSessionRequest`. */
+export const CLAUDE_SESSION_PATH = '/api/agent/claude/session';
+const MAX_RESPONSE_BYTES = MAX_SEND_BYTES * 2 + 16_384;
+const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
+
+export type ClaudeSessionRequest =
+  | Readonly<{ v: 1; op: 'read'; sessionId: string }>
+  | Readonly<{ v: 1; op: 'send'; sessionId: string; body: string }>
+  | Readonly<{ v: 1; op: 'mode'; sessionId: string }>
+  | Readonly<{
+    v: 1; op: 'mode_set'; sessionId: string;
+    commandId: string; expectedVersion: number; requested: ListeningMode; issuedAt: string;
+  }>
+  | Readonly<{ v: 1; op: 'pending'; sessionId: string }>;
+
+export type ClaudeSessionResponse = Readonly<{ status: 200 | 400 | 401; body: Readonly<Record<string, unknown>> }>;
+
+/**
+ * Server-side HTTP binding for the adapter. The local Khala server mounts it on an
+ * authenticated loopback route; the bearer credential is handed to the adapter
+ * and nothing about it (or any token) is echoed.
+ */
+export async function handleClaudeSessionRequest(
+  adapter: ClaudeSessionAdapter,
+  input: Readonly<{ authorization: string | undefined; body: unknown; readBudgetBytes: number }>,
+): Promise<ClaudeSessionResponse> {
+  const bearer = typeof input.authorization === 'string' ? BEARER.exec(input.authorization) : null;
+  if (bearer === null) return { status: 401, body: { kind: 'refused', code: 'unauthorized' } };
+  const request = decodeRequest(input.body);
+  if (request === null) return { status: 400, body: { kind: 'refused', code: 'invalid_request' } };
+  const call = { credential: bearer[1]!, sessionId: request.sessionId };
+  let outcome: Readonly<Record<string, unknown>>;
+  switch (request.op) {
+    case 'read': outcome = await adapter.read(call, { maxBytes: input.readBudgetBytes }); break;
+    case 'send': outcome = await adapter.send(call, { body: request.body }); break;
+    case 'mode': outcome = await adapter.mode(call); break;
+    case 'mode_set': outcome = await adapter.setMode(call, {
+      commandId: request.commandId, expectedVersion: request.expectedVersion, requested: request.requested, issuedAt: request.issuedAt,
+    }); break;
+    case 'pending': outcome = await adapter.pending(call); break;
+  }
+  return { status: outcome.kind === 'refused' && outcome.code === 'unauthorized' ? 401 : 200, body: outcome };
+}
+
+function decodeRequest(value: unknown): ClaudeSessionRequest | null {
+  if (!plainObject(value) || value.v !== 1 || !validIdentifier(value.sessionId)) return null;
+  const keys = Object.keys(value);
+  const only = (...extra: string[]) => keys.every(key => ['v', 'op', 'sessionId', ...extra].includes(key));
+  const sessionId = value.sessionId;
+  switch (value.op) {
+    case 'read': case 'mode': case 'pending':
+      return only() ? { v: 1, op: value.op, sessionId } : null;
+    case 'send':
+      return only('body') && typeof value.body === 'string' ? { v: 1, op: 'send', sessionId, body: value.body } : null;
+    case 'mode_set':
+      if (!only('commandId', 'expectedVersion', 'requested', 'issuedAt') || !validIdentifier(value.commandId)
+        || !Number.isSafeInteger(value.expectedVersion) || (value.expectedVersion as number) < 0
+        || !(LISTENING_MODES as readonly unknown[]).includes(value.requested) || !validUtcTimestamp(value.issuedAt)) return null;
+      return {
+        v: 1, op: 'mode_set', sessionId, commandId: value.commandId,
+        expectedVersion: value.expectedVersion as number, requested: value.requested as ListeningMode, issuedAt: value.issuedAt,
+      };
+    default:
+      return null;
+  }
+}
+
+export type ClaudeClientRefusal =
+  | ClaudeSessionRefusal
+  | Readonly<{ kind: 'refused'; code: RuntimeDescriptorFailure }>;
+
+type Result<T> = Exclude<T, ClaudeSessionRefusal> | ClaudeClientRefusal;
+
+export interface ClaudeSessionClient {
+  read(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeReadOutcome>>;
+  send(sessionId: string, body: string, signal?: AbortSignal): Promise<Result<ClaudeSendOutcome>>;
+  mode(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeModeOutcome>>;
+  pending(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudePendingOutcome>>;
+}
+
+export type ClaudeSessionClientOptions = Readonly<{ descriptorPath: string; fetch?: typeof fetch }>;
+
+/**
+ * The hook- and command-process side. Each call re-reads the owner-only runtime
+ * descriptor, so the loopback port and credential are resolved at runtime and are
+ * never taken from configuration, argv, or the environment. It holds no token,
+ * cursor, or acknowledgement state of its own.
+ */
+export function createClaudeSessionClient(options: ClaudeSessionClientOptions): ClaudeSessionClient {
+  const transport = options.fetch ?? fetch;
+
+  async function call(request: ClaudeSessionRequest, signal: AbortSignal | undefined): Promise<unknown> {
+    const descriptor = await readRuntimeDescriptor(options.descriptorPath);
+    if (!descriptor.ok) return { kind: 'refused', code: descriptor.code };
+    let response: Response;
+    try {
+      response = await transport(`${descriptor.target.origin}${CLAUDE_SESSION_PATH}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${descriptor.target.credential}`, 'content-type': 'application/json' },
+        body: JSON.stringify(request),
+        redirect: 'error',
+        ...(signal === undefined ? {} : { signal }),
+      });
+    } catch {
+      return { kind: 'refused', code: 'unavailable' };
+    }
+    // A rotated or stale descriptor fails closed here, without a retry.
+    if (response.status === 401) return { kind: 'refused', code: 'unauthorized' };
+    if (response.status !== 200) return { kind: 'refused', code: 'unavailable' };
+    try {
+      const text = await response.text();
+      return Buffer.byteLength(text) > MAX_RESPONSE_BYTES ? { kind: 'refused', code: 'unavailable' } : JSON.parse(text);
+    } catch {
+      return { kind: 'refused', code: 'unavailable' };
+    }
+  }
+
+  return {
+    async read(sessionId, signal) {
+      const value = await call({ v: 1, op: 'read', sessionId }, signal);
+      if (plainObject(value) && value.kind === 'empty' && Object.keys(value).length === 1) return { kind: 'empty' };
+      if (plainObject(value) && value.kind === 'batch' && typeof value.text === 'string' && Object.keys(value).length === 2) {
+        return { kind: 'batch', text: value.text };
+      }
+      return refusal(value);
+    },
+    async send(sessionId, body, signal) {
+      const value = await call({ v: 1, op: 'send', sessionId, body }, signal);
+      if (plainObject(value) && ['accepted', 'outcome_unknown'].includes(value.kind as string) && validIdentifier(value.clientTxnId)) {
+        return value.kind === 'accepted'
+          ? { kind: 'accepted', clientTxnId: value.clientTxnId, eventId: validIdentifier(value.eventId) ? value.eventId : null }
+          : { kind: 'outcome_unknown', clientTxnId: value.clientTxnId };
+      }
+      if (plainObject(value) && value.kind === 'refused' && validIdentifier(value.clientTxnId) && validIdentifier(value.code)) {
+        return { kind: 'refused', code: value.code, clientTxnId: value.clientTxnId };
+      }
+      return refusal(value);
+    },
+    async mode(sessionId, signal) {
+      const value = await call({ v: 1, op: 'mode', sessionId }, signal);
+      if (plainObject(value) && value.kind === 'mode') return value as Exclude<ClaudeModeOutcome, ClaudeSessionRefusal>;
+      return refusal(value);
+    },
+    async pending(sessionId, signal) {
+      const value = await call({ v: 1, op: 'pending', sessionId }, signal);
+      if (plainObject(value) && (value.kind === 'pending' || value.kind === 'idle') && Object.keys(value).length === 1) {
+        return { kind: value.kind };
+      }
+      return refusal(value);
+    },
+  };
+}
+
+const CLIENT_REFUSALS: readonly string[] = [
+  ...CLAUDE_SESSION_REFUSALS, 'descriptor_missing', 'descriptor_insecure', 'descriptor_malformed',
+];
+
+function refusal(value: unknown): ClaudeClientRefusal {
+  return plainObject(value) && value.kind === 'refused' && CLIENT_REFUSALS.includes(value.code as string)
+    ? { kind: 'refused', code: value.code as ClaudeClientRefusal['code'] }
+    : { kind: 'refused', code: 'unavailable' };
+}
+

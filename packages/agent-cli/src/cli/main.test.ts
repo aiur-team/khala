@@ -30,6 +30,14 @@ describe('bundled CLI entrypoint', () => {
     expect(JSON.parse(result.stderr)).toEqual({ ok: false, error: 'invalid_arguments' });
   });
 
+  it('keeps the registered Claude session command fail-closed until live composition exists', () => {
+    const result = spawnSync(process.execPath, [linkedEntrypoint, 'claude', 'read', '--session', 'session-1'], { encoding: 'utf8' });
+
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(JSON.parse(result.stderr)).toEqual({ ok: false, error: 'transport_unavailable' });
+  });
+
   it('runs standalone status through a symlink', () => {
     const result = spawnSync(process.execPath, [linkedEntrypoint, 'status'], { encoding: 'utf8' });
 

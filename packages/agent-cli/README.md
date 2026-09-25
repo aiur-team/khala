@@ -11,6 +11,7 @@ khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
 khala status
 khala mcp-serve
+khala claude <read|send|mode|pending> --session <claude-session-id>
 ```
 
 Released or model-authored bytes are accepted only through stdin, MCP stdio, or
@@ -133,6 +134,40 @@ arrival alone selects nothing. Neither delivery path publishes or forwards a
 message; only an explicit `khala_send` call sends. Pull or piggyback delivery
 creates no receipt, advertises no capability, and makes no claim that a peer is
 asynchronous, synchronous, steerable, or actively listening.
+
+## Claude session adapter
+
+```text
+khala claude <read|send|mode|pending> --session <claude-session-id>
+```
+
+This is the entry point for the Claude plugin's hooks and `/khala` skill. The
+command resolves the loopback origin and installation credential from the
+owner-only (exactly `0600`, not a symlink) runtime descriptor on every call,
+posts one request to the local Khala server, and exits. Installed plugin or MCP
+entries hold only the descriptor path; the port and credential never appear in
+configuration, argv, environment variables, output, or errors. A missing,
+malformed, or insecure descriptor fails closed with `descriptor_missing`,
+`descriptor_malformed`, or `descriptor_insecure`; a stale one is refused by
+the server as `unauthorized`. `send` reads its message from stdin.
+
+Server-side, `createClaudeSessionAdapter` authenticates the installation
+credential and treats the Claude session ID only as a selector among that
+principal's verified bindings, at their active generation. Cwd is never used,
+and a foreign session is refused exactly like an unknown one
+(`session_not_bound`). Reads call the single `khala_read` operation. The
+server's `ClaudeSessionStatePort` durably keeps the returned batch token and
+attaches it to exactly one next send, pull, or mode-control call for the same
+principal, binding, and generation, including across a server restart. The
+token never reaches the hook or command process: `read` prints the shared
+`<khala-channel-batch-v1>` frame without its `batchToken` line. Handoff runs only
+when `HarnessCapabilities.acknowledgement` is `batch_token_next_call`;
+otherwise `read` is refused as `unproven`, and mode support without evidence
+reports `unproven`. `pending` returns only `pending` or `idle` from the local
+automation fence's notification signal; it never pulls or acknowledges.
+
+The installed binary does not compose this client yet, so `khala claude`
+fails closed with `transport_unavailable`.
 
 ## Composition boundary
 
