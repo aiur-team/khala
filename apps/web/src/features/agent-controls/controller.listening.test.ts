@@ -258,13 +258,11 @@ describe('listening mode — defaults and labels', () => {
 
   it('widens the short id until two concurrent same-CLI bindings are distinguishable', () => {
     const base = 'bind-a' as BindingId;
-    const seen = new Map<string, BindingId>();
+    const target = bindingShortId(base, []);
     let collider: BindingId | null = null;
-    for (let index = 0; collider === null && index < 100_000; index += 1) {
+    for (let index = 0; collider === null && index < 1_000_000; index += 1) {
       const id = `bind-${index}` as BindingId;
-      const prefix = bindingShortId(id, []);
-      if (prefix === bindingShortId(base, [])) collider = id;
-      seen.set(prefix, id);
+      if (bindingShortId(id, []) === target) collider = id;
     }
     expect(collider).not.toBeNull();
     const a = bindingShortId(base, [collider!]);
@@ -380,6 +378,18 @@ describe('listening mode — stopped session', () => {
     expect(listening().sessionActive).toBe(false);
     expect(listening().options.every(option => !option.selectable && !option.canGrantExperimental)).toBe(true);
     expect(listening().inactiveReason).toMatch(/Resume or rejoin/);
+    controller.dispose();
+  });
+
+  it('keeps the last session label when a disconnect drops capabilities', async () => {
+    const state = fixture();
+    const { listening, emit, controller } = await start(state);
+    const label = listening().sessionLabel;
+    state.connection = 'offline';
+    state.capabilities = null;
+    emit();
+    expect(listening().sessionLabel).toBe(label);
+    expect(listening().effective).toBe('none');
     controller.dispose();
   });
 

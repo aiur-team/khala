@@ -165,9 +165,14 @@ export function createAgentControlsController(
    * so the owner never confirms against evidence they did not see.
    */
   function applyListening(snapshot: AgentControlsSnapshot, generationChanged: boolean): void {
-    const next = projectListening(snapshot, config.viewerOwnerId, evidenceRegistry);
+    const projected = projectListening(snapshot, config.viewerOwnerId, evidenceRegistry);
     const generationReplaced = generationChanged
-      || (listeningBase !== null && next !== null && next.generation !== listeningBase.generation);
+      || (listeningBase !== null && projected !== null && projected.generation !== listeningBase.generation);
+    // A disconnect can drop capabilities (and with them the CLI version); the
+    // stopped row keeps the last label it showed for this generation.
+    const next = projected !== null && listeningBase !== null && !generationReplaced && snapshot.capabilities === null
+      ? { ...projected, sessionLabel: listeningBase.sessionLabel }
+      : projected;
     if (generationReplaced) {
       resetListeningIntent();
       listeningBase = next;
