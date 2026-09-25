@@ -44,6 +44,8 @@ async function start(overrides: Partial<ChannelServerOptions> = {}, fixture?: Ch
   return { fixture: fx, server, origin: server.origin, events, clock };
 }
 
+// Response bodies are probed field by field across many shapes; assertions, not types, check them.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Reply = Readonly<{ status: number; headers: IncomingMessage['headers']; text: string; json: any }>;
 
 function call(port: number, input: Readonly<{
