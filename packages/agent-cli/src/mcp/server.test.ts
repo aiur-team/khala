@@ -53,6 +53,7 @@ describe('MCP server', () => {
         description: expect.stringMatching(/Khala channel.*exact batchToken.*releaseId.*solely to acknowledge/),
         inputSchema: {
           additionalProperties: false,
+          required: ['message'],
           properties: {
             ackBatchToken: {
               type: 'string',
