@@ -54,7 +54,7 @@ acceptance.
 
 - [`navigation.registerLocationRenderer`](https://github.com/element-hq/element-web/blob/f2e247684496637f80e73805442e7d8e99f68548/packages/module-api/src/api/navigation.ts) exposes an **alpha** route renderer; `openRoom` is the exposed join/navigation hook.
 - [`builtins.renderRoomView`](https://github.com/element-hq/element-web/blob/f2e247684496637f80e73805442e7d8e99f68548/packages/module-api/src/api/builtins.ts) and RoomViewProps hide room header/composer/right panel/widgets; these are **alpha** surfaces, not a stable external component kit.
-- [`LoggedInView.tsx:653–723`](https://github.com/element-hq/element-web/blob/f2e247684496637f80e73805442e7d8e99f68548/apps/web/src/components/structures/LoggedInView.tsx#L653) invokes module content and hides its room list, but retains SpacePanel and a left wrapper. Exposed UIComponent customization has no host-shell suppression option. Branding alone does not remove this chrome.
+- [`LoggedInView.tsx:653–723`](https://github.com/element-hq/element-web/blob/f2e247684496637f80e73805442e7d8e99f68548/apps/web/src/components/structures/LoggedInView.tsx#L653) invokes module content and hides its channel list, but retains SpacePanel and a left wrapper. Exposed UIComponent customization has no host-shell suppression option. Branding alone does not remove this chrome.
 - The published `Api.overwriteAccountAuth` and custom login props allow account injection in principle; actual OAuth provisioning, invitation admission, token refresh and user device setup are **not exercised** by this comparison.
 
 [PATCHES.md](../../experiments/client-reuse/element/PATCHES.md) records a proposed

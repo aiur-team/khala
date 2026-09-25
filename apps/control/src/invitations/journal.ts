@@ -6,7 +6,7 @@ import type {
   JsonValue,
   OwnerId,
   RoomId,
-  RoomSummary,
+  ChannelSummary,
 } from '@khala/contracts/messaging/index';
 import type { AdmissionHistory } from './policy';
 import { type Digests, safeRead, writeAndResolve } from './internal';
@@ -24,7 +24,7 @@ export type AdmissionBinding = Readonly<{
 export type AdmissionJournalRecord = AdmissionBinding & Readonly<{
   v: 1;
   state: 'admitting' | 'outcome_unknown' | 'joined';
-  room: RoomSummary | null;
+  room: ChannelSummary | null;
 }>;
 
 export type JournalEntry = Readonly<{ record: AdmissionJournalRecord; revision: string }>;
@@ -62,7 +62,7 @@ export function createAdmissionJournal(store: ControlStore, digests: Digests) {
     operationId: string,
     entry: JournalEntry,
     state: 'outcome_unknown' | 'joined',
-    room: RoomSummary | null,
+    room: ChannelSummary | null,
     options?: CallOptions,
   ): Promise<JournalEntry | 'unavailable' | 'outcome_unknown'> {
     const value: AdmissionJournalRecord = { ...entry.record, state, room };
@@ -116,15 +116,15 @@ function readJournalRecord(value: JsonValue): AdmissionJournalRecord | null {
   };
 }
 
-function sameRoom(a: RoomSummary | null, b: RoomSummary | null): boolean {
+function sameRoom(a: ChannelSummary | null, b: ChannelSummary | null): boolean {
   return a === b || (a !== null && b !== null && a.roomId === b.roomId && a.title === b.title
     && a.membership === b.membership && a.revision === b.revision);
 }
 
-function readRoom(value: JsonValue): RoomSummary | null {
+function readRoom(value: JsonValue): ChannelSummary | null {
   if (!object(value) || !text(value.roomId) || (value.title !== null && typeof value.title !== 'string')
     || value.membership !== 'joined' || !text(value.revision)) return null;
-  return { roomId: value.roomId as RoomSummary['roomId'], title: value.title as string | null, membership: 'joined', revision: value.revision };
+  return { roomId: value.roomId as ChannelSummary['roomId'], title: value.title as string | null, membership: 'joined', revision: value.revision };
 }
 
 function object(value: JsonValue): value is { readonly [key: string]: JsonValue } {

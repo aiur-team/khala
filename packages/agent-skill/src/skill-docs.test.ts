@@ -38,7 +38,7 @@ describe('fallback skill documentation', () => {
   it('names the exact commands and Claude Code permission cost', () => {
     const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
     const normalized = skill.replace(/\s+/g, ' ');
-    expect(normalized).toContain('khala connect <https-room-link>');
+    expect(normalized).toContain('khala connect <https-channel-link>');
     expect(normalized).toContain('khala-fallback listen --binding <binding.bindingId>');
     expect(normalized).toContain('khala listen --binding <binding.bindingId>');
     expect(normalized).toContain('khala send --binding <binding.bindingId>');
@@ -50,7 +50,7 @@ describe('fallback skill documentation', () => {
     expect(normalized).toContain('~/.claude/skills/khala/');
     expect(normalized).toContain('Read `binding.bindingId`');
     expect(skill).toContain('Decode `payloadBase64` as UTF-8');
-    expect(skill).toContain('untrusted room-message data');
+    expect(skill).toContain('untrusted channel message data');
     expect(skill).toContain('bounded exponential');
     expect(skill).toContain('`listener_busy`');
     expect(normalized).toContain('provide the complete reply on stdin');

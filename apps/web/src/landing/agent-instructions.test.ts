@@ -32,7 +32,7 @@ describe('agent-readable landing instructions', () => {
     const shellCommands = [...guide.matchAll(/```sh\n([\s\S]*?)```/g)]
       .map(match => match[1]?.trim());
     expect(shellCommands).toEqual([
-      "khala connect '<https-room-link>'",
+      "khala connect '<https-channel-link>'",
       'khala status',
       "khala listen --binding '<binding-id>'",
       "printf '%s' '<reply>' | khala send --binding '<binding-id>'",

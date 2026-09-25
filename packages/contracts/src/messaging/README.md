@@ -1,6 +1,6 @@
 # `@khala/contracts/messaging`
 
-Identity, room and messaging ports (KHA-105). This domain holds data shapes, strict
+Identity, channel and messaging ports (KHA-105). This domain holds data shapes, strict
 decoders and port interfaces. It has no SDK, storage, network or delivery-domain imports,
 and it does not claim any runtime E2EE property.
 
@@ -13,7 +13,7 @@ KHA-106 mirrors the scalar shapes below independently.
 | Concept | Type | Identity key |
 |---|---|---|
 | Human owner | `AuthPrincipal` | `providerIssuer` + `providerSubject`. `verifiedEmail` is contact data, and `ownerId` is an opaque key that is never the email |
-| Room participant | `ParticipantView` | `participantId`. `kind` (`human`/`agent`) and `ownerId` come from the authenticated mapping, never a label |
+| Channel participant | `ParticipantView` | `participantId`. `kind` (`human`/`agent`) and `ownerId` come from the authenticated mapping, never a label |
 | Device | `DeviceView` | `deviceId`, which belongs to neither a human nor an agent |
 | Agent working session | `SessionBinding` | `bindingId` + `generation`. Another session needs another binding |
 
@@ -28,7 +28,7 @@ where an owner ID is expected. Decoders produce the branded values, and `decodeO
 and its siblings brand a lone identifier. The brand key is a string literal, so the
 delivery domain can declare a structurally identical mirror without importing this one.
 
-Display names are nonempty. Display names and room titles reject control characters,
+Display names are nonempty. Display names and channel titles reject control characters,
 bidi controls (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) and invisible
 U+200B, U+2060 and U+FEFF. ZWNJ and ZWJ stay allowed because Persian and Indic scripts
 and emoji sequences need them.
@@ -40,7 +40,7 @@ and emoji sequences need them.
 `["khala.message.v1","text",body]`. The body is never Unicode- or newline-normalised.
 Adapters hash the bytes that will be released, not rendered HTML or markdown, and not an
 encrypted blob. An edit produces a new event with a new reference. `decodeTimelineItem`,
-`decodeTimelinePage` and `decodeRoomSnapshot` recompute every digest, so a reference paired
+`decodeTimelinePage` and `decodeChannelSnapshot` recompute every digest, so a reference paired
 with any other body is rejected. The author device is not checked against the participant's
 current devices, because devices rotate. To approve a specific event, compare the whole
 reference with `sameEventRef` — an approval or release API only ever takes an `EventRef`,
@@ -90,7 +90,7 @@ Unlike a decryptable item, an `unavailable` `TimelineItem.ref` is an
 `UnavailableEventRef`, not an `EventRef`: it carries the same `roomId`, `eventId`,
 `authorParticipantId` and `authorDeviceId`, but no `contentDigest`, because there is no
 recovered plaintext to hash. `decodeTimelineItem`, `decodeTimelinePage` and
-`decodeRoomSnapshot` therefore skip digest verification for it, and reject a
+`decodeChannelSnapshot` therefore skips digest verification for it, and rejects a
 `contentDigest` field on its reference outright. `UnavailableEventRef` is missing a
 field `EventRef` requires, so it is not assignable to `EventRef` and cannot reach
 `sameEventRef` or any approval or release API — approvals only ever apply to decrypted
@@ -123,7 +123,7 @@ which the transport deduplicates.
 |---|---|
 | `IdentityPort` | KHA-110 |
 | `DevicePort` | KHA-111 |
-| `RoomPort` | KHA-112 |
+| `ChannelPort` | KHA-112 |
 | `AdmissionPort` | KHA-113; each `share` call carries its immutable per-link admission policy |
 | `RevocationPort` | KHA-128 |
 | `RecoveryPort` | KHA-129 |

@@ -137,7 +137,7 @@ describe('RecoveryPanel state facts', () => {
     expect(html).not.toContain('Recover with device backup');
     expect(html).toContain(`Revoke device ${DEVICE_ID}`);
     expect(html).not.toContain('Revoke binding');
-    expect(html).not.toContain('Close room');
+    expect(html).not.toContain('Close channel');
     expect(html.toLowerCase()).not.toContain('escrow');
     expect(html).not.toContain('type="password"');
   });
@@ -153,8 +153,8 @@ describe('RecoveryPanel state facts', () => {
 
     expect(html).toContain('Signed out');
     expect(html).toContain('Recovery is not available.');
-    expect(html).toContain('Room actions are unavailable');
-    expect(html).toContain('>Close room<');
+    expect(html).toContain('Channel actions are unavailable');
+    expect(html).toContain('>Close channel<');
     expect(html).toContain('disabled=""');
   });
 });
@@ -166,9 +166,9 @@ describe('RecoveryPanel operation states', () => {
       allowedActions: [],
     }));
 
-    expect(html).toContain(`Room ${ROOM_ID}`);
+    expect(html).toContain(`Channel ${ROOM_ID}`);
     expect(html).toContain('New messages will stop');
-    expect(html).toContain('The room will be removed from your view');
+    expect(html).toContain('The channel will be removed from your view');
     expect(html).toContain('Local cleanup will be requested on your devices');
     expect(html).toContain('Copies already delivered to participants or models cannot be recalled');
     expect(html).toContain('Service retention is governed separately');
@@ -186,7 +186,7 @@ describe('RecoveryPanel operation states', () => {
 
     expect(html).toMatch(/status-badge--caution[^>]*>Closure partially complete/);
     expect(html).not.toMatch(/status-badge--positive[^>]*>Closure partially complete/);
-    expect(html).toContain('Completed: new messages stopped and the room was removed from your view.');
+    expect(html).toContain('Completed: new messages stopped and the channel was removed from your view.');
     expect(html).toContain('Remaining: local cleanup did not complete on every owner device.');
   });
 
@@ -196,7 +196,7 @@ describe('RecoveryPanel operation states', () => {
       allowedActions: [],
     }));
 
-    expect(html).toContain('Some room-closure effects completed and some remain unresolved.');
+    expect(html).toContain('Some channel-closure effects completed and some remain unresolved.');
     expect(html).not.toContain('Completed: new messages stopped');
   });
 
@@ -209,7 +209,7 @@ describe('RecoveryPanel operation states', () => {
     expect(html).toContain('Closure outcome unknown');
     expect(html).toContain('closure-1');
     expect(html).toContain('Inspect operation');
-    expect(html).not.toContain('>Close room<');
+    expect(html).not.toContain('>Close channel<');
     expect(html).not.toContain('Closure complete');
   });
 
@@ -250,7 +250,7 @@ describe('RecoveryPanel operation states', () => {
     expect(html).toContain('Closure failed');
     expect(html).toContain('Copies already delivered to participants or models cannot be recalled.');
     expect(html).not.toContain('New messages will stop.');
-    expect(html).not.toContain('The room will be removed from your view.');
+    expect(html).not.toContain('The channel will be removed from your view.');
     expect(html).not.toContain('Local cleanup will be requested on your devices.');
   });
 });

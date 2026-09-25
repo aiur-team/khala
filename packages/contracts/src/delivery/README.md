@@ -14,12 +14,12 @@ without a root barrel or lockfile change.
 An `ApprovalCommand` names one binding generation, one policy version and an ordered,
 nonempty selection of immutable `EventRef` values. Selection size comes from a decoded
 `DeliveryLimits` capability; there is no protocol default and no silent truncation.
-Duplicate event identities and mixed-room selections fail decoding. Reordering events
+Duplicate event identities and mixed-channel selections fail decoding. Reordering events
 changes the command input.
 
 `OwnerAuthority` is a trusted composition input. There is deliberately no JSON decoder
 for it: a browser body that contains an `ownerId` is not authentication. Implementations
-must validate owner/room membership and binding ownership before reading pending
+must validate owner/channel membership and binding ownership before reading pending
 plaintext. `issuedAt` is audit data, not replay protection.
 
 The same command ID with identical canonical input returns its stored result. Reusing an
@@ -42,7 +42,7 @@ branded type with exactly two constructors:
 
 - `releaseFromApproval({ approval, items, binding, policyVersion, release })` checks
   every item against the approved selection with `sameEventRef`, in order, and checks the
-  binding ID, binding generation, policy version and room. Any difference is a typed
+  binding ID, binding generation, policy version and channel. Any difference is a typed
   rejection (`stale_content`, `stale_binding`, `stale_policy`, `binding_mismatch`,
   `room_mismatch`, `selection_mismatch`), never a partial release.
 - `verifyReleasedJob(job, approval)` re-verifies a stored or decoded release against the

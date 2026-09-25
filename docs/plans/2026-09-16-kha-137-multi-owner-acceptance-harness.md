@@ -93,7 +93,7 @@ interface ScenarioHarness {
 
 ### Fixture and oracle design
 
-Create A/B/C with distinct human identity, agent participant, device, binding and independent policy version. Duplicate email/display names are useful adversarial metadata but do not collapse verified owners. Fixed event fixture E7 is authored by A and visible in the room; B and C each have independent pending/release decisions. B approving E7 cannot release C's copy. Tests assert the observable model-facing output, not only internal policy flags.
+Create A/B/C with distinct human identity, agent participant, device, binding and independent policy version. Duplicate email/display names are useful adversarial metadata but do not collapse verified owners. Fixed event fixture E7 is authored by A and visible in the channel; B and C each have independent pending/release decisions. B approving E7 cannot release C's copy. Tests assert the observable model-facing output, not only internal policy flags.
 
 Use deterministic fake-clock scheduling for component tests. Keep fake clocks separate per process where the integration models independent time. Live evidence uses monotonic elapsed durations plus wall-clock provenance, no fabricated synchronized latency. Stable operation/release/receipt IDs permit correlation without plaintext logs. Evidence mode is mandatory: a fake reporting context_consumed cannot satisfy a live harness assertion.
 

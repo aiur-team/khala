@@ -11,12 +11,12 @@ import type {
   AgentConnectionState,
   AgentPresence,
   AgentPresenceSnapshot,
-  RoomUiPort,
-} from '../../features/room/ports';
+  ChannelUiPort,
+} from '../../features/channel/ports';
 
 type TimerHandle = unknown;
 
-export type RoomUiCompositionOptions = Readonly<{
+export type ChannelUiCompositionOptions = Readonly<{
   fetch: typeof globalThis.fetch;
   endpoint?: string;
   pollIntervalMs?: number;
@@ -26,6 +26,9 @@ export type RoomUiCompositionOptions = Readonly<{
   setTimeout?: (callback: () => void, milliseconds: number) => TimerHandle;
   clearTimeout?: (handle: TimerHandle) => void;
 }>;
+
+/** @deprecated Use `ChannelUiCompositionOptions`. Kept through the first tagged release containing #163. */
+export type RoomUiCompositionOptions = ChannelUiCompositionOptions;
 
 const CONNECTIONS: readonly AgentConnectionState[] = ['connected', 'stale', 'offline', 'unknown'];
 const AGENT_KEYS = [
@@ -87,7 +90,7 @@ function decodeSnapshot(value: unknown): Readonly<{
 }
 
 /** Browser adapter for the authenticated, content-free agent status route. */
-export function createRoomUiPort(options: RoomUiCompositionOptions): RoomUiPort {
+export function createChannelUiPort(options: ChannelUiCompositionOptions): ChannelUiPort {
   const endpoint = options.endpoint ?? '/api/agent/status';
   const pollIntervalMs = options.pollIntervalMs ?? 5_000;
   const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
@@ -162,3 +165,6 @@ export function createRoomUiPort(options: RoomUiCompositionOptions): RoomUiPort 
     },
   };
 }
+
+/** @deprecated Use `createChannelUiPort`. Kept through the first tagged release containing #163. */
+export const createRoomUiPort = createChannelUiPort;

@@ -1,8 +1,19 @@
 import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 import { describe, expect, it, vi } from 'vitest';
-import { createRoomUiPort } from './agent-presence';
+import {
+  createChannelUiPort,
+  createRoomUiPort,
+  type ChannelUiCompositionOptions,
+  type RoomUiCompositionOptions,
+} from './agent-presence';
 
-describe('human room composition', () => {
+describe('human channel composition', () => {
+  it('keeps deprecated room composition aliases on the canonical implementation', () => {
+    expect(createRoomUiPort).toBe(createChannelUiPort);
+    const options = null as unknown as RoomUiCompositionOptions;
+    expect(options as ChannelUiCompositionOptions).toBeNull();
+  });
+
   it('decodes presence and keeps install commands out of the public agent snapshot', async () => {
     const fetchStatus = vi.fn(async () => new Response(JSON.stringify({
       generation: 7,
@@ -13,10 +24,10 @@ describe('human room composition', () => {
         connection: 'connected',
         routeLabel: 'Codex CLI',
         lastReceipt: { kind: 'harness_queued', observedAt: '2026-09-19T12:00:00.000Z' },
-        installCommand: "khala connect 'https://khala.example/room/link'",
+        installCommand: "khala connect 'https://khala.example/channel/link'",
       }],
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    const port = createRoomUiPort({ fetch: fetchStatus });
+    const port = createChannelUiPort({ fetch: fetchStatus });
 
     const snapshot = await port.agents('room-1' as RoomId, new AbortController().signal);
 
@@ -32,12 +43,12 @@ describe('human room composition', () => {
       }],
     });
     await expect(port.installCommand('agent-1' as ParticipantId, new AbortController().signal))
-      .resolves.toBe("khala connect 'https://khala.example/room/link'");
+      .resolves.toBe("khala connect 'https://khala.example/channel/link'");
     expect(fetchStatus).toHaveBeenCalledOnce();
   });
 
   it('fails closed on malformed or content-bearing status responses', async () => {
-    const port = createRoomUiPort({
+    const port = createChannelUiPort({
       fetch: async () => new Response(JSON.stringify({
         generation: 1,
         agents: [{
@@ -57,7 +68,7 @@ describe('human room composition', () => {
   });
 
   it('rejects an invalid connection state', async () => {
-    const port = createRoomUiPort({
+    const port = createChannelUiPort({
       fetch: async () => new Response(JSON.stringify({
         generation: 1,
         agents: [{
@@ -76,7 +87,7 @@ describe('human room composition', () => {
   });
 
   it('rejects invisible and bidi control characters in presence labels', async () => {
-    const port = createRoomUiPort({
+    const port = createChannelUiPort({
       fetch: async () => new Response(JSON.stringify({
         generation: 1,
         agents: [{
@@ -98,7 +109,7 @@ describe('human room composition', () => {
     let generation = 0;
     const callbacks: Array<() => void> = [];
     const clearInterval = vi.fn();
-    const port = createRoomUiPort({
+    const port = createChannelUiPort({
       fetch: async () => new Response(JSON.stringify({ generation: ++generation, agents: [] })),
       setInterval(callback) { callbacks.push(callback); return callbacks.length; },
       clearInterval,
@@ -116,7 +127,7 @@ describe('human room composition', () => {
     const intervalCallbacks: Array<() => void> = [];
     const timeoutCallbacks: Array<() => void> = [];
     let calls = 0;
-    const port = createRoomUiPort({
+    const port = createChannelUiPort({
       fetch: async (_input, init) => {
         calls += 1;
         if (calls === 1) {

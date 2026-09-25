@@ -15,8 +15,8 @@ Production web origin: **https://khala.aiur.team** (user-selected). Hosting/DNS 
 ## Ordinary user journey
 
 1. Sign in with OAuth, following Archon’s identity-only email sign-in experience.
-2. Create a chat, optionally give it a name, and optionally prepare introductory content.
-3. Copy the chat link to the existing working agent and coworker.
+2. Create a channel, optionally give it a name, and optionally prepare introductory content.
+3. Copy the channel link to the existing working agent and coworker.
 4. The agent performs its own supported connection/subscription setup; the coworker joins through the web experience and shares the link with their agent.
 
 Connector, adapter, pairing and key-storage terminology below describes implementation, not additional user setup. No manual install/configuration, shell command, separate Matrix registration or normal-path cryptographic ceremony is part of this flow. Review/release controls remain intentional human interactions.
@@ -36,7 +36,7 @@ One undispatched root, **KHA-ROOT**, has 44 direct executable members, organized
 | KHA-E01 — Validate feasibility and ownership | Evidence resolves substrate, no-setup ownership and existing-session feasibility gates. | KHA-102, KHA-103, KHA-104, KHA-141, KHA-142, KHA-143, KHA-144 |
 | KHA-E02 — Establish workspace and contracts | Independent consumers build against owned, versioned ports and fixtures. | KHA-101, KHA-105, KHA-106 |
 | KHA-E03 — Operate reusable hosting | Selected services and Netlify deployment have restart, restore and upgrade evidence. | KHA-108, KHA-109, KHA-131 |
-| KHA-E04 — Deliver human encrypted chat | Two humans complete OAuth/create/share/chat with attribution and queued introductions. | KHA-107, KHA-110, KHA-111, KHA-112, KHA-113, KHA-122, KHA-123, KHA-124, KHA-132 |
+| KHA-E04 — Deliver a human encrypted channel | Two humans complete OAuth/create/share/channel with attribution and queued introductions. | KHA-107, KHA-110, KHA-111, KHA-112, KHA-113, KHA-122, KHA-123, KHA-124, KHA-132 |
 | KHA-E05 — Attach existing working agents | Owner runtime attaches and notifies existing sessions without human technical setup. | KHA-114, KHA-115, KHA-116, KHA-117, KHA-118, KHA-121, KHA-133 |
 | KHA-E06 — Control peer delivery | Human authorization governs exact release, trusted delivery, re-arm and pause. | KHA-119, KHA-120, KHA-125, KHA-126, KHA-134, KHA-135 |
 | KHA-E07 — Recover and revoke safely | Loss, replacement and closure follow approved history/retention policy. | KHA-127, KHA-128, KHA-129, KHA-130, KHA-136 |
@@ -51,12 +51,12 @@ Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linke
 | Ticket | Bounded outcome | Prerequisites | Primary write surface |
 |---|---|---|---|
 | KHA-101 | Scaffold TypeScript workspace and CI | None | `package.json`; `pnpm-lock.yaml`; `pnpm-workspace.yaml`; `tsconfig.base.json`; `.github/workflows/`; `scripts/check-boundaries.mjs` |
-| KHA-105 | Define identity, room and messaging ports | KHA-101, KHA-102, KHA-141, KHA-142, KHA-144 | `packages/contracts/src/messaging/`; `packages/contracts/fixtures/messaging/` |
+| KHA-105 | Define identity, channel and messaging ports | KHA-101, KHA-102, KHA-141, KHA-142, KHA-144 | `packages/contracts/src/messaging/`; `packages/contracts/fixtures/messaging/` |
 | KHA-106 | Define approval and harness ports | KHA-101, KHA-103, KHA-104 | `packages/contracts/src/delivery/`; `packages/contracts/fixtures/delivery/` |
 
 **KHA-101 acceptance:** All package shells build; feature imports are checked; root commands discover package tests without per-feature CI edits.
 
-**KHA-105 acceptance:** Versioned identities, room admission, immutable event references, SDK mapping and recovery ports have valid/invalid fixtures; provider subject is distinct from email, device and agent session.
+**KHA-105 acceptance:** Versioned identities, channel admission, immutable event references, SDK mapping and recovery ports have valid/invalid fixtures; provider subject is distinct from email, device and agent session.
 
 **KHA-106 acceptance:** Pin exact release references, owner commands, capability reports, receipt states and outcome_unknown; contract tests cover forgery and duplicate semantics without importing messaging implementations.
 
@@ -72,7 +72,7 @@ Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linke
 | KHA-143 | Choose client reuse boundary | KHA-141 | `docs/evidence/client-reuse.md`; `experiments/client-reuse/` |
 | KHA-144 | Prove OAuth-to-agent ownership bootstrap | KHA-102, KHA-141, KHA-142 | `experiments/ownership/`; `docs/evidence/ownership.md` |
 
-**KHA-102 acceptance:** Pinned Synapse/Postgres starts with durable volumes; record license, service requirements and Netlify comparison. No custom chat backend.
+**KHA-102 acceptance:** Pinned Synapse/Postgres starts with durable volumes; record license, service requirements and Netlify comparison. No custom channel backend.
 
 **KHA-103 acceptance:** An existing working session receives an event after agent-performed setup; record required opt-ins, busy behavior, identity and timestamps. Any human setup requirement is a product gap.
 
@@ -91,7 +91,7 @@ Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linke
 | Ticket | Bounded outcome | Prerequisites | Primary write surface |
 |---|---|---|---|
 | KHA-107 | Build Aiur-branded shell | KHA-101, KHA-143 | `apps/web/src/shell/`; `apps/web/src/brand/` |
-| KHA-122 | Build create-chat and intro composer | KHA-101, KHA-105, KHA-107 | `apps/web/src/features/create-chat/` |
+| KHA-122 | Build create-channel and intro composer | KHA-101, KHA-105, KHA-107 | `apps/web/src/features/create-channel/` |
 | KHA-123 | Build attributed live timeline | KHA-101, KHA-105, KHA-107 | `apps/web/src/features/timeline/` |
 | KHA-124 | Build OAuth entry and invitation journey | KHA-101, KHA-105, KHA-107 | `apps/web/src/features/join/` |
 | KHA-125 | Build recipient review UI | KHA-101, KHA-105, KHA-106, KHA-107 | `apps/web/src/features/review/` |
@@ -124,7 +124,7 @@ Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linke
 
 **KHA-109 acceptance:** Restore a disposable backup and exercise upgrade/rollback against declared versions; sanitized health evidence and resource baseline are recorded.
 
-**KHA-131 acceptance:** Static app and small authenticated control handlers deploy through Netlify adapter; environment validation keeps secrets private; no persistent Hono service or duplicate chat event log.
+**KHA-131 acceptance:** Static app and small authenticated control handlers deploy through Netlify adapter; environment validation keeps secrets private; no persistent Hono service or duplicate channel event log.
 
 ## Identity
 
@@ -150,9 +150,9 @@ Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linke
 
 | Ticket | Bounded outcome | Prerequisites | Primary write surface |
 |---|---|---|---|
-| KHA-112 | Implement room and intro commands | KHA-101, KHA-105 | `packages/messaging/src/rooms/` |
+| KHA-112 | Implement channel and intro commands | KHA-101, KHA-105 | `packages/messaging/src/channels/` |
 
-**KHA-112 acceptance:** Room creation and named/unnamed chat work; human and delegated-agent multi-message intro batches retain attribution and retry identity. Agent room creation is not assumed.
+**KHA-112 acceptance:** Channel creation and named/unnamed channel work; human and delegated-agent multi-message intro batches retain attribution and retry identity. Agent channel creation is not assumed.
 
 ## Connector
 
@@ -200,7 +200,7 @@ Each member has a [draft scope card](tickets/KHA-101.md); all 44 cards are linke
 
 | Ticket | Bounded outcome | Prerequisites | Primary write surface |
 |---|---|---|---|
-| KHA-132 | Wire real human create/share/chat flow | KHA-108, KHA-110, KHA-111, KHA-112, KHA-113, KHA-122, KHA-123, KHA-124, KHA-131 | `apps/web/src/composition/human/`; `apps/control/src/composition/human/`; `tests/integration/human/` |
+| KHA-132 | Wire real human create/share/channel flow | KHA-108, KHA-110, KHA-111, KHA-112, KHA-113, KHA-122, KHA-123, KHA-124, KHA-131 | `apps/web/src/composition/human/`; `apps/control/src/composition/human/`; `tests/integration/human/` |
 | KHA-133 | Wire existing-session agent connection | KHA-114, KHA-115, KHA-116, KHA-117, KHA-118, KHA-121 | `apps/connector/src/runtime/`; `apps/control/src/composition/agent/`; `tests/integration/connector/` |
 | KHA-134 | Wire human approval to model delivery | KHA-119, KHA-125, KHA-132, KHA-133 | `apps/web/src/composition/review/`; `apps/connector/src/composition/review/`; `tests/integration/review/` |
 | KHA-135 | Wire trust, pause and status acknowledgments | KHA-120, KHA-126, KHA-134 | `apps/web/src/composition/controls/`; `apps/connector/src/composition/controls/`; `tests/integration/controls/` |

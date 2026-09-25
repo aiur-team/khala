@@ -1,13 +1,13 @@
 # `@khala/connector/bootstrap`
 
-Agent-operated link bootstrap (KHA-114). The human pastes a chat link into their existing
+Agent-operated link bootstrap (KHA-114). The human pastes a channel link into their existing
 agent session. The agent calls `bootstrapAgent` with that link and its own session claim.
 The connector does the rest; the human only signs in, if they are not already signed in.
 Import from `@khala/connector/bootstrap/index`.
 
 ```ts
 const result = await bootstrapAgent(
-  { chatUrl, session: { harness, sessionId, workdir }, operationId },
+  { channelUrl, session: { harness, sessionId, workdir }, operationId },
   { discovery, sessions, ownership, admission, devices, operations },
 );
 ```
@@ -57,7 +57,7 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `connected` | The binding is live on a ready device | Report connected. `reused: true` means an earlier attempt had already finished |
 | `unavailable` (retryable) | Nothing conclusive happened, or the outcome is unknown | Retry later with the **same** `operationId` |
 | `blocked: invalid_request` | Malformed input (operation ID `[A-Za-z0-9_-]{8,64}`, harness, session, workdir) | Fix the call |
-| `blocked: invalid_link` | Not a URL, too long, or it carries credentials | Ask the human for the chat link again |
+| `blocked: invalid_link` | Not a URL, too long, or it carries credentials | Ask the human for the channel link again |
 | `blocked: untrusted_origin` | The link, a redirect or an endpoint is off the allowlist | Tell the human this is not a Khala link |
 | `blocked: link_unavailable` | The service does not know the link | Ask for a fresh link |
 | `blocked: unsupported_descriptor` | The service speaks a protocol version this connector does not | Report that an update is needed |
@@ -65,7 +65,7 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `blocked: unsupported_harness` | No evidence-backed existing-session support for this harness | Report it honestly; do not ask the human to configure anything |
 | `blocked: ownership_required` | The owner did not finish sign-in, or no browser on this machine | Ask the human to finish in the opened tab, or report that remote agents need the (unbuilt) fallback |
 | `blocked: admission_denied` | The owner declined, the invite or policy refused, or the service offered a capability other than the adapter's | Report it |
-| `blocked: binding_conflict` | This room is bound to another session or generation of this owner | Report it; rebinding is an explicit owner flow |
+| `blocked: binding_conflict` | This channel is bound to another session or generation of this owner | Report it; rebinding is an explicit owner flow |
 | `blocked: binding_revoked` | The owner revoked this session's binding | Report it. Only a later session generation can bind again; never retry the revoked one |
 | `blocked: operation_conflict` | This operation ID was used for other input | Use a new operation ID for new input |
 | `blocked: device_unavailable` | Admitted, but the device could not become ready | Retry with the same ID (it resumes the same device), or let the owner revoke it |

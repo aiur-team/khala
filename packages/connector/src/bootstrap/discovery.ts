@@ -1,4 +1,4 @@
-// Origin-bound discovery. A chat link is a locator on a configured trusted
+// Origin-bound discovery. A channel link is a locator on a configured trusted
 // origin. The descriptor is always requested from that origin's fixed path, and
 // every redirect is revalidated against the same allowlist. Nothing the link or
 // response says can move the connector to an origin it was not configured with.
@@ -18,7 +18,7 @@ export type DiscoveryResult =
   | Readonly<{ kind: 'unavailable' }>;
 
 export interface DiscoveryPort {
-  resolve(chatUrl: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<DiscoveryResult>;
+  resolve(channelUrl: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<DiscoveryResult>;
 }
 
 export type DiscoveryOptions = Readonly<{
@@ -47,17 +47,17 @@ export type LinkCheck =
   | Readonly<{ kind: 'rejected'; code: 'untrusted_origin' | 'invalid_link' }>;
 
 /**
- * Validates a pasted chat link. Embedded credentials are refused rather than
+ * Validates a pasted channel link. Embedded credentials are refused rather than
  * stripped, so a link carrying them is never silently "fixed" and forwarded.
  * The fragment is dropped; it never reaches the service.
  */
-export function checkChatLink(chatUrl: string, trusted: ReadonlySet<string>): LinkCheck {
-  if (typeof chatUrl !== 'string' || chatUrl.length === 0 || Buffer.byteLength(chatUrl) > MAX_LINK_BYTES) {
+export function checkChannelLink(channelUrl: string, trusted: ReadonlySet<string>): LinkCheck {
+  if (typeof channelUrl !== 'string' || channelUrl.length === 0 || Buffer.byteLength(channelUrl) > MAX_LINK_BYTES) {
     return { kind: 'rejected', code: 'invalid_link' };
   }
   let url: URL;
   try {
-    url = new URL(chatUrl);
+    url = new URL(channelUrl);
   } catch {
     return { kind: 'rejected', code: 'invalid_link' };
   }
@@ -66,6 +66,9 @@ export function checkChatLink(chatUrl: string, trusted: ReadonlySet<string>): Li
   url.hash = '';
   return { kind: 'ok', origin: url.origin, link: url.href };
 }
+
+/** @deprecated Use `checkChannelLink`; remove after the first tagged release containing #163. */
+export const checkChatLink = checkChannelLink;
 
 export function createDiscovery(options: DiscoveryOptions): DiscoveryPort {
   for (const origin of options.trustedOrigins) {
@@ -76,8 +79,8 @@ export function createDiscovery(options: DiscoveryOptions): DiscoveryPort {
   const timeoutMs = options.timeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS;
 
   return {
-    async resolve(chatUrl, callOptions) {
-      const checked = checkChatLink(chatUrl, trusted);
+    async resolve(channelUrl, callOptions) {
+      const checked = checkChannelLink(channelUrl, trusted);
       if (checked.kind === 'rejected') return checked;
       const timeout = AbortSignal.timeout(timeoutMs);
       const signal = callOptions?.signal ? AbortSignal.any([callOptions.signal, timeout]) : timeout;

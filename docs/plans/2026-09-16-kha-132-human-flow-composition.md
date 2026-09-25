@@ -44,7 +44,7 @@ The ordinary user is collaborating with another human and their already-working 
 
 - A1. The authenticated human who owns the current agent connection.
 - A2. Other admitted humans and their attributed agents, whose messages are content rather than control authority.
-- F1. Human A signs in and creates a chat, sends intros and shares the link; human B signs in, joins and replies; both observe one consistent timeline.
+- F1. Human A signs in and creates a channel, sends intros and shares the link; human B signs in, joins and replies; both observe one consistent timeline.
 
 ### Acceptance examples
 
@@ -84,7 +84,7 @@ Product Contract unchanged. Implementation details below do not settle questions
 |---|---|---|
 |110 | IdentityPort and verified AuthPrincipal | Same-origin browser session adapter; no provider credentials in bundle |
 |111 | DevicePort | Acquire/observe/stop one identity-scoped crypto lifecycle |
-|112 | RoomPort | Create/intro/send/timeline operations and replacement snapshots |
+|112 | ChannelPort | Create/intro/send/timeline operations and replacement snapshots |
 |113 | AdmissionPort inspect/admit/share | Canonical link and admission under current verified human |
 |122–124 | Feature controllers/screens | Construct/dispose with real ports, no fixture fallback |
 |131 | Netlify discovery/handler registration | Provide human handler bundle in assigned composition directory |
@@ -127,15 +127,15 @@ sequenceDiagram
   Browser->>Device: ensureReady owner
   Device-->>Browser: ready same generation
   Browser->>Room: create then prepareIntro
-  Browser->>Admission: share canonical room link
+  Browser->>Admission: share canonical channel link
   Admission-->>Browser: canonical link
 ```
 
-RoomPort.observe supplies a full replacement snapshot `{room,items,snapshotRevision,generation}`. Do not append it as a delta. Feature-controller pagination merges by event identity and respects the authoritative snapshot generation. A deep-link refresh must reach the SPA entry only after131 distinguishes reserved discovery/control routes. Logout clears UI data and stops observers even if SDK shutdown fails; it does not claim deletion of historical data from all stores.
+ChannelPort.observe supplies a full replacement snapshot `{room,items,snapshotRevision,generation}`. Do not append it as a delta. Feature-controller pagination merges by event identity and respects the authoritative snapshot generation. A deep-link refresh must reach the SPA entry only after131 distinguishes reserved discovery/control routes. Logout clears UI data and stops observers even if SDK shutdown fails; it does not claim deletion of historical data from all stores.
 
 ### Failure propagation and evidence
 
-Auth unavailable is not signed-out. Device locked is not empty room. Admission revoked denies mounting protected content. A failed handler/SDK dependency shows explicit unavailable state; no demo service can auto-enable. Stop old generation before rendering new principal to avoid transient cross-account plaintext. Live tests need two disposable OAuth identities and a real selected messaging deployment; fake OAuth is permitted only in component tests and cannot satisfy this ticket's completion proof.
+Auth unavailable is not signed-out. Device locked is not empty channel. Admission revoked denies mounting protected content. A failed handler/SDK dependency shows explicit unavailable state; no demo service can auto-enable. Stop old generation before rendering new principal to avoid transient cross-account plaintext. Live tests need two disposable OAuth identities and a real selected messaging deployment; fake OAuth is permitted only in component tests and cannot satisfy this ticket's completion proof.
 
 ### Assumptions and prerequisite gates
 
@@ -171,7 +171,7 @@ No implementation or runtime test has run as part of this plan. Browser credenti
 
 ### U2. Connect routes and human handler composition
 
-**Goal:** Make OAuth/create/share/chat reachable on standalone hosting.
+**Goal:** Make OAuth/create/share/channel reachable on standalone hosting.
 
 **Requirements:** R1/R3/R4; F1; KTD3/KTD4. **Dependencies:** U1.
 
@@ -238,5 +238,5 @@ P11 sets the production app origin to `https://khala.aiur.team`. Canonical produ
 
 ## Definition of Done
 
-Two real OAuth humans complete encrypted create/share/chat and queued introduction access. Production bundles contain only live adapters, lifecycle races are tested, and follow-on registrations have a documented owner. Source/destination plaintext check is scoped to synthetic messaging payloads, not a claim that metadata is encrypted.
+Two real OAuth humans complete encrypted create/share/channel and queued introduction access. Production bundles contain only live adapters, lifecycle races are tested, and follow-on registrations have a documented owner. Source/destination plaintext check is scoped to synthetic messaging payloads, not a claim that metadata is encrypted.
 All owned unit tests and applicable contract checks pass on the merged base. Every acceptance example is linked to test evidence. Remove abandoned experiment code, fixture imports from production, unused subscriptions and dead fallbacks. Preserve scope/file ownership; report dependency defects to their owner instead of patching sibling directories. No deployment or implementation completion is implied by this document.

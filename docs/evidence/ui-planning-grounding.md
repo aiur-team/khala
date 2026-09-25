@@ -24,7 +24,7 @@ Read-only live checks: GET `http://127.0.0.1:4000/` returned 401; GET `http://12
 
 Khala should be recognizable as one Aiur left-nav page. The route heading is **Khala**, the topbar identity remains Aiur, and content uses the dashboard's layout/surfaces rather than a large product splash. Standalone shipping supplies this chrome. A future embedding host can supply chrome, theme and navigation without duplicating it inside the content mount. This does not add a current Aiur integration, cross-origin credential sharing, iframe bridge or a new plugin framework.
 
-Standalone navigation exposes only available Khala destinations. Do not reproduce Units/Build Order/etc. as inert navigation to imply integration. Use a route-level chat list and the conversation/review workspace inside the content slot. Application controls are truthful about their scope; an agent delivery pause is not Aiur's global fleet pause.
+Standalone navigation exposes only available Khala destinations. Do not reproduce Units/Build Order/etc. as inert navigation to imply integration. Use a route-level channel list and the conversation/review workspace inside the content slot. Application controls are truthful about their scope; an agent delivery pause is not Aiur's global fleet pause.
 
 ## External implementation guidance
 

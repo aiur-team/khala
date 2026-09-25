@@ -1,0 +1,58 @@
+Captured: 2026-09-24T15:07:08-07:00
+Host: orangekid
+
+$ uname -srmo
+Linux 7.1.4-arch1-1 x86_64 GNU/Linux
+
+$ printf 'XDG_CURRENT_DESKTOP=%s\nDISPLAY=%s\nWAYLAND_DISPLAY=%s\n' "$XDG_CURRENT_DESKTOP" "$DISPLAY" "$WAYLAND_DISPLAY"
+XDG_CURRENT_DESKTOP=Hyprland
+DISPLAY=:0
+WAYLAND_DISPLAY=wayland-1
+
+$ command -v cursor || printf 'cursor NOT_INSTALLED\n'
+cursor NOT_INSTALLED
+
+$ command -v cursor-agent || printf 'cursor-agent NOT_INSTALLED\n'
+cursor-agent NOT_INSTALLED
+
+$ command -v claude-desktop || printf 'claude-desktop NOT_INSTALLED\n'
+claude-desktop NOT_INSTALLED
+
+$ command -v claude && claude --version
+/home/everdred/.local/bin/claude
+2.1.282 (Claude Code)
+
+$ command -v chatgpt || printf 'chatgpt NOT_INSTALLED\n'
+chatgpt NOT_INSTALLED
+
+$ command -v codex && codex --version
+/home/everdred/.local/share/mise/installs/node/lts/bin/codex
+codex-cli 0.154.0
+
+$ command -v chromium && chromium --version
+/usr/bin/chromium
+Chromium 150.0.7871.128 Arch Linux
+
+$ command -v google-chrome || printf 'google-chrome NOT_INSTALLED\n'
+google-chrome NOT_INSTALLED
+
+$ command -v firefox && firefox --version
+/usr/bin/firefox
+Mozilla Firefox 152.0.6
+
+$ rg -n '^(Version|Name|Exec)=' ~/.local/share/applications/ChatGPT.desktop ~/.local/share/applications/claude-code-url-handler.desktop
+/home/everdred/.local/share/applications/ChatGPT.desktop:2:Version=1.0
+/home/everdred/.local/share/applications/ChatGPT.desktop:3:Name=ChatGPT
+/home/everdred/.local/share/applications/ChatGPT.desktop:4:Exec=omarchy-launch-webapp https://chatgpt.com/
+/home/everdred/.local/share/applications/claude-code-url-handler.desktop:2:Name=Claude Code URL Handler
+/home/everdred/.local/share/applications/claude-code-url-handler.desktop:4:Exec="/home/everdred/.local/bin/claude" --handle-uri %u
+
+$ flatpak list --app
+(no output)
+
+Notes:
+- The ChatGPT desktop entry is a browser launcher, not an installed native app.
+- No authenticated Cursor, Claude Desktop, claude.ai, ChatGPT desktop, or Codex cloud
+  test session was available.
+- Claude Code and Codex CLI are inventoried only to distinguish them from the app
+  surfaces assessed here. Their presence is not evidence for an app-mode cell.
