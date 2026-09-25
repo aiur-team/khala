@@ -8,15 +8,15 @@ import type { EventRef, MessageContent } from './events';
 import type { IdentityPort, IdentityState } from './identity';
 import type { DeviceId, RoomId } from './ids';
 import { type Disposer, type OperationResult, isCurrentGeneration, ok, outcomeUnknown, rejected, unavailable } from './outcomes';
-import type { RoomPort, RoomRejection, RoomSnapshot, SendState } from './rooms';
+import type { ChannelPort, ChannelRejection, ChannelSnapshot, SendState } from './channels';
 
 const roomDemo = 'room_demo' as RoomId;
 
-describe('RoomPort.send', () => {
+describe('ChannelPort.send', () => {
   // A transport that accepted the write remotely but whose response never arrived locally.
-  function slowRoomPort(remote: Map<string, EventRef>): Pick<RoomPort, 'send'> {
+  function slowChannelPort(remote: Map<string, EventRef>): Pick<ChannelPort, 'send'> {
     return {
-      send: ({ clientTxnId }, options) => new Promise<OperationResult<SendState, RoomRejection>>(resolve => {
+      send: ({ clientTxnId }, options) => new Promise<OperationResult<SendState, ChannelRejection>>(resolve => {
         remote.set(clientTxnId, intro.eventRef as EventRef);
         options?.signal?.addEventListener('abort', () => resolve(outcomeUnknown(clientTxnId)), { once: true });
       }),
@@ -26,7 +26,7 @@ describe('RoomPort.send', () => {
   it('reports an aborted wait as outcome_unknown, not cancellation', async () => {
     const remote = new Map<string, EventRef>();
     const controller = new AbortController();
-    const pending = slowRoomPort(remote).send(
+    const pending = slowChannelPort(remote).send(
       { roomId: roomDemo, clientTxnId: 'txn_intro_1', content: intro.content as MessageContent },
       { signal: controller.signal },
     );
@@ -36,16 +36,16 @@ describe('RoomPort.send', () => {
   });
 });
 
-describe('RoomPort.observe', () => {
+describe('ChannelPort.observe', () => {
   it('lets consumers ignore snapshots from a stale lifecycle generation', () => {
-    const listeners = new Set<(snapshot: RoomSnapshot) => void>();
-    const observe = (_roomId: RoomId, listener: (snapshot: RoomSnapshot) => void): Disposer => {
+    const listeners = new Set<(snapshot: ChannelSnapshot) => void>();
+    const observe = (_roomId: RoomId, listener: (snapshot: ChannelSnapshot) => void): Disposer => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     };
     const room = { roomId: roomDemo, title: null, membership: 'joined' as const, revision: 'rev_1' };
     const currentGeneration = 1;
-    const applied: RoomSnapshot[] = [];
+    const applied: ChannelSnapshot[] = [];
     const dispose = observe(roomDemo, snapshot => {
       if (isCurrentGeneration(currentGeneration, snapshot)) applied.push(snapshot);
     });

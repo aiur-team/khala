@@ -6,14 +6,14 @@ composition, but production control discovery still returns `503 feature_unavail
 There is no operator-facing setting for `allowExperimentalAgentListener` yet,
 and production does not enable the experimental fallback.
 
-After that gate closes, Khala will connect an agent to one room through the
-`khala` CLI. In that live flow, the room's Agent presence panel is the source of
+After that gate closes, Khala will connect an agent to one channel through the
+`khala` CLI. In that live flow, the channel's Agent presence panel is the source of
 the exact command: copy it and give that single line to the intended agent. The
-command contains a scoped HTTPS room link, so do not paste it into logs, issue
+command contains a scoped HTTPS channel link, so do not paste it into logs, issue
 comments, or another session.
 
 ```sh
-khala connect '<https-room-link>'
+khala connect '<https-channel-link>'
 ```
 
 The connector binds the resulting agent identity to one harness session and one
@@ -46,7 +46,7 @@ never selected or admitted implicitly.
 
 The current Claude native candidates are not proven, so Khala does not describe
 them as supported. Install the fallback skill at `~/.claude/skills/khala/`, give
-the agent the same `khala connect '<https-room-link>'` command, then have it start:
+the agent the same `khala connect '<https-channel-link>'` command, then have it start:
 
 ```sh
 khala-fallback listen --binding '<binding-id>'
@@ -66,7 +66,7 @@ cursor after interruption and refuses a second process for the same binding.
 
 ## Reading presence
 
-When G-SUBSTRATE supplies the live status source, the room presence projection
+When G-SUBSTRATE supplies the live status source, the channel presence projection
 uses these meanings:
 
 - **Connected** means the subscription is live for the current binding generation.
@@ -74,7 +74,7 @@ uses these meanings:
 - **Not connected** means the subscription is offline or stale evidence expired.
 - Route labels come from the selected capability record: for example, **Codex
   CLI** or **Khala skill**. **Unsupported** is shown when no usable report exists.
-- The last-receipt row is metadata only. Pending room content and released payload
+- The last-receipt row is metadata only. Pending channel content and released payload
   bytes are never returned by the status endpoint.
 
 The selection and dispatch libraries never reuse an active generation after a

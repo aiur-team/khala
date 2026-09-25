@@ -1,11 +1,11 @@
 // Owns the merged, generation-fenced transcript projection consumed through
 // `useSyncExternalStore`. Draft text, scroll anchor and pagination-request UI
 // state stay local to the screen component (KTD2) — this module only merges
-// `RoomPort.timeline` pages with `RoomPort.observe` snapshots by opaque event
+// `ChannelPort.timeline` pages with `ChannelPort.observe` snapshots by opaque event
 // ID and caches an immutable snapshot for the store contract.
 
 import type { RoomId } from '@khala/contracts/messaging/ids';
-import type { RoomMembership, RoomPort, RoomRejection, RoomSnapshot, TimelineItem, TimelinePage } from '@khala/contracts/messaging/index';
+import type { ChannelMembership, ChannelPort, ChannelRejection, ChannelSnapshot, TimelineItem, TimelinePage } from '@khala/contracts/messaging/index';
 import { isCurrentGeneration, type OperationResult } from '@khala/contracts/messaging/outcomes';
 import type { TimelinePhase } from './model';
 
@@ -16,8 +16,8 @@ export type TimelineData = Readonly<{
   items: readonly TimelineItem[];
   nextCursor: string | null;
   newMessageCount: number;
-  /** `null` until the first room snapshot arrives. `revoked`/`left` means the viewer can no longer read or send live. */
-  membership: RoomMembership | null;
+  /** `null` until the first channel snapshot arrives. `revoked`/`left` means the viewer can no longer read or send live. */
+  membership: ChannelMembership | null;
 }>;
 
 export interface TimelineController {
@@ -25,15 +25,15 @@ export interface TimelineController {
   getSnapshot(): TimelineData;
   subscribe(listener: () => void): () => void;
   /** Prepends one older page. A no-op once `dispose()` has run. */
-  loadOlder(): Promise<OperationResult<TimelinePage, RoomRejection> | null>;
+  loadOlder(): Promise<OperationResult<TimelinePage, ChannelRejection> | null>;
   /** Tells the controller whether the reader is scrolled to the newest item. */
   setReaderAtLatest(atLatest: boolean): void;
-  /** Idempotent; unsubscribes the room observer exactly once. */
+  /** Idempotent; unsubscribes the channel observer exactly once. */
   dispose(): void;
 }
 
 export function createTimelineController(
-  roomPort: RoomPort,
+  roomPort: ChannelPort,
   roomId: RoomId,
   options: Readonly<{ generation: number; pageSize?: number }>,
 ): TimelineController {
@@ -47,7 +47,7 @@ export function createTimelineController(
   let newMessageCount = 0;
   let readerAtLatest = true;
   let disposed = false;
-  let membership: RoomMembership | null = null;
+  let membership: ChannelMembership | null = null;
   // Set on a failed history read, cleared only by a *successful* one — a live
   // snapshot arriving in between must not paper over a known history gap by
   // reporting `ready` (order-independent: forbidden-then-snapshot and
@@ -94,7 +94,7 @@ export function createTimelineController(
     return older.length > 0 || recent.length > 0 ? 'partial' : 'unavailable';
   }
 
-  function applySnapshot(snapshot: RoomSnapshot): void {
+  function applySnapshot(snapshot: ChannelSnapshot): void {
     if (disposed || !isCurrentGeneration(generation, snapshot)) return;
     const previouslyKnown = new Set([...older, ...recent].map(item => item.ref.eventId));
     const arrivedCount = snapshot.items.filter(item => !previouslyKnown.has(item.ref.eventId)).length;
@@ -116,9 +116,9 @@ export function createTimelineController(
   // firing their own `roomPort.timeline` call: two independent calls would
   // both compute their "new" additions against the same pre-fetch `older`
   // snapshot and each prepend a copy, duplicating rows.
-  let inFlightLoadOlder: Promise<OperationResult<TimelinePage, RoomRejection> | null> | null = null;
+  let inFlightLoadOlder: Promise<OperationResult<TimelinePage, ChannelRejection> | null> | null = null;
 
-  function loadOlder(): Promise<OperationResult<TimelinePage, RoomRejection> | null> {
+  function loadOlder(): Promise<OperationResult<TimelinePage, ChannelRejection> | null> {
     if (disposed) return Promise.resolve(null);
     if (inFlightLoadOlder) return inFlightLoadOlder;
     const request = performLoadOlder().finally(() => {
@@ -128,7 +128,7 @@ export function createTimelineController(
     return request;
   }
 
-  async function performLoadOlder(): Promise<OperationResult<TimelinePage, RoomRejection> | null> {
+  async function performLoadOlder(): Promise<OperationResult<TimelinePage, ChannelRejection> | null> {
     const result = await roomPort.timeline({ roomId, cursor: nextCursor, limit: pageSize });
     if (disposed) return null;
     if (result.kind !== 'ok') {

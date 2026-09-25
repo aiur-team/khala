@@ -29,7 +29,7 @@ Produce reproducible browser encryption and persistence evidence on pinned OSS S
 
 ### Problem Frame
 
-WASM compilation and an in-memory demo do not establish reliable encrypted browser chat or usable device recovery.
+WASM compilation and an in-memory demo do not establish reliable encrypted browser channel or usable device recovery.
 
 ### Requirements
 

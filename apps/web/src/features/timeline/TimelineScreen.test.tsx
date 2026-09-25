@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
-import type { RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
+import type { ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { TimelineController, TimelineData } from './controller';
 import { TimelineScreen } from './TimelineScreen';
 
@@ -40,7 +40,7 @@ function fakeController(data: Omit<TimelineData, 'membership'> & Partial<Pick<Ti
 }
 
 const viewer = participant('viewer', 'human', 'Viewer');
-const noopSendPort: Pick<RoomPort, 'send'> = { send: async () => ({ kind: 'unavailable', retryable: true }) };
+const noopSendPort: Pick<ChannelPort, 'send'> = { send: async () => ({ kind: 'unavailable', retryable: true }) };
 
 describe('TimelineScreen', () => {
   it('distinguishes human and agent authors, labeling each row by its own kind — a swapped label would fail this', () => {

@@ -34,7 +34,7 @@ type MappingRecord =
 
 export type MessagingAccount =
   | Readonly<{ kind: 'active'; accountId: string }>
-  /** Retry later; no chat is ready and no session should be minted. */
+  /** Retry later; no channel is ready and no session should be minted. */
   | Readonly<{ kind: 'unavailable' }>
   /** The directory maps this owner to a different account than the stored mapping. */
   | Readonly<{ kind: 'conflict' }>;

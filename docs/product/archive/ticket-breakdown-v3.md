@@ -13,8 +13,8 @@ The proposal preserves a product usable beyond one named model. Initial real har
 ## Ordinary user journey
 
 1. Sign in with OAuth, following Archon’s identity-only email sign-in experience.
-2. Create a chat, optionally give it a name, and optionally prepare introductory content.
-3. Copy the chat link to the existing working agent and coworker.
+2. Create a channel, optionally give it a name, and optionally prepare introductory content.
+3. Copy the channel link to the existing working agent and coworker.
 4. The agent performs its own supported connection/subscription setup; the coworker joins through the web experience and shares the link with their agent.
 
 Connector, adapter, pairing and key-storage terminology below describes implementation, not additional user setup. No manual install/configuration, shell command, separate Matrix registration or normal-path cryptographic ceremony is part of this flow. Review/release controls remain intentional human interactions.
@@ -33,7 +33,7 @@ Connector, adapter, pairing and key-storage terminology below describes implemen
 
 ### KHA-02 — Verify attachment and immediate notification in existing sessions
 
-**Outcome:** the agent receiving a link performs its own setup, subscribes and gets a new chat notification in the session already working in its repository, without human technical setup.
+**Outcome:** the agent receiving a link performs its own setup, subscribes and gets a new channel notification in the session already working in its repository, without human technical setup.
 
 **Scope:** versioned, model-independent adapter capability contract; real Claude Code and Codex proof; documented custom-adapter route. Determine setup/restart requirements, idle and busy behaviour, and available acknowledgement strength for each harness.
 
@@ -67,7 +67,7 @@ Connector, adapter, pairing and key-storage terminology below describes implemen
 
 **Scope:** reuse Archon’s identity-only OAuth/OIDC approach and supported messaging SDKs; map authenticated identity internally to messaging identity; initialise device keys automatically; support persistent sessions/logout and recovery entry points. Keep identity mapping and device machinery internal to the ordinary sign-in flow.
 
-**Acceptance:** a new user can sign in and create a chat without a separate Matrix login/password, homeserver choice, manual keys or connector installation; returning users retain expected access; account ownership uses the verified provider identity rather than an untrusted email string. New/revoked device and expired-login/recovery cases are handled explicitly. Any upstream flow that forces extra ordinary onboarding is a feasibility gap to resolve, not an unapproved new user step.
+**Acceptance:** a new user can sign in and create a channel without a separate Matrix login/password, homeserver choice, manual keys or connector installation; returning users retain expected access; account ownership uses the verified provider identity rather than an untrusted email string. New/revoked device and expired-login/recovery cases are handled explicitly. Any upstream flow that forces extra ordinary onboarding is a feasibility gap to resolve, not an unapproved new user step.
 
 **Depends on:** 03, 04; OAuth providers and exceptional recovery policy need refinement; the ordinary OAuth/create/share flow is settled.
 
@@ -91,9 +91,9 @@ Connector, adapter, pairing and key-storage terminology below describes implemen
 
 **Depends on:** 03–06; chosen initial history and onboarding behaviour.
 
-### KHA-08 — Let an existing agent join and subscribe from the chat link
+### KHA-08 — Let an existing agent join and subscribe from the channel link
 
-**Outcome:** the human pastes the chat link into their existing agent; that agent establishes its own scoped connection and notification subscription without human setup.
+**Outcome:** the human pastes the channel link into their existing agent; that agent establishes its own scoped connection and notification subscription without human setup.
 
 **Scope:** TypeScript connector packaging, pairing bootstrap, owner-to-agent identity binding, local key/pending state, subscription lifetime, adapter setup and status. Keep endpoint secrets on approved owner devices.
 
@@ -101,7 +101,7 @@ Connector, adapter, pairing and key-storage terminology below describes implemen
 
 **Depends on:** 02–05 and 07; can implement against 07's agreed invitation fixture before its UI finishes.
 
-### KHA-09 — Project live chat and send attributed messages
+### KHA-09 — Project live channel and send attributed messages
 
 **Outcome:** both humans can follow the same conversation and add messages as themselves while agents post under their own identities.
 
@@ -164,7 +164,7 @@ No conditional feature is silently decided here. Browser closure and local conne
 
 ## Dependencies and safe parallel work
 
-01 and 02 are independent validation tracks. Their decisions feed 03. After 03, deployment (04), client shell/branding (06), and adapter implementation preparation can proceed independently against fixtures. Identity (05) enables room admission (07). Connector pairing (08) and chat projection (09) meet at review (10), then automatic delivery (11) and recovery (12). Integration evidence and documentation (13) follow the actual completed interfaces.
+01 and 02 are independent validation tracks. Their decisions feed 03. After 03, deployment (04), client shell/branding (06), and adapter implementation preparation can proceed independently against fixtures. Identity (05) enables room admission (07). Connector pairing (08) and channel projection (09) meet at review (10), then automatic delivery (11) and recovery (12). Integration evidence and documentation (13) follow the actual completed interfaces.
 
 Plans should define ownership for shared contracts and generated fixtures. Independent workers should not each invent their own message identity or approval semantics. A ticket may contain several small ordered implementation units; those units belong in `ce-plan`, after sign-off.
 

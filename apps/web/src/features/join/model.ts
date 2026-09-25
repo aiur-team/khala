@@ -36,7 +36,7 @@ export const CHECKING_IDENTITY_VIEW: JoinView = {
 /**
  * Terminal or redirecting phase implied by an `InviteState`, or `null` when
  * the state means "keep going" (`eligible`, `already_joined` still require
- * device readiness and an `admit` call to reach a room).
+ * device readiness and an `admit` call to reach a channel).
  */
 export function inviteStatePhase(state: InviteState): JoinPhase | null {
   switch (state) {

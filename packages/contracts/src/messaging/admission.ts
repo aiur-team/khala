@@ -5,7 +5,7 @@
 import { type ContentLimits, type Decoded, decodeWith, fail, identifier, literal, nullable, object, utcTimestamp } from './decode';
 import type { DeviceId, RoomId } from './ids';
 import type { CallOptions, OperationResult } from './outcomes';
-import { type RoomSummary, readRoomSummary } from './rooms';
+import { type ChannelSummary, readChannelSummary } from './channels';
 
 export type ShareGrant = Readonly<{
   inviteRef: string;
@@ -30,7 +30,7 @@ export type InviteState =
  * G-ADMISSION may add `outcome` variants (for example a pending approval); consumers
  * must handle `outcome` exhaustively so such an addition is a reviewed version bump.
  */
-export type Admission = Readonly<{ outcome: 'joined' | 'already_joined'; room: RoomSummary }>;
+export type Admission = Readonly<{ outcome: 'joined' | 'already_joined'; room: ChannelSummary }>;
 
 export type AdmissionRejection = 'auth_required' | 'expired' | 'revoked' | 'identity_mismatch' | 'forbidden' | 'operation_mismatch';
 
@@ -80,7 +80,7 @@ export function decodeAdmission(input: unknown, limits: ContentLimits): Decoded<
     const r = object(input, '', ['outcome', 'room']);
     const admission: Admission = {
       outcome: literal(r.field('outcome'), r.at('outcome'), ['joined', 'already_joined']),
-      room: readRoomSummary(r.field('room'), r.at('room'), limits),
+      room: readChannelSummary(r.field('room'), r.at('room'), limits),
     };
     if (admission.room.membership !== 'joined') fail(r.at('room.membership'), 'mismatch');
     return admission;

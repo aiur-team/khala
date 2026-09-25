@@ -48,10 +48,10 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-/** The one command the room panel hands to an agent; follow-on route setup is capability-driven. */
-export function agentInstallCommand(roomLink: string): string {
+/** The one command the channel panel hands to an agent; follow-on route setup is capability-driven. */
+export function agentInstallCommand(channelLink: string): string {
   let parsed: URL;
-  try { parsed = new URL(roomLink); } catch { throw new TypeError('invalid_room_link'); }
+  try { parsed = new URL(channelLink); } catch { throw new TypeError('invalid_room_link'); }
   if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '' || parsed.hash !== '') {
     throw new TypeError('invalid_room_link');
   }

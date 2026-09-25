@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AUTHORIZE_PATH, DESCRIPTOR_PATH, REDEEM_PATH, TOKEN_PATH, decodeDescriptor } from './descriptor';
-import { createDiscovery } from './discovery';
+import { checkChannelLink, checkChatLink, createDiscovery } from './discovery';
 
 const ORIGIN = 'https://khala.example';
 const OTHER = 'https://preview.khala.example';
@@ -102,6 +102,14 @@ describe('createDiscovery', () => {
     expect(() => createDiscovery({ trustedOrigins: ['http://khala.example'] })).toThrow();
     expect(() => createDiscovery({ trustedOrigins: [`${ORIGIN}/`] })).toThrow();
     expect(() => createDiscovery({ trustedOrigins: ['http://127.0.0.1:8888'] })).not.toThrow();
+  });
+});
+
+describe('channel link validation', () => {
+  it('keeps the deprecated chat-named export equivalent to the channel API', () => {
+    const trusted = new Set([ORIGIN]);
+    expect(checkChannelLink(LINK, trusted)).toEqual({ kind: 'ok', origin: ORIGIN, link: LINK });
+    expect(checkChatLink(LINK, trusted)).toEqual(checkChannelLink(LINK, trusted));
   });
 });
 

@@ -8,7 +8,7 @@ apps/
     brand/                        # 107: sourced Aiur assets, fonts, tokens
     shell/                        # 107: layout slots, no feature imports
     features/
-      create-chat/                # 122
+      create-channel/             # 122
       timeline/                   # 123
       join/                       # 124
       review/                     # 125
@@ -33,12 +33,12 @@ apps/
     composition/recovery/         # 136
 packages/
   contracts/
-    src/messaging/                # 105: identity, room, SDK ports, device lifecycle
+    src/messaging/                # 105: identity, channel, SDK ports, device lifecycle
     src/delivery/                 # 106: approval, trust, dispatch, adapter ports
     fixtures/{messaging,delivery}/
   messaging/src/
     browser-device/               # 111
-    rooms/                        # 112
+    channels/                     # 112 (canonical; `rooms/` is a deprecated compatibility wrapper)
     revocation/                   # 128
     recovery/                     # 129
   connector/src/
@@ -68,7 +68,7 @@ Tests for a module live beside it (`*.test.ts`), not in a shared growing test fi
 - Policy consumes contracts; it is deterministic and has no storage, network or harness imports.
 - Messaging, connector and harness implementations consume contracts and OSS libraries. Cross-component behavior calls injected ports rather than importing another worker's unfinished module.
 - Composition roots are the only places that bind implementations together. Browser, control functions and owner runtime remain distinct deployment targets.
-- No global `types.ts`, `utils.ts`, `store.ts`, feature barrel or giant route file. State lives with the owning subsystem: SDK chat history/keys, connector durable inbox/release ledger, browser UI view state, and minimal authenticated control state. Do not copy the transport log to Blobs.
+- No global `types.ts`, `utils.ts`, `store.ts`, feature barrel or giant route file. State lives with the owning subsystem: SDK channel history/keys, connector durable inbox/release ledger, browser UI view state, and minimal authenticated control state. Do not copy the transport log to Blobs.
 - Netlify Blobs is a candidate for minimal control state under approved atomicity semantics; it is not prescribed for local agent state or SDK device keys. KHA-105 must pin the control-store port and concurrency behavior.
 
 ## Shared-file ownership and green merges
@@ -87,7 +87,7 @@ Use isolated per-issue worktrees as Aiur provides. At dispatch, inspect actual p
 
 | Seam implemented independently | Integration owner and real proof |
 |---|---|
-| OAuth ↔ device keys ↔ rooms ↔ admission ↔ create/join/timeline UI | 132: two humans complete encrypted create/share/chat on real services |
+| OAuth ↔ device keys ↔ rooms ↔ admission ↔ create/join/timeline UI | 132: two humans complete encrypted create/share/channel on real services |
 | Bootstrap ↔ key/inbox storage ↔ subscription ↔ bounded dispatch ↔ harnesses | 133: same-session agent connection and reconnect |
 | Human preview ↔ authenticated approval ↔ policy ↔ durable release ↔ model projection | 134: exact bytes delivered, every unreleased path closed |
 | Trust UI ↔ policy transitions ↔ connector acknowledgment ↔ budgets/pause | 135: effective policy, offline/busy and race evidence |
@@ -102,7 +102,7 @@ The proposal has nine dependency levels. This is dependency depth, not an agreed
 
 Staff KHA-144 (automatic ownership proof), then 105 (messaging ports), and 106 (delivery ports) promptly: they unlock the broadest fan-out. UI/backend/adapter/policy workers then operate on disjoint paths. Do not wait for deployed UI before starting connector adapters, or for production endpoints before building fixture-driven screens. Within available capacity, prioritize real integration preparation so completed modules do not accumulate without a working path.
 
-Contract review, root dependency updates, shared deployment environments and final merges are bounded coordination points. Give integration tests per-worker ephemeral accounts/data/ports, never a shared production room or shared local key store. The deployment owner schedules any destructive restore against a disposable environment.
+Contract review, root dependency updates, shared deployment environments and final merges are bounded coordination points. Give integration tests per-worker ephemeral accounts/data/ports, never a shared production channel or shared local key store. The deployment owner schedules any destructive restore against a disposable environment.
 
 ## Aiur source grounding
 

@@ -14,13 +14,13 @@ origin: docs/product/tickets/KHA-103.md
 
 ## Goal Capsule
 
-Determine whether Claude can arrange prompt notification of the same working session from a chat link without human infrastructure setup. Dependencies: None. Follow the approved scope card and the units below. A plan is not evidence that the proposed integration works. All implementation surfaces listed here are proposed unless a source explicitly identifies existing code.
+Determine whether Claude can arrange prompt notification of the same working session from a channel link without human infrastructure setup. Dependencies: None. Follow the approved scope card and the units below. A plan is not evidence that the proposed integration works. All implementation surfaces listed here are proposed unless a source explicitly identifies existing code.
 
 ## Product Contract
 
 ### Summary
 
-Determine whether Claude can arrange prompt notification of the same working session from a chat link without human infrastructure setup.
+Determine whether Claude can arrange prompt notification of the same working session from a channel link without human infrastructure setup.
 
 ### Problem Frame
 

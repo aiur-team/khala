@@ -17,7 +17,7 @@ Product Contract preservation: unchanged. R01-R10, A1-A5, F1-F8 and AE1-AE6 are 
 
 ## Goal Capsule
 
-Nine tickets, KHA-145 to KHA-153, that replace the parked existing-session attachment approach with the agent surface the owner directed in P15. Two harness proofs, one contract amendment, one agent CLI package, two adapter routes, one fallback skill package, one room page, one composition ticket. Readiness is `requirements-only`: G-HARNESSES and G-SUBSTRATE are open, and the route table below is a set of candidates supported by CLI evidence, not proven delivery. A plan is not evidence that a route works.
+Nine tickets, KHA-145 to KHA-153, that replace the parked existing-session attachment approach with the agent surface the owner directed in P15. Two harness proofs, one contract amendment, one agent CLI package, two adapter routes, one fallback skill package, one channel page, one composition ticket. Readiness is `requirements-only`: G-HARNESSES and G-SUBSTRATE are open, and the route table below is a set of candidates supported by CLI evidence, not proven delivery. A plan is not evidence that a route works.
 
 Product authority: `docs/product/decisions.md` P01, P04, P06, P10, P11, P12, P13, P14, P15.
 
@@ -93,7 +93,7 @@ A route that queues into a session **Khala did not start** is not `khala_hosted_
 - Cross-package implementation imports are refused unless the importing file's path contains `/composition/`. The only always-allowed cross-package destination is `packages/contracts`. A new `packages/agent-cli` may import `@khala/contracts/delivery/*` freely; to reach `@khala/harnesses` or `@khala/connector` its files must live under a `composition/` directory.
 - A new package subpath must be declared in the owning package's `exports` map, or the workspace import will not resolve.
 - `scripts/package-task.mjs` refuses to emit `*.test.*`, `fakes.ts` or `fixtures/**` into `dist`, and `scripts/dist-exports.test.mjs` asserts it for `packages/harnesses`. A new package inherits the same discipline.
-- `apps/web/` may not transitively reach `apps/control`, `apps/connector`, `packages/connector` or `packages/harnesses`, and sibling features under `apps/web/src/features/*` may not import each other. KHA-152's room page therefore takes every feature screen as an injected render prop, exactly as `apps/web/src/features/review/ReviewItem.tsx` already takes `renderContent`.
+- `apps/web/` may not transitively reach `apps/control`, `apps/connector`, `packages/connector` or `packages/harnesses`, and sibling features under `apps/web/src/features/*` may not import each other. KHA-152's channel page therefore takes every feature screen as an injected render prop, exactly as `apps/web/src/features/review/ReviewItem.tsx` already takes `renderContent`.
 
 ### Worked data shape
 
@@ -168,7 +168,7 @@ If the `codex queue` process is killed between spawn and exit, the third receipt
 
 **KTD5. MCP is a send surface, not a delivery surface** (instantiates KD2). Both `claude mcp` and `codex mcp` configure servers that are loaded at session start and whose tools the model pulls. KHA-148 ships an MCP mode of the CLI (`khala mcp-serve`) so an agent can register `khala_send` once and send without a Bash approval every turn. No ticket plans MCP as an inbound route.
 
-**KTD6. The room page composes, it does not reimplement** (instantiates KD6). `apps/web/src/features/timeline/TimelineScreen.tsx` already has the composer (`handleSend`), retry with a stable `clientTxnId` (`send.ts`), attribution and a generation-fenced controller. `apps/web/src/features/review/ReviewScreen.tsx` already has selection and approval. KHA-152 adds `apps/web/src/features/room/` which arranges them and adds the one genuinely missing surface: agent presence and the install command. The boundary checker forbids importing sibling features, so every screen arrives as an injected render prop and KHA-153 supplies the real ones.
+**KTD6. The channel page composes, it does not reimplement** (instantiates KD6). `apps/web/src/features/timeline/TimelineScreen.tsx` already has the composer (`handleSend`), retry with a stable `clientTxnId` (`send.ts`), attribution and a generation-fenced controller. `apps/web/src/features/review/ReviewScreen.tsx` already has selection and approval. KHA-152 adds `apps/web/src/features/channel/` which arranges them and adds the one genuinely missing surface: agent presence and the install command. The boundary checker forbids importing sibling features, so every screen arrives as an injected render prop and KHA-153 supplies the real ones.
 
 **KTD7. Cloud and desktop apps are recorded, not planned** (session-settled: user-directed, via KD7). `codex remote-control pair` and `claude --cloud` are named in `docs/product/native-agent-surface.md` as the follow-up and appear in no implementation unit.
 
@@ -180,7 +180,7 @@ Delivery path for one released message, after all nine tickets.
 
 ```mermaid
 sequenceDiagram
-    participant H as Owning human (apps/web room page)
+    participant H as Owning human (apps/web channel page)
     participant C as Connector runtime (apps/connector/src/runtime)
     participant A as Harness adapter (packages/harnesses)
     participant K as khala CLI / listener (packages/agent-cli)
@@ -222,7 +222,7 @@ graph TD
     K148 --> K151[KHA-151 fallback skill]
     K145 --> K149
     K146 --> K150
-    K107[KHA-107 shell] --> K152[KHA-152 room page]
+    K107[KHA-107 shell] --> K152[KHA-152 channel page]
     K122[KHA-122] --> K152
     K123[KHA-123] --> K152
     K125[KHA-125] --> K152
@@ -255,8 +255,8 @@ packages/harnesses/src/claude/
   reconcile.ts                          # new, KHA-149, only if the proof shows a queryable queue
 packages/harnesses/src/codex/
   native-cli.ts                         # new, KHA-150: codex queue route A
-apps/web/src/features/room/             # new, KHA-152
-  RoomScreen.tsx
+apps/web/src/features/channel/             # new, KHA-152
+  ChannelScreen.tsx
   AgentPresencePanel.tsx
   ports.ts
   controller.ts
@@ -373,7 +373,7 @@ Do not bump `v`. These are additive members of open-ended string unions inside a
 
 ### U4. KHA-148 — Build the Khala agent CLI
 
-**Goal.** One installable binary that an agent runs to connect to a room, receive released messages and send replies, with no human configuration.
+**Goal.** One installable binary that an agent runs to connect to a channel, receive released messages and send replies, with no human configuration.
 
 **Requirements.** R01, R05, R06, R10, AE1.
 
@@ -381,11 +381,11 @@ Do not bump `v`. These are additive members of open-ended string unions inside a
 
 **Files.** `packages/agent-cli/package.json`, `packages/agent-cli/src/cli/`, `packages/agent-cli/src/cli/inbox.ts`, `packages/agent-cli/src/mcp/`, `packages/agent-cli/src/composition/`, `packages/agent-cli/README.md`, plus adjacent tests.
 
-**Approach.** Four commands. `khala connect <link>` parses the room link, runs the KHA-114 bootstrap, persists into the KHA-115 ledger and reports the binding. `khala listen` runs the KHA-116 subscription and writes released messages to a per-binding inbox with a durable cursor. `khala send` reads the message from stdin and posts it to the room. `khala status` prints the binding, the route and the cursor as JSON, for both the agent and KHA-152's presence panel.
+**Approach.** Four commands. `khala connect <link>` parses the channel link, runs the KHA-114 bootstrap, persists into the KHA-115 ledger and reports the binding. `khala listen` runs the KHA-116 subscription and writes released messages to a per-binding inbox with a durable cursor. `khala send` reads the message from stdin and posts it to the channel. `khala status` prints the binding, the route and the cursor as JSON, for both the agent and KHA-152's presence panel.
 
 `khala mcp-serve` runs the same CLI as an MCP server exposing one tool, `khala_send`, so an agent registered with `claude mcp add` or `codex mcp add` can reply without a shell approval each turn (KTD5).
 
-The inbox format is a cursor-addressed append-only file per binding, one JSON object per line, holding the release ID, the room event references, the author attribution and the payload. A consumer acknowledges by advancing the cursor, which is what makes the fallback listener's exactly-once claim the connector's rather than the harness's, consistent with KHA-121.
+The inbox format is a cursor-addressed append-only file per binding, one JSON object per line, holding the release ID, the channel event references, the author attribution and the payload. A consumer acknowledges by advancing the cursor, which is what makes the fallback listener's exactly-once claim the connector's rather than the harness's, consistent with KHA-121.
 
 Every file that imports `@khala/connector` or `@khala/harnesses` lives under `packages/agent-cli/src/composition/`. Everything else imports only `@khala/contracts/delivery/*`. This is the boundary checker's rule, not a style preference.
 
@@ -501,11 +501,11 @@ The skill must be honest about its cost. On Claude Code in `default` permission 
 - `SKILL.md` names the exact permission cost and the exact commands; assert it mentions `khala connect`, `khala listen` and `khala send`.
 - The skill never reads pending content: the inbox it reads contains only released entries. Assert against a ledger holding both.
 
-**Verification.** `pnpm --filter @khala/agent-skill test` passes; a manual install-and-run against a fixture room delivers one released message and returns one reply.
+**Verification.** `pnpm --filter @khala/agent-skill test` passes; a manual install-and-run against a fixture channel delivers one released message and returns one reply.
 
 ---
 
-### U8. KHA-152 — Build the room page and agent presence panel
+### U8. KHA-152 — Build the channel page and agent presence panel
 
 **Goal.** One page where a human sends, receives, reviews and sees each agent's connection state and route.
 
@@ -513,43 +513,43 @@ The skill must be honest about its cost. On Claude Code in `default` permission 
 
 **Dependencies.** KHA-107, KHA-122, KHA-123, KHA-125.
 
-**Files.** `apps/web/src/features/room/RoomScreen.tsx`, `apps/web/src/features/room/AgentPresencePanel.tsx`, `apps/web/src/features/room/ports.ts`, `apps/web/src/features/room/controller.ts`, `apps/web/src/features/room/README.md`, `apps/web/src/features/room/browser-harness/`, adjacent tests.
+**Files.** `apps/web/src/features/channel/ChannelScreen.tsx`, `apps/web/src/features/channel/AgentPresencePanel.tsx`, `apps/web/src/features/channel/ports.ts`, `apps/web/src/features/channel/controller.ts`, `apps/web/src/features/channel/README.md`, `apps/web/src/features/channel/browser-harness/`, adjacent tests.
 
-**Approach.** Compose, do not reimplement (KTD6). `RoomScreen` takes `renderTimeline`, `renderReview` and `renderControls` as props and arranges them inside `AiurShell` from `apps/web/src/shell/AiurShell.tsx` in `hosted-content` mode, so the page can later be embedded in Aiur's own shell per P10.
+**Approach.** Compose, do not reimplement (KTD6). `ChannelScreen` takes `renderTimeline`, `renderReview` and `renderControls` as props and arranges them inside `AiurShell` from `apps/web/src/shell/AiurShell.tsx` in `hosted-content` mode, so the page can later be embedded in Aiur's own shell per P10.
 
-`AgentPresencePanel` is the new surface. Per agent participant it shows the display name and owner, connection state, the route name in human words ("Codex CLI", "Claude listener", "Khala skill"), the last receipt, and a copy-to-clipboard install command for an agent that has not connected. A room with no connected agent shows the install command first, because that is the state a new room is in.
+`AgentPresencePanel` is the new surface. Per agent participant it shows the display name and owner, connection state, the route name in human words ("Codex CLI", "Claude listener", "Khala skill"), the last receipt, and a copy-to-clipboard install command for an agent that has not connected. A channel with no connected agent shows the install command first, because that is the state a new channel is in.
 
-`ports.ts` declares `RoomUiPort` with `agents()`, `subscribeAgents()` and `installCommand(participantId)`, in the shape of `apps/web/src/features/review/ports.ts`. KHA-153 supplies the implementation; this ticket ships fakes and a browser harness, as every landed web feature already does.
+`ports.ts` declares `ChannelUiPort` with `agents()`, `subscribeAgents()` and `installCommand(participantId)`, in the shape of `apps/web/src/features/review/ports.ts`. KHA-153 supplies the implementation; this ticket ships fakes and a browser harness, as every landed web feature already does.
 
 Route names are copy, not logic. The panel renders whatever the capability record says, including `unsupported`, and never claims a route works because a binding exists.
 
 The page must work at phone width. `AiurShell` already carries the density and token system; do not introduce a second one.
 
-**Execution note.** Fixture-driven at merge. G-SUBSTRATE is open, so no live `RoomPort` exists; that is KHA-132's and KHA-153's problem, not this ticket's.
+**Execution note.** Fixture-driven at merge. G-SUBSTRATE is open, so no live `ChannelPort` exists; that is KHA-132's and KHA-153's problem, not this ticket's.
 
 **Patterns to follow.** `apps/web/src/features/review/ReviewScreen.tsx` for injected rendering; `apps/web/src/features/timeline/controller.ts` for the generation-fenced subscribe/snapshot merge; `apps/web/src/features/agent-controls/` for receipt labelling; each feature's `browser-harness/` for the fake-driven harness.
 
 **Test scenarios.**
 - Covers AE5. Typing and sending renders the message optimistically and reconciles on the echoed event.
-- Covers AE1. A room whose agent has connected shows that agent as connected with a named route.
+- Covers AE1. A channel whose agent has connected shows that agent as connected with a named route.
 - Covers AE3. An agent whose capability record says `unsupported` renders as unsupported with the fallback offered, and the panel does not claim a working route.
-- A room with no connected agent leads with the install command, and the copy control reports success.
+- A channel with no connected agent leads with the install command, and the copy control reports success.
 - An agent that stops reporting moves to a stale state after a bounded interval rather than showing connected forever.
 - A revoked participant cannot send; the composer is disabled, matching the existing timeline behaviour.
 - Pending review items render through the injected review screen and approving one calls the injected handler with the exact selection.
 - Rendering at 400px keeps every control reachable and the page does not scroll horizontally.
 - Undecryptable and unavailable items render as placeholders rather than empty rows.
-- Boundary: `apps/web/src/features/room/` imports no sibling feature. Asserted by `pnpm lint`.
+- Boundary: `apps/web/src/features/channel/` imports no sibling feature. Asserted by `pnpm lint`.
 
-**Verification.** `pnpm --filter @khala/web test` passes; the browser harness renders the room with fakes; `pnpm lint` passes including the boundary checker.
+**Verification.** `pnpm --filter @khala/web test` passes; the browser harness renders the channel with fakes; `pnpm lint` passes including the boundary checker.
 
 ---
 
-### U9. KHA-153 — Compose the native surface into the connector runtime and the room
+### U9. KHA-153 — Compose the native surface into the connector runtime and the channel
 
-**Goal.** Bind the CLI, the adapters, the skill and the room page into one working owner runtime, and document the agent onboarding path.
+**Goal.** Bind the CLI, the adapters, the skill and the channel page into one working owner runtime, and document the agent onboarding path.
 
-**Requirements.** R01, R07, R08, R09, AE1, AE2, AE3. **Amends KHA-133** (issue #42): KHA-133 currently composes bootstrap, storage, subscription, dispatch and a single fail-closed Claude adapter. It must instead select the adapter from the capability record, and it must expose the agent-presence data the room page needs.
+**Requirements.** R01, R07, R08, R09, AE1, AE2, AE3. **Amends KHA-133** (issue #42): KHA-133 currently composes bootstrap, storage, subscription, dispatch and a single fail-closed Claude adapter. It must instead select the adapter from the capability record, and it must expose the agent-presence data the channel page needs.
 
 **Dependencies.** KHA-133, KHA-149, KHA-150, KHA-151, KHA-152.
 
@@ -559,7 +559,7 @@ The page must work at phone width. `AiurShell` already carries the density and t
 
 Adapter selection. The runtime calls `inspect` on each candidate adapter for a binding's harness and selects the one whose capability record reports a usable route, falling back to the skill path when none does. Selection is recorded in the ledger so a restart does not silently change route; a changed route is a new binding generation, consistent with the writer-lock rule in `packages/harnesses/src/codex/README.md`.
 
-Presence. Implement `RoomUiPort` from KHA-152 over the KHA-115 ledger and the capability records. Route names come from the capability record; connection state comes from the last receipt and the subscription's own liveness.
+Presence. Implement `ChannelUiPort` from KHA-152 over the KHA-115 ledger and the capability records. Route names come from the capability record; connection state comes from the last receipt and the subscription's own liveness.
 
 Onboarding. `docs/operations/agent-onboarding.md` gives the exact one-command install per harness and what the human hands over. It is the source of the string KHA-152's panel copies.
 
@@ -571,7 +571,7 @@ Do not re-scope KHA-132 or KHA-134. This ticket consumes the human composition a
 
 **Test scenarios.**
 - Covers AE1. A fixture link produces a binding, a selected route and a presence row, end to end.
-- Covers AE2. A released message reaches the selected adapter with the exact bytes and produces a consumption receipt visible in the room.
+- Covers AE2. A released message reaches the selected adapter with the exact bytes and produces a consumption receipt visible in the channel.
 - Covers AE3. A harness with no usable route selects the skill path and the presence row says so.
 - A restart mid-bootstrap leaves the handle usable. This is issue #42's named trap: bootstrap rows landing in the ledger before `bindDeviceIdentity` make an `existing`-mode bind return `identity_unbound`. Bind the device identity first, or keep bootstrap rows out of `holdsState`, and test the restart.
 - Revocation is terminal per `bindingId`; re-bootstrap mints a new `bindingId`. Issue #42 records this as an Executor decision.
@@ -598,7 +598,7 @@ These are planned commands. None of them was executed against the new code durin
 
 - It does not prove that any native route works. KHA-145 and KHA-146 are the proofs, and until they report, every new capability record ships `unsupported` or `experimental`. G-HARNESSES stays open.
 - It does not select a messaging substrate. G-SUBSTRATE is untouched, so there is no live transport, and KHA-152 merges fixture-driven.
-- It does not build the browser entry point, bundle, router or live `RoomPort`. That is KHA-132, which has not landed.
+- It does not build the browser entry point, bundle, router or live `ChannelPort`. That is KHA-132, which has not landed.
 - It does not build the review approval route or the `ReviewUiPort` implementation. That is KHA-134.
 - It does not implement trust, automatic peer delivery, turn budgets or cancellation. G-AUTOMATION is open, `HarnessPort` has no cancel operation by design, and nothing in P15 asks for one.
 - It does not touch recovery, revocation or closure UI beyond citing the issue #42 rule that KHA-153 must honour.
@@ -609,7 +609,7 @@ These are planned commands. None of them was executed against the new code durin
 
 ## Definition of Done
 
-All nine tickets have landed; every capability record in `packages/harnesses` cites an evidence document that exists and matches it; `docs/product/native-agent-surface.md` records the recommended route per harness with its evidence reference; issue #26 and issue #42 are updated with which ticket amends them; a human can open a room, see an agent's install command, hand it over, and see that agent connect and reply; and G-HARNESSES has been decided on the evidence rather than on documentation.
+All nine tickets have landed; every capability record in `packages/harnesses` cites an evidence document that exists and matches it; `docs/product/native-agent-surface.md` records the recommended route per harness with its evidence reference; issue #26 and issue #42 are updated with which ticket amends them; a human can open a channel, see an agent's install command, hand it over, and see that agent connect and reply; and G-HARNESSES has been decided on the evidence rather than on documentation.
 
 ## Sources & Research
 

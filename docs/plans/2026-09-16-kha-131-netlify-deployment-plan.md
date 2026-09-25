@@ -39,7 +39,7 @@ Deploy the browser app and bounded control requests on Netlify while keeping con
 ### Acceptance examples
 
 - AE1. A preview build references only preview origins and cannot consume production control credentials.
-- AE2. A deep chat link reload serves the app, while an API error remains a structured API response.
+- AE2. A deep channel link reload serves the app, while an API error remains a structured API response.
 
 ### Scope and decisions
 
@@ -112,7 +112,7 @@ flowchart TB
   V -->|failure| F[Fail closed and preserve diagnosis]
 ```
 
-Scaffold smoke in this ticket may use an unavailable placeholder screen; it must not expose fake chat behavior. Real authenticated chat proof remains KHA-132. KHA-131 must also register `build:functions` in its owned control package through the dependency owner when the initial scaffold lacks it.
+Scaffold smoke in this ticket may use an unavailable placeholder screen; it must not expose fake channel behavior. Real authenticated channel proof remains KHA-132. KHA-131 must also register `build:functions` in its owned control package through the dependency owner when the initial scaffold lacks it.
 
 ### Concrete function registration contract
 
@@ -208,7 +208,7 @@ Every proposed verification command below is an implementation-time contract, no
 
 **Patterns:** KTD1–KTD4; referenced upstream behavior and owned sibling boundaries.
 
-**Test scenarios:** Browser reload of chat route works; auth callback/API are not SPA rewrites; browser bundle scan finds no server secret or native connector module.
+**Test scenarios:** Browser reload of channel route works; auth callback/API are not SPA rewrites; browser bundle scan finds no server secret or native connector module.
 
 **Verification:** Record the observed pass/fail result, exact build/environment and sanitized evidence; do not infer runtime success from configuration parsing alone.
 

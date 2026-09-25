@@ -18,7 +18,7 @@ The source repositories are local evidence, not an assertion that every file is 
 
 ## Settled no-setup onboarding correction
 
-The user explicitly defined the ordinary experience: **OAuth sign-in for identity/email, create an optionally named chat, copy its link to their own existing agent and coworker.** This supersedes any proposed normal-path connector pairing approval, manual install, MCP configuration, key ceremony, homeserver selection, or separate Matrix registration elsewhere in this research. The agent handles supported connection/subscription setup itself after receiving the link. User-visible states can say “Waiting for your agent,” “Agent connected,” and “Messages awaiting review.”
+The user explicitly defined the ordinary experience: **OAuth sign-in for identity/email, create an optionally named channel, copy its link to their own existing agent and coworker.** This supersedes any proposed normal-path connector pairing approval, manual install, MCP configuration, key ceremony, homeserver selection, or separate Matrix registration elsewhere in this research. The agent handles supported connection/subscription setup itself after receiving the link. User-visible states can say “Waiting for your agent,” “Agent connected,” and “Messages awaiting review.”
 
 Treat OAuth/account-to-agent binding and SDK device initialisation as implementation responsibilities to prove. Do not solve a missing runtime feature by assigning technical setup to the human or silently creating a different agent session. Exceptional recovery or unsupported-environment messages are distinct from the successful onboarding path.
 
@@ -51,7 +51,7 @@ SHA-256: `5f3b8f3dfa3c1376c775ede482bbb2048bbc4a9c51fd4535ba826f0ec7ac7482`.
 
 Preserve aspect ratio and the existing gradient. Pair a decorative image (`alt=""`) with an accessible text product name; provide an accessible name when the image is the entire home link. Reuse the existing favicon family from the selected sibling source, documenting source paths and checksums when copying. Do not silently rebrand the symbol as an individual agent avatar.
 
-Aiur bundles [Bungee](../../../aiur/src/priv/static/bungee.woff2) for offline dashboard rendering. Marketing currently requests Bungee, Space Grotesk, and JetBrains Mono from Google Fonts. Proposed Khala application behavior is same-origin font delivery so opening a private room does not depend on a third-party font request. The implementation ticket must retain or obtain the appropriate font license files; this inspection did not find adjacent license files for all three fonts. Font packaging is an implementation prerequisite, not permission to replace the typefaces.
+Aiur bundles [Bungee](../../../aiur/src/priv/static/bungee.woff2) for offline dashboard rendering. Marketing currently requests Bungee, Space Grotesk, and JetBrains Mono from Google Fonts. Proposed Khala application behavior is same-origin font delivery so opening a private channel does not depend on a third-party font request. The implementation ticket must retain or obtain the appropriate font license files; this inspection did not find adjacent license files for all three fonts. Font packaging is an implementation prerequisite, not permission to replace the typefaces.
 
 ### Token mapping
 
@@ -74,17 +74,17 @@ The dashboard explicitly distinguishes blue accent decoration from a blue button
 
 Aiur marketing defaults to dark, persists `aiur-theme`, and applies it before hydration. Archon home follows `prefers-color-scheme` with a light bare root. Proposed Khala behavior follows Aiur: dark initial default, explicit light/dark toggle, stored choice applied before the first render. Handle unavailable storage without breaking the page. Identically named local-storage keys do not synchronize preferences between separate origins; do not imply a cross-product preference unless an actual mechanism is implemented.
 
-The decorative diagonal flow field and letter entrance animation belong on a public landing surface if one ships. The chat/review surface should remain still while people read and decide. Preserve reduced-motion support; do not communicate queue progress through motion alone. Bungee fits product names and short page headings, Space Grotesk fits prose and controls, and JetBrains Mono fits code, IDs, timestamps, and technical metadata. Do not render an entire long conversation in monospace.
+The decorative diagonal flow field and letter entrance animation belong on a public landing surface if one ships. The channel/review surface should remain still while people read and decide. Preserve reduced-motion support; do not communicate queue progress through motion alone. Bungee fits product names and short page headings, Space Grotesk fits prose and controls, and JetBrains Mono fits code, IDs, timestamps, and technical metadata. Do not render an entire long conversation in monospace.
 
 ## Product experience proposed for review
 
 The original [scope](recovered/SCOPE.md) requires at least two humans and their two agents, cross-owner invitations, queued previews before recipient-model delivery, and the option to relax the airlock. The later connector decision allows the connector itself to decrypt pending content. A four-actor demonstration is therefore the minimum meaningful end-to-end slice. A single-human chatbot screen would not prove the product.
 
-### Room and attribution
+### Channel and attribution
 
-The room header should identify the room and participating people, with each agent visually grouped under its owning human. Message headers should say, for example, **Morgan · Human** or **Build agent · Agent for Morgan**. Organization and model are secondary metadata, not authenticated identities by themselves. Agent delegation, signed authorship, human review, and verified device identity must remain separate concepts. A human approving a message does not become its author; a model name is not proof of a specific runtime.
+The channel header should identify the channel and participating people, with each agent visually grouped under its owning human. Message headers should say, for example, **Morgan · Human** or **Build agent · Agent for Morgan**. Organization and model are secondary metadata, not authenticated identities by themselves. Agent delegation, signed authorship, human review, and verified device identity must remain separate concepts. A human approving a message does not become its author; a model name is not proof of a specific runtime.
 
-Prefer a shared chronological conversation with explicit author headers over left/right chat bubbles whose direction implies that every remote message has the same author. Human posts, agent posts, and system events have different labels. Each recipient's review state is local to that recipient: a shared message can be released to one owner's agent while still awaiting another owner's review. Never show a room-wide “approved” badge when only one release exists.
+Prefer a shared chronological conversation with explicit author headers over left/right chat bubbles whose direction implies that every remote message has the same author. Human posts, agent posts, and system events have different labels. Each recipient's review state is local to that recipient: a shared message can be released to one owner's agent while still awaiting another owner's review. Never show a channel-wide “approved” badge when only one release exists.
 
 Render external content as inert text/limited Markdown. Code fences and quotations remain visibly content, even if they contain strings such as “system,” “approved,” or “run this command.” No raw HTML, remote auto-loaded images, or executable previews in the initial review surface. Exact renderer and supported media are ticket decisions, with the same rules in the preview and the released-content view.
 
@@ -92,13 +92,13 @@ Render external content as inert text/limited Markdown. Code fences and quotatio
 
 Recommended flow for owner review:
 
-1. A human creates a room, or their delegated agent prepares it with clear owner attribution.
+1. A human creates a channel, or their delegated agent prepares it with clear owner attribution.
 2. The creator queues introductory messages and obtains an invitation for the other human.
-3. Opening the invitation shows who invited the recipient and what access accepting grants. Validate the invitation before revealing protected room content.
+3. Opening the invitation shows who invited the recipient and what access accepting grants. Validate the invitation before revealing protected channel content.
 4. The recipient joins as a human and reads the queued preview. Joining must not automatically pass pending messages into their agent model. Under the owner's connector-gated decision, a trusted connector may already be able to decrypt them.
 5. The recipient shares the invitation link with their **existing agent session**. The link's machine-readable entry point explains how to attach that session through the supported connector. It carries no pending message bodies or human approval credential. If human authentication/device authorization is needed, it directs the human to the browser and then resumes the same join attempt. The recipient releases selected messages when ready; model-context delivery remains gated regardless of whether session attachment happens before or after preview.
 
-The same shareable invitation URL can route humans and agents into the appropriate flow; separate credentials and authority do not require two different links or a mandatory onboarding wizard. A scoped agent handoff is an internal authorization operation, not a second product ceremony. Do not put a human bootstrap secret or review authority in the shareable URL. Notifications before acceptance should omit protected message bodies. Invitation-expired, invitation-revoked, wrong-account, device-not-authorized, and awaiting-key-access deserve distinct recovery paths rather than a generic empty room.
+The same shareable invitation URL can route humans and agents into the appropriate flow; separate credentials and authority do not require two different links or a mandatory onboarding wizard. A scoped agent handoff is an internal authorization operation, not a second product ceremony. Do not put a human bootstrap secret or review authority in the shareable URL. Notifications before acceptance should omit protected message bodies. Invitation-expired, invitation-revoked, wrong-account, device-not-authorized, and awaiting-key-access deserve distinct recovery paths rather than a generic empty channel.
 
 Proposed initial affordance: **Share this link with your agent** with a copy button, followed by status such as **Waiting for your agent**, **Agent connected; messages awaiting review**. Reuse available local tooling and installation state. Where a runtime needs one-time connector setup, the agent must perform supported setup itself. A required manual technical step is a compatibility gap against the settled user journey, not an assumed product prerequisite. Do not promise silent attachment to every runtime: the experiment must demonstrate how an already-running session discovers tools or another supported interface without losing its working context. A missing runtime capability should produce a precise compatibility explanation, not silently spawn a replacement agent.
 
@@ -108,7 +108,7 @@ Use **Review** as the navigation label, with “airlock” explained in supporti
 
 Proposed controls are **Release to my agent**, **Keep for review**, and **Reject**. Redaction/annotation remains an explicit product question. If supported, show original versus released version and attribute the transformation to the reviewing human; never silently replace the author's original or imply that edited text is still their signed text. Bulk release and AI review summaries also require an explicit product decision because they change what the person actually reviews.
 
-Trust controls should say **Review messages from Morgan before my agent receives them** and **Allow future messages from Morgan automatically in this room**. Keep the active policy visible in the room and composer context. Do not label the peer “Safe” or the content “Injection-free.” Re-enabling review affects future delivery; it cannot remove content already read or copied by an agent. Policy changes need a durable event, clear effective point, and a visible pending/confirmed distinction during connection loss. Exact policy scope and race semantics are owned by the identity/state research.
+Trust controls should say **Review messages from Morgan before my agent receives them** and **Allow future messages from Morgan automatically in this channel**. Keep the active policy visible in the channel and composer context. Do not label the peer “Safe” or the content “Injection-free.” Re-enabling review affects future delivery; it cannot remove content already read or copied by an agent. Policy changes need a durable event, clear effective point, and a visible pending/confirmed distinction during connection loss. Exact policy scope and race semantics are owned by the identity/state research.
 
 ### Status language tied to evidence
 
@@ -123,13 +123,13 @@ Trust controls should say **Review messages from Morgan before my agent receives
 | Agent responded | Attributed reply received | Correct or safe action |
 | Reconnecting | Connection unavailable/recovering | Draft loss or automatic send failure |
 | Syncing messages | Resume/replay active | Fully current state |
-| History unavailable on this device | Missing historical key/access | Empty original room |
+| History unavailable on this device | Missing historical key/access | Empty original channel |
 
 Avoid read receipts unless the protocol can define and support their exact meaning. Distinguish ciphertext receipt, decryption, adapter handoff, and model response. Do not derive trust-policy state from the last frame seen by the browser while replay is incomplete.
 
 ## Desktop, mobile, and accessibility acceptance intent
 
-Desktop can show room navigation, conversation, and the review pane together. On phones use one main pane at a time with a persistent route to **Review (N)**; preserve selected item and reading position when switching. Keep the release action and recipient identity together, and account for the on-screen keyboard. Long code, URLs, names, and invitation errors must wrap or scroll inside their own region without widening the page.
+Desktop can show channel navigation, conversation, and the review pane together. On phones use one main pane at a time with a persistent route to **Review (N)**; preserve selected item and reading position when switching. Keep the release action and recipient identity together, and account for the on-screen keyboard. Long code, URLs, names, and invitation errors must wrap or scroll inside their own region without widening the page.
 
 The sibling [website operating notes](../../../aiur/website/AGENTS.md) document why a fixed-size headless screenshot is insufficient for mobile layout verification. Carry that lesson into Khala: exercise 360×780, 375×667, 390×844 and landscape 844×390 using actual mobile emulation, then inspect overflow and keyboard behavior. These are acceptance targets; no Khala application has yet been rendered or tested.
 
@@ -144,14 +144,14 @@ These are bounded candidates for sign-off, not approved detailed plans. Backend 
 | Slice | Observable outcome | Dependency / boundary |
 |---|---|---|
 | Aiur brand foundation | Existing symbol, sourced tokens, bundled licensed fonts, light/dark first paint, accessible button/status primitives | No new logo; source manifest; no unrelated sibling changes |
-| Room shell and attributed transcript | Two humans and two delegated agents can be distinguished in a readable responsive room | Authenticated membership and message projection contracts |
+| Channel shell and attributed transcript | Two humans and two delegated agents can be distinguished in a readable responsive channel | Authenticated membership and message projection contracts |
 | Human invitation and queued preview | Recipient sees an authentic invitation and can read queued content before model delivery | Invite claim, human-device authorization, connector review boundary |
 | Existing-session agent handoff | Human shares the invitation link with the agent already working; it attaches without a new session or exposed human approval credentials | Runtime discovery/setup, delegation/agent admission API and connector handshake |
 | Per-recipient review queue | Exact message version can be kept, rejected, or released to a named agent, with confirmed outcome | Durable connector review/release API and concurrency contract |
 | Visible trust policy | Human can change scoped future-message policy and see the confirmed effective state | Policy versioning, reconnect/replay and re-arming semantics |
 | Recovery and connection states | Drafts, reconnect, missing keys, expired invitation and revoked access remain understandable | Authoritative replay/recovery/error contracts |
 | Responsive and accessible product journey | Four-actor invite→preview→release→response flow usable across themes, mobile and keyboard | Vertical slice complete; include adversarial display content and long messages |
-| Public product entry and onboarding copy | Khala reads as an Aiur product and explains the human/agent joining flow | Optional launch scope; landing page is separate from secure room rendering |
+| Public product entry and onboarding copy | Khala reads as an Aiur product and explains the human/agent joining flow | Optional launch scope; landing page is separate from secure channel rendering |
 
 Each implementation plan should include representative signed/unsigned and pending/released fixtures, empty/error/reconnecting states, exact labels, component ownership, server prerequisites, prohibited shortcuts, and acceptance steps. Detailed `ce-brainstorm` / `ce-plan` work follows ticket sign-off as requested by the owner.
 
@@ -160,7 +160,7 @@ Each implementation plan should include representative signed/unsigned and pendi
 1. What should the first four-actor session accomplish: compare codebases, coordinate a joint implementation, debug an integration, or another concrete outcome? This determines whether text/code alone is enough.
 2. Is the recipient reviewing only the initial queued introduction, every inbound cross-owner message by default, or a different boundary? Can each owner choose independently?
 3. Should release support redaction/annotation initially, or only the exact original message? Should the sender know which messages were withheld?
-4. When someone allows automatic delivery, is that permission limited to this room, or does it extend to the peer elsewhere? Should adding/replacing an agent re-enable review?
+4. When someone allows automatic delivery, is that permission limited to this channel, or does it extend to the peer elsewhere? Should adding/replacing an agent re-enable review?
 5. Is mobile intended for approving messages and reading updates, or for the complete creation/agent-connection workflow?
 6. Are file attachments and links needed in the first useful session? Remote previews change both exposure and review design.
 7. Does **Review** communicate the core control adequately, with **airlock** as explanatory language, or should **Airlock** be the product's primary term?
@@ -174,7 +174,7 @@ Reduce the earlier question list to three decisions that change the first useful
 | Decision | Proposed default for the ticket proposal | Why it matters |
 |---|---|---|
 | What real collaboration proves the first release, and does it require attachments? | Two existing agents discuss a cross-repository technical task using text, code blocks and ordinary links; attachment/media work is a separately visible ticket | Determines the transcript and connector payload scope without assuming a new agent workflow |
-| What is the initial review policy and release operation? | Each human reviews inbound cross-owner messages independently; release the exact message version; allow automatic future delivery from that peer in this room; edited versions require a new decision | Determines connector policy and the essential controls; redaction, bulk release and wider trust scope can be explicitly included or deferred |
+| What is the initial review policy and release operation? | Each human reviews inbound cross-owner messages independently; release the exact message version; allow automatic future delivery from that peer in this channel; edited versions require a new decision | Determines connector policy and the essential controls; redaction, bulk release and wider trust scope can be explicitly included or deferred |
 | What must work on a phone in the first release? | Read, review/release and switch review policy; desktop is the reference for initial agent attachment, while a phone can still copy the same invitation link | Determines whether an Element-based integration's mobile limits are acceptable |
 
 The human already specified existing-session/any-model attachment, OSS reuse, connector gating, Aiur brand inheritance, and hosting/language preferences. Do not re-ask those as scope choices. Which initial runtime adapters prove model independence is an engineering compatibility proposal backed by the experiment, not permission to narrow the product to a single model. UI wording such as **Review** versus **Airlock** can be proposed in the tickets rather than blocking architecture. Publication/license intent may still need a focused answer if the selected upstream combination makes it consequential; it need not stall the read-only comparison or become a general onboarding requirement.
@@ -234,10 +234,10 @@ A separate review panel or web surface is acceptable if it shares the authentica
 
 - Add **UI reuse experiment and version/license inventory** ahead of application construction. Select one client path from observed results; do not build all candidates.
 - Rewrite **Aiur brand foundation** as a token/asset adaptation of the selected client and the small Khala extension, preserving required notices. Start from config-supported theming before custom CSS patches.
-- Rewrite **Room shell and attributed transcript** as ownership/agent attribution integration. Remove generic room list, composer and timeline reconstruction from the initial scope if Element supplies them.
+- Rewrite **Channel shell and attributed transcript** as ownership/agent attribution integration. Remove generic channel list, composer and timeline reconstruction from the initial scope if Element supplies them.
 - Keep **Invitation and queued preview**, but integrate existing Matrix account/device flows. No separate review encryption-room UI is required by the settled product decision.
 - Keep **Agent connection**, **Review queue**, and **Trust policy** as Khala-specific work. Their durable state controls connector-to-model delivery; wording must disclose that the connector can already decrypt pending messages.
 - Rewrite **Recovery and connection states** as reuse plus Khala-specific error/status integration. Do not implement a second sync loop or crypto recovery system merely to match the Aiur visual theme.
 - Keep the four-actor mobile/accessibility journey. Existing client tests do not cover Khala's review authority or queue semantics; add tests at those new seams.
 
-This changes the scope estimate: selecting Matrix plus an existing client removes much of the generic chat implementation, while leaving the distinctive human/agent ownership and release boundary as explicit Khala work. The license choice, extension fit, and mobile experience remain concrete selection gates rather than reasons to default prematurely to a bespoke client.
+This changes the scope estimate: selecting Matrix plus an existing client removes much of the generic channel implementation, while leaving the distinctive human/agent ownership and release boundary as explicit Khala work. The license choice, extension fit, and mobile experience remain concrete selection gates rather than reasons to default prematurely to a bespoke client.

@@ -38,7 +38,7 @@ test('AgentControlsPanel requests a pause, reconciles it via a values-only snaps
     // (derived from ownerId), not a raw label string.
     await page.getByText('Your agent').waitFor();
     await page.getByText('agent-harness').waitFor();
-    await page.getByText('room-harness').waitFor();
+    await page.getByText('channel-harness').waitFor();
 
     // Located by class, not accessible name: the button's label changes to
     // "Resume review delivery" once the pause takes effect below.

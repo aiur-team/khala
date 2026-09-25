@@ -16,7 +16,7 @@ import * as messaging from './index';
 import { decodeRecoveryCapabilities, decodeRecoveryStatus } from './recovery';
 import { decodeRevocationProgress, decodeRevocationRequest } from './revocation';
 import { isCurrentGeneration } from './outcomes';
-import { decodeRoomSnapshot, decodeRoomSummary, decodeSendState, decodeTimelinePage } from './rooms';
+import { decodeChannelSnapshot, decodeChannelSummary, decodeSendState, decodeTimelinePage } from './channels';
 
 const limits = (() => {
   const decoded = decodeContentLimits(intro.limits);
@@ -33,7 +33,7 @@ const decoders: Record<string, (input: unknown) => Decoded<unknown> | Promise<De
   timelineContent: input => decodeTimelineContent(input, limits),
   unavailableEventRef: decodeUnavailableEventRef,
   timelineItem: input => decodeTimelineItem(input, limits),
-  roomSummary: input => decodeRoomSummary(input, limits),
+  roomSummary: input => decodeChannelSummary(input, limits),
   sendState: decodeSendState,
   deviceView: decodeDeviceView,
   shareGrant: decodeShareGrant,
@@ -87,7 +87,7 @@ describe('exact intro fixture', () => {
   it('decodes a page and a snapshot containing the worked item', async () => {
     const room = { roomId: 'room_demo', title: 'API review', membership: 'joined', revision: 'rev_1' };
     expect((await decodeTimelinePage({ items: [intro.timelineItem], nextCursor: null, snapshotRevision: 's1' }, limits)).ok).toBe(true);
-    expect((await decodeRoomSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits)).ok).toBe(true);
+    expect((await decodeChannelSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits)).ok).toBe(true);
   });
 
   it('decodes a page and a snapshot mixing text and unavailable items', async () => {
@@ -95,7 +95,7 @@ describe('exact intro fixture', () => {
     const items = [intro.timelineItem, intro.timelineItemUnavailable];
     expect(await decodeTimelinePage({ items, nextCursor: null, snapshotRevision: 's1' }, limits))
       .toEqual({ ok: true, value: { items, nextCursor: null, snapshotRevision: 's1' } });
-    expect(await decodeRoomSnapshot({ room, items, snapshotRevision: 's1', generation: 1 }, limits))
+    expect(await decodeChannelSnapshot({ room, items, snapshotRevision: 's1', generation: 1 }, limits))
       .toEqual({ ok: true, value: { room, items, snapshotRevision: 's1', generation: 1 } });
   });
 
@@ -103,7 +103,7 @@ describe('exact intro fixture', () => {
     expect(await decodeTimelinePage({ items: [intro.timelineItem, intro.timelineItem], nextCursor: null, snapshotRevision: 's1' }, limits))
       .toEqual({ ok: false, error: { path: 'items[1].ref.eventId', code: 'duplicate' } });
     const room = { roomId: 'room_other', title: null, membership: 'joined', revision: 'rev_1' };
-    expect(await decodeRoomSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits))
+    expect(await decodeChannelSnapshot({ room, items: [intro.timelineItem], snapshotRevision: 's1', generation: 1 }, limits))
       .toEqual({ ok: false, error: { path: 'items[0].ref.roomId', code: 'mismatch' } });
   });
 
@@ -111,7 +111,7 @@ describe('exact intro fixture', () => {
     expect(await decodeTimelinePage({ items: [intro.timelineItemUnavailable, intro.timelineItemUnavailable], nextCursor: null, snapshotRevision: 's1' }, limits))
       .toEqual({ ok: false, error: { path: 'items[1].ref.eventId', code: 'duplicate' } });
     const room = { roomId: 'room_other', title: null, membership: 'joined', revision: 'rev_1' };
-    expect(await decodeRoomSnapshot({ room, items: [intro.timelineItemUnavailable], snapshotRevision: 's1', generation: 1 }, limits))
+    expect(await decodeChannelSnapshot({ room, items: [intro.timelineItemUnavailable], snapshotRevision: 's1', generation: 1 }, limits))
       .toEqual({ ok: false, error: { path: 'items[0].ref.roomId', code: 'mismatch' } });
   });
 
@@ -132,7 +132,7 @@ describe('exact intro fixture', () => {
     const failure = { ok: false, error: { path: 'items[1].ref.contentDigest', code: 'mismatch' } };
     const second = mutate(tampered, { 'ref.eventId': 'event_intro_2' });
     expect(await decodeTimelinePage({ items: [intro.timelineItem, second], nextCursor: null, snapshotRevision: 's1' }, limits)).toEqual(failure);
-    expect(await decodeRoomSnapshot({ room, items: [intro.timelineItem, second], snapshotRevision: 's1', generation: 1 }, limits)).toEqual(failure);
+    expect(await decodeChannelSnapshot({ room, items: [intro.timelineItem, second], snapshotRevision: 's1', generation: 1 }, limits)).toEqual(failure);
   });
 });
 
@@ -217,7 +217,7 @@ describe('content limits', () => {
     const forged = { maxBodyBytes: Number.NaN, maxDisplayNameBytes: undefined, maxRoomTitleBytes: -1 } as unknown as ContentLimits;
     expect(decodeMessageContent(intro.content, forged)).toEqual({ ok: false, error: { path: 'body', code: 'invalid_limits' } });
     expect(decodeParticipantView(intro.participants.agent, forged)).toEqual({ ok: false, error: { path: 'displayName', code: 'invalid_limits' } });
-    expect(decodeRoomSummary({ roomId: 'room_demo', title: 'API review', membership: 'joined', revision: 'rev_1' }, forged))
+    expect(decodeChannelSummary({ roomId: 'room_demo', title: 'API review', membership: 'joined', revision: 'rev_1' }, forged))
       .toEqual({ ok: false, error: { path: 'title', code: 'invalid_limits' } });
   });
 });

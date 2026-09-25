@@ -50,7 +50,7 @@ export type SubmissionPhase = 'idle' | 'submitting' | 'released' | 'rejected' | 
  * Access/freshness of the whole review view, independent of one selection's
  * staleness. `revoked` clears protected preview and disables submission
  * (Failure boundaries); `unavailable` means the dependency backing the view
- * could not be reached, not that the room is empty.
+ * could not be reached, not that the channel is empty.
  */
 export type ReviewAccessState = 'loading' | 'ready' | 'revoked' | 'unavailable';
 

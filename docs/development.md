@@ -18,7 +18,7 @@ pnpm build
 | `@khala/control` | Request-lifetime control functions and composition |
 | `@khala/connector-app` | Continuous owner runtime and composition |
 | `@khala/contracts` | Separate messaging and delivery ports and opaque types |
-| `@khala/messaging` | Browser messaging, room, revocation, and recovery adapters |
+| `@khala/messaging` | Browser messaging, channel, revocation, and recovery adapters |
 | `@khala/connector` | Owner storage, subscription, dispatch, and retention |
 | `@khala/harnesses` | Claude and Codex adapters |
 | `@khala/policy` | Pure release and trust decisions |
