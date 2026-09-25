@@ -25,16 +25,20 @@ result then grades each row.
 - **`async` is proven only by an explicit `khala_read` round trip.** The batch token appears only
   in the `khala_read` tool result. When the next `khala_read` call presents that token, the result
   must have reached a model context. `verify.mjs` also requires all of the following:
-  - an operator-recorded echo of the marker in the target conversation;
+  - an operator-recorded echo of the marker in a target conversation declared in `run.json`
+    (`targetConversations`), recorded after the batch was first delivered and before it was
+    acknowledged;
   - a restart recorded after the first fetch, with the same batch replayed on a connection
     opened after that restart and before acknowledgement;
   - a restart recorded after acknowledgement, followed by a read on a new connection with no
     duplicate;
-  - a single app MCP client for the whole run.
+  - a single MCP client for the whole run, whose `clientInfo.name` is one of the
+    `expectedClientNames` declared in `run.json` before the run.
 - **Never delivery:** a server notification (`notifications/tools/list_changed`,
-  `notifications/message`), a change in tool availability, or any call from a different MCP
-  client, such as Claude Code or the MCP inspector. Any of these makes the run fail or stay
-  `unknown`.
+  `notifications/message`), a change in tool availability, or any call from an MCP client that the
+  run did not declare, including a client with an empty or missing name. The check is an
+  allowlist, so Claude Code, `mcp-remote`, the MCP inspector, and any other client fail the run.
+  Any of these makes the run fail or stay `unknown`.
 - **`steer` and `sync` are never simulated.** The kit has no push boundary. Claude Desktop and
   claude.ai document no active-tool or end-turn prompt-injection hook, so these cells stay
   `unknown`. A cell becomes `unsupported` only when an operator records a proven negative for that
@@ -67,8 +71,10 @@ Use normal trust settings: install and approve the extension or connector once, 
 would, and record that approval.
 
 1. Prepare the state directory outside any project. Start from `evidence/<shape>/run.json`, fill in
-   the exact app version (Claude > About), account tier, administrator policy, OS, and launch, and
-   remove `blocked`. Then run
+   the exact app version (Claude > About), account tier, administrator policy, OS, and launch.
+   Declare `expectedClientNames` (the app's MCP `clientInfo.name` for that version, as published or
+   read from the app's own MCP log before the proof) and `targetConversations` (the id of the new
+   conversation you will start for the proof). Remove `blocked`. Then run
    `node khala-admin.mjs init <state> <filled-run.json>`.
 2. Install the route:
    - Local extension: run `npx @anthropic-ai/mcpb pack experiments/interactive-cli/claude-app`,

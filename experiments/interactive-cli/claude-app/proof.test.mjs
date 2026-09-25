@@ -15,6 +15,7 @@ const root = resolve(import.meta.dirname);
 const identity = shape => ({
   runId: 'test', app: 'claude', shape, appVersion: '0.0.0-test', accountTier: 'test-tier',
   administratorPolicyScope: 'test-policy', os: 'test-os', launch: 'test driver',
+  expectedClientNames: ['claude-ai'], targetConversations: ['test-conversation'],
 });
 
 async function stateDir(shape = 'desktop_extension') {
@@ -205,8 +206,32 @@ test('wrong implementation: an acknowledgement from a second Claude session cann
   await fullAsyncRun(dir, { ackClient: 'claude-code' });
   const result = await verdict(dir);
   assert.equal(result.modes.async.status, 'unknown');
-  assert.ok(result.failures.some(f => /claude-code/.test(f)));
+  assert.ok(result.failures.some(f => /"claude-code", not a declared Claude app client/.test(f)));
   assert.ok(result.failures.some(f => /more than one MCP client/.test(f)));
+});
+
+test('wrong implementation: a run from any undeclared or unnamed client proves nothing', async () => {
+  const dir = await stateDir();
+  await fullAsyncRun(dir);
+  const log = await events(dir);
+  for (const name of ['Claude Code', 'mcp-remote', 'gemini-cli', 'vscode', 'goose', '', '  ', undefined]) {
+    const relabelled = log.map(e => (e.kind === 'connected' ? { ...e, clientInfo: { ...e.clientInfo, name } } : e));
+    const result = verify(identity('desktop_extension'), relabelled);
+    assert.equal(result.modes.async.status, 'unknown', `client ${JSON.stringify(name)}`);
+    assert.ok(result.failures.some(f => /not a declared Claude app client/.test(f)), `client ${JSON.stringify(name)}`);
+  }
+});
+
+test('a run without declared app clients or target conversations is not graded', async () => {
+  const dir = await stateDir();
+  await fullAsyncRun(dir);
+  const log = await events(dir);
+  for (const [key, value] of [['expectedClientNames', undefined], ['expectedClientNames', []], ['expectedClientNames', ['']],
+    ['targetConversations', undefined], ['targetConversations', []], ['targetConversations', ['unknown']]]) {
+    const result = verify({ ...identity('desktop_extension'), [key]: value }, log);
+    assert.equal(result.modes.async.status, 'unknown', `${key}=${JSON.stringify(value)}`);
+    assert.match(result.modes.async.reason, new RegExp(`identity incomplete: .*${key}`));
+  }
 });
 
 test('wrong implementation: a run driven wholly by another Claude session (Claude Code) proves nothing', async () => {
@@ -214,13 +239,13 @@ test('wrong implementation: a run driven wholly by another Claude session (Claud
   await fullAsyncRun(dir, { client: 'claude-code' });
   const result = await verdict(dir);
   assert.equal(result.modes.async.status, 'unknown');
-  assert.ok(result.failures.some(f => /is claude-code, not the Claude app session/.test(f)));
+  assert.ok(result.failures.some(f => /"claude-code", not a declared Claude app client/.test(f)));
 });
 
 test('an acknowledgement on a connection with no recorded client is not evidence', async () => {
   const dir = await stateDir();
   await fullAsyncRun(dir);
-  const log = (await events(dir)).map(e => (e.kind === 'connected' ? { ...e, clientInfo: null } : e));
+  const log = (await events(dir)).filter(e => e.kind !== 'connected');
   const result = verify(identity('desktop_extension'), log);
   assert.deepEqual(result.failures, []);
   assert.match(result.modes.async.reason, /identified app client/);
@@ -241,10 +266,31 @@ test('missing model echo or restart replay leaves async unknown', async () => {
   const log = await events(dir);
   const noEcho = verify(identity('desktop_extension'), log.filter(e => e.observation !== 'model-echo'));
   assert.equal(noEcho.modes.async.status, 'unknown');
-  assert.match(noEcho.modes.async.reason, /no model-echo observation/);
+  assert.match(noEcho.modes.async.reason, /no model-echo in a target conversation/);
   const noReplay = verify(identity('desktop_extension'), log.filter(e => !(e.kind === 'delivered' && e.replay)));
   assert.equal(noReplay.modes.async.status, 'unknown');
   assert.match(noReplay.modes.async.reason, /no restart between fetch and acknowledgement/);
+});
+
+test('wrong implementation: an echo before delivery, after acknowledgement, or in another conversation does not count', async () => {
+  const dir = await stateDir();
+  await fullAsyncRun(dir);
+  const log = await events(dir);
+  const echo = log.find(e => e.observation === 'model-echo');
+  const without = log.filter(e => e !== echo);
+  const gap = /no model-echo in a target conversation between delivery and acknowledgement/;
+  const at = (index, event) => [...without.slice(0, index), event, ...without.slice(index)];
+  const cases = {
+    'before any delivery': at(without.findIndex(e => e.kind === 'delivered'), echo),
+    'after acknowledgement': at(without.findIndex(e => e.kind === 'acknowledged') + 1, echo),
+    'in another conversation': log.map(e => (e === echo ? { ...e, conversation: 'other-conversation' } : e)),
+  };
+  for (const [name, events] of Object.entries(cases)) {
+    const result = verify(identity('desktop_extension'), events);
+    assert.deepEqual(result.failures, [], name);
+    assert.equal(result.modes.async.status, 'unknown', name);
+    assert.match(result.modes.async.reason, gap, name);
+  }
 });
 
 test('a replay counts only after a recorded before-ack restart on a connection opened after it', async () => {

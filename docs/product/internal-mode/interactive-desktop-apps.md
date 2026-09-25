@@ -149,11 +149,13 @@ Its `verify.mjs` grades a run for one exact app/shape/version/account/policy tup
 becomes proven only through an explicit `khala_read` round trip that shows all of:
 
 - the batch token acknowledged on the next call;
-- the marker echoed in the target conversation;
+- the marker echoed in a target conversation declared before the run, after delivery and before
+  acknowledgement;
 - the batch replayed across a restart before acknowledgement;
 - no duplicate after acknowledgement.
 
-Server notifications, tool-list changes, and calls from any other MCP client never count. `steer`
+The run also declares the app's MCP client name(s) up front. Server notifications, tool-list
+changes, and calls from any client not on that list, including an unnamed one, never count. `steer`
 and `sync` stay `unknown` unless a live session of that version records a proven absence. All
 three Claude rows stay Blocked until a person runs the kit's runbook in their own session.
 

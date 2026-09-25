@@ -5,19 +5,26 @@
 // Only an explicit khala_read round trip can prove delivery: the batch token
 // exists nowhere but in the tool result, so an acknowledgement presenting it
 // shows the result reached a model context. Server notifications, tool-list
-// changes, and a different MCP client never count.
+// changes, and any MCP client the run did not declare never count.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const SHAPE_TRANSPORT = { desktop_extension: 'stdio', remote_connector: 'http', browser: 'http' };
 const IDENTITY_FIELDS = ['app', 'shape', 'appVersion', 'accountTier', 'administratorPolicyScope', 'os'];
-const NON_APP_CLIENT = /claude-code|codex|cursor|opencode|inspector/i;
+// Declared before the run: the app's own MCP client name(s), and the
+// conversation(s) the operator started for the proof.
+const DECLARED_LISTS = ['expectedClientNames', 'targetConversations'];
 
 const unknown = (route, reason) => ({ status: 'unknown', route, reason });
 
 export function verify(run, events) {
   const failures = [];
-  const missingIdentity = IDENTITY_FIELDS.filter(key => typeof run[key] !== 'string' || run[key] === '' || run[key] === 'unknown');
+  const nonEmpty = value => typeof value === 'string' && value !== '' && value !== 'unknown';
+  const missingIdentity = [
+    ...IDENTITY_FIELDS.filter(key => !nonEmpty(run[key])),
+    ...DECLARED_LISTS.filter(key => !Array.isArray(run[key]) || run[key].length === 0 || !run[key].every(nonEmpty)),
+  ];
+  const expectedClients = new Set(Array.isArray(run.expectedClientNames) ? run.expectedClientNames : []);
   if (run.app !== 'claude') failures.push('run.app must be "claude"');
   if (!(run.shape in SHAPE_TRANSPORT)) failures.push(`run.shape ${run.shape} is not a Claude app shape`);
 
@@ -26,8 +33,10 @@ export function verify(run, events) {
     if (connection.transport !== SHAPE_TRANSPORT[run.shape]) {
       failures.push(`connection ${connection.connectionId} used ${connection.transport}, not the ${run.shape} transport`);
     }
-    if (NON_APP_CLIENT.test(connection.clientInfo?.name ?? '')) {
-      failures.push(`connection ${connection.connectionId} is ${connection.clientInfo.name}, not the Claude app session`);
+    // Declared names are non-empty, so an empty or missing name never matches.
+    const name = connection.clientInfo?.name;
+    if (!expectedClients.has(name)) {
+      failures.push(`connection ${connection.connectionId} is ${JSON.stringify(name ?? null)}, not a declared Claude app client`);
     }
   }
   const clientNames = new Set([...connections.values()].map(c => c.clientInfo?.name ?? null));
@@ -56,7 +65,7 @@ export function verify(run, events) {
   if (missingIdentity.length) {
     modes.async = unknown(route, `identity incomplete: ${missingIdentity.join(', ')}`);
   } else if (failures.length === 0) {
-    const missing = asyncGaps(events, connections);
+    const missing = asyncGaps(run, events, connections);
     if (missing.length === 0) {
       modes.async = { status: 'proven', route, testedVersion: run.appVersion, reason: 'explicit khala_read delivered, model echoed, acknowledged by token on the next call, and replayed across restart only before acknowledgement' };
       acknowledgement = 'batch_token_next_call';
@@ -82,7 +91,7 @@ function pushMode(mode, run, events, missingIdentity) {
   return { status: 'unsupported', route, testedVersion: run.appVersion, reason: negative.reason };
 }
 
-function asyncGaps(events, connections) {
+function asyncGaps(run, events, connections) {
   const clientOf = id => connections.get(id)?.clientInfo?.name ?? null;
   const delivered = new Map();
   for (const e of events.filter(e => e.kind === 'delivered')) {
@@ -91,19 +100,25 @@ function asyncGaps(events, connections) {
   // One-client runs are enforced by the caller, so any recorded client here is
   // the same app client that received the batch.
   const acks = events.filter(e => e.kind === 'acknowledged' && delivered.has(e.tokenId) && clientOf(e.connectionId) !== null);
-  const echoed = new Set(events.filter(e => e.kind === 'observed' && e.observation === 'model-echo' && e.conversation).map(e => e.release));
+  const index = new Map(events.map((e, i) => [e, i]));
+  const firstDelivery = ack => index.get(delivered.get(ack.tokenId).find(d => !d.replay));
   const gaps = [];
   if (acks.length === 0) gaps.push('no batch acknowledged by token from an identified app client');
-  if (!acks.some(e => e.releaseIds.some(id => echoed.has(id)))) gaps.push('no model-echo observation for an acknowledged release');
+  // An echo counts only in a declared target conversation, after the batch
+  // was first delivered and before it was acknowledged.
+  const echoes = events.filter(e => e.kind === 'observed' && e.observation === 'model-echo' && run.targetConversations.includes(e.conversation));
+  const echoed = ack => echoes.some(e => (
+    ack.releaseIds.includes(e.release) && firstDelivery(ack) < index.get(e) && index.get(e) < index.get(ack)
+  ));
+  if (!acks.some(echoed)) gaps.push('no model-echo in a target conversation between delivery and acknowledgement');
   // Restarts are ordered facts: a replay counts only on a connection opened
   // after a before-ack restart that followed the first fetch, and the
   // after-ack restart counts only when a later connection reads again.
-  const index = new Map(events.map((e, i) => [e, i]));
   const opened = new Map(events.filter(e => e.kind === 'connected').map(e => [e.connectionId, index.get(e)]));
   const restarts = phase => events.filter(e => e.kind === 'observed' && e.observation === 'restart' && e.phase === phase).map(e => index.get(e));
   const replayed = acks.some(ack => {
     const deliveries = delivered.get(ack.tokenId);
-    const first = index.get(deliveries.find(d => !d.replay));
+    const first = firstDelivery(ack);
     return deliveries.some(d => d.replay && index.get(d) < index.get(ack) && restarts('before-ack').some(at => (
       first < at && at < index.get(d) && opened.get(d.connectionId) > at
     )));
