@@ -78,7 +78,7 @@ const held = (reason: HoldReason): AutomaticReleaseDecision => ({ kind: 'held', 
 
 /**
  * Decides whether one event may be released without owner review. Unless the
- * injected `automation` authority approves limits, every event holds as
+ * injected `authority` approves limits, every event holds as
  * `automation_gated` (see `gate.ts`); hosted composition always injects the closed one.
  * Beyond the gate every doubt still holds: missing or unconfirmed policy, a newer
  * request not yet enforced, a changed or revoked binding, a peer outside scope, an
