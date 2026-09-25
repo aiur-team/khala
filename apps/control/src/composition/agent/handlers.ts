@@ -21,6 +21,8 @@ export type AgentHandlerDependencies = Readonly<{
   status: Readonly<{ snapshot(roomId: RoomId, signal: AbortSignal): Promise<AgentStatusSnapshot> }>;
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
+  /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
+  channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
 }>;
 
 function json(status: number, body: unknown): Response {
@@ -57,6 +59,16 @@ const unavailablePairingRoutes = Object.freeze([
   unavailablePairing('/api/agent/pairing/result'),
 ]);
 
+const unavailableChannelDiscoveryRoutes = Object.freeze([
+  Object.freeze({
+    path: '/api/agent/channel-discovery/bootstrap/token',
+    methods: Object.freeze(['POST']),
+    async handle() {
+      return json(503, { error: 'feature_unavailable' });
+    },
+  }),
+] satisfies readonly RouteRegistration[]);
+
 function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
   return {
     generation: snapshot.generation,
@@ -76,7 +88,11 @@ function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
 }
 
 export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): readonly RouteRegistration[] {
-  if (!dependencies) return Object.freeze([unavailableStatus, ...unavailablePairingRoutes]);
+  if (!dependencies) return Object.freeze([
+    unavailableStatus,
+    ...unavailablePairingRoutes,
+    ...unavailableChannelDiscoveryRoutes,
+  ]);
   const status: RouteRegistration = Object.freeze({
     path: '/api/agent/status',
     methods: Object.freeze(['GET']),
@@ -90,5 +106,9 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
       return json(200, project(await dependencies.status.snapshot(room.value, request.signal)));
     },
   });
-  return Object.freeze([status, ...(dependencies.pairing?.() ?? unavailablePairingRoutes)]);
+  return Object.freeze([
+    status,
+    ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
+    ...(dependencies.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
+  ]);
 }

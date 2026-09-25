@@ -9,6 +9,7 @@ describe('registerAgentHandlers', () => {
       { path: '/api/agent/status', methods: ['GET'] },
       { path: '/api/agent/pairing/claim', methods: ['POST'] },
       { path: '/api/agent/pairing/result', methods: ['POST'] },
+      { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'] },
     ]);
     for (const [index, registration] of registrations.entries()) {
       const response = await registration.handle(new Request(`https://example.test${registration.path}`));
@@ -17,7 +18,9 @@ describe('registerAgentHandlers', () => {
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
       expect(await response.json()).toEqual(index === 0
         ? { code: 'feature_unavailable' }
-        : { v: 1, kind: 'rejected', code: 'feature_unavailable' });
+        : index < 3
+          ? { v: 1, kind: 'rejected', code: 'feature_unavailable' }
+          : { error: 'feature_unavailable' });
     }
   });
 
@@ -29,7 +32,26 @@ describe('registerAgentHandlers', () => {
       status: { snapshot: async () => ({ generation: 0, agents: [] }) },
       pairing: () => [claim, result],
     });
-    expect(registrations.slice(1)).toEqual([claim, result]);
+    expect(registrations.slice(1, 3)).toEqual([claim, result]);
+  });
+
+  it('substitutes only the live channel-discovery bootstrap registration', () => {
+    const token = {
+      path: '/api/agent/channel-discovery/bootstrap/token',
+      methods: ['POST'],
+      handle: async () => new Response('token'),
+    } as const;
+    const registrations = registerAgentHandlers({
+      authorize: async () => 'allowed',
+      status: { snapshot: async () => ({ generation: 0, agents: [] }) },
+      channelDiscoveryBootstrap: () => [token],
+    });
+
+    expect(registrations.at(-1)).toBe(token);
+    expect(registrations.slice(1, 3).map(route => route.path)).toEqual([
+      '/api/agent/pairing/claim',
+      '/api/agent/pairing/result',
+    ]);
   });
 
   it('authorizes and returns the content-free room presence snapshot', async () => {
