@@ -153,6 +153,8 @@ test('khala_read fails closed without the beforeMCPExecution caller record', asy
   await start(dir, 's1');
   await release(dir, NONCE);
   assert.match(await mcp(dir, 's1', 'khala_read', { record: false }), /not bound/);
+  const denied = (await loadTrial(dir)).events.filter(event => event.kind === 'denied');
+  assert.deepEqual(denied.map(event => event.reason), ['no_caller_record']);
   assert.match(await mcp(dir, 's1', 'khala_read'), /KHALA-NONCE-7f3a/);
 });
 
