@@ -2,7 +2,9 @@ import type { RouteRegistration } from '../../runtime/handler';
 
 export type HumanHandlerDependencies = Readonly<{
   /** Request-lifetime live pairing registrations supplied by the composition root. */
-  pairing: () => readonly RouteRegistration[];
+  pairing?: () => readonly RouteRegistration[];
+  /** Authenticated channel-access registrations supplied by the composition root. */
+  channelAccess?: () => readonly RouteRegistration[];
 }>;
 
 function json(status: number, body: unknown): Response {
@@ -31,6 +33,15 @@ const unavailablePairingRoutes = Object.freeze([
   unavailable('/api/human/pairing/decision', ['POST']),
 ]);
 
+const unavailableChannelAccessRoutes = Object.freeze([
+  unavailable('/api/human/channel-access/inbox', ['GET']),
+  unavailable('/api/human/channel-access/decision', ['POST']),
+  unavailable('/api/human/channel-access/mute', ['POST']),
+]);
+
 export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {
-  return dependencies ? Object.freeze([...dependencies.pairing()]) : unavailablePairingRoutes;
+  return Object.freeze([
+    ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
+    ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
+  ]);
 }

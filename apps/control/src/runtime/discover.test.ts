@@ -136,10 +136,17 @@ describe('renderRouteManifest', () => {
       { path: '/api/health', methods: ['GET'], domain: 'runtime' },
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'], domain: 'human' },
       { path: '/api/human/pairing/decision', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/channel-access/inbox', methods: ['GET'], domain: 'human' },
+      { path: '/api/human/channel-access/decision', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/channel-access/mute', methods: ['POST'], domain: 'human' },
       { path: '/api/agent/status', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/pairing/claim', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/pairing/result', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/channel-access/request', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/channel-access/create', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/channel-access/status', methods: ['GET'], domain: 'agent' },
     ]);
     expect(JSON.stringify(manifest)).not.toContain('pairing/redeem');
+    expect(JSON.stringify(manifest)).not.toMatch(/channel-access\/(exchange|grant)|:\w|\*/);
   });
 });

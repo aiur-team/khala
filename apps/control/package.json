@@ -7,6 +7,7 @@
     "./auth/*": "./src/auth/*.ts",
     "./invitations/*": "./src/invitations/*.ts",
     "./agent-bootstrap/*": "./src/agent-bootstrap/*.ts",
+    "./channel-access/*": "./src/channel-access/*.ts",
     "./runtime/*": "./src/runtime/*.ts",
     "./composition/*": "./src/composition/*.ts"
   },

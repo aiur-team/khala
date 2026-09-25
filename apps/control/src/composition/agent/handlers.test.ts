@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { registerAgentHandlers } from './handlers';
 
 describe('registerAgentHandlers', () => {
-  it('reserves status and pairing routes without import-time dependencies', async () => {
+  it('reserves status, pairing and channel-access routes without import-time dependencies', async () => {
     const registrations = registerAgentHandlers();
 
     expect(registrations.map(({ path, methods }) => ({ path, methods }))).toEqual([
       { path: '/api/agent/status', methods: ['GET'] },
       { path: '/api/agent/pairing/claim', methods: ['POST'] },
       { path: '/api/agent/pairing/result', methods: ['POST'] },
+      { path: '/api/agent/channel-access/request', methods: ['POST'] },
+      { path: '/api/agent/channel-access/create', methods: ['POST'] },
+      { path: '/api/agent/channel-access/status', methods: ['GET'] },
     ]);
     for (const [index, registration] of registrations.entries()) {
       const response = await registration.handle(new Request(`https://example.test${registration.path}`));
@@ -29,7 +32,19 @@ describe('registerAgentHandlers', () => {
       status: { snapshot: async () => ({ generation: 0, agents: [] }) },
       pairing: () => [claim, result],
     });
-    expect(registrations.slice(1)).toEqual([claim, result]);
+    expect(registrations.slice(1, 3)).toEqual([claim, result]);
+  });
+
+  it('appends live channel-access registrations after status and pairing', () => {
+    const access = { path: '/api/agent/channel-access/request', methods: ['POST'], handle: async () => new Response('access') } as const;
+    const create = { path: '/api/agent/channel-access/create', methods: ['POST'], handle: async () => new Response('create') } as const;
+    const status = { path: '/api/agent/channel-access/status', methods: ['GET'], handle: async () => new Response('status') } as const;
+    const registrations = registerAgentHandlers({
+      authorize: async () => 'allowed',
+      status: { snapshot: async () => ({ generation: 0, agents: [] }) },
+      channelAccess: () => [access, create, status],
+    });
+    expect(registrations.slice(-3)).toEqual([access, create, status]);
   });
 
   it('authorizes and returns the content-free room presence snapshot', async () => {

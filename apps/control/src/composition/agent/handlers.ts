@@ -21,6 +21,8 @@ export type AgentHandlerDependencies = Readonly<{
   status: Readonly<{ snapshot(roomId: RoomId, signal: AbortSignal): Promise<AgentStatusSnapshot> }>;
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
+  /** Authenticated channel-access registrations supplied by the composition root. */
+  channelAccess?: () => readonly RouteRegistration[];
 }>;
 
 function json(status: number, body: unknown): Response {
@@ -57,6 +59,18 @@ const unavailablePairingRoutes = Object.freeze([
   unavailablePairing('/api/agent/pairing/result'),
 ]);
 
+const unavailableChannelAccessRoutes = Object.freeze([
+  unavailablePairing('/api/agent/channel-access/request'),
+  unavailablePairing('/api/agent/channel-access/create'),
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/channel-access/status',
+    methods: Object.freeze(['GET']),
+    async handle() {
+      return json(503, { v: 1, kind: 'rejected', code: 'feature_unavailable' });
+    },
+  }),
+]);
+
 function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
   return {
     generation: snapshot.generation,
@@ -76,7 +90,7 @@ function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
 }
 
 export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): readonly RouteRegistration[] {
-  if (!dependencies) return Object.freeze([unavailableStatus, ...unavailablePairingRoutes]);
+  if (!dependencies) return Object.freeze([unavailableStatus, ...unavailablePairingRoutes, ...unavailableChannelAccessRoutes]);
   const status: RouteRegistration = Object.freeze({
     path: '/api/agent/status',
     methods: Object.freeze(['GET']),
@@ -90,5 +104,9 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
       return json(200, project(await dependencies.status.snapshot(room.value, request.signal)));
     },
   });
-  return Object.freeze([status, ...(dependencies.pairing?.() ?? unavailablePairingRoutes)]);
+  return Object.freeze([
+    status,
+    ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
+    ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
+  ]);
 }
