@@ -1,0 +1,14 @@
+{
+  "mode": "async",
+  "batch": {
+    "token": "batch-async-011",
+    "messages": [
+      {
+        "id": "message-batch-async-011",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "ASYNC-NONCE-406: Please reply with response ASYNC-ACK-406."
+      }
+    ]
+  }
+}

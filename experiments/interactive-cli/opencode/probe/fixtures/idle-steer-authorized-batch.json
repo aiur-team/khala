@@ -1,0 +1,14 @@
+{
+  "mode": "steer",
+  "batch": {
+    "token": "batch-idle-steer-009",
+    "messages": [
+      {
+        "id": "message-batch-idle-steer-009",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "IDLE-STEER-NONCE-084: Please reply with response IDLE-STEER-ACK-084."
+      }
+    ]
+  }
+}

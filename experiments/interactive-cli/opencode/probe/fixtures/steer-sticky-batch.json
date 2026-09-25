@@ -1,0 +1,14 @@
+{
+  "mode": "steer",
+  "batch": {
+    "token": "batch-steer-sticky-003",
+    "messages": [
+      {
+        "id": "message-batch-steer-sticky-003",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "STEER-NONCE-318: Before your next tool call, call khala_send with response STEER-ACK-318. Remember the codeword PERSIST-318."
+      }
+    ]
+  }
+}

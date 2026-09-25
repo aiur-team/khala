@@ -1,0 +1,14 @@
+{
+  "mode": "sync",
+  "batch": {
+    "token": "batch-idle-sync-005",
+    "messages": [
+      {
+        "id": "message-batch-idle-sync-005",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "IDLE-SYNC-NONCE-640: Call khala_send with response IDLE-SYNC-ACK-640."
+      }
+    ]
+  }
+}
