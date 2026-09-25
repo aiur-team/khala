@@ -1,0 +1,61 @@
+{
+  "description": "Supported-environment matrix for automatic browser handoff. Only `proven` entries may enable automatic opening, and only on an exact match of every field in lib/profile.mjs MATCH_FIELDS. Every other environment prints the manual local URL.",
+  "profiles": [
+    {
+      "id": "linux-xdg-open-generic-chromium150-headless",
+      "status": "proven",
+      "evidence": "evidence/linux-xdg-open-generic-chromium.json",
+      "profile": {
+        "os": "linux",
+        "procfsHidepid": "off",
+        "opener": { "implementation": "xdg-utils xdg-open", "version": "1.2.1", "mode": "generic" },
+        "handler": { "mimeType": "text/html", "exec": "/usr/bin/chromium --headless=new --user-data-dir=<PRIVATE_BROWSER_PROFILE> %U" },
+        "browser": { "name": "chromium", "major": "150" },
+        "handoff": "private-file"
+      }
+    },
+    {
+      "id": "linux-xdg-open-generic-firefox152-headless",
+      "status": "proven",
+      "evidence": "evidence/linux-xdg-open-generic-firefox.json",
+      "profile": {
+        "os": "linux",
+        "procfsHidepid": "off",
+        "opener": { "implementation": "xdg-utils xdg-open", "version": "1.2.1", "mode": "generic" },
+        "handler": { "mimeType": "text/html", "exec": "/usr/bin/firefox --headless --no-remote --profile <PRIVATE_BROWSER_PROFILE> %u" },
+        "browser": { "name": "firefox", "major": "152" },
+        "handoff": "private-file"
+      }
+    },
+    {
+      "id": "any-argv-url",
+      "status": "rejected",
+      "note": "Conventional handoff: the fragment URL is opener argv. The cross-user observer read the credential from both xdg-open's and the browser's /proc/<pid>/cmdline in every negative-control trial. Never supported."
+    },
+    {
+      "id": "linux-headful-default-browser",
+      "status": "unproven",
+      "note": "The operator's own default handler (for example `/usr/bin/chromium %U`) in a visible session. Same opener and handoff path, but not run here because it would open a window on the operator's desktop. Prove with run.mjs --exec '<exec with {profile}>'."
+    },
+    {
+      "id": "linux-xdg-open-desktop-specific",
+      "status": "unproven",
+      "note": "xdg-open delegating to gio, kde-open, exo-open or similar when XDG_CURRENT_DESKTOP names a known desktop. The adapter forces X-Generic instead of claiming these."
+    },
+    {
+      "id": "linux-procfs-hidepid",
+      "status": "unproven",
+      "note": "hidepid=invisible or noaccess hides other users' processes, which is stricter but was not the tested visibility control."
+    },
+    {
+      "id": "macos-open",
+      "status": "unproven",
+      "note": "Not tested."
+    },
+    {
+      "id": "windows",
+      "status": "unproven",
+      "note": "Not tested and not claimed."
+    }
+  ]
+}

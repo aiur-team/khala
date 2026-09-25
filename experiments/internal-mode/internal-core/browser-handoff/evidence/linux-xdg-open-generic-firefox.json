@@ -1,0 +1,3132 @@
+{
+  "harness": "browser-handoff-spike",
+  "generatedAt": "2026-09-25T08:07:28.182Z",
+  "targetUid": 1000,
+  "observer": {
+    "kind": "docker",
+    "image": "mcr.microsoft.com/playwright:v1.63.0-noble",
+    "flags": "--pid=host --network=none --user=65534:65534 --cap-drop=ALL --security-opt=no-new-privileges"
+  },
+  "profile": {
+    "os": "linux",
+    "distro": "arch",
+    "kernel": "7.1.4-arch1-1",
+    "procfsHidepid": "off",
+    "ptraceScope": "1",
+    "opener": {
+      "implementation": "xdg-utils xdg-open",
+      "version": "1.2.1",
+      "mode": "generic"
+    },
+    "handler": {
+      "mimeType": "text/html",
+      "desktopId": "khala-proof-browser.desktop",
+      "exec": "/usr/bin/firefox --headless --no-remote --profile <PRIVATE_BROWSER_PROFILE> %u"
+    },
+    "browser": {
+      "name": "firefox",
+      "version": "Mozilla Firefox 152.0.6",
+      "major": "152"
+    },
+    "handoff": "private-file"
+  },
+  "trials": [
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:42097/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogb40"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1185,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 267,
+        "scannedProcesses": 800,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 24,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1474387,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:42097/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogb40"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1474427,
+            "uid": 1000,
+            "ppid": 1474387,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-0-argv-url http://127.0.0.1:42097/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogb40",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474442,
+            "uid": 1000,
+            "ppid": 1474427,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474499,
+            "uid": 1000,
+            "ppid": 1474427,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474562,
+            "uid": 1000,
+            "ppid": 1474427,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {7617cabf-1379-4981-a238-18ca73b0b1fc} -parentPid 1474427 -crashReporter 5 -crashHelperPid 1474434 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474563,
+            "uid": 1000,
+            "ppid": 1474562,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-0-argv-url http://127.0.0.1:42097/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogb40"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474583,
+            "uid": 1000,
+            "ppid": 1474427,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[forkserver]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474593,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27259 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {98afedf6-af30-46ca-973d-dd060d7e9f02} -parentPid 1474427 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474595,
+            "uid": 1000,
+            "ppid": 1474593,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474602,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27304 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {3c060c00-3663-4d49-932d-b6d1634ad422} -parentPid 1474427 -crashReporter 5 -crashHelperPid 1474434 -crashHelper 6 -appDir"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474603,
+            "uid": 1000,
+            "ppid": 1474602,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474634,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:26724 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {c52b88c6-8bb8-4746-a25e-7c3baf415f84} -parentPid 1474427 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474636,
+            "uid": 1000,
+            "ppid": 1474634,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[Chroot Helper]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474678,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27722 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {958e3ef3-8f09-4aee-9090-606416dd73df} -parentPid 1474427 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474680,
+            "uid": 1000,
+            "ppid": 1474678,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474702,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29324 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {8a3d67f7-0453-48a8-81b2-36375a97d33a} -parentPid 1474427 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474704,
+            "uid": 1000,
+            "ppid": 1474702,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474820,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43125 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {1b131544-c5a2-4d72-95f5-78401735a0ce} -parentPid 1474427 -crashReporter 5 -crashHelperPid 1474434 -cra"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474823,
+            "uid": 1000,
+            "ppid": 1474820,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474892,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:41559 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {8b4488b8-5aa9-4368-a3b8-546ade99e359} -parentPid 1474427 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474893,
+            "uid": 1000,
+            "ppid": 1474892,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474899,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:41559 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {d647f989-6dda-4898-8e86-adaec2fff38c} -parentPid 1474427 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474901,
+            "uid": 1000,
+            "ppid": 1474899,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474906,
+            "uid": 1000,
+            "ppid": 1474583,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:41559 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {63f26e26-b041-4794-a5c6-c7b7ee1a0ca6} -parentPid 1474427 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1474908,
+            "uid": 1000,
+            "ppid": 1474906,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {b045e267-cfa2-4244-9e8a-24271fb2cbda} -parentPid 1474427 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[Chroot Helper]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475111,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-0-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1475135,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-0-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2079
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1474387,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:42097/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogb40"
+          },
+          {
+            "pid": 1474427,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-0-argv-url http://127.0.0.1:42097/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogb40"
+          },
+          {
+            "pid": 1474563,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-0-argv-url http://127.0.0.1:42097/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogb40"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-3Na7Np/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1429,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 284,
+        "scannedProcesses": 826,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 26,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1475279,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-3Na7Np/open.html"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1475327,
+            "uid": 1000,
+            "ppid": 1475279,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-0-private-file <TRIAL_ROOT>/handoff-3Na7N",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475342,
+            "uid": 1000,
+            "ppid": 1475327,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w",
+              "[glxtest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475405,
+            "uid": 1000,
+            "ppid": 1475327,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475465,
+            "uid": 1000,
+            "ppid": 1475327,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {9f752432-6e1c-4d8c-89ed-3007c6d4ac7f} -parentPid 1475327 -crashReporter 5 -crashHelperPid 1475333 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475466,
+            "uid": 1000,
+            "ppid": 1475465,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-0-private-file <TRIAL_ROOT>/handoff-3Na7N",
+              "[Chroot Helper]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475511,
+            "uid": 1000,
+            "ppid": 1475327,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475547,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27259 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {53b8acc7-91ed-46ef-9ccd-5c18baa23176} -parentPid 1475327 -crashReporter 6 -crashHel",
+              "[WebExtensions]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475548,
+            "uid": 1000,
+            "ppid": 1475547,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475556,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27304 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {fe0891b4-c5a2-40f8-bbe2-37bbfa7e03d9} -parentPid 1475327 -crashReporter 5 -crashHelperPid 1475333 -crashHelper 6 -appDir"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475557,
+            "uid": 1000,
+            "ppid": 1475556,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475615,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27633 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {20640dcc-19ff-4621-8b7a-6fb4a2bf9db2} -parentPid 1475327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475617,
+            "uid": 1000,
+            "ppid": 1475615,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475683,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27566 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {8f142a31-d76d-413c-a48d-c4628dbf4d8b} -parentPid 1475327 -crashReporter 6 -crashHel",
+              "[Isolated Web Co]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475685,
+            "uid": 1000,
+            "ppid": 1475683,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475714,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29242 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {42c1ce95-45aa-45ed-a329-88cc43a52a2d} -parentPid 1475327 -crashReporter 6 -crashHel",
+              "[Privileged Cont]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475716,
+            "uid": 1000,
+            "ppid": 1475714,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475786,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27812 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {1b7cf410-9fb8-4183-8526-bf293ef78d4b} -parentPid 1475327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475787,
+            "uid": 1000,
+            "ppid": 1475786,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475862,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43059 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {02590578-b55d-4814-8f5a-28ecad793596} -parentPid 1475327 -crashReporter 5 -crashHelperPid 1475333 -cra"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475864,
+            "uid": 1000,
+            "ppid": 1475862,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475923,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42395 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {e75642cc-8f0d-4bd1-a797-2d8f4cd725d3} -parentPid 1475327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475925,
+            "uid": 1000,
+            "ppid": 1475923,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475926,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42395 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {ed9ea261-35ed-4ed1-8ab4-c58878cfa2ff} -parentPid 1475327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475930,
+            "uid": 1000,
+            "ppid": 1475926,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475933,
+            "uid": 1000,
+            "ppid": 1475511,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42395 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {df6c2f76-bf48-43f4-bb5f-ac985ded4774} -parentPid 1475327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1475937,
+            "uid": 1000,
+            "ppid": 1475933,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {684307ec-00f8-4f64-aca6-44f8fd35126d} -parentPid 1475327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[Chroot Helper]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476103,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-0-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1476126,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-0-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2167
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-3Na7Np": {
+            "EACCES": 118,
+            "ENOENT": 166
+          },
+          "<TRIAL_ROOT>/handoff-3Na7Np/open.html": {
+            "EACCES": 118,
+            "ENOENT": 166
+          }
+        },
+        "hits": []
+      }
+    },
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:35621/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoggtq"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1169,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 264,
+        "scannedProcesses": 795,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 24,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1476273,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:35621/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoggtq"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1476313,
+            "uid": 1000,
+            "ppid": 1476273,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-1-argv-url http://127.0.0.1:35621/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoggtq",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476328,
+            "uid": 1000,
+            "ppid": 1476313,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476384,
+            "uid": 1000,
+            "ppid": 1476313,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476434,
+            "uid": 1000,
+            "ppid": 1476313,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {7007b4dc-b88e-4a2c-8bf7-8447c348825a} -parentPid 1476313 -crashReporter 5 -crashHelperPid 1476320 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476435,
+            "uid": 1000,
+            "ppid": 1476434,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-1-argv-url http://127.0.0.1:35621/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoggtq"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476454,
+            "uid": 1000,
+            "ppid": 1476313,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[forkserver]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476468,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27259 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {5511d729-9a00-4873-b0dc-078b03c0de59} -parentPid 1476313 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476469,
+            "uid": 1000,
+            "ppid": 1476468,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476477,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27304 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {7841bdf4-d370-409c-ae42-cab8a8aa1cf6} -parentPid 1476313 -crashReporter 5 -crashHelperPid 1476320 -crashHelper 6 -appDir"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476478,
+            "uid": 1000,
+            "ppid": 1476477,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476508,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:26677 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {86c94e89-ae84-4f70-b379-b14e1a358b47} -parentPid 1476313 -crashReporter 6 -crashHel",
+              "[Isolated Web Co]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476510,
+            "uid": 1000,
+            "ppid": 1476508,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476551,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27675 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {965782f9-87a3-4d56-b2b3-421a4b2f8958} -parentPid 1476313 -crashReporter 6 -crashHel",
+              "[Isolated Web Co]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476553,
+            "uid": 1000,
+            "ppid": 1476551,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476574,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29277 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {0218cd0b-6167-4dcf-89b6-b0f71b153d77} -parentPid 1476313 -crashReporter 6 -crashHel",
+              "[Privileged Cont]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476576,
+            "uid": 1000,
+            "ppid": 1476574,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476673,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43078 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {9fb2eb43-a318-4d52-aa25-6216d0548e6e} -parentPid 1476313 -crashReporter 5 -crashHelperPid 1476320 -cra",
+              "[Utility Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476674,
+            "uid": 1000,
+            "ppid": 1476673,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476904,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42430 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {dc5e949c-acb7-4346-b61e-c03e0b56a432} -parentPid 1476313 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476905,
+            "uid": 1000,
+            "ppid": 1476904,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476917,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42430 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {71a8849b-d72e-4a91-b1a8-b8e136d3b771} -parentPid 1476313 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476920,
+            "uid": 1000,
+            "ppid": 1476917,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476923,
+            "uid": 1000,
+            "ppid": 1476454,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42430 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {20498620-d346-47db-8ed8-c37e9a874986} -parentPid 1476313 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1476927,
+            "uid": 1000,
+            "ppid": 1476923,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {2352c3cb-eaec-496b-a6b9-253bdbad4e1d} -parentPid 1476313 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477114,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-1-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1477150,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-1-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2007
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1476273,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:35621/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoggtq"
+          },
+          {
+            "pid": 1476313,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-1-argv-url http://127.0.0.1:35621/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoggtq"
+          },
+          {
+            "pid": 1476435,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-1-argv-url http://127.0.0.1:35621/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoggtq"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-aN24Pp/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1226,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 277,
+        "scannedProcesses": 839,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 26,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1477277,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-aN24Pp/open.html"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1477327,
+            "uid": 1000,
+            "ppid": 1477277,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-1-private-file <TRIAL_ROOT>/handoff-aN24P",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477341,
+            "uid": 1000,
+            "ppid": 1477327,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w",
+              "[glxtest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477396,
+            "uid": 1000,
+            "ppid": 1477327,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477463,
+            "uid": 1000,
+            "ppid": 1477327,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {e859fa97-ae09-4263-8690-9065e68a7742} -parentPid 1477327 -crashReporter 5 -crashHelperPid 1477333 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477464,
+            "uid": 1000,
+            "ppid": 1477463,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-1-private-file <TRIAL_ROOT>/handoff-aN24P"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477486,
+            "uid": 1000,
+            "ppid": 1477327,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[forkserver]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477506,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27259 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {62953e15-def9-484d-abbb-fbf77dfe2865} -parentPid 1477327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477507,
+            "uid": 1000,
+            "ppid": 1477506,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477515,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27304 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {68d20b22-2a46-430d-8a9b-0f4094b17b8f} -parentPid 1477327 -crashReporter 5 -crashHelperPid 1477333 -crashHelper 6 -appDir"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477516,
+            "uid": 1000,
+            "ppid": 1477515,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477547,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27530 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {297c18ef-3475-4955-9d5f-b5b002cbebaf} -parentPid 1477327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477549,
+            "uid": 1000,
+            "ppid": 1477547,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477589,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27425 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {935d8fb8-5b9c-4de6-b339-3fb84090ee8f} -parentPid 1477327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477592,
+            "uid": 1000,
+            "ppid": 1477589,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477615,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29100 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {c9bc61fb-ea41-4468-b1e3-19bb0a376adc} -parentPid 1477327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477617,
+            "uid": 1000,
+            "ppid": 1477615,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477669,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27671 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {a4ab197f-991c-432c-9387-d3a5d197d967} -parentPid 1477327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477670,
+            "uid": 1000,
+            "ppid": 1477669,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477798,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43059 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {8aec1a46-8a67-440e-a59b-8509d2680ad3} -parentPid 1477327 -crashReporter 5 -crashHelperPid 1477333 -cra"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477799,
+            "uid": 1000,
+            "ppid": 1477798,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477853,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42069 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {e92785bc-475b-457e-8df7-7d89d685de39} -parentPid 1477327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477854,
+            "uid": 1000,
+            "ppid": 1477853,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477887,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42395 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {4a585732-04e6-40a1-a08e-670d71e3c960} -parentPid 1477327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477888,
+            "uid": 1000,
+            "ppid": 1477887,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477893,
+            "uid": 1000,
+            "ppid": 1477486,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42395 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {904c61d8-00e2-46ee-88e5-1b4471d570f3} -parentPid 1477327 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1477895,
+            "uid": 1000,
+            "ppid": 1477893,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {8648726c-e63e-4ad8-8486-aca01aefaba8} -parentPid 1477327 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478131,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-1-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1478164,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-1-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2160
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-aN24Pp": {
+            "EACCES": 108,
+            "ENOENT": 169
+          },
+          "<TRIAL_ROOT>/handoff-aN24Pp/open.html": {
+            "EACCES": 108,
+            "ENOENT": 169
+          }
+        },
+        "hits": []
+      }
+    },
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:38135/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogmku"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1170,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 273,
+        "scannedProcesses": 825,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 23,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1478327,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:38135/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogmku"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1478364,
+            "uid": 1000,
+            "ppid": 1478327,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-2-argv-url http://127.0.0.1:38135/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogmku",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478379,
+            "uid": 1000,
+            "ppid": 1478364,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 19 -w"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478431,
+            "uid": 1000,
+            "ppid": 1478364,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478492,
+            "uid": 1000,
+            "ppid": 1478364,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {b80c6241-5c73-4168-b53f-9ae319009e34} -parentPid 1478364 -crashReporter 5 -crashHelperPid 1478371 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478493,
+            "uid": 1000,
+            "ppid": 1478492,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-2-argv-url http://127.0.0.1:38135/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogmku"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478519,
+            "uid": 1000,
+            "ppid": 1478364,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[forkserver]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478540,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27343 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {726be6fd-e063-49cb-b7aa-1a7be22fcc70} -parentPid 1478364 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478541,
+            "uid": 1000,
+            "ppid": 1478540,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478550,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27388 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {509cde82-f541-46a1-b263-d6ef7ef4005f} -parentPid 1478364 -crashReporter 5 -crashHelperPid 1478371 -crashHelper 6 -appDir"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478551,
+            "uid": 1000,
+            "ppid": 1478550,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478587,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:26724 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {1672b176-02b5-47ff-95bb-a754f66186ef} -parentPid 1478364 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478589,
+            "uid": 1000,
+            "ppid": 1478587,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478635,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27722 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {e26a030a-fd18-41e6-8904-31327209e06c} -parentPid 1478364 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478637,
+            "uid": 1000,
+            "ppid": 1478635,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478660,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29324 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {ffbb6f75-503a-4a18-b20d-11283df2ef0b} -parentPid 1478364 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478662,
+            "uid": 1000,
+            "ppid": 1478660,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478757,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43866 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {9e9655ab-e576-4726-8be1-725d7376dbda} -parentPid 1478364 -crashReporter 5 -crashHelperPid 1478371 -cra"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478780,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42477 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {e678f850-ab67-4179-9eff-a6d8cda499aa} -parentPid 1478364 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478782,
+            "uid": 1000,
+            "ppid": 1478780,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478787,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42477 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {2bc2495b-dedf-4559-a9a7-8a26dfa4106c} -parentPid 1478364 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478790,
+            "uid": 1000,
+            "ppid": 1478787,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478801,
+            "uid": 1000,
+            "ppid": 1478519,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42477 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {baf21a99-a577-4007-8ba3-9c41f2fc9c87} -parentPid 1478364 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478803,
+            "uid": 1000,
+            "ppid": 1478801,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {823db53f-40f1-444d-99e5-3ad5599165bc} -parentPid 1478364 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1478981,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-2-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1479024,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-2-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2140
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1478327,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:38135/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogmku"
+          },
+          {
+            "pid": 1478364,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-2-argv-url http://127.0.0.1:38135/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogmku"
+          },
+          {
+            "pid": 1478493,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-2-argv-url http://127.0.0.1:38135/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogmku"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-VZSqu3/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1308,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 282,
+        "scannedProcesses": 857,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 26,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1479281,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-VZSqu3/open.html",
+              "[xdg-open]"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1479329,
+            "uid": 1000,
+            "ppid": 1479281,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-2-private-file <TRIAL_ROOT>/handoff-VZSqu",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479342,
+            "uid": 1000,
+            "ppid": 1479329,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w",
+              "[glxtest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479387,
+            "uid": 1000,
+            "ppid": 1479329,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479481,
+            "uid": 1000,
+            "ppid": 1479329,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {5bc29543-afca-4cfc-ad1b-6b8b6307e531} -parentPid 1479329 -crashReporter 5 -crashHelperPid 1479334 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479482,
+            "uid": 1000,
+            "ppid": 1479481,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-2-private-file <TRIAL_ROOT>/handoff-VZSqu"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479576,
+            "uid": 1000,
+            "ppid": 1479329,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[forkserver]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479602,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27259 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {0736bbab-1a8d-4a93-9776-aba45f5b7bcd} -parentPid 1479329 -crashReporter 6 -crashHel",
+              "[WebExtensions]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479603,
+            "uid": 1000,
+            "ppid": 1479602,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479611,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27304 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {2b727987-8bae-4c7b-af33-5d575ac8676b} -parentPid 1479329 -crashReporter 5 -crashHelperPid 1479334 -crashHelper 6 -appDir",
+              "[RDD Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479612,
+            "uid": 1000,
+            "ppid": 1479611,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479648,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27682 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {e82fd7c1-1fc6-4cb4-a6e9-2710f3342ca8} -parentPid 1479329 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479650,
+            "uid": 1000,
+            "ppid": 1479648,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479696,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27566 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {057b7631-390a-412a-9c9d-f699dfb25c82} -parentPid 1479329 -crashReporter 6 -crashHel",
+              "[Isolated Web Co]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479698,
+            "uid": 1000,
+            "ppid": 1479696,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479722,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29242 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {02298e47-830e-436f-904a-8cae17aca9a5} -parentPid 1479329 -crashReporter 6 -crashHel",
+              "[Privileged Cont]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479724,
+            "uid": 1000,
+            "ppid": 1479722,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479807,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27812 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {48e626cf-8c7d-4a81-af17-2189e21e92ab} -parentPid 1479329 -crashReporter 6 -crashHel",
+              "[Isolated Web Co]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479808,
+            "uid": 1000,
+            "ppid": 1479807,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479869,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43059 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {0720613d-2f2b-41cf-a931-2ddcdcff4b45} -parentPid 1479329 -crashReporter 5 -crashHelperPid 1479334 -cra",
+              "[Utility Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479870,
+            "uid": 1000,
+            "ppid": 1479869,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479901,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42395 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {e66cf5e7-fbae-47f0-8d6d-d7764d9108bf} -parentPid 1479329 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479902,
+            "uid": 1000,
+            "ppid": 1479901,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479907,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42395 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {7e3b210b-b013-4bc1-a7c4-35b62a40832a} -parentPid 1479329 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479910,
+            "uid": 1000,
+            "ppid": 1479907,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479914,
+            "uid": 1000,
+            "ppid": 1479576,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42395 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {61eef085-6b69-4392-89c2-e1eb572aca12} -parentPid 1479329 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1479915,
+            "uid": 1000,
+            "ppid": 1479914,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {01c70311-e926-47e6-b6ab-ffee11fff2e4} -parentPid 1479329 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480075,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-2-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1480122,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-2-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2208
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-VZSqu3": {
+            "EACCES": 111,
+            "ENOENT": 171
+          },
+          "<TRIAL_ROOT>/handoff-VZSqu3/open.html": {
+            "EACCES": 111,
+            "ENOENT": 171
+          }
+        },
+        "hits": []
+      }
+    },
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:36403/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogse4"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1246,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 275,
+        "scannedProcesses": 846,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 24,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1480232,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:36403/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogse4"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1480271,
+            "uid": 1000,
+            "ppid": 1480232,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-3-argv-url http://127.0.0.1:36403/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogse4",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480284,
+            "uid": 1000,
+            "ppid": 1480271,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w",
+              "[glxtest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480330,
+            "uid": 1000,
+            "ppid": 1480271,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480385,
+            "uid": 1000,
+            "ppid": 1480271,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {11344171-1486-4eaf-8505-c5af9446e4c7} -parentPid 1480271 -crashReporter 5 -crashHelperPid 1480276 -crashHelper 6 -appDir"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480386,
+            "uid": 1000,
+            "ppid": 1480385,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-3-argv-url http://127.0.0.1:36403/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogse4"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480412,
+            "uid": 1000,
+            "ppid": 1480271,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480436,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27259 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {60e73232-b735-483b-a8a3-dedaca581d08} -parentPid 1480271 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480437,
+            "uid": 1000,
+            "ppid": 1480436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480445,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27304 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {ded4fc3d-73b3-4791-8248-74c512a5bc81} -parentPid 1480271 -crashReporter 5 -crashHelperPid 1480276 -crashHelper 6 -appDir"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480446,
+            "uid": 1000,
+            "ppid": 1480445,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480482,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:26724 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {94085f34-a79b-4263-815c-c22d0f13b68e} -parentPid 1480271 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480484,
+            "uid": 1000,
+            "ppid": 1480482,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480533,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27722 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {b2451bfe-5bdd-4b56-9145-4b08fe49fc4f} -parentPid 1480271 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480535,
+            "uid": 1000,
+            "ppid": 1480533,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480560,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29324 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {6aaf55f0-dcfd-4ebd-8aa2-7e57c8d205df} -parentPid 1480271 -crashReporter 6 -crashHel",
+              "[Privileged Cont]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480562,
+            "uid": 1000,
+            "ppid": 1480560,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480661,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43555 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {8a2deb61-29e4-440a-b808-f97ecc1aa709} -parentPid 1480271 -crashReporter 5 -crashHelperPid 1480276 -cra"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480662,
+            "uid": 1000,
+            "ppid": 1480661,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480693,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42608 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {3563efb1-4bda-4a13-a859-c7dca9eac418} -parentPid 1480271 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480694,
+            "uid": 1000,
+            "ppid": 1480693,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480699,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42608 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {ee774dc1-e27e-4329-8145-972c9155cd39} -parentPid 1480271 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480701,
+            "uid": 1000,
+            "ppid": 1480699,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480734,
+            "uid": 1000,
+            "ppid": 1480412,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42608 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {aa7027b3-4bf7-45b4-903c-8d9c561cf200} -parentPid 1480271 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480737,
+            "uid": 1000,
+            "ppid": 1480734,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {eead40aa-5551-4de9-8e16-f2f3ad2fe237} -parentPid 1480271 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1480944,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-3-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1481026,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-3-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2107
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1480232,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:36403/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogse4"
+          },
+          {
+            "pid": 1480271,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-3-argv-url http://127.0.0.1:36403/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogse4"
+          },
+          {
+            "pid": 1480386,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-3-argv-url http://127.0.0.1:36403/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogse4"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-iRavRu/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1212,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 268,
+        "scannedProcesses": 828,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 25,
+          "helper": 3
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1481236,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-iRavRu/open.html"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1481261,
+            "uid": 1000,
+            "ppid": 1481236,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-mime query default text/html"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1481292,
+            "uid": 1000,
+            "ppid": 1481236,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-3-private-file <TRIAL_ROOT>/handoff-iRavR",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481305,
+            "uid": 1000,
+            "ppid": 1481292,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w",
+              "[glxtest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481352,
+            "uid": 1000,
+            "ppid": 1481292,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481408,
+            "uid": 1000,
+            "ppid": 1481292,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {7e6e704b-91f4-4a22-aaac-552daa433edf} -parentPid 1481292 -crashReporter 5 -crashHelperPid 1481297 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481409,
+            "uid": 1000,
+            "ppid": 1481408,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-3-private-file <TRIAL_ROOT>/handoff-iRavR"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481436,
+            "uid": 1000,
+            "ppid": 1481292,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[forkserver]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481459,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27259 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {26759915-cab6-4f68-bbf1-71c2a7c9e2c4} -parentPid 1481292 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481460,
+            "uid": 1000,
+            "ppid": 1481459,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481468,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27304 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {7ca517fb-78f9-4e83-afd9-85503035550a} -parentPid 1481292 -crashReporter 5 -crashHelperPid 1481297 -crashHelper 6 -appDir"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481469,
+            "uid": 1000,
+            "ppid": 1481468,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481503,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27530 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {6e729979-65fd-48d2-a285-ebf4c9472f0d} -parentPid 1481292 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481505,
+            "uid": 1000,
+            "ppid": 1481503,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481552,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27519 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {80a15e78-5e14-45fd-92dd-2d2989e07107} -parentPid 1481292 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481554,
+            "uid": 1000,
+            "ppid": 1481552,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481581,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29195 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {a16c5cd0-5d30-4856-9d9d-35f90d4b0d4a} -parentPid 1481292 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481584,
+            "uid": 1000,
+            "ppid": 1481581,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481647,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27765 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {5f0c6187-6edc-4a43-a472-3605f432b9b7} -parentPid 1481292 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481648,
+            "uid": 1000,
+            "ppid": 1481647,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481741,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43012 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {107ab0b3-6e7b-443a-b06c-7344480da8e9} -parentPid 1481292 -crashReporter 5 -crashHelperPid 1481297 -cra"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481785,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42348 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {3127f82c-877d-4ee9-8d0a-b13f43b1b38f} -parentPid 1481292 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481786,
+            "uid": 1000,
+            "ppid": 1481785,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481787,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42348 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {b930e07e-22c0-43b4-9adf-f797fe78753b} -parentPid 1481292 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481790,
+            "uid": 1000,
+            "ppid": 1481787,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481797,
+            "uid": 1000,
+            "ppid": 1481436,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42348 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {681a3db7-fe87-4423-a305-64e6c84c1374} -parentPid 1481292 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481798,
+            "uid": 1000,
+            "ppid": 1481797,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c7aed877-893a-423b-bee5-67ed0dc700ef} -parentPid 1481292 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1481926,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-3-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1481988,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-3-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2091,
+          "ENOENT": 1
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-iRavRu": {
+            "EACCES": 103,
+            "ENOENT": 165
+          },
+          "<TRIAL_ROOT>/handoff-iRavRu/open.html": {
+            "EACCES": 103,
+            "ENOENT": 165
+          }
+        },
+        "hits": []
+      }
+    },
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:41011/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogy6w"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1226,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 269,
+        "scannedProcesses": 816,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 23,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1482103,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:41011/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogy6w",
+              "[xdg-open]"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1482142,
+            "uid": 1000,
+            "ppid": 1482103,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-4-argv-url http://127.0.0.1:41011/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogy6w",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482155,
+            "uid": 1000,
+            "ppid": 1482142,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w",
+              "[glxtest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482201,
+            "uid": 1000,
+            "ppid": 1482142,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482243,
+            "uid": 1000,
+            "ppid": 1482142,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {6613821a-a454-45c0-a9dc-7dc21486913d} -parentPid 1482142 -crashReporter 5 -crashHelperPid 1482147 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482244,
+            "uid": 1000,
+            "ppid": 1482243,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-4-argv-url http://127.0.0.1:41011/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogy6w"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482310,
+            "uid": 1000,
+            "ppid": 1482142,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[forkserver]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482370,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27259 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {008c6691-903e-4ee6-bbcb-e39de38bc51c} -parentPid 1482142 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482371,
+            "uid": 1000,
+            "ppid": 1482370,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482379,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27304 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {5c612c3a-7f13-4c41-960d-ecd7cc6857ba} -parentPid 1482142 -crashReporter 5 -crashHelperPid 1482147 -crashHelper 6 -appDir",
+              "[RDD Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482380,
+            "uid": 1000,
+            "ppid": 1482379,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482418,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:26724 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {74c27b91-a1ff-4e7b-9b06-c623588eca26} -parentPid 1482142 -crashReporter 6 -crashHel",
+              "[Isolated Web Co]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482420,
+            "uid": 1000,
+            "ppid": 1482418,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482476,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27722 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {5b4050d5-bfa4-493b-bd02-5d5580a53c27} -parentPid 1482142 -crashReporter 6 -crashHel",
+              "[Isolated Web Co]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482478,
+            "uid": 1000,
+            "ppid": 1482476,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482504,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29324 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {665b032b-0919-4ff1-82eb-63e80bea7038} -parentPid 1482142 -crashReporter 6 -crashHel",
+              "[Privileged Cont]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482506,
+            "uid": 1000,
+            "ppid": 1482504,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482620,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43141 -prefMapHandle 1:283999 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {92498f11-0d3a-4e43-a917-283527190da4} -parentPid 1482142 -crashReporter 5 -crashHelperPid 1482147 -cra"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482664,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42477 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {33262283-80de-403e-8e50-7c3b4d00e90a} -parentPid 1482142 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482666,
+            "uid": 1000,
+            "ppid": 1482664,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482670,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42477 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {82f5e752-86da-4cc1-8076-f83e4f478ca1} -parentPid 1482142 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482671,
+            "uid": 1000,
+            "ppid": 1482670,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482676,
+            "uid": 1000,
+            "ppid": 1482310,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42477 -prefMapHandle 1:283999 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {cb69f192-2353-485b-99cd-441c60dd6774} -parentPid 1482142 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482678,
+            "uid": 1000,
+            "ppid": 1482676,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {1181e4b7-522e-436e-8ac7-23986dd1f6cc} -parentPid 1482142 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[Chroot Helper]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1482800,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-4-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1482862,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-4-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2101
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1482103,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:41011/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogy6w"
+          },
+          {
+            "pid": 1482142,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-4-argv-url http://127.0.0.1:41011/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogy6w"
+          },
+          {
+            "pid": 1482244,
+            "field": "cmdline",
+            "sample": "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-4-argv-url http://127.0.0.1:41011/__khala/bootstrap#credential=<CANARY>&channel=channel-mugogy6w"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-ILjMO8/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 1260,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 279,
+        "scannedProcesses": 827,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 25,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1474244,
+            "uid": 1000,
+            "ppid": 1474242,
+            "cmdlines": [
+              "node run.mjs --browser firefox --trials 5 --out evidence/linux-xdg-open-generic-firefox.json"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1482985,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-ILjMO8/open.html"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1483033,
+            "uid": 1000,
+            "ppid": 1482985,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-4-private-file <TRIAL_ROOT>/handoff-ILjMO",
+              "[firefox]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483046,
+            "uid": 1000,
+            "ppid": 1483033,
+            "cmdlines": [
+              "/usr/lib/firefox/glxtest -f 18 -w"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483092,
+            "uid": 1000,
+            "ppid": 1483033,
+            "cmdlines": [
+              "/usr/lib/firefox/vaapitest -d /dev/dri/renderD128",
+              "[vaapitest]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483131,
+            "uid": 1000,
+            "ppid": 1483033,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:26651 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {825d14e1-c61b-4596-a724-e598ea623616} -parentPid 1483033 -crashReporter 5 -crashHelperPid 1483038 -crashHelper 6 -appDir",
+              "[Socket Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483132,
+            "uid": 1000,
+            "ppid": 1483131,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox --headless --no-remote --profile <TRIAL_ROOT>/browser-profile-4-private-file <TRIAL_ROOT>/handoff-ILjMO"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483153,
+            "uid": 1000,
+            "ppid": 1483033,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver",
+              "[forkserver]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483178,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27343 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {a25285e8-d439-43ec-88d0-9b6cd7ee0067} -parentPid 1483033 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483179,
+            "uid": 1000,
+            "ppid": 1483178,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483188,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -prefsHandle 0:27388 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {44e1fea9-c980-449c-b12a-179d3b1ba819} -parentPid 1483033 -crashReporter 5 -crashHelperPid 1483038 -crashHelper 6 -appDir",
+              "[RDD Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483189,
+            "uid": 1000,
+            "ppid": 1483188,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483225,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27530 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {7851cdaf-b49a-4067-84d3-76fa8504c638} -parentPid 1483033 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483227,
+            "uid": 1000,
+            "ppid": 1483225,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483273,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27378 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {80807108-d0fc-46b7-9e99-a13f56b8c2c4} -parentPid 1483033 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483275,
+            "uid": 1000,
+            "ppid": 1483273,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483302,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:29053 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {b5590867-e815-405d-bea2-130c47f9a55b} -parentPid 1483033 -crashReporter 6 -crashHel"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483304,
+            "uid": 1000,
+            "ppid": 1483302,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483365,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:27624 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {f7f939c0-b304-4dc1-a6aa-7a10cd6c0946} -parentPid 1483033 -crashReporter 6 -crashHel",
+              "[Isolated Web Co]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483366,
+            "uid": 1000,
+            "ppid": 1483365,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483450,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -parentBuildID 20260714082727 -sandboxingKind 0 -prefsHandle 0:43012 -prefMapHandle 1:284007 -sandboxReporter 2 -chrootClient 3 -ipcHandle 4 -initialChannelId {7f342487-8d1f-4c0b-bd85-f669be412900} -parentPid 1483033 -crashReporter 5 -crashHelperPid 1483038 -cra",
+              "[Utility Process]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483495,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42291 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {bcff6402-8def-4530-9c2b-aea8d6c60999} -parentPid 1483033 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483496,
+            "uid": 1000,
+            "ppid": 1483495,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483501,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42348 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {1d60bd47-ea3a-4e6e-9079-c62a53106cd9} -parentPid 1483033 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483502,
+            "uid": 1000,
+            "ppid": 1483501,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483507,
+            "uid": 1000,
+            "ppid": 1483153,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -isForBrowser -prefsHandle 0:42348 -prefMapHandle 1:284007 -jsInitHandle 2:156120 -parentBuildID 20260714082727 -sandboxReporter 3 -chrootClient 4 -ipcHandle 5 -initialChannelId {336936a3-82bc-43d2-8c81-7a28cb891746} -parentPid 1483033 -crashReporter 6 -crashHel",
+              "[Web Content]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483510,
+            "uid": 1000,
+            "ppid": 1483507,
+            "cmdlines": [
+              "/usr/lib/firefox/firefox -contentproc -ipcHandle 0 -signalPipe 1 -initialChannelId {c3374e7f-a944-4118-83ff-55584601fe05} -parentPid 1483033 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appDir /usr/lib/firefox/browser 2 forkserver"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1483637,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-4-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1483707,
+            "uid": 1000,
+            "ppid": 1474244,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-4-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 2222
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-ILjMO8": {
+            "EACCES": 109,
+            "ENOENT": 170
+          },
+          "<TRIAL_ROOT>/handoff-ILjMO8/open.html": {
+            "EACCES": 109,
+            "ENOENT": 170
+          }
+        },
+        "hits": []
+      }
+    }
+  ],
+  "verdict": {
+    "proved": true,
+    "failures": []
+  }
+}
