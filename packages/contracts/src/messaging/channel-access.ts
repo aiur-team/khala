@@ -192,19 +192,19 @@ export interface ChannelAccessResolutionPort {
     ownerId: OwnerId;
     channelRef: AuthorizedChannelRef;
     targetRevision: string;
-    requester: DiscoveryRequester;
+    requester: ChannelAccessRequesterContext;
   }>, options?: CallOptions): Promise<ChannelAccessRevalidationResult>;
   revalidateCreate(input: Readonly<{
     ownerId: OwnerId;
     ownerRevision: string;
-    requester: DiscoveryRequester;
+    requester: ChannelAccessRequesterContext;
   }>, options?: CallOptions): Promise<ChannelCreateRevalidationResult>;
   currentAccessOwner(
     channelRef: AuthorizedChannelRef,
     owner: AuthPrincipal,
     options?: CallOptions,
   ): Promise<ChannelAccessOwnershipResult>;
-  checkRequester(requester: DiscoveryRequester, options?: CallOptions): Promise<ChannelAccessRequesterCheck>;
+  checkRequester(requester: ChannelAccessRequesterContext, options?: CallOptions): Promise<ChannelAccessRequesterCheck>;
 }
 
 /** Agent request journal; the additional context comes from trusted composition. */
@@ -224,6 +224,7 @@ export interface ChannelAccessRequestJournalPort {
   inspect(
     input: ChannelAccessStatusQuery,
     requester: DiscoveryRequester,
+    context: ChannelAccessRequesterContext,
     options?: CallOptions,
   ): Promise<AccessRequestStatus>;
 }

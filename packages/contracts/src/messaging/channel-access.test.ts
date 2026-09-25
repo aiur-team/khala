@@ -218,6 +218,10 @@ describe('channel-access authority boundaries', () => {
       .toEqualTypeOf<ChannelCreateIntent>();
     expectTypeOf<Parameters<ChannelAccessResolutionPort['resolveAccess']>[1]>()
       .toEqualTypeOf<DiscoveryRequester>();
+    expectTypeOf<Parameters<ChannelAccessResolutionPort['revalidateAccess']>[0]['requester']>()
+      .toEqualTypeOf<ChannelAccessRequesterContext>();
+    expectTypeOf<Parameters<ChannelAccessResolutionPort['checkRequester']>[0]>()
+      .toEqualTypeOf<ChannelAccessRequesterContext>();
 
     type ResolverMethods = keyof ChannelAccessResolutionPort;
     const methods: readonly ResolverMethods[] = [
