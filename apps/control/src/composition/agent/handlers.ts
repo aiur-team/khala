@@ -21,6 +21,8 @@ export type AgentHandlerDependencies = Readonly<{
   status: Readonly<{ snapshot(roomId: RoomId, signal: AbortSignal): Promise<AgentStatusSnapshot> }>;
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
+  /** Authenticated channel-access registrations supplied by the composition root. */
+  channelAccess?: () => readonly RouteRegistration[];
   /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
   channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
   /** Request-lifetime channel-listing registrations supplied by the composition root. */
@@ -61,6 +63,17 @@ const unavailablePairingRoutes = Object.freeze([
   unavailablePairing('/api/agent/pairing/result'),
 ]);
 
+const unavailableChannelAccessRoutes = Object.freeze([
+  unavailablePairing('/api/agent/channel-access/request'),
+  unavailablePairing('/api/agent/channel-access/create'),
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/channel-access/status',
+    methods: Object.freeze(['GET']),
+    async handle() {
+      return json(503, { v: 1, kind: 'rejected', code: 'feature_unavailable' });
+    },
+  }),
+]);
 const unavailableChannelDiscoveryRoutes = Object.freeze([
   Object.freeze({
     path: '/api/agent/channel-discovery/bootstrap/token',
@@ -103,6 +116,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
   if (!dependencies) return Object.freeze([
     unavailableStatus,
     ...unavailablePairingRoutes,
+    ...unavailableChannelAccessRoutes,
     ...unavailableChannelDiscoveryRoutes,
     ...unavailableChannelListingRoutes,
   ]);
@@ -122,6 +136,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
   return Object.freeze([
     status,
     ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
+    ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
     ...(dependencies.channelDiscovery?.() ?? unavailableChannelListingRoutes),
   ]);

@@ -3,6 +3,8 @@ import type { RouteRegistration } from '../../runtime/handler';
 export type HumanHandlerDependencies = Readonly<{
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
+  /** Authenticated channel-access registrations supplied by the composition root. */
+  channelAccess?: () => readonly RouteRegistration[];
   /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
   channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
   /** Request-lifetime channel-discovery settings registrations supplied by the composition root. */
@@ -35,6 +37,12 @@ const unavailablePairingRoutes = Object.freeze([
   unavailable('/api/human/pairing/decision', ['POST']),
 ]);
 
+const unavailableChannelAccessRoutes = Object.freeze([
+  unavailable('/api/human/channel-access/inbox', ['GET']),
+  unavailable('/api/human/channel-access/decision', ['POST']),
+  unavailable('/api/human/channel-access/mute', ['POST']),
+]);
+
 const unavailableChannelDiscoveryRoutes = Object.freeze([
   Object.freeze({
     path: '/api/human/channel-discovery/bootstrap/authorize',
@@ -48,11 +56,13 @@ const unavailableChannelDiscoveryRoutes = Object.freeze([
 const unavailableChannelSettingsRoutes = Object.freeze([
   unavailable('/api/human/channel-discovery/settings', ['PUT']),
   unavailable('/api/human/channel-discovery/allowlist', ['POST']),
+  unavailable('/api/human/channel-discovery/rollout', ['PUT']),
 ]);
 
 export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {
   return Object.freeze([
     ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
+    ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
     ...(dependencies?.channelDiscovery?.() ?? unavailableChannelSettingsRoutes),
   ]);

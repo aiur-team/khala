@@ -76,6 +76,24 @@ export {
   validateSealedGrantPayload,
 } from './discovery';
 export {
+  type ChannelAccessAuthorization, type ChannelAccessDecisionCommand, type ChannelAccessDecisionPort,
+  type ChannelAccessDecisionRejection, type ChannelAccessFulfillmentClaim, type ChannelAccessFulfillmentPort,
+  type ChannelAccessFulfillmentRejection, type ChannelAccessFulfillmentUpdate, type ChannelAccessMuteCommand,
+  type ChannelAccessMuteResult, type ChannelAccessNotification, type ChannelAccessNotificationPort,
+  type ChannelAccessOperationKind, type ChannelAccessOwnerOutcome, type ChannelAccessOwnerProjection,
+  type ChannelAccessOwnershipResult, type ChannelAccessRequesterCheck, type ChannelAccessRequesterContext,
+  type ChannelAccessRequesterProjection, type ChannelAccessRequestHandle, type ChannelAccessRequestJournalPort,
+  type ChannelAccessResolutionPort, type ChannelAccessResolutionResult, type ChannelAccessResolvedTarget,
+  type ChannelAccessRevalidationResult, type ChannelAccessStatusQuery, type ChannelCreateAuthorization,
+  type ChannelCreateResolutionResult, type ChannelCreateResolvedTarget, type ChannelCreateRevalidationResult,
+  CHANNEL_ACCESS_COOLDOWN_MS, CHANNEL_ACCESS_OWNER_OUTCOMES, CHANNEL_ACCESS_REQUEST_LIFETIME_MS,
+  CHANNEL_ACCESS_SENSITIVE_RETENTION_MS, MAX_CHANNEL_ACCESS_LABEL_BYTES, MAX_CHANNEL_ACCESS_NOTIFICATIONS_PER_MINUTE,
+  MAX_CHANNEL_ACCESS_OWNER_PENDING, MAX_CHANNEL_ACCESS_REQUESTER_PENDING, decodeChannelAccessDecisionCommand,
+  decodeChannelAccessFulfillmentClaim, decodeChannelAccessFulfillmentUpdate, decodeChannelAccessMuteCommand,
+  decodeChannelAccessNotification, decodeChannelAccessOwnerProjection, decodeChannelAccessRequesterContext,
+  decodeChannelAccessStatusQuery,
+} from './channel-access';
+export {
   type PairingApprovalResult, type PairingClaimProjection, type PairingClaimRequest, type PairingClaimResult,
   type PairingCreateRequest, type PairingCreateResult, type PairingDecisionRequest, type PairingDecisionResult,
   type PairingFailure, type PairingFailureCode, type PairingFailureRoute, type PairingGrantRedemptionRequest,
