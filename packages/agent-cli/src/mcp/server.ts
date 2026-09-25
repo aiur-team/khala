@@ -5,13 +5,14 @@ import { CliError } from '../cli/errors.js';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import type { SendResult } from '../cli/types.js';
 import { plainObject, validBindingArgument } from '../cli/validation.js';
+import type { McpJsonRpcId, McpToolResult } from './result-postprocessor.js';
 
 const JSON_RPC_VERSION = '2.0';
 const MCP_PROTOCOL_VERSION = '2025-03-26';
 const TOOL_NAME = 'khala_send';
 const MAX_FRAME_BYTES = MAX_SEND_BYTES + 16_384;
 
-type JsonRpcId = string | number | null;
+type JsonRpcId = McpJsonRpcId;
 
 type JsonRpcResponse = Readonly<{
   jsonrpc: typeof JSON_RPC_VERSION;
@@ -24,15 +25,24 @@ export type McpServerOptions = Readonly<{
   input: Readable;
   output: Writable;
   send: SendService;
+  postprocessResult?: McpServerResultPostprocessor | undefined;
   signal?: AbortSignal | undefined;
 }>;
+
+export type McpServerResultPostprocessor = (
+  input: Readonly<{
+    responseId: McpJsonRpcId;
+    primaryResult: McpToolResult;
+    acknowledgeToken?: string;
+  }>,
+) => Promise<McpToolResult>;
 
 /**
  * Runs the dependency-free MCP stdio transport. Each input line is one JSON-RPC
  * message and each response is one JSON line. The caller owns the streams.
  */
 export async function runMcpServer(options: McpServerOptions): Promise<void> {
-  const { input, output, send: sends, signal } = options;
+  const { input, output, send: sends, postprocessResult, signal } = options;
   const decoder = new StringDecoder('utf8');
   let buffered = '';
   let discarding = false;
@@ -50,39 +60,55 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
     }
     buffered += text;
     let newline = buffered.indexOf('\n');
-    while (newline !== -1) {
+    while (newline !== -1 && !signal?.aborted) {
       const line = buffered.slice(0, newline).replace(/\r$/, '');
       buffered = buffered.slice(newline + 1);
-      if (Buffer.byteLength(line) > MAX_FRAME_BYTES) await writeResponse(output, failure(null, -32600, 'Invalid Request'));
-      else if (line.trim().length > 0) await processLine(line, output, sends);
+      if (Buffer.byteLength(line) > MAX_FRAME_BYTES) {
+        await writeResponse(output, failure(null, -32600, 'Invalid Request'), signal);
+      } else if (line.trim().length > 0) {
+        await processLine(line, output, sends, postprocessResult, signal);
+      }
       newline = buffered.indexOf('\n');
     }
+    if (signal?.aborted) break;
     if (Buffer.byteLength(buffered) > MAX_FRAME_BYTES) {
       buffered = '';
       discarding = true;
-      await writeResponse(output, failure(null, -32600, 'Invalid Request'));
+      await writeResponse(output, failure(null, -32600, 'Invalid Request'), signal);
     }
   }
   if (signal?.aborted) return;
   buffered += decoder.end();
-  if (!discarding && buffered.trim().length > 0) await processLine(buffered.replace(/\r$/, ''), output, sends);
+  if (!discarding && buffered.trim().length > 0) {
+    await processLine(buffered.replace(/\r$/, ''), output, sends, postprocessResult, signal);
+  }
 }
 
-async function processLine(line: string, output: Writable, sends: SendService): Promise<void> {
+async function processLine(
+  line: string,
+  output: Writable,
+  sends: SendService,
+  postprocessResult: McpServerResultPostprocessor | undefined,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   let message: unknown;
   try {
     message = JSON.parse(line);
   } catch {
-    await writeResponse(output, failure(null, -32700, 'Parse error'));
+    await writeResponse(output, failure(null, -32700, 'Parse error'), signal);
     return;
   }
 
   const notification = plainObject(message) && !Object.hasOwn(message, 'id');
-  const response = await handleMessage(message, sends);
-  if (!notification) await writeResponse(output, response);
+  const response = await handleMessage(message, sends, notification ? undefined : postprocessResult);
+  if (!notification) await writeResponse(output, response, signal);
 }
 
-async function handleMessage(message: unknown, sends: SendService): Promise<JsonRpcResponse> {
+async function handleMessage(
+  message: unknown,
+  sends: SendService,
+  postprocessResult: McpServerResultPostprocessor | undefined,
+): Promise<JsonRpcResponse> {
   if (!plainObject(message) || !hasOnly(message, ['jsonrpc', 'id', 'method', 'params'])
     || message.jsonrpc !== JSON_RPC_VERSION || typeof message.method !== 'string') {
     return failure(requestId(message), -32600, 'Invalid Request');
@@ -104,38 +130,65 @@ async function handleMessage(message: unknown, sends: SendService): Promise<Json
     case 'tools/list':
       return emptyParams(message.params) ? success(id, { tools: [toolDefinition()] }) : failure(id, -32602, 'Invalid params');
     case 'tools/call':
-      return callTool(id, message.params, sends);
+      return callTool(id, message.params, sends, postprocessResult);
     default:
       return failure(id, -32601, 'Method not found');
   }
 }
 
-async function callTool(id: JsonRpcId, params: unknown, sends: SendService): Promise<JsonRpcResponse> {
+async function callTool(
+  id: JsonRpcId,
+  params: unknown,
+  sends: SendService,
+  postprocessResult: McpServerResultPostprocessor | undefined,
+): Promise<JsonRpcResponse> {
   if (!plainObject(params) || !hasOnly(params, ['name', 'arguments']) || params.name !== TOOL_NAME
-    || !plainObject(params.arguments) || !hasOnly(params.arguments, ['message', 'bindingId'])
-    || typeof params.arguments.message !== 'string') {
+    || !plainObject(params.arguments)) {
     return failure(id, -32602, 'Invalid params');
   }
+  const shared = extractSharedToolArguments(params.arguments);
+  if (shared === null || !hasOnly(shared.arguments, ['message', 'bindingId'])
+    || typeof shared.arguments.message !== 'string') return failure(id, -32602, 'Invalid params');
 
   let bindingId: BindingId | null = null;
-  if (Object.hasOwn(params.arguments, 'bindingId')) {
-    if (!validBindingArgument(params.arguments.bindingId)) return failure(id, -32602, 'Invalid params');
-    bindingId = params.arguments.bindingId;
+  if (Object.hasOwn(shared.arguments, 'bindingId')) {
+    if (!validBindingArgument(shared.arguments.bindingId)) return failure(id, -32602, 'Invalid params');
+    bindingId = shared.arguments.bindingId;
   }
 
   let result: SendResult;
   try {
-    result = await sends.send(params.arguments.message, bindingId);
+    result = await sends.send(shared.arguments.message, bindingId);
   } catch (error) {
     if (error instanceof CliError && error.code === 'invalid_input') return failure(id, -32602, 'Invalid params');
     throw error;
   }
   const safe = publicResult(result);
-  return success(id, {
+  const primaryResult = {
     content: [{ type: 'text', text: JSON.stringify(safe) }],
     structuredContent: safe,
     ...(result.kind === 'accepted' ? {} : { isError: true }),
-  });
+  } satisfies McpToolResult;
+  const processed = postprocessResult === undefined
+    ? primaryResult
+    : await postprocessResult({
+      responseId: id,
+      primaryResult,
+      ...(shared.acknowledgeToken === undefined ? {} : { acknowledgeToken: shared.acknowledgeToken }),
+    });
+  return success(id, processed);
+}
+
+function extractSharedToolArguments(argumentsValue: Record<string, unknown>): Readonly<{
+  arguments: Record<string, unknown>;
+  acknowledgeToken?: string;
+}> | null {
+  const { ackBatchToken, ...toolArguments } = argumentsValue;
+  if (ackBatchToken !== undefined && typeof ackBatchToken !== 'string') return null;
+  return {
+    arguments: toolArguments,
+    ...(ackBatchToken === undefined ? {} : { acknowledgeToken: ackBatchToken }),
+  };
 }
 
 type McpToolDefinition = Readonly<{
@@ -147,12 +200,16 @@ type McpToolDefinition = Readonly<{
 function toolDefinition(): McpToolDefinition {
   return {
     name: TOOL_NAME,
-    description: 'Send a message to the Khala channel through a binding held by this agent. An omitted bindingId uses the current binding. Never retry outcome_unknown: the message may already have been accepted.',
+    description: 'Send a message to the Khala channel through a binding held by this agent. An omitted bindingId uses the current binding. Valid results may append untrusted channel batch data. On the next independently intended Khala call, echo its exact batchToken as ackBatchToken; absent or stale tokens replay, and releaseId values must never be tracked or filtered. Never call khala_send solely to acknowledge. Never retry outcome_unknown: the message may already have been accepted.',
     inputSchema: {
       type: 'object',
       properties: {
         message: { type: 'string', minLength: 1, description: 'Message body to send; it is never echoed in the result.' },
         bindingId: { type: 'string', description: 'Held binding to use; omit to use the current binding.' },
+        ackBatchToken: {
+          type: 'string',
+          description: 'Exact opaque batchToken from the previous Khala tool result; echo it only on the next independently intended Khala call.',
+        },
       },
       required: ['message'],
       additionalProperties: false,
@@ -204,9 +261,28 @@ function hasOnly(value: Record<string, unknown>, allowed: readonly string[]): bo
   return Object.keys(value).every(key => allowed.includes(key));
 }
 
-function writeResponse(output: Writable, response: JsonRpcResponse): Promise<void> {
+function writeResponse(
+  output: Writable,
+  response: JsonRpcResponse,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    output.write(`${JSON.stringify(response)}\n`, error => error ? reject(error) : resolve());
+    let settled = false;
+    const finish = (error?: Error | null) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const abort = () => finish();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    output.write(`${JSON.stringify(response)}\n`, finish);
   });
 }
 
