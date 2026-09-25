@@ -19,3 +19,15 @@ export {
 } from './descriptor';
 export { type HttpAdmissionOptions, type LoopbackOwnershipOptions, createHttpAdmission, createLoopbackOwnership } from './loopback';
 export { type ProofSigner, createProofSigner } from './proof';
+export {
+  type ChannelDiscoveryAuthorizationOutcome,
+  type ChannelDiscoveryAuthorizeInput,
+  type ChannelDiscoveryCredentialClient,
+  type ChannelDiscoveryCredentialClientOptions,
+  type ChannelDiscoveryRefreshOutcome,
+  type DiscoveryBootstrapRejection,
+  CHANNEL_DISCOVERY_AUTHORIZE_PATH,
+  CHANNEL_DISCOVERY_TOKEN_PATH,
+  DEFAULT_CHANNEL_DISCOVERY_TIMEOUT_MS,
+  createChannelDiscoveryCredentialClient,
+} from './channel-discovery';

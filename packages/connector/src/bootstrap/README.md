@@ -85,6 +85,28 @@ that throws is treated as `unavailable`, and its message is dropped.
 The HTTP clients send `Origin: <service origin>` on POSTs, which the control gateway requires
 on state-changing requests. Authority comes from the proof and grant, never that header.
 
+## Channel discovery authorization
+
+`createChannelDiscoveryCredentialClient` is a separate, channel-less bootstrap for an
+already-running verified native session. It opens the owner's browser on the exact configured
+service origin, receives a one-time code through an ephemeral `127.0.0.1` callback, and exchanges
+PKCE S256 plus an Ed25519 DPoP proof for a five-minute discovery credential. That credential has
+only `list_channels`, `request_channel_access`, and `request_channel_create`; this flow does not
+create or join a channel and does not create a device, binding, admission grant, or adapter
+capability.
+
+The client exposes `authorize`, `refresh`, `current`, and `invalidate`. It verifies the native
+session before opening a browser and again before refresh. Refresh is DPoP-bound to the current
+credential and installs a replacement only after strict audience, scope, origin, requester,
+generation, expiry, and proof-key validation. Authoritative rejection or a changed generation
+clears local authority. A lost exchange response is reported as `outcome_unknown`, because the
+service may already have issued or rotated authority.
+
+Only the proof signer is durable. Discovery credential plaintext lives in the client instance;
+restarting the connector starts without discovery authority and requires fresh owner consent.
+The trusted-origin list is injected explicitly, so a syntactically valid but unconfigured HTTPS
+origin is rejected before browser launch.
+
 ## Not proven here
 
 Tests use injected doubles plus a real loopback listener and real Ed25519 signatures, so
