@@ -90,6 +90,30 @@ describe('HarnessCapabilities', () => {
       .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
   });
 
+  it('rejects malformed v3 capability envelopes', () => {
+    const missingModes = structuredClone(exact.capabilities) as Record<string, unknown>;
+    delete missingModes.modes;
+    expect(decodeHarnessCapabilities(missingModes))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'modes' });
+
+    const missingAcknowledgement = structuredClone(exact.capabilities) as Record<string, unknown>;
+    delete missingAcknowledgement.acknowledgement;
+    expect(decodeHarnessCapabilities(missingAcknowledgement))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'acknowledgement' });
+
+    expect(decodeHarnessCapabilities({ ...exact.capabilities, unexpected: true }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'unexpected' });
+    expect(decodeHarnessCapabilities({ ...exact.capabilities, acknowledgement: 'immediate' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'acknowledgement' });
+    expect(decodeHarnessCapabilities({
+      ...exact.capabilities,
+      modes: {
+        ...exact.capabilities.modes,
+        steer: { ...exact.capabilities.modes.steer, testedVersion: 'different-version' },
+      },
+    })).toEqual({ ok: false, code: 'invalid_field', field: 'modes.steer.testedVersion' });
+  });
+
   it('decodes a retained v2 envelope into a conservative v3 view', () => {
     const legacy = structuredClone(exact.capabilities) as Record<string, unknown>;
     legacy.v = 2;
@@ -110,6 +134,22 @@ describe('HarnessCapabilities', () => {
     });
     if (decoded.ok) {
       expect(Object.values(decoded.value.modes).every(mode => mode.reason?.includes('v2'))).toBe(true);
+    }
+  });
+
+  it('normalizes maximum-length v2 identifiers into a decodable v3 envelope', () => {
+    const legacy = structuredClone(exact.capabilities) as Record<string, unknown>;
+    legacy.v = 2;
+    legacy.harness = 'h'.repeat(512);
+    legacy.adapterVersion = 'a'.repeat(512);
+    delete legacy.modes;
+    delete legacy.acknowledgement;
+
+    const normalized = decodeHarnessCapabilities(legacy);
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      expect(normalized.value.modes.steer.route).toBe('legacy-v2-unknown-steer');
+      expect(decodeHarnessCapabilities(normalized.value)).toEqual({ ok: true, value: normalized.value });
     }
   });
 

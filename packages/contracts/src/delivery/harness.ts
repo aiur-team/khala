@@ -49,6 +49,11 @@ export const IMMEDIATE_NOTIFICATION_SUPPORT = [
  */
 export const RECONCILE_SUPPORT = ['unknown', 'unsupported', 'while_queued'] as const;
 
+// Retained v2 envelopes have no listening-mode route evidence. Keep the
+// synthesized route independent of their (individually valid) identifiers so
+// the normalized v3 value remains within the identifier byte limit.
+const LEGACY_V2_UNKNOWN_ROUTE = 'legacy-v2-unknown';
+
 export type HarnessCapabilities = Readonly<{
   v: 3;
   harness: string;
@@ -126,7 +131,7 @@ export function decodeHarnessCapabilities(input: unknown): Decoded<HarnessCapabi
     const adapterVersion = identifier(r.field('adapterVersion'), r.at('adapterVersion'));
     const modes = v === 2
       ? unknownModeSupportMap(
-        `legacy-v2-${harness}-${adapterVersion}`,
+        LEGACY_V2_UNKNOWN_ROUTE,
         'Retained v2 capability data contains no primary interactive listening-mode evidence.',
         harnessVersion,
       )

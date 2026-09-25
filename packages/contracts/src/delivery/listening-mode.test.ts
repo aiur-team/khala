@@ -53,6 +53,26 @@ describe('listening-mode values and support', () => {
       .toEqual({ ok: false, code: 'invalid_field', field: 'evidenceRevision' });
   });
 
+  it.each(
+    (['proven', 'experimental'] as const).flatMap(status =>
+      (['testedVersion', 'evidenceRef', 'evidenceRevision'] as const).flatMap(field =>
+        (['missing', null, ''] as const).map(value => [status, field, value] as const),
+      ),
+    ),
+  )('rejects malformed %s evidence rows at %s (%s)', (status, field, value) => {
+    const support: Record<string, unknown> = { ...proven, status };
+    if (value === 'missing') delete support[field];
+    else support[field] = value;
+    expect(decodeModeSupport(support)).toEqual({ ok: false, code: 'invalid_field', field });
+  });
+
+  it.each([
+    [{ ...proven, reason: 1 }, 'reason'],
+    [{ ...proven, unexpected: true }, 'unexpected'],
+  ])('rejects malformed evidenced rows at %s', (support, field) => {
+    expect(decodeModeSupport(support)).toEqual({ ok: false, code: 'invalid_field', field });
+  });
+
   it('rejects unknown and unsupported rows without a concrete reason', () => {
     expect(decodeModeSupport({ ...unknown('codex-sync'), reason: null }))
       .toEqual({ ok: false, code: 'invalid_field', field: 'reason' });
