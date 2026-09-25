@@ -27,4 +27,3 @@ trusted_hash = "sha256:bb068b34c3ec2f5f78b801842e09c6a545ae5a1235ac220ec3018557f
 
 [hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0156/.codex/hooks.json:stop:0:0"]
 trusted_hash = "sha256:87badbef18354124271836591f795f27273a79caf0c18bc1c2bd77b220ce8947"
-
