@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import messagingIntro from '../../fixtures/messaging/exact-intro.json';
+import appHarness from '../../fixtures/delivery/app-harness.json';
 import exact from '../../fixtures/delivery/exact-release.json';
 import invalid from '../../fixtures/delivery/invalid.json';
 import views from '../../fixtures/delivery/views.json';
+import { decodeAppHarnessRecord } from './app-harness';
 import { decodeSessionBinding } from './binding';
 import {
   type ApprovalCommand, type PolicySetCommand,
@@ -250,12 +252,31 @@ describe('view fixtures', () => {
   });
 });
 
+describe('app harness fixtures', () => {
+  it.each(appHarness.valid)('accepts and round-trips byte-stably: $name', testCase => {
+    const result = decodeAppHarnessRecord(testCase.input);
+    expect(result).toEqual({ ok: true, value: testCase.input });
+    if (result.ok) expect(JSON.stringify(result.value)).toBe(JSON.stringify(testCase.input));
+  });
+
+  it.each(appHarness.invalid)('rejects: $name', testCase => {
+    expect(decodeAppHarnessRecord(testCase.input)).toEqual({ ok: false, ...testCase.error });
+  });
+});
+
 describe('public surface', () => {
   it('does not expose fixtures or test helpers', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { exports: Record<string, string> };
     expect(Object.entries(packageJson.exports).filter(([key, target]) => /fixture/i.test(key + target))).toEqual([]);
     expect(() => readFileSync(new URL('./fixtures.ts', import.meta.url))).toThrow();
     expect(Object.keys(delivery).filter(name => /fixture|fake/i.test(name))).toEqual([]);
+    expect(Object.keys(delivery)).toEqual(expect.arrayContaining([
+      'APP_HARNESSES',
+      'APP_HARNESS_SHAPES',
+      'APP_HOOK_BOUNDARIES',
+      'decodeAppHarnessRecord',
+      'sameAppHarnessIdentity',
+    ]));
     const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(indexSource).not.toMatch(/from '[^']*(fixtures|\.test)/);
   });
@@ -264,6 +285,7 @@ describe('public surface', () => {
     for (const file of [
       'decode.ts', 'ids.ts', 'events.ts', 'binding.ts', 'jobs.ts', 'commands.ts', 'receipts.ts', 'listening-mode.ts',
       'harness.ts',
+      'app-harness.ts',
     ]) {
       expect(readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')).not.toMatch(/messaging/);
     }
