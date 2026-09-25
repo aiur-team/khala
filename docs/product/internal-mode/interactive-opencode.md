@@ -15,9 +15,9 @@ Khala-launched agent. The OpenCode plugin is the delivery boundary:
   canonical untrusted-data envelope as a synthetic user message directly after
   the latest tool result. Re-apply it from durable state on later model calls,
   because OpenCode never stores the transform.
-- **`sync` (default), agent busy:** hold the batch until the session goes idle,
-  then submit it once with the in-process SDK client's session-addressed
-  `promptAsync`.
+- **`sync` (default), agent busy:** hold the batch while the session is busy.
+  When the idle watcher observes the session as idle, submit it once with the
+  in-process SDK client's session-addressed `promptAsync`.
 - **`steer` and `sync`, agent idle:** a plugin idle watcher wakes on a new
   batch. It re-reads `session.status` and calls the same session-addressed
   `promptAsync` (decision 34).
@@ -62,7 +62,7 @@ cannot: a message that arrives while the agent already sits idle.
 |---|---|---|---|---|
 | `steer` | Agent busy in built-in `bash sleep 20` | Native plugin hooks | **Proven** | Enqueued `00:42:04.180`; `bash` returned `00:42:20.404`; transform applied `00:42:20.492`; `khala_send(STEER-ACK-318)` `00:42:21.839`; next `bash` started `00:42:22.979`. No abort. [Results](../../../experiments/interactive-cli/opencode/evidence/results.md#steer-on-the-built-in-bash-tool) |
 | `steer` | Agent idle | Native plugin idle watcher + in-process `promptAsync` | **Proven** | Enqueued `00:44:17.919`; watcher `00:44:18.303`; accepted `00:44:18.318`; `khala_send(IDLE-STEER-ACK-084)` `00:44:19.324`. [Results](../../../experiments/interactive-cli/opencode/evidence/results.md#delivery-to-an-idle-agent-decision-34) |
-| `sync` (default) | Agent busy | Native `session.idle` + in-process `promptAsync` | **Proven** | Enqueued during `sleep` at `00:44:42.428`; no delivery at either tool boundary; idle `00:45:01.459`; accepted `00:45:01.492`; `khala_send(SYNC-ACK-195)` `00:45:03.009`. [Results](../../../experiments/interactive-cli/opencode/evidence/results.md#sync-with-the-agent-busy) |
+| `sync` (default) | Agent busy | Native plugin idle watcher + in-process `promptAsync` | **Proven** | Enqueued during `sleep` at `00:44:42.428`; no delivery at either tool boundary; idle `00:45:01.459`; the watcher submitted at `00:45:01.472`; `khala_send(SYNC-ACK-195)` `00:45:03.009`. [Results](../../../experiments/interactive-cli/opencode/evidence/results.md#sync-with-the-agent-busy) |
 | `sync` (default) | Agent idle | Native plugin idle watcher + in-process `promptAsync` | **Proven** | Enqueued `00:44:08.812`; watcher `00:44:09.266`; accepted `00:44:09.292`; `khala_send(IDLE-SYNC-ACK-973)` `00:44:10.525`. [Results](../../../experiments/interactive-cli/opencode/evidence/results.md#delivery-to-an-idle-agent-decision-34) |
 | `async` | Any | Native plugin tool (or MCP facade) | **Proven** | Enqueued `00:45:14.781`; no lease through a 5 s dwell and an `ASYNC-DEFERRED` turn; `khala_read` `00:45:24.464`; `khala_send(ASYNC-ACK-406)` `00:45:25.824`. [Results](../../../experiments/interactive-cli/opencode/evidence/results.md#async) |
 
@@ -152,6 +152,10 @@ parallel ones (decision 32).
   product route depends on a port.
 - `opencode-listening-routes` is dropped. Its route work moves into
   `opencode-session-bridge`.
+- This proof amends #157's existing `setup-cli-opencode` contract with the
+  exact-version detection, normal-trust plugin registration, standing channel
+  instruction, per-route status, no-port rule, and preservation tests below;
+  #157 remains the sole owner of that contract.
 - Live runs belong to the acceptance area (decisions 10 and 11).
 
 ### `opencode-delivery-contract`
@@ -171,7 +175,8 @@ parallel ones (decision 32).
 
 - `steer.busy`: after-tool transform with tail placement and durable re-apply.
 - `steer.idle`: idle watcher.
-- `sync.busy`: `session.idle` then `promptAsync`.
+- `sync.busy`: idle watcher observes the end-of-turn idle state, then calls
+  `promptAsync`.
 - `sync.idle`: idle watcher.
 - `async`: `khala_read`.
 
@@ -199,7 +204,7 @@ parallel ones (decision 32).
 - Event-correlated binding and the canonical envelope.
 - `steer`: after-tool lease, tail-message transform, and durable re-apply of
   live envelopes.
-- `sync`: `session.idle` submission.
+- `sync`: idle-watcher submission after an immediate `session.status` re-read.
 - Idle wake on the `opencode-inbox-notifier` hint, with a `session.status`
   re-read before `promptAsync`.
 - `khala_read`/`khala_send` facades over `listening-mode-pull`.
@@ -225,18 +230,6 @@ these happen:
 - Busy `promptAsync` is used as `steer`.
 - An idle-arriving batch waits for a user turn.
 - Focusing session B while the binding names A changes B's context or draft.
-
-### `setup-cli-opencode`
-
-| Field | Contract |
-|---|---|
-| Title | Install the OpenCode plugin from `@aiur/khala` |
-| Complexity | `complexity:3` |
-| Scope | Extend `npx @aiur/khala setup`, `status` and `remove`. Detect the user's selected `opencode` binary and version (`PATH` can differ from `mise exec`). Register the plugin from `@aiur/khala` and write the proven tool permissions without widening others. Record the channel-join standing instruction the delivery routes rely on. Report per-route support from `opencode-delivery-contract`. Remove only Khala-owned entries. Never launch OpenCode or enable a server port. |
-| Files | Setup-owned files from `setup-cli-plan`; the OpenCode setup adapter and its tests; concise user docs in `website/docs-app/`. |
-| Acceptance | Setup preserves every unrelated plugin and config byte, writes no credentials or messages into argv or config, and adds no `--port`, password, or bypass flag. `status` reports the five routes for `1.17.10` and `unproven` elsewhere. `remove` restores the prior config. |
-| Wrong-implementation test | Seed unrelated plugins, a global `"permission": "allow"`, and a `PATH` `1.17.10` against a `mise exec` `1.15.6`. Setup must target the selected binary, keep unrelated bytes, and never claim evidence for `1.15.6`. It must also fail if setup adds `--port` or an `OPENCODE_SERVER_PASSWORD` to make a route work. |
-| Blocked by | `setup-cli-plan`, `authenticated-loopback-server`, `opencode-delivery-contract`, `opencode-session-bridge`. |
 
 ### Harness inputs for acceptance
 

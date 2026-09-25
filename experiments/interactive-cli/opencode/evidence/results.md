@@ -48,7 +48,10 @@ launched the TUI inside a tmux PTY and typed each prompt over that PTY.
 
 Every trial used a fresh batch token. `queue.mjs reset` logs a `channel.reset`
 line with before and after snapshots, and `enqueue` refuses a token the state
-already holds. Resets ran at `00:41:07.127`, `00:41:58.599`, `00:42:53.019`
+already holds. A reset clears the queue, lease, and acknowledgement list; it
+does not clear the plugin's in-memory steer re-apply map. The process restart
+at `00:42:57` cleared that map before the later idle and sync trials. Resets ran
+at `00:41:07.127`, `00:41:58.599`, `00:42:53.019`
 (before the restart trial), `00:43:31.670`, `00:43:40.773`, `00:44:03.184`,
 `00:44:05.758`, `00:44:14.865`, `00:44:36.845` and `00:45:14.733`.
 
