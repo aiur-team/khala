@@ -129,6 +129,11 @@ which the transport deduplicates.
 | `RecoveryPort` | KHA-129 |
 | `ControlStore` | Specified here, persistence adapter supplied by KHA-131 |
 | `ChannelDiscoveryPort` | `channel-discovery-contract`; agent-facing requests only |
+| `ChannelAccessResolutionPort` | Discovery adapter; side-effect-free target resolution and revalidation only |
+| `ChannelAccessRequestJournalPort` | Control service; durable request journal and requester-safe status |
+| `ChannelAccessDecisionPort` | Human-cookie composition; owner-authenticated CAS decisions and mutes |
+| `ChannelAccessNotificationPort` | Notification outbox; minimal revisioned owner and requester projections |
+| `ChannelAccessFulfillmentPort` | Trusted fulfillment worker; separately typed access and creation claims |
 | `ChannelCreateAdapterPort` | Human-authorized provider composition only |
 | `ChannelPrivateEligibilityPort` | Owner-only private allowlist administration |
 | `AdmissionGrantExchangePort` | Connector-only sealed grant recovery |
@@ -178,6 +183,20 @@ requester tuple, after deriving the credential key's RFC 7638 SHA-256 OKP thumbp
 `ValidatedGrantExchangeRequest`: it derives both key thumbprints and compares the
 authenticated proof thumbprint plus the operation, device, origin, requester, generation
 and expiry. `AdmissionGrantExchangePort` accepts only that validated type.
+
+Channel-access requests bind a stable requester, current session fingerprint and
+generation, canonical origin, operation kind and hidden target or proposal. Owner-facing
+projections expose only bounded display text and operation-specific detail; they never
+carry credentials, grants or provider identifiers. Decisions require an `AuthPrincipal`
+and expected revision, while mutes are operation-specific. Approval only records an
+approved journal state; it does not itself create a channel, issue a grant or admit a
+device.
+
+Fulfillment consumes distinct branded `ChannelAccessAuthorization` and
+`ChannelCreateAuthorization` values through separate claim methods. Neither authority
+has a decoder from untrusted input, and the fulfillment port has no provider, grant or
+admission method. Notifications are also strict, minimal and revisioned so redelivery
+does not widen the owner or requester projection.
 
 Grant recovery uses pinned `libsodium-wrappers` and `crypto_box_seal` (X25519 plus
 XSalsa20-Poly1305), never HPKE or local cryptographic primitives. The v1 envelope names
