@@ -352,6 +352,60 @@ function withCookies(response: Response, cookies: readonly string[]): Response {
  */
 const loadProductionServices = createProductionHumanServiceLoader();
 
-export function registerHumanHandlers(): readonly RouteRegistration[] {
-  return createHumanHandlers(loadProductionServices);
+export type HumanHandlerDependencies = Readonly<{
+  /** Request-lifetime live pairing registrations supplied by the composition root. */
+  pairing?: () => readonly RouteRegistration[];
+  /** Authenticated channel-access registrations supplied by the composition root. */
+  channelAccess?: () => readonly RouteRegistration[];
+  /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
+  channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
+  /** Request-lifetime channel-discovery settings registrations supplied by the composition root. */
+  channelDiscovery?: () => readonly RouteRegistration[];
+}>;
+
+function unavailableRoute(path: string, methods: readonly string[]): RouteRegistration {
+  return Object.freeze({
+    path,
+    methods: Object.freeze(methods),
+    async handle() {
+      return json(503, { v: 1, kind: 'rejected', code: 'feature_unavailable' });
+    },
+  });
+}
+
+const unavailablePairingRoutes = Object.freeze([
+  unavailableRoute('/api/human/pairing/request', ['POST', 'GET']),
+  unavailableRoute('/api/human/pairing/decision', ['POST']),
+]);
+
+const unavailableChannelAccessRoutes = Object.freeze([
+  unavailableRoute('/api/human/channel-access/inbox', ['GET']),
+  unavailableRoute('/api/human/channel-access/decision', ['POST']),
+  unavailableRoute('/api/human/channel-access/mute', ['POST']),
+]);
+
+const unavailableChannelDiscoveryRoutes = Object.freeze([
+  Object.freeze({
+    path: '/api/human/channel-discovery/bootstrap/authorize',
+    methods: Object.freeze(['GET', 'POST']),
+    async handle() {
+      return json(503, { error: 'feature_unavailable' });
+    },
+  }),
+]);
+
+const unavailableChannelSettingsRoutes = Object.freeze([
+  unavailableRoute('/api/human/channel-discovery/settings', ['PUT']),
+  unavailableRoute('/api/human/channel-discovery/allowlist', ['POST']),
+  unavailableRoute('/api/human/channel-discovery/rollout', ['PUT']),
+]);
+
+export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {
+  return Object.freeze([
+    ...createHumanHandlers(loadProductionServices),
+    ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
+    ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
+    ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
+    ...(dependencies?.channelDiscovery?.() ?? unavailableChannelSettingsRoutes),
+  ]);
 }

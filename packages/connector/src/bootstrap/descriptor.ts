@@ -1,4 +1,4 @@
-// Public bootstrap descriptor served for a chat link. It names an invite, the
+// Public bootstrap descriptor served for a channel link. It names an invite, the
 // ownership methods the service accepts and the service's fixed endpoints. It is
 // data only: nothing in it can select an executable, widen permissions or point
 // the connector at another origin.
@@ -20,7 +20,7 @@ export const MAX_INVITE_BYTES = 512;
 
 export type BootstrapDescriptor = Readonly<{
   v: 1;
-  /** Opaque invite reference; never an owner, room or secret. */
+  /** Opaque invite reference; never an owner, channel or secret. */
   invite: string;
   /** Known methods only, in the service's order; unknown identifiers are dropped. */
   methods: readonly OwnershipMethod[];

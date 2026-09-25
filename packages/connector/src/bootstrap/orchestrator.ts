@@ -11,13 +11,21 @@ import type { OwnershipMethod } from './descriptor';
 import type {
   BootstrapPorts, OperationRecord, SessionClaim, VerifiedSession,
 } from './ports';
+import { admitsExistingSessionRoute } from '../route-admission';
 
-export type BootstrapInput = Readonly<{
-  chatUrl: string;
+type BootstrapInputBase = Readonly<{
   session: SessionClaim;
   /** Caller-chosen and reused on every retry of the same setup. */
   operationId: string;
 }>;
+
+export type BootstrapInput = BootstrapInputBase & (
+  | Readonly<{ channelUrl: string; chatUrl?: never }>
+  /** @deprecated Use `channelUrl`. Kept through the first tagged release containing #163. */
+  | Readonly<{ chatUrl: string; channelUrl?: never }>
+);
+
+type NormalizedBootstrapInput = BootstrapInputBase & Readonly<{ channelUrl: string }>;
 
 export const BLOCKED_CODES = [
   'invalid_request',
@@ -50,18 +58,21 @@ const MAX_WORKDIR_BYTES = 4096;
 
 /** Stable digest of everything a retry must repeat exactly. */
 export function operationFingerprint(input: BootstrapInput): string {
-  const { chatUrl, session } = input;
+  const normalized = normalizeInput(input);
+  if (normalized === null) throw new TypeError('invalid bootstrap input');
+  const { channelUrl, session } = normalized;
   return createHash('sha256')
-    .update(JSON.stringify(['khala.bootstrap.v1', chatUrl, session.harness, session.sessionId, session.workdir]))
+    .update(JSON.stringify(['khala.bootstrap.v1', channelUrl, session.harness, session.sessionId, session.workdir]))
     .digest('base64url');
 }
 
 export async function bootstrapAgent(input: BootstrapInput, ports: BootstrapPorts): Promise<BootstrapResult> {
-  if (!validInput(input)) return blocked('invalid_request');
-  const { operationId } = input;
+  const normalized = normalizeInput(input);
+  if (!validInput(normalized)) return blocked('invalid_request');
+  const { operationId } = normalized;
   const retry: BootstrapResult = { kind: 'unavailable', retryable: true, operationId };
   const clock = ports.clock ?? Date.now;
-  const fingerprint = operationFingerprint(input);
+  const fingerprint = operationFingerprint(normalized);
 
   const loaded = await guard(() => ports.operations.load(operationId), { kind: 'unavailable' } as const);
   if (loaded.kind === 'unavailable') return retry;
@@ -76,7 +87,7 @@ export async function bootstrapAgent(input: BootstrapInput, ports: BootstrapPort
     if (status === 'ready') return { kind: 'connected', binding: record.binding, reused: true };
   }
 
-  const discovered = await guard(() => ports.discovery.resolve(input.chatUrl), { kind: 'unavailable' } as const);
+  const discovered = await guard(() => ports.discovery.resolve(normalized.channelUrl), { kind: 'unavailable' } as const);
   if (discovered.kind === 'unavailable') return retry;
   if (discovered.kind === 'rejected') return blocked(discovered.code);
 
@@ -88,9 +99,8 @@ export async function bootstrapAgent(input: BootstrapInput, ports: BootstrapPort
   if (inspected.kind === 'unsupported') return blocked('unsupported_harness');
   const session = inspected.session;
   const { capabilities } = inspected;
-  if (session.harness !== input.session.harness || session.sessionId !== input.session.sessionId
-    || capabilities.harness !== session.harness || capabilities.support === 'unsupported'
-    || capabilities.existingSession !== 'khala_hosted_resume') {
+  if (session.harness !== normalized.session.harness || session.sessionId !== normalized.session.sessionId
+    || !admitsExistingSessionRoute(capabilities, session.harness, ports.allowExperimentalAgentListener ?? false)) {
     return blocked('unsupported_harness');
   }
   // The binding is immutable: a new generation needs the owner's rebinding flow, not a reconnect.
@@ -177,10 +187,23 @@ function bindsSession(binding: SessionBinding, session: VerifiedSession): boolea
   return binding.harness === session.harness && binding.sessionId === session.sessionId && binding.generation === session.generation;
 }
 
-function validInput(input: BootstrapInput): boolean {
+function normalizeInput(input: BootstrapInput): NormalizedBootstrapInput | null {
+  if (typeof input !== 'object' || input === null) return null;
+  const candidate = input as Record<string, unknown>;
+  const hasChannelUrl = Object.prototype.hasOwnProperty.call(candidate, 'channelUrl');
+  const hasChatUrl = Object.prototype.hasOwnProperty.call(candidate, 'chatUrl');
+  if (hasChannelUrl === hasChatUrl) return null;
+  return {
+    channelUrl: hasChannelUrl ? candidate.channelUrl as string : candidate.chatUrl as string,
+    session: candidate.session as SessionClaim,
+    operationId: candidate.operationId as string,
+  };
+}
+
+function validInput(input: NormalizedBootstrapInput | null): input is NormalizedBootstrapInput {
   if (typeof input !== 'object' || input === null) return false;
-  const { chatUrl, session, operationId } = input;
-  if (typeof chatUrl !== 'string' || typeof operationId !== 'string' || !OPERATION_ID.test(operationId)) return false;
+  const { channelUrl, session, operationId } = input;
+  if (typeof channelUrl !== 'string' || typeof operationId !== 'string' || !OPERATION_ID.test(operationId)) return false;
   if (typeof session !== 'object' || session === null) return false;
   return typeof session.harness === 'string' && HARNESS.test(session.harness)
     && boundedText(session.sessionId, MAX_FIELD_BYTES) && boundedText(session.workdir, MAX_WORKDIR_BYTES);

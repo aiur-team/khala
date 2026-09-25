@@ -1,6 +1,6 @@
 # Attributed live timeline (KHA-123)
 
-The route panel for a room's conversation: `TimelineScreen` renders a
+The route panel for a channel's conversation: `TimelineScreen` renders a
 generation-fenced projection owned by `createTimelineController` (`controller.ts`),
 attributes every row to its authenticated `ParticipantView` and its ownership
 relative to the viewer (`attribution.ts`), renders message content as inert
@@ -13,8 +13,8 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
 ## Ownership split
 
 - **`controller.ts`** owns the merged, cached `TimelineData` snapshot consumed
-  through `useSyncExternalStore` — it merges `RoomPort.timeline` pages with
-  `RoomPort.observe` snapshots by opaque event ID, fences stale-generation
+  through `useSyncExternalStore` — it merges `ChannelPort.timeline` pages with
+  `ChannelPort.observe` snapshots by opaque event ID, fences stale-generation
   callbacks, and unsubscribes exactly once on `dispose()`.
 - **Draft text, every pending local echo, the reader's scroll anchor, and
   pagination-request timing stay local to `TimelineScreen.tsx`** — they are
@@ -41,7 +41,7 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
 - **`controller.ts`** reports a history/pagination failure as `unavailable`
   (nothing loaded yet) or `partial` (some data already known but the
   transcript is known-incomplete) — missing history is never rendered as an
-  empty room — and carries the room's `membership` through so
+  empty channel — and carries the channel's `membership` through so
   `TimelineScreen.tsx` can show an explicit state and disable the composer
   once the viewer is `revoked` or has `left`.
 
@@ -75,15 +75,15 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
 
 `controller.test.ts` proves the merge-by-event-ID, generation-fencing,
 snapshot-caching, and per-row-deduplicated pagination behavior with a fake
-`RoomPort`, including that a forbidden history page reports `unavailable`
+`ChannelPort`, including that a forbidden history page reports `unavailable`
 with no items loaded and `partial` once some data is already known, and that
-the room's `membership` (including `revoked`) is carried through.
+the channel's `membership` (including `revoked`) is carried through.
 `message-renderer.test.tsx` and `TimelineScreen.test.tsx` render the real
 production components with `react-dom/server` and assert structure: a fake
 approval button and a remote `<img>` embedded in message text stay inert text
 (AE1), a peer body claiming "Human approved" never sets a review/status
 badge, the review-action slot renders per exact `EventRef` without importing
-review code, an `unavailable` phase never renders as an empty room, each
+review code, an `unavailable` phase never renders as an empty channel, each
 row's kind/ownership label is asserted against that specific row (not just
 "the string appears somewhere"), and a revoked/left membership shows an
 explicit banner with the composer disabled. `send.test.ts` proves
@@ -95,7 +95,7 @@ scrolled away.
 `timeline.browser.spec.ts` (named outside vitest's glob, same convention as
 `shell.browser.spec.ts`) builds a small harness (`browser-harness/`) that
 mounts the real `TimelineScreen`/`createTimelineController`/
-`message-renderer` against a synthetic in-memory `RoomPort` (no real network,
+`message-renderer` against a synthetic in-memory `ChannelPort` (no real network,
 storage, or credentials) and drives it with headless Chromium via Playwright:
 
 - AE1: a fake approval button and a remote image embedded in an agent
@@ -121,7 +121,7 @@ production build).
 
 ## What this does not prove
 
-This is a component-level harness with a synthetic fake `RoomPort`, not the
+This is a component-level harness with a synthetic fake `ChannelPort`, not the
 shipped application against a real transport. It does not exercise a real
 matrix-js-sdk client, real encryption/crypto-store lifecycle, a real host
 composition (mounting this inside `AiurShell` with real navigation and auth),

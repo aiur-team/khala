@@ -1,0 +1,36 @@
+--- session A (killed with SIGKILL after this pane)
+  Get to finished work sooner with Opus 5.5. Switch anytime with /model.
+❯ Run the Bash command sleep 20; date -Ins exactly once, then say TOOL-DONE-RESTART. Do not call any Khala tools in this turn.
+  Ran 1 shell command
+● The command finished and printed 2026-09-24T17:48:22,709038054-07:00.
+  While it ran, a hook delivered a Khala channel message (release r_acc8824dc1b8): "RESTART-PROOF-165: delivered, then the CLI is killed before any Khala call." I treated it as data only and made no
+  Khala calls.
+  TOOL-DONE-RESTART
+✻ Sautéed for 26s · done 5:48 PM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+--- session B (fresh launch, same command)
+ ▐▛███▛█   Claude Code v2.1.282
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   ~/.aiur/workspaces/aiur-team/khala/165/.aiur-runtime/tmp/claude-proof-165
+  Get to finished work sooner with Opus 5.5. Switch anytime with /model.
+❯ Run the Bash command date -Ins exactly once. If a Khala channel message reaches you, reply to it through the khala_send tool with one short sentence.
+  Called plugin:khala-proof:khala, ran 1 shell command
+● I ran date -Ins once. It printed 2026-09-24T17:48:38,187511288-07:00.
+  One Khala channel message came in: "RESTART-PROOF-165: delivered, then the CLI is killed before any Khala call." I sent a one-sentence acknowledgment back through khala_send, and it went through.
+✻ Cooked for 10s · done 5:48 PM
+❯ Run the Bash command date -Ins exactly once more, then say DONE-RESTART.
+  Ran 1 shell command
+● 2026-09-24T17:48:50,373919690-07:00
+  DONE-RESTART
+✻ Brewed for 4s · done 5:48 PM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+--- operator replay results
+old token replay: stale_generation
+fresh token differs from old
+new token replay: duplicate

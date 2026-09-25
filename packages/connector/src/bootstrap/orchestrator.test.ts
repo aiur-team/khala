@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/messaging/index';
-import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
-import { type BootstrapInput, bootstrapAgent } from './orchestrator';
+import { type HarnessCapabilities, unknownModeSupportMap } from '@khala/contracts/delivery/index';
+import { type BootstrapInput, bootstrapAgent, operationFingerprint } from './orchestrator';
 import type {
   AdapterCapability, AdmissionOutcome, BootstrapPorts, DeviceActivation, OperationRecord, OwnershipOutcome, SessionInspection,
 } from './ports';
@@ -14,9 +14,14 @@ import { AUTHORIZE_PATH, REDEEM_PATH, TOKEN_PATH } from './descriptor';
 const ORIGIN = 'https://khala.example';
 const T0 = Date.parse('2026-09-18T12:00:00Z');
 const INPUT: BootstrapInput = {
-  chatUrl: `${ORIGIN}/i/room-invite`,
+  channelUrl: `${ORIGIN}/i/room-invite`,
   session: { harness: 'codex', sessionId: 'thread-existing-b', workdir: '/work/b' },
   operationId: 'bootstrap-b-1',
+};
+const LEGACY_INPUT: BootstrapInput = {
+  chatUrl: INPUT.channelUrl,
+  session: INPUT.session,
+  operationId: INPUT.operationId,
 };
 const DESCRIPTOR = {
   v: 1 as const, invite: 'room-invite', methods: ['loopback-browser-v1' as const],
@@ -24,9 +29,11 @@ const DESCRIPTOR = {
 };
 const SESSION = { harness: 'codex', sessionId: 'thread-existing-b', generation: 3 };
 const CAPABILITIES: HarnessCapabilities = {
-  v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1', support: 'experimental', existingSession: 'khala_hosted_resume',
+  v: 3, harness: 'codex', version: '1.0.0', adapterVersion: '1', support: 'tested', existingSession: 'khala_hosted_resume',
   immediateNotification: 'khala_hosted_idle', busy: 'queue', receiptEvidence: [], reconcileByReleaseId: 'unknown',
-  limits: { maxPayloadBytes: 1024, maxBatchItems: 1 } as never, evidenceRef: null,
+  limits: { maxPayloadBytes: 1024, maxBatchItems: 1 } as never, evidenceRef: 'docs/evidence/codex.md',
+  modes: unknownModeSupportMap('test-codex-interactive', 'Test fixture has no primary mode proof.', '1.0.0'),
+  acknowledgement: 'unknown',
 };
 
 function bindingFor(deviceId: string, generation = 3): SessionBinding {
@@ -110,12 +117,81 @@ function harness(overrides: {
 }
 
 describe('bootstrapAgent', () => {
+  it('preserves the established fingerprint bytes for canonical and legacy links', () => {
+    expect(operationFingerprint(INPUT)).toBe('VQzXYp6ofh66QHUcN6dN4_qDqVGpB3u8lY1iBKEayWg');
+    expect(operationFingerprint(LEGACY_INPUT)).toBe(operationFingerprint(INPUT));
+  });
+
+  it('accepts the legacy chatUrl input and normalizes it for discovery', async () => {
+    const { ports } = harness();
+    let discovered = '';
+    const result = await bootstrapAgent(LEGACY_INPUT, {
+      ...ports,
+      discovery: {
+        async resolve(channelUrl) {
+          discovered = channelUrl;
+          return { kind: 'resolved', origin: ORIGIN, descriptor: DESCRIPTOR };
+        },
+      },
+    });
+
+    expect(result).toMatchObject({ kind: 'connected' });
+    expect(discovered).toBe(INPUT.channelUrl);
+  });
+
   it('connects the existing session through its own device after ownership and admission', async () => {
     const { ports, counts, records } = harness();
     const result = await bootstrapAgent(INPUT, ports);
     expect(result).toEqual({ kind: 'connected', binding: bindingFor('KHALADEV1'), reused: false });
     expect(records.get(INPUT.operationId)?.record.phase).toBe('connected');
     expect(counts).toMatchObject({ reserve: 1, prove: 1, redeem: 1, activate: 1 });
+  });
+
+  it('admits a tested native CLI queue route with evidence', async () => {
+    const { ports, counts } = harness({
+      inspect: () => ({
+        kind: 'verified',
+        session: SESSION,
+        capabilities: { ...CAPABILITIES, existingSession: 'native_cli_queue', immediateNotification: 'native_cli_queue' },
+      }),
+    });
+    expect(await bootstrapAgent(INPUT, ports)).toMatchObject({ kind: 'connected' });
+    expect(counts).toMatchObject({ reserve: 1, prove: 1, redeem: 1, activate: 1 });
+  });
+
+  it('admits the experimental agent listener only with an explicit opt-in', async () => {
+    const listener: HarnessCapabilities = {
+      ...CAPABILITIES,
+      support: 'experimental',
+      existingSession: 'agent_installed_listener',
+      immediateNotification: 'agent_installed_listener',
+      busy: 'unknown',
+      evidenceRef: null,
+    };
+    const { ports, counts } = harness({
+      inspect: () => ({ kind: 'verified', session: SESSION, capabilities: listener }),
+    });
+    expect(await bootstrapAgent(INPUT, { ...ports, allowExperimentalAgentListener: true })).toMatchObject({ kind: 'connected' });
+    expect(counts).toMatchObject({ reserve: 1, prove: 1, redeem: 1, activate: 1 });
+  });
+
+  it('refuses the experimental agent listener by default', async () => {
+    const { ports, counts } = harness({
+      inspect: () => ({
+        kind: 'verified',
+        session: SESSION,
+        capabilities: {
+          ...CAPABILITIES,
+          support: 'experimental',
+          existingSession: 'agent_installed_listener',
+          immediateNotification: 'agent_installed_listener',
+          busy: 'unknown',
+          evidenceRef: null,
+        },
+      }),
+    });
+    expect(await bootstrapAgent(INPUT, ports)).toEqual({ kind: 'blocked', code: 'unsupported_harness' });
+    expect(counts).toMatchObject({ reserve: 0, prove: 0, redeem: 0 });
   });
 
   it('AE1: a retry after a lost response returns the recorded binding without admitting again', async () => {
@@ -162,7 +238,7 @@ describe('bootstrapAgent', () => {
     await bootstrapAgent(INPUT, ports);
     const other = { ...INPUT, session: { ...INPUT.session, sessionId: 'thread-other' } };
     expect(await bootstrapAgent(other, ports)).toEqual({ kind: 'blocked', code: 'operation_conflict' });
-    expect(await bootstrapAgent({ ...INPUT, chatUrl: `${ORIGIN}/i/other` }, ports)).toEqual({ kind: 'blocked', code: 'operation_conflict' });
+    expect(await bootstrapAgent({ ...INPUT, channelUrl: `${ORIGIN}/i/other` }, ports)).toEqual({ kind: 'blocked', code: 'operation_conflict' });
   });
 
   it('reports an unsupported or missing harness before any owner-facing step', async () => {
@@ -170,9 +246,10 @@ describe('bootstrapAgent', () => {
       [{ kind: 'unsupported' }, 'unsupported_harness'],
       [{ kind: 'missing' }, 'harness_session_missing'],
       [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'unknown' } }, 'unsupported_harness'],
-      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'native_cli_queue' } }, 'unsupported_harness'],
-      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, existingSession: 'agent_installed_listener' } }, 'unsupported_harness'],
       [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, support: 'unsupported' } }, 'unsupported_harness'],
+      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, support: 'experimental' } }, 'unsupported_harness'],
+      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, evidenceRef: null } }, 'unsupported_harness'],
+      [{ kind: 'verified', session: SESSION, capabilities: { ...CAPABILITIES, immediateNotification: 'unknown' } }, 'unsupported_harness'],
       [{ kind: 'verified', session: { ...SESSION, sessionId: 'thread-someone-else' }, capabilities: CAPABILITIES }, 'unsupported_harness'],
     ] as const) {
       const { ports, counts } = harness({ inspect: () => inspection as SessionInspection });
@@ -291,6 +368,8 @@ describe('bootstrapAgent', () => {
       { ...INPUT, session: { ...INPUT.session, harness: 'Codex!' } },
       { ...INPUT, session: { ...INPUT.session, sessionId: 'a\nb' } },
       { ...INPUT, session: { ...INPUT.session, workdir: '' } },
+      { ...INPUT, chatUrl: INPUT.channelUrl } as unknown as BootstrapInput,
+      { session: INPUT.session, operationId: INPUT.operationId } as unknown as BootstrapInput,
     ]) {
       expect(await bootstrapAgent(bad, ports)).toEqual({ kind: 'blocked', code: 'invalid_request' });
     }

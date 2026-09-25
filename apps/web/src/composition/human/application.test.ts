@@ -74,7 +74,7 @@ function application(
       admission: {} as AdmissionPort,
       limits,
     },
-    { initialPath: '/rooms/first', ...(createRouteDisposer ? { createRouteDisposer } : {}) },
+    { initialPath: '/channels/first', ...(createRouteDisposer ? { createRouteDisposer } : {}) },
   );
 }
 
@@ -101,7 +101,7 @@ describe('createHumanApplication', () => {
     const ensureReady = vi.fn(async (ownerId: OwnerId) => ok(readyDevice(ownerId === alice.ownerId ? alice : bob)));
     const app = application(identity, fakeDevice({ ensureReady }));
 
-    app.navigate('/rooms/bob');
+    app.navigate('/channels/bob');
     await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
     expect(ready(app.getSnapshot()).principal.ownerId).toBe(bob.ownerId);
 
@@ -124,14 +124,14 @@ describe('createHumanApplication', () => {
     const app = application(identity, fakeDevice({ ensureReady }));
 
     await eventually(() => expect(ensureReady).toHaveBeenCalledTimes(1));
-    app.navigate('/rooms/second');
+    app.navigate('/channels/second');
     await eventually(() => expect(identity.current).toHaveBeenCalledTimes(2));
     expect(ensureReady).toHaveBeenCalledTimes(1);
 
     deviceResult.resolve(ok(readyDevice(alice)));
     await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
 
-    expect(ready(app.getSnapshot()).path).toBe('/rooms/second');
+    expect(ready(app.getSnapshot()).path).toBe('/channels/second');
     expect(ensureReady).toHaveBeenCalledTimes(1);
   });
 
@@ -157,7 +157,7 @@ describe('createHumanApplication', () => {
     });
     await eventually(() => expect(app.getSnapshot().phase).toBe('ready'));
 
-    app.navigate('/rooms/bob');
+    app.navigate('/channels/bob');
     await eventually(() => expect(ready(app.getSnapshot()).principal.ownerId).toBe(bob.ownerId));
 
     expect(events).toEqual([

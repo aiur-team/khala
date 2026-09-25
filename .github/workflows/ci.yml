@@ -1,7 +1,21 @@
 name: CI
 on:
+  # `push:` with no filter ran a full build for every commit on every branch,
+  # and `pull_request:` then ran the same commit again. Over 2026-09 that was
+  # 219 commits validated twice and 746 wasted minutes, on the one private repo
+  # where minutes are metered. Validate a branch through its pull request;
+  # validate `main` on push, because that is the commit nothing else checks.
   push:
+    branches: [main]
   pull_request:
+
+# A branch pushed again while CI is still running does not need the older
+# answer -- the newer commit is the one that will merge. `main` is exempt: every
+# commit that lands there gets its own verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 jobs:
@@ -25,4 +39,23 @@ jobs:
           CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")"
           export CHROMIUM_PATH
           pnpm test:browser
+      # Screenshot baselines only match the browser, fonts and rasteriser they
+      # were taken with, so this runs in the pinned Playwright image (keep the
+      # tag equal to the @playwright/test version). Two passes prove the
+      # baselines are stable, and the final check proves nothing rewrote them.
+      - name: Visual baselines
+        run: |
+          docker run --rm --ipc=host --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI=true \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$PWD:$PWD" -w "$PWD" mcr.microsoft.com/playwright:v1.63.0-noble \
+            sh -c 'corepack pnpm --filter @khala/web test:visual && corepack pnpm --filter @khala/web test:visual'
+          git diff --exit-code -- apps/web/src
+          test -z "$(git status --porcelain --untracked-files=all -- apps/web/src)"
+      - name: Upload visual diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs
+          path: apps/web/test-results/
+          if-no-files-found: ignore
       - run: pnpm build

@@ -1,11 +1,11 @@
 {
   "recordedAt": "2026-09-18T21:58:14Z",
-  "host": "orangekid",
+  "host": "<executor-host>",
   "cliVersion": "2.1.276 (Claude Code)",
   "target": {
     "sessionId": "118f6a23-92a8-4f67-824c-58e012149e88",
-    "workdir": "/home/everdred/.aiur/workspaces/aiur-team/khala/101/.khala-disposable/claude-native-target",
-    "requestedWorkdir": "/home/everdred/.cache/khala-disposable/claude-native-target",
+    "workdir": "~/.aiur/workspaces/aiur-team/khala/101/.khala-disposable/claude-native-target",
+    "requestedWorkdir": "~/.cache/khala-disposable/claude-native-target",
     "fallbackReason": "The managed workspace sandbox could read but could not write the operator-created home-cache directory. A runtime instruction supplied the workspace-local fallback; no durable GitHub confirmation existed at run time, and PR #117 review confirmed it after the fact.",
     "mode": "fresh --session-id"
   },

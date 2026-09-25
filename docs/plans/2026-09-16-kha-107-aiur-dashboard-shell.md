@@ -105,7 +105,7 @@ flowchart TB
   P --> C[Feature content slots]
 ```
 
-Desktop mirrors the 15rem rail, 2.6rem collapsed rail and 75rem content measure at the source 960px breakpoint. Mobile reserves bottom navigation/safe-area space and permits the content/composer to use the remaining viewport. The room list is feature content, not a second unrelated product sidebar. Native focus outline, `aria-current`, visible labels and stable landmark IDs survive layout changes. Theme startup reads a valid stored preference before app mount, tolerates blocked storage and supports host-provided theme. Do not copy fleet-wide pause into the Khala topbar; its authority differs.
+Desktop mirrors the 15rem rail, 2.6rem collapsed rail and 75rem content measure at the source 960px breakpoint. Mobile reserves bottom navigation/safe-area space and permits the content/composer to use the remaining viewport. The channel list is feature content, not a second unrelated product sidebar. Native focus outline, `aria-current`, visible labels and stable landmark IDs survive layout changes. Theme startup reads a valid stored preference before app mount, tolerates blocked storage and supports host-provided theme. Do not copy fleet-wide pause into the Khala topbar; its authority differs.
 
 ### Assumptions and risks
 

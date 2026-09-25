@@ -60,12 +60,14 @@ export function createBrowserRoomJournal(ownerId: OwnerId, options: BrowserRoomJ
   const storage = options.storage === undefined ? browserStorage() : options.storage;
   const locks = options.locks === undefined ? browserLocks() : options.locks;
   const newRevision = options.newRevision ?? (() => crypto.randomUUID());
+  // khala-terminology-allow: machine-only localStorage key namespace, never rendered
   const prefix = `khala.room-journal.v1:${encodeURIComponent(ownerId)}:`;
 
   async function exclusive<T>(key: string, unavailable: T, operation: (storageKey: string) => T): Promise<T> {
     if (!storage || !locks) return unavailable;
     const storageKey = `${prefix}${key}`;
     try {
+      // khala-terminology-allow: machine-only Web Lock name, never rendered
       return await locks.request(`khala.room-journal:${storageKey}`, { mode: 'exclusive' }, () => operation(storageKey));
     } catch {
       return unavailable;

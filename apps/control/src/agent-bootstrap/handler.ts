@@ -28,6 +28,7 @@ import { checkMutationOrigin, csrfMatches, safeEqual } from '../auth/csrf';
 import { type Random, guardStore, randomToken, settleWrite } from '../auth/store';
 import type { RouteRegistration } from '../runtime/handler';
 import { type ProofCheck, checkProof } from './proof';
+import { type BindingRecord, createAgentBindingStore } from './store';
 
 export const DESCRIPTOR_PATH = '/api/agent/bootstrap/descriptor';
 export const AUTHORIZE_PATH = '/api/human/agent-bootstrap/authorize';
@@ -51,14 +52,23 @@ const PROOF_REPLAY_TTL_MS = 120_000;
 export type AdmissionPolicy = (input: Readonly<{ principal: AuthPrincipal; inviteRef: string; session: SessionRef }>) => Promise<'allow' | 'deny'>;
 
 /**
- * Admits the owner's agent participant, with this device, into the invite's room
- * (KHA-113 / G-SUBSTRATE). `room` resolves an invite without side effects, so a
- * binding conflict is refused before any device joins. `admit` receives an
- * operation ID already scoped to the owner and device.
+ * Inspects and then admits the owner's exact verified agent participant into the
+ * invite's room (KHA-113 / G-SUBSTRATE). Inspection is side-effect free. Commit
+ * atomically refuses if the room or participant no longer matches the expectation.
  */
 export interface AgentAdmissionPort {
-  room(inviteRef: string): Promise<OperationResult<RoomId, AdmissionRejection>>;
-  admit(input: Readonly<{ ownerId: OwnerId; inviteRef: string; deviceId: string; operationId: string }>): Promise<
+  inspect(input: Readonly<{ ownerId: OwnerId; inviteRef: string; session: SessionRef }>): Promise<
+    OperationResult<Readonly<{ agentParticipantId: ParticipantId; roomId: RoomId }>, AdmissionRejection>
+  >;
+  admit(input: Readonly<{
+    ownerId: OwnerId;
+    inviteRef: string;
+    deviceId: string;
+    session: SessionRef;
+    expectedAgentParticipantId: ParticipantId;
+    expectedRoomId: RoomId;
+    operationId: string;
+  }>): Promise<
     OperationResult<Readonly<{ agentParticipantId: ParticipantId; roomId: RoomId }>, AdmissionRejection>
   >;
 }
@@ -103,6 +113,8 @@ export type AgentBootstrapDeps = Readonly<{
   /** No default: the deployment must decide G-ADMISSION explicitly. */
   admissionPolicy: AdmissionPolicy;
   agents: AgentAdmissionPort;
+  /** Roll-forward gate for legacy singleton records; marker-aware reads are always enabled. */
+  legacyMigrationWritesEnabled: boolean;
 }>;
 
 export type SessionRef = Readonly<{ harness: string; sessionId: string; generation: number }>;
@@ -121,13 +133,6 @@ type GrantRecord = {
   ownerId: string; invite: string; harness: string; sessionId: string; generation: number;
   deviceId: string; jkt: string; redemption: Redemption | null;
 };
-/**
- * The owner's binding for one room. `revokedGeneration` is set by revocation and is
- * never cleared: a later bootstrap creates a new binding instead. `capability` is the
- * digest of the only adapter capability currently accepted for the binding.
- */
-type BindingRecord = { binding: SessionBinding; revokedGeneration: number | null; capability: string | null };
-type BindingIndex = { ownerId: string; roomId: string };
 type CapabilityRecord = {
   ownerId: string; roomId: string; bindingId: string; generation: number; jkt: string; scope: string[];
 };
@@ -153,7 +158,9 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   const origin = new URL(deps.origin);
   if (origin.protocol !== 'https:' || origin.origin !== deps.origin) throw new Error('bootstrap origin must be an exact https origin');
   if (typeof deps.admissionPolicy !== 'function') throw new Error('an explicit admission policy is required (G-ADMISSION)');
+  if (typeof deps.legacyMigrationWritesEnabled !== 'boolean') throw new Error('legacy migration write activation must be explicit');
   const store = guardStore(deps.store);
+  const bindings = createAgentBindingStore({ store: deps.store, legacyMigrationWritesEnabled: deps.legacyMigrationWritesEnabled });
   const tokenUrl = `${deps.origin}${TOKEN_PATH}`;
   const redeemUrl = `${deps.origin}${REDEEM_PATH}`;
 
@@ -329,34 +336,60 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     }
 
     const ownerId = held.ownerId as OwnerId;
-    // Refuse a takeover before the device joins anything.
-    const room = await safeCall(() => deps.agents.room(held.invite));
-    if (room === null || room.kind === 'unavailable' || room.kind === 'outcome_unknown') return json(503, { code: 'unavailable' });
-    if (room.kind === 'rejected') return json(403, { code: 'admission_denied' });
-    const current = await store.read<BindingRecord>(bindingKey(ownerId, room.value));
+    const sessionRef: SessionRef = { harness: held.harness, sessionId: held.sessionId, generation: held.generation };
+    // Resolve the verified session's exact participant without joining a device.
+    const inspected = await safeCall(() => deps.agents.inspect({ ownerId, inviteRef: held.invite, session: sessionRef }));
+    if (inspected === null || inspected.kind === 'unavailable' || inspected.kind === 'outcome_unknown') return json(503, { code: 'unavailable' });
+    if (inspected.kind === 'rejected') return json(403, { code: 'admission_denied' });
+    const address = {
+      ownerId, roomId: inspected.value.roomId, agentParticipantId: inspected.value.agentParticipantId,
+    };
+    const current = await bindings.findParticipant(address);
     if (current.kind === 'unavailable') return json(503, { code: 'unavailable' });
-    if (current.kind === 'record') {
-      const verdict = bindingVerdict(current.record.value, held, null);
+    if (current.kind === 'found') {
+      const verdict = bindingVerdict(current.record, held, address.agentParticipantId);
       if (verdict !== 'reuse' && verdict !== 'replace') return json(409, { code: verdict });
     }
+    const claimed = await bindings.claimSession({
+      ...address, harness: held.harness, sessionId: held.sessionId,
+      deviceId: held.deviceId as SessionBinding['deviceId'], generation: held.generation,
+    });
+    if (claimed.kind === 'unavailable') return json(503, { code: 'unavailable' });
+    if (claimed.kind === 'conflict') return json(409, { code: 'binding_conflict' });
 
     let admitted = redemption!.admitted;
     if (admitted === null) {
-      // A client-chosen ID never reaches the port unscoped, so owners cannot collide on it.
-      const scopedOperationId = `bootstrap-${createHash('sha256').update(JSON.stringify([ownerId, held.deviceId, operationId])).digest('base64url')}`;
-      const result = await safeCall(() => deps.agents.admit({ ownerId, inviteRef: held.invite, deviceId: held.deviceId, operationId: scopedOperationId }));
+      // Independent grants for this verified binding converge on one provider commit.
+      const scopedOperationId = `bootstrap-${createHash('sha256').update(JSON.stringify([
+        ownerId, address.roomId, address.agentParticipantId, held.deviceId,
+        held.harness, held.sessionId, held.generation,
+      ])).digest('base64url')}`;
+      const result = await safeCall(() => deps.agents.admit({
+        ownerId,
+        inviteRef: held.invite,
+        deviceId: held.deviceId,
+        session: sessionRef,
+        expectedAgentParticipantId: address.agentParticipantId,
+        expectedRoomId: address.roomId,
+        operationId: scopedOperationId,
+      }));
       if (result === null || result.kind === 'unavailable') return json(503, { code: 'unavailable' });
       if (result.kind === 'outcome_unknown') return json(502, { code: 'outcome_unknown' });
       if (result.kind === 'rejected') return json(403, { code: 'admission_denied' });
+      if (result.value.roomId !== address.roomId || result.value.agentParticipantId !== address.agentParticipantId) {
+        return json(403, { code: 'admission_denied' });
+      }
       admitted = { agentParticipantId: result.value.agentParticipantId, roomId: result.value.roomId };
       // Recorded so a retry of this operation resumes here instead of admitting again.
       const recorded = await saveRedemption({ ...redemption!, admitted });
       if (recorded === 'conflict') return json(401, { code: 'grant_replayed' });
       if (recorded !== 'applied') return json(503, { code: 'unavailable' });
     }
-    if (admitted.roomId !== room.value) return json(403, { code: 'admission_denied' });
+    if (admitted.roomId !== address.roomId || admitted.agentParticipantId !== address.agentParticipantId) {
+      return json(403, { code: 'admission_denied' });
+    }
 
-    const bound = await bindSession(ownerId, room.value, admitted.agentParticipantId as ParticipantId, held);
+    const bound = await bindSession(address, held);
     if (bound.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (bound.kind === 'refused') return json(409, { code: bound.code });
 
@@ -364,7 +397,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const spent = await saveRedemption({ ...redemption!, issued: true });
     if (spent === 'conflict') return json(401, { code: 'grant_replayed' });
     if (spent !== 'applied') return json(503, { code: 'unavailable' });
-    const capability = await issueCapability(ownerId, room.value, bound.binding, held.jkt);
+    const capability = await issueCapability(ownerId, address.roomId, bound.binding, held.jkt);
     if (capability.kind !== 'issued') return json(capability.kind === 'revoked' ? 409 : 503, { code: capability.kind === 'revoked' ? 'binding_revoked' : 'unavailable' });
     return json(200, {
       binding: bound.binding,
@@ -376,46 +409,36 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   }
 
   /**
-   * One binding per owner and room. The same session and device get the same binding
-   * back. A revoked binding is never revived: only a session at a later generation
-   * gets a new binding, with a new ID and its own authority.
+   * One binding per owner, room and participant. The same session and device get the
+   * same binding back. A revoked binding is never revived: only the same participant,
+   * session and device at a later generation gets a new binding ID.
    */
   async function bindSession(
-    ownerId: OwnerId, roomId: RoomId, agentParticipantId: ParticipantId, held: GrantRecord,
+    address: Readonly<{ ownerId: OwnerId; roomId: RoomId; agentParticipantId: ParticipantId }>, held: GrantRecord,
   ): Promise<Readonly<{ kind: 'bound'; binding: SessionBinding }> | Readonly<{ kind: 'refused'; code: BindingRefusal }> | Readonly<{ kind: 'unavailable' }>> {
-    const storeKey = bindingKey(ownerId, roomId);
-    const existing = await store.read<BindingRecord>(storeKey);
+    const existing = await bindings.findParticipant(address);
     if (existing.kind === 'unavailable') return { kind: 'unavailable' };
-    let expectedRevision: string | null = null;
-    if (existing.kind === 'record') {
-      const verdict = bindingVerdict(existing.record.value, held, agentParticipantId);
-      if (verdict === 'reuse') return { kind: 'bound', binding: existing.record.value.binding };
+    let expectedBindingId: BindingId | null = null;
+    if (existing.kind === 'found') {
+      const verdict = bindingVerdict(existing.record, held, address.agentParticipantId);
+      if (verdict === 'reuse') return { kind: 'bound', binding: existing.record.binding };
       if (verdict !== 'replace') return { kind: 'refused', code: verdict };
-      expectedRevision = existing.record.revision;
+      expectedBindingId = existing.record.binding.bindingId;
     }
     const binding: SessionBinding = {
-      v: 1, bindingId: `bnd_${randomToken(deps.random, 16)}` as BindingId, ownerId, agentParticipantId,
+      v: 1, bindingId: `bnd_${randomToken(deps.random, 16)}` as BindingId, ownerId: address.ownerId,
+      agentParticipantId: address.agentParticipantId,
       deviceId: held.deviceId as SessionBinding['deviceId'], harness: held.harness, sessionId: held.sessionId, generation: held.generation,
     };
-    // The index comes first, so revocation can always find a binding that exists.
-    const indexed = await settleWrite<JsonValue>(store, {
-      key: key('binding-index', binding.bindingId), expectedRevision: null, operationId: `index-${randomToken(deps.random, 16)}`,
-      next: { value: { ownerId, roomId } satisfies BindingIndex, expiresAt: null },
-    });
-    if (indexed.kind !== 'applied') return { kind: 'unavailable' };
     const record: BindingRecord = { binding, revokedGeneration: null, capability: null };
-    const written = await settleWrite<JsonValue>(store, {
-      key: storeKey, expectedRevision, operationId: `bind-${randomToken(deps.random, 16)}`,
-      next: { value: record, expiresAt: null },
-    });
-    if (written.kind === 'applied') return { kind: 'bound', binding };
-    if (written.kind === 'conflict' && written.current) {
-      const current = written.current.value as BindingRecord;
-      const verdict = bindingVerdict(current, held, agentParticipantId);
-      if (verdict === 'reuse') return { kind: 'bound', binding: current.binding };
+    const written = await bindings.putParticipant({ ...address, expectedBindingId, record });
+    if (written.kind === 'applied') return { kind: 'bound', binding: written.record.binding };
+    if (written.kind === 'conflict' && written.record) {
+      const verdict = bindingVerdict(written.record, held, address.agentParticipantId);
+      if (verdict === 'reuse') return { kind: 'bound', binding: written.record.binding };
       return { kind: 'refused', code: verdict === 'replace' ? 'binding_conflict' : verdict };
     }
-    return { kind: 'unavailable' };
+    return written.kind === 'conflict' ? { kind: 'refused', code: 'binding_conflict' } : { kind: 'unavailable' };
   }
 
   /** Mints the binding's only accepted capability. An earlier one for the binding stops working. */
@@ -432,36 +455,11 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       next: { value, expiresAt: new Date(expiresAt).toISOString() },
     });
     if (written.kind !== 'applied') return { kind: 'unavailable' };
-    const pointed = await updateBinding(ownerId, roomId, binding.bindingId, record => (
+    const pointed = await bindings.updateBinding(binding.bindingId, record => (
       record.revokedGeneration === null ? { ...record, capability: digest(capability) } : null
     ));
     if (pointed === 'applied') return { kind: 'issued', token: capability, expiresAt };
     return { kind: pointed === 'unchanged' ? 'revoked' : 'unavailable' };
-  }
-
-  /**
-   * Compare-and-set on the binding record, retried on a concurrent change. `change`
-   * returns `null` to leave the record as it is. A record for another binding ID, or
-   * none, is `absent`.
-   */
-  async function updateBinding(
-    ownerId: OwnerId | string, roomId: RoomId | string, bindingId: string, change: (record: BindingRecord) => BindingRecord | null,
-  ): Promise<'applied' | 'unchanged' | 'absent' | 'unavailable'> {
-    const storeKey = bindingKey(ownerId as OwnerId, roomId as RoomId);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const read = await store.read<BindingRecord>(storeKey);
-      if (read.kind === 'unavailable') return 'unavailable';
-      if (read.kind === 'absent' || read.record.value.binding.bindingId !== bindingId) return 'absent';
-      const next = change(read.record.value);
-      if (next === null) return 'unchanged';
-      const written = await settleWrite<JsonValue>(store, {
-        key: storeKey, expectedRevision: read.record.revision, operationId: `binding-${randomToken(deps.random, 16)}`,
-        next: { value: next, expiresAt: null },
-      });
-      if (written.kind === 'applied') return 'applied';
-      if (written.kind !== 'conflict') return 'unavailable';
-    }
-    return 'unavailable';
   }
 
   const capabilities: AdapterCapabilities = {
@@ -486,11 +484,13 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       if (proof === 'unavailable') return { kind: 'unavailable' };
       if (proof !== null) return refuse(401, proof);
       if (!(ADAPTER_CAPABILITIES as readonly string[]).includes(action) || !held.scope.includes(action)) return refuse(403, 'capability_not_granted');
-      const current = await store.read<BindingRecord>(bindingKey(held.ownerId as OwnerId, held.roomId as RoomId));
+      const current = await bindings.findBinding(held.bindingId);
       if (current.kind === 'unavailable') return { kind: 'unavailable' };
       if (current.kind === 'absent') return refuse(401, 'binding_superseded');
-      const record = current.record.value;
-      if (record.binding.bindingId !== held.bindingId || record.binding.generation !== held.generation) return refuse(401, 'binding_superseded');
+      if (current.kind !== 'found') return { kind: 'unavailable' };
+      const record = current.record;
+      if (record.binding.ownerId !== held.ownerId || record.binding.bindingId !== held.bindingId
+        || record.binding.generation !== held.generation) return refuse(401, 'binding_superseded');
       if (record.revokedGeneration !== null) return refuse(401, 'binding_revoked');
       if (record.capability === null || !safeEqual(record.capability, digest(presented))) return refuse(401, 'binding_superseded');
       return { kind: 'authorized', action: action as AdapterAction, ownerId: held.ownerId as OwnerId, roomId: held.roomId as RoomId, binding: record.binding };
@@ -500,16 +500,11 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       if (typeof input?.bindingId !== 'string' || !Number.isSafeInteger(input.revokedGeneration) || input.revokedGeneration < 0) {
         return { kind: 'unavailable' };
       }
-      const index = await store.read<BindingIndex>(key('binding-index', input.bindingId));
-      if (index.kind === 'unavailable') return { kind: 'unavailable' };
-      // No index means no binding, and so no capability, was ever issued under this ID.
-      if (index.kind === 'absent') return { kind: 'applied' };
-      const { ownerId, roomId } = index.record.value;
       const revokedGeneration = input.revokedGeneration;
-      const result = await updateBinding(ownerId, roomId, input.bindingId, record => (
+      const result = await bindings.updateBinding(input.bindingId, record => (
         record.revokedGeneration === null ? { ...record, revokedGeneration, capability: null } : null
       ));
-      // `absent`: the room's binding was replaced, and its capabilities no longer match it.
+      // `absent`: this binding was replaced, and its capabilities no longer match it.
       return { kind: result === 'unavailable' ? 'unavailable' : 'applied' };
     },
   };
@@ -563,15 +558,16 @@ type ProofRefusal = Extract<ProofCheck, { kind: 'invalid' }>['code'];
 type BindingVerdict = 'reuse' | 'replace' | BindingRefusal;
 type BindingRefusal = 'binding_conflict' | 'binding_revoked';
 
-/** `agentParticipantId` is `null` before admission, when it is not yet known. */
-function bindingVerdict(record: BindingRecord, held: GrantRecord, agentParticipantId: ParticipantId | null): BindingVerdict {
+function bindingVerdict(record: BindingRecord, held: GrantRecord, agentParticipantId: ParticipantId): BindingVerdict {
   const { binding, revokedGeneration } = record;
+  const sameIdentity = binding.ownerId === held.ownerId && binding.deviceId === held.deviceId
+    && binding.harness === held.harness && binding.sessionId === held.sessionId
+    && binding.agentParticipantId === agentParticipantId;
   if (revokedGeneration !== null) {
+    if (!sameIdentity) return 'binding_conflict';
     return held.generation > Math.max(revokedGeneration, binding.generation) ? 'replace' : 'binding_revoked';
   }
-  const same = binding.ownerId === held.ownerId && binding.deviceId === held.deviceId && sameSession(binding, held)
-    && (agentParticipantId === null || binding.agentParticipantId === agentParticipantId);
-  return same ? 'reuse' : 'binding_conflict';
+  return sameIdentity && binding.generation === held.generation ? 'reuse' : 'binding_conflict';
 }
 
 type AuthorizeParams = Readonly<{
@@ -638,12 +634,8 @@ function isText(value: unknown): value is string {
 }
 
 /** Store keys never contain a raw secret: codes, grants and capabilities are hashed, other parts digested. */
-function key(kind: 'code' | 'grant' | 'proof' | 'binding' | 'binding-index' | 'capability', value: string): string {
+function key(kind: 'code' | 'grant' | 'proof' | 'capability', value: string): string {
   return `agent-bootstrap:${kind}:${createHash('sha256').update(`khala.agent-bootstrap.${kind}.v1\u0000${value}`).digest('hex')}`;
-}
-
-function bindingKey(ownerId: OwnerId, roomId: RoomId): string {
-  return key('binding', JSON.stringify([ownerId, roomId]));
 }
 
 /** What a binding record keeps of its current capability: never the capability itself. */
@@ -712,8 +704,8 @@ function consentPage(params: AuthorizeParams, csrfToken: string): Response {
   const fields = [...new URLSearchParams(authorizeQuery(params)).entries(), ['csrf', csrfToken]]
     .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name!)}" value="${escapeHtml(value!)}">`).join('');
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Connect your agent</title></head><body>
-<h1>Connect your agent to this chat?</h1>
-<p>An agent session on this computer asked to join the chat as your agent.
+<h1>Connect your agent to this channel?</h1>
+<p>An agent session on this computer asked to join the channel as your agent.
 Continue only if you just gave the link to your own agent.</p>
 <dl><dt>Harness</dt><dd>${escapeHtml(params.session.harness)}</dd><dt>Session</dt><dd>${escapeHtml(params.session.sessionId)}</dd>
 <dt>Device</dt><dd>${escapeHtml(params.deviceId)}</dd></dl>

@@ -26,8 +26,8 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     const roomId = roomText.replace(/^Room:\s*/u, '');
     expect(roomId).not.toBe('');
 
-    await bob.getByRole('button', { name: 'Open chat' }).click();
-    await expect(bob).toHaveURL(`${environment.appOrigin}/rooms/${encodeURIComponent(roomId)}`);
+    await bob.getByRole('button', { name: 'Open channel' }).click();
+    await expect(bob).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
     // The current product default is link admission with no earlier history.
     await expect(bob.getByText(intro)).toHaveCount(0);
     const reply = syntheticCanary('reply');
@@ -35,8 +35,8 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await bob.getByRole('button', { name: 'Send' }).click();
     await expect(bob.getByText(reply)).toBeVisible();
 
-    await alice.getByRole('button', { name: 'Open chat' }).click();
-    await expect(alice).toHaveURL(`${environment.appOrigin}/rooms/${encodeURIComponent(roomId)}`);
+    await alice.getByRole('button', { name: 'Open channel' }).click();
+    await expect(alice).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
     await expect(alice.getByText(reply)).toBeVisible();
     await expect(alice.getByText(intro)).toBeVisible();
 
@@ -68,7 +68,7 @@ test('an account without admission cannot read a protected room', async ({ brows
 
     const outsider = await freshPage(outsiderContext, environment);
     await signIn(outsider, environment, environment.users[1]);
-    await outsider.goto(`${environment.appOrigin}/rooms/${encodeURIComponent(`!not-admitted:${inviteRef}`)}`);
+    await outsider.goto(`${environment.appOrigin}/channels/${encodeURIComponent(`!not-admitted:${inviteRef}`)}`);
     await expect(outsider.getByText(canary)).toHaveCount(0);
     await expect(outsider.getByRole('alert')).toBeVisible();
   } finally {

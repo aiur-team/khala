@@ -44,7 +44,7 @@ The ordinary user is collaborating with another human and their already-working 
 
 - A1. The authenticated human who owns the current agent connection.
 - A2. Other admitted humans and their attributed agents, whose messages are content rather than control authority.
-- F1. Replace a device, reconcile available keys and delivery ledger, remove a membership and close the chat according to approved policy.
+- F1. Replace a device, reconcile available keys and delivery ledger, remove a membership and close the channel according to approved policy.
 
 ### Acceptance examples
 

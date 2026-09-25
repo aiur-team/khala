@@ -5,7 +5,7 @@ import type {
   CallOptions,
   DeviceId,
   OperationResult,
-  RoomSummary,
+  ChannelSummary,
 } from '@khala/contracts/messaging/index';
 import { ok, outcomeUnknown, rejected, unavailable } from '@khala/contracts/messaging/index';
 import type { AdmissionRuntime } from './index';
@@ -28,7 +28,7 @@ export async function admitInvite(
   if (existing === 'unavailable') return unavailable();
   if (existing !== 'absent') {
     if (!sameRequest(existing, input, identity.principal.ownerId, runtime)) return rejected('operation_mismatch');
-    if (existing.record.state === 'joined') return ok({ outcome: 'already_joined', room: existing.record.room as RoomSummary });
+    if (existing.record.state === 'joined') return ok({ outcome: 'already_joined', room: existing.record.room as ChannelSummary });
     return resumeAdmission(runtime, journal, input, existing, identity.principal, options, true);
   }
 
@@ -47,7 +47,7 @@ export async function admitInvite(
   if (claimed === 'operation_mismatch') return rejected('operation_mismatch');
   if (claimed === 'unavailable') return unavailable();
   if (claimed === 'outcome_unknown') return outcomeUnknown(input.operationId);
-  if (claimed.record.state === 'joined') return ok({ outcome: 'already_joined', room: claimed.record.room as RoomSummary });
+  if (claimed.record.state === 'joined') return ok({ outcome: 'already_joined', room: claimed.record.room as ChannelSummary });
   return resumeAdmission(runtime, journal, input, claimed, identity.principal, options, false);
 }
 
@@ -180,7 +180,7 @@ async function complete(
   journal: ReturnType<typeof createAdmissionJournal>,
   operationId: string,
   entry: JournalEntry,
-  room: RoomSummary,
+  room: ChannelSummary,
   options?: CallOptions,
 ): Promise<OperationResult<Admission, AdmissionRejection>> {
   if (room.membership !== 'joined') return unavailable();

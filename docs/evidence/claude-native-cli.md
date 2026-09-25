@@ -9,7 +9,7 @@ was alive, including a release written during a tool call, but an interrupted pr
 pending release had no acknowledgement. Downstream native capability records must remain `unsupported`; KHA-149
 may cite this document as rejection evidence, not as evidence for `support: "tested"`.
 
-Recorded on 2026-09-18 on host `orangekid`, Linux 7.1.4-arch1-1 x86_64, with Node 24.18.0 and npm 11.16.0.
+Recorded on 2026-09-18 on host `<executor-host>`, Linux 7.1.4-arch1-1 x86_64, with Node 24.18.0 and npm 11.16.0.
 Tested CLI: Claude Code 2.1.276 from `~/.local/share/claude/versions/2.1.276`. This is not a minimum-version claim.
 TypeScript is 5.9.3 and `@types/node` is 24.10.1. Exact help/version hashes and the installed-binary frame template
 are in `experiments/claude-native/evidence/inventory.json`; sanitized live observations are in
@@ -21,7 +21,7 @@ are in `experiments/claude-native/evidence/inventory.json`; sanitized live obser
 The durable issue comment authorized one fresh disposable session at
 `~/.cache/khala-disposable/claude-native-target`. The managed sandbox could not write that prepared directory, so
 the runtime instruction's workspace-local fallback was used:
-`/home/everdred/.aiur/workspaces/aiur-team/khala/101/.khala-disposable/claude-native-target`. Its UUID was
+`~/.aiur/workspaces/aiur-team/khala/101/.khala-disposable/claude-native-target`. Its UUID was
 `118f6a23-92a8-4f67-824c-58e012149e88`. The fallback was still fresh and disposable, and no existing or
 non-disposable session was attached or messaged. There was no durable GitHub confirmation of the fallback at run
 time; PR #117's review confirms after the fact that the workspace path was acceptable.

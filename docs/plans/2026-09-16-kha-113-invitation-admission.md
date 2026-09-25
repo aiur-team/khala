@@ -25,7 +25,7 @@ Implementation belongs to the assigned ticket worker after gates clear. Root dep
 
 ### Summary
 
-Admit the coworker through the approved chat-link journey without technical setup. This ticket covers the bounded outcome in `docs/product/tickets/KHA-113.md`.
+Admit the coworker through the approved channel-link journey without technical setup. This ticket covers the bounded outcome in `docs/product/tickets/KHA-113.md`.
 
 ### Problem Frame
 
@@ -33,7 +33,7 @@ A shared link can route the user but cannot simultaneously prove a named identit
 
 ### Requirements
 
-- R1. Admit the coworker through the approved chat-link journey without technical setup.
+- R1. Admit the coworker through the approved channel-link journey without technical setup.
 - R2. Enforce the selected invite authority, expiry and revocation policy without disclosing content before authorisation.
 - R3. Bind admission to the authenticated principal and selected device; retries do not create duplicate memberships.
 - R4. Disclose only the history allowed by the approved admission policy.
@@ -114,7 +114,7 @@ G-ADMISSION must choose named-person/bearer semantics, invitation reuse and any 
 
 **Test scenarios:**
 
-- Expired/revoked invite shows no room content or secrets.
+- Expired/revoked invite shows no channel content or secrets.
 - Unauthenticated inspection yields auth_required with safe return navigation.
 - Wrong named recipient rejects only when that policy is selected; bearer policy tests document its distinct authority.
 

@@ -5,7 +5,7 @@
 // evidence has an unknown outcome and must never be resubmitted; only a release with no
 // dispatch evidence at all is undispatched. Storage authorises neither.
 
-import type { BindingId, ReleaseId, ReceiptKind } from '@khala/contracts/delivery/index';
+import type { BindingId, ReleaseId, ReceiptKindV2 } from '@khala/contracts/delivery/index';
 import type { DatabaseSync } from 'node:sqlite';
 import { StorageError, toStorageError } from './errors';
 import { readEpoch } from './leases';
@@ -50,10 +50,10 @@ export type RecoveryReport = Readonly<{
   blocked: readonly RecoveryBlocker[];
 }>;
 
-const TERMINAL_RECEIPTS: readonly ReceiptKind[] = ['completed', 'failed', 'cancelled'];
-/** Any of these means the harness may have received the job. */
-const DISPATCH_EVIDENCE: readonly ReceiptKind[] = [
-  'dispatching', 'transport_written', 'harness_queued', 'context_consumed', 'outcome_unknown',
+const TERMINAL_RECEIPTS: readonly ReceiptKindV2[] = ['completed', 'failed', 'cancelled'];
+/** Any of these proves dispatch progressed beyond a merely queued local release. */
+const DISPATCH_EVIDENCE: readonly ReceiptKindV2[] = [
+  'dispatching', 'transport_written', 'harness_queued', 'context_consumed', 'outcome_unknown', 'agent_acknowledged',
 ];
 const sqlList = (kinds: readonly string[]) => kinds.map(kind => `'${kind}'`).join(', ');
 
@@ -66,7 +66,8 @@ const count = (value: unknown): number => (value as { n: number }).n;
  */
 export async function recoverConnectorStorage(storage: ConnectorStorage): Promise<RecoveryReport> {
   const internals = storageInternals.get(storage);
-  if (!internals || !internals.isOpen()) throw new StorageError('closed');
+  if (!internals) throw new StorageError('closed');
+  internals.assertUsable();
   try {
     return inspect(internals.ctx.db);
   } catch (error) {

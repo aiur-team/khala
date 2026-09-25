@@ -1,13 +1,13 @@
 # `@khala/connector/bootstrap`
 
-Agent-operated link bootstrap (KHA-114). The human pastes a chat link into their existing
+Agent-operated link bootstrap (KHA-114). The human pastes a channel link into their existing
 agent session. The agent calls `bootstrapAgent` with that link and its own session claim.
 The connector does the rest; the human only signs in, if they are not already signed in.
 Import from `@khala/connector/bootstrap/index`.
 
 ```ts
 const result = await bootstrapAgent(
-  { chatUrl, session: { harness, sessionId, workdir }, operationId },
+  { channelUrl, session: { harness, sessionId, workdir }, operationId },
   { discovery, sessions, ownership, admission, devices, operations },
 );
 ```
@@ -57,7 +57,7 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `connected` | The binding is live on a ready device | Report connected. `reused: true` means an earlier attempt had already finished |
 | `unavailable` (retryable) | Nothing conclusive happened, or the outcome is unknown | Retry later with the **same** `operationId` |
 | `blocked: invalid_request` | Malformed input (operation ID `[A-Za-z0-9_-]{8,64}`, harness, session, workdir) | Fix the call |
-| `blocked: invalid_link` | Not a URL, too long, or it carries credentials | Ask the human for the chat link again |
+| `blocked: invalid_link` | Not a URL, too long, or it carries credentials | Ask the human for the channel link again |
 | `blocked: untrusted_origin` | The link, a redirect or an endpoint is off the allowlist | Tell the human this is not a Khala link |
 | `blocked: link_unavailable` | The service does not know the link | Ask for a fresh link |
 | `blocked: unsupported_descriptor` | The service speaks a protocol version this connector does not | Report that an update is needed |
@@ -65,7 +65,7 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `blocked: unsupported_harness` | No evidence-backed existing-session support for this harness | Report it honestly; do not ask the human to configure anything |
 | `blocked: ownership_required` | The owner did not finish sign-in, or no browser on this machine | Ask the human to finish in the opened tab, or report that remote agents need the (unbuilt) fallback |
 | `blocked: admission_denied` | The owner declined, the invite or policy refused, or the service offered a capability other than the adapter's | Report it |
-| `blocked: binding_conflict` | This room is bound to another session or generation of this owner | Report it; rebinding is an explicit owner flow |
+| `blocked: binding_conflict` | This channel is bound to another session or generation of this owner | Report it; rebinding is an explicit owner flow |
 | `blocked: binding_revoked` | The owner revoked this session's binding | Report it. Only a later session generation can bind again; never retry the revoked one |
 | `blocked: operation_conflict` | This operation ID was used for other input | Use a new operation ID for new input |
 | `blocked: device_unavailable` | Admitted, but the device could not become ready | Retry with the same ID (it resumes the same device), or let the owner revoke it |
@@ -78,12 +78,34 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `sessions: SessionInspectionPort` | Harness adapters (KHA-117/118) over KHA-103/104 evidence |
 | `ownership` | `createLoopbackOwnership({ signer, openBrowser })`. `openBrowser` comes from the harness adapter |
 | `admission` | `createHttpAdmission({ signer })` |
-| `signer` | `createProofSigner(ed25519PrivateKey)`. KHA-115 persists the key owner-only |
+| `signer` | KHA-133 `createBootstrapPersistence(storage)` restores one owner-only PKCS8 Ed25519 key and returns its `ProofSigner` |
 | `devices: ConnectorDevicePort` | Messaging device lifecycle (G-SUBSTRATE). `reserve` must be stable per operation, and re-activating resumes. `activate` receives the adapter capability; each request under it needs a fresh proof from `signer` with `ath` |
-| `operations: BootstrapOperationStore` | KHA-115 durable storage, compare-and-set by revision |
+| `operations: BootstrapOperationStore` | KHA-133 `createBootstrapPersistence(storage)` durable per-operation compare-and-set |
 
 The HTTP clients send `Origin: <service origin>` on POSTs, which the control gateway requires
 on state-changing requests. Authority comes from the proof and grant, never that header.
+
+## Channel discovery authorization
+
+`createChannelDiscoveryCredentialClient` is a separate, channel-less bootstrap for an
+already-running verified native session. It opens the owner's browser on the exact configured
+service origin, receives a one-time code through an ephemeral `127.0.0.1` callback, and exchanges
+PKCE S256 plus an Ed25519 DPoP proof for a five-minute discovery credential. That credential has
+only `list_channels`, `request_channel_access`, and `request_channel_create`; this flow does not
+create or join a channel and does not create a device, binding, admission grant, or adapter
+capability.
+
+The client exposes `authorize`, `refresh`, `current`, and `invalidate`. It verifies the native
+session before opening a browser and again before refresh. Refresh is DPoP-bound to the current
+credential and installs a replacement only after strict audience, scope, origin, requester,
+generation, expiry, and proof-key validation. Authoritative rejection or a changed generation
+clears local authority. A lost exchange response is reported as `outcome_unknown`, because the
+service may already have issued or rotated authority.
+
+Only the proof signer is durable. Discovery credential plaintext lives in the client instance;
+restarting the connector starts without discovery authority and requires fresh owner consent.
+The trusted-origin list is injected explicitly, so a syntactically valid but unconfigured HTTPS
+origin is rejected before browser launch.
 
 ## Not proven here
 

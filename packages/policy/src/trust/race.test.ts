@@ -1,21 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   type ApprovalCommand, type CommandId, type EventRef, releaseFromApproval,
 } from '@khala/contracts/delivery/index';
-import { type AutomaticReleaseInput, evaluateAutomaticRelease } from './automatic';
+import { type AutomaticReleaseInput, evaluateAutomaticRelease as evaluateRelease } from './automatic';
 import {
-  ROOM, ack, binding, causalRoot, command, event, owner, releaseId, start,
+  ROOM, ack, binding, causalRoot, command, event, exampleAutomation, owner, releaseId, start,
 } from '../../test/trust/fakes';
-import { applyPolicyAck, applyRebind, evaluatePolicyChange, trustView } from './transitions';
+import { applyPolicyAck, applyRebind, evaluatePolicyChange as evaluateChange, trustView } from './transitions';
 import type { TrustState } from './types';
 
-// These tests exercise races as they will behave once G-AUTOMATION opens, using
-// example limits that are not approved values. `gate.test.ts` proves the real seam
+// These tests exercise races under an injected bounded authority with example limits
+// that are not approved values. `gate.test.ts` proves the closed hosted authority
 // keeps every `auto` request refused and every event held.
-vi.mock('./gate', async importOriginal => ({
-  ...await importOriginal<typeof import('./gate')>(),
-  approvedAutomation: () => ({ maxCausalDepth: 3 }),
-}));
+const evaluatePolicyChange = (...args: Parameters<typeof evaluateChange> extends [...infer A, unknown] ? A : never) =>
+  evaluateChange(...args, exampleAutomation());
+const evaluateAutomaticRelease = (input: AutomaticReleaseInput) => evaluateRelease(input, exampleAutomation());
 
 const id = (value: string) => value as CommandId;
 

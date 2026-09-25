@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import messagingIntro from '../../fixtures/messaging/exact-intro.json';
+import appHarness from '../../fixtures/delivery/app-harness.json';
 import exact from '../../fixtures/delivery/exact-release.json';
 import invalid from '../../fixtures/delivery/invalid.json';
 import views from '../../fixtures/delivery/views.json';
+import { decodeAppHarnessRecord } from './app-harness';
 import { decodeSessionBinding } from './binding';
 import {
   type ApprovalCommand, type PolicySetCommand,
@@ -15,7 +17,9 @@ import { decodeEventRef } from './events';
 import { decodeHarnessCapabilities } from './harness';
 import * as delivery from './index';
 import { decodeReleasedJob, releaseFromApproval, verifyReleasedJob } from './jobs';
-import { decodeDeliveryReceipt } from './receipts';
+import {
+  decodeDeliveryReceipt, decodeDeliveryReceiptTransport, decodeDeliveryReceiptV1, decodeDeliveryReceiptV2,
+} from './receipts';
 
 const limits = (() => {
   const decoded = decodeDeliveryLimits(exact.limits);
@@ -31,6 +35,9 @@ const decoders: Record<string, (input: unknown) => Decoded<unknown>> = {
   policyAck: decodePolicyAck,
   releasedJob: input => decodeReleasedJob(input, limits),
   receipt: decodeDeliveryReceipt,
+  receiptV1: decodeDeliveryReceiptV1,
+  receiptV2: decodeDeliveryReceiptV2,
+  receiptTransport: decodeDeliveryReceiptTransport,
   capabilities: decodeHarnessCapabilities,
   approvalResult: input => decodeApprovalResult(input, limits),
 };
@@ -65,6 +72,20 @@ describe('exact release fixture', () => {
     const result = decoders[decoder]!(input);
     expect(result).toEqual({ ok: true, value: input });
     if (result.ok) expect(JSON.stringify(result.value)).toBe(JSON.stringify(input));
+  });
+
+  it('round-trips explicit receipt versions without promotion', () => {
+    expect(decodeDeliveryReceiptV1(exact.receipt)).toEqual({ ok: true, value: exact.receipt });
+    expect(decodeDeliveryReceiptV2(exact.receiptV2)).toEqual({ ok: true, value: exact.receiptV2 });
+    for (const receipt of [exact.receipt, exact.receiptV2]) {
+      const result = decodeDeliveryReceiptTransport(receipt);
+      expect(result).toEqual({ ok: true, value: receipt });
+      if (result.ok) expect(JSON.stringify(result.value)).toBe(JSON.stringify(receipt));
+    }
+    expect(decodeDeliveryReceiptV1(exact.receiptV2)).toEqual({ ok: false, code: 'invalid_version', field: 'v' });
+    expect(decodeDeliveryReceiptV2(exact.receipt)).toEqual({ ok: false, code: 'invalid_version', field: 'v' });
+    expect(decodeDeliveryReceiptTransport({ ...exact.receiptV2, v: 3 }))
+      .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
   });
 
   it('releases exactly the fixture job from the fixture approval', () => {
@@ -194,7 +215,7 @@ describe('view fixtures', () => {
 
   it('lists every evidence route and approval outcome', () => {
     expect(views.valid.map(view => view.name)).toEqual(expect.arrayContaining([
-      'Claude 2.1.276 no-setup route is unsupported',
+      'Claude 2.1.276 native route remains unsupported',
       'Codex native CLI queue notification is tested',
       'agent-installed listener remains unsupported',
       'Codex executor Khala did not start is unknown',
@@ -231,18 +252,41 @@ describe('view fixtures', () => {
   });
 });
 
+describe('app harness fixtures', () => {
+  it.each(appHarness.valid)('accepts and round-trips byte-stably: $name', testCase => {
+    const result = decodeAppHarnessRecord(testCase.input);
+    expect(result).toEqual({ ok: true, value: testCase.input });
+    if (result.ok) expect(JSON.stringify(result.value)).toBe(JSON.stringify(testCase.input));
+  });
+
+  it.each(appHarness.invalid)('rejects: $name', testCase => {
+    expect(decodeAppHarnessRecord(testCase.input)).toEqual({ ok: false, ...testCase.error });
+  });
+});
+
 describe('public surface', () => {
   it('does not expose fixtures or test helpers', () => {
     const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { exports: Record<string, string> };
     expect(Object.entries(packageJson.exports).filter(([key, target]) => /fixture/i.test(key + target))).toEqual([]);
     expect(() => readFileSync(new URL('./fixtures.ts', import.meta.url))).toThrow();
     expect(Object.keys(delivery).filter(name => /fixture|fake/i.test(name))).toEqual([]);
+    expect(Object.keys(delivery)).toEqual(expect.arrayContaining([
+      'APP_HARNESSES',
+      'APP_HARNESS_SHAPES',
+      'APP_HOOK_BOUNDARIES',
+      'decodeAppHarnessRecord',
+      'sameAppHarnessIdentity',
+    ]));
     const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(indexSource).not.toMatch(/from '[^']*(fixtures|\.test)/);
   });
 
   it('imports nothing from the messaging domain', () => {
-    for (const file of ['decode.ts', 'ids.ts', 'events.ts', 'binding.ts', 'jobs.ts', 'commands.ts', 'receipts.ts', 'harness.ts']) {
+    for (const file of [
+      'decode.ts', 'ids.ts', 'events.ts', 'binding.ts', 'jobs.ts', 'commands.ts', 'receipts.ts', 'listening-mode.ts',
+      'harness.ts',
+      'app-harness.ts',
+    ]) {
       expect(readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')).not.toMatch(/messaging/);
     }
   });

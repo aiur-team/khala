@@ -6,7 +6,7 @@ import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import { resolveInitialTheme } from '../../shell/theme';
 import type { ShellMode, ThemeChoice } from '../../shell/types';
-import { CreateChatScreen } from '../../features/create-chat/CreateChatScreen';
+import { CreateChannelScreen } from '../../features/create-channel/CreateChannelScreen';
 import { createJoinController } from '../../features/join/controller';
 import { JoinScreen } from '../../features/join/JoinScreen';
 import type { JoinView } from '../../features/join/model';
@@ -14,7 +14,7 @@ import type { HumanApplicationHandle, HumanRouteContext } from './application';
 import { attachHumanCapabilities, registerHumanCapabilities, type HumanCapability } from './capabilities';
 import type { HumanRoute, HumanRouteCodec } from './routes';
 
-export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'room' }>) => ReactNode;
+export type HumanRoomRenderer = (context: HumanRouteContext, route: Extract<HumanRoute, { kind: 'channel' }>) => ReactNode;
 
 export type HumanApplicationScreenProps = Readonly<{
   application: HumanApplicationHandle;
@@ -23,7 +23,8 @@ export type HumanApplicationScreenProps = Readonly<{
   mode?: ShellMode;
   navigateExternal?: (url: string) => void;
   navigateRoute?: (path: string) => void;
-  renderRoom?: HumanRoomRenderer;
+  /** Binds the live room screens; production supplies `renderHumanRoom`. */
+  renderRoom: HumanRoomRenderer;
   capabilities?: readonly HumanCapability[];
 }>;
 
@@ -79,7 +80,7 @@ function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
 function ReadyRoute({ context, routes, renderRoom, navigateExternal, navigateRoute, capabilities }: {
   context: HumanRouteContext;
   routes: HumanRouteCodec;
-  renderRoom?: HumanRoomRenderer;
+  renderRoom: HumanRoomRenderer;
   navigateExternal: (url: string) => void;
   navigateRoute: (path: string) => void;
   capabilities: readonly HumanCapability[];
@@ -89,20 +90,14 @@ function ReadyRoute({ context, routes, renderRoom, navigateExternal, navigateRou
   switch (route.kind) {
     case 'create':
       return (
-        <KhalaPageFrame model={{ title: 'Khala', description: 'Create a private room and share its link.', labelledBy: 'khala-create-title' }}>
-          <CreateChatScreen ports={context} onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />
+        <KhalaPageFrame model={{ title: 'Khala', description: 'Create a private channel and share its link.', labelledBy: 'khala-create-title' }}>
+          <CreateChannelScreen ports={context} onOpenRoom={roomId => navigateRoute(routes.roomPath(roomId))} />
         </KhalaPageFrame>
       );
     case 'join':
       return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
-    case 'room':
-      return renderRoom ? renderRoom(context, route) : (
-        <KhalaPageFrame model={{ title: 'Room unavailable', labelledBy: 'khala-room-unavailable' }}>
-          <Panel heading="Conversation unavailable">
-            <p role="alert">The live room adapter is unavailable for this deployment.</p>
-          </Panel>
-        </KhalaPageFrame>
-      );
+    case 'channel':
+      return renderRoom(context, route);
     case 'not_found':
       return (
         <KhalaPageFrame model={{ title: 'Page not found', labelledBy: 'khala-not-found' }}>
@@ -145,7 +140,7 @@ export function HumanApplicationScreen({
         navigateExternal={navigateExternal}
         navigateRoute={navigateRoute}
         capabilities={capabilities}
-        {...(renderRoom ? { renderRoom } : {})}
+        renderRoom={renderRoom}
       />
     );
   } else if (snapshot.phase === 'signed_out') {

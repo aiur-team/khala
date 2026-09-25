@@ -8,7 +8,7 @@ import type {
   JsonValue,
   OwnerId,
   RoomId,
-  RoomSummary,
+  ChannelSummary,
 } from '@khala/contracts/messaging/index';
 import { isRecordLive, sameJsonValue } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
@@ -96,7 +96,7 @@ export function harness(overrides: Partial<AdmissionServiceOptions> = {}) {
   let current: AuthPrincipal | null | 'unavailable' = principal();
   const clock = () => now;
   const backing = fakeStore(clock);
-  const memberships = new Map<string, RoomSummary>();
+  const memberships = new Map<string, ChannelSummary>();
   const historyReadiness = new Map<string, boolean>();
   const membershipHistoryReadiness = new Map<string, boolean>();
   const admits: string[] = [];
@@ -126,7 +126,7 @@ export function harness(overrides: Partial<AdmissionServiceOptions> = {}) {
         nextAdmission = 'ok';
         return { kind: 'unavailable' };
       }
-      const room: RoomSummary = memberships.get(input.principal.ownerId)
+      const room: ChannelSummary = memberships.get(input.principal.ownerId)
         ?? { roomId: input.roomId, title: 'Shared room', membership: 'joined', revision: `m${memberships.size + 1}` };
       memberships.set(input.principal.ownerId, room);
       if (input.history === 'full') histories.push(input.operationId);

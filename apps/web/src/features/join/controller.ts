@@ -1,4 +1,4 @@
-// Orchestrates OAuth entry and chat admission. Re-inspects admission on every
+// Orchestrates OAuth entry and channel admission. Re-inspects admission on every
 // `start()`/`retry()` (there is no identity-change subscription to react to —
 // `IdentityPort` exposes none), fences every async step's response by a
 // lifecycle generation so a superseded `start()` cannot mount stale state, and

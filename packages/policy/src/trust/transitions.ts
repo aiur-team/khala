@@ -2,9 +2,11 @@
 // returned state with their own compare-and-set and deliver the returned effects.
 
 import {
-  type BindingId, type OwnerId, type PolicyAck, type PolicySetCommand, type RoomId, samePolicySetCommandInput,
+  type BindingId, type HarnessCapabilities, type OwnerId, type PolicyAck, type PolicySetCommand, type RoomId,
+  samePolicySetCommandInput,
 } from '@khala/contracts/delivery/index';
-import { approvedAutomation, isAutomationConfig } from './gate';
+import { initialListeningModeControl } from '../listening-mode/store';
+import { type AutomationAuthority, resolveAutomation } from './gate';
 import type {
   BindingStatus, JournalEntry, PolicyActor, PolicyChangeOutcome, PolicyChangeRejection, PolicyRevision,
   PublishPolicyEffect, TrustState, TrustView,
@@ -48,6 +50,7 @@ export function initialTrustState(input: Readonly<{
   ownerId: OwnerId;
   generation: number;
   policyVersion: number;
+  capabilities?: HarnessCapabilities | null;
 }>): TrustState {
   const revision = baseline(input.policyVersion, input.generation);
   return {
@@ -59,6 +62,8 @@ export function initialTrustState(input: Readonly<{
     effective: revision,
     connector: null,
     journal: new Map(),
+    listeningMode: initialListeningModeControl(input, input.capabilities ?? null),
+    listeningModeJournal: new Map(),
   };
 }
 
@@ -71,7 +76,8 @@ export function initialTrustState(input: Readonly<{
  * it with other input is refused, and replaying an accepted command after a
  * rebind is `stale_binding` rather than a success for the old generation.
  *
- * `auto` is refused while G-AUTOMATION is open (see `gate.ts`). The gate applies
+ * `auto` is refused unless the injected `automation` authority approves limits (see
+ * `gate.ts`); hosted composition always injects the closed one. The gate applies
  * only to the `auto` mode: review, pause and resume requests are evaluated as usual.
  */
 export function evaluatePolicyChange(
@@ -79,6 +85,7 @@ export function evaluatePolicyChange(
   actor: PolicyActor,
   command: PolicySetCommand,
   bindingStatus: BindingStatus,
+  automation: AutomationAuthority,
 ): PolicyChange {
   // Refusals to non-owners and on revoked bindings are not journaled, so they
   // cannot claim a command id.
@@ -98,7 +105,7 @@ export function evaluatePolicyChange(
     return { state, outcome: prior.outcome, effects: publishIfPending(state, prior) };
   }
 
-  const code = refusal(state, command);
+  const code = refusal(state, command, automation);
   if (code) return settle(state, command, { ok: false, code });
 
   const requested: PolicyRevision = {
@@ -113,11 +120,13 @@ export function evaluatePolicyChange(
   return { ...next, effects: [{ kind: 'publish_policy', bindingId: state.bindingId, revision: requested }] };
 }
 
-function refusal(state: TrustState, command: PolicySetCommand): PolicyChangeRejection | null {
+function refusal(
+  state: TrustState, command: PolicySetCommand, automation: AutomationAuthority,
+): PolicyChangeRejection | null {
   if (command.bindingId !== state.bindingId || command.roomId !== state.roomId) return 'binding_mismatch';
   if (command.expectedBindingGeneration !== state.generation) return 'stale_binding';
   if (command.expectedPolicyVersion !== state.requested.version) return 'stale_policy';
-  if (command.mode === 'auto' && !isAutomationConfig(approvedAutomation())) return 'automation_gated';
+  if (command.mode === 'auto' && resolveAutomation(automation) === null) return 'automation_gated';
   return null;
 }
 
@@ -172,11 +181,27 @@ export function applyPolicyAck(state: TrustState, ack: PolicyAck): AckTransition
  * request or acknowledgment made for the old generation is stale. A revoked
  * binding cannot be rebound into a usable trust state.
  */
-export function applyRebind(state: TrustState, generation: number, bindingStatus: BindingStatus): RebindOutcome {
+export function applyRebind(
+  state: TrustState,
+  generation: number,
+  bindingStatus: BindingStatus,
+  capabilities: HarnessCapabilities | null = null,
+): RebindOutcome {
   if (bindingStatus !== 'active') return { ok: false, code: 'binding_revoked' };
   if (!Number.isSafeInteger(generation) || generation <= state.generation) return { ok: false, code: 'stale_binding' };
   const revision = baseline(state.requested.version + 1, generation);
-  return { ok: true, state: { ...state, generation, requested: revision, effective: revision, connector: null } };
+  return {
+    ok: true,
+    state: {
+      ...state,
+      generation,
+      requested: revision,
+      effective: revision,
+      connector: null,
+      listeningMode: initialListeningModeControl({ bindingId: state.bindingId, generation }, capabilities),
+      listeningModeJournal: new Map(),
+    },
+  };
 }
 
 /** The claims a status surface may make about this binding's trust policy. */

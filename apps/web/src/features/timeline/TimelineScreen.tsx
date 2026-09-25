@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { RoomId } from '@khala/contracts/messaging/ids';
-import type { EventRef, MessageContent, ParticipantView, RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
+import type { EventRef, MessageContent, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
 import { attributionFor, buildDisplayNameResolver, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent } from './message-renderer';
@@ -16,7 +16,7 @@ import type { ReaderAnchor } from './model';
 
 export interface TimelineScreenProps {
   controller: TimelineController;
-  roomPort: Pick<RoomPort, 'send'>;
+  roomPort: Pick<ChannelPort, 'send'>;
   roomId: RoomId;
   /** The signed-in human whose composer this is; used only for the local echo's byline. */
   viewer: ParticipantView;
@@ -48,7 +48,7 @@ function sendStateLabel(phase: PendingSend['phase']): string {
 const CAN_COMPOSE: ReadonlySet<string> = new Set(['joining', 'joined']);
 
 /**
- * Narrows a `TimelineItem` to its decryptable branch. `RoomPort.timeline`/`observe` never
+ * Narrows a `TimelineItem` to its decryptable branch. `ChannelPort.timeline`/`observe` never
  * yield an `unavailable` item today (KHA-105 landed the contract shape; KHA-123 renders
  * text only), but a future producer may, and an `UnavailableEventRef` cannot reach
  * `renderReviewAction`, which is keyed by `EventRef`.
@@ -74,7 +74,7 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
     controller.setReaderAtLatest(atLatest);
   }, [atLatest, controller]);
 
-  // Requests the first history page once on mount so a fresh room has a
+  // Requests the first history page once on mount so a fresh channel has a
   // cursor to page from; pagination-request state otherwise stays local.
   useEffect(() => {
     void controller.loadOlder();
@@ -125,14 +125,14 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
     const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
     setPendingList(list => [...list, { clientTxnId, content, phase: 'pending' }]);
-    const result = await sendDraft(roomPort as RoomPort, roomId, clientTxnId, content);
+    const result = await sendDraft(roomPort as ChannelPort, roomId, clientTxnId, content);
     setPendingList(list => list.map(entry => (entry.clientTxnId === clientTxnId ? result : entry)));
   }
 
   async function handleRetry(entry: PendingSend): Promise<void> {
     if (entry.phase !== 'failed' && entry.phase !== 'outcome_unknown') return;
     setPendingList(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? { ...item, phase: 'pending' } : item)));
-    const result = await retrySend(roomPort as RoomPort, roomId, entry);
+    const result = await retrySend(roomPort as ChannelPort, roomId, entry);
     setPendingList(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? result : item)));
   }
 

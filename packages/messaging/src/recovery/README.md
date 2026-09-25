@@ -12,7 +12,7 @@ owner both return `device_not_ready`. A contracts follow-up should add a dedicat
 rejects `unsupported_mode` without invoking `ProvideRecoverySecret`, and `inspect()` returns
 `not_found` because the service never creates a recovery operation or journal.
 
-Fresh-device enrolment and room re-admission live in their owning modules. They must not backfill old
+Fresh-device enrolment and channel re-admission live in their owning modules. They must not backfill old
 history. Each existing timeline `missing_key` entry is a per-event row representing ciphertext that
 a replacement device cannot decrypt; it is not recovered history. This module has no SDK backup,
 secret, storage, release, dispatch, binding or membership dependency, so it cannot become an escrow

@@ -15,7 +15,7 @@ origin: docs/product/tickets/KHA-124.md
 
 ## Goal Capsule
 
-A coworker opens the shared chat link and joins through ordinary OAuth identity.
+A coworker opens the shared channel link and joins through ordinary OAuth identity.
 
 Authority: current user decisions override the approved ticket scope, which overrides technical recommendations. Scope source is `docs/product/tickets/KHA-124.md`; global requirements: R12, R14, R15. Planning snapshot: Khala `6d4694173eff9b0832f4c3a2cdb90b4281fcccd9` with approved ticket proposal at `d625c19`. Dependency tickets: KHA-101, KHA-105, KHA-107. This plan changes Khala only; sibling Aiur/Archon are read-only design references.
 
@@ -27,7 +27,7 @@ Stop condition: Admission authority/history are upstream contract decisions. If 
 
 ### Summary
 
-A coworker opens the shared chat link and joins through ordinary OAuth identity.
+A coworker opens the shared channel link and joins through ordinary OAuth identity.
 
 ### Problem Frame
 
@@ -35,7 +35,7 @@ The ordinary user is collaborating with another human and their already-working 
 
 ### Requirements
 
-- R1. The ordinary journey asks for OAuth sign-in and chat admission only, not Matrix credentials, homeserver selection or device-key setup.
+- R1. The ordinary journey asks for OAuth sign-in and channel admission only, not Matrix credentials, homeserver selection or device-key setup.
 - R2. Returning from OAuth resumes the intended room and preserves the verified human identity.
 - R3. Expired, revoked, wrong-account and unavailable invitations have distinct recoverable states.
 - R4. Joining or viewing queued introductions does not release pending messages to an agent model.
@@ -107,7 +107,7 @@ OAuth cancellation preserves a safe return action and does not enter a sign-in r
 
 ### Dashboard-native design and risks
 
-Use a modest route panel under Aiur chrome; show signed-in email and invitation outcome beside the actual join action. After admission, the person can read and share the same chat link with their existing agent. There is no model selector or connector wizard. Device recovery is offered only for real failure; `initializing` is not an excuse for a default key-management ceremony. Cross-origin callback or open-redirect handling is110/131's responsibility, tested at132 as an integration seam.
+Use a modest route panel under Aiur chrome; show signed-in email and invitation outcome beside the actual join action. After admission, the person can read and share the same channel link with their existing agent. There is no model selector or connector wizard. Device recovery is offered only for real failure; `initializing` is not an excuse for a default key-management ceremony. Cross-origin callback or open-redirect handling is110/131's responsibility, tested at132 as an integration seam.
 
 ### Shared implementation discipline
 
@@ -149,7 +149,7 @@ No implementation or runtime test has run as part of this plan. Browser credenti
 
 **Test scenarios:**
 
-1. Covers AE1. Revocation during OAuth denies admission without showing room content.
+1. Covers AE1. Revocation during OAuth denies admission without showing channel content.
 2. Device init fails then succeeds on explicit retry; join runs once.
 3. Account switch during join discards old response and clears protected view.
 4. Unknown admit result resolves same operation instead of issuing a second claim.
@@ -207,5 +207,5 @@ P11 sets the production app origin to `https://khala.aiur.team`. Canonical produ
 
 ## Definition of Done
 
-Every join state maps to a canonical result; normal path has OAuth and chat admission only. URL/identity races, cancellation and revocation have tests. No model connection or release occurs merely by mounting this screen.
+Every join state maps to a canonical result; normal path has OAuth and channel admission only. URL/identity races, cancellation and revocation have tests. No model connection or release occurs merely by mounting this screen.
 All owned unit tests and applicable contract checks pass on the merged base. Every acceptance example is linked to test evidence. Remove abandoned experiment code, fixture imports from production, unused subscriptions and dead fallbacks. Preserve scope/file ownership; report dependency defects to their owner instead of patching sibling directories. No deployment or implementation completion is implied by this document.

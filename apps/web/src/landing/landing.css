@@ -1,0 +1,662 @@
+/*
+ * Public splash page for khala.aiur.team, modelled on archon.aiur.team: the
+ * same tan/charcoal palette, Bungee wordmark, Space Grotesk body, JetBrains
+ * Mono prompt pill and solid blue call to action. Fonts are the vendored,
+ * self-hosted brand faces (see ../brand/SOURCES.md); nothing loads from a
+ * third-party origin, so the site CSP needs no exception.
+ */
+@import '../brand/fonts.css';
+
+/* Light is the bare :root so no colour exists only inside a media block. */
+:root {
+  color-scheme: light;
+  --bg: #e7d6b2;
+  --fg: #2a2520;
+  --muted: #5f5645;
+  --accent: #1f57c4;
+  --hairline: rgba(42, 37, 26, 0.12);
+  --pill-bd: rgba(42, 37, 26, 0.16);
+  --pill-bg: rgba(42, 37, 26, 0.035);
+  --line: rgba(42, 37, 26, 0.17);
+  --focus: #1f57c4;
+
+  /*
+   * Every button is white on archon's "Example Doc" blue. That blue is
+   * archon's light-theme accent, #1f57c4, and it stays the same in both
+   * themes: white on archon's dark-theme accent (#2f86ff) is only about
+   * 3.5:1, below WCAG AA for text, while white on #1f57c4 is about 6.5:1.
+   */
+  --button-bg: #1f57c4;
+  --button-bg-hover: #1a4aa6;
+  --button-fg: #ffffff;
+
+  --font-display: 'Khala Bungee', 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Khala Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Khala JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #1a1b1e;
+    --fg: #edeef0;
+    --muted: #8c8d93;
+    --accent: #2f86ff;
+    --hairline: rgba(221, 226, 235, 0.1);
+    --pill-bd: rgba(221, 226, 235, 0.13);
+    --pill-bg: rgba(221, 226, 235, 0.03);
+    --line: rgba(221, 226, 235, 0.14);
+    --focus: #2f86ff;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #1a1b1e;
+  --fg: #edeef0;
+  --muted: #8c8d93;
+  --accent: #2f86ff;
+  --hairline: rgba(221, 226, 235, 0.1);
+  --pill-bd: rgba(221, 226, 235, 0.13);
+  --pill-bg: rgba(221, 226, 235, 0.03);
+  --line: rgba(221, 226, 235, 0.14);
+  --focus: #2f86ff;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background: var(--bg);
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100svh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+/* ---- Buttons: one look for every button and button-styled link. ---- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--button-bg);
+  color: var(--button-fg);
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.button:hover {
+  background: var(--button-bg-hover);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.button svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+/* ---- Aiur announcement ---- */
+
+.banner {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
+  padding: 10px 44px 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: linear-gradient(var(--pill-bg), var(--pill-bg)), var(--bg);
+  font-family: var(--font-mono);
+  font-size: clamp(11px, 1.5vw, 13px);
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.banner[hidden],
+:root[data-aiur-banner='dismissed'] .banner {
+  display: none;
+}
+
+.banner b {
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.banner a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+.banner-close {
+  /* Same as aiur.team's announcement dismiss: a quiet icon, not a blue button. */
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.banner-close svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.banner-close:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.banner-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner-close { transition: none; }
+}
+
+/* ---- Top-right controls ---- */
+
+.topbar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0.75rem clamp(0.9rem, 3vw, 1.25rem) 0;
+}
+
+.docs {
+  padding: 0.6rem 1.1rem;
+  font-size: 0.95rem;
+}
+
+.icon {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+}
+
+.icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* The toggle shows what pressing it switches to: a moon in light, a sun in dark. */
+.theme-toggle .icon-sun {
+  display: none;
+}
+
+.theme-toggle[aria-pressed='true'] .icon-sun {
+  display: block;
+}
+
+.theme-toggle[aria-pressed='true'] .icon-moon {
+  display: none;
+}
+
+/* ---- Hero ---- */
+
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100svh - 52px);
+  padding: clamp(28px, 8vh, 72px) clamp(16px, 6vw, 56px);
+  text-align: center;
+  overflow: visible;
+}
+
+/* Aiur's flow field begins flush below the banner and fades below the hero. */
+#field {
+  position: absolute;
+  top: -50px;
+  left: 0;
+  width: 100%;
+  height: calc(100% + 310px);
+  z-index: 0;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 260px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 260px), transparent 100%);
+}
+
+.stage > :not(#field) {
+  position: relative;
+  z-index: 1;
+}
+
+.lockup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 2.2vw, 26px);
+}
+
+.aiur-logo {
+  display: block;
+  width: auto;
+  height: clamp(72px, 12vw, 132px);
+}
+
+.wordmark {
+  display: flex;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(48px, 11vw, 104px);
+  line-height: 0.9;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+
+/* Each letter rises in a beat apart, as archon's wordmark does. */
+.wordmark span {
+  display: inline-block;
+  transform: translateY(18px);
+  opacity: 0;
+  animation: rise 0.7s cubic-bezier(0.2, 0.85, 0.3, 1) forwards;
+}
+
+.wordmark span:nth-child(1) { animation-delay: 0.15s; }
+.wordmark span:nth-child(2) { animation-delay: 0.25s; }
+.wordmark span:nth-child(3) { animation-delay: 0.35s; }
+.wordmark span:nth-child(4) { animation-delay: 0.45s; }
+.wordmark span:nth-child(5) { animation-delay: 0.55s; }
+
+@keyframes rise {
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.what {
+  margin-top: clamp(26px, 5vh, 44px);
+  max-width: 34ch;
+  text-wrap: balance;
+  font-size: clamp(18px, 2.7vw, 25px);
+  font-weight: 500;
+  line-height: 1.42;
+  letter-spacing: -0.012em;
+}
+
+.prompt-hint {
+  margin-top: clamp(26px, 5vh, 44px);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* One copyable line in the shape of archon's install box. */
+.install-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: min(100%, 44rem);
+  margin-top: 10px;
+  padding: 9px 9px 9px 18px;
+  border: 1px solid var(--pill-bd);
+  border-radius: 11px;
+  background: var(--pill-bg);
+  backdrop-filter: blur(3px);
+  font-family: var(--font-mono);
+  font-size: clamp(12.5px, 1.6vw, 14px);
+  text-align: left;
+}
+
+.install-box .prompt {
+  flex: none;
+  color: var(--accent);
+}
+
+.install-box .cmd {
+  min-width: 0;
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+}
+
+.copy {
+  flex: none;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.copy svg {
+  width: 14px;
+  height: 14px;
+}
+
+.copy-status {
+  min-height: 1.4em;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.scrollcue {
+  display: flex;
+  width: max-content;
+  margin-top: clamp(14px, 3vh, 28px);
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+  animation: fadeUp 0.8s ease 1.25s forwards;
+  transition: opacity 0.4s ease;
+}
+
+.scrollcue.gone { opacity: 0 !important; }
+
+.scrollcue .chev {
+  width: 16px;
+  height: 16px;
+  animation: nudge 1.8s ease-in-out infinite;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes nudge {
+  0%, 100% { transform: translateY(-2px); }
+  50% { transform: translateY(3px); }
+}
+
+/* ---- Feature grid ---- */
+
+.feature-section {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 70rem;
+  margin: 0 auto;
+  padding: clamp(72px, 11vh, 128px) clamp(20px, 5vw, 56px) 0;
+}
+
+.features-intro,
+.features-signoff {
+  text-align: center;
+  text-wrap: balance;
+  color: var(--fg);
+}
+
+.features-intro {
+  max-width: 24ch;
+  font-size: clamp(25px, 3.6vw, 42px);
+  font-weight: 500;
+  line-height: 1.26;
+  letter-spacing: -0.015em;
+}
+
+.features-intro .accent,
+.features-signoff .open {
+  color: var(--accent);
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(46px, 6.5vh, 72px) clamp(28px, 3.4vw, 56px);
+  width: 100%;
+  margin-top: clamp(56px, 8vh, 96px);
+  padding-top: clamp(40px, 6vh, 60px);
+  border-top: 1px solid var(--hairline);
+}
+
+.feature-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.feature-head {
+  display: flex;
+  align-items: center;
+}
+
+.feature-head {
+  justify-content: space-between;
+}
+
+.feature-icon {
+  width: 26px;
+  height: 26px;
+  color: var(--accent);
+}
+
+.feature-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.feature-index {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+
+.feature-card h3 {
+  font-size: clamp(17px, 1.55vw, 21px);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.feature-card p {
+  max-width: 32ch;
+  font-size: clamp(14px, 1.15vw, 15.5px);
+  line-height: 1.62;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.feature-card code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--fg);
+}
+
+.features-signoff {
+  max-width: 22ch;
+  margin-top: clamp(80px, 12vh, 140px);
+  padding: clamp(52px, 8vh, 88px) 0;
+  border-top: 1px solid var(--hairline);
+  font-size: clamp(27px, 4.4vw, 52px);
+  font-weight: 600;
+  line-height: 1.16;
+  letter-spacing: -0.02em;
+}
+
+/* ---- Footer ---- */
+
+.aside {
+  padding: 28px 16px 40px;
+  border-top: 1px solid var(--hairline);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.aside a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.aside a:hover {
+  color: var(--fg);
+}
+
+.aside a:focus-visible,
+.feature-section a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (max-width: 720px) {
+  .features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 38px 28px;
+  }
+}
+
+@media (max-width: 440px) {
+  .stage {
+    padding-inline: 16px;
+  }
+
+  .lockup {
+    gap: 8px;
+  }
+
+  .aiur-logo {
+    height: clamp(58px, 21vw, 80px);
+  }
+
+  .wordmark {
+    font-size: clamp(42px, 18vw, 68px);
+  }
+
+  .features {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 34px;
+  }
+
+  .feature-card p {
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .button {
+    transition: none;
+  }
+
+  .wordmark span,
+  .scrollcue {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .scrollcue .chev { animation: none; }
+}
+
+/* ---- Prompt: not live yet ---- */
+
+/* The frame hugs the prompt box exactly, so the label centres on the box
+   itself (the box's own top margin moves onto the frame). */
+.prompt-frame {
+  position: relative;
+  display: flex;
+  max-width: min(100%, 44rem);
+  margin-top: 10px;
+}
+
+.prompt-frame .install-box {
+  margin-top: 0;
+}
+
+.install-box.is-soon {
+  opacity: 0.3;
+  filter: grayscale(1) blur(2.5px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.coming-soon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: clamp(16px, 2vw, 19px);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+  pointer-events: none;
+}

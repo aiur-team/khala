@@ -14,7 +14,7 @@ The earlier proposal favoured a custom MLS relay with human-only review groups. 
 
 ## Human experience and implementation boundary
 
-The user signs in with OAuth as in Archon, creates a chat with an optional name, and shares its link with their own existing agent and coworker. The agent handles any supported local connection/subscription setup itself. “Owner-controlled connector” describes where trusted integration code runs, not software the user must install/configure. Separate Matrix registration, pairing commands and normal-path key-management steps are not acceptable default onboarding.
+The user signs in with OAuth as in Archon, creates a channel with an optional name, and shares its link with their own existing agent and coworker. The agent handles any supported local connection/subscription setup itself. “Owner-controlled connector” describes where trusted integration code runs, not software the user must install/configure. Separate Matrix registration, pairing commands and normal-path key-management steps are not acceptable default onboarding.
 
 The link needs a machine-readable entry point for the agent and the ordinary web route for people. Prove secure association of the existing session with its human without exposing human OAuth tokens or granting human review authority to the model. This is an unresolved implementation feasibility requirement, not permission to add a setup wizard.
 
@@ -71,7 +71,7 @@ Inspected source at reference commit, rather than just old research:
 | [presence](../../../archon/templates/base/presence.js), leased in-memory records and privacy choice | Presence is ephemeral, optional, and never delivery authority |
 | [notify](../../../archon/netlify/lib/notify.mjs), durable changes followed by best-effort notification | Persist first; stream is a wakeup path; replay repairs missed fan-out |
 
-Archon's realtime sink emits identifiers and edit hashes, but its separate Slack sink can emit comment excerpts. Do not copy that plaintext sink into Khala. Archon's browser transport is SSE plus REST, not its own WebSocket server. Its one-document CAS and silent realtime degradation fit a document overlay; high-frequency chat should use an append log and show offline/unsynced status. Archon is also not an E2EE implementation to reuse as-is.
+Archon's realtime sink emits identifiers and edit hashes, but its separate Slack sink can emit comment excerpts. Do not copy that plaintext sink into Khala. Archon's browser transport is SSE plus REST, not its own WebSocket server. Its one-document CAS and silent realtime degradation fit a document overlay; high-frequency channel messaging should use an append log and show offline/unsynced status. Archon is also not an E2EE implementation to reuse as-is.
 
 ## Validation before detailed implementation plans
 

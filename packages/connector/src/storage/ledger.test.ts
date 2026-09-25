@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { EventRef, ReleaseId } from '@khala/contracts/delivery/index';
 import {
-  approval, binding, bindingId, commandRecord, content, eventRef, limits, ownerId, pendingInput, receipt, release,
+  agentAcknowledgement, approval, binding, bindingId, commandRecord, content, eventRef, limits, ownerId, pendingInput, receipt, release,
   scratchDirectory, streamId, unavailableInput,
 } from './fixtures/fakes';
 import type { DeviceId, ParticipantId } from '@khala/contracts/delivery/index';
@@ -307,6 +307,58 @@ describe('releases', () => {
 });
 
 describe('receipts', () => {
+  it('preserves mixed receipt versions and immutable duplicates across restart', async () => {
+    const { storage, state } = await fresh();
+    await seedBinding(storage);
+    await storage.persistPending(pendingInput('event_7', 'hi'));
+    const command = approval('command_1', [eventRef('event_7', 'hi')]);
+    const payload = content('envelope');
+    const job = release(command, binding(0), payload);
+    const releaseRevision = await storage.ledger.transaction(tx => tx.ledgerRevision());
+    await storage.ledger.transaction(tx => tx.putRelease({
+      command: commandRecord(command, job.releaseId), job, payload, expectedLedgerRevision: releaseRevision,
+    }));
+
+    const v1 = receipt(job.releaseId, 'transport_written');
+    const v2 = agentAcknowledgement(job.releaseId);
+    const v1Json = JSON.stringify(v1);
+    const v2Json = JSON.stringify(v2);
+
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: v1 })))
+      .toEqual({ kind: 'recorded', receipt: v1 });
+    expect((rawDb(storage).prepare('SELECT receipt FROM receipts WHERE receipt_id = ?').get(v1.receiptId) as { receipt: string }).receipt)
+      .toBe(v1Json);
+
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: v2 })))
+      .toEqual({ kind: 'recorded', receipt: v2 });
+    const storedBeforeRestart = rawDb(storage).prepare('SELECT receipt FROM receipts ORDER BY ledger_revision')
+      .all() as { receipt: string }[];
+    expect(storedBeforeRestart.map(row => row.receipt)).toEqual([v1Json, v2Json]);
+
+    const afterWrites = await storage.ledger.transaction(tx => tx.ledgerRevision());
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: v2 })))
+      .toEqual({ kind: 'duplicate', receipt: v2 });
+    expect(await storage.ledger.transaction(tx => tx.ledgerRevision())).toBe(afterWrites);
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({
+      receipt: { ...v2, observedAt: '2026-09-18T11:00:00Z' },
+    }))).toEqual({ kind: 'conflict', code: 'receipt_conflict' });
+
+    const reopened = await reopen(storage, state);
+    expect(await reopened.ledger.transaction(tx => tx.readReceipts(job.releaseId))).toEqual([
+      { receipt: v1, correlation: 'correlated' },
+      { receipt: v2, correlation: 'correlated' },
+    ]);
+    expect((rawDb(reopened).prepare('SELECT receipt FROM receipts ORDER BY ledger_revision').all() as { receipt: string }[])
+      .map(row => row.receipt)).toEqual([v1Json, v2Json]);
+
+    const beforeRestartedDuplicate = await reopened.ledger.transaction(tx => tx.ledgerRevision());
+    expect(await reopened.ledger.transaction(tx => tx.appendReceipt({ receipt: v2 })))
+      .toEqual({ kind: 'duplicate', receipt: v2 });
+    expect(await reopened.ledger.transaction(tx => tx.ledgerRevision())).toBe(beforeRestartedDuplicate);
+    expect((rawDb(reopened).prepare('SELECT receipt FROM receipts WHERE receipt_id = ?').get(v2.receiptId) as { receipt: string }).receipt)
+      .toBe(v2Json);
+  });
+
   it('records correlated facts once and keeps uncorrelated ones for reconciliation', async () => {
     const { storage } = await fresh();
     await seedBinding(storage);
@@ -320,8 +372,10 @@ describe('receipts', () => {
     }));
 
     const written = receipt(job.releaseId, 'transport_written');
-    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: written }))).toEqual({ kind: 'recorded' });
-    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: written }))).toEqual({ kind: 'duplicate' });
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: written })))
+      .toEqual({ kind: 'recorded', receipt: written });
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: written })))
+      .toEqual({ kind: 'duplicate', receipt: written });
     expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: { ...written, observedAt: '2026-09-18T11:00:00Z' } })))
       .toEqual({ kind: 'conflict', code: 'receipt_conflict' });
     expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: receipt('release_unknown', 'completed', 0, 'receipt_orphan') })))
@@ -391,13 +445,24 @@ describe('recovery of released jobs', () => {
   for (const kind of evidence) {
     it(`treats a correlated ${kind} receipt as an unknown outcome, never undispatched`, async () => {
       const { storage, state, job } = await releasedJob();
-      expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: receipt(job.releaseId, kind) })))
-        .toEqual({ kind: 'recorded' });
+      const evidenceReceipt = receipt(job.releaseId, kind);
+      expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: evidenceReceipt })))
+        .toEqual({ kind: 'recorded', receipt: evidenceReceipt });
       const report = await recoverConnectorStorage(await reopen(storage, state));
       expect(report.outcomeUnknownReleases).toEqual([job.releaseId]);
       expect(report.undispatchedReleases).toEqual([]);
     });
   }
+
+  it('treats an agent acknowledgement as an unknown outcome, never undispatched', async () => {
+    const { storage, state, job } = await releasedJob();
+    const acknowledgement = agentAcknowledgement(job.releaseId);
+    expect(await storage.ledger.transaction(tx => tx.appendReceipt({ receipt: acknowledgement })))
+      .toEqual({ kind: 'recorded', receipt: acknowledgement });
+    const report = await recoverConnectorStorage(await reopen(storage, state));
+    expect(report.outcomeUnknownReleases).toEqual([job.releaseId]);
+    expect(report.undispatchedReleases).toEqual([]);
+  });
 
   it('treats an uncorrelated outcome_unknown receipt as dispatch evidence too', async () => {
     const { storage, state, job } = await releasedJob();
@@ -673,6 +738,17 @@ describe('release refusals', () => {
       .toEqual({ kind: 'conflict', code: 'invalid_command_result' });
     expect(await put({ command: { ...record, result: { ok: false, code: 'stale_binding' } as never } }))
       .toEqual({ kind: 'conflict', code: 'invalid_command_result' });
+  });
+
+  it('refuses a release whose embedded approval provenance differs from its command', async () => {
+    const { put, command, job } = await releasable();
+    const record = commandRecord(command, job.releaseId);
+    const mismatched = {
+      ...record,
+      command: { ...command, expectedPolicyVersion: command.expectedPolicyVersion + 1 },
+    };
+
+    expect(await put({ command: mismatched })).toEqual({ kind: 'conflict', code: 'command_mismatch' });
   });
 
   it('refuses a job whose event reference differs from the pending record', async () => {

@@ -4,7 +4,7 @@ import { parseJoinLocation, type JoinLocationError, type RouteCodec } from '../.
 export type HumanRoute =
   | Readonly<{ kind: 'create'; path: string }>
   | Readonly<{ kind: 'join'; path: string; inviteRef: string }>
-  | Readonly<{ kind: 'room'; path: string; roomId: RoomId }>
+  | Readonly<{ kind: 'channel'; path: string; roomId: RoomId }>
   | Readonly<{ kind: 'not_found'; path: string }>;
 
 export interface HumanRouteCodec extends RouteCodec {
@@ -46,9 +46,11 @@ function normalizedBasePath(value: string): string {
 export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRouteCodec {
   const origin = exactHttpsOrigin(options.origin);
   const base = normalizedBasePath(options.basePath);
-  const createPath = () => `${base}/`;
+  // The site root belongs to the public landing page (netlify.toml), so the
+  // application's create route lives one segment below the base path.
+  const createPath = () => `${base}/new`;
   const joinRoot = `${base}/join`;
-  const roomsRoot = `${base}/rooms/`;
+  const roomsRoot = `${base}/channels/`;
   const notFound = (path: string): HumanRoute => ({ kind: 'not_found', path });
 
   function joinPath(inviteRef: string): string {
@@ -60,7 +62,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
 
   function roomPath(roomId: string): string {
     const decoded = decodeRoomId(roomId);
-    if (!decoded.ok) throw new Error('invalid room identifier');
+    if (!decoded.ok) throw new Error('invalid channel identifier');
     return `${roomsRoot}${encodeURIComponent(decoded.value)}`;
   }
 
@@ -83,6 +85,18 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
         return notFound(requestedPath);
       }
     }
+    // Canonical share links from the control invitation service use the
+    // `/join/<inviteRef>` path form; both forms resolve to the same join route.
+    if (parsed.pathname.startsWith(`${joinRoot}/`) && !parsed.search) {
+      const encoded = parsed.pathname.slice(joinRoot.length + 1);
+      if (!encoded || encoded.includes('/')) return notFound(requestedPath);
+      try {
+        const inviteRef = decodeURIComponent(encoded);
+        return { kind: 'join', path: joinPath(inviteRef), inviteRef };
+      } catch {
+        return notFound(requestedPath);
+      }
+    }
     if (parsed.pathname.startsWith(roomsRoot) && !parsed.search) {
       const encoded = parsed.pathname.slice(roomsRoot.length);
       if (!encoded || encoded.includes('/')) return notFound(requestedPath);
@@ -94,7 +108,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
       }
       const decoded = decodeRoomId(raw);
       if (!decoded.ok) return notFound(requestedPath);
-      return { kind: 'room', path: roomPath(decoded.value), roomId: decoded.value };
+      return { kind: 'channel', path: roomPath(decoded.value), roomId: decoded.value };
     }
     return notFound(requestedPath);
   }

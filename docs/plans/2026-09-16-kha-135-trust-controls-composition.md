@@ -76,7 +76,7 @@ Product Contract unchanged. Implementation details below do not settle questions
 - KTD1. `registerControls` binds126 to120's policy operations using106 `PolicySetCommand` and `PolicyAck`. Browser commands capture expectedBindingGeneration and expectedPolicyVersion; authenticated human authority is derived as in134.
 - KTD2. The connector serializes trust, pause and dispatch eligibility at120/121's documented boundary. Successful control transport is only requested state; UI effective state requires a matching connector acknowledgment plus authoritative policy snapshot.
 - KTD3. Freshness, connection status, model busy state and delivery outcome are separate signals. Keep receipt facts with their source/evidence and preserve outcome_unknown until correlated reconciliation.
-- KTD4. The integration installs only approved controls. No cancellation endpoint is manufactured from a pause button, no peer-global trust inferred from a room command, and no ordinary chat message can change policy.
+- KTD4. The integration installs only approved controls. No cancellation endpoint is manufactured from a pause button, no peer-global trust inferred from a room command, and no ordinary channel message can change policy.
 
 ### Files, exports and example
 

@@ -32,11 +32,31 @@ export {
   sameApprovalCommandInput, samePolicySetCommandInput,
 } from './commands';
 export {
-  type DeliveryReceipt, type ReceiptErrorCode, type ReceiptKind, RECEIPT_ERROR_CODES, RECEIPT_KINDS,
-  decodeDeliveryReceipt,
+  type DeliveryReceipt, type DeliveryReceiptTransport, type DeliveryReceiptV1, type DeliveryReceiptV2,
+  type ReceiptErrorCode, type ReceiptKind, type ReceiptKindV1, type ReceiptKindV2,
+  type ReceiptSourceV1, type ReceiptSourceV2,
+  RECEIPT_ERROR_CODES, RECEIPT_KINDS, RECEIPT_KINDS_V1, RECEIPT_KINDS_V2,
+  RECEIPT_SOURCES_V1, RECEIPT_SOURCES_V2,
+  decodeDeliveryReceipt, decodeDeliveryReceiptTransport, decodeDeliveryReceiptV1, decodeDeliveryReceiptV2,
 } from './receipts';
+export {
+  type AcknowledgementSupport, type ListeningMode, type ListeningModeCommand, type ListeningModeResult,
+  type AgentBindingAuthority, type ListeningModeControl, type ListeningModeView,
+  type ModeSupport, type ModeSupportMap, type OwnerRouteGrantCommand, type RouteGrant,
+  ACKNOWLEDGEMENT_SUPPORT, LISTENING_MODES, LISTENING_MODE_RESULT_OUTCOMES, MODE_SUPPORT_STATUSES,
+  OWNER_ROUTE_GRANT_COMMAND_KINDS,
+  decodeListeningMode, decodeListeningModeCommand, decodeListeningModeResult, decodeModeSupport,
+  decodeModeSupportMap, decodeOwnerRouteGrantCommand, initialListeningMode, routeGrantMatches,
+  unknownModeSupport, unknownModeSupportMap,
+} from './listening-mode';
 export {
   type Clock, type EvidenceSink, type HarnessCapabilities, type HarnessPort, BUSY_BEHAVIORS,
   EXISTING_SESSION_SUPPORT, HARNESS_SUPPORT, IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT,
   decodeHarnessCapabilities,
 } from './harness';
+export {
+  type AppHarness, type AppHarnessBoundaries, type AppHarnessIdentity, type AppHarnessRecord,
+  type AppHarnessShape, type AppHookBoundary,
+  APP_HARNESSES, APP_HARNESS_SHAPES, APP_HOOK_BOUNDARIES,
+  decodeAppHarnessRecord, sameAppHarnessIdentity,
+} from './app-harness';

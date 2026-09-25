@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { DeliveryReceipt, OwnerAuthority } from '@khala/contracts/delivery/index';
 import {
-  deferred, faultyLedger, makeRelease, ownerAuthority, receipt, recordOf, seed, testPolicy, world,
+  agentAcknowledgement, deferred, faultyLedger, makeRelease, ownerAuthority, receipt, recordOf, seed, testLimits,
+  testPolicy, world,
 } from './fixtures/fakes';
-import { markUnknown } from './reconcile';
+import { applyReceipt, markUnknown } from './reconcile';
 import { MAX_RECEIPTS } from './types';
 
 async function dispatchingWithoutReceipt() {
@@ -12,8 +13,8 @@ async function dispatchingWithoutReceipt() {
   await seed(w.ledger, job);
   const ledger = faultyLedger(w.ledger);
   // Both the receipt commit and the fallback to outcome_unknown fail, as in a crash.
-  ledger.crashAt(4, 'before');
   ledger.crashAt(5, 'before');
+  ledger.crashAt(6, 'before');
   const crashed = w.dispatcher({ ledger });
   crashed.wake();
   await crashed.idle();
@@ -94,6 +95,43 @@ describe('restart reconciliation', () => {
 });
 
 describe('later observations', () => {
+  it('refuses agent receipts at the generic observer boundary', async () => {
+    const w = await world();
+    const dispatcher = w.dispatcher();
+    const { job } = w.add(makeRelease({ releaseId: 'release-agent-observer' }));
+    await dispatcher.enqueue(job);
+    await dispatcher.idle();
+    const before = await recordOf(w.ledger, job.releaseId);
+    const acknowledgement = agentAcknowledgement(job, {
+      observedAt: '2026-09-18T02:40:00.000Z',
+      evidenceRef: 'ack:release-agent-observer',
+    });
+
+    expect(await dispatcher.observe(acknowledgement)).toBe(false);
+    expect(await recordOf(w.ledger, job.releaseId)).toEqual(before);
+  });
+
+  it('stores trusted acknowledgement evidence idempotently without completing the job', async () => {
+    const { w, job } = await dispatchingWithoutReceipt();
+    const acknowledgement = agentAcknowledgement(job, {
+      observedAt: '2026-09-18T02:41:00.000Z',
+      evidenceRef: 'ack:release-trusted-agent',
+    });
+
+    expect(await w.ledger.transact(tx => applyReceipt(tx, acknowledgement))).toBe(true);
+    expect(await w.ledger.transact(tx => applyReceipt(tx, acknowledgement))).toBe(true);
+    const afterDuplicate = await recordOf(w.ledger, job.releaseId);
+    expect(afterDuplicate?.state).toBe('accepted');
+    expect(afterDuplicate?.receipts.filter(seen => seen.receiptId === acknowledgement.receiptId))
+      .toEqual([acknowledgement]);
+
+    expect(await w.ledger.transact(tx => applyReceipt(tx, {
+      ...acknowledgement,
+      evidenceRef: 'ack:changed-fact',
+    }))).toBe(false);
+    expect(await recordOf(w.ledger, job.releaseId)).toEqual(afterDuplicate);
+  });
+
   it('stores each receipt once and never moves a settled job backwards', async () => {
     const w = await world();
     const dispatcher = w.dispatcher();
@@ -192,8 +230,8 @@ describe('later observations', () => {
 });
 
 describe('unknown outcomes', () => {
-  async function unknownOn(bindingId: string, policy = testPolicy()) {
-    const w = await world(policy);
+  async function unknownOn(bindingId: string, limits = testLimits()) {
+    const w = await world(testPolicy(), undefined, limits);
     w.harness.onSubmit = async () => { throw new Error('connection reset'); };
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1', bindingId, root: 'cause-1' })).job);
@@ -204,7 +242,7 @@ describe('unknown outcomes', () => {
   }
 
   it('keeps the binding busy', async () => {
-    const { w, dispatcher } = await unknownOn('bind-1', testPolicy({ busy: 'wait' }));
+    const { w, dispatcher } = await unknownOn('bind-1', testLimits({ busy: 'wait' }));
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-1', root: 'cause-2' })).job);
     await dispatcher.idle();
     expect(w.harness.submittedIds()).toEqual(['release-1']);
@@ -212,7 +250,7 @@ describe('unknown outcomes', () => {
   });
 
   it('holds its concurrency slot', async () => {
-    const { w, dispatcher } = await unknownOn('bind-1', testPolicy({ maxConcurrentJobs: 1 }));
+    const { w, dispatcher } = await unknownOn('bind-1', testLimits({ maxConcurrentJobs: 1 }));
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2', root: 'cause-2' })).job);
     await dispatcher.idle();
     expect(w.harness.submittedIds()).toEqual(['release-1']);

@@ -31,6 +31,14 @@ The standalone mount owns Khala chrome. A host-content mount owns only route
 content and follows the same authentication and disposal rules, so a future
 Aiur host does not create duplicate chrome or alternate authority semantics.
 
+## Routes and entry
+
+The site root `/` belongs to the public landing page (`netlify.toml`), so the
+application routes live below it: `/new` creates a channel, `/join?invite=…`
+admits a shared link, and `/channels/<id>` opens a channel. The SPA entry reads
+an optional `?mount=hosted-content` parameter to boot without standalone chrome,
+then strips it before routing; any other value boots standalone.
+
 The Matrix adapter accepts timeline attribution only after the same-origin
 control API maps a canonical local Matrix account to its authenticated Khala
 owner and participant ID. It then matches the event's claimed Ed25519 key to a

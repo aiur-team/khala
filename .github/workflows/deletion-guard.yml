@@ -1,0 +1,54 @@
+name: Deletion guard
+# Server-side backstop for the Aiur pre-push deletion guard. The worker-side
+# guard is advisory: a 2026-09-25 audit found 70 of 289 agent pushes where it
+# never ran (masked by a pipe, `;`, `|| true`, or skipped outright). This check
+# runs on GitHub, where no worker shell can reach it, and is required by branch
+# protection on `main`.
+#
+# A PR that removes files passes only with an APPROVED review, from a
+# repository admin, on the exact current head commit. GitHub binds each review
+# to a commit_id that the PR author cannot forge, so any later push (for
+# example one deleting more files) makes the approval stale and the check goes
+# red again. There is deliberately no label: the agent account has write access
+# and can label PRs, so a label cannot be an approval token.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  deletion-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse unapproved file deletions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)"
+          removed="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | select(.status == "removed") | .filename')"
+          if [ -z "$removed" ]; then
+            echo "No files removed."
+            exit 0
+          fi
+          echo "This PR removes $(printf '%s\n' "$removed" | wc -l) file(s) at $head:"
+          printf '  %s\n' $removed
+          approvers="$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+            --jq ".[] | select(.state == \"APPROVED\" and .commit_id == \"$head\") | .user.login" | sort -u)"
+          for login in $approvers; do
+            role="$(gh api "repos/$REPO/collaborators/$login/permission" --jq .permission 2>/dev/null || echo none)"
+            if [ "$role" = "admin" ]; then
+              echo "Allowed: $login (admin) approved head $head."
+              exit 0
+            fi
+            echo "Ignoring approval by $login ($role): not an admin."
+          done
+          echo "::error::This PR deletes files. It needs an APPROVED review from a repository admin on head $head. Agents: do not try to satisfy this check; stop and ask the Executor."
+          exit 1

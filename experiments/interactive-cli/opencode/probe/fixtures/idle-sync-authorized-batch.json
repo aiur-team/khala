@@ -1,0 +1,14 @@
+{
+  "mode": "sync",
+  "batch": {
+    "token": "batch-idle-sync-008",
+    "messages": [
+      {
+        "id": "message-batch-idle-sync-008",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "IDLE-SYNC-NONCE-973: Please reply with response IDLE-SYNC-ACK-973."
+      }
+    ]
+  }
+}

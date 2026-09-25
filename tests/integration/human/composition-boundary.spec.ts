@@ -4,7 +4,7 @@ import { readLiveHumanEnvironment } from './fixtures';
 const environment = readLiveHumanEnvironment();
 
 test('production bundle boots standalone and keeps reserved APIs out of the SPA', async ({ page, request }) => {
-  await page.goto(environment.appOrigin, { waitUntil: 'networkidle' });
+  await page.goto(`${environment.appOrigin}/new`, { waitUntil: 'networkidle' });
   await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
   await expect(page.getByRole('alert')).not.toContainText(/fixture|demo|sample/iu);
 
@@ -15,7 +15,13 @@ test('production bundle boots standalone and keeps reserved APIs out of the SPA'
 });
 
 test('host-content mount does not add a second navigation landmark', async ({ page }) => {
-  await page.goto(`${environment.appOrigin}/?mount=hosted-content`, { waitUntil: 'networkidle' });
+  await page.goto(`${environment.appOrigin}/new?mount=hosted-content`, { waitUntil: 'networkidle' });
   await expect(page.getByRole('navigation')).toHaveCount(0);
   await expect(page.getByRole('main')).toHaveCount(1);
+  expect(new URL(page.url()).search).toBe('');
+});
+
+test('site root stays the public landing page, not the application shell', async ({ page }) => {
+  await page.goto(environment.appOrigin, { waitUntil: 'networkidle' });
+  await expect(page.getByRole('button', { name: 'Sign in' })).toHaveCount(0);
 });

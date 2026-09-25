@@ -4,7 +4,7 @@ type: feat
 date: 2026-09-16
 topic: connector-runtime-composition
 artifact_contract: ce-unified-plan/v1
-artifact_readiness: requirements-only
+artifact_readiness: implementation-ready
 product_contract_source: ce-brainstorm
 execution: code
 origin: docs/product/tickets/KHA-133.md
@@ -14,120 +14,302 @@ origin: docs/product/tickets/KHA-133.md
 
 ## Goal Capsule
 
-Compose independently tested bootstrap, crypto/inbox, subscription, dispatch and harness components into one owner-controlled runtime. Dependencies: KHA-114, KHA-115, KHA-116, KHA-117, KHA-118, KHA-121. Follow the approved scope card and the units below. A plan is not evidence that the proposed integration works. All implementation surfaces listed here are proposed unless a source explicitly identifies existing code.
+Compose the shipped bootstrap, durable storage, subscription, dispatch, and harness contracts behind one owner-controlled runtime. The runtime must preserve one device and binding across restart, keep pending plaintext outside the harness, reconcile ambiguous dispatch without resubmission, and report unsupported production delivery honestly. KHA-153 later replaces this ticket's single fail-closed Claude binding with capability-driven native/fallback selection.
+
+Authority follows the current product decisions and the KHA-153 amendment, then this plan, then implementation-time evidence. A missing substrate/device port or unsupported harness is a truthful degraded state, not permission to add a production fake.
+
+---
 
 ## Product Contract
 
 ### Summary
 
-Compose independently tested bootstrap, crypto/inbox, subscription, dispatch and harness components into one owner-controlled runtime.
+Provide the durable base connector runtime that later delivery capabilities plug into, while preserving owner review and exact session identity across crash, reconnect, revocation, and ambiguous model receipts.
 
 ### Problem Frame
 
-A transport receipt cannot establish model consumption, and successful replay cannot establish exactly-once agent execution. The observable outcome in this ticket must preserve the owner-controlled review boundary and existing session identity across retries and failures.
+A transport receipt cannot establish model consumption, and replay cannot establish exactly-once agent execution. Bootstrap progress and the connector signing identity must survive a crash without silently minting a new device. The merged Claude adapter deliberately proves no supported native delivery route, so this ticket must separate a harness-neutral composition proof from the production Claude configuration's fail-closed result.
 
 ### Requirements
 
-- R1. Wire real ports with explicit startup/shutdown ordering and one device-state lock.
-- R2. Retain the same binding throughout reconnect and preserve review-before-model semantics.
-- R3. Expose actionable readiness/offline/unsupported/unknown states without leaking pending plaintext.
+- R1. Open one owner/device state handle under an exclusive lock and enforce explicit, idempotent startup and reverse-order shutdown.
+- R2. Persist bootstrap operations and one Ed25519 signer on the connector ledger, bind the recovered device identity before any state-counting write, and resume the same operation and device after restart. Before admission, resume toward one binding; after admission, preserve the existing binding.
+- R3. Catch up durable subscription state before enabling dispatch; persist dispatch intent, policy, approval lookup, counters, and evidence so restart reconciles but never blindly resubmits.
+- R4. Only exact released bytes may reach a harness. Pending plaintext, owner authority, policy controls, workdir, secrets, and the test approval fixture never cross the harness or hosted agent-handler boundary.
+- R5. Publish content-free prerequisite states for storage, bootstrap, subscription, controls, harness, dispatch, review, and recovery. Unsupported, offline, blocked, and unknown are distinct from ready.
 
-### Actors and flow
+### Actors and Flow
 
-A1: owning human. A2: trusted owner connector. A3: existing model session and its harness adapter. A4: ciphertext transport/control service. Human identity, connector device, agent participant and working session are distinct.
+- A1. Owning human, who alone authorizes review, release, policy, revocation, and abandonment of unknown delivery.
+- A2. Trusted owner connector, which holds pending plaintext and the durable ledger.
+- A3. Exact agent session named by the bootstrap claim and verified by a harness adapter.
+- A4. Ciphertext transport/control service, which never substitutes for local dispatch evidence.
 
-F1. Storage opens under exclusive lock; bootstrap establishes binding; subscription catches up; dispatch starts only after prerequisites and effective controls are ready.
+- F1. Start opens storage and the device/SDK under one runtime owner, binds the recovered device identity, restores the signer and bootstrap operation, verifies the exact session, catches up subscription state, loads effective controls, reconciles unresolved dispatch intents, and only then enables eligible claims.
+- F2. Stop prevents new claims, cancels subscription/reconnect work, preserves or settles in-flight evidence, stops feature observers, closes the harness/SDK, closes storage last, and remains safe when repeated.
 
 ### Acceptance Examples
 
-- AE1. Restart replays durable pending items without duplicate model submission and reconnects the original session. Covers R1 and R2.
-- AE2. Storage or crypto readiness failure blocks dispatch while reporting the exact failed prerequisite. Covers R2 and R3.
+- AE1. A pre-admission crash reopens the same signer/device and resumes the operation toward one binding. An admitted-or-later crash preserves that binding, reconciles ambiguous delivery, and performs no duplicate model submission. Covers R1-R3.
+- AE2. Storage, crypto, replay, authority, controls, or harness readiness failure blocks the dependent stage and identifies the exact content-free prerequisite. Covers R1, R3, and R5.
+- AE3. An instrumented harness receives only digest-matching released bytes, while the real Claude adapter reports unsupported and makes no route/model call. Covers R4 and R5.
 
 ### Key Decisions
 
-KD1. Existing-session delivery (session-settled: user-directed — chosen over replacement agents: preserve the human's working context). Any model is supported by protocol extensibility; actual harness support requires evidence.
-
-KD2. Connector-gated review (session-settled: user-directed — chosen over separate review encryption groups: pending plaintext may stay in the trusted owner connector but not model context).
-
-KD3. TypeScript and OSS reuse (session-settled: user-directed — chosen over custom infrastructure by default: reduce development). Netlify is preferred; Railway is acceptable when reuse saves work. Matrix remains a candidate, not a selected dependency.
+- KD1. Existing-session identity remains a base-runtime invariant, but P15 supersedes it as the final delivery mechanism. KHA-133 preserves the exact claim/binding and ships one fail-closed Claude seam; KHA-153 owns native CLI/fallback selection, persisted route choice, install flow, and presence. (session-settled: user-directed — chosen over replacement agents: preserve context without claiming an unsupported route)
+- KD2. Connector-gated review remains the trust boundary. Only released projection enters the harness; pending plaintext may stay in the trusted connector. (session-settled: user-directed — chosen over separate review encryption groups: keep review owner-controlled)
+- KD3. Bootstrap operations, the signer key, binding, approvals/releases, dispatch intent/evidence, counters, cursors, and revocations share the owner-local connector ledger. SDK crypto storage remains separate and no cross-store atomicity is claimed.
+- KD4. Revocation is terminal per `bindingId`; a later generation never re-arms it, and re-bootstrap must mint a new binding ID. (session-settled: user-directed — chosen over generation-only revocation: match the reviewed storage/bootstrap contract)
+- KD5. Runtime orchestration is injection-only under `apps/connector/src/runtime/`; cross-package production imports remain in composition roots. Explicit typed factories expose missing ports and cannot silently substitute fixtures.
 
 ### Scope Boundaries
 
-- `apps/connector/src/runtime/`
-- `apps/control/src/composition/agent/`
-- `tests/integration/connector/`
+In scope:
 
-No sibling implementation edits, root package/lockfile changes, provider deployment or production credentials. Root dependency changes go through KHA-101. This ticket does not add human installation/configuration, broaden history disclosure, weaken harness permissions or claim isolation from an unrestricted same-host agent. Integration is explicit, not accomplished by importing unfinished sibling implementations.
+- `packages/connector/src/storage/` for the KHA-133-owned persistence gaps explicitly handed off by KHA-114, KHA-115, and KHA-121.
+- `apps/connector/src/runtime/`, the finite connector capability registry/placeholders, `apps/control/src/composition/agent/`, and focused connector integration tests.
 
-### Open Questions
+Out of scope:
 
-Upstream G-SUBSTRATE, G-HARNESSES, G-AUTOMATION remain inherited; P02 determines browsers-closed runtime availability.
+- Capability-driven adapter selection, fallback skill/CLI delivery, route-choice persistence, outbound `khala send`, installation, and presence; KHA-148/KHA-153 own those.
+- Production credentials, provider deployment, root dependency versions, or a general plugin framework.
+- Human review/control/recovery implementations; KHA-134/135/136 replace the typed unavailable placeholders.
+- Claims that a fake harness or injected transport proves Claude support, exact-once model execution, or isolation from an unrestricted same-user process.
 
-### Sources
+### Product Contract Preservation
 
-- `docs/product/tickets/KHA-133.md`, `docs/product/decisions.md`, `docs/product/repo-layout.md`.
-- `docs/research/01-agent-protocols.md`, `docs/research/02-substrates.md`, `docs/research/07-state-and-transport.md`.
+Changed KD1, R2-R5, and AE1/AE3 to incorporate the settled P15/KHA-153 amendment plus the executor's bootstrap-persistence and revocation decisions. The owner-controlled review boundary and exact-session identity constraints are unchanged.
+
+---
 
 ## Planning Contract
 
-Source manifest: `docs/evidence/transport-planning-sources.json` pins local repositories, read-only CLI observations and official documentation checks. No runtime proof is implied.
+### Key Technical Decisions
 
-### Composition ownership and lifecycle
+- KTD1. Add a schema migration for bootstrap-operation CAS rows, the PKCS8 Ed25519 private key, approval command inputs, effective dispatch policy, dispatch records, and causal counters. Bootstrap-only rows and the signer do not by themselves make an unbound ledger adoptable; normal bindings/cursors/releases/dispatch state do.
+- KTD2. The runtime device factory durably recovers or creates exactly one SDK device and its fingerprint before returning. `bindDeviceIdentity` succeeds before signer/bootstrap writes; a crash before ledger binding must recover the same SDK identity rather than minting a second device, and every later restart must match it.
+- KTD3. The runtime owns the only storage/device lease. Subscription receives an adapter to that already-held lease rather than opening a second store or SDK instance.
+- KTD4. Startup may prove the harness-neutral seam with injected contract-valid ports, but production Claude readiness stays degraded because `createClaudeHarness` reports unsupported and performs no native route call.
+- KTD5. Runtime status is a finite snapshot and contains no content, token, path, workdir, transport secret, SQLite detail, or pending identifier.
+- KTD6. Hosted agent registration is side-effect-free. Until live dependencies exist it exposes only an explicit 503 status route under `/api/agent/*`; it never publishes the test approval fixture or ledger access.
 
-This is the integration reconnection owner for KHA-114/115/116/117/118/121. Own `apps/connector/src/runtime/create.ts`, `start.ts`, `stop.ts`, `status.ts`, `registry.ts`; hosted binding glue in `apps/control/src/composition/agent/handlers.ts`; tests in `tests/integration/connector/`. Export `createConnectorRuntime(config, factories): ConnectorRuntime`. Hosted `handlers.ts` exports `registerAgentHandlers(): readonly RouteRegistration[]`, importing the KHA-131 runtime type `{path:string;methods:readonly string[];handle:(request:Request)=>Promise<Response>}`. Restrict entries to `/api/agent/*`;131 owns the single generated Netlify gateway. Module import performs no network/bootstrap work. An absent producer reserves its domain as503; an existing malformed producer fails the build rather than silently disappearing. Factories adapt already-tested package exports; do not duplicate their policy/crypto/transport implementations or rewrite sibling files to hide integration gaps.
+### High-Level Technical Design
+
+The app runtime owns these stable contracts; composition roots adapt package implementations to them so `apps/connector/src/runtime/` does not import across component boundaries:
 
 ```ts
-interface ConnectorRuntime {
-  start():Promise<void>;
-  status():RuntimeStatus;
-  stop():Promise<void>;
+type PrerequisiteState =
+  | "ready"
+  | "blocked"
+  | "offline"
+  | "unsupported"
+  | "unknown";
+
+interface RuntimeStatus {
+  binding: SessionBinding | null;
+  phase: "starting" | "ready" | "degraded" | "stopping" | "stopped";
+  prerequisites: Readonly<Record<RuntimePrerequisite, PrerequisiteState>>;
+  effectivePolicyVersion: number | null;
+  errorCode: string | null;
 }
-type RuntimeStatus = {binding:SessionBinding|null;
-  phase:"starting"|"ready"|"degraded"|"stopping"|"stopped";
-  prerequisites:Readonly<Record<string,"ready"|"blocked"|"offline">>;
-  effectivePolicyVersion:number|null; errorCode:string|null};
+
+interface ConnectorRuntime {
+  start(): Promise<void>;
+  status(): RuntimeStatus;
+  stop(): Promise<void>;
+}
+
+interface ConnectorRuntimeConfig {
+  requiredCapabilities: readonly ConnectorCapabilityId[];
+}
+
+interface ConnectorRuntimeFactories {
+  openStorage(): Promise<RuntimeStoragePort>;
+  openDevice(storage: RuntimeStoragePort): Promise<RuntimeDevicePort>;
+  bootstrap(context: BootstrapContext): Promise<BootstrapResult>;
+  openSubscription(context: BoundRuntimeContext): Promise<RuntimeSubscriptionPort>;
+  loadControls(context: BoundRuntimeContext): Promise<EffectiveControls>;
+  openDispatcher(context: DispatchContext): Promise<RuntimeDispatcherPort>;
+  inspectHarness(binding: SessionBinding): Promise<HarnessCapability>;
+  registerCapabilities(context: ConnectorCapabilityContext): readonly ConnectorCapability[];
+}
 ```
 
-Configuration selects the substrate/harness adapter only after their decision/proof gates clear. Explicit factories/registration lists are sufficient; do not build a general plugin framework. KHA-133 owns the finite central list and a one-time bootstrap ownership exception: create unavailable `register.ts` placeholders under `apps/connector/src/composition/{review,controls,recovery}/`. Later KHA-134/135/136 replace only their owned placeholder, keeping the central imports valid from the first build. No future absent-file import, filesystem scan or later central-list edit is needed. Coordinate this narrow bootstrap exception with the parent ownership map.
+Each factory result is an explicitly closeable stage handle and carries only the data required by the next stage. Operational prerequisite failures resolve `start()` into `degraded` with the exact prerequisite state; invalid configuration, malformed factory results, identity/binding invariants, and teardown failures reject after best-effort reverse cleanup. Concurrent lifecycle calls share one in-flight transition.
 
-`runtime/capabilities.ts` exports `ConnectorCapability` with `id: "review"|"controls"|"recovery"`, `state: "unavailable"|"ready"`, `start():Promise<void>`, `stop():Promise<void>`. Each `registerReview`, `registerControls`, `registerRecovery` takes `ConnectorCapabilityContext` and returns that handle. Context contains canonical binding, ConnectorLedger, Dispatcher and clock plus feature-specific protected transport dependencies supplied explicitly at the composition boundary; no untyped service locator. Placeholder start/stop are no-op, state stays unavailable. Required unavailable capabilities block their feature readiness; they never fake success. Feature close stops only its own observers, not the shared SDK. Parallel workers must not all change a shared registry. KHA-131 owns hosted runtime/provider configuration; app runtime consumes it rather than changing deployment setup.
+`RuntimeSubscriptionPort` is the sole reconnect scheduler and publishes transport/replay/authority changes into one serialized runtime reevaluator. Capability handles publish readiness changes through the same reevaluator. It immediately closes dispatch eligibility when controls, authority, transport, harness support, or a required capability is lost, and re-runs only the idempotent control-load, reconciliation, and eligibility barriers after recovery; it never repeats bootstrap or submission implicitly.
 
-### Startup and shutdown order
+```ts
+type ConnectorCapabilityId = "review" | "controls" | "recovery";
 
-1. Validate configuration and open exclusive owner/device state lock. Recover ledger/crypto state using supported SDK semantics.
-2. Run/recover the agent bootstrap operation and verify immutable binding/native session capabilities. If bootstrap needs storage, use the already-open scoped store; never open a second crypto machine for the same device.
-3. Establish authenticated transport and durable subscription/catch-up. Load effective control state and reconcile unresolved dispatch intents. Missing keys, stale authority or replay gaps block readiness.
-4. Start dispatch only when required state/control/harness prerequisites are ready. A public connection icon cannot substitute for readiness. Publish content-free status.
-5. On stop/revocation, stop new claims, cancel subscription/reconnect scheduling, drain or mark in-flight outcomes according to observed evidence, flush ledger, close SDK and release lock. Abrupt termination is handled by durable recovery, not this graceful path alone.
+interface ConnectorCapability {
+  readonly id: ConnectorCapabilityId;
+  readonly state: "unavailable" | "ready";
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
 
-Browser closure is not a connector shutdown signal unless P02 explicitly selects a browser-bound runtime. An owner-local agent helper may be long-lived, but setup/install/service ownership and lifecycle must satisfy the no-human-configuration contract. Do not select a background daemon mode silently to make the test pass.
+interface ConnectorCapabilityContext {
+  readonly binding: SessionBinding;
+  readonly ledger: RuntimeLedgerPort;
+  readonly dispatcher: RuntimeDispatcherPort;
+  readonly clock: () => number;
+  prerequisiteChanged(id: ConnectorCapabilityId): void;
+}
 
-### Worked reconnect
+interface ConnectorCapabilityDependencies {
+  readonly review: ReviewCapabilityDependencies;
+  readonly controls: ControlsCapabilityDependencies;
+  readonly recovery: RecoveryCapabilityDependencies;
+}
+```
 
-Start owner B in existing session S1 and binding generation0. Receive pending E7 with no model notification. For this base-runtime proof, an injected authenticated test approval fixture creates release R7 through the real ledger contract. KHA-134 later replaces that test-only input with the human browser approval path. Kill the connector after native acceptance but before receipt persistence. Restart opens the same device state, replays E7 once and sees unresolved R7 intent. It reconciles native evidence where supported or presents unknown; it does not mint a fresh device, create session S2 or resubmit R7 automatically. New E8 may continue through review only when the runtime can safely separate its eligibility from blocked R7.
+The finite registry passes each `registerReview`, `registerControls`, and `registerRecovery` function its own typed dependency object alongside `ConnectorCapabilityContext`; there is no untyped service locator. Each function returns exactly one matching handle. Controls is required for global dispatch readiness in this base runtime. Unavailable review or recovery blocks only that feature's readiness until its owning ticket replaces the placeholder; feature stop closes only its own observers.
+
+```mermaid
+flowchart TB
+  Config[Validated config] --> Store[Open ledger and exclusive lease]
+  Store --> Device[Recover device and bind identity]
+  Device --> Bootstrap[Restore signer and bootstrap operation]
+  Bootstrap --> Binding[Persist exact binding]
+  Binding --> Subscription[Subscribe first and catch up]
+  Subscription --> Controls[Load effective controls]
+  Controls --> Reconcile[Reconcile unresolved dispatch intents]
+  Reconcile --> Gate{All required prerequisites supported?}
+  Gate -->|yes| Dispatch[Enable new dispatch claims]
+  Gate -->|no| Degraded[Publish content-free degraded state]
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> stopped
+  stopped --> starting: start
+  starting --> ready: barriers satisfied
+  starting --> degraded: blocked/offline/unsupported/unknown
+  degraded --> ready: prerequisite recovers
+  ready --> degraded: authority or transport lost
+  ready --> stopping: stop
+  degraded --> stopping: stop
+  starting --> stopping: stop
+  stopping --> stopped: reverse teardown complete
+```
+
+### Assumptions and Deferred Evidence
+
+- The runtime can be implemented and tested while the production substrate/device factory remains unavailable; that absence must keep production readiness degraded.
+- Genuine disposable Matrix/session proof belongs in `tests/integration/connector/` and requires the existing explicit live opt-in. Local crash/fault tests stay adjacent to the implementation and use real disk plus injected external ports.
+- KHA-153 owns package/dependency wiring for its selected native routes. This ticket does not edit the root manifest or lockfile to make an unsupported production path appear complete.
+
+---
 
 ## Implementation Units
 
-### U1. Factories and single-owner lifecycle
+### U1. Persist bootstrap identity and approval inputs
 
-Wire actual component exports and explicit config validation. Covers R1. Integration tests assert one SDK/device instance, lock conflict, ordered close and no double subscription. Detect missing required registration at startup rather than falling back to mocks.
+- **Goal:** Close the storage handoffs required to resume bootstrap and re-verify released jobs.
+- **Requirements:** R2, R3, KD3, KD4, KTD1, KTD2; covers AE1.
+- **Dependencies:** None.
+- **Files:** `packages/connector/src/storage/schema.ts`, `packages/connector/src/storage/ledger.ts`, `packages/connector/src/storage/bootstrap.ts`, `packages/connector/src/storage/bootstrap.test.ts`, `packages/connector/src/storage/open.test.ts`, `packages/connector/src/storage/README.md`.
+- **Approach:** Migrate the ledger with strict bootstrap-operation CAS rows and one persisted PKCS8 Ed25519 key. Decode every stored operation/key on read. Store the exact `ApprovalCommand` alongside its command journal entry so dispatch can re-verify after restart. Keep terminal revocation semantics unchanged.
+- **Execution note:** Start with failing real-disk restart, CAS conflict, key-stability, schema-migration, and identity-order tests.
+- **Patterns to follow:** `packages/connector/src/storage/open.ts`, `ledger.ts`, and `schema.ts`; `packages/connector/src/bootstrap/orchestrator.test.ts` operation-store semantics.
+- **Test scenarios:**
+  1. A create/open cycle generates one Ed25519 key; reopening returns the same public thumbprint and corrupt/non-Ed25519 bytes fail closed without leaking bytes.
+  2. Operation create/update uses per-row revisions, refuses stale CAS, rejects a changed fingerprint, and survives reopen at each bootstrap phase.
+  3. A crash after the reserved operation persists reopens and binds the same device without `identity_unbound`.
+  4. A crash after durable SDK identity creation but before `bindDeviceIdentity` recovers the same fingerprint and creates no second device.
+  5. A v1 ledger migrates without losing pending/release state; a newer schema remains unsupported.
+  6. A stored approval command round-trips and a missing legacy command returns unavailable to dispatch rather than fabricating approval.
+- **Verification:** Connector storage tests prove durable restart and all current storage invariants still pass.
 
-### U2. Binding, recovery and readiness barriers
+### U2. Implement the durable dispatch ledger adapter
 
-Depends U1 plus all card dependencies. Connect bootstrap result to store, subscription and harness; load controls before dispatch. Covers R1/R2, AE2. Test storage failure, invalid binding, missing keys, unsupported harness, expired authority, replay gap and disconnected control updates.
+- **Goal:** Supply the production `DispatchLedger`, effective-policy write seam, approval lookup, bounded payload reader, and recovery enumeration KHA-121 handed to composition.
+- **Requirements:** R3-R5, KTD1, KTD3; covers AE1 and AE2.
+- **Dependencies:** U1.
+- **Files:** `packages/connector/src/storage/schema.ts`, `packages/connector/src/storage/dispatch.ts`, `packages/connector/src/storage/dispatch.test.ts`, `packages/connector/src/storage/README.md`.
+- **Approach:** Map dispatch policies, binding/revocation state, records, sequence allocation, release uniqueness, active/queued selection, and causal counters onto one synchronous SQLite transaction. Expose an effective-policy update method only to the trusted controls composition after contract authentication; the storage boundary transactionally enforces the exact binding/generation, terminal revocation, and monotonically increasing version, accepting only an exact duplicate as idempotent. Enumerate dispatching/unknown records for startup reconciliation.
+- **Execution note:** Prove rollback, restart, and no-resubmit behavior before wiring the runtime.
+- **Patterns to follow:** `packages/connector/src/dispatch/types.ts`, `claim.ts`, `reconcile.ts`, and the test-only memory ledger as behavioral reference only.
+- **Test scenarios:**
+  1. Every `DispatchTx` read/write survives reopen, preserves queue order, and rolls back the whole transaction on throw or async callback.
+  2. Revoked bindings report revoked at every generation; a new binding ID is independent.
+  3. Duplicate release/approval and causal counters remain bounded and durable under restart.
+  4. Dispatching and outcome-unknown records are enumerated for reconciliation, while completed/rejected records are not resubmitted.
+  5. Payload reads enforce the caller's byte bound and approval lookup returns only decoded durable commands.
+  6. Forged/unverified provenance never reaches the storage seam; binding mismatch, stale/conflicting version, and revocation fail closed, while an exact authenticated replay is idempotent.
+- **Verification:** The real adapter passes the KHA-121 behavioral scenarios without importing fixture code.
 
-### U3. Fault-injected real-port path
+### U3. Compose the single-owner runtime lifecycle
 
-Depends U2. Exercise pending→authenticated release fixture→dispatch with the actual selected backend/SDK in the integration profile, using approved synthetic content. This base proof has no dependency on later KHA-134/135/136. Their real human review/control/recovery integrations and complete workflow are verified by those tickets and KHA-140. Covers R2/R3 and AE1. Verify no pending data reaches harness and crash/restart preserves unknown state.
+- **Goal:** Provide side-effect-free creation plus single-flight start, truthful status, recovery barriers, and deterministic teardown.
+- **Requirements:** R1-R5, F1, F2, KTD2-KTD5; covers AE1-AE3.
+- **Dependencies:** U1, U2.
+- **Files:** `apps/connector/src/runtime/create.ts`, `apps/connector/src/runtime/status.ts`, `apps/connector/src/runtime/capabilities.ts`, `apps/connector/src/runtime/create.test.ts`.
+- **Approach:** `createConnectorRuntime(config, factories)` validates the stable contracts above without starting I/O. `start()` performs the ordered barriers and records exact prerequisite outcomes. It persists the exact binding, starts catch-up, creates dispatch, reconciles durable ambiguous intents, and permits new claims only when controls and harness capability are supported. Subscription and capability events feed the serialized reevaluator so readiness can move in either direction without repeating bootstrap or submission. Repeated/concurrent starts and stops coalesce.
+- **Execution note:** Add lifecycle tests before implementation; use recording factories to assert ordering, then one real-storage composition path.
+- **Patterns to follow:** generation/single-flight lifecycle in `packages/messaging/src/browser-device/service.ts`; subscription and dispatcher stop contracts.
+- **Test scenarios:**
+  1. Module import/create performs no network, storage, SDK, bootstrap, or model work; two concurrent starts open one owner/device instance and one subscription.
+  2. Storage lock failure, invalid identity, bootstrap block, replay gap, lost authority, missing controls, unsupported harness, and unknown outcome each produce the exact content-free prerequisite state.
+  3. Startup reconciles every durable dispatching/unknown intent before enabling claims and never calls submit for reconciliation-only records.
+  4. The exact bootstrap binding/session/generation flows to subscription and dispatch; no replacement session is created.
+  5. Stop during partial start/catch-up/dispatch prevents new claims and closes capabilities, dispatcher, subscription, harness/SDK, and storage in reverse order; repeated stop is safe.
+  6. Real Claude inspection leaves the runtime degraded as unsupported and invokes neither notify nor route submission.
+- **Verification:** Connector-app tests prove ordering/status, then the real storage/bootstrap/dispatch integration proves persistence boundaries.
 
-### U4. Central feature registration handoff
+### U4. Install finite capability and hosted registration seams
 
-Create the finite imports and typed unavailable placeholders now; prove the base build succeeds while no later feature implementation exists. KHA-134/135/136 replace their own register modules without central edits or circular imports. Final real-feature composition proof belongs to KHA-140 after their merges. Publish minimal runtime state and diagnostic evidence refs; logs redact tokens, plaintext and owner secrets.
+- **Goal:** Let KHA-134/135/136 replace typed unavailable modules without later central-list edits and reserve the hosted agent domain honestly.
+- **Requirements:** R4, R5, KD2, KTD6; covers AE2 and AE3.
+- **Dependencies:** U3.
+- **Files:** `apps/connector/src/runtime/registry.ts`, `apps/connector/src/composition/review/register.ts`, `apps/connector/src/composition/controls/register.ts`, `apps/connector/src/composition/recovery/register.ts`, `apps/control/src/composition/agent/handlers.ts`, `apps/control/src/composition/agent/handlers.test.ts`.
+- **Approach:** Implement the exact capability/context signatures above and register exactly review, controls, and recovery. Placeholder start/stop are no-op and remain unavailable. Controls gates global dispatch readiness; unavailable review/recovery gate only their feature state. `registerAgentHandlers()` returns validated `/api/agent/*` registrations with no import-time work and a content-free 503 until live dependencies are composed.
+- **Test scenarios:**
+  1. The finite registry rejects duplicate/missing/malformed capability IDs and never reports an unavailable placeholder as ready.
+  2. Feature stop closes only its own observers, not the shared SDK or ledger.
+  3. Hosted registration is import-safe, restricted to `/api/agent/*`, and returns sanitized 503 without exposing pending content or test fixtures.
+  4. Route discovery treats the producer as present and fails the build on malformed registrations.
+- **Verification:** Connector/control typecheck and focused tests pass without future feature implementations.
+
+### U5. Prove restart and release-boundary composition
+
+- **Goal:** Exercise the durable base seam end to end without misrepresenting injected ports as production support.
+- **Requirements:** R1-R5, AE1-AE3.
+- **Dependencies:** U1-U4.
+- **Files:** `apps/connector/src/runtime/composition.test.ts`; genuine live follow-up evidence, when available, belongs in `tests/integration/connector/`.
+- **Approach:** Use real on-disk storage, bootstrap orchestration, subscription state machine, dispatcher, and an instrumented contract-valid harness. Seed an authenticated test-only approval/release through the real ledger API. Run separate positive seam and real-Claude negative cases.
+- **Test scenarios:**
+  1. Pending and released sentinel text coexist; the instrumented harness receives only the exact released bytes and no status/error/log contains either plaintext.
+  2. Kill/reopen after native acceptance but before receipt persistence leaves one durable intent; reconciliation records evidence or unknown and submission count stays one.
+  3. A pre-admission restart preserves key, operation, device, and lock ownership and resumes toward one binding; an admitted-or-later restart preserves the existing binding.
+  4. Terminal revocation blocks the old binding ID; a simulated re-bootstrap succeeds only with a new ID.
+  5. Real Claude composition stays degraded and makes zero model/route calls.
+- **Verification:** The deterministic local integration passes with real disk; no live-send claim is made without explicit disposable-environment evidence.
+
+---
 
 ## Verification Contract
 
-After scaffold run `pnpm --filter @khala/connector-app test`, `pnpm --filter @khala/control test`, `pnpm test`, `pnpm typecheck`. Tag/select integration tests through KHA-101's agreed test discovery; document required disposable backend/session inputs and explicit opt-in. Kill/restart tests use real disk and selected SDK, not only fake components. Live sends require designated test sessions. Planning started no runtime and sent no message.
+| Gate | Scope | Done signal |
+|---|---|---|
+| `pnpm --filter @khala/connector test` | U1-U2 | Storage, bootstrap persistence, dispatch adapter, crash/restart, and existing connector tests pass. |
+| `pnpm --filter @khala/connector-app test` | U3-U5 | Lifecycle, status, registry, teardown, and composition tests pass. |
+| `pnpm --filter @khala/control test` | U4 | Hosted registration and route discovery tests pass. |
+| `pnpm typecheck` | All | All workspace and harness types compile without production fixture imports. |
+| `pnpm lint` | All | ESLint and import-boundary checks pass. |
+| `pnpm test` | All | Full CI suite passes; live integration remains separately opt-in. |
+
+No `KHALA_E2E_LIVE` run is required to claim the deterministic base seam. Any future live send must use a designated disposable environment/session and is support evidence only for the exact tested route/version.
+
+---
 
 ## Definition of Done
 
-Actual base components compose with one device owner, correct startup/control barriers and deterministic teardown; authenticated fixture release is explicitly test-only and is not claimed as human-UI acceptance. AE1/AE2 pass in the selected runtime, support/unknown states remain truthful, and independent component tests still pass. Inherited substrate/harness/automation and P02 gates are resolved before ready status; KHA-140 owns proof of the final fully merged composition.
+- Bootstrap operation state and the Ed25519 signer survive restart on the owner-only ledger with correct CAS and identity ordering.
+- The real durable dispatch adapter provides policy, binding/revocation, approval, payload, queue, intent, receipt, and causal-count semantics required by KHA-121.
+- One runtime owns storage/device lifecycle, starts prerequisites in order, reconciles before claims, and tears down deterministically and idempotently.
+- Status remains content-free and never reports ready when storage, binding, catch-up, controls, or harness support is blocked, offline, unsupported, or unknown.
+- Only released, digest-verified bytes reach the harness; pending plaintext and owner-only controls never cross the model or hosted handler boundary.
+- The shipped Claude adapter is proven fail-closed with zero route/model calls; KHA-153 remains the owner of supported native/fallback delivery and presence.
+- Revocation remains terminal per binding ID, and restart/ambiguous receipt paths never duplicate model submission.

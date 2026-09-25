@@ -7,7 +7,7 @@ import type { OpenMode } from './leases';
 
 /** `PRAGMA application_id`: ASCII "KHLA", so a foreign SQLite file is refused. */
 export const APPLICATION_ID = 0x4b484c41;
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA_V1 = `
 CREATE TABLE meta (
@@ -128,6 +128,64 @@ CREATE TABLE receipts (
 CREATE INDEX receipts_release ON receipts (release_id);
 `;
 
+/**
+ * KHA-133 additions. Bootstrap rows deliberately do not touch `ledger_revision`:
+ * a crash before device binding must still be able to bind the recovered SDK
+ * identity instead of tripping the existing-state adoption guard.
+ */
+const SCHEMA_V2 = `
+ALTER TABLE commands ADD COLUMN approval_command TEXT;
+CREATE INDEX commands_command_id ON commands (command_id);
+
+CREATE TABLE bootstrap_operations (
+  operation_id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  record TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE bootstrap_signer (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  private_key BLOB NOT NULL
+) STRICT;
+
+CREATE TABLE dispatch_policies (
+  binding_id TEXT PRIMARY KEY REFERENCES bindings (binding_id),
+  generation INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  policy TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE dispatch_records (
+  release_id TEXT PRIMARY KEY,
+  command_id TEXT NOT NULL UNIQUE,
+  seq INTEGER NOT NULL UNIQUE,
+  state TEXT NOT NULL,
+  record TEXT NOT NULL
+) STRICT;
+CREATE INDEX dispatch_records_state_seq ON dispatch_records (state, seq);
+
+CREATE TABLE dispatch_causal_counts (
+  causal_root_id TEXT PRIMARY KEY,
+  count INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE dispatch_sequence (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  value INTEGER NOT NULL
+) STRICT;
+INSERT INTO dispatch_sequence (singleton, value) VALUES (1, 0);
+`;
+
+/** One selected harness route per binding, fenced by the newest observed generation. */
+const SCHEMA_V3 = `
+CREATE TABLE harness_route_selections (
+  binding_id TEXT PRIMARY KEY,
+  generation INTEGER NOT NULL CHECK (generation >= 0),
+  route_id TEXT NOT NULL
+) STRICT;
+`;
+
 function pragmaNumber(db: DatabaseSync, name: string): number {
   const row = db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined;
   const value = row ? Object.values(row)[0] : undefined;
@@ -148,6 +206,8 @@ export function prepareSchema(db: DatabaseSync, mode: OpenMode): void {
     // An empty ledger where state should exist was lost or truncated, not new.
     if (mode === 'existing') throw new StorageError('corrupt');
     db.exec(SCHEMA_V1);
+    db.exec(SCHEMA_V2);
+    db.exec(SCHEMA_V3);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.prepare("INSERT INTO meta (key, value) VALUES ('ledger_revision', '0')").run();
@@ -156,5 +216,12 @@ export function prepareSchema(db: DatabaseSync, mode: OpenMode): void {
   if (applicationId !== APPLICATION_ID) throw new StorageError('corrupt');
   if (version > SCHEMA_VERSION) throw new StorageError('schema_unsupported');
   if (version < 1) throw new StorageError('corrupt');
-  // Future migrations run here, one version step at a time, in this transaction.
+  if (version === 1) {
+    db.exec(SCHEMA_V2);
+    db.exec('PRAGMA user_version = 2');
+  }
+  if (version <= 2) {
+    db.exec(SCHEMA_V3);
+    db.exec('PRAGMA user_version = 3');
+  }
 }

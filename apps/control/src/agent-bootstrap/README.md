@@ -41,20 +41,32 @@ The redeem response is `{ binding, adapter_capability: { token, token_type: 'DPo
   refused). Its RFC 7638 thumbprint must equal the bound `jkt`. It is checked with `node:crypto` for
   signature, exact `htm`/`htu`, `iat` within 60 s (5 s skew), `ath` on redeem and capability use (and
   none on the token call), and each `jti` is recorded once for 120 s.
-- **Binding.** There is one binding per owner and room. The same session, generation, device and agent
-  participant get the same binding back. Any other session or generation is `409 binding_conflict`.
-  That check runs before admission, so a conflicting device never joins the room.
+- **Binding.** Bindings are scoped by owner, channel and verified agent participant, so distinct verified
+  sessions may coexist as distinct participants in one channel. A side-effect-free inspection resolves the
+  session's participant before the handler checks that participant's binding and claims the durable session
+  locator plus a participant-scoped pre-admission reservation. The same participant, session, generation and
+  device get the same binding back; participant,
+  session or device substitution is `409 binding_conflict`. Those checks run before admission, so a
+  conflicting device never joins the channel.
+- **Legacy migration.** Existing owner/channel singleton records are read compatibly and, when
+  `legacyMigrationWritesEnabled` is active, roll forward to participant-scoped storage without changing the
+  binding ID or losing revocation or current-capability state. Marker, locator or record mismatches fail
+  closed. Marker-aware readers must be deployed everywhere before enabling migration writes; recovery after
+  the first forwarding marker is roll-forward.
 - **Revocation.** A revoked binding is never revived. Re-bootstrapping at or below the revoked generation is
-  `409 binding_revoked`, before admission. A session at a later generation gets a new binding ID with
-  its own capability.
+  `409 binding_revoked`, before admission. Only the same participant, session and device at a later
+  generation gets a new binding ID with its own capability. Revoking one participant never changes another
+  participant's binding or capability in the same channel.
 - **Adapter capability.** 256-bit, stored hashed with a one-hour lifetime and bound to the connector key,
   the binding ID and its generation. Its scope is exactly `publish_own`, `receive_released` and
   `ack_delivery`: nothing approves, releases or sets policy. `capabilities.authorize(request, action)`
   accepts it only with a fresh proof for that request, and only while it is the binding's current
   capability. A later bootstrap of the same binding supersedes it, and `revokeAdapterCapability`
   (the shape of `RevocationControlPort.revokeAdapterCapability`) ends it.
-- **Operation IDs.** The connector's `operation_id` only ever reaches `admit` hashed together with the
-  owner and device, so two owners cannot collide on a chosen ID.
+- **Operation IDs.** The connector's `operation_id` claims only its one-time grant. Admission receives a
+  stable private operation identity derived from owner, channel, participant, device, harness, session and
+  generation. Independent grants for the same verified binding therefore converge on one idempotent
+  admission commit, while unrelated bindings cannot collide.
 - **Failures.** Responses are finite codes only. A throwing port becomes `503 unavailable`; an
   unknown admission outcome is `502 outcome_unknown`. The connector retries both with the
   same operation ID.
@@ -69,7 +81,8 @@ The redeem response is `{ binding, adapter_capability: { token, token_type: 'DPo
 | `inviteFromLink(url)` | KHA-132 route codec (the share-link vocabulary is not fixed here) |
 | `admissionFor(request)` | Request-scoped KHA-105 `AdmissionPort` for the signed-in owner (only `inspect` is used) |
 | `admissionPolicy` | **G-ADMISSION.** It is required and has no default. It decides whether a signed-in holder of the link may bind an agent |
-| `agents: AgentAdmissionPort` | `room(invite)` resolves the room with no side effects. `admit` adds the owner's agent participant, with this device, to that room, idempotently per (scoped) operation ID (KHA-113 / G-SUBSTRATE) |
+| `agents: AgentAdmissionPort` | `inspect({ ownerId, inviteRef, session })` resolves the verified session's exact channel and participant with no side effects. `admit` commits that expected participant and channel with the device, atomically rejects drift, and is idempotent per stable operation ID (KHA-113 / G-SUBSTRATE) |
+| `legacyMigrationWritesEnabled` | Explicit rollout gate. Readers always understand legacy records and forwarding markers; set true only after every live reader is marker-aware |
 | `clock`, `random` | Trusted time and a CSPRNG |
 
 The gateway (`runtime/handler.ts`) requires `Origin` on POSTs. The connector sends the service's

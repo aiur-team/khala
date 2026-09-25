@@ -13,8 +13,13 @@ describe('eligibility and transactional claim', () => {
     await w.setPolicy(testPolicy({ version: 4, armedAt: 3, paused: true }));
     expect(await dispatcher.enqueue(job)).toBe('queued');
     await dispatcher.idle();
+    // A paused arrival only persists; it starts no pass.
+    expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: null });
+    dispatcher.wake();
+    await dispatcher.idle();
 
     expect(w.harness.submitted).toHaveLength(0);
+    expect(w.boundary.calls).toHaveLength(0);
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'paused', attemptId: null });
     expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
 
@@ -103,6 +108,8 @@ describe('eligibility and transactional claim', () => {
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(job);
+    // With no policy the arrival does not wake; a later pass finds the binding gone.
+    dispatcher.wake();
     await dispatcher.idle();
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'rejected', reason: 'stale_binding' });
   });
@@ -142,9 +149,9 @@ describe('eligibility and transactional claim', () => {
 
   it.each([
     ['no policy', null],
-    ['an infinite causal limit', testPolicy({ maxJobsPerCausalRoot: Number.POSITIVE_INFINITY })],
-    ['a zero concurrency limit', testPolicy({ maxConcurrentJobs: 0 })],
-    ['a fractional limit', testPolicy({ maxJobsPerCausalRoot: 1.5 })],
+    ['a per-binding causal limit', malformed(policy => { policy.maxJobsPerCausalRoot = 10; })],
+    ['a per-binding concurrency limit', malformed(policy => { policy.maxConcurrentJobs = 10; })],
+    ['a per-binding busy policy', malformed(policy => { policy.busy = 'queue'; })],
     ['an unreadable expiry', testPolicy({ expiresAt: 'soon' })],
     ['an expiry with an offset', testPolicy({ expiresAt: '2026-09-18T03:00:00+02:00' })],
     ['an expiry on a date that does not exist', testPolicy({ expiresAt: '2026-02-30T00:00:00Z' })],
@@ -153,7 +160,6 @@ describe('eligibility and transactional claim', () => {
     ['a string pause flag', malformed(policy => { policy.paused = 'false'; })],
     ['no expiry field', malformed(policy => delete policy.expiresAt)],
     ['an unknown field', malformed(policy => { policy.resetBy = 'agent'; })],
-    ['a steer busy policy', malformed(policy => { policy.busy = 'steer'; })],
     ['a negative version', testPolicy({ version: -1 })],
     ['a fractional version', testPolicy({ version: 3.5 })],
     ['an arming version after the version', testPolicy({ version: 3, armedAt: 4 })],
@@ -165,6 +171,7 @@ describe('eligibility and transactional claim', () => {
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(job);
+    dispatcher.wake();
     await dispatcher.idle();
     expect(w.harness.submitted).toHaveLength(0);
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'unconfigured' });
@@ -261,11 +268,55 @@ describe('eligibility and transactional claim', () => {
   });
 
   describe('harness route', () => {
+    it('submits through a tested native CLI queue route with evidence', async () => {
+      const w = await world();
+      w.harness.route = { existingSession: 'native_cli_queue', immediateNotification: 'native_cli_queue' };
+      const dispatcher = w.dispatcher();
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1']);
+    });
+
+    it('submits through the experimental agent listener only with an explicit opt-in', async () => {
+      const w = await world();
+      w.harness.route = {
+        support: 'experimental',
+        existingSession: 'agent_installed_listener',
+        immediateNotification: 'agent_installed_listener',
+        busy: 'unknown',
+        evidenceRef: null,
+      };
+      const dispatcher = w.dispatcher({ allowExperimentalAgentListener: true });
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1']);
+    });
+
+    it('refuses the experimental agent listener without the opt-in', async () => {
+      const w = await world();
+      w.harness.route = {
+        support: 'experimental',
+        existingSession: 'agent_installed_listener',
+        immediateNotification: 'agent_installed_listener',
+        busy: 'unknown',
+        evidenceRef: null,
+      };
+      const dispatcher = w.dispatcher();
+      const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
+      await dispatcher.enqueue(job);
+      await dispatcher.idle();
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'harness_unsupported' });
+      expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
+    });
+
     it.each([
       ['a route that steers a running turn', { busy: 'steer' }],
       ['a route with unknown busy behavior', { busy: 'unknown' }],
       ['an unsupported route', { support: 'unsupported' }],
+      ['an experimental native route', { support: 'experimental' }],
       ['a route that cannot resume the existing session', { existingSession: 'unknown' }],
+      ['a route without immediate notification', { immediateNotification: 'unknown' }],
       ['a route for another harness', { harness: 'claude' }],
       ['a malformed capability report', null],
       ['a tested route with no evidence, which the decoder rejects', { evidenceRef: null }],

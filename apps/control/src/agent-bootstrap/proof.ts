@@ -15,7 +15,7 @@ const KEY_X = /^[A-Za-z0-9_-]{43}$/;
 const JTI = /^[A-Za-z0-9_-]{16,64}$/;
 
 export type ProofCheck =
-  | Readonly<{ kind: 'valid'; jti: string }>
+  | Readonly<{ kind: 'valid'; jti: string; publicKey: string }>
   | Readonly<{ kind: 'invalid'; code: 'proof_required' | 'invalid_proof' | 'proof_key_mismatch' | 'proof_target_mismatch' | 'proof_token_mismatch' }>;
 
 export type ProofExpectation = Readonly<{
@@ -67,7 +67,7 @@ export function checkProof(proof: string | null, expected: ProofExpectation): Pr
   } else if (typeof payload.ath !== 'string' || !safeEqual(payload.ath, createHash('sha256').update(expected.accessToken).digest('base64url'))) {
     return invalid('proof_token_mismatch');
   }
-  return { kind: 'valid', jti };
+  return { kind: 'valid', jti, publicKey: jwk.x };
 }
 
 /** RFC 7638 thumbprint of an Ed25519 public key. */

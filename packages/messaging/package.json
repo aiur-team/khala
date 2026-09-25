@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     "./browser-device/index": "./src/browser-device/index.ts",
+    "./channels/*": "./src/channels/*.ts",
+    "./channels/fixtures/fakes": null,
     "./rooms/*": "./src/rooms/*.ts",
     "./rooms/fixtures/fakes": null,
     "./revocation/*": "./src/revocation/*.ts",

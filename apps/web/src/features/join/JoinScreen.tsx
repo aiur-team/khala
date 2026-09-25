@@ -22,12 +22,12 @@ const BUSY_COPY: Partial<Record<JoinPhase, string>> = {
   checking_identity: 'Checking your sign-in…',
   checking_invitation: 'Checking this invitation…',
   initializing_device: 'Getting your device ready…',
-  joining: 'Joining the room…',
+  joining: 'Joining the channel…',
 };
 
 const OUTCOME_COPY: Partial<Record<JoinPhase, { heading: string; body: string }>> = {
   expired: { heading: 'This invitation expired', body: 'Ask whoever shared this link for a new one.' },
-  revoked: { heading: 'This invitation was revoked', body: 'Access to this room is no longer available through this link.' },
+  revoked: { heading: 'This invitation was revoked', body: 'Access to this channel is no longer available through this link.' },
   wrong_account: { heading: 'Wrong account', body: 'This invitation is not for the account you are signed in as.' },
   unavailable: { heading: 'Something did not load', body: 'This did not complete. You can try again.' },
 };
@@ -40,7 +40,7 @@ export function JoinScreen({ view, onSignIn, onRetry, onOpenRoom }: JoinScreenPr
   return (
     <KhalaPageFrame model={{ title: 'Join', labelledBy: 'join-heading' }} banner={banner}>
       <Panel
-        heading="Join this room"
+        heading="Join this channel"
         status={BUSY_PHASES.includes(view.phase) ? 'busy' : 'idle'}
         {...(statusMessage !== undefined ? { statusMessage } : {})}
       >
@@ -75,8 +75,8 @@ function Joined({ roomId, onOpenRoom }: { roomId: string | null; onOpenRoom?: (r
     <div className="join-joined" role="status">
       <StatusBadge tone="positive" label="Joined" />
       <p>You&apos;re in.</p>
-      {roomId ? <p className="join-joined__room-id">Room: {roomId}</p> : null}
-      {roomId && onOpenRoom ? <button type="button" onClick={() => onOpenRoom(roomId)}>Open chat</button> : null}
+      {roomId ? <p className="join-joined__room-id">Channel: {roomId}</p> : null}
+      {roomId && onOpenRoom ? <button type="button" onClick={() => onOpenRoom(roomId)}>Open channel</button> : null}
     </div>
   );
 }

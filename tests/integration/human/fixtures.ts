@@ -123,7 +123,7 @@ export async function signIn(page: Page, environment: LiveHumanEnvironment, user
 
 export async function freshPage(context: BrowserContext, environment: LiveHumanEnvironment): Promise<Page> {
   const page = await context.newPage();
-  await page.goto(environment.appOrigin, { waitUntil: 'networkidle' });
+  await page.goto(`${environment.appOrigin}/new`, { waitUntil: 'networkidle' });
   return page;
 }
 

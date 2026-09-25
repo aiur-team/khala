@@ -1,9 +1,9 @@
-// U1: decide whether a binding is on the one route KHA-104 proved, and describe it.
-// Nothing here resumes, starts or attaches to a thread.
+// Describe either proven Codex route without starting, resuming or attaching to a thread.
 
 import { isAbsolute, normalize } from 'node:path';
 import {
   type DeliveryLimits, type HarnessCapabilities, type ReceiptErrorCode, type SessionBinding, sameSessionBinding,
+  unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import {
   type CodexClientPort, type CodexConnection, type CodexDeadlines, type CodexHost, type CodexHostPort,
@@ -13,6 +13,8 @@ import {
 export const CODEX_HARNESS = 'codex';
 export const CODEX_ADAPTER_VERSION = 'khala-hosted-queue-1';
 export const CODEX_EVIDENCE_REF = 'docs/evidence/codex.md';
+export const CODEX_NATIVE_CLI_ADAPTER_VERSION = 'native-cli-notification-1';
+export const CODEX_NATIVE_CLI_EVIDENCE_REF = 'docs/evidence/codex-native-cli.md#queue-idle';
 
 /**
  * Exact versions with same-session evidence. A newer or older version is not promoted
@@ -27,6 +29,10 @@ export const TESTED_CODEX_VERSIONS: readonly string[] = ['0.154.0'];
  */
 export const CODEX_RECEIPT_EVIDENCE = [
   'transport_written', 'harness_queued', 'context_consumed', 'completed', 'outcome_unknown', 'failed',
+] as const;
+
+export const CODEX_NATIVE_CLI_RECEIPT_EVIDENCE = [
+  'harness_queued', 'outcome_unknown', 'failed',
 ] as const;
 
 export type ProbeFailure =
@@ -141,7 +147,7 @@ export async function probeBinding(binding: SessionBinding, deps: ProbeDeps): Pr
 /** The KHA-104 route: a dormant thread resumed in a Khala-started app-server, queue delivery. */
 export function testedCapabilities(version: string, limits: DeliveryLimits): HarnessCapabilities {
   return {
-    v: 2,
+    v: 3,
     harness: CODEX_HARNESS,
     version,
     adapterVersion: CODEX_ADAPTER_VERSION,
@@ -154,13 +160,51 @@ export function testedCapabilities(version: string, limits: DeliveryLimits): Har
     reconcileByReleaseId: 'while_queued',
     limits,
     evidenceRef: CODEX_EVIDENCE_REF,
+    modes: unknownModeSupportMap(
+      'codex-interactive-hooks',
+      'Khala-hosted app-server evidence is secondary and cannot prove delivery into the user-owned Codex TUI.',
+      version,
+    ),
+    acknowledgement: 'unknown',
+  };
+}
+
+/** KHA-146 route A: native queue notification plus KHA-148's local payload inbox. */
+export function nativeCliCapabilities(version: string, limits: DeliveryLimits): HarnessCapabilities {
+  return {
+    v: 3,
+    harness: CODEX_HARNESS,
+    version,
+    adapterVersion: CODEX_NATIVE_CLI_ADAPTER_VERSION,
+    support: 'tested',
+    existingSession: 'native_cli_queue',
+    immediateNotification: 'native_cli_queue',
+    busy: 'queue',
+    receiptEvidence: [...CODEX_NATIVE_CLI_RECEIPT_EVIDENCE],
+    reconcileByReleaseId: 'unsupported',
+    limits,
+    evidenceRef: CODEX_NATIVE_CLI_EVIDENCE_REF,
+    modes: unknownModeSupportMap(
+      'codex-interactive-native',
+      'The native queue proves notification only; idle agents receive messages only at their next turn until payload delivery is proved.',
+      version,
+    ),
+    acknowledgement: 'unknown',
+  };
+}
+
+export function unsupportedNativeCliCapabilities(version: string, limits: DeliveryLimits): HarnessCapabilities {
+  return {
+    ...unsupportedCapabilities(version, limits),
+    adapterVersion: CODEX_NATIVE_CLI_ADAPTER_VERSION,
+    evidenceRef: CODEX_NATIVE_CLI_EVIDENCE_REF,
   };
 }
 
 /** Anything off the proven route: no capability is claimed. */
 export function unsupportedCapabilities(version: string, limits: DeliveryLimits): HarnessCapabilities {
   return {
-    v: 2,
+    v: 3,
     harness: CODEX_HARNESS,
     version,
     adapterVersion: CODEX_ADAPTER_VERSION,
@@ -172,5 +216,11 @@ export function unsupportedCapabilities(version: string, limits: DeliveryLimits)
     reconcileByReleaseId: 'unknown',
     limits,
     evidenceRef: CODEX_EVIDENCE_REF,
+    modes: unknownModeSupportMap(
+      'codex-interactive-uninspected',
+      'This exact Codex version and interactive session route have not been inspected.',
+      version,
+    ),
+    acknowledgement: 'unknown',
   };
 }

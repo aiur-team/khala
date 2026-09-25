@@ -38,9 +38,15 @@ importers:
 
   apps/connector:
     dependencies:
+      '@khala/connector':
+        specifier: workspace:*
+        version: link:../../packages/connector
       '@khala/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@khala/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
 
   apps/control:
     dependencies:
@@ -54,6 +60,28 @@ importers:
         specifier: 3.8.8
         version: 3.8.8
     devDependencies:
+      tsx:
+        specifier: 4.20.6
+        version: 4.20.6
+
+  apps/internal:
+    dependencies:
+      '@khala/connector':
+        specifier: workspace:*
+        version: link:../../packages/connector
+      '@khala/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@khala/messaging':
+        specifier: workspace:*
+        version: link:../../packages/messaging
+      '@khala/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+    devDependencies:
+      '@playwright/test':
+        specifier: 1.63.0
+        version: 1.63.0
       tsx:
         specifier: 4.20.6
         version: 4.20.6
@@ -92,13 +120,39 @@ importers:
         specifier: 7.3.6
         version: 7.3.6(@types/node@22.20.3)(tsx@4.20.6)
 
+  packages/agent-cli:
+    devDependencies:
+      '@khala/connector':
+        specifier: workspace:*
+        version: link:../connector
+      '@khala/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+
+  packages/agent-skill:
+    dependencies:
+      '@khala/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@aiur/khala':
+        specifier: workspace:*
+        version: link:../agent-cli
+
   packages/connector:
     dependencies:
       '@khala/contracts':
         specifier: workspace:*
         version: link:../contracts
 
-  packages/contracts: {}
+  packages/contracts:
+    devDependencies:
+      libsodium-wrappers:
+        specifier: 0.8.4
+        version: 0.8.4
 
   packages/harnesses:
     dependencies:
@@ -1141,6 +1195,12 @@ packages:
   levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
+
+  libsodium-wrappers@0.8.4:
+    resolution: {integrity: sha512-mu8aAWucZjTB5O/BtGXtW4e1agy7uHxNYG7zPthmmD1jU43LCDmSWZLN4JhflbdPXj3yDO4lxM1O9hLDgIOXDw==}
+
+  libsodium@0.8.4:
+    resolution: {integrity: sha512-lMcYaRi0zcs7tarATsQUYC7rstliIXZuoq0c6zXSgNtSNtdvBgkSegjWhpMJAXzKX3SUSwIp7+zEsob+j3LuRw==}
 
   locate-path@6.0.0:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
@@ -2349,6 +2409,12 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
       type-check: 0.4.0
+
+  libsodium-wrappers@0.8.4:
+    dependencies:
+      libsodium: 0.8.4
+
+  libsodium@0.8.4: {}
 
   locate-path@6.0.0:
     dependencies:

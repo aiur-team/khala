@@ -109,7 +109,7 @@ export function AgentControlsPanel({ ports, config, controller: injectedControll
           <dd>{view.agentLabel}</dd>
         </div>
         <div>
-          <dt>Room</dt>
+          <dt>Channel</dt>
           <dd>{view.roomLabel}</dd>
         </div>
       </dl>

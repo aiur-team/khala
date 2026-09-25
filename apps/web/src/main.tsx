@@ -1,6 +1,7 @@
 import { decodeContentLimits } from '@khala/contracts/messaging/index';
 import { createHumanApplication } from './composition/human/application';
 import { createHumanBrowserApi } from './composition/human/browser-api';
+import { readHumanEntry } from './composition/human/entry';
 import { createMatrixBrowserPorts } from './composition/human/matrix-browser';
 import { mountKhalaContent } from './composition/human/mount';
 import { renderHumanRoom } from './composition/human/room';
@@ -8,9 +9,9 @@ import { createHumanRouteCodec } from './composition/human/routes';
 import './brand/fonts.css';
 import './brand/tokens.css';
 import './shell/shell.css';
-import './features/create-chat/create-chat.css';
+import './features/create-channel/create-channel.css';
 import './features/timeline/timeline.css';
-import './features/room/room.css';
+import './features/channel/channel.css';
 import './main.css';
 
 const target = document.querySelector('#app');
@@ -27,6 +28,9 @@ const decodedLimits = decodeContentLimits({
 });
 if (!decodedLimits.ok) throw new Error('invalid Matrix content limits');
 
+const entry = readHumanEntry(location);
+if (entry.path !== `${location.pathname}${location.search}`) history.replaceState(null, '', entry.path);
+
 const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value });
 const matrix = createMatrixBrowserPorts({
   identity: api.identity,
@@ -41,14 +45,14 @@ const application = createHumanApplication({
   admission: api.admission,
   participant: matrix.participant,
   limits: decodedLimits.value,
-}, { initialPath: `${location.pathname}${location.search}` });
+}, { initialPath: entry.path });
 const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
 const mounted = mountKhalaContent({
   target,
   application,
   identity: api.identity,
   routes,
-  mode: 'standalone',
+  mode: entry.mode,
   renderRoom: renderHumanRoom,
   navigateRoute(path) {
     history.pushState(null, '', path);

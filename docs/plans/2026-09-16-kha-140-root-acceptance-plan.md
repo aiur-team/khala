@@ -135,7 +135,7 @@ Every proposed verification command below is an implementation-time contract, no
 
 **Patterns:** KTD1–KTD4; referenced upstream behavior and owned sibling boundaries.
 
-**Test scenarios:** No manual install/config appears; full human chat remains distinct from released agent context; third owner has independent review.
+**Test scenarios:** No manual install/config appears; full human channel remains distinct from released agent context; third owner has independent review.
 
 **Verification:** Record the observed pass/fail result, exact build/environment and sanitized evidence; do not infer runtime success from configuration parsing alone.
 
@@ -153,7 +153,7 @@ Every proposed verification command below is an implementation-time contract, no
 
 **Patterns:** KTD1–KTD4; referenced upstream behavior and owned sibling boundaries.
 
-**Test scenarios:** A new adapter author can run conformance suite; user troubleshooting does not ask for raw tokens or plaintext chat logs.
+**Test scenarios:** A new adapter author can run conformance suite; user troubleshooting does not ask for raw tokens or plaintext channel logs.
 
 **Verification:** Record the observed pass/fail result, exact build/environment and sanitized evidence; do not infer runtime success from configuration parsing alone.
 

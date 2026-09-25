@@ -5,15 +5,35 @@
 import { createHash } from 'node:crypto';
 import {
   type ApprovalCommand, type AuthorizationId, type BindingId, type CausalRootId, type CommandId, type DeliveryReceipt,
-  type EventRef, type HarnessCapabilities, type HarnessPort, type OwnerAuthority, type ReceiptKind, type ReleasedJob,
-  type SessionBinding, type UnverifiedReleasedJob, decodeDeliveryLimits, releaseFromApproval,
+  type DeliveryReceiptV2, type EventRef, type HarnessCapabilities, type HarnessPort, type ListeningMode,
+  type ModeSupport, type ModeSupportMap, type OwnerAuthority, type ReceiptKind, type ReleasedJob, type SessionBinding,
+  type UnverifiedReleasedJob, decodeDeliveryLimits, releaseFromApproval,
 } from '@khala/contracts/delivery/index';
 import { queuedRecord } from '../claim';
 import { createMemoryLedger, type MemoryLedger } from './memory-ledger';
 import { createDispatcher } from '../run';
-import type { DispatchDeps, DispatchLedger, DispatchPolicy, Dispatcher } from '../types';
+import type {
+  AttemptSnapshot, BoundaryObservation, DeliveryBoundary, DispatchDeps, DispatchLedger, DispatchListening,
+  DispatchLimits, DispatchPolicy, Dispatcher,
+} from '../types';
 
 export const POLICY_VERSION = 3;
+export const HARNESS_VERSION = '0.154.0';
+export const EVIDENCE_REVISION = 'evidence-rev-1';
+
+/** An applied listening-mode projection with `requested === effective`. */
+export function listening(
+  mode: ListeningMode | null = 'sync',
+  overrides: Partial<DispatchListening> = {},
+): DispatchListening {
+  return {
+    version: 1,
+    requested: mode ?? 'sync',
+    effective: mode,
+    evidenceRevision: mode === null ? null : EVIDENCE_REVISION,
+    ...overrides,
+  };
+}
 
 /** Explicit test controls. These are fixture values, not product defaults. */
 export function testPolicy(overrides: Partial<DispatchPolicy> = {}): DispatchPolicy {
@@ -21,12 +41,32 @@ export function testPolicy(overrides: Partial<DispatchPolicy> = {}): DispatchPol
     version: POLICY_VERSION,
     armedAt: POLICY_VERSION,
     paused: false,
-    maxJobsPerCausalRoot: 10,
-    maxConcurrentJobs: 10,
     expiresAt: null,
-    busy: 'queue',
+    listening: listening(),
     ...overrides,
   };
+}
+
+/**
+ * Explicit test limits, injected into the dispatcher the way composition injects the local profile.
+ * These are fixture values, looser than the product profile so tests isolate one limit at a time.
+ */
+export function testLimits(overrides: Partial<DispatchLimits> = {}): DispatchLimits {
+  return { maxJobsPerCausalRoot: 10, maxConcurrentJobs: 10, busy: 'queue', ...overrides };
+}
+
+/** Proven support for every mode on the fixture's exact interactive route. */
+export function provenModes(overrides: Partial<Record<ListeningMode, Partial<ModeSupport>>> = {}): ModeSupportMap {
+  const support = (mode: ListeningMode): ModeSupport => ({
+    status: 'proven',
+    route: `test-codex-interactive-${mode}`,
+    testedVersion: HARNESS_VERSION,
+    evidenceRef: `docs/evidence/codex-${mode}.md`,
+    evidenceRevision: EVIDENCE_REVISION,
+    reason: null,
+    ...overrides[mode],
+  } as ModeSupport);
+  return { steer: support('steer'), sync: support('sync'), async: support('async') };
 }
 
 export const OWNER = 'owner-b' as SessionBinding['ownerId'];
@@ -124,6 +164,27 @@ export function receipt(job: UnverifiedReleasedJob, kind: ReceiptKind, extra: Pa
   };
 }
 
+type AgentAcknowledgement = Extract<DeliveryReceiptV2, { kind: 'agent_acknowledged' }>;
+
+export function agentAcknowledgement(
+  job: UnverifiedReleasedJob,
+  extra: Partial<AgentAcknowledgement> = {},
+): AgentAcknowledgement {
+  return {
+    v: 2,
+    receiptId: `receipt-${job.releaseId}-agent-acknowledged` as AgentAcknowledgement['receiptId'],
+    releaseId: job.releaseId,
+    bindingId: job.binding.bindingId,
+    generation: job.binding.generation,
+    kind: 'agent_acknowledged',
+    observedAt: '2026-09-18T02:38:01.125Z',
+    source: 'agent',
+    evidenceRef: `ack:${job.releaseId}`,
+    errorCode: null,
+    ...extra,
+  };
+}
+
 export const MAX_PAYLOAD_BYTES = 4096;
 
 const LIMITS = (() => {
@@ -137,7 +198,7 @@ export function capabilities(
   overrides: Partial<HarnessCapabilities> = {},
 ): HarnessCapabilities {
   return {
-    v: 2,
+    v: 3,
     harness: 'codex',
     version: '0.154.0',
     adapterVersion: 'test-adapter',
@@ -149,6 +210,8 @@ export function capabilities(
     reconcileByReleaseId: 'while_queued',
     limits: LIMITS,
     evidenceRef: 'docs/evidence/codex.md',
+    modes: provenModes(),
+    acknowledgement: 'batch_token_next_call',
     ...overrides,
   };
 }
@@ -189,6 +252,29 @@ export class FakeHarness implements HarnessPort {
   submittedIds(): string[] { return this.submitted.map(entry => entry.job.releaseId); }
 }
 
+export type BoundaryCall = Readonly<{ job: ReleasedJob; snapshot: AttemptSnapshot; signal: AbortSignal }>;
+
+/**
+ * Proved-boundary double. By default the boundary is reached at once, reporting the claimed session
+ * and the harness's current capabilities without counting as a harness inspection.
+ */
+export class FakeBoundary implements DeliveryBoundary {
+  readonly calls: BoundaryCall[] = [];
+  onAwait: (call: BoundaryCall) => Promise<BoundaryObservation | null>;
+
+  constructor(harness: FakeHarness) {
+    this.onAwait = async ({ job }) => ({
+      binding: job.binding,
+      capabilities: harness.route === null ? null : capabilities(harness.busy, harness.route),
+    });
+  }
+
+  async await(call: BoundaryCall): Promise<BoundaryObservation | null> {
+    this.calls.push(call);
+    return this.onAwait(call);
+  }
+}
+
 /** Wraps a ledger so chosen transactions throw before or after they commit. */
 export function faultyLedger(inner: DispatchLedger): DispatchLedger & { crashAt(n: number, when: 'before' | 'after'): void; count: number } {
   const crashes = new Map<number, 'before' | 'after'>();
@@ -209,9 +295,12 @@ export function faultyLedger(inner: DispatchLedger): DispatchLedger & { crashAt(
 export type World = {
   ledger: MemoryLedger;
   harness: FakeHarness;
+  boundary: FakeBoundary;
   releases: Map<string, Release>;
   errors: unknown[];
   now: Date;
+  /** The limits every dispatcher from this world is constructed with. */
+  limits: DispatchLimits;
   /** Payload refs read, with the byte limit each read was given. */
   reads: Array<Readonly<{ ref: string; maxBytes: number }>>;
   /** Approval command IDs looked up, in order. */
@@ -221,10 +310,16 @@ export type World = {
   add(release: Release): Release;
   /** Sets the effective policy of every binding. */
   setPolicy(policy: DispatchPolicy | null): Promise<void>;
+  /** The dependencies `dispatcher()` constructs with, for compositions that build their own. */
+  deps(overrides?: Partial<DispatchDeps>): DispatchDeps;
   dispatcher(overrides?: Partial<DispatchDeps>): Dispatcher;
 };
 
-export async function world(policy: DispatchPolicy | null = testPolicy(), bindingIds = ['bind-1', 'bind-2', 'bind-3']): Promise<World> {
+export async function world(
+  policy: DispatchPolicy | null = testPolicy(),
+  bindingIds = ['bind-1', 'bind-2', 'bind-3'],
+  limits: DispatchLimits = testLimits(),
+): Promise<World> {
   const ledger = createMemoryLedger();
   await ledger.transact(tx => {
     for (const id of bindingIds) {
@@ -236,12 +331,15 @@ export async function world(policy: DispatchPolicy | null = testPolicy(), bindin
   const approvals = new Map<string, ApprovalCommand>();
   const payloads = new Map<string, Uint8Array>();
   let ids = 0;
+  const harness = new FakeHarness();
   const state: World = {
     ledger,
-    harness: new FakeHarness(),
+    harness,
+    boundary: new FakeBoundary(harness),
     releases,
     errors: [],
     now: new Date('2026-09-18T01:00:00Z'),
+    limits,
     reads: [],
     lookups: [],
     onApproval: () => undefined,
@@ -255,9 +353,14 @@ export async function world(policy: DispatchPolicy | null = testPolicy(), bindin
       return release;
     },
     dispatcher(overrides = {}) {
-      return createDispatcher({
+      return createDispatcher(state.deps(overrides));
+    },
+    deps(overrides = {}) {
+      return {
         ledger,
+        limits: state.limits,
         harness: state.harness,
+        boundary: state.boundary,
         approvals: {
           get: async id => {
             state.lookups.push(id);
@@ -277,7 +380,7 @@ export async function world(policy: DispatchPolicy | null = testPolicy(), bindin
         workerId: 'worker-1',
         onError: error => void state.errors.push(error),
         ...overrides,
-      });
+      };
     },
   };
   return state;

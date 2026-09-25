@@ -1,13 +1,13 @@
 import { useEffect, useMemo } from 'react';
-import { createRoomController } from '../../features/room/controller';
-import type { RoomUiPort } from '../../features/room/ports';
-import { RoomScreen } from '../../features/room/RoomScreen';
+import { createChannelController } from '../../features/channel/controller';
+import type { ChannelUiPort } from '../../features/channel/ports';
+import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRoomRenderer } from './mount';
 
-const unavailablePresence: RoomUiPort = {
+const unavailablePresence: ChannelUiPort = {
   async agents() { throw new Error('agent presence unavailable'); },
   subscribeAgents: () => () => undefined,
   async installCommand() { throw new Error('agent onboarding unavailable'); },
@@ -26,7 +26,7 @@ function HumanRoom({ context, roomId }: {
     [context.generation, context.room, roomId],
   );
   const room = useMemo(
-    () => createRoomController(unavailablePresence, { roomId, generation: context.generation }),
+    () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
   );
   useEffect(() => () => {
@@ -43,7 +43,7 @@ function HumanRoom({ context, roomId }: {
   }
 
   return (
-    <RoomScreen
+    <ChannelScreen
       title="Khala conversation"
       description="Encrypted messages shared by admitted participants."
       controller={room}
@@ -52,12 +52,12 @@ function HumanRoom({ context, roomId }: {
       )}
       renderReview={() => (
         <Panel heading="Recipient review">
-          <p role="status">Connector review is not available for this room yet.</p>
+          <p role="status">Connector review is not available for this channel yet.</p>
         </Panel>
       )}
       renderControls={() => (
         <Panel heading="Agent controls">
-          <p role="status">Agent controls are not available for this room yet.</p>
+          <p role="status">Agent controls are not available for this channel yet.</p>
         </Panel>
       )}
     />

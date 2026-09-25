@@ -17,6 +17,8 @@ import {
 } from './handlers';
 
 const ORIGIN = 'https://khala.aiur.team';
+const FLOW_ROUTE_COUNT = 9;
+const flowRoutes = () => registerHumanHandlers().slice(0, FLOW_ROUTE_COUNT);
 const principal: AuthPrincipal = {
   v: 1,
   ownerId: 'owner_alice' as OwnerId,
@@ -83,7 +85,7 @@ async function body(response: Response): Promise<Record<string, unknown>> {
 
 describe('human handler registration', () => {
   it('publishes a literal, duplicate-free method shape without a catch-all route', () => {
-    const registrations = registerHumanHandlers();
+    const registrations = flowRoutes();
     const shape = registrations.map(({ path, methods }) => [path, methods]);
 
     expect(shape).toEqual([
@@ -98,6 +100,8 @@ describe('human handler registration', () => {
       [MATRIX_PARTICIPANTS_PATH, ['POST']],
     ]);
     expect(new Set(shape.map(([path]) => path)).size).toBe(shape.length);
+    const all = registerHumanHandlers();
+    expect(new Set(all.map(({ path }) => path)).size).toBe(all.length);
     expect(registrations.every(({ path }) => path.startsWith('/api/human/') && !path.includes('*'))).toBe(true);
     expect(registrations.every(({ methods }) => methods.length > 0 && new Set(methods).size === methods.length)).toBe(true);
   });
@@ -111,7 +115,7 @@ describe('human handler registration', () => {
   });
 
   it('keeps production registrations fail-closed when deployment services are unavailable', async () => {
-    for (const registration of registerHumanHandlers()) {
+    for (const registration of flowRoutes()) {
       const response = await registration.handle(request(registration.path, {
         method: registration.methods[0]!,
         headers: { origin: ORIGIN, 'sec-fetch-site': 'same-origin' },
@@ -313,5 +317,75 @@ describe('admission route handlers', () => {
     expect(response.status).toBe(401);
     expect(await body(response)).toEqual({ code: 'authentication_required' });
     expect(state.admission.admit).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerHumanHandlers feature routes', () => {
+  const features = (registrations: ReturnType<typeof registerHumanHandlers>) => registrations.slice(FLOW_ROUTE_COUNT);
+
+  it('reserves the exact human pairing and channel-access surface with finite immutable fallbacks', async () => {
+    const all = registerHumanHandlers();
+    const registrations = features(all);
+    expect(registrations.map(({ path, methods }) => ({ path, methods }))).toEqual([
+      { path: '/api/human/pairing/request', methods: ['POST', 'GET'] },
+      { path: '/api/human/pairing/decision', methods: ['POST'] },
+      { path: '/api/human/channel-access/inbox', methods: ['GET'] },
+      { path: '/api/human/channel-access/decision', methods: ['POST'] },
+      { path: '/api/human/channel-access/mute', methods: ['POST'] },
+      { path: '/api/human/channel-discovery/bootstrap/authorize', methods: ['GET', 'POST'] },
+      { path: '/api/human/channel-discovery/settings', methods: ['PUT'] },
+      { path: '/api/human/channel-discovery/allowlist', methods: ['POST'] },
+      { path: '/api/human/channel-discovery/rollout', methods: ['PUT'] },
+    ]);
+    expect(Object.isFrozen(all)).toBe(true);
+    for (const registration of registrations) {
+      expect(Object.isFrozen(registration)).toBe(true);
+      const response = await registration.handle(new Request(`https://example.test${registration.path}`));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual(registration.path.includes('channel-discovery/bootstrap')
+        ? { error: 'feature_unavailable' }
+        : { v: 1, kind: 'rejected', code: 'feature_unavailable' });
+    }
+  });
+
+  it('substitutes live pairing registrations', () => {
+    const request = { path: '/api/human/pairing/request', methods: ['POST', 'GET'], handle: async () => new Response('request') } as const;
+    const decision = { path: '/api/human/pairing/decision', methods: ['POST'], handle: async () => new Response('decision') } as const;
+    expect(features(registerHumanHandlers({ pairing: () => [request, decision] })).slice(0, 2)).toEqual([request, decision]);
+  });
+
+  it('places live channel-access registrations after pairing', () => {
+    const inbox = { path: '/api/human/channel-access/inbox', methods: ['GET'], handle: async () => new Response('inbox') } as const;
+    const decision = { path: '/api/human/channel-access/decision', methods: ['POST'], handle: async () => new Response('decision') } as const;
+    const mute = { path: '/api/human/channel-access/mute', methods: ['POST'], handle: async () => new Response('mute') } as const;
+    const registrations = features(registerHumanHandlers({ channelAccess: () => [inbox, decision, mute] }));
+    const start = registrations.indexOf(inbox);
+    expect(registrations.slice(start, start + 3)).toEqual([inbox, decision, mute]);
+    expect(registrations.slice(0, start).map(({ path }) => path)).toEqual(['/api/human/pairing/request', '/api/human/pairing/decision']);
+  });
+
+  it('substitutes only the live channel-discovery bootstrap registration', () => {
+    const authorize = {
+      path: '/api/human/channel-discovery/bootstrap/authorize',
+      methods: ['GET', 'POST'],
+      handle: async () => new Response('authorize'),
+    } as const;
+    const registrations = features(registerHumanHandlers({ channelDiscoveryBootstrap: () => [authorize] }));
+
+    expect(registrations.at(-4)).toBe(authorize);
+    expect(registrations.slice(0, 2).map(route => route.path)).toEqual([
+      '/api/human/pairing/request',
+      '/api/human/pairing/decision',
+    ]);
+  });
+
+  it('substitutes only the live channel-discovery settings registrations', () => {
+    const settings = { path: '/api/human/channel-discovery/settings', methods: ['PUT'], handle: async () => new Response('settings') } as const;
+    const allowlist = { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], handle: async () => new Response('allowlist') } as const;
+    const rollout = { path: '/api/human/channel-discovery/rollout', methods: ['PUT'], handle: async () => new Response('rollout') } as const;
+    const registrations = features(registerHumanHandlers({ channelDiscovery: () => [settings, allowlist, rollout] }));
+
+    expect(registrations.slice(-3)).toEqual([settings, allowlist, rollout]);
+    expect(registrations.at(-4)?.path).toBe('/api/human/channel-discovery/bootstrap/authorize');
   });
 });

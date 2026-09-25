@@ -6,7 +6,10 @@ import {
   EXISTING_SESSION_SUPPORT, IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT,
   type HarnessCapabilities, type HarnessPort, decodeHarnessCapabilities,
 } from './harness';
-import { type DeliveryReceipt, RECEIPT_ERROR_CODES, RECEIPT_KINDS, decodeDeliveryReceipt } from './receipts';
+import {
+  type DeliveryReceipt, type DeliveryReceiptTransport, type DeliveryReceiptV2, type ReceiptKind, type ReceiptKindV2,
+  RECEIPT_ERROR_CODES, RECEIPT_KINDS, decodeDeliveryReceipt, decodeDeliveryReceiptV2,
+} from './receipts';
 
 const capabilityViews = views.valid.filter(view => view.decoder === 'capabilities');
 const route = (adapterVersion: string): unknown => {
@@ -32,6 +35,7 @@ describe('HarnessCapabilities', () => {
   it('claims for the proven Codex route only what KHA-104 observed', () => {
     expect(decodeHarnessCapabilities(exact.capabilities)).toEqual({ ok: true, value: exact.capabilities });
     expect(exact.capabilities).toMatchObject({
+      v: 3,
       harness: 'codex',
       version: '0.154.0',
       support: 'tested',
@@ -39,6 +43,10 @@ describe('HarnessCapabilities', () => {
       reconcileByReleaseId: 'while_queued',
       busy: 'queue',
       evidenceRef: 'docs/evidence/codex.md',
+      acknowledgement: 'unknown',
+    });
+    expect(exact.capabilities.modes).toMatchObject({
+      steer: { status: 'unknown' }, sync: { status: 'unknown' }, async: { status: 'unknown' },
     });
   });
 
@@ -85,8 +93,81 @@ describe('HarnessCapabilities', () => {
       .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
   });
 
+  it('rejects malformed v3 capability envelopes', () => {
+    const missingModes = structuredClone(exact.capabilities) as Record<string, unknown>;
+    delete missingModes.modes;
+    expect(decodeHarnessCapabilities(missingModes))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'modes' });
+
+    const missingAcknowledgement = structuredClone(exact.capabilities) as Record<string, unknown>;
+    delete missingAcknowledgement.acknowledgement;
+    expect(decodeHarnessCapabilities(missingAcknowledgement))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'acknowledgement' });
+
+    expect(decodeHarnessCapabilities({ ...exact.capabilities, unexpected: true }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'unexpected' });
+    expect(decodeHarnessCapabilities({ ...exact.capabilities, acknowledgement: 'immediate' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'acknowledgement' });
+    expect(decodeHarnessCapabilities({
+      ...exact.capabilities,
+      modes: {
+        ...exact.capabilities.modes,
+        steer: { ...exact.capabilities.modes.steer, testedVersion: 'different-version' },
+      },
+    })).toEqual({ ok: false, code: 'invalid_field', field: 'modes.steer.testedVersion' });
+  });
+
+  it('decodes a retained v2 envelope into a conservative v3 view', () => {
+    const legacy = structuredClone(exact.capabilities) as Record<string, unknown>;
+    legacy.v = 2;
+    delete legacy.modes;
+    delete legacy.acknowledgement;
+    const decoded = decodeHarnessCapabilities(legacy);
+    expect(decoded).toMatchObject({
+      ok: true,
+      value: {
+        v: 3,
+        acknowledgement: 'unknown',
+        modes: {
+          steer: { status: 'unknown' },
+          sync: { status: 'unknown' },
+          async: { status: 'unknown' },
+        },
+      },
+    });
+    if (decoded.ok) {
+      expect(Object.values(decoded.value.modes).every(mode => mode.reason?.includes('v2'))).toBe(true);
+    }
+  });
+
+  it('normalizes maximum-length v2 identifiers into a decodable v3 envelope', () => {
+    const legacy = structuredClone(exact.capabilities) as Record<string, unknown>;
+    legacy.v = 2;
+    legacy.harness = 'h'.repeat(512);
+    legacy.adapterVersion = 'a'.repeat(512);
+    delete legacy.modes;
+    delete legacy.acknowledgement;
+
+    const normalized = decodeHarnessCapabilities(legacy);
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      expect(normalized.value.modes.steer.route).toBe('legacy-v2-unknown-steer');
+      expect(decodeHarnessCapabilities(normalized.value)).toEqual({ ok: true, value: normalized.value });
+    }
+  });
+
+  it('keeps acknowledgement independent of otherwise identical mode support', () => {
+    for (const acknowledgement of ['unknown', 'unsupported', 'batch_token_next_call'] as const) {
+      expect(decodeHarnessCapabilities({ ...exact.capabilities, acknowledgement })).toEqual({
+        ok: true, value: { ...exact.capabilities, acknowledgement },
+      });
+    }
+  });
+
   it('keeps the Claude session and every foreign or generic route out of support claims', () => {
-    expect(route('no-setup-route')).toMatchObject({ support: 'unsupported', existingSession: 'unsupported' });
+    expect(route('native-route-unavailable-1')).toMatchObject({
+      support: 'unsupported', existingSession: 'unsupported', evidenceRef: 'docs/evidence/claude-native-cli.md',
+    });
     for (const adapterVersion of ['foreign-executor', 'unimplemented']) {
       expect(route(adapterVersion)).toMatchObject({
         support: 'unsupported',
@@ -138,6 +219,46 @@ describe('DeliveryReceipt', () => {
   it.each(RECEIPT_ERROR_CODES)('accepts closed code %s on a failed receipt', errorCode => {
     const receipt = { ...exact.receipt, kind: 'failed', errorCode };
     expect(decodeDeliveryReceipt(receipt)).toEqual({ ok: true, value: receipt });
+  });
+
+  it('keeps the compatibility receipt aliases v1-only', () => {
+    const v2 = exact.receiptV2 as Extract<DeliveryReceiptV2, { kind: 'agent_acknowledged' }>;
+    const v2Kind: ReceiptKindV2 = 'agent_acknowledged';
+    const transport: DeliveryReceiptTransport = v2;
+    expect(transport.v).toBe(2);
+
+    // @ts-expect-error DeliveryReceipt remains the v1-only UI/harness compatibility type.
+    const compatibilityReceipt: DeliveryReceipt = v2;
+    // @ts-expect-error ReceiptKind remains the v1-only capability vocabulary.
+    const compatibilityKind: ReceiptKind = 'agent_acknowledged';
+    // @ts-expect-error An acknowledgement can only be sourced from the agent.
+    const harnessAcknowledgement: DeliveryReceiptV2 = { ...v2, source: 'harness' };
+    // @ts-expect-error The agent source can only be paired with an acknowledgement.
+    const agentCompletion: DeliveryReceiptV2 = { ...v2, kind: 'completed' };
+    // @ts-expect-error An acknowledgement must retain its shared evidence reference.
+    const acknowledgementWithoutEvidence: DeliveryReceiptV2 = { ...v2, evidenceRef: null };
+    // @ts-expect-error An acknowledgement never carries an error code.
+    const acknowledgementWithError: DeliveryReceiptV2 = { ...v2, errorCode: 'timeout' };
+    expect([
+      v2Kind,
+      compatibilityReceipt,
+      compatibilityKind,
+      harnessAcknowledgement,
+      agentCompletion,
+      acknowledgementWithoutEvidence,
+      acknowledgementWithError,
+    ]).toHaveLength(7);
+  });
+
+  it('rejects invalid v2 acknowledgement/source pairings', () => {
+    expect(decodeDeliveryReceiptV2({ ...exact.receiptV2, source: 'harness' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'source' });
+    expect(decodeDeliveryReceiptV2({ ...exact.receiptV2, kind: 'completed' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'kind' });
+    expect(decodeDeliveryReceiptV2({ ...exact.receiptV2, evidenceRef: null }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'evidenceRef' });
+    expect(decodeDeliveryReceiptV2({ ...exact.receiptV2, errorCode: 'timeout' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'errorCode' });
   });
 });
 
