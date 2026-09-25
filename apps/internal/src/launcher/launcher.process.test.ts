@@ -83,7 +83,11 @@ describe('internal launcher processes', () => {
 
     // B asks for A's port, so the next port is free and a lease-blind launcher would fall forward and start.
     const launcherB = start(state, ['create', '-', String(a.port)]);
-    expect(await launcherB.exited).toBe(3);
+    const outcome = await Promise.race([
+      launcherB.exited.then(code => ({ exited: code })),
+      report(launcherB).then(started => ({ started })),
+    ]);
+    expect(outcome).toEqual({ exited: 3 });
     expect(JSON.parse(launcherB.stderr().trim().split('\n').at(-1)!)).toEqual({ ok: false, error: 'launcher_running' });
     expect(launcherB.stdout()).toBe('');
     expect(fs.readFileSync(active).equals(before)).toBe(true);
