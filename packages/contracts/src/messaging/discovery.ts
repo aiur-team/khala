@@ -330,6 +330,8 @@ export interface ChannelPrivateEligibilityPort {
 }
 
 export type GrantExchangeRejection =
+  /** Denied, revoked, deleted, or otherwise no longer exchangeable. Never a reason. */
+  | 'closed'
   | 'expired'
   | 'proof_mismatch'
   | 'encryption_key_mismatch'

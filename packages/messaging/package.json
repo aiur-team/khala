@@ -10,7 +10,8 @@
     "./rooms/*": "./src/rooms/*.ts",
     "./rooms/fixtures/fakes": null,
     "./revocation/*": "./src/revocation/*.ts",
-    "./recovery/*": "./src/recovery/*.ts"
+    "./recovery/*": "./src/recovery/*.ts",
+    "./channel-access/exchange/*": "./src/channel-access/exchange/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
@@ -19,7 +20,8 @@
     "test:browser": "node --import tsx --test 'src/**/*.browser.spec.ts'"
   },
   "dependencies": {
-    "@khala/contracts": "workspace:*"
+    "@khala/contracts": "workspace:*",
+    "libsodium-wrappers": "0.8.4"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
