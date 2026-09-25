@@ -48,7 +48,12 @@ describe('registerAgentHandlers', () => {
       status: { snapshot: async () => ({ generation: 0, agents: [] }) },
       channelAccess: () => [access, create, status],
     });
-    expect(registrations.slice(-4, -1)).toEqual([access, create, status]);
+    const start = registrations.indexOf(access);
+    expect(registrations.slice(start, start + 3)).toEqual([access, create, status]);
+    expect(registrations.slice(0, start).map(({ path }) => path)).toEqual([
+      '/api/agent/status',
+      ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/pairing/')),
+    ]);
   });
 
   it('substitutes only the live channel-discovery bootstrap registration', () => {

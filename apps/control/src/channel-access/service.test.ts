@@ -4,18 +4,24 @@ import type {
   AuthorizedChannelRef,
   ChannelAccessNotification,
   ChannelAccessNotificationPort,
+  ChannelAccessOwnershipResult,
   ChannelAccessRequesterContext,
   ChannelAccessResolutionPort,
+  ChannelAccessRevalidationResult,
+  ChannelCreateRevalidationResult,
   DiscoveryRequester,
   OwnerId,
 } from '@khala/contracts/messaging/index';
-import { createChannelAccessPolicy } from './policy';
-import type { ChannelAccessCreateInput, ChannelAccessStore } from './store';
+import { CHANNEL_ACCESS_COOLDOWN_MS, createChannelAccessPolicy } from './policy';
+import { createChannelAccessStore, type ChannelAccessStore } from './store';
 import { createChannelAccessService } from './service';
+import { fakeControlStore } from './support.test';
 
+const T0 = Date.parse('2026-09-24T12:00:00Z');
 const DIGEST = 'a'.repeat(43);
-const HANDLE = `careq_${DIGEST}`;
-const DEADLINE = '2026-10-01T12:00:00Z';
+const CHANNEL_REF = 'channel_ref_1' as AuthorizedChannelRef;
+const TARGET_REVISION = 'target_revision_1';
+const OWNER_REVISION = 'owner_revision_1';
 const requester: DiscoveryRequester = {
   principal: 'principal_1' as DiscoveryRequester['principal'],
   origin: 'https://khala.example',
@@ -40,136 +46,96 @@ const owner: AuthPrincipal = {
   verifiedEmail: 'owner@example.com',
   sessionExpiresAt: '2026-09-25T12:00:00Z',
 };
+const otherOwner: AuthPrincipal = { ...owner, ownerId: 'owner_2' as OwnerId, providerSubject: 'subject_2' };
 
 function harness() {
-  const creates: ChannelAccessCreateInput[] = [];
-  const notifications: ChannelAccessNotification[] = [];
-  let outcome: 'pending_owner' | 'approved' | 'connecting' | 'revoked' = 'pending_owner';
-  let requesterState: 'current' | 'revoked' = 'current';
-  let revision = 1;
-  const detail = {
-    kind: 'access' as const,
-    authorizedChannelRef: 'channel_ref_1',
-    targetRevision: 'target_revision_1',
-    title: 'Private room',
+  let now = T0;
+  const backing = fakeControlStore();
+  const policy = createChannelAccessPolicy({ key: new Uint8Array(32).fill(5) });
+  const journal = createChannelAccessStore({ store: backing.store, policy, clock: () => now });
+  const claims: string[] = [];
+  const store: ChannelAccessStore = {
+    ...journal,
+    async claimAccess(...args) { claims.push('access'); return journal.claimAccess(...args); },
+    async claimCreate(...args) { claims.push('create'); return journal.claimCreate(...args); },
   };
-  const storedContext = () => ({
-    requestHandle: HANDLE,
-    operationId: 'request_1',
-    ownerId: owner.ownerId,
-    revision,
-    requester: requester.principal,
-    sessionFingerprint: context.sessionFingerprint,
-    sessionGeneration: context.sessionGeneration,
-    origin: context.origin,
-    harness: context.harness,
-    requesterLabel: context.displayLabel,
-    workspaceLabel: context.workspaceLabel,
-    targetFingerprint: 'target_digest',
-    deadline: DEADLINE,
-    outcome,
-    detail,
-  });
-  const ownerProjection = () => ({
-    requestHandle: HANDLE,
-    kind: 'access' as const,
-    outcome,
-    revision,
-    createdAt: '2026-09-24T12:00:00Z',
-    deadline: DEADLINE,
-    sessionFingerprint: context.sessionFingerprint,
-    harness: context.harness,
-    requesterLabel: context.displayLabel,
-    workspaceLabel: context.workspaceLabel,
-    title: detail.title,
-    proposedTitle: null,
-    ownerDecision: outcome === 'approved' || outcome === 'connecting' ? 'approved' as const : 'pending' as const,
-    decidedAt: outcome === 'pending_owner' ? null : '2026-09-24T12:05:00Z',
-    muted: false,
-    muteRevision: null,
-  });
-  const store = {
-    async create(input: ChannelAccessCreateInput) {
-      creates.push(input);
-      return { kind: 'accepted' as const, requestHandle: HANDLE, revision, deadline: DEADLINE, outcome };
-    },
-    async inspectRequester(input: { sessionGeneration: number }) {
-      return input.sessionGeneration === context.sessionGeneration
-        ? { kind: 'found' as const, status: { outcome, revision, deadline: DEADLINE }, context: storedContext() }
-        : { kind: 'unavailable' as const };
-    },
-    async revoke(input: { expectedRevision: number }) {
-      if (input.expectedRevision !== revision) return { kind: 'stale' as const };
-      outcome = 'revoked';
-      revision += 1;
-      return { kind: 'updated' as const, outcome: 'revoked' as const, revision };
-    },
-    async listOwner() { return { kind: 'found' as const, requests: [ownerProjection()] }; },
-    async readOwner(input: { ownerId: string }) {
-      return input.ownerId === owner.ownerId
-        ? { kind: 'found' as const, request: ownerProjection() }
-        : { kind: 'not_found' as const };
-    },
-    async readContext() { return { kind: 'found' as const, context: storedContext() }; },
-    async decide(input: { ownerId: string; decision: 'approve' | 'deny'; expectedRevision: number }) {
-      if (input.ownerId !== owner.ownerId) return { kind: 'not_found' as const };
-      if (input.expectedRevision !== revision) return { kind: 'stale' as const };
-      outcome = input.decision === 'approve' ? 'approved' : 'pending_owner';
-      revision += 1;
-      return { kind: 'decided' as const, outcome: input.decision === 'approve' ? 'approved' as const : 'denied' as const, revision };
-    },
-    async claimAccess() {
-      outcome = 'connecting';
-      revision += 1;
-      return {
-        kind: 'claimed' as const,
-        revision,
-        authorization: {
-          v: 1 as const, kind: 'access' as const, requestHandle: HANDLE, ownerId: owner.ownerId,
-          requester: requester.principal, sessionFingerprint: context.sessionFingerprint,
-          sessionGeneration: context.sessionGeneration, origin: context.origin, operationId: 'request_1',
-          authorizedChannelRef: detail.authorizedChannelRef, approvedAt: '2026-09-24T12:05:00Z', deadline: DEADLINE,
-        },
-      };
-    },
-    async listNotifications() {
-      return { kind: 'found' as const, notifications: [{ id: 'notification_1', kind: 'request' as const, revision: 1, count: 1, createdAt: '2026-09-24T12:00:00Z' }] };
-    },
-    async ackNotification() { return { kind: 'acknowledged' as const }; },
-  } as unknown as ChannelAccessStore;
+  const notifications: ChannelAccessNotification[] = [];
+  const ownershipCalls: unknown[] = [];
+  const state: {
+    requester: 'current' | 'revoked';
+    access: ChannelAccessRevalidationResult;
+    create: ChannelCreateRevalidationResult;
+    ownership: (principal: AuthPrincipal) => ChannelAccessOwnershipResult;
+  } = {
+    requester: 'current',
+    access: { kind: 'current', ownerId: owner.ownerId, targetRevision: TARGET_REVISION, title: 'Private channel' },
+    create: { kind: 'current', ownerId: owner.ownerId, ownerRevision: OWNER_REVISION },
+    ownership: principal => principal.ownerId === owner.ownerId
+      ? { kind: 'owned', ownerId: owner.ownerId, targetRevision: TARGET_REVISION }
+      : { kind: 'forbidden' },
+  };
   const resolver: ChannelAccessResolutionPort = {
     async resolveAccess() {
-      return {
-        kind: 'resolved', ownerId: owner.ownerId, channelRef: detail.authorizedChannelRef as AuthorizedChannelRef,
-        targetRevision: detail.targetRevision, title: detail.title,
-      };
+      return { kind: 'resolved', ownerId: owner.ownerId, channelRef: CHANNEL_REF, targetRevision: TARGET_REVISION, title: 'Private channel' };
     },
-    async resolveCreate() { return { kind: 'unavailable' }; },
-    async revalidateAccess() { return { kind: 'current', ownerId: owner.ownerId, targetRevision: detail.targetRevision, title: detail.title }; },
-    async revalidateCreate() { return { kind: 'unavailable' }; },
-    async currentAccessOwner(_channel, principal) {
-      return principal.ownerId === owner.ownerId
-        ? { kind: 'owned', ownerId: owner.ownerId, targetRevision: detail.targetRevision }
-        : { kind: 'forbidden' };
+    async resolveCreate() { return { kind: 'resolved', ownerId: owner.ownerId, ownerRevision: OWNER_REVISION }; },
+    async revalidateAccess() { return state.access; },
+    async revalidateCreate() { return state.create; },
+    async currentAccessOwner(channelRef, principal) {
+      ownershipCalls.push([channelRef, principal.ownerId]);
+      return state.ownership(principal);
     },
-    async checkRequester() { return { kind: requesterState }; },
+    async checkRequester() { return { kind: state.requester }; },
   };
   const notification: ChannelAccessNotificationPort = {
     async publish(value) { notifications.push(value); return { kind: 'ok', value: null }; },
   };
-  const service = createChannelAccessService({
-    store,
-    resolver,
-    policy: createChannelAccessPolicy({ key: new Uint8Array(32).fill(5) }),
-    notification,
-  });
+  const service = createChannelAccessService({ store, resolver, policy, notification });
+
+  async function handle(): Promise<string> {
+    const listed = await journal.listOwner({ ownerId: owner.ownerId });
+    if (listed.kind !== 'found' || listed.requests.length === 0) throw new Error('request missing');
+    return listed.requests[listed.requests.length - 1]!.requestHandle;
+  }
+
   return {
     service,
-    creates,
+    backing,
+    journal,
+    claims,
     notifications,
-    revokeRequester() { requesterState = 'revoked'; },
-    outcome: () => outcome,
+    ownershipCalls,
+    state,
+    handle,
+    advance(ms: number) { now += ms; },
+    async requestAccess(operationId = 'request_1') {
+      const status = await service.journal.requestAccess({
+        v: 1, kind: 'listing_ref', operationId, credentialRef: 'credential_1', listingRef: 'listing_1',
+      }, requester, context);
+      expect(status.outcome).toBe('pending_owner');
+      return handle();
+    },
+    async requestCreate(operationId = 'create_1') {
+      const status = await service.journal.requestCreate({
+        v: 1, operationId, credentialRef: 'credential_1', origin: requester.origin, proposedTitle: 'New channel',
+      }, requester, context);
+      expect(status.outcome).toBe('pending_owner');
+      return handle();
+    },
+    async outcome(requestHandle: string) {
+      const located = await journal.readContext({ requestHandle });
+      if (located.kind !== 'found') throw new Error('request missing');
+      return located.context.outcome;
+    },
+    mutes() {
+      const aggregate = [...backing.records.values()][0]?.value as { mutes?: Record<string, { enabled: boolean }> };
+      return Object.values(aggregate.mutes ?? {});
+    },
   };
+}
+
+function approve(requestHandle: string, operationId = 'decision_1') {
+  return { v: 1 as const, requestHandle: requestHandle as never, expectedRevision: 'carev_1', decision: 'approve' as const, operationId };
 }
 
 describe('channel-access service', () => {
@@ -180,61 +146,169 @@ describe('channel-access service', () => {
       channelUrl: 'https://khala.example/_khala/channel/secret-locator',
     }, requester, context);
     expect(status).toEqual({ v: 1, operationId: 'request_1', outcome: 'pending_owner' });
-    expect(h.creates).toHaveLength(1);
-    expect(JSON.stringify(h.creates[0])).not.toContain('secret-locator');
+    expect(h.backing.records.size).toBeGreaterThan(0);
+    expect(JSON.stringify([...h.backing.records.values()])).not.toContain('secret-locator');
     expect(h.notifications).toEqual([expect.objectContaining({ v: 1, ownerId: owner.ownerId, kind: 'request', count: 1 })]);
   });
 
   it('keeps approval journal-only until the typed consumer claims authorization', async () => {
     const h = harness();
-    await h.service.journal.requestAccess({
-      v: 1, kind: 'listing_ref', operationId: 'request_1', credentialRef: 'credential_1', listingRef: 'listing_1',
-    }, requester, context);
-    const downstream = {
-      channels: [] as string[], memberships: [] as string[], devices: [] as string[], bindings: [] as string[],
-      providers: [] as string[], connectors: [] as string[], grants: [] as string[],
-    };
-    const before = structuredClone(downstream);
-    const approved = await h.service.decisions.decide({
-      v: 1, requestHandle: HANDLE as never, expectedRevision: 'carev_1', decision: 'approve', operationId: 'decision_1',
-    }, owner);
-    expect(approved.kind).toBe('ok');
+    const requestHandle = await h.requestAccess();
+    const approved = await h.service.decisions.decide(approve(requestHandle), owner);
+    expect(approved).toMatchObject({ kind: 'ok', value: { outcome: 'approved', revision: 'carev_2', ownerDecision: 'approved' } });
 
-    const RUN_CONSUMER_AFTER_APPROVAL = false; // MUTATION GUARD: change false to true; downstream snapshot must fail.
-    if (RUN_CONSUMER_AFTER_APPROVAL) {
-      const claimed = await h.service.fulfillment.claimAccess({
-        v: 1, requestHandle: HANDLE as never, expectedRevision: 'carev_2', operationId: 'claim_1',
-      });
-      if (claimed.kind === 'ok') downstream.grants.push(claimed.value.authorizationRef);
-    }
+    // The contract's wrong-implementation test: approval must not claim, connect, or mint any authorization.
+    expect(h.claims).toEqual([]);
+    expect(await h.outcome(requestHandle)).toBe('approved');
+    expect(JSON.stringify([...h.backing.records.values()])).not.toContain('channel-access-grant-exchange');
+    expect(await h.service.journal.inspect({ v: 1, operationId: 'request_1', operationKind: 'access' }, requester, context))
+      .toEqual({ v: 1, operationId: 'request_1', outcome: 'approved' });
 
-    expect(downstream).toEqual(before);
+    const claimed = await h.service.fulfillment.claimAccess({
+      v: 1, requestHandle: requestHandle as never, expectedRevision: 'carev_2', operationId: 'claim_1',
+    });
+    expect(claimed).toMatchObject({ kind: 'ok', value: { kind: 'access', channelRef: CHANNEL_REF, requestRevision: 'carev_3' } });
+    expect(h.claims).toEqual(['access']);
+    expect(await h.outcome(requestHandle)).toBe('connecting');
   });
 
-  it('revokes active work on status and inbox reads once the requester generation is revoked', async () => {
+  it('revokes active work on status reads once the requester generation is revoked', async () => {
     const h = harness();
-    h.revokeRequester();
+    const requestHandle = await h.requestAccess();
+    h.state.requester = 'revoked';
     expect(await h.service.journal.inspect({ v: 1, operationId: 'request_1', operationKind: 'access' }, requester, context))
       .toEqual({ v: 1, operationId: 'request_1', outcome: 'revoked' });
-    expect(h.outcome()).toBe('revoked');
+    expect(await h.outcome(requestHandle)).toBe('revoked');
   });
 
   it('drops revoked rows from the owner inbox', async () => {
     const h = harness();
-    h.revokeRequester();
+    const requestHandle = await h.requestAccess();
+    h.state.requester = 'revoked';
     expect(await h.service.decisions.inbox(owner)).toEqual({ kind: 'ok', value: [] });
-    expect(h.outcome()).toBe('revoked');
+    expect(await h.outcome(requestHandle)).toBe('revoked');
   });
 
   it('collapses wrong-owner and cross-session reads without mutating the journal', async () => {
     const h = harness();
-    const wrongOwner = { ...owner, ownerId: 'owner_2' as OwnerId };
-    expect((await h.service.decisions.decide({
-      v: 1, requestHandle: HANDLE as never, expectedRevision: 'carev_1', decision: 'approve', operationId: 'wrong_owner',
-    }, wrongOwner))).toEqual({ kind: 'rejected', code: 'forbidden' });
+    const requestHandle = await h.requestAccess();
+    expect(await h.service.decisions.decide(approve(requestHandle, 'wrong_owner'), otherOwner))
+      .toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await h.outcome(requestHandle)).toBe('pending_owner');
     const result = await h.service.journal.inspect({ v: 1, operationId: 'request_1', operationKind: 'access' }, {
       ...requester, sessionGeneration: 4,
     }, { ...context, sessionGeneration: 4 });
     expect(result).toEqual({ v: 1, operationId: 'request_1', outcome: 'unavailable' });
+  });
+});
+
+describe('channel-access decision revalidation', () => {
+  it.each([
+    ['the requester generation is revoked', (h: ReturnType<typeof harness>) => { h.state.requester = 'revoked'; }],
+    ['the owner loses visibility of the channel', (h: ReturnType<typeof harness>) => { h.state.access = { kind: 'revoked' }; }],
+    ['the channel changes ownership', (h: ReturnType<typeof harness>) => {
+      h.state.access = { kind: 'current', ownerId: otherOwner.ownerId, targetRevision: TARGET_REVISION, title: 'Private channel' };
+    }],
+    ['the channel target revision moves', (h: ReturnType<typeof harness>) => {
+      h.state.access = { kind: 'current', ownerId: owner.ownerId, targetRevision: 'target_revision_2', title: 'Private channel' };
+    }],
+  ] as const)('closes an access request and refuses the (former) owner when %s', async (_name, change) => {
+    const h = harness();
+    const requestHandle = await h.requestAccess();
+    change(h);
+    expect(await h.service.decisions.decide(approve(requestHandle), owner)).toEqual({ kind: 'rejected', code: 'revoked' });
+    expect(await h.outcome(requestHandle)).toBe('revoked');
+    expect(await h.service.fulfillment.claimAccess({
+      v: 1, requestHandle: requestHandle as never, expectedRevision: 'carev_2', operationId: 'claim_after_revoke',
+    })).toMatchObject({ kind: 'rejected' });
+    expect(h.claims).toEqual([]);
+  });
+
+  it('closes a create request when the owner revision moves before the decision', async () => {
+    const h = harness();
+    const requestHandle = await h.requestCreate();
+    h.state.create = { kind: 'current', ownerId: owner.ownerId, ownerRevision: 'owner_revision_2' };
+    expect(await h.service.decisions.decide(approve(requestHandle), owner)).toEqual({ kind: 'rejected', code: 'revoked' });
+    expect(await h.outcome(requestHandle)).toBe('revoked');
+  });
+
+  it('does not close the request when revalidation is unavailable', async () => {
+    const h = harness();
+    const requestHandle = await h.requestAccess();
+    h.state.access = { kind: 'unavailable' };
+    expect(await h.service.decisions.decide(approve(requestHandle), owner)).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.outcome(requestHandle)).toBe('pending_owner');
+  });
+});
+
+describe('channel-access mutes', () => {
+  function mute(requestHandle: string, overrides: Partial<{ expectedRevision: string | null; action: 'mute' | 'unmute'; operationId: string }> = {}) {
+    return { v: 1 as const, requestHandle: requestHandle as never, expectedRevision: null, action: 'mute' as const, operationId: 'mute_1', ...overrides };
+  }
+
+  it('requires current channel ownership before muting an access requester', async () => {
+    const h = harness();
+    const requestHandle = await h.requestAccess();
+    expect(await h.service.decisions.setMute(mute(requestHandle), owner))
+      .toEqual({ kind: 'ok', value: { v: 1, operationKind: 'access', muted: true, revision: 'carev_1' } });
+    expect(h.ownershipCalls).toEqual([[CHANNEL_REF, owner.ownerId]]);
+    expect(h.mutes()).toEqual([expect.objectContaining({ enabled: true })]);
+
+    h.advance(CHANNEL_ACCESS_COOLDOWN_MS);
+    expect(await h.service.journal.requestAccess({
+      v: 1, kind: 'listing_ref', operationId: 'request_muted', credentialRef: 'credential_1', listingRef: 'listing_1',
+    }, requester, context)).toEqual({ v: 1, operationId: 'request_muted', outcome: 'unavailable' });
+  });
+
+  it.each([
+    ['the resolver refuses the owner', (): ChannelAccessOwnershipResult => ({ kind: 'forbidden' })],
+    ['the channel now belongs to another owner', (): ChannelAccessOwnershipResult => ({
+      kind: 'owned', ownerId: otherOwner.ownerId, targetRevision: TARGET_REVISION,
+    })],
+    ['the ownership is for a stale target revision', (): ChannelAccessOwnershipResult => ({
+      kind: 'owned', ownerId: owner.ownerId, targetRevision: 'target_revision_2',
+    })],
+  ] as const)('refuses an access mute when %s', async (_name, ownership) => {
+    const h = harness();
+    const requestHandle = await h.requestAccess();
+    h.state.ownership = ownership;
+    expect(await h.service.decisions.setMute(mute(requestHandle), owner)).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(h.ownershipCalls).toHaveLength(1);
+    expect(h.mutes()).toEqual([]);
+  });
+
+  it('refuses a mute from an owner who does not own the request before consulting the resolver', async () => {
+    const h = harness();
+    const requestHandle = await h.requestAccess();
+    expect(await h.service.decisions.setMute(mute(requestHandle), otherOwner)).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(h.ownershipCalls).toEqual([]);
+    expect(h.mutes()).toEqual([]);
+  });
+
+  it('reconciles duplicate mute operations and rejects stale or reused revisions', async () => {
+    const h = harness();
+    const requestHandle = await h.requestAccess();
+    const muted = await h.service.decisions.setMute(mute(requestHandle), owner);
+    expect(muted).toEqual({ kind: 'ok', value: { v: 1, operationKind: 'access', muted: true, revision: 'carev_1' } });
+    expect(await h.service.decisions.setMute(mute(requestHandle), owner)).toEqual(muted);
+    expect(await h.service.decisions.setMute(mute(requestHandle, { action: 'unmute' }), owner))
+      .toEqual({ kind: 'rejected', code: 'operation_mismatch' });
+    expect(await h.service.decisions.setMute(mute(requestHandle, { operationId: 'mute_again' }), owner))
+      .toEqual({ kind: 'rejected', code: 'stale_revision' });
+    expect(await h.service.decisions.setMute(mute(requestHandle, {
+      action: 'unmute', expectedRevision: 'carev_2', operationId: 'unmute_ahead',
+    }), owner)).toEqual({ kind: 'rejected', code: 'stale_revision' });
+    expect(await h.service.decisions.setMute(mute(requestHandle, {
+      action: 'unmute', expectedRevision: 'not-a-revision', operationId: 'unmute_malformed',
+    }), owner)).toEqual({ kind: 'rejected', code: 'stale_revision' });
+
+    const unmuted = await h.service.decisions.setMute(mute(requestHandle, {
+      action: 'unmute', expectedRevision: 'carev_1', operationId: 'unmute_1',
+    }), owner);
+    expect(unmuted).toEqual({ kind: 'ok', value: { v: 1, operationKind: 'access', muted: false, revision: 'carev_2' } });
+    expect(await h.service.decisions.setMute(mute(requestHandle, {
+      action: 'mute', expectedRevision: 'carev_1', operationId: 'mute_stale',
+    }), owner)).toEqual({ kind: 'rejected', code: 'stale_revision' });
+    expect(h.mutes()).toEqual([expect.objectContaining({ enabled: false })]);
   });
 });

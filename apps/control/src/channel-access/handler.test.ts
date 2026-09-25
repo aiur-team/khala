@@ -7,6 +7,7 @@ import type {
   OwnerId,
 } from '@khala/contracts/messaging/index';
 import type { Authentication, MutationAuthorization } from '../auth';
+import { ORIGIN as AUTH_ORIGIN, harness as authHarness, signIn } from '../auth/support.test';
 import type { ChannelAccessService } from './service';
 import {
   AGENT_CHANNEL_ACCESS_CREATE_PATH,
@@ -53,7 +54,7 @@ const projection: ChannelAccessOwnerProjection = {
   outcome: 'pending_owner',
   revision: 'carev_1',
   requester: { sessionFingerprint: DIGEST, harness: 'codex', displayLabel: 'Build agent', workspaceLabel: 'Khala' },
-  detail: { kind: 'access', title: 'Private room', history: 'none' },
+  detail: { kind: 'access', title: 'Private channel', history: 'none' },
   createdAt: '2026-09-24T12:00:00Z',
   deadline: '2026-10-01T12:00:00Z',
   ownerDecision: 'pending',
@@ -121,10 +122,10 @@ describe('createChannelAccessHandlers', () => {
     const [access, create, status] = h.handlers.agent;
     const accessResponse = await access!.handle(jsonRequest(access!.path, {
       v: 1, kind: 'channel_url', operationId: 'access_1', credentialRef: 'credential_1',
-      channelUrl: 'https://khala.example/channels/private-room',
+      channelUrl: 'https://khala.example/channels/private-channel',
     }));
     const createResponse = await create!.handle(jsonRequest(create!.path, {
-      v: 1, operationId: 'create_1', credentialRef: 'credential_1', origin: requester.origin, proposedTitle: 'New room',
+      v: 1, operationId: 'create_1', credentialRef: 'credential_1', origin: requester.origin, proposedTitle: 'New channel',
     }));
     const statusResponse = await status!.handle(new Request(
       `https://khala.example${status!.path}?v=1&operationId=access_1&operationKind=access`,
@@ -200,6 +201,38 @@ describe('createChannelAccessHandlers', () => {
     expect(h.calls.inbox).toHaveLength(0);
     expect(h.calls.decision).toHaveLength(0);
     expect(h.calls.mute).toHaveLength(0);
+  });
+
+  it('refuses agent bearer and discovery credentials on human decision routes under real session auth', async () => {
+    const auth = authHarness();
+    const { cookies } = await signIn(auth);
+    const agentCalls: Request[] = [];
+    const h = dependencies({
+      auth: auth.service,
+      authenticateAgent: async request => {
+        agentCalls.push(request);
+        return { kind: 'authenticated', requester, context: requesterContext };
+      },
+    });
+    const decision = h.handlers.human.find(item => item.path === HUMAN_CHANNEL_ACCESS_DECISION_PATH)!;
+    const body = JSON.stringify({
+      v: 1, requestHandle: HANDLE, expectedRevision: 'carev_1', decision: 'approve', operationId: 'decision_1',
+    });
+    const send = (headers: Record<string, string>) => decision.handle(new Request(`${AUTH_ORIGIN}${decision.path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: AUTH_ORIGIN, 'sec-fetch-site': 'same-origin', ...headers },
+      body,
+    }));
+
+    const bearer = await send({ authorization: `Bearer ${'d'.repeat(43)}` });
+    const discovery = await send({ authorization: `DPoP ${'e'.repeat(43)}`, dpop: 'header.payload.signature', 'x-khala-csrf': 'forged' });
+    const sessionWithoutCsrf = await send({ cookie: cookies.join('; '), authorization: `Bearer ${'d'.repeat(43)}` });
+
+    expect(bearer.status).toBe(401);
+    expect(discovery.status).toBe(401);
+    expect(sessionWithoutCsrf.status).toBe(403);
+    expect(h.calls.decision).toHaveLength(0);
+    expect(agentCalls).toHaveLength(0);
   });
 
   it('maps dependency throws and rejected capability-shaped human bodies to finite sanitized responses', async () => {

@@ -1,10 +1,3 @@
-import {
-  type CompareAndSetInput,
-  type ControlRecord,
-  type ControlStore,
-  type JsonValue,
-  sameJsonValue,
-} from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
 import {
   CHANNEL_ACCESS_COOLDOWN_MS,
@@ -16,77 +9,10 @@ import {
   createChannelAccessStore,
   type ChannelAccessCreateInput,
 } from './store';
+import { fakeControlStore } from './support.test';
 
 const T0 = Date.parse('2026-09-24T12:00:00Z');
 const key = new Uint8Array(32).fill(7);
-
-type Fault = 'unavailable' | 'throw' | 'lose_response';
-
-function fakeControlStore() {
-  const records = new Map<string, ControlRecord>();
-  const operations = new Map<string, { key: string; next: CompareAndSetInput['next']; record: ControlRecord }>();
-  const faults: Partial<Record<'read' | 'compareAndSet' | 'resolve', Fault[]>> = {};
-  let revision = 0;
-  let beforeWrite: ((input: CompareAndSetInput) => Promise<void> | void) | null = null;
-  const take = (operation: keyof typeof faults) => faults[operation]?.shift();
-  const store: ControlStore = {
-    async read<T extends JsonValue>(recordKey: string) {
-      const fault = take('read');
-      if (fault === 'throw') throw new Error('secret provider detail');
-      if (fault) return { kind: 'unavailable' as const };
-      const record = records.get(recordKey);
-      return record ? { kind: 'record' as const, record: record as ControlRecord<T> } : { kind: 'absent' as const };
-    },
-    async compareAndSet<T extends JsonValue>(input: CompareAndSetInput<T>) {
-      const fault = take('compareAndSet');
-      if (fault === 'throw') throw new Error('secret provider detail');
-      if (fault === 'unavailable') return { kind: 'unavailable' as const };
-      if (beforeWrite) await beforeWrite(input);
-      const previous = operations.get(input.operationId);
-      if (previous) {
-        return previous.key === input.key
-          && previous.next.expiresAt === input.next.expiresAt
-          && sameJsonValue(previous.next.value, input.next.value)
-          ? { kind: 'applied' as const, record: previous.record as ControlRecord<T> }
-          : { kind: 'operation_mismatch' as const };
-      }
-      const current = records.get(input.key) ?? null;
-      if ((current?.revision ?? null) !== input.expectedRevision) {
-        return { kind: 'conflict' as const, current: current as ControlRecord<T> | null };
-      }
-      revision += 1;
-      const record: ControlRecord<T> = {
-        key: input.key,
-        revision: `r${revision}`,
-        operationId: input.operationId,
-        value: structuredClone(input.next.value),
-        expiresAt: input.next.expiresAt,
-      };
-      records.set(input.key, record);
-      operations.set(input.operationId, { key: input.key, next: structuredClone(input.next), record });
-      return fault === 'lose_response'
-        ? { kind: 'outcome_unknown' as const, operationId: input.operationId }
-        : { kind: 'applied' as const, record };
-    },
-    async resolve<T extends JsonValue>(input: Readonly<{ key: string; operationId: string }>) {
-      const fault = take('resolve');
-      if (fault === 'throw') throw new Error('secret provider detail');
-      if (fault) return { kind: 'unavailable' as const };
-      const operation = operations.get(input.operationId);
-      return operation?.key === input.key
-        ? { kind: 'applied' as const, record: operation.record as ControlRecord<T> }
-        : { kind: 'not_applied' as const };
-    },
-  };
-  return {
-    store,
-    records,
-    inject(operation: keyof typeof faults, ...values: Fault[]) {
-      faults[operation] = [...(faults[operation] ?? []), ...values];
-    },
-    interceptWrites(interceptor: typeof beforeWrite) { beforeWrite = interceptor; },
-  };
-}
 
 function barrier(parties: number) {
   let arrivals = 0;
@@ -108,7 +34,7 @@ function request(overrides: Partial<ChannelAccessCreateInput> = {}): ChannelAcce
     operationId: 'request_1',
     ownerId: 'owner_1',
     targetFingerprint: 'target_1',
-    detail: { kind: 'access', authorizedChannelRef: 'authorized_1', targetRevision: 'target_revision_1', title: 'Private room' },
+    detail: { kind: 'access', authorizedChannelRef: 'authorized_1', targetRevision: 'target_revision_1', title: 'Private channel' },
     harness: 'codex',
     requesterLabel: 'Build agent',
     workspaceLabel: 'Khala',
@@ -190,7 +116,7 @@ describe('channel access journal creation', () => {
     })).toMatchObject({ kind: 'updated', enabled: true, revision: 1 });
     expect(await h.journal.create(request({
       requester: 'principal_2', operationId: 'create_muted', targetFingerprint: 'proposal_b',
-      detail: { kind: 'create', proposalDigest: 'proposal_b', proposedTitle: 'Private room', ownerRevision: 'owner_revision_1' },
+      detail: { kind: 'create', proposalDigest: 'proposal_b', proposedTitle: 'Private channel', ownerRevision: 'owner_revision_1' },
     }))).toEqual({ kind: 'unavailable' });
   });
 });
@@ -241,6 +167,28 @@ describe('channel access journal reads and decisions', () => {
     })).toEqual({ kind: 'expired' });
     expect(await h.journal.inspect(request())).toMatchObject({ kind: 'found', status: { outcome: 'expired' } });
   });
+
+  it('expires an approved but unclaimed request at the deadline, freeing its slot and refusing the claim', async () => {
+    const h = harness({ requesterMax: 1 });
+    const created = await accepted(h);
+    expect(await h.journal.decide({
+      ownerId: 'owner_1', requestHandle: created.requestHandle, expectedRevision: 1,
+      decision: 'approve', operationId: 'approve',
+    })).toMatchObject({ kind: 'decided', outcome: 'approved', revision: 2 });
+    const next = request({ operationId: 'next', targetFingerprint: 'target_2' });
+    h.setNow(T0 + CHANNEL_ACCESS_COOLDOWN_MS);
+    expect(await h.journal.create(next)).toEqual({ kind: 'unavailable' });
+
+    h.setNow(T0 + CHANNEL_ACCESS_DEADLINE_MS);
+    expect(await h.journal.inspect(request())).toMatchObject({ kind: 'found', status: { outcome: 'expired', revision: 3 } });
+    expect(await h.journal.claimAccess({
+      binding: request(), expectedRevision: 2, consumerId: 'grant_exchange', operationId: 'late_claim',
+    })).toEqual({ kind: 'expired' });
+    expect(await h.journal.claimAccess({
+      binding: request(), expectedRevision: 3, consumerId: 'grant_exchange', operationId: 'late_claim_current',
+    })).toEqual({ kind: 'expired' });
+    expect((await h.journal.create(next)).kind).toBe('accepted');
+  });
 });
 
 describe('channel access fulfillment and retention', () => {
@@ -261,7 +209,7 @@ describe('channel access fulfillment and retention', () => {
 
     const create = harness();
     const createInput = request({
-      detail: { kind: 'create', proposalDigest: 'proposal_1', proposedTitle: 'New room', ownerRevision: 'owner_revision_1' },
+      detail: { kind: 'create', proposalDigest: 'proposal_1', proposedTitle: 'New channel', ownerRevision: 'owner_revision_1' },
     });
     const createCreated = await accepted(create, createInput);
     await create.journal.decide({ ownerId: 'owner_1', requestHandle: createCreated.requestHandle, expectedRevision: 1, decision: 'approve', operationId: 'approve_create' });
@@ -270,7 +218,7 @@ describe('channel access fulfillment and retention', () => {
     })).toEqual({ kind: 'unavailable' });
     expect(await create.journal.claimCreate({
       binding: createInput, expectedRevision: 2, consumerId: 'create_workflow', operationId: 'claim_create',
-    })).toMatchObject({ kind: 'claimed', authorization: { kind: 'create', proposedTitle: 'New room' } });
+    })).toMatchObject({ kind: 'claimed', authorization: { kind: 'create', proposedTitle: 'New channel' } });
   });
 
   it('keeps nine individual notifications plus one revisioned batch and acknowledges exact revisions', async () => {

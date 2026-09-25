@@ -35,7 +35,10 @@ describe('registerHumanHandlers', () => {
     const inbox = { path: '/api/human/channel-access/inbox', methods: ['GET'], handle: async () => new Response('inbox') } as const;
     const decision = { path: '/api/human/channel-access/decision', methods: ['POST'], handle: async () => new Response('decision') } as const;
     const mute = { path: '/api/human/channel-access/mute', methods: ['POST'], handle: async () => new Response('mute') } as const;
-    expect(registerHumanHandlers({ channelAccess: () => [inbox, decision, mute] }).slice(-4, -1)).toEqual([inbox, decision, mute]);
+    const registrations = registerHumanHandlers({ channelAccess: () => [inbox, decision, mute] });
+    const start = registrations.indexOf(inbox);
+    expect(registrations.slice(start, start + 3)).toEqual([inbox, decision, mute]);
+    expect(registrations.slice(0, start).map(({ path }) => path)).toEqual(['/api/human/pairing/request', '/api/human/pairing/decision']);
   });
 
   it('substitutes only the live channel-discovery bootstrap registration', () => {
