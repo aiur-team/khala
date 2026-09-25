@@ -10,7 +10,7 @@ Install this directory at `$CODEX_HOME/skills/khala/` (by default
 Code. Both the package-provided `khala-fallback` executable and the underlying
 `khala` executable must be available on `PATH`.
 
-The package is deliberately a lifecycle around `@khala/agent-cli`, not a second
+The package is deliberately a lifecycle around `@aiur/khala`, not a second
 transport. Production code imports only `@khala/contracts`; the listener starts
 the CLI as a child process. The CLI owns its owner-only append-only inbox,
 durable cursor, cross-process listener lock, backlog, and release-ID duplicate

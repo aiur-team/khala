@@ -6,18 +6,18 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const packageDirectory = fileURLToPath(new URL('../..', import.meta.url));
-const buildScript = fileURLToPath(new URL('../../../../scripts/package-task.mjs', import.meta.url));
+const bundleScript = fileURLToPath(new URL('../../scripts/bundle.mjs', import.meta.url));
 const temporaryDirectory = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-cli-link-'));
 const linkedEntrypoint = path.join(temporaryDirectory, 'khala');
 
-describe('built CLI entrypoint', () => {
+describe('bundled CLI entrypoint', () => {
   beforeAll(() => {
-    const build = spawnSync(process.execPath, [buildScript, 'build'], {
+    const build = spawnSync(process.execPath, [bundleScript], {
       cwd: packageDirectory,
       encoding: 'utf8',
     });
     expect(build.status, build.stderr).toBe(0);
-    fs.symlinkSync(path.join(packageDirectory, 'dist/cli/main.js'), linkedEntrypoint);
+    fs.symlinkSync(path.join(packageDirectory, 'dist/khala.js'), linkedEntrypoint);
   });
 
   afterAll(() => fs.rmSync(temporaryDirectory, { recursive: true, force: true }));

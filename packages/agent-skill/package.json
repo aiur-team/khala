@@ -17,6 +17,6 @@
     "@khala/contracts": "workspace:*"
   },
   "devDependencies": {
-    "@khala/agent-cli": "workspace:*"
+    "@aiur/khala": "workspace:*"
   }
 }

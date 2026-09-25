@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { runCli, type CliDependencies } from '@khala/agent-cli/cli/app';
+import { runCli, type CliDependencies } from '@aiur/khala/cli/app';
 import { describe, expect, it } from 'vitest';
 
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
