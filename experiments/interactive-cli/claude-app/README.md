@@ -122,7 +122,10 @@ table lists each line, the test that fails when it is reverted, and whether that
 | `khala-admin.mjs` refuses `notify` on HTTP shapes | notify probes are refused on the HTTP shapes | KILLED |
 | `http.mjs` 404 for an unknown session | remote connector speaks Streamable HTTP… | KILLED |
 | `verify.mjs` async evidence gaps | wrong implementation: an MCP notification or tool-list change is not delivery | KILLED |
-| `verify.mjs` non-app client refusal | wrong implementation: a run driven wholly by another Claude session… | KILLED |
+| `verify.mjs` declared-client allowlist (also rejects empty names) | wrong implementation: a run from any undeclared or unnamed client proves nothing | KILLED |
+| `verify.mjs` declared clients and target conversations required | a run without declared app clients or target conversations is not graded | KILLED |
+| `verify.mjs` echo between first delivery and acknowledgement | wrong implementation: an echo before delivery, after acknowledgement, or in another conversation… | KILLED |
+| `verify.mjs` echo in a declared target conversation | wrong implementation: an echo before delivery, after acknowledgement, or in another conversation… | KILLED |
 | `verify.mjs` one client per run | wrong implementation: an acknowledgement from a second Claude session… | KILLED |
 | `verify.mjs` ack needs an identified client | an acknowledgement on a connection with no recorded client… | KILLED |
 | `verify.mjs` replay ordered after a before-ack restart | a replay counts only after a recorded before-ack restart… | KILLED |
