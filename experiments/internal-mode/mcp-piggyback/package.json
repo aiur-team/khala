@@ -1,0 +1,14 @@
+{
+  "name": "khala-mcp-piggyback-format-proof",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.23.2 || 24.18.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "verify:evidence": "node verify.mjs evidence/live-run.json",
+    "live": "node run-live.mjs"
+  }
+}
