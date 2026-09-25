@@ -10,7 +10,7 @@ const bridge = resolve("bridge.ts");
 function run(root: string, command: string[], input?: unknown) {
   return spawnSync(process.execPath, [bridge, ...command], {
     cwd: resolve("."),
-    env: { ...process.env, KHALA_FIXTURE_DIR: root },
+    env: { ...process.env, KHALA_FIXTURE_DIR: root, CODEX_THREAD_ID: "session" },
     input: input === undefined ? undefined : JSON.stringify(input),
     encoding: "utf8"
   });
@@ -24,7 +24,7 @@ function runAsync(root: string, command: string[], input?: unknown): Promise<{
   return new Promise((resolveRun) => {
     const child = spawn(process.execPath, [bridge, ...command], {
       cwd: resolve("."),
-      env: { ...process.env, KHALA_FIXTURE_DIR: root }
+      env: { ...process.env, KHALA_FIXTURE_DIR: root, CODEX_THREAD_ID: "session" }
     });
     let stdout = "";
     let stderr = "";
@@ -104,13 +104,12 @@ test("async remains silent until the agent explicitly reads", async () => {
     assert.equal(hook.stdout, "");
   }
 
-  const read = run(root, ["read", "session", "turn-1"]);
+  const read = run(root, ["read"]);
   assert.deepEqual(JSON.parse(read.stdout), { messages: [{ token: "a-1", body: "on demand" }] });
-  assert.deepEqual(JSON.parse(run(root, ["read", "session", "turn-1"]).stdout), { messages: [] });
-  assert.deepEqual(JSON.parse(run(root, ["read", "session", "turn-2"]).stdout),
-    { messages: [{ token: "a-1", body: "on demand" }] });
-  assert.equal(run(root, ["ack", "a-1"]).status, 0);
-  assert.deepEqual(JSON.parse(run(root, ["read", "session", "turn-3"]).stdout), { messages: [] });
+  assert.deepEqual(JSON.parse(run(root, ["read"]).stdout),
+    { messages: [{ token: "a-1", body: "on demand" }] }, "an unacknowledged batch stays readable");
+  assert.deepEqual(JSON.parse(run(root, ["read", "--ack", "a-1"]).stdout), { messages: [] });
+  assert.deepEqual(JSON.parse(run(root, ["read"]).stdout), { messages: [] });
 });
 
 test("hooks fail closed without session and turn identity", async () => {
@@ -124,8 +123,8 @@ test("hooks fail closed without session and turn identity", async () => {
 test("acknowledgement is idempotent and retained on disk", async () => {
   const root = await fixture();
   run(root, ["enqueue"], { mode: "async", token: "a-2", body: "once" });
-  assert.equal(run(root, ["ack", "a-2"]).status, 0);
-  assert.equal(run(root, ["ack", "a-2"]).status, 0);
+  assert.equal(run(root, ["read", "--ack", "a-2"]).status, 0);
+  assert.equal(run(root, ["read", "--ack", "a-2"]).status, 0);
 
   const events = (await readFile(join(root, "events.jsonl"), "utf8"))
     .trim().split("\n").map((line) => JSON.parse(line));
@@ -151,7 +150,7 @@ test("concurrent boundaries claim a batch only once", async () => {
 test("concurrent acknowledgements preserve one durable transition", async () => {
   const root = await fixture();
   run(root, ["enqueue"], { mode: "async", token: "a-race", body: "ack once" });
-  const results = await Promise.all(Array.from({ length: 8 }, () => runAsync(root, ["ack", "a-race"])));
+  const results = await Promise.all(Array.from({ length: 8 }, () => runAsync(root, ["read", "--ack", "a-race"])));
   assert.ok(results.every((result) => result.status === 0), results.map((result) => result.stderr).join("\n"));
 
   const events = (await readFile(join(root, "events.jsonl"), "utf8"))
@@ -159,7 +158,7 @@ test("concurrent acknowledgements preserve one durable transition", async () => 
   const acknowledgements = events.filter((event) => event.event === "acknowledged");
   assert.equal(acknowledgements.filter((event) => event.duplicate === false).length, 1);
   assert.equal(acknowledgements.filter((event) => event.duplicate === true).length, 7);
-  assert.deepEqual(JSON.parse(run(root, ["read", "session", "turn-after-race"]).stdout), { messages: [] });
+  assert.deepEqual(JSON.parse(run(root, ["read"]).stdout), { messages: [] });
 });
 
 test("an acknowledgement racing a hook cannot resurrect the batch", async () => {
@@ -169,17 +168,67 @@ test("an acknowledgement racing a hook cannot resurrect the batch", async () => 
     runAsync(root, ["hook"], {
       hook_event_name: "PreToolUse", session_id: "session", turn_id: "turn-race", tool_name: "Bash"
     }),
-    runAsync(root, ["ack", "hook-ack-race"])
+    runAsync(root, ["read", "--ack", "hook-ack-race"])
   ]);
   assert.equal(hook.status, 0, hook.stderr);
   assert.equal(ack.status, 0, ack.stderr);
-  assert.deepEqual(JSON.parse(run(root, ["read", "session", "turn-after-race"]).stdout), { messages: [] });
+  assert.deepEqual(JSON.parse(run(root, ["read"]).stdout), { messages: [] });
 });
 
 test("an interrupted temporary write cannot replace committed state", async () => {
   const root = await fixture();
   run(root, ["enqueue"], { mode: "async", token: "committed", body: "keep me" });
   await writeFile(join(root, "inbox.json.crashed.new"), "{partial", { mode: 0o600 });
-  const read = run(root, ["read", "session", "turn-after-crash"]);
+  const read = run(root, ["read"]);
   assert.deepEqual(JSON.parse(read.stdout), { messages: [{ token: "committed", body: "keep me" }] });
+});
+
+test("steer and sync pull at an idle prompt boundary; async does not", async () => {
+  for (const mode of ["steer", "sync", "async"]) {
+    const root = await fixture();
+    run(root, ["enqueue"], { mode, token: `${mode}-idle`, body: "idle wake" });
+    const prompt = run(root, ["hook"], {
+      hook_event_name: "UserPromptSubmit", session_id: "session", turn_id: "turn-wake"
+    });
+    if (mode === "async") {
+      assert.equal(prompt.stdout, "");
+    } else {
+      assert.match(JSON.parse(prompt.stdout).hookSpecificOutput.additionalContext, /idle wake/);
+    }
+  }
+});
+
+test("a restart reoffers an unacknowledged batch once and never after acknowledgement", async () => {
+  const root = await fixture();
+  run(root, ["enqueue"], { mode: "sync", token: "restart", body: "survive restart" });
+  const hook = (turn: string) => run(root, ["hook"], {
+    hook_event_name: "UserPromptSubmit", session_id: "session", turn_id: turn
+  });
+  assert.notEqual(hook("before-crash").stdout, "");
+  assert.notEqual(hook("after-restart").stdout, "");
+  assert.equal(hook("after-restart").stdout, "");
+  assert.equal(run(root, ["read", "--ack", "restart"]).status, 0);
+  assert.equal(hook("second-restart").stdout, "");
+});
+
+test("a new batch cannot overwrite an unacknowledged one", async () => {
+  const root = await fixture();
+  run(root, ["enqueue"], { mode: "sync", token: "first", body: "keep" });
+  const second = run(root, ["enqueue"], { mode: "sync", token: "second", body: "replacement" });
+  assert.notEqual(second.status, 0);
+  assert.match(second.stderr, /unacknowledged batch is pending/);
+});
+
+test("events record session and turn identity", async () => {
+  const root = await fixture();
+  run(root, ["enqueue"], { mode: "sync", token: "id", body: "identity", session: "session" });
+  run(root, ["hook"], { hook_event_name: "Stop", session_id: "session", turn_id: "turn-1" });
+  run(root, ["read", "--ack", "id"]);
+  const events = (await readFile(join(root, "events.jsonl"), "utf8"))
+    .trim().split("\n").map((line) => JSON.parse(line));
+  const delivered = events.find((event) => event.event === "delivered");
+  assert.equal(delivered.sessionId, "session");
+  assert.equal(delivered.turnId, "turn-1");
+  assert.equal(events.find((event) => event.event === "acknowledged").sessionId, "session");
+  assert.equal(events.find((event) => event.event === "batch_arrived").sessionId, "session");
 });

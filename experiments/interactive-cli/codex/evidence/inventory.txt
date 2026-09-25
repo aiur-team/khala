@@ -18,3 +18,10 @@ Neither exposes a stdin message option. Both report hooks stable/enabled, and
 the former steer, tui_app_server, remote_control, and send_async_message feature
 flags as removed. `codex app-server` starts a new server; no command advertises
 attaching a server/socket to an already-running local TUI.
+
+Rechecked 2026-09-25 before the normal-trust re-run: `codex --version` still
+0.154.0 and `npm view @openai/codex version` still 0.156.1. Neither version has
+a `hooks` subcommand. Hook trust is granted only in the TUI's "Hooks need
+review" dialog and persisted as `[hooks.state."<path>:<event>:<group>:<handler>"]
+trusted_hash` in config.toml; `--dangerously-bypass-hook-trust` (not used) is
+the only documented way around it.

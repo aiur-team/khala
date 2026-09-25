@@ -1,78 +1,132 @@
 {
-  "host": "Linux x86_64, interactive PTY",
-  "date": "2026-09-24",
+  "date": "2026-09-25",
+  "launches": "launches.json",
   "versions": ["0.154.0", "0.156.1"],
   "proofs": [
     {
-      "version": "0.154.0",
-      "mode": "steer",
-      "status": "Proven",
-      "token": "steer-post-0154",
+      "version": "0.154.0", "cell": "steer", "status": "Proven", "token": "steer-0154-r3",
+      "sessionId": "01a0d601-cf4a-7ee2-9b74-af0cdcc51cac", "turnId": "01a0d602-dbe2-7350-b7cf-34c8b7e6e287",
       "route": "PostToolUse",
-      "arrivedAt": "2026-09-24T22:18:00.455Z",
-      "observedAt": "2026-09-24T22:18:02.443Z",
-      "detail": "Batch arrived during a 20-second Bash sleep and was injected 1 ms after PostToolUse. A separate run proved PreToolUse block at 22:16:12.117Z."
+      "toolStartAt": "2026-09-25T00:41:49.820Z", "arrivedAt": "2026-09-25T00:41:54.895Z",
+      "observedAt": "2026-09-25T00:42:09.916Z", "contextAt": "2026-09-25T00:42:09.921Z",
+      "acknowledgedAt": "2026-09-25T00:42:14.766Z", "relayedAt": "2026-09-25T00:42:17.463Z",
+      "detail": "Arrived 5.1 s into `sleep 20`; offered 1 ms after the PostToolUse hook logged; entered model context as a developer item; the next Khala call acknowledged it and the reply relayed the marker."
     },
     {
-      "version": "0.154.0",
-      "mode": "sync",
-      "status": "Proven",
-      "token": "sync-stop-0154",
+      "version": "0.154.0", "cell": "sync", "status": "Proven", "token": "sync-0154-r2",
+      "sessionId": "01a0d601-cf4a-7ee2-9b74-af0cdcc51cac", "turnId": "01a0d603-e384-71e2-a5c8-48b29c99336d",
       "route": "Stop",
-      "arrivedAt": "2026-09-24T22:19:07.197Z",
-      "observedAt": "2026-09-24T22:19:11.914Z",
-      "acknowledgedAt": "2026-09-24T22:19:19.118Z",
-      "detail": "PostToolUse at 22:19:09.109Z did not deliver; Stop delivered after the tool/turn."
+      "toolStartAt": "2026-09-25T00:42:57.524Z", "arrivedAt": "2026-09-25T00:43:02.597Z",
+      "observedAt": "2026-09-25T00:43:19.277Z", "contextAt": "2026-09-25T00:43:19.280Z",
+      "acknowledgedAt": "2026-09-25T00:43:24.059Z", "relayedAt": "2026-09-25T00:43:26.746Z",
+      "silentAt": ["PostToolUse@2026-09-25T00:43:17.625Z"],
+      "detail": "Arrived mid-tool; PostToolUse left it pending; Stop blocked once with the batch, then the agent acknowledged and relayed it."
     },
     {
-      "version": "0.154.0",
-      "mode": "async",
-      "status": "Proven",
-      "token": "async-read-0154",
+      "version": "0.154.0", "cell": "async", "status": "Proven", "token": "async-0154-r2",
+      "sessionId": "01a0d601-cf4a-7ee2-9b74-af0cdcc51cac",
       "route": "explicit read",
-      "arrivedAt": "2026-09-24T22:19:58.106Z",
-      "observedAt": "2026-09-24T22:20:20.665Z",
-      "acknowledgedAt": "2026-09-24T22:20:24.146Z",
-      "detail": "UserPromptSubmit, PreToolUse and PostToolUse remained silent before the agent's explicit read."
+      "arrivedAt": "2026-09-25T00:44:04.995Z",
+      "observedAt": "2026-09-25T00:44:33.563Z", "contextAt": "2026-09-25T00:44:33.652Z",
+      "acknowledgedAt": "2026-09-25T00:44:38.265Z", "relayedAt": "2026-09-25T00:44:40.769Z",
+      "silentAt": ["UserPromptSubmit@2026-09-25T00:44:06.119Z", "PreToolUse@2026-09-25T00:44:09.175Z", "PostToolUse@2026-09-25T00:44:29.283Z"],
+      "detail": "Every hook saw the pending batch and injected nothing; the agent chose to read after its tool, then acknowledged."
     },
     {
-      "version": "0.156.1",
-      "mode": "steer",
-      "status": "Proven",
-      "token": "steer-busy-0156",
+      "version": "0.154.0", "cell": "idle-wake-sync", "status": "Proven", "token": "wakesync-0154",
+      "sessionId": "01a0d601-cf4a-7ee2-9b74-af0cdcc51cac", "turnId": "01a0d606-3baa-7b50-8cab-abdd37f5fc07",
+      "route": "UserPromptSubmit",
+      "arrivedAt": "2026-09-25T00:45:27.350Z", "wakeAt": "2026-09-25T00:45:27.539Z",
+      "observedAt": "2026-09-25T00:45:27.933Z", "contextAt": "2026-09-25T00:45:27.942Z",
+      "acknowledgedAt": "2026-09-25T00:45:34.442Z", "relayedAt": "2026-09-25T00:45:36.970Z",
+      "detail": "TUI idle at the prompt. The fixed codex queue notice started a turn; its UserPromptSubmit hook pulled the batch 583 ms after arrival."
+    },
+    {
+      "version": "0.154.0", "cell": "idle-wake-steer", "status": "Proven", "token": "wakesteer-0154",
+      "sessionId": "01a0d601-cf4a-7ee2-9b74-af0cdcc51cac", "turnId": "01a0d606-fef0-73a2-8008-d554e6388125",
+      "route": "UserPromptSubmit",
+      "arrivedAt": "2026-09-25T00:46:14.684Z", "wakeAt": "2026-09-25T00:46:14.878Z",
+      "observedAt": "2026-09-25T00:46:17.934Z", "contextAt": "2026-09-25T00:46:17.939Z",
+      "acknowledgedAt": "2026-09-25T00:46:22.813Z", "relayedAt": "2026-09-25T00:46:25.246Z",
+      "detail": "Same fixed wake with steer selected; delivered 3.3 s after arrival."
+    },
+    {
+      "version": "0.154.0", "cell": "restart", "status": "Proven", "token": "restart-0154",
+      "sessionId": "01a0d601-cf4a-7ee2-9b74-af0cdcc51cac", "turnId": "01a0d608-2721-7972-bde7-e2e6fa05575f",
+      "route": "UserPromptSubmit",
+      "arrivedAt": "2026-09-25T00:47:04.811Z", "firstOfferAt": "2026-09-25T00:47:07.923Z",
+      "killedAt": "2026-09-25T00:47:07.934Z",
+      "observedAt": "2026-09-25T00:47:33.927Z", "contextAt": "2026-09-25T00:47:33.933Z",
+      "acknowledgedAt": "2026-09-25T00:47:38.793Z", "relayedAt": "2026-09-25T00:47:41.134Z",
+      "afterAckSilentAt": ["UserPromptSubmit@2026-09-25T00:48:35.534Z", "Stop@2026-09-25T00:48:37.044Z"],
+      "detail": "Fresh token. Codex was SIGKILLed 11 ms after the first offer, before any acknowledgement. `codex resume` re-offered it once at the next prompt; after acknowledgement a second resume saw it acknowledged and delivered nothing."
+    },
+    {
+      "version": "0.156.1", "cell": "steer", "status": "Proven", "token": "steer-0156-r2",
+      "sessionId": "01a0d60a-2956-7021-a1b4-5a7f971e0b5f", "turnId": "01a0d60a-630f-7e21-99e4-792d17b4ee94",
       "route": "PostToolUse",
-      "arrivedAt": "2026-09-24T22:52:14.179Z",
-      "observedAt": "2026-09-24T22:52:26.095Z",
-      "acknowledgedAt": "2026-09-24T22:52:31.141Z",
-      "detail": "Batch arrived during a 20-second Bash sleep and was injected 2 ms after PostToolUse."
+      "toolStartAt": "2026-09-25T00:50:03.510Z", "arrivedAt": "2026-09-25T00:50:08.596Z",
+      "observedAt": "2026-09-25T00:50:23.639Z", "contextAt": "2026-09-25T00:50:23.643Z",
+      "acknowledgedAt": "2026-09-25T00:50:28.377Z", "relayedAt": "2026-09-25T00:50:31.273Z",
+      "detail": "Arrived 5.1 s into `sleep 20`; offered 1 ms after the PostToolUse hook logged; acknowledged and relayed."
     },
     {
-      "version": "0.156.1",
-      "mode": "sync",
-      "status": "Proven",
-      "token": "sync-busy-0156",
+      "version": "0.156.1", "cell": "sync", "status": "Proven", "token": "sync-0156-r2",
+      "sessionId": "01a0d60a-2956-7021-a1b4-5a7f971e0b5f", "turnId": "01a0d60b-78f4-7553-bccb-79f05c8965eb",
       "route": "Stop",
-      "arrivedAt": "2026-09-24T22:53:25.857Z",
-      "observedAt": "2026-09-24T22:53:35.960Z",
-      "acknowledgedAt": "2026-09-24T22:53:40.806Z",
-      "detail": "Batch arrived during a 20-second Bash sleep; PostToolUse left it pending and Stop delivered after the tool/turn."
+      "toolStartAt": "2026-09-25T00:51:14.908Z", "arrivedAt": "2026-09-25T00:51:19.980Z",
+      "observedAt": "2026-09-25T00:51:36.539Z", "contextAt": "2026-09-25T00:51:36.543Z",
+      "acknowledgedAt": "2026-09-25T00:51:41.540Z", "relayedAt": "2026-09-25T00:51:44.355Z",
+      "silentAt": ["PostToolUse@2026-09-25T00:51:35.042Z"],
+      "detail": "PostToolUse left it pending; Stop delivered after the turn; acknowledged and relayed."
     },
     {
-      "version": "0.156.1",
-      "mode": "async",
-      "status": "Proven",
-      "token": "async-read-0156",
+      "version": "0.156.1", "cell": "async", "status": "Proven", "token": "async-0156-r2",
+      "sessionId": "01a0d60a-2956-7021-a1b4-5a7f971e0b5f",
       "route": "explicit read",
-      "arrivedAt": "2026-09-24T22:24:54.694Z",
-      "observedAt": "2026-09-24T22:25:41.931Z",
-      "acknowledgedAt": "2026-09-24T22:25:45.039Z",
-      "detail": "All lifecycle hooks stayed silent; the agent chose to read, reported ASYNC_READ_0156, and acknowledged."
+      "arrivedAt": "2026-09-25T00:52:20.087Z",
+      "observedAt": "2026-09-25T00:52:52.669Z", "contextAt": "2026-09-25T00:52:52.777Z",
+      "acknowledgedAt": "2026-09-25T00:53:01.197Z", "relayedAt": "2026-09-25T00:53:07.445Z",
+      "silentAt": ["UserPromptSubmit@2026-09-25T00:52:21.264Z", "PreToolUse@2026-09-25T00:52:25.191Z", "PostToolUse@2026-09-25T00:52:45.319Z"],
+      "detail": "Hooks stayed silent; the agent chose to read, then acknowledged."
+    },
+    {
+      "version": "0.156.1", "cell": "idle-wake-sync", "status": "Proven", "token": "wakesync-0156",
+      "sessionId": "01a0d60a-2956-7021-a1b4-5a7f971e0b5f", "turnId": "01a0d60d-d0bd-7e61-8bc5-73210f37db1c",
+      "route": "UserPromptSubmit",
+      "arrivedAt": "2026-09-25T00:53:39.910Z", "wakeAt": "2026-09-25T00:53:40.150Z",
+      "observedAt": "2026-09-25T00:53:44.919Z", "contextAt": "2026-09-25T00:53:44.931Z",
+      "acknowledgedAt": "2026-09-25T00:53:52.009Z", "relayedAt": "2026-09-25T00:53:56.029Z",
+      "detail": "Idle TUI woken by the fixed notice; delivered 5.0 s after arrival."
+    },
+    {
+      "version": "0.156.1", "cell": "idle-wake-steer", "status": "Proven", "token": "wakesteer-0156",
+      "sessionId": "01a0d60a-2956-7021-a1b4-5a7f971e0b5f", "turnId": "01a0d60e-6cf8-7a43-a5b9-a24c14a78f1f",
+      "route": "UserPromptSubmit",
+      "arrivedAt": "2026-09-25T00:54:20.266Z", "wakeAt": "2026-09-25T00:54:20.486Z",
+      "observedAt": "2026-09-25T00:54:24.892Z", "contextAt": "2026-09-25T00:54:24.901Z",
+      "acknowledgedAt": "2026-09-25T00:54:29.774Z", "relayedAt": "2026-09-25T00:54:34.649Z",
+      "detail": "Idle TUI woken by the fixed notice; delivered 4.6 s after arrival."
+    },
+    {
+      "version": "0.156.1", "cell": "restart", "status": "Proven", "token": "restart-0156",
+      "sessionId": "01a0d60a-2956-7021-a1b4-5a7f971e0b5f", "turnId": "01a0d60f-5fe2-7222-b58e-5e9d50e4508a",
+      "route": "UserPromptSubmit",
+      "arrivedAt": "2026-09-25T00:55:09.096Z", "firstOfferAt": "2026-09-25T00:55:14.904Z",
+      "killedAt": "2026-09-25T00:55:14.910Z",
+      "observedAt": "2026-09-25T00:55:27.210Z", "contextAt": "2026-09-25T00:55:27.221Z",
+      "acknowledgedAt": "2026-09-25T00:55:32.682Z", "relayedAt": "2026-09-25T00:55:36.635Z",
+      "afterAckSilentAt": ["UserPromptSubmit@2026-09-25T00:56:22.424Z", "Stop@2026-09-25T00:56:24.588Z"],
+      "detail": "Fresh token. SIGKILL 6 ms after the first offer; that offer never reached the persisted rollout. The resumed session got it once, acknowledged it, and a second resume delivered nothing."
     }
   ],
+  "observations": [
+    "steer-0154-r2 (session 01a0d5fe-...) entered model context at 00:39:21.792Z but the model neither acknowledged nor relayed it under the earlier 'treat as data' framing. Because it stayed unacknowledged, the next session re-offered it and it was then acknowledged. Offered is not consumed; only the acknowledgement retires a batch."
+  ],
   "safety": {
-    "messageBytesInArgv": false,
     "hardAbortEnabled": false,
-    "acknowledgement": "batch token",
-    "sessionOwner": "user-started Codex TUI"
+    "acknowledgement": "batch token on the agent's next Khala call (read --ack)",
+    "startedBy": "agent-launched with default settings",
+    "processCapture": ["proc-0.154.0.json", "proc-0.156.1.json"]
   }
 }
