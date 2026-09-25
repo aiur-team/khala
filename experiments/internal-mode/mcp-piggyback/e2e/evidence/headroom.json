@@ -1,0 +1,78 @@
+{
+  "softResponseBytes": 131072,
+  "sendResultPayloadBudget": 19962,
+  "rows": [
+    {
+      "body": "plain-ascii",
+      "releases": 1,
+      "payloadBytes": 19962,
+      "responseBytes": 20739,
+      "softLimitUsed": 0.158,
+      "expansion": 1.04
+    },
+    {
+      "body": "plain-ascii",
+      "releases": 8,
+      "payloadBytes": 19960,
+      "responseBytes": 22493,
+      "softLimitUsed": 0.172,
+      "expansion": 1.13
+    },
+    {
+      "body": "typical-chat",
+      "releases": 1,
+      "payloadBytes": 19933,
+      "responseBytes": 22895,
+      "softLimitUsed": 0.175,
+      "expansion": 1.15
+    },
+    {
+      "body": "typical-chat",
+      "releases": 8,
+      "payloadBytes": 19784,
+      "responseBytes": 24277,
+      "softLimitUsed": 0.185,
+      "expansion": 1.23
+    },
+    {
+      "body": "control-escaped",
+      "releases": 1,
+      "payloadBytes": 19960,
+      "responseBytes": 24019,
+      "softLimitUsed": 0.183,
+      "expansion": 1.2
+    },
+    {
+      "body": "control-escaped",
+      "releases": 8,
+      "payloadBytes": 19952,
+      "responseBytes": 25453,
+      "softLimitUsed": 0.194,
+      "expansion": 1.28
+    },
+    {
+      "body": "quote-heavy",
+      "releases": 1,
+      "payloadBytes": 19962,
+      "responseBytes": 40433,
+      "softLimitUsed": 0.308,
+      "expansion": 2.03
+    },
+    {
+      "body": "quote-heavy",
+      "releases": 8,
+      "payloadBytes": 19952,
+      "responseBytes": 40293,
+      "softLimitUsed": 0.307,
+      "expansion": 2.02
+    },
+    {
+      "body": "raw-control (non-canonical)",
+      "releases": 1,
+      "payloadBytes": 19962,
+      "responseBytes": 120531,
+      "softLimitUsed": 0.92,
+      "expansion": 6.04
+    }
+  ]
+}

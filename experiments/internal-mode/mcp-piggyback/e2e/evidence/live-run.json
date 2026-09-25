@@ -1,0 +1,531 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-25T22:14:47.750Z",
+  "codexVersion": "codex-cli 0.154.0",
+  "startedBy": "agent-launched interactive TUI with default settings (decisions 33 and 43); not user-started",
+  "trustBypassFlagsUsed": [],
+  "launches": [
+    {
+      "run": "async",
+      "command": "tmux -L kh201 new-session -d -s async -x 220 -y 55 -c <fixture>/async/project codex",
+      "note": "update prompt answered Skip; folder-trust prompt answered Yes"
+    },
+    {
+      "run": "nonRead",
+      "command": "tmux -L kh201 new-session -d -s nonRead -x 220 -y 55 -c <fixture>/nonRead/project codex",
+      "note": "update prompt answered Skip; folder-trust prompt answered Yes"
+    },
+    {
+      "run": "restart",
+      "command": "tmux -L kh201 new-session -d -s restart1 -x 220 -y 55 -c <fixture>/restart/project codex",
+      "note": "a first restart1 launch reached the composer before its folder-trust prompt was answered, started no MCP server, made no model call, and was closed; this relaunch answered Skip and Yes"
+    },
+    {
+      "run": "restart",
+      "command": "tmux -L kh201 new-session -d -s restart2 -x 220 -y 55 -c <fixture>/restart/project codex",
+      "note": "fresh session after kill-after-delivery.mjs SIGKILLed restart1's Codex and MCP server"
+    }
+  ],
+  "approvals": "Every Khala tool call was allowed at Codex's default MCP approval prompt with option 1 (Allow, this call only); no session or permanent approval was granted.",
+  "runs": {
+    "async": {
+      "sessions": [
+        "01a0da95-ae1b-71d3-9051-6c113d742bca"
+      ],
+      "prompts": [
+        "Check my Khala channel for anything new and tell me what is there.",
+        "Please reply on the channel: Thanks both, I will look at the header spacing and footer contrast today.",
+        "Check the Khala channel again for anything new."
+      ],
+      "modelInputMarkerHits": 0,
+      "agentMessages": [
+        "I’ll check your Khala channel for new messages.",
+        "Two new messages in **room-design-review**:\n\n**participant-mira**\n> KH201-A-7f3c: the staging deploy is green, please re-check the header spacing\n\n**participant-oskar**\n> KH201-A-9d21: agreed, and the footer link color still fails contrast",
+        "I’ll send your reply to the channel.",
+        "Sent to **room-design-review**:\n> Thanks both, I will look at the header spacing and footer contrast today.",
+        "I’ll check the channel again for new messages.",
+        "No new messages in the Khala channel."
+      ],
+      "enqueued": [
+        {
+          "releaseId": "release-7e78e7ff-6910-4c14-983c-09687a2a2a19",
+          "payloadDigest": "sha256:9b038ce1e8cee2ece2017362f05630b634c2db3bcf9d229c3110c2869db83c99",
+          "channel": "room-design-review",
+          "channelLabel": "room-design-review",
+          "author": "participant-mira",
+          "authorLabel": "participant-mira",
+          "body": "KH201-A-7f3c: the staging deploy is green, please re-check the header spacing",
+          "marker": "KH201-A-7f3c",
+          "at": "2026-09-25T21:59:48.487Z"
+        },
+        {
+          "releaseId": "release-4f2230fd-965f-4481-b7a4-419266708dd4",
+          "payloadDigest": "sha256:6141b067edd3511808000d4905ac9fc697580da1158a49abcd7709b2f7f39ee9",
+          "channel": "room-design-review",
+          "channelLabel": "room-design-review",
+          "author": "participant-oskar",
+          "authorLabel": "participant-oskar",
+          "body": "KH201-A-9d21: agreed, and the footer link color still fails contrast",
+          "marker": "KH201-A-9d21",
+          "at": "2026-09-25T21:59:48.489Z"
+        }
+      ],
+      "serveProcesses": [
+        {
+          "serveId": "665489-1790373637862",
+          "startedAt": "2026-09-25T22:00:37.863Z",
+          "codexPid": 659289,
+          "codexArgv": [
+            "~/.local/share/mise/installs/node/24.18.0/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          ],
+          "codexStdin": "/dev/pts/5"
+        }
+      ],
+      "calls": [
+        {
+          "rpcId": 2,
+          "serveId": "665489-1790373637862",
+          "session": "01a0da95-ae1b-71d3-9051-6c113d742bca",
+          "at": "2026-09-25T22:01:01.208Z",
+          "tool": "khala_read",
+          "arguments": {},
+          "response": {
+            "primaryKind": "batch",
+            "contentCount": 2,
+            "batchCount": 1,
+            "batchToken": "031b67f3-e43a-42b7-b538-69f7bf8778c9",
+            "releaseIds": [
+              "release-7e78e7ff-6910-4c14-983c-09687a2a2a19",
+              "release-4f2230fd-965f-4481-b7a4-419266708dd4"
+            ],
+            "batchSha256": "1bdb9eaa0b91ce76e0e69fe2df35cd00bb9678b83252e93f489684b3984e1137",
+            "responseBytes": 1539,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_read",
+            "arguments": {},
+            "callId": "exec-82edb8fa-c548-41e2-a0fe-34f055cc03fc",
+            "modelCode": "text(await tools.mcp__khala__khala_read({}));",
+            "at": "2026-09-25T22:01:01.215Z"
+          }
+        },
+        {
+          "rpcId": 3,
+          "serveId": "665489-1790373637862",
+          "session": "01a0da95-ae1b-71d3-9051-6c113d742bca",
+          "at": "2026-09-25T22:01:23.446Z",
+          "tool": "khala_send",
+          "arguments": {
+            "ackBatchToken": "031b67f3-e43a-42b7-b538-69f7bf8778c9",
+            "message": "Thanks both, I will look at the header spacing and footer contrast today."
+          },
+          "response": {
+            "primaryKind": "accepted",
+            "contentCount": 1,
+            "batchCount": 0,
+            "batchToken": null,
+            "releaseIds": [],
+            "batchSha256": null,
+            "responseBytes": 325,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_send",
+            "arguments": {
+              "ackBatchToken": "031b67f3-e43a-42b7-b538-69f7bf8778c9",
+              "message": "Thanks both, I will look at the header spacing and footer contrast today."
+            },
+            "callId": "exec-f113e425-0720-4996-abfe-28c93fd6c204",
+            "modelCode": "text(await tools.mcp__khala__khala_send({ackBatchToken:\"031b67f3-e43a-42b7-b538-69f7bf8778c9\",message:\"Thanks both, I will look at the header spacing and footer contrast today.\"}));",
+            "at": "2026-09-25T22:01:23.456Z"
+          }
+        },
+        {
+          "rpcId": 4,
+          "serveId": "665489-1790373637862",
+          "session": "01a0da95-ae1b-71d3-9051-6c113d742bca",
+          "at": "2026-09-25T22:01:50.117Z",
+          "tool": "khala_read",
+          "arguments": {
+            "ackBatchToken": "031b67f3-e43a-42b7-b538-69f7bf8778c9"
+          },
+          "response": {
+            "primaryKind": "empty",
+            "contentCount": 1,
+            "batchCount": 0,
+            "batchToken": null,
+            "releaseIds": [],
+            "batchSha256": null,
+            "responseBytes": 131,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_read",
+            "arguments": {
+              "ackBatchToken": "031b67f3-e43a-42b7-b538-69f7bf8778c9"
+            },
+            "callId": "exec-1dc1d2e7-e219-40d5-ae9b-9441391a3638",
+            "modelCode": "text(await tools.mcp__khala__khala_read({ackBatchToken:\"031b67f3-e43a-42b7-b538-69f7bf8778c9\"}));",
+            "at": "2026-09-25T22:01:50.118Z"
+          }
+        }
+      ],
+      "sends": [
+        {
+          "at": "2026-09-25T22:01:23.446Z",
+          "body": "Thanks both, I will look at the header spacing and footer contrast today."
+        }
+      ],
+      "kills": [],
+      "inboxAfter": {
+        "v": 1,
+        "offset": 2028,
+        "releaseId": "release-4f2230fd-965f-4481-b7a4-419266708dd4"
+      }
+    },
+    "nonRead": {
+      "sessions": [
+        "01a0da96-a371-73e3-abc0-d9252bbcef9c"
+      ],
+      "prompts": [
+        "Post this to my Khala channel: Starting the release checklist now.",
+        "Post to the channel: Checklist step one is done."
+      ],
+      "modelInputMarkerHits": 0,
+      "agentMessages": [
+        "I’ll post that to your Khala channel.",
+        "Posted: “Starting the release checklist now.”\n\nReceived from channel `room-release-train`:\n\n**participant-juno**\n> KH201-B-4e8a: the RC build finished, changelog needs one more line\n\n**participant-tavi**\n> KH201-B-c615: I can add the changelog line after lunch",
+        "I’ll post that to your Khala channel.",
+        "Posted: “Checklist step one is done.”"
+      ],
+      "enqueued": [
+        {
+          "releaseId": "release-5e497b55-b208-4262-9fac-33a0d4c5a747",
+          "payloadDigest": "sha256:e1a1aad1f8ba582a7f21b02bd120e3fab331dc22a881d00874107df5bd4786eb",
+          "channel": "room-release-train",
+          "channelLabel": "room-release-train",
+          "author": "participant-juno",
+          "authorLabel": "participant-juno",
+          "body": "KH201-B-4e8a: the RC build finished, changelog needs one more line",
+          "marker": "KH201-B-4e8a",
+          "at": "2026-09-25T22:01:29.624Z"
+        },
+        {
+          "releaseId": "release-525c39c3-8b33-41f3-8dfb-53d523cd8f75",
+          "payloadDigest": "sha256:cc9fbb911cfcab7b91eb3a716e332f0c5dd01c03ffc34a793f72135bb8489e41",
+          "channel": "room-release-train",
+          "channelLabel": "room-release-train",
+          "author": "participant-tavi",
+          "authorLabel": "participant-tavi",
+          "body": "KH201-B-c615: I can add the changelog line after lunch",
+          "marker": "KH201-B-c615",
+          "at": "2026-09-25T22:01:29.626Z"
+        }
+      ],
+      "serveProcesses": [
+        {
+          "serveId": "675402-1790373700662",
+          "startedAt": "2026-09-25T22:01:40.662Z",
+          "codexPid": 673691,
+          "codexArgv": [
+            "~/.local/share/mise/installs/node/24.18.0/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          ],
+          "codexStdin": "/dev/pts/6"
+        }
+      ],
+      "calls": [
+        {
+          "rpcId": 2,
+          "serveId": "675402-1790373700662",
+          "session": "01a0da96-a371-73e3-abc0-d9252bbcef9c",
+          "at": "2026-09-25T22:02:04.000Z",
+          "tool": "khala_send",
+          "arguments": {
+            "message": "Starting the release checklist now."
+          },
+          "response": {
+            "primaryKind": "accepted",
+            "contentCount": 2,
+            "batchCount": 1,
+            "batchToken": "4f7a64f5-8027-4e88-80b2-29f16063b260",
+            "releaseIds": [
+              "release-5e497b55-b208-4262-9fac-33a0d4c5a747",
+              "release-525c39c3-8b33-41f3-8dfb-53d523cd8f75"
+            ],
+            "batchSha256": "89f646af389bd84e1549fa41fd3a10190b8212adac8aed99cfdb35af9d8fd337",
+            "responseBytes": 1710,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_send",
+            "arguments": {
+              "message": "Starting the release checklist now."
+            },
+            "callId": "exec-26baa380-1bde-4335-8379-6ea7d3738572",
+            "modelCode": "text(await tools.mcp__khala__khala_send({message:\"Starting the release checklist now.\"}));",
+            "at": "2026-09-25T22:02:04.012Z"
+          }
+        },
+        {
+          "rpcId": 3,
+          "serveId": "675402-1790373700662",
+          "session": "01a0da96-a371-73e3-abc0-d9252bbcef9c",
+          "at": "2026-09-25T22:02:25.450Z",
+          "tool": "khala_send",
+          "arguments": {
+            "message": "Checklist step one is done.",
+            "ackBatchToken": "4f7a64f5-8027-4e88-80b2-29f16063b260"
+          },
+          "response": {
+            "primaryKind": "accepted",
+            "contentCount": 1,
+            "batchCount": 0,
+            "batchToken": null,
+            "releaseIds": [],
+            "batchSha256": null,
+            "responseBytes": 325,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_send",
+            "arguments": {
+              "message": "Checklist step one is done.",
+              "ackBatchToken": "4f7a64f5-8027-4e88-80b2-29f16063b260"
+            },
+            "callId": "exec-9b8a7b21-e852-432c-bb65-af552e112dc4",
+            "modelCode": "text(await tools.mcp__khala__khala_send({message:\"Checklist step one is done.\",ackBatchToken:\"4f7a64f5-8027-4e88-80b2-29f16063b260\"}));",
+            "at": "2026-09-25T22:02:25.463Z"
+          }
+        }
+      ],
+      "sends": [
+        {
+          "at": "2026-09-25T22:02:04.005Z",
+          "body": "Starting the release checklist now."
+        },
+        {
+          "at": "2026-09-25T22:02:25.450Z",
+          "body": "Checklist step one is done."
+        }
+      ],
+      "kills": [],
+      "inboxAfter": {
+        "v": 1,
+        "offset": 1998,
+        "releaseId": "release-525c39c3-8b33-41f3-8dfb-53d523cd8f75"
+      }
+    },
+    "restart": {
+      "sessions": [
+        "01a0da99-62b3-74f2-a2f6-5e6926198097",
+        "01a0da99-e871-7e90-8695-86f2158c7763"
+      ],
+      "prompts": [
+        "Check my Khala channel for anything new and tell me what is there.",
+        "Check my Khala channel for anything new and tell me what is there.",
+        "Reply on the channel: Thanks, I am watching the consumer too.",
+        "Check the Khala channel again for anything new."
+      ],
+      "modelInputMarkerHits": 0,
+      "agentMessages": [
+        "I’ll check your Khala channel for new messages.",
+        "I’ll check your Khala channel for new messages.",
+        "Two new messages in **room-incident-42**:\n\n**participant-rhea**\n> KH201-C-2b90: pager fired for the queue backlog, I am looking\n\n**participant-sol**\n> KH201-C-e47d: backlog is draining, root cause looks like a stuck consumer",
+        "I’ll send your reply to the channel.",
+        "Sent: “Thanks, I am watching the consumer too.”",
+        "I’ll check the Khala channel again.",
+        "No new messages in the Khala channel."
+      ],
+      "enqueued": [
+        {
+          "releaseId": "release-e56a817e-1444-41f9-939a-64cdf6e119f6",
+          "payloadDigest": "sha256:137d1567e72a93fb0de2529c9ccd76a8e5aab6f6befdee0836c664f90be68c2a",
+          "channel": "room-incident-42",
+          "channelLabel": "room-incident-42",
+          "author": "participant-rhea",
+          "authorLabel": "participant-rhea",
+          "body": "KH201-C-2b90: pager fired for the queue backlog, I am looking",
+          "marker": "KH201-C-2b90",
+          "at": "2026-09-25T22:02:36.813Z"
+        },
+        {
+          "releaseId": "release-7bf319c2-6cbe-4440-b580-3edf4f7552ec",
+          "payloadDigest": "sha256:d482aaa308faee9bdd02d61abeb5d587e9fc43d7e5812c1179bc2401d7dc525a",
+          "channel": "room-incident-42",
+          "channelLabel": "room-incident-42",
+          "author": "participant-sol",
+          "authorLabel": "participant-sol",
+          "body": "KH201-C-e47d: backlog is draining, root cause looks like a stuck consumer",
+          "marker": "KH201-C-e47d",
+          "at": "2026-09-25T22:02:36.816Z"
+        }
+      ],
+      "serveProcesses": [
+        {
+          "serveId": "746590-1790373880711",
+          "startedAt": "2026-09-25T22:04:40.712Z",
+          "codexPid": 741630,
+          "codexArgv": [
+            "~/.local/share/mise/installs/node/24.18.0/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          ],
+          "codexStdin": "/dev/pts/8"
+        },
+        {
+          "serveId": "752550-1790373914933",
+          "startedAt": "2026-09-25T22:05:14.934Z",
+          "codexPid": 752149,
+          "codexArgv": [
+            "~/.local/share/mise/installs/node/24.18.0/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
+          ],
+          "codexStdin": "/dev/pts/7"
+        }
+      ],
+      "calls": [
+        {
+          "rpcId": 2,
+          "serveId": "746590-1790373880711",
+          "session": "01a0da99-62b3-74f2-a2f6-5e6926198097",
+          "at": "2026-09-25T22:05:07.365Z",
+          "tool": "khala_read",
+          "arguments": {},
+          "response": {
+            "primaryKind": "batch",
+            "contentCount": 2,
+            "batchCount": 1,
+            "batchToken": "81c19250-445d-44f7-b992-3901714b1821",
+            "releaseIds": [
+              "release-e56a817e-1444-41f9-939a-64cdf6e119f6",
+              "release-7bf319c2-6cbe-4440-b580-3edf4f7552ec"
+            ],
+            "batchSha256": "6005e74585a8d77b39933dc082c114b02f29df1e94865c598afe11316decb85c",
+            "responseBytes": 1524,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_read",
+            "arguments": {},
+            "callId": "exec-27b002be-9309-4269-ba95-405a5cddff14",
+            "modelCode": "text(await tools.mcp__khala__khala_read({}));",
+            "at": "2026-09-25T22:05:07.373Z"
+          }
+        },
+        {
+          "rpcId": 2,
+          "serveId": "752550-1790373914933",
+          "session": "01a0da99-e871-7e90-8695-86f2158c7763",
+          "at": "2026-09-25T22:05:25.809Z",
+          "tool": "khala_read",
+          "arguments": {},
+          "response": {
+            "primaryKind": "batch",
+            "contentCount": 2,
+            "batchCount": 1,
+            "batchToken": "81c19250-445d-44f7-b992-3901714b1821",
+            "releaseIds": [
+              "release-e56a817e-1444-41f9-939a-64cdf6e119f6",
+              "release-7bf319c2-6cbe-4440-b580-3edf4f7552ec"
+            ],
+            "batchSha256": "6005e74585a8d77b39933dc082c114b02f29df1e94865c598afe11316decb85c",
+            "responseBytes": 1524,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_read",
+            "arguments": {},
+            "callId": "exec-bdc39be2-6d23-45cf-a603-90552cfc5cd3",
+            "modelCode": "text(await tools.mcp__khala__khala_read({}));",
+            "at": "2026-09-25T22:05:25.811Z"
+          }
+        },
+        {
+          "rpcId": 3,
+          "serveId": "752550-1790373914933",
+          "session": "01a0da99-e871-7e90-8695-86f2158c7763",
+          "at": "2026-09-25T22:12:29.738Z",
+          "tool": "khala_send",
+          "arguments": {
+            "ackBatchToken": "81c19250-445d-44f7-b992-3901714b1821",
+            "message": "Thanks, I am watching the consumer too."
+          },
+          "response": {
+            "primaryKind": "accepted",
+            "contentCount": 1,
+            "batchCount": 0,
+            "batchToken": null,
+            "releaseIds": [],
+            "batchSha256": null,
+            "responseBytes": 325,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_send",
+            "arguments": {
+              "ackBatchToken": "81c19250-445d-44f7-b992-3901714b1821",
+              "message": "Thanks, I am watching the consumer too."
+            },
+            "callId": "exec-5c4b5b7d-1790-4ab1-9148-7244f9bc4d35",
+            "modelCode": "text(await tools.mcp__khala__khala_send({ackBatchToken:\"81c19250-445d-44f7-b992-3901714b1821\",message:\"Thanks, I am watching the consumer too.\"}));",
+            "at": "2026-09-25T22:12:29.756Z"
+          }
+        },
+        {
+          "rpcId": 4,
+          "serveId": "752550-1790373914933",
+          "session": "01a0da99-e871-7e90-8695-86f2158c7763",
+          "at": "2026-09-25T22:12:42.927Z",
+          "tool": "khala_read",
+          "arguments": {
+            "ackBatchToken": "81c19250-445d-44f7-b992-3901714b1821"
+          },
+          "response": {
+            "primaryKind": "empty",
+            "contentCount": 1,
+            "batchCount": 0,
+            "batchToken": null,
+            "releaseIds": [],
+            "batchSha256": null,
+            "responseBytes": 131,
+            "isError": false
+          },
+          "rollout": {
+            "tool": "khala_read",
+            "arguments": {
+              "ackBatchToken": "81c19250-445d-44f7-b992-3901714b1821"
+            },
+            "callId": "exec-26e0a3be-7bd2-4a5c-990e-03c44b611536",
+            "modelCode": "text(await tools.mcp__khala__khala_read({ackBatchToken:\"81c19250-445d-44f7-b992-3901714b1821\"}));",
+            "at": "2026-09-25T22:12:42.928Z"
+          }
+        }
+      ],
+      "sends": [
+        {
+          "at": "2026-09-25T22:12:29.738Z",
+          "body": "Thanks, I am watching the consumer too."
+        }
+      ],
+      "kills": [
+        {
+          "at": "2026-09-25T22:05:07.373Z",
+          "event": "killed",
+          "serveId": "746590-1790373880711",
+          "codexPid": 741630,
+          "servePid": 746590,
+          "deliveredAt": "2026-09-25T22:05:07.373Z"
+        }
+      ],
+      "inboxAfter": {
+        "v": 1,
+        "offset": 2004,
+        "releaseId": "release-7bf319c2-6cbe-4440-b580-3edf4f7552ec"
+      }
+    }
+  },
+  "negativeClaims": [
+    "The Codex TUIs are agent-launched with default settings, not user-started.",
+    "No hosted agent, app-server, codex exec, transcript capture, or assistant-output capture is part of the proof; replies are read from Codex's own local rollout after the fact.",
+    "Idle wake, sync, steer, and delivery at non-Khala tool boundaries remain unproven.",
+    "This evidence changes no capability record; listening-mode-contract owns that."
+  ]
+}

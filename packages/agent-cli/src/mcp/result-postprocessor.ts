@@ -1,4 +1,6 @@
+import { cliErrorCode } from '../cli/errors.js';
 import type { InboxBatch, InboxConsumer } from '../cli/inbox.js';
+import type { CliErrorCode } from '../cli/types.js';
 import { validDigest, validIdentifier } from '../cli/validation.js';
 
 export const MCP_SOFT_RESPONSE_BYTES = 128 * 1024;
@@ -19,10 +21,21 @@ export type McpToolResult = Readonly<{
   [key: string]: unknown;
 }>;
 
+/**
+ * A content-free record of a batch that was not appended. `stage` names the
+ * step that failed closed: the binding check, inbox selection, or rendering the
+ * selected bytes. It never carries payload, token, or error text.
+ */
+export type McpPostprocessSuppression = Readonly<{
+  stage: 'status' | 'read' | 'render';
+  code: CliErrorCode;
+}>;
+
 type CommonPostprocessInput<Result extends McpToolResult> = Readonly<{
   responseId: McpJsonRpcId;
   primaryResult: Result;
   isCurrentBinding: () => Promise<boolean>;
+  onSuppressed?: (suppression: McpPostprocessSuppression) => void;
 }>;
 
 export type ConsumerPostprocessInput<Result extends McpToolResult = McpToolResult> =
@@ -96,26 +109,45 @@ export function createMcpResultPostprocessor(
 
   return async <Result extends McpToolResult>(input: McpResultPostprocessInput<Result>): Promise<Result> => {
     const primary = input.primaryResult;
+    let stage: McpPostprocessSuppression['stage'] = 'status';
+    const suppress = (code: CliErrorCode): Result => {
+      reportSuppression(input, { stage, code });
+      return primary;
+    };
     try {
       const hasConsumer = Object.hasOwn(input, 'consumer') && input.consumer !== undefined;
       const hasPreselected = Object.hasOwn(input, 'preselectedBatch');
-      if (hasConsumer === hasPreselected) return primary;
+      if (hasConsumer === hasPreselected) return suppress('internal_error');
       if (hasPreselected) {
         const outcome = await postprocessPreselectedMcpResult(input as PreselectedPostprocessInput<Result>);
         return outcome.kind === 'composed' ? outcome.result : primary;
       }
-      if (!await input.isCurrentBinding()) return primary;
+      if (!await input.isCurrentBinding()) return suppress('binding_not_held');
 
+      stage = 'read';
       const batch = await readConsumerBatch(input as ConsumerPostprocessInput<Result>, softResponseBytes);
       if (batch === null) return primary;
-      if (!await input.isCurrentBinding()) return primary;
+      stage = 'status';
+      if (!await input.isCurrentBinding()) return suppress('binding_not_held');
 
+      stage = 'render';
       const rendered = renderInboxBatch(batch);
       return appendBatchItem(primary, rendered) as Result;
-    } catch {
-      return primary;
+    } catch (error) {
+      return suppress(cliErrorCode(error));
     }
   };
+}
+
+function reportSuppression(
+  input: Pick<CommonPostprocessInput<McpToolResult>, 'onSuppressed'>,
+  suppression: McpPostprocessSuppression,
+): void {
+  try {
+    input.onSuppressed?.(suppression);
+  } catch {
+    // Reporting is diagnostic only; it must never change the tool result.
+  }
 }
 
 const defaultPostprocessor = createMcpResultPostprocessor();
@@ -134,16 +166,22 @@ export function postprocessMcpResult<Result extends McpToolResult>(
 export async function postprocessPreselectedMcpResult<Result extends McpToolResult>(
   input: PreselectedPostprocessInput<Result>,
 ): Promise<PreselectedMcpPostprocessOutcome<Result>> {
+  let stage: McpPostprocessSuppression['stage'] = 'status';
+  const suppress = (code: 'binding_not_held' | 'internal_error'): PreselectedMcpPostprocessOutcome<Result> => {
+    reportSuppression(input, { stage, code });
+    return { kind: 'suppressed', code };
+  };
   try {
-    if (!await input.isCurrentBinding()) return { kind: 'suppressed', code: 'binding_not_held' };
+    if (!await input.isCurrentBinding()) return suppress('binding_not_held');
     if (input.preselectedBatch === null) return { kind: 'composed', result: input.primaryResult };
-    if (!await input.isCurrentBinding()) return { kind: 'suppressed', code: 'binding_not_held' };
+    if (!await input.isCurrentBinding()) return suppress('binding_not_held');
+    stage = 'render';
     return {
       kind: 'composed',
       result: appendBatchItem(input.primaryResult, renderInboxBatch(input.preselectedBatch)) as Result,
     };
   } catch {
-    return { kind: 'suppressed', code: 'internal_error' };
+    return suppress('internal_error');
   }
 }
 

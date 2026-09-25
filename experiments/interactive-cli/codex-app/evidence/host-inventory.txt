@@ -1,0 +1,70 @@
+Captured: 2026-09-25T01:11:06-07:00
+Host: orangekid
+
+$ uname -srmo
+Linux 7.1.4-arch1-1 x86_64 GNU/Linux
+
+$ command -v codex && codex --version
+~/.local/share/mise/installs/node/lts/bin/codex
+codex-cli 0.154.0
+
+$ npm view @openai/codex version
+0.157.0
+
+$ command -v chatgpt || printf '%s NOT_INSTALLED\n' chatgpt
+chatgpt NOT_INSTALLED
+
+$ command -v codex-app || printf '%s NOT_INSTALLED\n' codex-app
+codex-app NOT_INSTALLED
+
+$ command -v codex-desktop || printf '%s NOT_INSTALLED\n' codex-desktop
+codex-desktop NOT_INSTALLED
+
+$ rg -n '^(Name|Exec)=' ~/.local/share/applications/ChatGPT.desktop
+3:Name=ChatGPT
+5:Exec=omarchy-launch-webapp https://chatgpt.com/
+
+$ ls ~/.local/share/applications | rg -i 'codex|chatgpt|openai'
+ChatGPT.desktop
+
+$ ls /opt | rg -i 'codex|chatgpt|openai' || printf 'no codex/chatgpt/openai entry in /opt\n'
+no codex/chatgpt/openai entry in /opt
+
+$ pacman -Qq | rg -i 'codex|chatgpt|openai' || printf 'no codex/chatgpt/openai pacman package\n'
+no codex/chatgpt/openai pacman package
+
+$ flatpak list --app
+bash: line 1: flatpak: command not found
+
+$ codex login status
+Logged in using ChatGPT
+
+$ codex features list | rg "^hooks "
+hooks                                    stable             true
+
+$ codex cloud --help | sed -n "3,11p"
+Usage: codex cloud [OPTIONS] [COMMAND]
+
+Commands:
+  exec    Submit a new Codex Cloud task without launching the TUI
+  status  Show the status of a Codex Cloud task
+  list    List Codex Cloud tasks
+  apply   Apply the diff for a Codex Cloud task locally
+  diff    Show the unified diff for a Codex Cloud task
+  help    Print this message or the help of the given subcommand(s)
+
+$ codex cloud list --limit 20
+No tasks found.
+
+$ ps -eo comm= | rg -x -c "codex|codex-.*" || printf %s\\n "no codex process running"
+no codex process running
+
+Notes:
+- No native Codex desktop app is installed. ChatGPT.desktop launches chatgpt.com in
+  a browser wrapper; it is not the Codex desktop surface.
+- The CLI is logged in with ChatGPT, but the account has no Codex Cloud task. The only
+  CLI path to a task is `codex cloud exec`, which submits a new task. That is the
+  contract's wrong implementation and was not run.
+- The CLI exposes no command to install hooks into a Codex Cloud environment.
+- No `codex app-server`, `codex exec`, or `codex cloud exec` process was started for
+  this capture, and no Codex process was running when it finished.
