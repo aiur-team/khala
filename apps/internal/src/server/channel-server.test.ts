@@ -139,6 +139,16 @@ describe('browser bootstrap exchange', () => {
     expect((await exchange(h)).status).toBe(401);
   });
 
+  it('refuses channel scopes that cannot be addressed as a route segment', async () => {
+    const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-server-'), now: NOW });
+    cleanups.push(() => fixture.dispose());
+    const base = { store: fixture.store, newId: () => 'x', clock: () => NOW, startPort: 0 } as const;
+    await expect(startChannelServer({ ...base, bootstrap: [{ ...fixture.bootstrap, channelId: 'a:b' as never }], bindings: [] }))
+      .rejects.toBeInstanceOf(CredentialConfigError);
+    await expect(startChannelServer({ ...base, bootstrap: [], bindings: [{ ...fixture.bob, channels: ['..' as never] }] }))
+      .rejects.toBeInstanceOf(CredentialConfigError);
+  });
+
   it('refuses malformed or duplicate credential registrations before listening', async () => {
     const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-server-'), now: NOW });
     cleanups.push(() => fixture.dispose());
@@ -261,6 +271,47 @@ describe('credential authentication', () => {
     const stale = { ...fixture.bob, binding: { ...bobBinding, generation: 9 } };
     const h = await start({ bindings: [stale] }, fixture);
     expect((await call(h.server.port, { path: `/api/v1/channels/${channelId}`, headers: bearer(stale.credential) })).status).toBe(401);
+  });
+
+  it('refuses an older generation once a newer one is registered, without explicit revocation', async () => {
+    const h = await start();
+    const path = `/api/v1/channels/${channelId}`;
+    expect((await call(h.server.port, { path, headers: bearer(h.fixture.bob.credential) })).status).toBe(200);
+    expect(h.fixture.store.registerBinding({ ...bobBinding, generation: 2, sessionId: 'session-bob-2' }))
+      .toMatchObject({ kind: 'done', changed: true });
+    expect((await call(h.server.port, { path, headers: bearer(h.fixture.bob.credential) })).status).toBe(401);
+  });
+
+  it('rechecks the binding after a slow body arrives and before the durable write', async () => {
+    const h = await start();
+    const status = await new Promise<number>((resolve, reject) => {
+      const body = JSON.stringify(message('after-revoke'));
+      const request = httpRequest({
+        host: '127.0.0.1',
+        port: h.server.port,
+        method: 'POST',
+        path: `/api/v1/channels/${channelId}/messages`,
+        headers: {
+          host: `127.0.0.1:${h.server.port}`,
+          ...bearer(h.fixture.bob.credential),
+          'content-type': 'application/json',
+          'content-length': String(Buffer.byteLength(body)),
+        },
+      });
+      request.once('error', reject);
+      request.once('response', response => {
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      request.write(body.slice(0, 5));
+      setTimeout(() => {
+        h.fixture.store.revokeBinding({ bindingId: bobBinding.bindingId, generation: bobBinding.generation });
+        request.end(body.slice(5));
+      }, 50);
+    });
+    expect(status).toBe(401);
+    const timeline = h.fixture.store.timeline({ channelId, participantId: bob.participantId, cursor: null, limit: 10 });
+    expect(timeline).toMatchObject({ kind: 'done', events: [] });
   });
 });
 
@@ -446,6 +497,14 @@ describe('credential-scoped SSE hints', () => {
     await eventually(() => reconnected!.text().includes('event: ready'));
     reconnected.close();
     human.close();
+  });
+
+  it('closes a stream once its participant leaves the channel', async () => {
+    const h = await start({ limits: { keepaliveMs: 30 } });
+    const agent = await openStream(h.server.port, `/api/v1/channels/${channelId}/hints`, bearer(h.fixture.bob.credential));
+    expect(agent.status).toBe(200);
+    h.fixture.store.setMembership({ channelId, participantId: bob.participantId, membership: 'left' });
+    await agent.closed;
   });
 
   it('closes a binding stream when the binding is revoked and all streams on shutdown', async () => {

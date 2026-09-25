@@ -133,13 +133,18 @@ function compile(routes: readonly RouteSpec[]): CompiledRoute[] {
   });
 }
 
+/** True when a value can be addressed as one undecoded route parameter segment. */
+export function isRouteSegment(value: unknown): value is string {
+  return typeof value === 'string' && PARAM_SEGMENT.test(value) && value !== '.' && value !== '..';
+}
+
 function matchPath(route: CompiledRoute, segments: readonly string[]): Record<string, string> | null {
   if (route.segments.length !== segments.length) return null;
   const params: Record<string, string> = {};
   for (const [index, pattern] of route.segments.entries()) {
     const actual = segments[index]!;
     if (pattern.startsWith(':')) {
-      if (!PARAM_SEGMENT.test(actual) || actual === '.' || actual === '..') return null;
+      if (!isRouteSegment(actual)) return null;
       params[pattern.slice(1)] = actual;
     } else if (pattern !== actual) {
       return null;

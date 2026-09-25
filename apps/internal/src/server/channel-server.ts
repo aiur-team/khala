@@ -10,13 +10,14 @@ import {
   SESSION_COOKIE, SESSION_EXCHANGE_ROUTE,
 } from './bootstrap';
 import {
-  type BindingCredential, type BootstrapCredential, type CredentialAuthority, type Principal, createCredentialAuthority,
+  type BindingCredential, type BootstrapCredential, type CredentialAuthority, CredentialConfigError, type Principal,
+  createCredentialAuthority,
 } from './credentials';
 import {
   BodyError, type ErrorCode, applySecurityHeaders, headerValues, readJsonObject, sendBytes, sendError, sendJson,
 } from './http';
 import {
-  type AuthOutcome, DEFAULT_LIMITS, type LogEvent, type LoopbackServer, type RouteContext, type RouteSpec,
+  type AuthOutcome, DEFAULT_LIMITS, type LogEvent, type LoopbackServer, type RouteContext, type RouteSpec, isRouteSegment,
   type ServerLimits, startLoopbackServer,
 } from './server';
 
@@ -138,6 +139,8 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   const limits: ChannelServerLimits = { ...DEFAULT_CHANNEL_SERVER_LIMITS, ...options.limits };
   const { store } = options;
   // Assets and credentials are validated before any socket is bound.
+  const scopedChannels = [...options.bootstrap.map(record => record.channelId), ...options.bindings.flatMap(record => record.channels)];
+  if (!scopedChannels.every(isRouteSegment)) throw new CredentialConfigError();
   const assets: AssetTable | null = options.assets ? loadAssets(options.assets, limits) : null;
   const authority: CredentialAuthority = createCredentialAuthority({
     bootstrap: options.bootstrap,
@@ -162,12 +165,26 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
-  /** Revalidates a binding against the durable store on every use. */
+  /**
+   * Revalidates a binding against the durable store on every use: the exact row
+   * must be active and still the newest generation for its binding ID.
+   */
   function bindingLive(principal: Principal): 'live' | 'revoked' | 'unavailable' {
     if (principal.kind !== 'binding') return 'live';
     const result = store.binding(principal.binding);
-    if (result.kind === 'unavailable') return 'unavailable';
-    return result.kind === 'done' && result.binding.status === 'active' ? 'live' : 'revoked';
+    const latest = store.latestBindingGeneration(principal.binding.bindingId);
+    if (result.kind === 'unavailable' || latest.kind === 'unavailable') return 'unavailable';
+    return result.kind === 'done' && result.binding.status === 'active' && latest.generation === principal.binding.generation
+      ? 'live'
+      : 'revoked';
+  }
+
+  /** Rechecks authority after a body arrives, immediately before a durable write. */
+  function stillLive(context: RouteContext<Principal>): boolean {
+    const live = bindingLive(context.principal!);
+    if (live === 'live') return true;
+    fail(context.response, live === 'unavailable' ? failure(503, 'unavailable') : failure(401, 'unauthenticated'));
+    return false;
   }
 
   function authenticate(request: IncomingMessage, params: Readonly<Record<string, string>>): AuthOutcome<Principal> {
@@ -235,9 +252,12 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       fail(response, failure(400, 'invalid_request'));
       return;
     }
+    const newChannelId = options.newId();
+    // Channel IDs must stay addressable as a route segment, or the channel becomes unreachable.
+    if (!isRouteSegment(newChannelId)) throw new Error('loopback server: unroutable channel id');
     const result = store.createChannel({
       operationId: body.operationId,
-      channelId: options.newId() as RoomId,
+      channelId: newChannelId as RoomId,
       title,
       creatorOwnerId: principal.human.ownerId,
       creatorParticipantId: principal.human.participantId,
@@ -306,6 +326,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       fail(response, failure(400, 'invalid_request'));
       return;
     }
+    if (!stillLive(context)) return;
     const author = actor(principal!);
     const result = store.send({
       channelId: params.channelId as RoomId,
@@ -343,15 +364,10 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     streams.set(who.sessionKey, own + 1);
     detach();
 
-    applySecurityHeaders(response);
-    response.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'x-accel-buffering': 'no',
-    });
-    // `ready` tells a new or reconnected client to reread authenticated durable state.
-    response.write('retry: 2000\n\nevent: ready\ndata: {}\n\n');
-
     let open = true;
+    let unsubscribe = () => {};
+    let keepalive: NodeJS.Timeout | undefined;
+    // Registered before anything can throw, so the stream slot is always released.
     const cleanup = () => {
       if (!open) return;
       open = false;
@@ -364,23 +380,37 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       else streams.set(who.sessionKey, remaining);
       if (!response.writableEnded) response.end();
     };
-    const stillAuthorized = () => {
-      try {
-        if (bindingLive(who) === 'live') return true;
-      } catch { /* Treated as revoked below. */ }
-      cleanup();
-      return false;
-    };
-    const unsubscribe = store.subscribeHints(channelId, () => {
-      if (open && stillAuthorized()) response.write('event: hint\ndata: {}\n\n');
-    });
-    const keepalive = setInterval(() => {
-      if (open && stillAuthorized()) response.write(': keepalive\n\n');
-    }, limits.keepaliveMs);
-    keepalive.unref();
     request.once('close', cleanup);
     response.once('close', cleanup);
     signal.addEventListener('abort', cleanup, { once: true });
+    // Binding liveness and channel membership are both rechecked before every frame.
+    const stillAuthorized = () => {
+      try {
+        if (bindingLive(who) === 'live'
+          && store.channel({ channelId, participantId: actor(who).participantId }).kind === 'done') return true;
+      } catch { /* Treated as unauthorized below. */ }
+      cleanup();
+      return false;
+    };
+    try {
+      unsubscribe = store.subscribeHints(channelId, () => {
+        if (open && stillAuthorized()) response.write('event: hint\ndata: {}\n\n');
+      });
+      keepalive = setInterval(() => {
+        if (open && stillAuthorized()) response.write(': keepalive\n\n');
+      }, limits.keepaliveMs);
+      keepalive.unref();
+      applySecurityHeaders(response);
+      response.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'x-accel-buffering': 'no',
+      });
+      // `ready` tells a new or reconnected client to reread authenticated durable state.
+      response.write('retry: 2000\n\nevent: ready\ndata: {}\n\n');
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
   }
 
   function staticAsset({ route, response }: RouteContext<Principal>): void {

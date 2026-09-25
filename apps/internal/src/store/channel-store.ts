@@ -53,6 +53,10 @@ export type BindingReadResult =
   | Readonly<{ kind: 'rejected'; code: 'binding_mismatch' }>
   | Readonly<{ kind: 'unavailable' }>;
 
+export type LatestGenerationResult =
+  | Readonly<{ kind: 'done'; generation: number | null }>
+  | Readonly<{ kind: 'unavailable' }>;
+
 export type CreateChannelResult =
   | Readonly<{ kind: 'created' | 'replayed'; channel: StoredChannel }>
   | Readonly<{ kind: 'rejected'; code: 'identity_mismatch' | 'operation_mismatch' | 'invalid_input' }>
@@ -324,6 +328,8 @@ export interface ChannelStore {
   registerBinding(binding: TrustedBinding): BindingRegistrationResult;
   revokeBinding(key: Readonly<{ bindingId: string; generation: number }>): BindingRevocationResult;
   binding(binding: TrustedBinding): BindingReadResult;
+  /** Newest registered generation for a binding ID, or null when none exists. */
+  latestBindingGeneration(bindingId: string): LatestGenerationResult;
   setMembership(input: Readonly<{ channelId: RoomId; participantId: ParticipantId; membership: ChannelMembership }>): MembershipResult;
   createChannel(input: Readonly<{
     operationId: string;
@@ -477,6 +483,16 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           return sameBinding(row, binding)
             ? { kind: 'done', binding: bindingFromRow(row) } as const
             : { kind: 'rejected', code: 'binding_mismatch' } as const;
+        });
+      } catch { return unavailable(); }
+    },
+
+    latestBindingGeneration(bindingId) {
+      try {
+        return handle.read(db => {
+          const row = db.prepare('SELECT max(generation) AS generation FROM bindings WHERE binding_id = ?')
+            .get(bindingId) as { generation: number | null } | undefined;
+          return { kind: 'done', generation: row?.generation ?? null } as const;
         });
       } catch { return unavailable(); }
     },

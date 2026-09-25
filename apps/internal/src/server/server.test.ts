@@ -203,6 +203,23 @@ describe('loopback listener', () => {
     expect((await first).status).toBe(204);
   });
 
+  it('closes a keep-alive socket after the per-socket request limit', async () => {
+    const server = await startHarness({ bodyReads: 0, storeReads: 0 }, { limits: { maxRequestsPerSocket: 1 } });
+    const response = await raw(server.port, ['GET /nope HTTP/1.1', `Host: 127.0.0.1:${server.port}`, 'Connection: keep-alive', '', '']);
+    expect(response.status).toBe(404);
+    expect(response.headers.connection).toBe('close');
+  });
+
+  it('drops connections beyond the connection limit without serving them', async () => {
+    const server = await startHarness({ bodyReads: 0, storeReads: 0 }, { limits: { maxConnections: 1 } });
+    const held = net.connect({ host: '127.0.0.1', port: server.port });
+    await new Promise(resolve => held.once('connect', resolve));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const excess = await raw(server.port, ['GET /nope HTTP/1.1', `Host: 127.0.0.1:${server.port}`, '', '']);
+    expect(excess.status).toBe(0);
+    held.destroy();
+  });
+
   it('refuses oversized bodies and times out incomplete headers', async () => {
     const events: LogEvent[] = [];
     const server = await startHarness({ bodyReads: 0, storeReads: 0 }, {

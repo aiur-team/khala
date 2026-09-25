@@ -91,6 +91,12 @@ describe('asset manifest loading', () => {
     expectCode(() => loadAssets(manifest(root, [{ route: '/s', file: 'linked/secret.txt', contentType: js }])), 'unsafe_file');
   });
 
+  it('rejects hard-linked files, which could alias content outside the bundle', () => {
+    const { root, outside } = bundle();
+    fs.linkSync(path.join(outside, 'secret.txt'), path.join(root, 'alias.txt'));
+    expectCode(() => loadAssets(manifest(root, [{ route: '/alias.txt', file: 'alias.txt', contentType: js }])), 'unsafe_file');
+  });
+
   it('rejects non-regular, missing, oversized and excess files', () => {
     const { root } = bundle();
     execFileSync('mkfifo', [path.join(root, 'pipe')]);

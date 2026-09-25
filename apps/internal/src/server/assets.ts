@@ -91,6 +91,8 @@ function readNoFollow(root: string, segments: readonly string[], maxBytes: numbe
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) throw new AssetManifestError('invalid_file');
+    // A hard link can alias a file outside the bundle on the same filesystem.
+    if (stat.nlink !== 1) throw new AssetManifestError('unsafe_file');
     if (stat.size > maxBytes) throw new AssetManifestError('too_large');
     const body = Buffer.alloc(stat.size);
     let offset = 0;
