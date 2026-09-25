@@ -21,18 +21,18 @@ Trusted composition supplies every input:
   Pause and revocation are enforced here only through these values: a pause or
   revoke must advance the effective policy version or the binding generation, or
   replace the binding composition supplies, before this module will refuse.
-- `room`: the room ID and its current member participant IDs.
+- `room`: the channel's compatibility-sensitive room ID and its current member participant IDs.
 - `pending`: the decrypted pending snapshot. Deleted events are omitted; redacted
   or undecryptable ones are omitted or carry `unavailable` content.
 - `release`: releaser-chosen `releaseId`, `payloadRef` and `causalRootId`.
 
 Checks run in this order, and each failure refuses the whole command:
 
-1. Owner matches the binding owner, the command room is the room, and the recipient
+1. Owner matches the binding owner, the command targets the same channel as `room`, and the recipient
    agent is a member (`forbidden`). No pending content is read before these pass.
 2. Binding ID and `expectedBindingGeneration` match (`stale_binding`), then the
    policy version (`stale_policy`).
-3. The selection is nonempty, single-room and free of duplicate events (`forbidden`).
+3. The selection is nonempty, belongs to one channel, and is free of duplicate events (`forbidden`).
 4. For each selected event, in order: a snapshot record exists (`expired_content`);
    it is the only one and its reference equals the selected reference, including
    author and device (`stale_content`); its author is a member (`forbidden`); its

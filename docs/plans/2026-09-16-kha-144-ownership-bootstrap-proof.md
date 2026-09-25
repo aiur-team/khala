@@ -25,17 +25,17 @@ Implementation belongs to the assigned ticket worker after gates clear. Root dep
 
 ### Summary
 
-Connect the chat link to the human's existing working agent without requiring technical setup by the human. This ticket covers the bounded outcome in `docs/product/tickets/KHA-144.md`.
+Connect the channel link to the human's existing working agent without requiring technical setup by the human. This ticket covers the bounded outcome in `docs/product/tickets/KHA-144.md`.
 
 ### Problem Frame
 
-The same public chat link must serve coworkers and agents, but routing information cannot prove which human owns an agent session.
+The same public channel link must serve coworkers and agents, but routing information cannot prove which human owns an agent session.
 
 ### Requirements
 
-- R1. Connect the chat link to the human's existing working agent without requiring technical setup by the human.
+- R1. Connect the channel link to the human's existing working agent without requiring technical setup by the human.
 - R2. Authenticate owner, room, connector key and exact session before granting agent authority.
-- R3. Ensure a copied public chat link alone cannot claim another person's ownership.
+- R3. Ensure a copied public channel link alone cannot claim another person's ownership.
 - R4. Prove automatic messaging account/device preparation or report the precise missing capability.
 
 ### Actors and flow
@@ -47,7 +47,7 @@ F1. An authorised actor requests this ticket's operation; the owning module vali
 ### Acceptance Examples
 
 - AE1. The approved authenticated trust path attaches the intended existing session to its verified owner without human technical setup. Covers R1, R2.
-- AE2. Another machine possessing only the public chat link cannot claim that owner or gain human policy/approval capability. Covers R3, R4.
+- AE2. Another machine possessing only the public channel link cannot claim that owner or gain human policy/approval capability. Covers R3, R4.
 
 ### Key Decisions
 

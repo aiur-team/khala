@@ -11,7 +11,7 @@ export function createConnectorBootstrapClient(options: ConnectorBootstrapClient
       const operationId = createHash('sha256')
         .update(JSON.stringify(['khala.agent-cli.bootstrap.v1', link, options.session.harness, options.session.sessionId, options.session.workdir]))
         .digest('base64url').slice(0, 32);
-      const result = await bootstrapAgent({ chatUrl: link, session: options.session, operationId }, options.ports);
+      const result = await bootstrapAgent({ channelUrl: link, session: options.session, operationId }, options.ports);
       if (result.kind === 'blocked') return { kind: 'refused', code: result.code };
       if (result.kind === 'unavailable') return { kind: 'unavailable' };
       return result;

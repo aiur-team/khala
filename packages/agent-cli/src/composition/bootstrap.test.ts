@@ -24,6 +24,10 @@ describe('connector bootstrap composition', () => {
       kind: 'refused', code: 'admission_denied',
     });
     const first = mockedBootstrap.mock.calls[0]![0].operationId;
+    expect(mockedBootstrap.mock.calls[0]![0]).toMatchObject({
+      channelUrl: 'https://chat.example/i/room',
+      operationId: 'yLnM_6ZpdiSG9ozWz11anaFcrTMfUVwV',
+    });
     await client.connect('https://chat.example/i/room');
     expect(mockedBootstrap.mock.calls[1]![0].operationId).toBe(first);
   });

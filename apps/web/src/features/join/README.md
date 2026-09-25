@@ -1,7 +1,7 @@
 # `join` (KHA-124)
 
-OAuth entry and chat admission for a coworker opening a shared invite link. The
-ordinary path asks for OAuth sign-in and chat admission only — no Matrix
+OAuth entry and channel admission for a coworker opening a shared invite link. The
+ordinary path asks for OAuth sign-in and channel admission only — no Matrix
 credentials, homeserver selection or device-key setup screens.
 
 ## Shape
@@ -54,7 +54,7 @@ not another automatic redirect.
   redirect loop; a long verified email does not overflow at 390px portrait or
   landscape; the raw invite reference never reaches console output; expired,
   revoked and wrong-account outcomes render distinct copy with no retry
-  action; and a revoked callback never exposes room content.
+  action; and a revoked callback never exposes channel content.
 
 None of this proves real OAuth, real admission or real key exchange — that
 proof belongs to `KHA-132`, which composes this feature's ports with live
@@ -63,10 +63,10 @@ changing the journey.
 
 ## Known gaps intentionally left to dependency owners
 
-- The queued-introduction preview happens on the room route reached *after*
+- The queued-introduction preview happens on the channel route reached *after*
   `joined` (the plan's journey diagram places it there, not on this screen);
   this ticket owns only the join screen, so `JoinView` carries `roomId` and
-  nothing else room-shaped — no `RoomPort`, no title, no body.
+  nothing else channel-shaped — no `ChannelPort`, no title, no body.
 - Production route parsing, the real OAuth callback and cross-origin/open-
   redirect handling belong to `KHA-110` / `KHA-131`, tested end-to-end at
   `KHA-132`.

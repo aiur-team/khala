@@ -134,7 +134,7 @@ No implementation or runtime test has run as part of this plan. Browser credenti
 
 ### U2. Build thin SDK dashboard-page probe
 
-**Goal:** Test distinctive UI with minimal custom chat behavior.
+**Goal:** Test distinctive UI with minimal custom channel behavior.
 
 **Requirements:** R1/R3; F1; KTD1. **Dependencies:** U1.
 

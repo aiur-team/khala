@@ -1,5 +1,5 @@
 ---
-title: "KHA-114 Bootstrap an agent from its chat link - Plan"
+title: "KHA-114 Bootstrap an agent from its channel link - Plan"
 type: feat
 date: 2026-09-16
 topic: agent-link-bootstrap
@@ -10,7 +10,7 @@ execution: code
 origin: docs/product/tickets/KHA-114.md
 ---
 
-# KHA-114 Bootstrap an agent from its chat link - Plan
+# KHA-114 Bootstrap an agent from its channel link - Plan
 
 ## Goal Capsule
 
@@ -28,7 +28,7 @@ A transport receipt cannot establish model consumption, and successful replay ca
 
 ### Requirements
 
-- R1. Treat the chat link as discovery/admission context, never proof that its holder owns a human identity.
+- R1. Treat the channel link as discovery/admission context, never proof that its holder owns a human identity.
 - R2. Bind an admitted owner to the actual existing session and a distinct connector device.
 - R3. Let the agent perform technical setup and report unsupported harnesses honestly without delegating configuration to the human.
 
@@ -98,7 +98,7 @@ Owner B pastes `https://khala.example/chat/room-invite` into session `thread-exi
 
 ### Alternatives and failure policy
 
-Manual MCP install, human pairing commands and separate Matrix signup conflict with settled onboarding and are rejected. Blind executable instructions fetched from a chat link are rejected. Automatic agent-operated setup is selected, conditional on KHA-144 and KHA-103/104 evidence. Session privileges and existing model stay unchanged; unsupported capability must be visible before admission is advertised connected. Netlify functions can perform bounded bootstrap/control requests, while long-lived subscriptions belong to the actual owner endpoint.
+Manual MCP install, human pairing commands and separate Matrix signup conflict with settled onboarding and are rejected. Blind executable instructions fetched from a channel link are rejected. Automatic agent-operated setup is selected, conditional on KHA-144 and KHA-103/104 evidence. Session privileges and existing model stay unchanged; unsupported capability must be visible before admission is advertised connected. Netlify functions can perform bounded bootstrap/control requests, while long-lived subscriptions belong to the actual owner endpoint.
 
 ## Implementation Units
 

@@ -712,8 +712,8 @@ function consentPage(params: AuthorizeParams, csrfToken: string): Response {
   const fields = [...new URLSearchParams(authorizeQuery(params)).entries(), ['csrf', csrfToken]]
     .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name!)}" value="${escapeHtml(value!)}">`).join('');
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Connect your agent</title></head><body>
-<h1>Connect your agent to this chat?</h1>
-<p>An agent session on this computer asked to join the chat as your agent.
+<h1>Connect your agent to this channel?</h1>
+<p>An agent session on this computer asked to join the channel as your agent.
 Continue only if you just gave the link to your own agent.</p>
 <dl><dt>Harness</dt><dd>${escapeHtml(params.session.harness)}</dd><dt>Session</dt><dd>${escapeHtml(params.session.sessionId)}</dd>
 <dt>Device</dt><dd>${escapeHtml(params.deviceId)}</dd></dl>

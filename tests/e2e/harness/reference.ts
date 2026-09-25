@@ -245,9 +245,9 @@ export type ConnectorDefect =
   | 'ignores_revocation'
   /** Hands a pending event to the model while it is still pending. */
   | 'leak_pending'
-  /** One owner's approval releases every owner's copy in the room. */
+  /** One owner's approval releases every owner's copy in the channel. */
   | 'release_room_wide'
-  /** One owner's approval dismisses every owner's pending copy in the room. */
+  /** One owner's approval dismisses every owner's pending copy in the channel. */
   | 'dismiss_room_wide'
   | 'no_dedupe'
   | 'double_submit'
@@ -272,7 +272,7 @@ export type ConnectorDefect =
   /** Forgets an unconfirmed intent on restart. */
   | 'forgets_intent';
 
-/** The shared room that room-wide defects reach through; honest connectors ignore it. */
+/** The shared channel that channel-wide defects reach through; honest connectors ignore it. */
 export type ReferenceRoom = { readonly members: Map<string, Readonly<{ release(refs: readonly EventRef[]): Promise<void>; dismiss(refs: readonly EventRef[]): void }>> };
 
 export function createReferenceRoom(): ReferenceRoom {

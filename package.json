@@ -8,8 +8,9 @@
   },
   "scripts": {
     "typecheck": "pnpm -r typecheck && tsc -p tests/e2e/harness/tsconfig.json",
-    "lint": "eslint . && pnpm check:boundaries",
+    "lint": "eslint . && pnpm check:boundaries && pnpm check:terminology",
     "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:terminology": "node scripts/check-terminology.mjs",
     "test": "node --test scripts/*.test.mjs && node --test 'infra/**/*.test.ts' && pnpm -r test && pnpm test:conformance && pnpm test:e2e",
     "test:integration": "playwright test --config tests/integration/playwright.config.ts",
     "test:conformance": "node tests/e2e/harness/run.mjs conformance",

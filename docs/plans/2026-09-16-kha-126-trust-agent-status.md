@@ -108,7 +108,7 @@ Snapshot freshness is separate from connection state. A room may sync while its 
 
 ### Blocking product choices
 
-P02/P08/G-AUTOMATION remain unanswered: background operation, trust scope, pause authority, bounds and pending-backlog treatment. This document specifies an implementation candidate and honest capability rendering, but stays requirements-only until policy owners settle those choices. Do not turn proposed room-local trust or specific budget defaults into requirements. Neutral controller/fixture work may proceed only if the parent explicitly splits it from the gated behavior.
+P02/P08/G-AUTOMATION remain unanswered: background operation, trust scope, pause authority, bounds and pending-backlog treatment. This document specifies an implementation candidate and honest capability rendering, but stays requirements-only until policy owners settle those choices. Do not turn proposed channel-local trust or specific budget defaults into requirements. Neutral controller/fixture work may proceed only if the parent explicitly splits it from the gated behavior.
 
 Canonical106 `PolicyAck` echoes commandId, bindingId and generation; requested/effective versions may be null when no authoritative revision was observed. Never coerce null to zero or treat mismatched acknowledgment as effective. Effective requires connector acknowledgment and null errorCode. Unknown command persistence is reconciled with the same identity. Candidate semantics pending G-AUTOMATION: policy change affects future events only; selected existing backlog uses a separate exact ApprovalCommand, never implicit release or a promise of atomic combined changes.
 

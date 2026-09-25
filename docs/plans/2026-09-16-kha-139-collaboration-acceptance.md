@@ -28,7 +28,7 @@ A transport receipt cannot establish model consumption, and successful replay ca
 
 ### Requirements
 
-- R1. Use the approved task and ordinary OAuth/chat-link flow without hidden human infrastructure setup.
+- R1. Use the approved task and ordinary OAuth/channel-link flow without hidden human infrastructure setup.
 - R2. Show exact-message approval, optional trusted delivery, re-arm and independent third-owner policy.
 - R3. Measure notification and consumption separately and disclose browser-closed and unsupported-harness limitations.
 
@@ -91,7 +91,7 @@ type AcceptanceResult = {caseId:string;
 
 A/B each OAuth-sign in, use the actual create/join link flow and give the link to their existing agent session. Record technical setup actions by actor; any human connector configuration fails the ordinary-flow assertion. A sends task message E1. B previews the exact content/provenance and releases it only to B's bound session. Capture original session identity plus receipt/write/queue/consumption/result separately. B later opts into the approved trusted mode, then re-arms review and proves a subsequent message waits again. C joins with its own identity/device/session; C's approval/trust state starts according to the agreed product policy and never inherits B's permission merely from room membership.
 
-The task assertions must show useful collaboration results, not just nonce echoes. Nonces are additional correlation evidence. Tool actions remain constrained by each existing session's permissions and approved scenario; a chat message cannot grant shell/repository authority. No credentials, proprietary data or destructive actions are needed for the synthetic launch case.
+The task assertions must show useful collaboration results, not just nonce echoes. Nonces are additional correlation evidence. Tool actions remain constrained by each existing session's permissions and approved scenario; a channel message cannot grant shell/repository authority. No credentials, proprietary data or destructive actions are needed for the synthetic launch case.
 
 ### Busy, offline and recovery coverage
 
@@ -107,7 +107,7 @@ Read KHA-109 decision and inherited gates, then encode concrete task assertions 
 
 ### U2. Two-owner reviewed collaboration
 
-Depends U1 and completed real feature compositions. Exercise OAuth/chat-link/current-session bootstrap, full human chat, exact review and useful correlated task response. Covers R1/R2 and AE1. Assert no pending message entered model context before approval; do not infer from UI alone.
+Depends U1 and completed real feature compositions. Exercise OAuth/channel-link/current-session bootstrap, full human channel, exact review and useful correlated task response. Covers R1/R2 and AE1. Assert no pending message entered model context before approval; do not infer from UI alone.
 
 ### U3. Trust, re-arm and independent third owner
 

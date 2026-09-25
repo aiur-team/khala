@@ -7,9 +7,9 @@
 // ambiguous one.
 
 import type { RoomId } from '@khala/contracts/messaging/ids';
-import type { MessageContent, RoomPort } from '@khala/contracts/messaging/index';
+import type { MessageContent, ChannelPort } from '@khala/contracts/messaging/index';
 import type { OperationResult } from '@khala/contracts/messaging/outcomes';
-import type { RoomRejection, SendState } from '@khala/contracts/messaging/index';
+import type { ChannelRejection, SendState } from '@khala/contracts/messaging/index';
 import type { SendPhase } from './model';
 
 export type PendingSend = Readonly<{
@@ -18,7 +18,7 @@ export type PendingSend = Readonly<{
   phase: SendPhase;
 }>;
 
-function phaseFor(result: OperationResult<SendState, RoomRejection>): SendPhase {
+function phaseFor(result: OperationResult<SendState, ChannelRejection>): SendPhase {
   switch (result.kind) {
     case 'ok':
       return result.value.state;
@@ -31,13 +31,13 @@ function phaseFor(result: OperationResult<SendState, RoomRejection>): SendPhase 
 }
 
 /** Sends one draft under a caller-supplied `clientTxnId`; the caller owns that identity's lifetime. */
-export async function sendDraft(roomPort: RoomPort, roomId: RoomId, clientTxnId: string, content: MessageContent): Promise<PendingSend> {
+export async function sendDraft(roomPort: ChannelPort, roomId: RoomId, clientTxnId: string, content: MessageContent): Promise<PendingSend> {
   const result = await roomPort.send({ roomId, clientTxnId, content });
   return { clientTxnId, content, phase: phaseFor(result) };
 }
 
 /** Retries a `failed` or `outcome_unknown` pending send by re-sending the identical transaction/content. */
-export async function retrySend(roomPort: RoomPort, roomId: RoomId, pending: PendingSend): Promise<PendingSend> {
+export async function retrySend(roomPort: ChannelPort, roomId: RoomId, pending: PendingSend): Promise<PendingSend> {
   const result = await roomPort.send({ roomId, clientTxnId: pending.clientTxnId, content: pending.content });
   return { ...pending, phase: phaseFor(result) };
 }

@@ -19,7 +19,7 @@ A human understands missing keys, replacement, revocation and closure without im
 
 Authority: current user decisions override the approved ticket scope, which overrides technical recommendations. Scope source is `docs/product/tickets/KHA-127.md`; global requirements: R12, R14. Planning snapshot: Khala `6d4694173eff9b0832f4c3a2cdb90b4281fcccd9` with approved ticket proposal at `d625c19`. Dependency tickets: KHA-101, KHA-105, KHA-107. This plan changes Khala only; sibling Aiur/Archon are read-only design references.
 
-P07/G-RETENTION is resolved for this surface: recovery is device- and key-based only, and room closure stops new messages, removes the room from the owner's view, and requests local cleanup on the owner's devices. Closure never claims to recall copies already delivered to other participants or models.
+P07/G-RETENTION is resolved for this surface: recovery is device- and key-based only, and channel closure stops new messages, removes the channel from the owner's view, and requests local cleanup on the owner's devices. Closure never claims to recall copies already delivered to other participants or models.
 
 ---
 
@@ -44,11 +44,11 @@ The ordinary user is collaborating with another human and their already-working 
 
 - A1. The authenticated human who owns the current agent connection.
 - A2. Other admitted humans and their attributed agents, whose messages are content rather than control authority.
-- F1. Open a room on a replacement device, inspect available history/recovery state and perform an authorized recovery action if offered.
+- F1. Open a channel on a replacement device, inspect available history/recovery state and perform an authorized recovery action if offered.
 
 ### Acceptance examples
 
-- AE1. Covers F1 / R1–R4. Login succeeds but history keys remain unavailable; the interface states that history is unavailable rather than implying the room has no messages.
+- AE1. Covers F1 / R1–R4. Login succeeds but history keys remain unavailable; the interface states that history is unavailable rather than implying the channel has no messages.
 - AE2. Covers R3–R4. Loss of authorization or an unavailable dependency produces an explicit state and no invented success; retry preserves operation identity where a write may already have happened.
 
 ### Key decisions
@@ -75,7 +75,7 @@ Product Contract changed: P07/G-RETENTION records the operator-approved no-delet
 - KTD2. P14 permits no recovery mode, so the current UI does not host a recovery secret input or configuration affordance. The canonical local-only callback remains a controller boundary for a future separately approved capability; it never becomes a serializable request body, analytics field or generic app store.
 - KTD3. Operations are resumable by their stable operation ID. Before any effectful recovery, revocation or closure dispatch, the controller generates and persists a scoped operation reference; the remote call receives that same ID. An injected resume store persists only operation kind, ID and account/device/room scope; it never stores secret material or content. Unknown recovery/revocation/cleanup outcomes are not successful completion or permission to retry external model work.
 - KTD4. Presentation reuses `Panel` and `StatusBadge`, with feature-owned status, alert and note regions for locked, loading, partial and unavailable states. Consequence summaries use actual policy scope and counts, never “delete everywhere.” Closure and retention behavior are not implemented by this view.
-- KTD5. Recovery is device- and key-based only, while closure stops future room messages, removes the room from the owner's view, and requests local device cleanup. Already-delivered participant or model copies are never presented as recalled or erased. (session-settled: user-directed — chosen over recovery escrow or a global deletion promise: delivered copies cannot be reliably recalled.)
+- KTD5. Recovery is device- and key-based only, while closure stops future channel messages, removes the channel from the owner's view, and requests local device cleanup. Already-delivered participant or model copies are never presented as recalled or erased. (session-settled: user-directed — chosen over recovery escrow or a global deletion promise: delivered copies cannot be reliably recalled.)
 - KTD6. The feature owns a typed closure UI seam with stable operation identity and inspection semantics; each intent binds the operation ID to the authenticated owner, room and expected room revision. KHA-136 supplies the real adapter and independently revalidates authority and target context during composition. `RecoveryPort` and `RevocationPort` remain canonical for their own domains and are not stretched into a room-close command.
 
 ### Output and local display model
@@ -92,13 +92,13 @@ type RecoveryOperation =
   | { kind: "closure"; operationId: string; state: "pending" | "complete" | "partial" | "failed" | "outcome_unknown" };
 ```
 
-Allowed action identifiers are a closed union projected from canonical recovery/revocation capabilities plus the feature-local typed closure capability; arbitrary server strings cannot dispatch browser functions. Example: verified principal + DeviceView locked + RecoveryPort capabilities unavailable renders a locked-history explanation and no fabricated recovery button. Partial restoration renders recovered access with remaining unavailable history, not an empty room.
+Allowed action identifiers are a closed union projected from canonical recovery/revocation capabilities plus the feature-local typed closure capability; arbitrary server strings cannot dispatch browser functions. Example: verified principal + DeviceView locked + RecoveryPort capabilities unavailable renders a locked-history explanation and no fabricated recovery button. Partial restoration renders recovered access with remaining unavailable history, not an empty channel.
 
 | Operation state | Presentation and permitted control |
 |---|---|
 | Idle | Show only actions present in the current authoritative capability snapshot. |
 | Pending / restoring / propagating | Announce progress and disable every recovery, revocation and closure action until the operation reaches a terminal state. Cancel stops the local wait but does not claim to cancel a remote effect. |
-| Complete / restored | Announce the exact completed effect. Successful closure navigates to the existing chat-list destination after the owner-visible room is removed. |
+| Complete / restored | Announce the exact completed effect. Successful closure navigates to the existing channel-list destination after the owner-visible room is removed. |
 | Partial | Show completed and remaining effects separately; never use a positive completion badge for the whole operation. |
 | Failed / unrecoverable | Show the finite public reason and only a capability-permitted next step. A definitive failure may begin a new operation; unrecoverable history remains explicit. |
 | Outcome unknown | Keep the same operation ID, show no success, and offer inspection/resume only; never expose a fresh destructive submission. |
@@ -112,7 +112,7 @@ flowchart TB
   H -->|Recover| L[Local secret callback if required]
   L --> R[RecoveryPort begin]
   H -->|Revoke| X[RevocationPort revoke]
-  H -->|Close room| C[Injected closure close]
+  H -->|Close channel| C[Injected closure close]
   R --> I[Inspect same operation ID]
   X --> I
   C --> I
@@ -125,7 +125,7 @@ A closure consequence screen requires approved semantics and command port before
 
 ### Approved recovery and closure policy
 
-The UI offers only device/key recovery modes reported by the canonical capability contract. It does not invent escrow or a recovery fallback. Closure is available only through an injected approved capability and must describe each effect separately: future messages stop, the owner no longer sees the room, local cleanup is requested on the owner's devices, and already-delivered copies remain outside Khala's recall authority. Retention durations remain outside this view and no numeric deletion window is implied.
+The UI offers only device/key recovery modes reported by the canonical capability contract. It does not invent escrow or a recovery fallback. Closure is available only through an injected approved capability and must describe each effect separately: future messages stop, the owner no longer sees the channel, local cleanup is requested on the owner's devices, and already-delivered copies remain outside Khala's recall authority. Retention durations remain outside this view and no numeric deletion window is implied.
 
 ### Shared implementation discipline
 
@@ -185,16 +185,16 @@ No implementation or runtime test has run as part of this plan. Browser credenti
 
 **Files:** `apps/web/src/features/recovery/RecoveryPanel.tsx`, `apps/web/src/features/recovery/recovery.css`, `apps/web/src/features/recovery/RecoveryPanel.test.tsx`.
 
-**Approach:** Use `Panel`, `StatusBadge` and feature-owned status/alert/note regions. Confirmation text names the exact target and consequence supplied by policy. Cancel returns to the unchanged room. Submit disables repeat activation while pending; success invokes the injected chat-list navigation callback; unknown outcome remains on the consequence screen for inspection under the same operation ID. Local UI close is distinct from room close/revoke.
+**Approach:** Use `Panel`, `StatusBadge` and feature-owned status/alert/note regions. Confirmation text names the exact target and consequence supplied by policy. Cancel returns to the unchanged channel. Submit disables repeat activation while pending; success invokes the injected channel-list navigation callback; unknown outcome remains on the consequence screen for inspection under the same operation ID. Local UI close is distinct from channel close/revoke.
 
 **Test scenarios:**
 
 1. No delete-everywhere promise appears for remote copies.
 2. Read-only/expired owner cannot invoke destructive operation.
 3. Partial cleanup displays remaining failure and avoids a green completion label.
-4. A late close response after account/device replacement cannot repopulate plaintext, re-enable actions or restore the room.
+4. A late close response after account/device replacement cannot repopulate plaintext, re-enable actions or restore the channel.
 5. Pending, complete, partial, failed, unrecoverable and unknown states render the state matrix's permitted controls and status wording.
-6. A room switch or stale closure capability revision invalidates submit before dispatch and cannot retarget the bound operation.
+6. A channel switch or stale closure capability revision invalidates submit before dispatch and cannot retarget the bound operation.
 
 **Verification:** Every destructive action maps to an approved canonical capability.
 

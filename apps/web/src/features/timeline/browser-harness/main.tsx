@@ -4,11 +4,11 @@ import { KhalaPageFrame } from '../../../shell/KhalaPageFrame';
 import type { NavigationItem } from '../../../shell/types';
 import { TimelineScreen } from '../TimelineScreen';
 import { createTimelineController } from '../controller';
-import { createFakeRoomPort } from './fake-room-port';
+import { createFakeChannelPort } from './fake-channel-port';
 
 const navigation: NavigationItem[] = [{ id: 'timeline', label: 'Conversation', href: '#timeline', current: true }];
 
-const harness = createFakeRoomPort();
+const harness = createFakeChannelPort();
 const controller = createTimelineController(harness.port, harness.roomId, { generation: 1, pageSize: 20 });
 
 declare global {
