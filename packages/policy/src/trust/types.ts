@@ -3,8 +3,10 @@
 // only a matching connector acknowledgment moves the effective revision.
 
 import type {
-  BindingId, CommandId, OwnerAuthority, OwnerId, ParticipantId, PolicyAckErrorCode, PolicySetCommand, RoomId,
+  BindingId, CommandId, ListeningModeControl, OwnerAuthority, OwnerId, ParticipantId, PolicyAckErrorCode,
+  PolicySetCommand, RoomId,
 } from '@khala/contracts/delivery/index';
+import type { ListeningModeOperationEntry } from '../listening-mode/store';
 
 export type PolicyMode = PolicySetCommand['mode'];
 
@@ -64,6 +66,10 @@ export type TrustState = Readonly<{
   effective: PolicyRevision | null;
   connector: ConnectorObservation | null;
   journal: ReadonlyMap<CommandId, JournalEntry>;
+  /** Durable listening control; effective mode is always derived from current capabilities. */
+  listeningMode: ListeningModeControl;
+  /** Successful listening operations retained independently from policy commands. */
+  listeningModeJournal: ReadonlyMap<string, ListeningModeOperationEntry>;
 }>;
 
 /**

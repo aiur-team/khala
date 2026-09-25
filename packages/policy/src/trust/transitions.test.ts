@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { BindingId, CommandId, RoomId } from '@khala/contracts/delivery/index';
+import type { BindingId, CommandId, DeliveryLimits, HarnessCapabilities, RoomId } from '@khala/contracts/delivery/index';
 import {
   ALICE, BINDING, MALLORY, OTHER_PEER, PEER, ack, command, owner, start,
 } from '../../test/trust/fakes';
@@ -15,6 +15,36 @@ vi.mock('./gate', async importOriginal => ({
 }));
 
 const id = (value: string) => value as CommandId;
+
+const asyncInitialCapabilities = (): HarnessCapabilities => ({
+  v: 3,
+  harness: 'opencode',
+  version: '1.0.0',
+  adapterVersion: 'plugin-1',
+  support: 'tested',
+  existingSession: 'agent_installed_listener',
+  immediateNotification: 'agent_installed_listener',
+  busy: 'queue',
+  receiptEvidence: ['harness_queued'],
+  reconcileByReleaseId: 'unsupported',
+  limits: { maxSelectionEvents: 32, maxPayloadBytes: 65_536 } as DeliveryLimits,
+  evidenceRef: 'docs/evidence/opencode.md',
+  modes: {
+    steer: {
+      status: 'proven', route: 'plugin-transform', testedVersion: '1.0.0',
+      evidenceRef: 'docs/evidence/opencode.md', evidenceRevision: 'opencode-v1', reason: null,
+    },
+    sync: {
+      status: 'unsupported', route: 'session-idle', testedVersion: '1.0.0',
+      evidenceRef: 'docs/evidence/opencode.md', evidenceRevision: 'opencode-v1', reason: 'No exact route.',
+    },
+    async: {
+      status: 'proven', route: 'khala-read', testedVersion: '1.0.0',
+      evidenceRef: 'docs/evidence/opencode.md', evidenceRevision: 'opencode-v1', reason: null,
+    },
+  },
+  acknowledgement: 'batch_token_next_call',
+});
 
 /** Accepts `cmd` from `state`, failing the test if it is refused. */
 function accept(state: TrustState, cmd = command()): TrustState {
@@ -306,6 +336,46 @@ describe('rebind', () => {
       version: 3, generation: 2, commandId: null, mode: 'review', paused: false, peerParticipantId: null,
     });
     expect(trustView(rebound.state)).toMatchObject({ status: 'effective', effective: { mode: 'review' } });
+  });
+
+  it('selects a fresh listening mode for the new generation and clears grants and operations', () => {
+    const prior = {
+      ...start(),
+      listeningMode: {
+        ...start().listeningMode,
+        requested: 'steer' as const,
+        version: 4,
+        experimentalGrants: [{
+          v: 1 as const,
+          kind: 'experimental_route' as const,
+          bindingId: BINDING,
+          generation: 1,
+          mode: 'steer' as const,
+          route: 'plugin-transform',
+          harnessVersion: '1.0.0',
+          evidenceRevision: 'opencode-v1',
+          grantRevision: 4,
+        }],
+      },
+      listeningModeJournal: new Map([['old-command', {
+        operationFingerprint: 'old',
+        result: { kind: 'applied' as const, control: start().listeningMode },
+      }]]),
+    };
+
+    const rebound = applyRebind(prior, 2, 'active', asyncInitialCapabilities());
+
+    expect(rebound.ok).toBe(true);
+    if (!rebound.ok) return;
+    expect(rebound.state.listeningMode).toMatchObject({
+      bindingId: BINDING,
+      generation: 2,
+      requested: 'async',
+      version: 1,
+      experimentalGrants: [],
+      hardCancelGrants: [],
+    });
+    expect(rebound.state.listeningModeJournal.size).toBe(0);
   });
 
   it('refuses a rebind that does not advance the generation', () => {

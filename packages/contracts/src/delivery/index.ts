@@ -41,6 +41,7 @@ export {
 } from './receipts';
 export {
   type AcknowledgementSupport, type ListeningMode, type ListeningModeCommand, type ListeningModeResult,
+  type AgentBindingAuthority, type ListeningModeControl, type ListeningModeView,
   type ModeSupport, type ModeSupportMap, type OwnerRouteGrantCommand, type RouteGrant,
   ACKNOWLEDGEMENT_SUPPORT, LISTENING_MODES, LISTENING_MODE_RESULT_OUTCOMES, MODE_SUPPORT_STATUSES,
   OWNER_ROUTE_GRANT_COMMAND_KINDS,

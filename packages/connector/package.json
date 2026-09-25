@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./agent/*": "./src/agent/*.ts",
     "./bootstrap/*": "./src/bootstrap/*.ts",
     "./storage/*": "./src/storage/*.ts",
     "./storage/fixtures/*": null,
