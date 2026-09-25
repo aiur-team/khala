@@ -19,10 +19,6 @@ function currentUid(): number | null {
   return typeof process.getuid === 'function' ? process.getuid() : null;
 }
 
-function currentGid(): number | null {
-  return typeof process.getgid === 'function' ? process.getgid() : null;
-}
-
 function lstatOrNull(target: string): fs.Stats | null {
   try {
     return fs.lstatSync(target);
@@ -49,19 +45,15 @@ const STICKY = 0o1000;
 
 function assertSafeAncestors(directory: string, mode: OpenMode): void {
   const uid = currentUid();
-  const gid = currentGid();
   for (let current = path.dirname(directory); ; current = path.dirname(current)) {
     const stats = lstatOrNull(current);
     if (stats === null) throw new StoreError(mode === 'existing' ? 'missing_state' : 'io_failed');
     if (!stats.isDirectory()) throw new StoreError('unsafe_path');
     if (uid !== null) {
       const sticky = (stats.mode & STICKY) !== 0;
-      const owned = stats.uid === uid || stats.uid === 0;
-      // A foreign-owned ancestor is safe only when this user cannot rename
-      // entries in it, or when sticky-directory rules protect each entry.
-      if (!owned && !sticky && (stats.mode & 0o022) !== 0) throw new StoreError('unsafe_path');
-      if (!sticky && (stats.mode & 0o002) !== 0) throw new StoreError('unsafe_path');
-      if (!sticky && (stats.mode & 0o020) !== 0 && stats.gid !== gid) throw new StoreError('unsafe_path');
+      // Every non-sticky ancestor must prevent other users from renaming its
+      // entries, including users that share this process's primary group.
+      if (!sticky && (stats.mode & 0o022) !== 0) throw new StoreError('unsafe_path');
     }
     if (current === path.dirname(current)) return;
   }

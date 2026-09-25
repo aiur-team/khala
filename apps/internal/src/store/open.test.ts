@@ -201,6 +201,12 @@ describe('openChannelStore', () => {
     expect(openError(directory)).toBe('unsafe_path');
   });
 
+  it('rejects a non-sticky group-writable ancestor owned by the current group', () => {
+    const directory = scratchDirectory();
+    fs.chmodSync(path.dirname(directory), 0o770);
+    expect(openError(directory)).toBe('unsafe_path');
+  });
+
   it('rejects wrong directory, database and companion modes', () => {
     const directory = scratchDirectory();
     open(directory).close();
