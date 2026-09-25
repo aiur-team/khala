@@ -11,7 +11,8 @@ import {
 import { usablePolicy } from '../dispatch/budget';
 import { sameRelease } from '../dispatch/claim';
 import {
-  ACTIVE_STATES, MAX_RECEIPTS, type BindingState, type BlockCode, type DispatchLedger, type DispatchPolicy,
+  ACTIVE_STATES, MAX_RECEIPTS, type AttemptSnapshot, type BindingState, type BlockCode, type DispatchLedger,
+  type DispatchListening, type DispatchPolicy,
   type DispatchRecord, type DispatchState, type DispatchTx, type QuarantineCode,
 } from '../dispatch/types';
 import { StorageError } from './errors';
@@ -22,17 +23,56 @@ import { type ConnectorStorage, storageInternals } from './open';
 import { sha256Digest } from './payloads';
 
 const STATES: readonly DispatchState[] = [
-  'queued', 'quarantined', 'rejected', 'dispatching', 'accepted', 'outcome_unknown', 'completed', 'failed', 'cancelled',
-  'abandoned',
+  'queued', 'claimed', 'quarantined', 'rejected', 'dispatching', 'accepted', 'outcome_unknown', 'completed', 'failed',
+  'cancelled', 'abandoned',
 ];
 const REASONS: readonly (BlockCode | QuarantineCode)[] = [
   'paused', 'budget_exhausted', 'stale_binding', 'stale_policy', 'revoked', 'busy', 'expired', 'claimed_elsewhere',
-  'unconfigured', 'at_capacity', 'harness_unsupported', 'approval_missing', 'approval_mismatch', 'release_invalid',
+  'unconfigured', 'at_capacity', 'harness_unsupported', 'mode_async', 'mode_unavailable', 'route_drift',
+  'boundary_unavailable', 'boundary_limit', 'approval_missing', 'approval_mismatch', 'release_invalid',
   'payload_missing', 'payload_invalid', 'payload_digest_mismatch',
 ];
-const RECORD_KEYS = [
+/** Records written before listening modes have neither `reserved` nor `snapshot`. */
+const LEGACY_RECORD_KEYS = [
   'abandonedBy', 'attemptId', 'claimedAt', 'job', 'reason', 'receipts', 'releaseId', 'seq', 'state', 'workerId',
 ];
+const RECORD_KEYS = [...LEGACY_RECORD_KEYS, 'reserved', 'snapshot'].sort();
+const SNAPSHOT_KEYS = [
+  'adapterVersion', 'bindingGeneration', 'evidenceRevision', 'harness', 'harnessVersion', 'modeAtClaim', 'route',
+  'sessionId',
+];
+/** Policies applied before listening modes. They decode, but block dispatch until a projection is applied. */
+const LEGACY_POLICY_KEYS = [
+  'armedAt', 'busy', 'expiresAt', 'maxConcurrentJobs', 'maxJobsPerCausalRoot', 'paused', 'version',
+];
+/** States in which a record can hold no route snapshot. */
+const UNCLAIMED_STATES: readonly DispatchState[] = ['queued', 'quarantined', 'rejected'];
+
+const sameKeys = (value: object, expected: readonly string[]): boolean => {
+  const keys = Object.keys(value).sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+};
+
+function decodeSnapshot(input: unknown, fail: () => never): AttemptSnapshot | null {
+  if (input === null) return null;
+  if (typeof input !== 'object' || !sameKeys(input, SNAPSHOT_KEYS)) return fail();
+  const value = input as Record<string, unknown>;
+  if (value.modeAtClaim !== 'steer' && value.modeAtClaim !== 'sync') return fail();
+  try {
+    return {
+      modeAtClaim: value.modeAtClaim,
+      bindingGeneration: requireCount(value.bindingGeneration),
+      sessionId: requireIdentifier(value.sessionId),
+      harness: requireIdentifier(value.harness),
+      harnessVersion: requireIdentifier(value.harnessVersion),
+      adapterVersion: requireIdentifier(value.adapterVersion),
+      route: requireIdentifier(value.route),
+      evidenceRevision: requireIdentifier(value.evidenceRevision),
+    };
+  } catch {
+    return fail();
+  }
+}
 
 function context(storage: ConnectorStorage) {
   const internals = storageInternals.get(storage);
@@ -62,8 +102,9 @@ function decodeRecord(input: unknown, limits: ReturnType<typeof context>['limits
   const fail = (): never => { throw new StorageError(stored ? 'corrupt' : 'invalid_input'); };
   if (typeof input !== 'object' || input === null) return fail();
   const value = input as Record<string, unknown>;
-  const keys = Object.keys(value).sort();
-  if (keys.length !== RECORD_KEYS.length || keys.some((key, index) => key !== RECORD_KEYS[index])) return fail();
+  // Only a stored record may predate listening modes; every new write carries both fields.
+  const legacy = stored && sameKeys(value, LEGACY_RECORD_KEYS);
+  if (!legacy && !sameKeys(value, RECORD_KEYS)) return fail();
   const decodedJob = decodeReleasedJob(value.job, limits);
   if (!decodedJob.ok) return fail();
   const job = decodedJob.value;
@@ -96,6 +137,15 @@ function decodeRecord(input: unknown, limits: ReturnType<typeof context>['limits
   if (new Set(receipts.map(receipt => receipt.receiptId)).size !== receipts.length) return fail();
   const abandonedBy = nullableIdentifier(value.abandonedBy, fail) as DispatchRecord['abandonedBy'];
   if ((state === 'abandoned') !== (abandonedBy !== null)) return fail();
+  // A legacy claim holds its reservation but has no snapshot, so it is never delivered again.
+  const reserved = legacy ? attemptId !== null : value.reserved;
+  if (typeof reserved !== 'boolean') return fail();
+  const snapshot = legacy ? null : decodeSnapshot(value.snapshot, fail);
+  if (state === 'claimed' && (snapshot === null || attemptId === null || !reserved)) return fail();
+  if (UNCLAIMED_STATES.includes(state) && (snapshot !== null || attemptId !== null)) return fail();
+  if (!UNCLAIMED_STATES.includes(state) && !reserved) return fail();
+  if (snapshot !== null && (snapshot.bindingGeneration !== job.binding.generation
+    || snapshot.sessionId !== job.binding.sessionId || snapshot.harness !== job.binding.harness)) return fail();
   return {
     releaseId: releaseId as ReleaseId,
     seq,
@@ -107,6 +157,8 @@ function decodeRecord(input: unknown, limits: ReturnType<typeof context>['limits
     claimedAt,
     receipts,
     abandonedBy,
+    snapshot,
+    reserved,
   };
 }
 
@@ -128,12 +180,20 @@ function bindingRevoked(db: ReturnType<typeof context>['db'], binding: SessionBi
     OR (target_kind = 'device' AND target_id = ?) LIMIT 1`).get(binding.bindingId, binding.deviceId) !== undefined;
 }
 
-function decodePolicy(json: string, bindingId: string, generation: number, version: number): DispatchPolicy {
-  const policy = parseJson(json) as DispatchPolicy;
+/** A stored policy; `listening` is null for one applied before listening modes. */
+type StoredPolicy = Readonly<{ policy: Omit<DispatchPolicy, 'listening'>; listening: DispatchListening | null }>;
+
+const LEGACY_LISTENING_PROBE: DispatchListening = { version: 0, requested: 'sync', effective: null, evidenceRevision: null };
+
+function decodePolicy(json: string, bindingId: string, generation: number, version: number): StoredPolicy {
+  const parsed = parseJson(json);
+  const legacy = typeof parsed === 'object' && parsed !== null && sameKeys(parsed, LEGACY_POLICY_KEYS);
+  const policy = (legacy ? { ...parsed, listening: LEGACY_LISTENING_PROBE } : parsed) as DispatchPolicy;
   if (!usablePolicy(policy) || policy.version !== version) throw new StorageError('corrupt');
   requireIdentifier(bindingId);
   requireCount(generation);
-  return policy;
+  const { listening, ...rest } = policy;
+  return { policy: rest, listening: legacy ? null : listening };
 }
 
 function canonicalPolicy(policy: DispatchPolicy): DispatchPolicy {
@@ -145,6 +205,12 @@ function canonicalPolicy(policy: DispatchPolicy): DispatchPolicy {
     maxConcurrentJobs: policy.maxConcurrentJobs,
     expiresAt: policy.expiresAt,
     busy: policy.busy,
+    listening: {
+      version: policy.listening.version,
+      requested: policy.listening.requested,
+      effective: policy.listening.effective,
+      evidenceRevision: policy.listening.evidenceRevision,
+    },
   };
 }
 
@@ -182,9 +248,11 @@ function makeTx(storage: ConnectorStorage, live: () => boolean): { tx: DispatchT
       const row = db.prepare(`SELECT generation, version, policy FROM dispatch_policies
         WHERE binding_id = ?`).get(id) as { generation: number; version: number; policy: string } | undefined;
       if (!row) return null;
-      const policy = decodePolicy(row.policy, id, row.generation, row.version);
+      const stored = decodePolicy(row.policy, id, row.generation, row.version);
       const binding = storedBinding(db, id as BindingId);
-      return binding !== null && binding.generation === row.generation ? policy : null;
+      // A policy without a listening projection blocks dispatch until one is applied.
+      if (binding === null || binding.generation !== row.generation || stored.listening === null) return null;
+      return { ...stored.policy, listening: stored.listening };
     }),
 
     binding: guarded((bindingId: BindingId): BindingState | null => {
@@ -316,13 +384,26 @@ export function createConnectorDispatchStorage(storage: ConnectorStorage): Conne
           | undefined;
         const json = JSON.stringify(policy);
         if (current) {
-          decodePolicy(current.policy, binding.bindingId, current.generation, current.version);
+          // Policy and listening mode are versioned independently. A write may advance either, but
+          // never moves one back or changes it under the same version. A replacement generation has
+          // a fresh listening-mode record, so only its policy version is compared.
+          const stored = decodePolicy(current.policy, binding.bindingId, current.generation, current.version);
+          const sameGeneration = current.generation === binding.generation;
+          const storedListening = sameGeneration ? stored.listening : null;
+          const { listening, ...rest } = policy;
           if (policy.version < current.version) return { kind: 'conflict', code: 'stale_version' };
-          if (policy.version === current.version) {
-            return current.generation === binding.generation && current.policy === json
-              ? { kind: 'duplicate' }
-              : { kind: 'conflict', code: 'version_conflict' };
+          if (storedListening !== null && listening.version < storedListening.version) {
+            return { kind: 'conflict', code: 'stale_version' };
           }
+          const samePolicyVersion = policy.version === current.version;
+          const sameListeningVersion = storedListening !== null && listening.version === storedListening.version;
+          if (samePolicyVersion && (!sameGeneration || JSON.stringify(rest) !== JSON.stringify(stored.policy))) {
+            return { kind: 'conflict', code: 'version_conflict' };
+          }
+          if (sameListeningVersion && JSON.stringify(listening) !== JSON.stringify(storedListening)) {
+            return { kind: 'conflict', code: 'version_conflict' };
+          }
+          if (samePolicyVersion && sameListeningVersion) return { kind: 'duplicate' };
         }
         ctx.db.prepare(`INSERT INTO dispatch_policies (binding_id, generation, version, policy) VALUES (?, ?, ?, ?)
           ON CONFLICT (binding_id) DO UPDATE SET generation = excluded.generation,
@@ -373,11 +454,12 @@ export function createConnectorDispatchStorage(storage: ConnectorStorage): Conne
 
     async reconciliationReleaseIds() {
       const ctx = context(storage);
-      // Accepted outcomes are known and await later observation; only ambiguous
-      // dispatching or outcome_unknown records require restart reconciliation.
+      // Accepted outcomes are known and await later observation. Restart reconciliation returns
+      // stranded pre-effect claims to pending and resolves ambiguous dispatching or
+      // outcome_unknown records.
       return runTransaction(ctx, () =>
         (ctx.db.prepare(`SELECT record FROM dispatch_records
-          WHERE state IN ('dispatching', 'outcome_unknown') ORDER BY seq`).all() as { record: string }[])
+          WHERE state IN ('claimed', 'dispatching', 'outcome_unknown') ORDER BY seq`).all() as { record: string }[])
           .map(row => storedRecord(row.record, ctx.limits))
           .map(record => record.releaseId));
     },

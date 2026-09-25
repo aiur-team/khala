@@ -12,8 +12,8 @@ async function dispatchingWithoutReceipt() {
   await seed(w.ledger, job);
   const ledger = faultyLedger(w.ledger);
   // Both the receipt commit and the fallback to outcome_unknown fail, as in a crash.
-  ledger.crashAt(4, 'before');
   ledger.crashAt(5, 'before');
+  ledger.crashAt(6, 'before');
   const crashed = w.dispatcher({ ledger });
   crashed.wake();
   await crashed.idle();

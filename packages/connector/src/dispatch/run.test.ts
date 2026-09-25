@@ -7,7 +7,8 @@ import type { DispatchLedger } from './types';
 // With a release seeded and no dispatcher awake, one pass makes these transactions in order.
 const QUEUE_READ = 1;
 const CLAIM = 3;
-const RECEIPT = 4;
+const PROMOTE = 4;
+const RECEIPT = 5;
 
 describe('submission and receipt persistence', () => {
   it('submits the exact verified payload once and stores the correlated receipt', async () => {
@@ -175,8 +176,21 @@ describe('submission and receipt persistence', () => {
       expect(w.harness.submittedIds()).toEqual(['release-1']);
     });
 
+    it('after the scheduler claim commits: restart reconciliation requeues it and it dispatches once', async () => {
+      const { w, job } = await crashing(CLAIM, 'after');
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(w.boundary.calls).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'claimed', reserved: true });
+      const restarted = w.dispatcher({ workerId: 'worker-2' });
+      await restarted.reconcile('release-1');
+      await restarted.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1']);
+      // The reservation made before the crash is the only one.
+      expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(1);
+    });
+
     it('after the intent commits but before the call: a restart never submits it', async () => {
-      const { w } = await crashing(CLAIM, 'after');
+      const { w } = await crashing(PROMOTE, 'after');
       expect(w.harness.submitted).toHaveLength(0);
       expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'dispatching' });
       const restarted = w.dispatcher({ workerId: 'worker-2' });

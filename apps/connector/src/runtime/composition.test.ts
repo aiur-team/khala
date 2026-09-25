@@ -174,6 +174,10 @@ describe('real storage runtime composition', () => {
           activeDispatcher = createDispatcher({
             ledger,
             harness,
+            // The route's proved boundary is reached at once and reports the claimed session.
+            boundary: {
+              await: async ({ job }) => ({ binding: job.binding, capabilities: await harness.inspect(job.binding) }),
+            },
             approvals: dispatch.approvals,
             payloads: dispatch.payloads,
             digest: async bytes => sha256Digest(bytes),

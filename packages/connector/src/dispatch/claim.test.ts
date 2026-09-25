@@ -13,8 +13,13 @@ describe('eligibility and transactional claim', () => {
     await w.setPolicy(testPolicy({ version: 4, armedAt: 3, paused: true }));
     expect(await dispatcher.enqueue(job)).toBe('queued');
     await dispatcher.idle();
+    // A paused arrival only persists; it starts no pass.
+    expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: null });
+    dispatcher.wake();
+    await dispatcher.idle();
 
     expect(w.harness.submitted).toHaveLength(0);
+    expect(w.boundary.calls).toHaveLength(0);
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'paused', attemptId: null });
     expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
 
@@ -103,6 +108,8 @@ describe('eligibility and transactional claim', () => {
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(job);
+    // With no policy the arrival does not wake; a later pass finds the binding gone.
+    dispatcher.wake();
     await dispatcher.idle();
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'rejected', reason: 'stale_binding' });
   });
@@ -165,6 +172,7 @@ describe('eligibility and transactional claim', () => {
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(job);
+    dispatcher.wake();
     await dispatcher.idle();
     expect(w.harness.submitted).toHaveLength(0);
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'unconfigured' });

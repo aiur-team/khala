@@ -9,8 +9,8 @@ import type {
   BindingId, CausalRootId, DeliveryReceiptTransport, DeviceId, ReleaseId,
 } from '@khala/contracts/delivery/index';
 import { queuedRecord } from '../dispatch/claim';
-import { testPolicy } from '../dispatch/fixtures/fakes';
-import type { DispatchRecord } from '../dispatch/types';
+import { listening, testPolicy } from '../dispatch/fixtures/fakes';
+import type { AttemptSnapshot, DispatchPolicy, DispatchRecord } from '../dispatch/types';
 import { createConnectorDispatchStorage } from './dispatch';
 import {
   agentAcknowledgement, approval, binding, bindingId, commandRecord, content, eventRef, limits, pendingInput, receipt,
@@ -101,6 +101,26 @@ function storedDispatchRecord(state: string, releaseId: string): string | undefi
   }
 }
 
+/** A copy of `value` without `keys`, typed as the original so a writer sees the malformed shape. */
+function without<T extends object>(value: T, ...keys: string[]): T {
+  const copy = { ...value } as Record<string, unknown>;
+  for (const key of keys) delete copy[key];
+  return copy as T;
+}
+
+function snapshotFor(job: Awaited<ReturnType<typeof durableRelease>>['job']): AttemptSnapshot {
+  return {
+    modeAtClaim: 'sync',
+    bindingGeneration: job.binding.generation,
+    sessionId: job.binding.sessionId,
+    harness: job.binding.harness,
+    harnessVersion: '0.154.0',
+    adapterVersion: 'test-adapter',
+    route: 'test-codex-interactive-sync',
+    evidenceRevision: 'evidence-rev-1',
+  };
+}
+
 function receiptPair(job: Awaited<ReturnType<typeof durableRelease>>['job']) {
   return [
     {
@@ -134,6 +154,8 @@ describe('durable dispatch storage', () => {
         workerId: 'worker-before-restart',
         claimedAt: '2026-09-18T10:09:00.000Z',
         receipts,
+        snapshot: snapshotFor(durable.job),
+        reserved: true,
       };
       tx.put(record);
       return record;
@@ -346,10 +368,12 @@ describe('durable dispatch storage', () => {
     expect(await createConnectorDispatchStorage(reopened).approvals.get(command.commandId)).toBeNull();
   });
 
-  it('enumerates only dispatching and outcome-unknown records for restart reconciliation', async () => {
+  it('enumerates only claimed, dispatching and outcome-unknown records for restart reconciliation', async () => {
     const { state, storage } = await fresh();
     let dispatch = createConnectorDispatchStorage(storage);
-    const states: DispatchRecord['state'][] = ['queued', 'dispatching', 'outcome_unknown', 'completed', 'rejected'];
+    const states: DispatchRecord['state'][] = [
+      'queued', 'claimed', 'dispatching', 'outcome_unknown', 'completed', 'rejected',
+    ];
     const releases: Awaited<ReturnType<typeof durableRelease>>[] = [];
     for (const [index, stateValue] of states.entries()) {
       releases.push(await durableRelease(storage, `reconcile-${stateValue}`, `root-${index}`));
@@ -358,13 +382,15 @@ describe('durable dispatch storage', () => {
       for (const [index, stateValue] of states.entries()) {
         const releaseValue = releases[index]!;
         const base = queuedRecord(releaseValue.job, tx.nextSeq());
-        const claimed = stateValue === 'dispatching' || stateValue === 'outcome_unknown';
+        const claimed = stateValue === 'claimed' || stateValue === 'dispatching' || stateValue === 'outcome_unknown';
         tx.put({
           ...base,
           state: stateValue,
           attemptId: claimed ? `attempt-${index}` : null,
           workerId: claimed ? 'worker-before-crash' : null,
           claimedAt: claimed ? '2026-09-18T10:02:00Z' : null,
+          snapshot: claimed ? snapshotFor(releaseValue.job) : null,
+          reserved: claimed || stateValue === 'completed',
         });
       }
     });
@@ -377,11 +403,12 @@ describe('durable dispatch storage', () => {
     opened.push(reopened);
     dispatch = createConnectorDispatchStorage(reopened);
     expect(await dispatch.reconciliationReleaseIds()).toEqual([
+      'reconcile-claimed' as ReleaseId,
       'reconcile-dispatching' as ReleaseId,
       'reconcile-outcome_unknown' as ReleaseId,
     ]);
     expect(await dispatch.ledger.transact(tx => tx.active()).then(records => records.map(record => record.releaseId)))
-      .toEqual(['reconcile-dispatching', 'reconcile-outcome_unknown']);
+      .toEqual(['reconcile-claimed', 'reconcile-dispatching', 'reconcile-outcome_unknown']);
   });
 
   it('queues only the exact durable release while preserving matching record updates', async () => {
@@ -424,5 +451,145 @@ describe('durable dispatch storage', () => {
     expect(await dispatch.ledger.transact(tx => tx.queued())).toEqual([]);
     await expect(dispatch.payloads.read('payload-ref', -1)).rejects.toMatchObject({ code: 'invalid_input' });
     expect(await dispatch.ledger.transact(tx => tx.binding('missing-binding' as BindingId))).toBeNull();
+  });
+});
+
+describe('listening-mode dispatch persistence', () => {
+  function claimedRecord(job: Awaited<ReturnType<typeof durableRelease>>['job'], seq: number): DispatchRecord {
+    return {
+      ...queuedRecord(job, seq),
+      state: 'claimed',
+      attemptId: 'attempt-claimed',
+      workerId: 'worker-before-restart',
+      claimedAt: '2026-09-18T10:02:00Z',
+      snapshot: snapshotFor(job),
+      reserved: true,
+    };
+  }
+
+  it('round-trips a scheduler claim snapshot and its reservation across restart', async () => {
+    const { state, storage } = await fresh();
+    let dispatch = createConnectorDispatchStorage(storage);
+    const durable = await durableRelease(storage, 'dispatch-claimed');
+    const expected = await dispatch.ledger.transact(tx => {
+      const record = claimedRecord(durable.job, tx.nextSeq());
+      tx.put(record);
+      return record;
+    });
+    const reopened = await reopen(storage, state);
+    dispatch = createConnectorDispatchStorage(reopened);
+    expect(await dispatch.ledger.transact(tx => tx.record(durable.job.releaseId))).toEqual(expected);
+    // A requeued pre-effect claim keeps its reservation marker through restart as well.
+    const requeued = { ...expected, state: 'queued' as const, reason: 'route_drift' as const,
+      attemptId: null, workerId: null, claimedAt: null, snapshot: null };
+    await dispatch.ledger.transact(tx => tx.put(requeued));
+    const again = await reopen(reopened, state);
+    expect(await createConnectorDispatchStorage(again).ledger.transact(tx => tx.record(durable.job.releaseId)))
+      .toEqual(requeued);
+  });
+
+  it.each([
+    ['a claim without a snapshot', (record: DispatchRecord) => ({ ...record, snapshot: null })],
+    ['a claim without its reservation', (record: DispatchRecord) => ({ ...record, reserved: false })],
+    ['a snapshot missing a field', (record: DispatchRecord) => ({
+      ...record, snapshot: without(record.snapshot!, 'route'),
+    })],
+    ['a snapshot with an unknown field', (record: DispatchRecord) => ({
+      ...record, snapshot: { ...record.snapshot!, maxCausalDepth: 3 } as AttemptSnapshot,
+    })],
+    ['an async modeAtClaim', (record: DispatchRecord) => ({
+      ...record, snapshot: { ...record.snapshot!, modeAtClaim: 'async' } as unknown as AttemptSnapshot,
+    })],
+    ['a snapshot for another session', (record: DispatchRecord) => ({
+      ...record, snapshot: { ...record.snapshot!, sessionId: 'thread-replacement' },
+    })],
+    ['a snapshot for another generation', (record: DispatchRecord) => ({
+      ...record, snapshot: { ...record.snapshot!, bindingGeneration: 1 },
+    })],
+    ['a queued record with a snapshot', (record: DispatchRecord) => ({ ...record, state: 'queued' as const,
+      attemptId: null, workerId: null, claimedAt: null })],
+    ['a record without the listening fields', (record: DispatchRecord) => without(record, 'snapshot', 'reserved')],
+  ])('refuses to write %s', async (_, corrupt) => {
+    const { storage } = await fresh();
+    const dispatch = createConnectorDispatchStorage(storage);
+    const durable = await durableRelease(storage, 'dispatch-malformed-snapshot');
+    await expect(dispatch.ledger.transact(tx => tx.put(corrupt(claimedRecord(durable.job, tx.nextSeq())))))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+  });
+
+  it('reads records stored before listening modes as snapshot-less and never deliverable', async () => {
+    const { state, storage } = await fresh();
+    const dispatch = createConnectorDispatchStorage(storage);
+    const queued = await durableRelease(storage, 'dispatch-legacy-queued', 'root-legacy-queued');
+    const inFlight = await durableRelease(storage, 'dispatch-legacy-dispatching', 'root-legacy-dispatching');
+    await dispatch.ledger.transact(tx => {
+      tx.put(queuedRecord(queued.job, tx.nextSeq()));
+      tx.put({ ...claimedRecord(inFlight.job, tx.nextSeq()), state: 'dispatching' });
+    });
+    await storage.close();
+    // Rewrite both rows in the pre-listening-mode shape.
+    const db = new DatabaseSync(path.join(state, LEDGER_FILE));
+    for (const row of db.prepare('SELECT release_id, record FROM dispatch_records').all() as
+      { release_id: string; record: string }[]) {
+      const legacy = without(JSON.parse(row.record) as DispatchRecord, 'snapshot', 'reserved');
+      db.prepare('UPDATE dispatch_records SET record = ? WHERE release_id = ?').run(JSON.stringify(legacy), row.release_id);
+    }
+    db.close();
+    const reopened = await openConnectorStorage({ directory: state, mode: 'existing', limits });
+    opened.push(reopened);
+    const legacy = createConnectorDispatchStorage(reopened);
+    expect(await legacy.ledger.transact(tx => tx.record(queued.job.releaseId)))
+      .toMatchObject({ state: 'queued', snapshot: null, reserved: false });
+    expect(await legacy.ledger.transact(tx => tx.record(inFlight.job.releaseId)))
+      .toMatchObject({ state: 'dispatching', snapshot: null, reserved: true });
+    expect(await legacy.reconciliationReleaseIds()).toEqual([inFlight.job.releaseId]);
+  });
+
+  it('blocks dispatch on a policy stored before listening modes until a projection is applied', async () => {
+    const { state, storage } = await fresh();
+    const dispatch = createConnectorDispatchStorage(storage);
+    const policy = testPolicy({ version: 3, armedAt: 3 });
+    expect(await dispatch.applyEffectivePolicy({ binding: binding(0), policy })).toEqual({ kind: 'applied' });
+    await storage.close();
+    const db = new DatabaseSync(path.join(state, LEDGER_FILE));
+    db.prepare('UPDATE dispatch_policies SET policy = ?').run(JSON.stringify(without(policy, 'listening')));
+    db.close();
+    const reopened = await openConnectorStorage({ directory: state, mode: 'existing', limits });
+    opened.push(reopened);
+    const legacy = createConnectorDispatchStorage(reopened);
+    expect(await legacy.ledger.transact(tx => tx.policy(bindingId))).toBeNull();
+    expect(await legacy.applyEffectivePolicy({ binding: binding(0), policy: { ...policy, version: 4 } }))
+      .toEqual({ kind: 'applied' });
+    expect(await legacy.ledger.transact(tx => tx.policy(bindingId))).toEqual({ ...policy, version: 4 });
+  });
+
+  it('advances policy and listening-mode versions independently and never moves either back', async () => {
+    const { storage } = await fresh();
+    const dispatch = createConnectorDispatchStorage(storage);
+    const policy = testPolicy({ version: 3, armedAt: 3, listening: listening('sync', { version: 2 }) });
+    const apply = (next: DispatchPolicy) => dispatch.applyEffectivePolicy({ binding: binding(0), policy: next });
+    expect(await apply(policy)).toEqual({ kind: 'applied' });
+    // A listening-mode change alone, at the same policy version.
+    const asyncMode = { ...policy, listening: listening('async', { version: 3 }) };
+    expect(await apply(asyncMode)).toEqual({ kind: 'applied' });
+    expect(await apply(asyncMode)).toEqual({ kind: 'duplicate' });
+    // A pause alone, at the same listening version.
+    const paused = { ...asyncMode, version: 4, paused: true };
+    expect(await apply(paused)).toEqual({ kind: 'applied' });
+    // A newer policy carrying an older listening projection cannot overwrite the newer mode.
+    expect(await apply({ ...paused, version: 5, listening: listening('sync', { version: 2 }) }))
+      .toEqual({ kind: 'conflict', code: 'stale_version' });
+    // Different content under an already-applied listening version conflicts.
+    expect(await apply({ ...paused, version: 5, listening: listening('steer', { version: 3 }) }))
+      .toEqual({ kind: 'conflict', code: 'version_conflict' });
+    expect(await dispatch.ledger.transact(tx => tx.policy(bindingId))).toEqual(paused);
+  });
+
+  it('rejects a policy carrying maxCausalDepth', async () => {
+    const { storage } = await fresh();
+    const dispatch = createConnectorDispatchStorage(storage);
+    const withDepth = { ...testPolicy(), maxCausalDepth: 3 } as unknown as DispatchPolicy;
+    await expect(dispatch.applyEffectivePolicy({ binding: binding(0), policy: withDepth }))
+      .rejects.toMatchObject({ code: 'invalid_input' });
   });
 });
