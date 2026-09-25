@@ -3,10 +3,12 @@ import type { BindingId, SessionBinding } from '@khala/contracts/delivery/index'
 import { ReadOperation, sameHeldBinding } from '../composition/read.js';
 import { CliError, cliErrorCode } from './errors.js';
 import type { BatchInbox, InboxItem } from './inbox.js';
+import { runInternal } from './internal.js';
 import { parseReadArguments, renderReadOutput } from './read.js';
 import { MAX_SEND_BYTES, SendService } from './send.js';
 import {
   AGENT_ROUTES, CONNECT_REFUSAL_CODES, type AgentClientPort, type AgentStatus, type ConnectRefusalCode,
+  type InternalRuntimeLoader,
 } from './types.js';
 import { plainObject, validBindingArgument, validIdentifier } from './validation.js';
 import {
@@ -18,6 +20,7 @@ export type CliDependencies = Readonly<{
   client: AgentClientPort;
   inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
+  internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
 }>;
 
 export async function runCli(argv: readonly string[], deps: CliDependencies): Promise<number> {
@@ -30,6 +33,7 @@ export async function runCli(argv: readonly string[], deps: CliDependencies): Pr
       case 'send': return await send(args, deps);
       case 'status': return await status(args, deps);
       case 'mcp-serve': return await mcp(args, deps);
+      case 'internal': return await runInternal(args, deps);
       default: throw new CliError('invalid_arguments');
     }
   } catch (error) {

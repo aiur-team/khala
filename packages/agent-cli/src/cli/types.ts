@@ -1,8 +1,10 @@
 import type { BindingId, EventRef, HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
+import type { InternalRuntime } from '@khala/contracts/internal/command';
 
 export const CLI_ERROR_CODES = [
   'invalid_arguments', 'invalid_link', 'invalid_input', 'not_connected', 'binding_not_held',
   'listener_busy', 'storage_failed', 'transport_unavailable', 'outcome_unknown', 'internal_error',
+  'internal_unavailable',
 ] as const;
 export type CliErrorCode = (typeof CLI_ERROR_CODES)[number];
 
@@ -56,3 +58,5 @@ export type InboxRecord = Readonly<{
   payloadDigest: string; payloadBase64: string; receivedAt: string;
 }>;
 export type InboxCursor = Readonly<{ v: 1; offset: number; releaseId: string | null }>;
+/** Lazily loads the application-owned `khala internal` runtime; called only for that command. */
+export type InternalRuntimeLoader = () => Promise<InternalRuntime>;
