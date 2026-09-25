@@ -39,4 +39,23 @@ jobs:
           CHROMIUM_PATH="$(node -e "console.log(require('@playwright/test').chromium.executablePath())")"
           export CHROMIUM_PATH
           pnpm test:browser
+      # Screenshot baselines only match the browser, fonts and rasteriser they
+      # were taken with, so this runs in the pinned Playwright image (keep the
+      # tag equal to the @playwright/test version). Two passes prove the
+      # baselines are stable, and the final check proves nothing rewrote them.
+      - name: Visual baselines
+        run: |
+          docker run --rm --ipc=host --user "$(id -u):$(id -g)" -e HOME=/tmp -e CI=true \
+            -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$PWD:$PWD" -w "$PWD" mcr.microsoft.com/playwright:v1.63.0-noble \
+            sh -c 'corepack pnpm --filter @khala/web test:visual && corepack pnpm --filter @khala/web test:visual'
+          git diff --exit-code -- apps/web/src
+          test -z "$(git status --porcelain --untracked-files=all -- apps/web/src)"
+      - name: Upload visual diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs
+          path: apps/web/test-results/
+          if-no-files-found: ignore
       - run: pnpm build
