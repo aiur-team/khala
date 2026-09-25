@@ -9,6 +9,7 @@ import type {
 import { describe, expect, it } from 'vitest';
 import { listeningModeStoreConformance } from '../../test/fixtures/listening-mode/conformance';
 import { authority, binding, command as policyCommand, owner, start } from '../../test/trust/fakes';
+import { CLOSED_AUTOMATION } from '../trust/gate';
 import { evaluatePolicyChange } from '../trust/transitions';
 import type { TrustState } from '../trust/types';
 import {
@@ -204,6 +205,7 @@ describe('hosted listening-mode store', () => {
       owner(),
       policyCommand({ mode: 'review', paused: true }),
       'active',
+      CLOSED_AUTOMATION,
     ).state;
     const service = createListeningModeService(createHostedListeningModeStore(host));
 

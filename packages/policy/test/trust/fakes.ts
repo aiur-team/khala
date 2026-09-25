@@ -6,6 +6,7 @@ import type {
   ReleaseId, RoomId, SessionBinding,
 } from '@khala/contracts/delivery/index';
 import { initialTrustState } from '../../src/trust/transitions';
+import type { AutomationAuthority } from '../../src/trust/gate';
 import type { PolicyActor, TrustState } from '../../src/trust/types';
 
 export const ROOM = 'room_1' as RoomId;
@@ -81,3 +82,8 @@ export const event = (id = 'event_1', author: ParticipantId = PEER): EventRef =>
 
 export const releaseId = (id = 'release_1') => id as ReleaseId;
 export const causalRoot = 'causal_1' as CausalRootId;
+
+/** Example limits that are not approved values, injected the way composition would. */
+export const exampleAutomation = (maxCausalDepth = 3): AutomationAuthority => ({
+  approvedAutomation: () => ({ maxCausalDepth }),
+});

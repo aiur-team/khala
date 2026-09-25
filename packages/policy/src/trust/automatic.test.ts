@@ -1,23 +1,21 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandId, RoomId } from '@khala/contracts/delivery/index';
-import { type AutomaticReleaseInput, evaluateAutomaticRelease } from './automatic';
+import { type AutomaticReleaseInput, evaluateAutomaticRelease as evaluate } from './automatic';
 import {
-  BINDING, OTHER_PEER, OWN_AGENT, PEER, ack, binding, causalRoot, command, event, owner, releaseId, start,
+  BINDING, OTHER_PEER, OWN_AGENT, PEER, ack, binding, causalRoot, command, event, exampleAutomation, owner, releaseId, start,
 } from '../../test/trust/fakes';
-import { applyPolicyAck, evaluatePolicyChange } from './transitions';
+import { applyPolicyAck, evaluatePolicyChange as evaluateChange } from './transitions';
 import type { TrustState } from './types';
 
-// These tests exercise release logic as it will behave once G-AUTOMATION opens,
-// using example limits that are not approved values. `gate.test.ts` proves the real
-// seam keeps every event held.
-const gate = vi.hoisted(() => {
-  const example = { maxCausalDepth: 3 };
-  return { example, config: example as { maxCausalDepth: number } | null };
-});
-vi.mock('./gate', async importOriginal => ({
-  ...await importOriginal<typeof import('./gate')>(),
-  approvedAutomation: () => gate.config,
-}));
+// These tests exercise release logic under an injected bounded authority with example
+// limits that are not approved values. `gate.test.ts` proves the closed hosted
+// authority keeps every event held.
+const example = { maxCausalDepth: 3 };
+const gate = { example, config: example as { maxCausalDepth: number } | null };
+const authority = { approvedAutomation: () => gate.config };
+const evaluateAutomaticRelease = (input: AutomaticReleaseInput) => evaluate(input, authority);
+const evaluatePolicyChange = (...args: Parameters<typeof evaluateChange> extends [...infer A, unknown] ? A : never) =>
+  evaluateChange(...args, exampleAutomation());
 afterEach(() => { gate.config = gate.example; });
 
 const id = (value: string) => value as CommandId;
