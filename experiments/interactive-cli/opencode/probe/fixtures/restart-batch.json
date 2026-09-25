@@ -1,0 +1,14 @@
+{
+  "mode": "async",
+  "batch": {
+    "token": "batch-restart-006",
+    "messages": [
+      {
+        "id": "message-batch-restart-006",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "RESTART-NONCE-751: Call khala_send with response RESTART-ACK-751."
+      }
+    ]
+  }
+}

@@ -6,7 +6,10 @@ import {
   EXISTING_SESSION_SUPPORT, IMMEDIATE_NOTIFICATION_SUPPORT, RECONCILE_SUPPORT,
   type HarnessCapabilities, type HarnessPort, decodeHarnessCapabilities,
 } from './harness';
-import { type DeliveryReceipt, RECEIPT_ERROR_CODES, RECEIPT_KINDS, decodeDeliveryReceipt } from './receipts';
+import {
+  type DeliveryReceipt, type DeliveryReceiptTransport, type DeliveryReceiptV2, type ReceiptKind, type ReceiptKindV2,
+  RECEIPT_ERROR_CODES, RECEIPT_KINDS, decodeDeliveryReceipt, decodeDeliveryReceiptV2,
+} from './receipts';
 
 const capabilityViews = views.valid.filter(view => view.decoder === 'capabilities');
 const route = (adapterVersion: string): unknown => {
@@ -216,6 +219,46 @@ describe('DeliveryReceipt', () => {
   it.each(RECEIPT_ERROR_CODES)('accepts closed code %s on a failed receipt', errorCode => {
     const receipt = { ...exact.receipt, kind: 'failed', errorCode };
     expect(decodeDeliveryReceipt(receipt)).toEqual({ ok: true, value: receipt });
+  });
+
+  it('keeps the compatibility receipt aliases v1-only', () => {
+    const v2 = exact.receiptV2 as Extract<DeliveryReceiptV2, { kind: 'agent_acknowledged' }>;
+    const v2Kind: ReceiptKindV2 = 'agent_acknowledged';
+    const transport: DeliveryReceiptTransport = v2;
+    expect(transport.v).toBe(2);
+
+    // @ts-expect-error DeliveryReceipt remains the v1-only UI/harness compatibility type.
+    const compatibilityReceipt: DeliveryReceipt = v2;
+    // @ts-expect-error ReceiptKind remains the v1-only capability vocabulary.
+    const compatibilityKind: ReceiptKind = 'agent_acknowledged';
+    // @ts-expect-error An acknowledgement can only be sourced from the agent.
+    const harnessAcknowledgement: DeliveryReceiptV2 = { ...v2, source: 'harness' };
+    // @ts-expect-error The agent source can only be paired with an acknowledgement.
+    const agentCompletion: DeliveryReceiptV2 = { ...v2, kind: 'completed' };
+    // @ts-expect-error An acknowledgement must retain its shared evidence reference.
+    const acknowledgementWithoutEvidence: DeliveryReceiptV2 = { ...v2, evidenceRef: null };
+    // @ts-expect-error An acknowledgement never carries an error code.
+    const acknowledgementWithError: DeliveryReceiptV2 = { ...v2, errorCode: 'timeout' };
+    expect([
+      v2Kind,
+      compatibilityReceipt,
+      compatibilityKind,
+      harnessAcknowledgement,
+      agentCompletion,
+      acknowledgementWithoutEvidence,
+      acknowledgementWithError,
+    ]).toHaveLength(7);
+  });
+
+  it('rejects invalid v2 acknowledgement/source pairings', () => {
+    expect(decodeDeliveryReceiptV2({ ...exact.receiptV2, source: 'harness' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'source' });
+    expect(decodeDeliveryReceiptV2({ ...exact.receiptV2, kind: 'completed' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'kind' });
+    expect(decodeDeliveryReceiptV2({ ...exact.receiptV2, evidenceRef: null }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'evidenceRef' });
+    expect(decodeDeliveryReceiptV2({ ...exact.receiptV2, errorCode: 'timeout' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'errorCode' });
   });
 });
 

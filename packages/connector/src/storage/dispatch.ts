@@ -6,7 +6,7 @@ import type {
   ApprovalCommand, BindingId, CausalRootId, CommandId, ReleaseId, SessionBinding,
 } from '@khala/contracts/delivery/index';
 import {
-  decodeApprovalCommand, decodeDeliveryReceipt, decodeReleasedJob, decodeSessionBinding, sameSessionBinding,
+  decodeApprovalCommand, decodeDeliveryReceiptTransport, decodeReleasedJob, decodeSessionBinding, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
 import { usablePolicy } from '../dispatch/budget';
 import { sameRelease } from '../dispatch/claim';
@@ -88,7 +88,7 @@ function decodeRecord(input: unknown, limits: ReturnType<typeof context>['limits
   if ((attemptId === null) !== (workerId === null) || (attemptId === null) !== (claimedAt === null)) return fail();
   if (!Array.isArray(value.receipts) || value.receipts.length > MAX_RECEIPTS) return fail();
   const receipts = value.receipts.map(receipt => {
-    const decoded = decodeDeliveryReceipt(receipt);
+    const decoded = decodeDeliveryReceiptTransport(receipt);
     if (!decoded.ok || decoded.value.releaseId !== job.releaseId
       || decoded.value.bindingId !== job.binding.bindingId || decoded.value.generation !== job.binding.generation) return fail();
     return decoded.value;

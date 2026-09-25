@@ -110,7 +110,7 @@ Only fixed markers are inspected, and they are not copied into the summary artif
 | Event read/ack proof | `codex-read-receipts`, `claude-read-receipts`, `opencode-read-receipts` |
 | Claude route/setup | `claude-session-adapter`, `claude-plugin-hooks`, `claude-plugin-dispatch`, `claude-plugin-channel-commands`, `setup-cli-claude` |
 | Codex route/setup | `setup-cli-codex` |
-| OpenCode route | `opencode-interactive-cli-proof`, `opencode-session-bridge`, `opencode-listening-routes`, `opencode-server-auth-proof` |
+| OpenCode route | `opencode-interactive-cli-proof`, `opencode-session-bridge`, `opencode-server-auth-proof` |
 
 Acceptance adds no competing batch, pull, capability, receipt, admission, or stop API.
 
@@ -210,7 +210,7 @@ Acceptance adds no competing batch, pull, capability, receipt, admission, or sto
 | Files/packages | One profile and fixtures under `scripts/acceptance/**`. |
 | Acceptance criteria | OpenCode+DeepSeek and Claude receive separate grants; every declared-supported mode stays on the recorded session IDs; event-linked handshake and causal Stop pass; missing route/provider/session proof is non-passing `unproven`; no fallback or wrapper passes. |
 | Tests | Three-part identity and mode matrix, unsupported refusal, cleanup injection, opt-in live. **Wrong implementations must fail:** direct DeepSeek passes without OpenCode; two DeepSeek/OpenCode agents replace Claude; a supported mode reaches a hosted secondary process; Stop is a no-op; or Khala launches/wraps either CLI. |
-| Blocked by | `live-acceptance-runner`, `opencode-interactive-cli-proof`, `opencode-session-bridge`, `opencode-listening-routes`, `opencode-server-auth-proof`, `opencode-read-receipts`, `interactive-claude`, `claude-read-receipts`, `setup-cli-opencode`, `setup-cli-claude`, `claude-session-adapter`, `claude-plugin-hooks`, `claude-plugin-dispatch`, `claude-plugin-channel-commands`. |
+| Blocked by | `live-acceptance-runner`, `opencode-interactive-cli-proof`, `opencode-session-bridge`, `opencode-server-auth-proof`, `opencode-read-receipts`, `interactive-claude`, `claude-read-receipts`, `setup-cli-opencode`, `setup-cli-claude`, `claude-session-adapter`, `claude-plugin-hooks`, `claude-plugin-dispatch`, `claude-plugin-channel-commands`. |
 | Conflict risk | Medium with OpenCode and Claude route fixtures; consume their released profiles without redefining them. |
 
 Recommended order: dependency slugs first, then `internal-protocol-acceptance` → `internal-browser-acceptance`; independently `live-acceptance-runner` → (`claude-codex-live-acceptance` ∥ `opencode-deepseek-claude-live-acceptance`).

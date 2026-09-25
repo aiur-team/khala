@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   type ApprovalCommand, type BindingId, type CausalRootId, type CommandId, type DeliveryLimits, type DeliveryReceipt,
+  type DeliveryReceiptV2,
   type DeviceId, type EventId, type EventRef, type OwnerId, type ParticipantId, type ReceiptId, type ReleaseId,
   type ReleasedJob, type RoomId, type SessionBinding, decodeDeliveryLimits, releaseFromApproval,
 } from '@khala/contracts/delivery/index';
@@ -121,5 +122,23 @@ export function receipt(releaseId: string, kind: DeliveryReceipt['kind'], genera
     source: 'connector',
     evidenceRef: null,
     errorCode: kind === 'failed' ? 'harness_rejected' : null,
+  };
+}
+
+export function agentAcknowledgement(
+  releaseId: string,
+  receiptId = 'receipt_agent_acknowledged',
+): DeliveryReceiptV2 {
+  return {
+    v: 2,
+    receiptId: receiptId as ReceiptId,
+    releaseId: releaseId as ReleaseId,
+    bindingId,
+    generation: 0,
+    kind: 'agent_acknowledged',
+    observedAt: '2026-09-18T10:03:00Z',
+    source: 'agent',
+    evidenceRef: 'evidence_agent_acknowledged',
+    errorCode: null,
   };
 }

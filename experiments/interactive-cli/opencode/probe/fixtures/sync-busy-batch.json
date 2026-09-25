@@ -1,0 +1,14 @@
+{
+  "mode": "sync",
+  "batch": {
+    "token": "batch-sync-busy-010",
+    "messages": [
+      {
+        "id": "message-batch-sync-busy-010",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "SYNC-NONCE-195: Please reply with response SYNC-ACK-195."
+      }
+    ]
+  }
+}

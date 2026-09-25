@@ -1,0 +1,14 @@
+{
+  "mode": "steer",
+  "batch": {
+    "token": "batch-steer-bash-002",
+    "messages": [
+      {
+        "id": "message-batch-steer-bash-002",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "STEER-NONCE-217: Before your next tool call, call khala_send with response STEER-ACK-217."
+      }
+    ]
+  }
+}
