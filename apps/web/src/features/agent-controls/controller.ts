@@ -1,10 +1,15 @@
 import type {
-  BindingId, CommandId, OwnerId, ParticipantId, PolicyAck, PolicySetCommand, RoomId,
+  BindingId, CommandId, ListeningMode, ListeningModeCommand, ListeningModeResult, OwnerId, OwnerRouteGrantCommand,
+  ParticipantId, PolicyAck, PolicySetCommand, RoomId,
 } from '@khala/contracts/delivery/index';
 import type { Disposer } from '@khala/contracts/messaging/index';
-import { initialAgentControlsView, ownerLabelFor, type AgentControlsView } from './model';
+import {
+  grantConfirmationFor, initialAgentControlsView, ownerLabelFor, projectListening,
+  type AgentControlsView, type EvidenceRegistry, type GrantConfirmation, type ListeningDisplay,
+  type ListeningProjection, type ListeningSubmission, type RouteGrantKind,
+} from './model';
 import { receiptLabel } from './receipt-labels';
-import type { AgentControlsPorts, AgentControlsSnapshot } from './ports';
+import type { AgentControlsPorts, AgentControlsSnapshot, RouteGrantAck } from './ports';
 
 export interface AgentControlsController {
   getView(): AgentControlsView;
@@ -20,6 +25,20 @@ export interface AgentControlsController {
   refresh(): void;
   /** Resends the last request that failed with a genuinely unknown outcome, reusing its commandId and expected version rather than starting a new one. */
   retry(): void;
+  /** Chooses a listening mode locally. Nothing is sent until `applyListeningMode`. */
+  selectListeningMode(mode: ListeningMode): void;
+  /**
+   * Submits the chosen mode with the displayed version. A version conflict
+   * refreshes the exact binding and keeps the choice unsubmitted; it is never
+   * retried automatically.
+   */
+  applyListeningMode(): void;
+  /** Opens the route-specific owner confirmation for an experimental route or hard cancel. */
+  requestGrant(kind: RouteGrantKind, mode: ListeningMode): void;
+  confirmGrant(): void;
+  cancelGrant(): void;
+  /** Revokes exactly one grant kind; the other grant is never touched. */
+  revokeGrant(kind: RouteGrantKind, mode: ListeningMode): void;
   dispose(): void;
 }
 
@@ -30,6 +49,8 @@ export interface AgentControlsConfig {
   readonly viewerOwnerId: OwnerId;
   readonly agentLabel: string;
   readonly roomLabel: string;
+  /** Allowlisted internal evidence paths; any reference missing here renders as plain text. */
+  readonly evidenceRegistry?: EvidenceRegistry;
 }
 
 const defaultCreateId = (): string =>
@@ -100,6 +121,67 @@ export function createAgentControlsController(
   let lastFailedCommand: PendingCommand | null = null;
   const listeners = new Set<(view: AgentControlsView) => void>();
   let portDisposer: Disposer | null = null;
+  const evidenceRegistry = config.evidenceRegistry ?? {};
+
+  // Listening-mode state is independent of the pause/resume policy command.
+  let listeningBase: ListeningProjection | null = null;
+  let listeningDraft: ListeningMode | null = null;
+  let listeningSubmission: ListeningSubmission = { kind: 'idle' };
+  let listeningCommandId: string | null = null;
+  let grantConfirmation: GrantConfirmation | null = null;
+  let grantCommandId: string | null = null;
+  let grantNotice: string | null = null;
+  let focusToken = 0;
+
+  function listeningDisplay(): ListeningDisplay | null {
+    if (listeningBase === null) return null;
+    return {
+      ...listeningBase,
+      draft: listeningDraft,
+      submission: listeningSubmission,
+      confirmation: grantConfirmation,
+      grantNotice,
+      focusToken,
+    };
+  }
+
+  function resetListeningIntent(): void {
+    listeningDraft = null;
+    listeningSubmission = { kind: 'idle' };
+    listeningCommandId = null;
+    grantConfirmation = null;
+    grantCommandId = null;
+    grantNotice = null;
+  }
+
+  function sameEvidence(a: GrantConfirmation['evidence'], b: GrantConfirmation['evidence']): boolean {
+    return a.route === b.route && a.testedVersion === b.testedVersion && a.evidenceRevision === b.evidenceRevision;
+  }
+
+  /**
+   * Adopts the listening part of a fresh snapshot. A replaced generation drops
+   * every draft, submission and confirmation; an older version for the same
+   * generation is ignored. An open confirmation whose evidence moved is closed
+   * so the owner never confirms against evidence they did not see.
+   */
+  function applyListening(snapshot: AgentControlsSnapshot, generationChanged: boolean): void {
+    const next = projectListening(snapshot, config.viewerOwnerId, evidenceRegistry);
+    const generationReplaced = generationChanged
+      || (listeningBase !== null && next !== null && next.generation !== listeningBase.generation);
+    if (generationReplaced) {
+      resetListeningIntent();
+      listeningBase = next;
+      return;
+    }
+    if (next !== null && listeningBase !== null && next.version < listeningBase.version) return;
+    listeningBase = next;
+    if (next === null || grantConfirmation === null) return;
+    const fresh = grantConfirmationFor(next, grantConfirmation.grantKind, grantConfirmation.mode);
+    if (fresh === null || !sameEvidence(fresh.evidence, grantConfirmation.evidence)) {
+      grantConfirmation = null;
+      grantNotice = `The evidence for ${next.sessionLabel} changed while you were reviewing it. Review the updated evidence before confirming.`;
+    }
+  }
 
   function notify(): void {
     if (disposed) return;
@@ -183,9 +265,11 @@ export function createAgentControlsController(
 
     const reason = unavailableReason(snapshot, config.viewerOwnerId, hasActionFailure);
     const isViewerOwned = snapshot.binding.ownerId === config.viewerOwnerId;
+    applyListening(snapshot, generationChanged);
 
     view = {
       ...view,
+      listening: listeningDisplay(),
       ownerLabel: ownerLabelFor(snapshot.binding.ownerId, config.viewerOwnerId),
       isViewerOwned,
       revoked: snapshot.bindingStatus === 'revoked',
@@ -410,6 +494,175 @@ export function createAgentControlsController(
     });
   }
 
+  function publishListening(): void {
+    view = { ...view, listening: listeningDisplay() };
+    notify();
+  }
+
+  function selectListeningMode(mode: ListeningMode): void {
+    if (disposed || listeningBase === null) return;
+    const option = listeningBase.options.find(candidate => candidate.mode === mode);
+    if (!option?.selectable) return;
+    listeningDraft = mode;
+    if (listeningSubmission.kind !== 'pending') listeningSubmission = { kind: 'idle' };
+    publishListening();
+  }
+
+  function applyListeningResult(commandId: string, attempted: ListeningMode, result: ListeningModeResult): void {
+    if (disposed || listeningCommandId !== commandId || result.commandId !== commandId) return;
+    listeningCommandId = null;
+    if (result.outcome === 'applied') {
+      listeningDraft = null;
+      listeningSubmission = { kind: 'applied', attempted };
+    } else if (result.outcome === 'conflict') {
+      // Never retried: the attempted choice stays as the unsubmitted draft and
+      // focus returns to the refreshed selector for an explicit decision.
+      listeningDraft = attempted;
+      listeningSubmission = { kind: 'conflict', attempted };
+      focusToken += 1;
+    } else {
+      listeningDraft = attempted;
+      listeningSubmission = { kind: 'refused', attempted, reason: result.reason ?? 'refused' };
+    }
+    publishListening();
+    readSnapshot();
+  }
+
+  function applyListeningMode(): void {
+    if (disposed || listeningBase === null || listeningDraft === null) return;
+    if (listeningCommandId !== null) return;
+    const attempted = listeningDraft;
+    const option = listeningBase.options.find(candidate => candidate.mode === attempted);
+    if (!option?.selectable || attempted === listeningBase.requested) return;
+    const command: ListeningModeCommand = {
+      v: 1,
+      commandId: createId() as CommandId,
+      bindingId: config.bindingId,
+      expectedBindingGeneration: listeningBase.generation,
+      expectedVersion: listeningBase.version,
+      requested: attempted,
+      issuedAt: new Date().toISOString(),
+    };
+    listeningCommandId = command.commandId;
+    listeningSubmission = { kind: 'pending', attempted };
+    publishListening();
+    port.submitListeningMode(command)
+      .then(result => applyListeningResult(command.commandId, attempted, result))
+      .catch(() => {
+        if (disposed || listeningCommandId !== command.commandId) return;
+        listeningCommandId = null;
+        listeningSubmission = { kind: 'unknown', attempted };
+        publishListening();
+      });
+  }
+
+  function requestGrant(kind: RouteGrantKind, mode: ListeningMode): void {
+    if (disposed || listeningBase === null || grantCommandId !== null) return;
+    const confirmation = grantConfirmationFor(listeningBase, kind, mode);
+    if (confirmation === null) return;
+    grantConfirmation = confirmation;
+    grantNotice = null;
+    publishListening();
+  }
+
+  function cancelGrant(): void {
+    if (disposed || grantConfirmation === null) return;
+    grantConfirmation = null;
+    publishListening();
+  }
+
+  const GRANT_NAMES: Readonly<Record<RouteGrantKind, string>> = {
+    experimental_route: 'Experimental route',
+    hard_cancel: 'Hard cancel',
+  };
+
+  function grantAckNotice(
+    kind: RouteGrantKind,
+    mode: ListeningMode,
+    action: 'grant' | 'revoke',
+    ack: RouteGrantAck,
+    sessionLabel: string,
+  ): string {
+    const subject = `${GRANT_NAMES[kind]} for ${mode} on ${sessionLabel}`;
+    if (ack.outcome === 'applied') return `${subject} ${action === 'grant' ? 'granted' : 'revoked'}.`;
+    if (ack.outcome === 'conflict') {
+      return `Another actor changed ${sessionLabel} first; the ${action} was not applied. Review the refreshed state.`;
+    }
+    return `${subject}: ${action} refused (${ack.reason ?? 'refused'}).`;
+  }
+
+  function submitGrant(command: OwnerRouteGrantCommand, kind: RouteGrantKind, action: 'grant' | 'revoke'): void {
+    const sessionLabel = listeningBase?.sessionLabel ?? config.agentLabel;
+    grantCommandId = command.commandId;
+    grantNotice = null;
+    publishListening();
+    port.submitRouteGrant(command)
+      .then(ack => {
+        if (disposed || grantCommandId !== command.commandId || ack.commandId !== command.commandId) return;
+        grantCommandId = null;
+        grantNotice = grantAckNotice(kind, command.mode, action, ack, sessionLabel);
+        publishListening();
+        readSnapshot();
+      })
+      .catch(() => {
+        if (disposed || grantCommandId !== command.commandId) return;
+        grantCommandId = null;
+        grantNotice = `Could not reach the connector; the ${GRANT_NAMES[kind].toLowerCase()} ${action} for ${sessionLabel} has an unknown outcome. Refresh before trying again.`;
+        publishListening();
+      });
+  }
+
+  function grantCommand(
+    kind: OwnerRouteGrantCommand['kind'],
+    mode: ListeningMode,
+    identity: Readonly<{ route: string; harnessVersion: string; evidenceRevision: string }>,
+  ): OwnerRouteGrantCommand | null {
+    if (listeningBase === null) return null;
+    return {
+      v: 1,
+      kind,
+      commandId: createId() as CommandId,
+      bindingId: config.bindingId,
+      expectedBindingGeneration: listeningBase.generation,
+      expectedVersion: listeningBase.version,
+      mode,
+      ...identity,
+      issuedAt: new Date().toISOString(),
+    };
+  }
+
+  function confirmGrant(): void {
+    if (disposed || grantConfirmation === null || grantCommandId !== null) return;
+    const confirmation = grantConfirmation;
+    const { route, testedVersion, evidenceRevision } = confirmation.evidence;
+    if (testedVersion === null || evidenceRevision === null) return;
+    const command = grantCommand(
+      confirmation.grantKind === 'experimental_route' ? 'grant_experimental_route' : 'grant_hard_cancel',
+      confirmation.mode,
+      { route, harnessVersion: testedVersion, evidenceRevision },
+    );
+    if (command === null) return;
+    grantConfirmation = null;
+    submitGrant(command, confirmation.grantKind, 'grant');
+  }
+
+  function revokeGrant(kind: RouteGrantKind, mode: ListeningMode): void {
+    if (disposed || listeningBase === null || grantCommandId !== null) return;
+    if (listeningBase.inactiveReason !== null) return;
+    const state = kind === 'hard_cancel'
+      ? listeningBase.hardCancel.grant
+      : listeningBase.options.find(option => option.mode === mode)?.experimentalGrant;
+    if (state === undefined || state.kind === 'none') return;
+    const { grant } = state;
+    const command = grantCommand(
+      kind === 'experimental_route' ? 'revoke_experimental_route' : 'revoke_hard_cancel',
+      grant.mode,
+      { route: grant.route, harnessVersion: grant.harnessVersion, evidenceRevision: grant.evidenceRevision },
+    );
+    if (command === null) return;
+    submitGrant(command, kind, 'revoke');
+  }
+
   readSnapshot();
   portDisposer = port.subscribe(config.bindingId, snapshot => {
     if (!disposed) applySnapshot(snapshot);
@@ -424,6 +677,12 @@ export function createAgentControlsController(
     requestPause,
     refresh: readSnapshot,
     retry,
+    selectListeningMode,
+    applyListeningMode,
+    requestGrant,
+    confirmGrant,
+    cancelGrant,
+    revokeGrant,
     dispose() {
       if (disposed) return;
       disposed = true;
