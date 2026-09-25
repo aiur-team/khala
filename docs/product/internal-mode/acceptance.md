@@ -21,7 +21,7 @@ The live runner uses normal Aiur dispatch, not a dedicated acceptance Executor o
 | Agent ownership | Khala launches or hosts no agent. The user starts the only Claude, Codex, or OpenCode CLI session; native hooks/plugins/MCP/CLI-server routes deliver every mode into that session. A `khala run <cli>` wrapper is not an accepted default. |
 | Setup | The package is `@aiur/khala`: `npx @aiur/khala setup`, `status`, and `remove`. Claude uses one user-scope plugin owned by `claude-plugin` and installed by `setup-cli-claude`; Codex uses MCP plus the Khala skill and no plugin. |
 | Admission | The launcher never binds silently. `/khala join <channel-url>` and other joins pass through `channel-access-journal` and `channel-access-inbox`; the human grants each participant. An agent may request `khala channels create` / `khala_create_channel`, but creation requires human confirmation. |
-| Receipts | `codex-read-receipts`, `claude-read-receipts` (RR4), and `opencode-read-receipts` (RR5) own route proof. Acceptance consumes rather than redefines them. |
+| Receipts | `codex-read-receipts`, `claude-read-receipts`, and `opencode-read-receipts` own route proof. Acceptance consumes rather than redefines them. |
 | Stop | `stop-control` ends the user-started agent sessions, not the local server. The channel stays viewable/resumable while the server runs. Closing the launcher stops the server; `khala internal --resume <channel-id>` resumes it. Khala never starts a replacement agent. |
 | Second live pair | One OpenCode session configured for DeepSeek exchanges with one Claude session. Two DeepSeek/OpenCode sessions and Aiur's direct DeepSeek backend do not qualify. |
 | Claude hardening | Channel text reaches the normal interactive Claude session as untrusted content in every mode. `setup` may report an optional hardening check, but delivery never depends on a restricted profile. Claude hook execution is owned by `claude-plugin`. |
@@ -104,7 +104,7 @@ Only fixed markers are inspected, and they are not copied into the summary artif
 |---|---|
 | Internal lifecycle | `internal-launcher`, `local-web-entry`, `stop-control` |
 | Channel UI | `listening-mode-ui` |
-| Human access request/grant | `channel-access-journal`, `channel-access-inbox` |
+| Channel discovery and access request/grant | `internal-channel-discovery`, `channel-access-journal`, `channel-access-inbox`, `channel-access-cli-mcp` |
 | Listening semantics/storage | `listening-mode-contract`, `listening-mode-store`, `local-automation-fence`, `listening-mode-dispatch`, `local-sqlite-channel-store` |
 | Inbox/pull | `mcp-inbox-batch`, `mcp-result-piggyback`, `listening-mode-pull`, `mcp-piggyback-evidence` |
 | Event read/ack proof | `codex-read-receipts`, `claude-read-receipts`, `opencode-read-receipts` |
@@ -150,7 +150,7 @@ Acceptance adds no competing batch, pull, capability, receipt, admission, or sto
 | Files/packages | `tests/e2e/internal-mode/**`, `tests/e2e/harness/**`; consume contracts, connector, messaging, policy, harnesses, agent-cli, internal composition. |
 | Acceptance criteria | Ordinary CI; only native boundaries fake; protocol steps pass; stop leaves server/channel available; unproved routes stay unproven; no leftovers. |
 | Tests | Happy flow plus boundary faults. **Wrong implementations must fail:** replaying a batch token creates a duplicate; Khala launches an agent; Stop kills the server or leaves an agent session alive; launcher close leaves the server alive; or `khala internal --resume <channel-id>` does not reopen the same channel. |
-| Blocked by | `internal-launcher`, `listening-mode-contract`, `mcp-inbox-batch`, `mcp-result-piggyback`, `listening-mode-pull`, `local-sqlite-channel-store`, `local-automation-fence`, `listening-mode-dispatch`, `stop-control`, `channel-access-journal`, `channel-access-inbox`. |
+| Blocked by | `internal-launcher`, `listening-mode-contract`, `mcp-inbox-batch`, `mcp-result-piggyback`, `listening-mode-pull`, `local-sqlite-channel-store`, `local-automation-fence`, `listening-mode-dispatch`, `stop-control`, `internal-channel-discovery`, `channel-access-journal`, `channel-access-inbox`. |
 | Conflict risk | High with internal composition/listening fixtures; consume their ports and keep changes in E2E modules. |
 
 ### AC2 — Browser CI acceptance
@@ -165,7 +165,7 @@ Acceptance adds no competing batch, pull, capability, receipt, admission, or sto
 | Files/packages | `apps/web/src/internal/**/*.browser.spec.ts` or final internal composition path; shared AC1 fixture. |
 | Acceptance criteria | Existing browser CI lane; real composition; **channel** in UI; stop ends sessions while channel stays viewable; keyboard/focus/status passes. |
 | Tests | Critical flow above. **Wrong implementations must fail:** session Stop kills the server, hides the channel, or leaves a session alive; launcher close leaves the server reachable; CLI resume opens a fresh channel instead of the persisted one. |
-| Blocked by | `internal-protocol-acceptance`, `local-web-entry`, `listening-mode-ui`, `stop-control`, `channel-access-journal`, `channel-access-inbox`. |
+| Blocked by | `internal-protocol-acceptance`, `local-web-entry`, `listening-mode-ui`, `stop-control`, `internal-channel-discovery`, `channel-access-journal`, `channel-access-inbox`. |
 | Conflict risk | High in internal web composition; limit production changes to feature-owned test seams. |
 
 ### AC3 — Live acceptance runner
@@ -180,7 +180,7 @@ Acceptance adds no competing batch, pull, capability, receipt, admission, or sto
 | Files/packages | `scripts/acceptance/**`, `tests/e2e/acceptance/**`, concise script documentation. |
 | Acceptance criteria | Only `aiur-team/khala`; normal dispatch + `acceptance`; one host/repository-serialized run; post-launcher-close snapshot from `local-sqlite-channel-store`; bounded time/cost; Executor-owned native sessions exercise every declared-supported mode; route/identity/exchange proof is mandatory and absent proof is non-passing `unproven`; optional hardening never gates delivery; guarded Stop and best-effort ownership-checked cleanup. |
 | Tests | Exact prompt-fixture assertion for join URL, untrusted framing, per-mode request/confirmation, ordered handshake, final hold-until-Stop, and no-code/no-PR; fake GitHub/log/snapshot/receipt/process adapters; different profiles contend on one lock; process death releases it; live raw SQLite access and Khala agent-launch commands are rejected; sessions are alive before Stop; wrong-binding/stale-generation Stop is refused; Stop failure still closes launcher/tickets; timeout/partial cleanup. **Wrong implementation must fail:** successful logs/timed sends pass without event-linked read/ack evidence, or the runner uses `khala run <cli>`. |
-| Blocked by | `internal-launcher`, `local-web-entry`, `local-sqlite-channel-store`, `listening-mode-pull`, `stop-control`, `channel-access-journal`, `channel-access-inbox`, `read-receipt-contract`, `read-receipt-recording`. |
+| Blocked by | `internal-launcher`, `local-web-entry`, `local-sqlite-channel-store`, `listening-mode-pull`, `stop-control`, `internal-channel-discovery`, `channel-access-journal`, `channel-access-inbox`, `channel-access-cli-mcp`, `read-receipt-contract`, `read-receipt-recording`. |
 | Conflict risk | Low with product packages; medium with test scripts/fixtures. Keep profiles declarative. |
 
 ### AC4 — Claude and Codex live profile
