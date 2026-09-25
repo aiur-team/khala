@@ -107,6 +107,46 @@ unavailable item before every consumer has this contract version will fail that
 consumer's whole page or snapshot decode (`readItems` decodes eagerly, so one
 unrecognized item fails the batch), not just drop the one item.
 
+## Imported history
+
+`imported-history.ts` defines the archive that carries an internal channel's messages
+into an external channel when it is made external. The archive travels inside the
+external channel's end-to-end encryption; this contract adds no cryptography of its own.
+
+- **Manifest.** `{ v: 1, archiveId, source: { channelId, revision }, importedBy,
+  importedAt, recordCount, chunks }`. Each chunk entry lists its `index`, `recordCount`,
+  `firstSequence`, `lastSequence` and `chunkDigest`, in order. `importedBy` is the
+  signed-in owner's participant that did the import, and it is the only external author.
+- **Record.** `{ v: 1, kind: 'imported', sourceRecordId, sequence, originalAuthor: {
+  label, kind }, originalSentAt, body, recordDigest }`. `sequence` is source order and
+  strictly increases across the archive. The body is kept exactly as sent, with no
+  Unicode or newline normalisation. `originalAuthor` is a display label from the source
+  channel: it is provenance, not an external participant.
+- **Digests.** `recordDigest` is SHA-256 over the positional JSON array
+  `["khala.imported-history.record.v1", channelId, sourceRecordId, sequence, label,
+  kind, sentAt, body]`. It binds a body to one source channel, record, position and
+  attribution, so a body carried with another record's digest is rejected.
+  `chunkDigest` is SHA-256 over `encodeImportedHistoryChunk`, which is also the size
+  that `maxChunkBytes` bounds. String escaping follows `encodeMessageContent`.
+- **Verification.** `decodeImportedHistoryChunk` recomputes every record digest and the
+  chunk digest against the manifest's entry. `openImportedHistory` also requires every
+  listed chunk, in manifest order, with no source record repeated. A reordered, dropped,
+  extra, altered or foreign chunk fails with a located `mismatch`, and a missing Web
+  Crypto fails with `digest_unavailable`.
+- **Sealing.** `sealImportedHistory` packs records in order and closes a chunk when the
+  next record would exceed `maxRecordsPerChunk` or `maxChunkBytes`. The same input
+  always gives the same bytes. `ImportedHistoryLimits` come only from
+  `decodeImportedHistoryLimits`, which requires `maxPageBytes >= maxBodyBytes` so that
+  one maximum-sized body always fits on one agent page.
+
+An imported record carries none of `EventRef`'s fields, so it is not assignable to
+`EventRef`, and every native reference, timeline, selection and approval decoder rejects
+it as an unknown field. Imported history never enters approval, release, delivery,
+receipt or subscription paths. `@khala/messaging/channels/imported-history` projects a
+verified archive as a frozen read-only view for humans (`projectImportedHistory`), plus
+bounded context pages that an agent reads on request (`importedContextPage`). Neither
+produces a `TimelineItem`.
+
 ## Outcomes
 
 `OperationResult` is `ok`, `rejected` (a finite code), `unavailable` (nothing happened, so
@@ -254,7 +294,8 @@ capability inputs and do not choose defaults:
 ## Fixtures
 
 The files in `packages/contracts/fixtures/messaging/` are for tests only and are never
-exported at runtime: `exact-intro.json`, `invalid.json`, `views.json` and
-`control-store.json`. `invalid.json` holds every invalid peer the plan lists: decoder
+exported at runtime: `exact-intro.json`, `invalid.json`, `views.json`,
+`control-store.json` and `imported-history.json` (pinned record and chunk digests).
+`invalid.json` holds every invalid peer the plan lists: decoder
 failures under `cases`, and well-formed values that a comparison or the control store
 must refuse under `peers`.
