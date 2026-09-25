@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import type {
   BindingId, DeliveryLimits, OwnerId, ParticipantId, PolicyAck, RoomId,
 } from '@khala/contracts/delivery/index';
-import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
+import { decodeDeliveryLimits, unknownModeSupportMap } from '@khala/contracts/delivery/index';
 import { AgentControlsPanel } from '../AgentControlsPanel';
 import type { AgentControlsConfig } from '../controller';
 import type { AgentControlsPorts, AgentControlsSnapshot } from '../ports';
@@ -55,7 +55,7 @@ function currentSnapshot(): AgentControlsSnapshot {
     },
     bindingStatus: 'active',
     capabilities: {
-      v: 2,
+      v: 3,
       harness: 'codex',
       version: '1.0.0',
       adapterVersion: '1.0.0',
@@ -67,6 +67,8 @@ function currentSnapshot(): AgentControlsSnapshot {
       reconcileByReleaseId: 'while_queued',
       limits,
       evidenceRef: 'evidence_harness',
+      modes: unknownModeSupportMap('test-codex-interactive', 'Browser fixture has no primary mode proof.', '1.0.0'),
+      acknowledgement: 'unknown',
     },
     policy: { bindingId: BINDING_ID, generation, effectiveVersion, effectiveMode, paused },
     connection: 'connected',

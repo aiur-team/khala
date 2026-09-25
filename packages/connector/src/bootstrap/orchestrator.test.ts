@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/messaging/index';
-import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
+import { type HarnessCapabilities, unknownModeSupportMap } from '@khala/contracts/delivery/index';
 import { type BootstrapInput, bootstrapAgent, operationFingerprint } from './orchestrator';
 import type {
   AdapterCapability, AdmissionOutcome, BootstrapPorts, DeviceActivation, OperationRecord, OwnershipOutcome, SessionInspection,
@@ -29,9 +29,11 @@ const DESCRIPTOR = {
 };
 const SESSION = { harness: 'codex', sessionId: 'thread-existing-b', generation: 3 };
 const CAPABILITIES: HarnessCapabilities = {
-  v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1', support: 'tested', existingSession: 'khala_hosted_resume',
+  v: 3, harness: 'codex', version: '1.0.0', adapterVersion: '1', support: 'tested', existingSession: 'khala_hosted_resume',
   immediateNotification: 'khala_hosted_idle', busy: 'queue', receiptEvidence: [], reconcileByReleaseId: 'unknown',
   limits: { maxPayloadBytes: 1024, maxBatchItems: 1 } as never, evidenceRef: 'docs/evidence/codex.md',
+  modes: unknownModeSupportMap('test-codex-interactive', 'Test fixture has no primary mode proof.', '1.0.0'),
+  acknowledgement: 'unknown',
 };
 
 function bindingFor(deviceId: string, generation = 3): SessionBinding {

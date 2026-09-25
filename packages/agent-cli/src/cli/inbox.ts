@@ -11,9 +11,11 @@ import { plainObject, validDigest, validEventRef, validIdentifier, validUtcTimes
 
 const INBOX_FILE = 'inbox.jsonl';
 const CURSOR_FILE = 'cursor.json';
+const BATCH_FILE = 'batch.json';
 const SOCKET_FILE = 'listener.sock';
 const LISTENER_LOCK_FILE = 'listener.lock';
 const RECORD_OVERHEAD_BYTES = 1024 * 1024;
+const MAX_BATCH_RECORDS = 8;
 
 export type InboxItem = Readonly<{
   record: InboxRecord;
@@ -27,12 +29,31 @@ export type InboxStatus = Readonly<{
   cursor: InboxCursor;
 }>;
 
+export type InboxBatch = Readonly<{
+  token: string;
+  items: readonly InboxItem[];
+}>;
+
+export type ReadBatchInput = Readonly<{
+  maxBytes: number;
+  acknowledgeToken?: string | null;
+}>;
+
+export type InboxConsumer = Readonly<{
+  readBatch(input: ReadBatchInput): Promise<InboxBatch | null>;
+  release(): Promise<void>;
+}>;
+
 export interface Inbox {
   enqueue(delivery: InboxDelivery): Promise<'appended' | 'duplicate'>;
   acquireListener(): Promise<Readonly<{ release(): Promise<void> }>>;
   readNext(): Promise<InboxItem | null>;
   acknowledge(item: InboxItem): Promise<void>;
   status(): Promise<InboxStatus>;
+}
+
+export interface BatchInbox extends Inbox {
+  acquireListener(): Promise<InboxConsumer>;
 }
 
 export type OpenInboxOptions = Readonly<{
@@ -45,7 +66,7 @@ export type OpenInboxOptions = Readonly<{
 
 type ValidatedOptions = Omit<OpenInboxOptions, 'bindingId'> & Readonly<{ bindingId: BindingId }>;
 
-export async function openInbox(options: OpenInboxOptions): Promise<Inbox> {
+export async function openInbox(options: OpenInboxOptions): Promise<BatchInbox> {
   const validated = validateOptions(options);
   const stateDirectory = path.resolve(options.stateDirectory);
   if (!path.isAbsolute(options.stateDirectory)) throw new CliError('invalid_input');
@@ -61,24 +82,27 @@ export async function openInbox(options: OpenInboxOptions): Promise<Inbox> {
   await ensurePrivateFile(inboxPath);
   await recoverTrailingWrite(inboxPath);
   const cursorPath = path.join(bindingDirectory, CURSOR_FILE);
+  const batchPath = path.join(bindingDirectory, BATCH_FILE);
   const socketPath = await listenerSocketPath(bindingDirectory);
   const listenerLockPath = path.join(bindingDirectory, LISTENER_LOCK_FILE);
-  return new FileInbox(validated, { bindingDirectory, inboxPath, cursorPath, socketPath, listenerLockPath });
+  return new FileInbox(validated, { bindingDirectory, inboxPath, cursorPath, batchPath, socketPath, listenerLockPath });
 }
 
 type InboxPaths = Readonly<{
   bindingDirectory: string;
   inboxPath: string;
   cursorPath: string;
+  batchPath: string;
   socketPath: string;
   listenerLockPath: string;
 }>;
 
-class FileInbox implements Inbox {
+class FileInbox implements BatchInbox {
   readonly #options: ValidatedOptions;
   readonly #bindingDirectory: string;
   readonly #inboxPath: string;
   readonly #cursorPath: string;
+  readonly #batchPath: string;
   readonly #socketPath: string;
   readonly #listenerLockPath: string;
   // TODO(KHA-153): compact acknowledged records once live composition defines retention.
@@ -93,6 +117,7 @@ class FileInbox implements Inbox {
     this.#bindingDirectory = paths.bindingDirectory;
     this.#inboxPath = paths.inboxPath;
     this.#cursorPath = paths.cursorPath;
+    this.#batchPath = paths.batchPath;
     this.#socketPath = paths.socketPath;
     this.#listenerLockPath = paths.listenerLockPath;
   }
@@ -128,7 +153,7 @@ class FileInbox implements Inbox {
     });
   }
 
-  async acquireListener(): Promise<Readonly<{ release(): Promise<void> }>> {
+  async acquireListener(): Promise<InboxConsumer> {
     const lock = await acquireListenerLock(this.#listenerLockPath);
     let server: net.Server | null = null;
     try {
@@ -145,6 +170,7 @@ class FileInbox implements Inbox {
     }
     let released = false;
     return {
+      readBatch: input => this.#readBatch(input, () => !released),
       release: async () => {
         if (released) return;
         released = true;
@@ -170,8 +196,67 @@ class FileInbox implements Inbox {
     return readItemAt(this.#inboxPath, cursor.offset, this.#options);
   }
 
+  async #readBatch(input: ReadBatchInput, ownsListener: () => boolean): Promise<InboxBatch | null> {
+    if (!ownsListener()) throw new CliError('listener_busy');
+    if (input === null || typeof input !== 'object' || !Number.isSafeInteger(input.maxBytes) || input.maxBytes < 0
+      || !(input.acknowledgeToken === undefined || input.acknowledgeToken === null
+        || typeof input.acknowledgeToken === 'string')) throw new CliError('invalid_input');
+    return this.#serial(async () => {
+      if (!ownsListener()) throw new CliError('listener_busy');
+      let cursor = await readCursor(this.#cursorPath);
+      let outstanding = await readBatchState(this.#batchPath, this.#inboxPath, this.#options);
+      if (outstanding !== null) {
+        if (cursor.offset === outstanding.state.endOffset && cursor.releaseId === outstanding.state.releaseId) {
+          await removeBatchState(this.#batchPath, this.#bindingDirectory);
+          outstanding = null;
+        } else if (cursor.offset !== outstanding.state.startOffset) {
+          throw new CliError('storage_failed');
+        }
+      }
+      if (outstanding !== null && input.acknowledgeToken === outstanding.state.token) {
+        await writeCursorAtomic(this.#cursorPath, this.#bindingDirectory, {
+          v: 1, offset: outstanding.state.endOffset, releaseId: outstanding.state.releaseId,
+        });
+        await removeBatchState(this.#batchPath, this.#bindingDirectory);
+        cursor = { v: 1, offset: outstanding.state.endOffset, releaseId: outstanding.state.releaseId };
+        outstanding = null;
+      }
+      if (outstanding !== null) return outstanding.batch;
+
+      const records: string[] = [];
+      const items: InboxItem[] = [];
+      let offset = cursor.offset;
+      let payloadBytes = 0;
+      let releaseId: string | null = null;
+      while (records.length < MAX_BATCH_RECORDS) {
+        const item = await readStoredItemAt(this.#inboxPath, offset, this.#options);
+        if (item === null) break;
+        if (records.length > 0 && payloadBytes + item.payload.byteLength > input.maxBytes) break;
+        records.push(item.encoded);
+        items.push({ record: item.record, payload: item.payload, nextOffset: item.nextOffset });
+        payloadBytes += item.payload.byteLength;
+        offset = item.nextOffset;
+        releaseId = item.record.releaseId;
+      }
+      if (records.length === 0 || releaseId === null) return null;
+      const state: BatchState = {
+        v: 1,
+        bindingId: this.#options.bindingId,
+        generation: this.#options.generation,
+        token: randomUUID(),
+        startOffset: cursor.offset,
+        endOffset: offset,
+        releaseId,
+        records,
+      };
+      await writeBatchStateAtomic(this.#batchPath, this.#bindingDirectory, state);
+      return { token: state.token, items };
+    });
+  }
+
   async acknowledge(item: InboxItem): Promise<void> {
     await this.#serial(async () => {
+      if (await readBatchState(this.#batchPath, this.#inboxPath, this.#options) !== null) throw new CliError('invalid_input');
       const cursor = await readCursor(this.#cursorPath);
       const current = await readItemAt(this.#inboxPath, cursor.offset, this.#options);
       if (current === null || current.nextOffset !== item.nextOffset
@@ -364,7 +449,93 @@ function decodeRecord(line: string, options: ValidatedOptions): { record: InboxR
   return { record, payload };
 }
 
+type StoredInboxItem = InboxItem & Readonly<{ encoded: string }>;
+
+type BatchState = Readonly<{
+  v: 1;
+  bindingId: BindingId;
+  generation: number;
+  token: string;
+  startOffset: number;
+  endOffset: number;
+  releaseId: string;
+  records: readonly string[];
+}>;
+
+type LoadedBatchState = Readonly<{ state: BatchState; batch: InboxBatch }>;
+
+async function readBatchState(
+  filename: string,
+  inboxPath: string,
+  options: ValidatedOptions,
+): Promise<LoadedBatchState | null> {
+  let encoded: string;
+  try {
+    encoded = await readPrivateUtf8File(filename);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    if (error instanceof CliError) throw error;
+    throw new CliError('storage_failed');
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(encoded);
+  } catch {
+    throw new CliError('storage_failed');
+  }
+  const keys = ['v', 'bindingId', 'generation', 'token', 'startOffset', 'endOffset', 'releaseId', 'records'];
+  if (!plainObject(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))
+    || value.v !== 1 || value.bindingId !== options.bindingId || value.generation !== options.generation
+    || !validIdentifier(value.token) || !Number.isSafeInteger(value.startOffset) || typeof value.startOffset !== 'number'
+    || value.startOffset < 0 || !Number.isSafeInteger(value.endOffset) || typeof value.endOffset !== 'number'
+    || value.endOffset <= value.startOffset || !validIdentifier(value.releaseId) || !Array.isArray(value.records)
+    || value.records.length === 0 || value.records.length > MAX_BATCH_RECORDS
+    || value.records.some(record => typeof record !== 'string')) throw new CliError('storage_failed');
+  const records = value.records as string[];
+  const items: InboxItem[] = [];
+  let offset = value.startOffset;
+  let lastReleaseId: string | null = null;
+  for (const record of records) {
+    const item = await readStoredItemAt(inboxPath, offset, options);
+    if (item === null || item.encoded !== record) throw new CliError('storage_failed');
+    items.push({ record: item.record, payload: item.payload, nextOffset: item.nextOffset });
+    offset = item.nextOffset;
+    lastReleaseId = item.record.releaseId;
+  }
+  if (offset !== value.endOffset || lastReleaseId !== value.releaseId) throw new CliError('storage_failed');
+  const state: BatchState = {
+    v: 1,
+    bindingId: options.bindingId,
+    generation: options.generation,
+    token: value.token,
+    startOffset: value.startOffset,
+    endOffset: value.endOffset,
+    releaseId: value.releaseId,
+    records,
+  };
+  return { state, batch: { token: state.token, items } };
+}
+
+async function writeBatchStateAtomic(filename: string, directory: string, state: BatchState): Promise<void> {
+  await writeAtomicJson(filename, directory, `.batch-${randomUUID()}.tmp`, state);
+}
+
+async function removeBatchState(filename: string, directory: string): Promise<void> {
+  try {
+    await fsp.unlink(filename);
+    await syncDirectory(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new CliError('storage_failed');
+  }
+}
+
 async function readItemAt(filename: string, offset: number, options: ValidatedOptions): Promise<InboxItem | null> {
+  const stored = await readStoredItemAt(filename, offset, options);
+  if (stored === null) return null;
+  return { record: stored.record, payload: stored.payload, nextOffset: stored.nextOffset };
+}
+
+async function readStoredItemAt(filename: string, offset: number, options: ValidatedOptions): Promise<StoredInboxItem | null> {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new CliError('storage_failed');
   const handle = await openNoFollow(filename, fs.constants.O_RDONLY);
   try {
@@ -384,8 +555,9 @@ async function readItemAt(filename: string, offset: number, options: ValidatedOp
       if (newline >= 0) {
         chunks.push(chunk.subarray(0, newline));
         length += newline;
-        const decoded = decodeRecord(Buffer.concat(chunks, length).toString('utf8'), options);
-        return { ...decoded, nextOffset: position + newline + 1 };
+        const encoded = decodeUtf8(Buffer.concat(chunks, length));
+        const decoded = decodeRecord(encoded, options);
+        return { ...decoded, encoded, nextOffset: position + newline + 1 };
       }
       chunks.push(chunk);
       length += bytesRead;
@@ -425,26 +597,55 @@ async function readCursor(filename: string): Promise<InboxCursor> {
 }
 
 async function writeCursorAtomic(filename: string, directory: string, cursor: InboxCursor): Promise<void> {
-  const temporary = path.join(directory, `.cursor-${randomUUID()}.tmp`);
+  await writeAtomicJson(filename, directory, `.cursor-${randomUUID()}.tmp`, cursor);
+}
+
+async function writeAtomicJson(filename: string, directory: string, temporaryName: string, value: unknown): Promise<void> {
+  const temporary = path.join(directory, temporaryName);
   let handle: fsp.FileHandle | null = null;
   try {
     handle = await fsp.open(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
-    await handle.writeFile(JSON.stringify(cursor) + '\n', 'utf8');
+    await handle.writeFile(JSON.stringify(value) + '\n', 'utf8');
     await handle.sync();
     await handle.close();
     handle = null;
     await fsp.rename(temporary, filename);
-    const directoryHandle = await fsp.open(directory, fs.constants.O_RDONLY);
-    try {
-      await directoryHandle.sync();
-    } finally {
-      await directoryHandle.close();
-    }
+    await syncDirectory(directory);
   } catch {
     throw new CliError('storage_failed');
   } finally {
     await handle?.close().catch(() => undefined);
     await fsp.unlink(temporary).catch(() => undefined);
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await fsp.open(directory, fs.constants.O_RDONLY);
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readPrivateUtf8File(filename: string): Promise<string> {
+  const stat = await fsp.lstat(filename);
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0
+    || (uid !== null && stat.uid !== uid)) throw new CliError('storage_failed');
+  const handle = await openNoFollow(filename, fs.constants.O_RDONLY);
+  try {
+    return decodeUtf8(await handle.readFile());
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new CliError('storage_failed');
   }
 }
 

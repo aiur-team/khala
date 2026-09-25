@@ -3,6 +3,7 @@ import {
   type HarnessCapabilities,
   type HarnessPort,
   type SessionBinding,
+  unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import { describe, expect, it, vi } from 'vitest';
 import { createRuntimeHarnessAdapter } from './harness';
@@ -22,7 +23,7 @@ const decodedLimits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadB
 if (!decodedLimits.ok) throw new Error('invalid test limits');
 
 const admitted: HarnessCapabilities = {
-  v: 2,
+  v: 3,
   harness: 'codex',
   version: '0.154.0',
   adapterVersion: 'hosted-resume',
@@ -34,6 +35,8 @@ const admitted: HarnessCapabilities = {
   reconcileByReleaseId: 'while_queued',
   limits: decodedLimits.value,
   evidenceRef: 'docs/evidence/codex.md',
+  modes: unknownModeSupportMap('test-codex-interactive', 'Test fixture has no primary mode proof.', '0.154.0'),
+  acknowledgement: 'unknown',
 };
 
 function realHarness(report: unknown): HarnessPort & { close: ReturnType<typeof vi.fn> } {
