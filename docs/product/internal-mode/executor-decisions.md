@@ -94,3 +94,15 @@ Binding decisions for the internal-mode and agent-integration work (epic #137). 
     inside the sealed plaintext. Prove the binding on Node 22 with libsodium's
     published known-answer tests and reject tampered ciphertext. Take no HPKE
     dependency and do not implement cryptographic primitives locally.
+42. **Listening-mode control: last change wins.** Operator decision, 2026-09-25.
+    The owner (from the UI) and the bound agent may both change the agent's
+    listening mode. Each write carries `expectedVersion`, so a simultaneous
+    change is refused as a conflict instead of silently overwriting. There is no
+    owner lock and no owner-only mode. This is the behaviour of the merged
+    `listening-mode-store` (#271). `listening-mode-ui` must show who made the
+    last change, and must handle a version conflict by reloading.
+43. **The Executor runs the human-verification pass.** Operator decision,
+    2026-09-25. The Executor runs the end-to-end acceptance tickets
+    (agent-launched, normal trust settings, decision 33) and the operator reviews
+    the evidence. `opencode-interactive-cli-proof` (#236), which requires a
+    person-started TUI, stays parked unless the operator later runs it.
