@@ -32,8 +32,12 @@ export {
   sameApprovalCommandInput, samePolicySetCommandInput,
 } from './commands';
 export {
-  type DeliveryReceipt, type ReceiptErrorCode, type ReceiptKind, RECEIPT_ERROR_CODES, RECEIPT_KINDS,
-  decodeDeliveryReceipt,
+  type DeliveryReceipt, type DeliveryReceiptTransport, type DeliveryReceiptV1, type DeliveryReceiptV2,
+  type ReceiptErrorCode, type ReceiptKind, type ReceiptKindV1, type ReceiptKindV2,
+  type ReceiptSourceV1, type ReceiptSourceV2,
+  RECEIPT_ERROR_CODES, RECEIPT_KINDS, RECEIPT_KINDS_V1, RECEIPT_KINDS_V2,
+  RECEIPT_SOURCES_V1, RECEIPT_SOURCES_V2,
+  decodeDeliveryReceipt, decodeDeliveryReceiptTransport, decodeDeliveryReceiptV1, decodeDeliveryReceiptV2,
 } from './receipts';
 export {
   type AcknowledgementSupport, type ListeningMode, type ListeningModeCommand, type ListeningModeResult,

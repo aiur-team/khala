@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-flash",
+  "autoupdate": false,
+  "permission": {
+    "*": "ask",
+    "proof_gate": "allow",
+    "khala_read": "allow",
+    "khala_send": "allow",
+    "bash": {
+      "*": "ask",
+      "sleep *": "allow",
+      "echo *": "allow"
+    }
+  }
+}

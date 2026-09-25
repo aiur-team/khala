@@ -1,0 +1,29 @@
+[projects."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0154"]
+trust_level = "trusted"
+
+[projects."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0156"]
+trust_level = "trusted"
+
+[hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0154/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:4976406bd33e63c6020b0d3b5d97a746b64755d253e18a204f03fe767ba4fb4c"
+
+[hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0154/.codex/hooks.json:post_tool_use:0:0"]
+trusted_hash = "sha256:f136b0dd1bf09737766941cde1b1f39fd07d9191c59236f73662ad8e37180e5f"
+
+[hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0154/.codex/hooks.json:user_prompt_submit:0:0"]
+trusted_hash = "sha256:80d31fbade1563cf1455b57c373fc05f371e150b65805c454f618d56ffd379e8"
+
+[hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0154/.codex/hooks.json:stop:0:0"]
+trusted_hash = "sha256:1152e389735f8caced679e76d33f6e0479865e09638d6b904ffe6a0c97a686d0"
+
+[hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0156/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:62ce44085bfba66ac06ea9b76f39b50346abdf5aab3647aed63d275eb9eb865d"
+
+[hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0156/.codex/hooks.json:post_tool_use:0:0"]
+trusted_hash = "sha256:1e5bcfd4cf4d7c5ed889ed3a820f46bd1d8b520f5cdb7519721d4349a99ee661"
+
+[hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0156/.codex/hooks.json:user_prompt_submit:0:0"]
+trusted_hash = "sha256:bb068b34c3ec2f5f78b801842e09c6a545ae5a1235ac220ec3018557fb524b43"
+
+[hooks.state."~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0156/.codex/hooks.json:stop:0:0"]
+trusted_hash = "sha256:87badbef18354124271836591f795f27273a79caf0c18bc1c2bd77b220ce8947"

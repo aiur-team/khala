@@ -2,8 +2,8 @@
 // approvals, payload store, codec, harness and clock are all supplied by composition (KHA-133).
 
 import type {
-  ApprovalCommand, AuthorizationId, BindingId, CausalRootId, CommandId, DeliveryReceipt, HarnessPort, OwnerAuthority,
-  ReleaseId, ReleasedJob, SessionBinding, UnverifiedReleasedJob,
+  ApprovalCommand, AuthorizationId, BindingId, CausalRootId, CommandId, DeliveryReceiptTransport, HarnessPort,
+  OwnerAuthority, ReleaseId, ReleasedJob, SessionBinding, UnverifiedReleasedJob,
 } from '@khala/contracts/delivery/index';
 
 /**
@@ -86,7 +86,7 @@ export type DispatchRecord = Readonly<{
   workerId: string | null;
   claimedAt: string | null;
   /** Correlated observations, in arrival order, deduplicated by receipt ID, at most `MAX_RECEIPTS`. */
-  receipts: readonly DeliveryReceipt[];
+  receipts: readonly DeliveryReceiptTransport[];
   /** The owner authorization that abandoned an unknown outcome, else null. */
   abandonedBy: AuthorizationId | null;
 }>;

@@ -1,0 +1,1 @@
+Run the bash command `sleep 20`, then run the bash command `echo STAGE-2`, then reply exactly ORIGINAL-TURN-DONE. Do not call khala_read.

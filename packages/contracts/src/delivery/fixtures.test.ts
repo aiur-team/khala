@@ -17,7 +17,9 @@ import { decodeEventRef } from './events';
 import { decodeHarnessCapabilities } from './harness';
 import * as delivery from './index';
 import { decodeReleasedJob, releaseFromApproval, verifyReleasedJob } from './jobs';
-import { decodeDeliveryReceipt } from './receipts';
+import {
+  decodeDeliveryReceipt, decodeDeliveryReceiptTransport, decodeDeliveryReceiptV1, decodeDeliveryReceiptV2,
+} from './receipts';
 
 const limits = (() => {
   const decoded = decodeDeliveryLimits(exact.limits);
@@ -33,6 +35,9 @@ const decoders: Record<string, (input: unknown) => Decoded<unknown>> = {
   policyAck: decodePolicyAck,
   releasedJob: input => decodeReleasedJob(input, limits),
   receipt: decodeDeliveryReceipt,
+  receiptV1: decodeDeliveryReceiptV1,
+  receiptV2: decodeDeliveryReceiptV2,
+  receiptTransport: decodeDeliveryReceiptTransport,
   capabilities: decodeHarnessCapabilities,
   approvalResult: input => decodeApprovalResult(input, limits),
 };
@@ -67,6 +72,20 @@ describe('exact release fixture', () => {
     const result = decoders[decoder]!(input);
     expect(result).toEqual({ ok: true, value: input });
     if (result.ok) expect(JSON.stringify(result.value)).toBe(JSON.stringify(input));
+  });
+
+  it('round-trips explicit receipt versions without promotion', () => {
+    expect(decodeDeliveryReceiptV1(exact.receipt)).toEqual({ ok: true, value: exact.receipt });
+    expect(decodeDeliveryReceiptV2(exact.receiptV2)).toEqual({ ok: true, value: exact.receiptV2 });
+    for (const receipt of [exact.receipt, exact.receiptV2]) {
+      const result = decodeDeliveryReceiptTransport(receipt);
+      expect(result).toEqual({ ok: true, value: receipt });
+      if (result.ok) expect(JSON.stringify(result.value)).toBe(JSON.stringify(receipt));
+    }
+    expect(decodeDeliveryReceiptV1(exact.receiptV2)).toEqual({ ok: false, code: 'invalid_version', field: 'v' });
+    expect(decodeDeliveryReceiptV2(exact.receipt)).toEqual({ ok: false, code: 'invalid_version', field: 'v' });
+    expect(decodeDeliveryReceiptTransport({ ...exact.receiptV2, v: 3 }))
+      .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
   });
 
   it('releases exactly the fixture job from the fixture approval', () => {
