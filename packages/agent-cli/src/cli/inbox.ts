@@ -16,6 +16,7 @@ const SOCKET_FILE = 'listener.sock';
 const LISTENER_LOCK_FILE = 'listener.lock';
 const RECORD_OVERHEAD_BYTES = 1024 * 1024;
 const MAX_BATCH_RECORDS = 8;
+const NOTIFY_DEADLINE_MS = 1000;
 
 export type InboxItem = Readonly<{
   record: InboxRecord;
@@ -44,6 +45,23 @@ export type InboxConsumer = Readonly<{
   release(): Promise<void>;
 }>;
 
+/**
+ * A listener that can wait for content-free wakes. A wake only says "re-read the
+ * durable batch": it carries nothing, and any number of pending wakes coalesce into
+ * one. The first wait after acquisition resolves at once, so a release stored while
+ * no listener was running, or whose hint was lost to a crash, is caught up on start.
+ */
+export type WakeableInboxConsumer = InboxConsumer & Readonly<{
+  nextWake(): Promise<void>;
+}>;
+
+/**
+ * `notified`: this binding generation's live listener accepted a zero-byte hint.
+ * `unavailable`: no live listener accepted it. The durable batch is untouched and is
+ * caught up when a listener next starts.
+ */
+export type ListenerNotification = 'notified' | 'unavailable';
+
 export interface Inbox {
   enqueue(delivery: InboxDelivery): Promise<'appended' | 'duplicate'>;
   acquireListener(): Promise<Readonly<{ release(): Promise<void> }>>;
@@ -53,7 +71,9 @@ export interface Inbox {
 }
 
 export interface BatchInbox extends Inbox {
-  acquireListener(): Promise<InboxConsumer>;
+  acquireListener(): Promise<WakeableInboxConsumer>;
+  /** Wakes only this binding generation's listener; the socket path never leaves the inbox. */
+  notifyListener(): Promise<ListenerNotification>;
 }
 
 export type OpenInboxOptions = Readonly<{
@@ -153,27 +173,58 @@ class FileInbox implements BatchInbox {
     });
   }
 
-  async acquireListener(): Promise<InboxConsumer> {
+  async acquireListener(): Promise<WakeableInboxConsumer> {
     const lock = await acquireListenerLock(this.#listenerLockPath);
+    // Starting is itself a catch-up wake: a release may have become durable while no
+    // listener ran, or its hint may have been lost between append and notification.
+    let pending = true;
+    let released = false;
+    let waiter: Readonly<{ resolve(): void; reject(error: Error): void }> | null = null;
+    const wake = () => {
+      if (released) return;
+      if (waiter === null) {
+        pending = true;
+        return;
+      }
+      const current = waiter;
+      waiter = null;
+      current.resolve();
+    };
     let server: net.Server | null = null;
     try {
-      server = await listen(this.#socketPath);
+      server = await listen(this.#socketPath, wake);
       if (server === null) {
         if (await socketIsLive(this.#socketPath)) throw new CliError('listener_busy');
         await removeStaleSocket(this.#socketPath);
-        server = await listen(this.#socketPath);
+        server = await listen(this.#socketPath, wake);
         if (server === null) throw new CliError('listener_busy');
       }
     } catch (error) {
       await lock.release();
       throw error;
     }
-    let released = false;
     return {
       readBatch: input => this.#readBatch(input, () => !released),
+      nextWake: () => {
+        if (released) return Promise.reject(new CliError('listener_busy'));
+        if (waiter !== null) return Promise.reject(new CliError('invalid_input'));
+        if (pending) {
+          pending = false;
+          return Promise.resolve();
+        }
+        return new Promise<void>((resolve, reject) => {
+          waiter = { resolve, reject };
+        });
+      },
       release: async () => {
         if (released) return;
         released = true;
+        pending = false;
+        if (waiter !== null) {
+          const current = waiter;
+          waiter = null;
+          current.reject(new CliError('listener_busy'));
+        }
         await new Promise<void>(resolve => server!.close(() => resolve()));
         let failed = false;
         try {
@@ -189,6 +240,10 @@ class FileInbox implements BatchInbox {
         if (failed) throw new CliError('storage_failed');
       },
     };
+  }
+
+  async notifyListener(): Promise<ListenerNotification> {
+    return notifySocket(this.#socketPath);
   }
 
   async readNext(): Promise<InboxItem | null> {
@@ -769,8 +824,42 @@ async function listenerSocketPath(bindingDirectory: string): Promise<string> {
   return path.join(root, `${createHash('sha256').update(bindingDirectory).digest('hex').slice(0, 32)}.sock`);
 }
 
-async function listen(socketPath: string): Promise<net.Server | null> {
-  const server = net.createServer(socket => socket.end());
+/**
+ * The whole hint protocol is connect, half-close, then wait for the listener's EOF.
+ * No application byte is ever written, so a hint cannot carry content.
+ */
+async function notifySocket(socketPath: string): Promise<ListenerNotification> {
+  return new Promise(resolve => {
+    const socket = net.createConnection({ path: socketPath, allowHalfOpen: true });
+    const settle = (outcome: ListenerNotification) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(outcome);
+    };
+    const timer = setTimeout(() => settle('unavailable'), NOTIFY_DEADLINE_MS);
+    socket.once('connect', () => socket.end());
+    socket.on('data', () => settle('unavailable'));
+    socket.once('end', () => settle('notified'));
+    socket.once('error', () => settle('unavailable'));
+    socket.once('close', () => settle('unavailable'));
+  });
+}
+
+async function listen(socketPath: string, onWake: () => void): Promise<net.Server | null> {
+  const server = net.createServer({ allowHalfOpen: true }, socket => {
+    let empty = true;
+    socket.on('error', () => undefined);
+    // A peer that writes anything is not speaking the hint protocol and wakes nothing.
+    socket.on('data', () => {
+      empty = false;
+      socket.destroy();
+    });
+    socket.once('end', () => {
+      if (!empty) return;
+      onWake();
+      socket.end();
+    });
+  });
   return new Promise((resolve, reject) => {
     const onError = (error: NodeJS.ErrnoException) => {
       server.removeAllListeners();

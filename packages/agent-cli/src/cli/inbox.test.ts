@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BindingId, EventRef } from '@khala/contracts/delivery/index';
 import { CliError } from './errors.js';
 import { openInbox } from './inbox.js';
-import type { BatchInbox, InboxConsumer } from './inbox.js';
+import type { BatchInbox, InboxConsumer, WakeableInboxConsumer } from './inbox.js';
 import type { InboxDelivery } from './types.js';
 
 const roots: string[] = [];
@@ -53,7 +55,7 @@ function released(releaseId: string, body: string, generation = 3): InboxDeliver
   return delivery({ releaseId, generation, payload: bytes, payloadDigest: digest(bytes) });
 }
 
-async function acquireBatch(inbox: BatchInbox): Promise<InboxConsumer> {
+async function acquireBatch(inbox: BatchInbox): Promise<WakeableInboxConsumer> {
   const consumer = await inbox.acquireListener();
   consumers.push(consumer);
   return consumer;
@@ -382,5 +384,166 @@ describe('durable inbox batches', () => {
     fs.writeFileSync(inboxPath, bytes);
 
     await expect(reader.readBatch({ maxBytes: 1024 })).rejects.toMatchObject({ code: 'storage_failed' });
+  });
+});
+
+async function settledWithin(promise: Promise<unknown>, ms = 100): Promise<boolean> {
+  let settled = false;
+  promise.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise(resolve => setTimeout(resolve, ms));
+  return settled;
+}
+
+function durableState(directory: string, generation = 3): Record<string, string | null> {
+  const read = (name: string) => {
+    const filename = path.join(bindingDirectory(directory, generation), name);
+    return fs.existsSync(filename) ? fs.readFileSync(filename, 'utf8') : null;
+  };
+  return { inbox: read('inbox.jsonl'), cursor: read('cursor.json'), batch: read('batch.json') };
+}
+
+function listenerSocket(directory: string, generation = 3): string {
+  const generationDirectory = bindingDirectory(directory, generation);
+  const direct = path.join(generationDirectory, 'listener.sock');
+  if (Buffer.byteLength(direct) < 100) return direct;
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  return path.join(
+    '/tmp',
+    `.khala-agent-cli-${uid}`,
+    `${createHash('sha256').update(generationDirectory).digest('hex').slice(0, 32)}.sock`,
+  );
+}
+
+function open(directory: string, generation = 3): Promise<BatchInbox> {
+  return openInbox({ stateDirectory: directory, bindingId, generation, maxPayloadBytes: 1024, maxSelectionEvents: 32 });
+}
+
+describe('listener notifier', () => {
+  it('sends a zero-byte hint and only a clean zero-byte connection wakes the listener', async () => {
+    const directory = stateDirectory();
+    const inbox = await open(directory);
+    const socketPath = listenerSocket(directory);
+    const received: Buffer[] = [];
+    const probe = net.createServer({ allowHalfOpen: true }, socket => {
+      socket.on('data', chunk => received.push(chunk));
+      socket.once('end', () => socket.end());
+    });
+    await new Promise<void>(resolve => probe.listen(socketPath, resolve));
+    try {
+      await expect(inbox.notifyListener()).resolves.toBe('notified');
+    } finally {
+      await new Promise<void>(resolve => probe.close(() => resolve()));
+    }
+    expect(Buffer.concat(received).byteLength).toBe(0);
+
+    const listener = await acquireBatch(inbox);
+    await listener.nextWake();
+    const waiting = listener.nextWake();
+    await new Promise<void>((resolve, reject) => {
+      const intruder = net.createConnection(socketPath, () => intruder.end('release-1'));
+      intruder.on('error', () => resolve());
+      intruder.once('close', () => resolve());
+      setTimeout(() => reject(new Error('intruder never closed')), 1000);
+    });
+    expect(await settledWithin(waiting)).toBe(false);
+    await expect(inbox.notifyListener()).resolves.toBe('notified');
+    await expect(waiting).resolves.toBeUndefined();
+  });
+
+  it('starts with one catch-up wake and coalesces pending hints into one', async () => {
+    const inbox = await open(stateDirectory());
+    const listener = await acquireBatch(inbox);
+
+    await expect(listener.nextWake()).resolves.toBeUndefined();
+    expect(await settledWithin(listener.nextWake())).toBe(false);
+    await listener.release();
+
+    const restarted = await acquireBatch(inbox);
+    await restarted.nextWake();
+    for (let index = 0; index < 5; index += 1) await expect(inbox.notifyListener()).resolves.toBe('notified');
+    await expect(restarted.nextWake()).resolves.toBeUndefined();
+    expect(await settledWithin(restarted.nextWake())).toBe(false);
+  });
+
+  it('fails closed without a live listener and leaves durable state untouched', async () => {
+    const directory = stateDirectory();
+    const inbox = await open(directory);
+    await inbox.enqueue(released('release-1', 'first'));
+    const before = durableState(directory);
+
+    await expect(inbox.notifyListener()).resolves.toBe('unavailable');
+
+    // A listener that died without cleanup leaves its socket file behind.
+    const socketPath = listenerSocket(directory);
+    const orphan = spawnSync(process.execPath, [
+      '-e',
+      'require("node:net").createServer().listen(process.argv[1], () => process.exit(0))',
+      socketPath,
+    ]);
+    expect(orphan.status).toBe(0);
+    expect(fs.lstatSync(socketPath).isSocket()).toBe(true);
+    await expect(inbox.notifyListener()).resolves.toBe('unavailable');
+    fs.rmSync(socketPath);
+    expect(durableState(directory)).toEqual(before);
+  });
+
+  it('wakes only the listener of its own binding generation', async () => {
+    const directory = stateDirectory();
+    const current = await open(directory, 3);
+    const other = await open(directory, 4);
+    const currentListener = await acquireBatch(current);
+    const otherListener = await acquireBatch(other);
+    await currentListener.nextWake();
+    await otherListener.nextWake();
+
+    const currentWake = currentListener.nextWake();
+    await expect(other.notifyListener()).resolves.toBe('notified');
+    await expect(otherListener.nextWake()).resolves.toBeUndefined();
+    expect(await settledWithin(currentWake)).toBe(false);
+  });
+
+  it('recovers a crash between append and hint with one catch-up and no second record or token', async () => {
+    const directory = stateDirectory();
+    const beforeCrash = await open(directory);
+    await expect(beforeCrash.enqueue(released('release-1', 'first'))).resolves.toBe('appended');
+    const stored = durableState(directory).inbox;
+
+    const restarted = await open(directory);
+    await expect(restarted.enqueue(released('release-1', 'first'))).resolves.toBe('duplicate');
+    const listener = await acquireBatch(restarted);
+    await expect(restarted.notifyListener()).resolves.toBe('notified');
+    await listener.nextWake();
+    expect(await settledWithin(listener.nextWake())).toBe(false);
+    const batch = await listener.readBatch({ maxBytes: 1024 });
+    expect(batch?.items.map(item => item.record.releaseId)).toEqual(['release-1']);
+    await listener.release();
+
+    const reconnected = await acquireBatch(await open(directory));
+    await reconnected.nextWake();
+    expect(await reconnected.readBatch({ maxBytes: 1024 })).toEqual(batch);
+    expect(durableState(directory).inbox).toBe(stored);
+    expect(JSON.parse(durableState(directory).cursor ?? '{"offset":0}').offset).toBe(0);
+  });
+
+  it('revokes wake authority when the listener is released', async () => {
+    const inbox = await open(stateDirectory());
+    const listener = await acquireBatch(inbox);
+    await listener.nextWake();
+    const revoked = expect(listener.nextWake()).rejects.toEqual(new CliError('listener_busy'));
+
+    await listener.release();
+    await revoked;
+    await expect(listener.nextWake()).rejects.toEqual(new CliError('listener_busy'));
+    await expect(inbox.notifyListener()).resolves.toBe('unavailable');
+  });
+
+  it('keeps the long-path fallback socket private to the inbox', async () => {
+    const inbox = await open(path.join(stateDirectory(), 'x'.repeat(120)));
+    const listener = await acquireBatch(inbox);
+    await listener.nextWake();
+
+    const outcome = await inbox.notifyListener();
+    expect(outcome).toBe('notified');
+    await expect(listener.nextWake()).resolves.toBeUndefined();
   });
 });
