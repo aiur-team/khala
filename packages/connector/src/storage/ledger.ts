@@ -9,9 +9,9 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import {
-  type ApprovalCommand, type ApprovalResult, type BindingId, type CommandId, type DeliveryLimits, type DeliveryReceipt, type EventId,
+  type ApprovalCommand, type ApprovalResult, type BindingId, type CommandId, type DeliveryLimits, type DeliveryReceiptTransport, type EventId,
   type EventRef, type OwnerId, type ReleaseId, type ReleasedJob, type RoomId, type SessionBinding,
-  type UnverifiedReleasedJob, decodeApprovalCommand, decodeApprovalResult, decodeDeliveryReceipt, decodeEventRef,
+  type UnverifiedReleasedJob, decodeApprovalCommand, decodeApprovalResult, decodeDeliveryReceiptTransport, decodeEventRef,
   decodeReleasedJob, decodeSessionBinding, sameEventRef, sameSessionBinding, verifyReleasedJob,
 } from '@khala/contracts/delivery/index';
 import { decodeWith, identifier, utcTimestamp, utf8Length } from '@khala/contracts/delivery/decode';
@@ -117,7 +117,8 @@ export type ReleaseResult =
   | Readonly<{ kind: 'conflict'; code: ReleaseConflictCode }>;
 
 export type ReceiptResult =
-  | Readonly<{ kind: 'recorded' | 'duplicate' }>
+  /** The canonical fact as stored, never a value regenerated from retry context. */
+  | Readonly<{ kind: 'recorded' | 'duplicate'; receipt: DeliveryReceiptTransport }>
   /**
    * `unknown_release` and `correlation_mismatch` are still recorded for
    * reconciliation; `receipt_conflict` (same ID, different fact) is not.
@@ -133,7 +134,7 @@ export type StoredRelease = Readonly<{
 
 export type ReceiptCorrelation = 'correlated' | 'unknown_release' | 'correlation_mismatch';
 
-export type StoredReceipt = Readonly<{ receipt: DeliveryReceipt; correlation: ReceiptCorrelation }>;
+export type StoredReceipt = Readonly<{ receipt: DeliveryReceiptTransport; correlation: ReceiptCorrelation }>;
 
 /**
  * A durable revocation. A revoked binding is blocked at every generation, including
@@ -192,7 +193,7 @@ export interface LedgerTx {
     expectedLedgerRevision: number;
   }): ReleaseResult;
   readRelease(releaseId: ReleaseId): StoredRelease | null;
-  appendReceipt(input: { receipt: DeliveryReceipt }): ReceiptResult;
+  appendReceipt(input: { receipt: DeliveryReceiptTransport }): ReceiptResult;
   /** Every receipt recorded for the release, with how it correlated when it was recorded. */
   readReceipts(releaseId: ReleaseId): readonly StoredReceipt[];
   /** Live references to a payload handle; retention (KHA-130) owns deletion policy. */
@@ -836,14 +837,16 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
 
     readRelease: guarded((releaseId: ReleaseId) => readRelease(releaseId)),
 
-    appendReceipt: guarded(({ receipt: input }: { receipt: DeliveryReceipt }): ReceiptResult => {
-      const receipt = canonical(input, decodeDeliveryReceipt);
+    appendReceipt: guarded(({ receipt: input }: { receipt: DeliveryReceiptTransport }): ReceiptResult => {
+      const receipt = canonical(input, decodeDeliveryReceiptTransport);
       const stored = db.prepare('SELECT receipt FROM receipts WHERE receipt_id = ?').get(receipt.receiptId) as
         | { receipt: string }
         | undefined;
       const json = JSON.stringify(receipt);
       if (stored !== undefined) {
-        return stored.receipt === json ? { kind: 'duplicate' } : { kind: 'conflict', code: 'receipt_conflict' };
+        return stored.receipt === json
+          ? { kind: 'duplicate', receipt: parseOrCorrupt(stored.receipt, decodeDeliveryReceiptTransport) }
+          : { kind: 'conflict', code: 'receipt_conflict' };
       }
       const release = readRelease(receipt.releaseId);
       const correlation: ReceiptCorrelation = release === null
@@ -854,14 +857,14 @@ export function createLedgerTx(ctx: LedgerContext, isLive: () => boolean): { tx:
       const revision = bumpRevision(db);
       db.prepare('INSERT INTO receipts (receipt_id, release_id, correlation, receipt, ledger_revision) VALUES (?, ?, ?, ?, ?)')
         .run(receipt.receiptId, receipt.releaseId, correlation, json, revision);
-      return correlation === 'correlated' ? { kind: 'recorded' } : { kind: 'conflict', code: correlation };
+      return correlation === 'correlated' ? { kind: 'recorded', receipt } : { kind: 'conflict', code: correlation };
     }),
 
     readReceipts: guarded((releaseId: ReleaseId): readonly StoredReceipt[] => {
       const rows = db.prepare('SELECT receipt, correlation FROM receipts WHERE release_id = ? ORDER BY ledger_revision')
         .all(releaseId) as { receipt: string; correlation: string }[];
       return rows.map(row => ({
-        receipt: parseOrCorrupt(row.receipt, decodeDeliveryReceipt),
+        receipt: parseOrCorrupt(row.receipt, decodeDeliveryReceiptTransport),
         correlation: row.correlation as ReceiptCorrelation,
       }));
     }),

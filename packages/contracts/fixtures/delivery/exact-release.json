@@ -130,6 +130,18 @@
     "evidenceRef": "codex:userMessage:release-1",
     "errorCode": null
   },
+  "receiptV2": {
+    "v": 2,
+    "receiptId": "receipt-release-1-agent-acknowledged",
+    "releaseId": "release-1",
+    "bindingId": "bind-b-1",
+    "generation": 0,
+    "kind": "agent_acknowledged",
+    "observedAt": "2026-09-18T02:38:02.125Z",
+    "source": "agent",
+    "evidenceRef": "batch:batch-1",
+    "errorCode": null
+  },
   "capabilities": {
     "v": 3,
     "harness": "codex",
