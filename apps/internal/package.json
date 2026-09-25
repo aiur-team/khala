@@ -7,5 +7,8 @@
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
     "build": "node ../../scripts/package-task.mjs build",
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@khala/contracts": "workspace:*"
   }
 }
