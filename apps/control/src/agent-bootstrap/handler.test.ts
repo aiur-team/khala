@@ -11,6 +11,7 @@ import {
   createAgentBootstrapHandlers, isLoopbackRedirect,
 } from './handler';
 import { thumbprint } from './proof';
+import { agentBindingStoreKeys } from './store';
 
 const ORIGIN = 'https://khala.aiur.team';
 const SESSION = { harness: 'codex', session_id: 'thread-existing-b', generation: 3 };
@@ -60,6 +61,7 @@ function setup(overrides: SetupOverrides = {}) {
   const store = fakeStore(clock);
   const admits: string[] = [];
   const admitOperations: string[] = [];
+  const admissionResults = new Map<string, Readonly<{ agentParticipantId: ParticipantId; roomId: RoomId }>>();
   const deps: AgentBootstrapDeps = {
     origin: ORIGIN,
     store: store.store,
@@ -72,12 +74,19 @@ function setup(overrides: SetupOverrides = {}) {
     inviteFromLink: url => (url.pathname.startsWith('/i/') ? url.pathname.slice(3) : null),
     admissionFor: () => ({ inspect: async () => overrides.invite?.() ?? 'eligible' }),
     admissionPolicy: async () => 'allow',
+    legacyMigrationWritesEnabled: true,
     agents: {
-      room: async () => ({ kind: 'ok', value: 'room_1' as RoomId }),
-      async admit({ ownerId, deviceId, operationId }) {
+      inspect: async ({ ownerId }) => ({
+        kind: 'ok', value: { agentParticipantId: `agent_${ownerId}` as ParticipantId, roomId: 'room_1' as RoomId },
+      }),
+      async admit({ deviceId, expectedAgentParticipantId, expectedRoomId, operationId }) {
+        const previous = admissionResults.get(operationId);
+        if (previous) return { kind: 'ok', value: previous };
         admits.push(deviceId);
         admitOperations.push(operationId);
-        return { kind: 'ok', value: { agentParticipantId: `agent_${ownerId}` as ParticipantId, roomId: 'room_1' as RoomId } };
+        const value = { agentParticipantId: expectedAgentParticipantId, roomId: expectedRoomId };
+        admissionResults.set(operationId, value);
+        return { kind: 'ok', value };
       },
     },
   };
@@ -163,6 +172,24 @@ type Harness = ReturnType<typeof setup>;
 
 function storedText(h: Harness): string {
   return JSON.stringify([...h.store.records.entries()]);
+}
+
+async function bootstrapSession(
+  h: Harness, sessionId: string, operationId: string, deviceId = 'KHALADEV1', generation = SESSION.generation,
+) {
+  const params = { session_id: sessionId, device_id: deviceId, generation: String(generation) };
+  const body = { session_id: sessionId, device_id: deviceId, generation };
+  const response = await h.redeem(await h.grant(params, body), operationId, body);
+  return { status: response.status, body: await response.json() as Redeemed & { code?: string } };
+}
+
+function moveBindingToLegacy(h: Harness, binding: Redeemed['binding']): void {
+  const participantKey = agentBindingStoreKeys.participant(binding.ownerId, 'room_1', binding.agentParticipantId);
+  const legacyKey = agentBindingStoreKeys.legacy(binding.ownerId, 'room_1');
+  const record = h.store.records.get(participantKey);
+  if (!record) throw new Error('participant binding fixture is missing');
+  h.store.records.delete(participantKey);
+  h.store.records.set(legacyKey, { ...record, key: legacyKey });
 }
 
 describe('descriptor', () => {
@@ -310,6 +337,10 @@ describe('authorize (owner browser)', () => {
   it('requires an explicit admission policy', () => {
     expect(() => createAgentBootstrapHandlers({ ...({} as AgentBootstrapDeps), origin: ORIGIN, admissionPolicy: undefined as never })).toThrow(/G-ADMISSION/);
   });
+
+  it('requires an explicit legacy migration write gate', () => {
+    expect(() => setup({ legacyMigrationWritesEnabled: undefined as never })).toThrow(/migration write activation/);
+  });
 });
 
 /** The consent form's fields, as the browser would submit them. */
@@ -405,6 +436,76 @@ describe('token exchange', () => {
 });
 
 describe('redeem', () => {
+  it('admits distinct participants for one owner and channel', async () => {
+    const h = setup({
+      agents: {
+        inspect: async ({ session }) => ({
+          kind: 'ok',
+          value: {
+            agentParticipantId: (session.sessionId === SESSION.session_id ? 'agent_1' : 'agent_2') as ParticipantId,
+            roomId: 'room_1' as RoomId,
+          },
+        }),
+      },
+    });
+
+    const first = await h.bootstrap();
+    const second = await bootstrapSession(h, 'thread-existing-c', 'bootstrap-c-1');
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.body.binding.agentParticipantId).not.toBe(first.body.binding.agentParticipantId);
+    expect(second.body.binding.bindingId).not.toBe(first.body.binding.bindingId);
+    expect(await h.adapter(first.body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+    expect(await h.adapter(second.body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+  });
+
+  it('refreshes and revokes one participant without changing another participant authority', async () => {
+    const h = setup({
+      agents: {
+        inspect: async ({ session }) => ({
+          kind: 'ok',
+          value: {
+            agentParticipantId: (session.sessionId === SESSION.session_id ? 'agent_a' : 'agent_b') as ParticipantId,
+            roomId: 'room_1' as RoomId,
+          },
+        }),
+      },
+    });
+    const firstA = (await h.bootstrap()).body;
+    const participantB = (await bootstrapSession(h, 'thread-existing-c', 'bootstrap-c-1')).body;
+    const refreshedA = (await h.bootstrap(SESSION.generation, 'bootstrap-a-2')).body;
+
+    expect(refreshedA.binding.bindingId).toBe(firstA.binding.bindingId);
+    expect(await h.adapter(firstA.adapter_capability.token, 'publish_own')).toMatchObject({ code: 'binding_superseded' });
+    expect(await h.adapter(refreshedA.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+    expect(await h.adapter(participantB.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+
+    await h.handlers.capabilities.revokeAdapterCapability({
+      operationId: 'revoke-a', bindingId: refreshedA.binding.bindingId as BindingId, revokedGeneration: SESSION.generation,
+    });
+    expect(await h.adapter(refreshedA.adapter_capability.token, 'publish_own')).toMatchObject({ code: 'binding_revoked' });
+    expect(await h.adapter(participantB.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+  });
+
+  it('converges independent grants for one session on one binding and admission commit', async () => {
+    const h = setup();
+    const [grantA, grantB] = await Promise.all([h.grant(), h.grant()]);
+    const responses = await Promise.all([
+      h.redeem(grantA, 'independent-a'),
+      h.redeem(grantB, 'independent-b'),
+    ]);
+    const bodies = await Promise.all(responses.map(response => response.json() as Promise<Redeemed>));
+
+    expect(responses.map(response => response.status)).toEqual([200, 200]);
+    expect(bodies[0]!.binding.bindingId).toBe(bodies[1]!.binding.bindingId);
+    expect(h.admits).toEqual(['KHALADEV1']);
+    expect(new Set(h.admitOperations).size).toBe(1);
+    const authorization = await Promise.all(bodies.map(body => h.adapter(body.adapter_capability.token, 'publish_own')));
+    expect(authorization.filter(result => result.kind === 'authorized')).toHaveLength(1);
+    expect(authorization.filter(result => result.kind === 'refused' && result.code === 'binding_superseded')).toHaveLength(1);
+  });
+
   it('binds the owner, agent participant, device and existing session, with the narrow adapter capability', async () => {
     const h = setup();
     const response = await h.redeem(await h.grant());
@@ -548,19 +649,53 @@ describe('redeem', () => {
     expect(h.admits).toHaveLength(admitted);
   });
 
+  it('does not reserve a new session when the participant binding verdict conflicts', async () => {
+    let secondParticipant = 'agent_owner_b';
+    const h = setup({
+      agents: {
+        inspect: async ({ ownerId, session }) => ({
+          kind: 'ok',
+          value: {
+            agentParticipantId: (session.sessionId === SESSION.session_id ? `agent_${ownerId}` : secondParticipant) as ParticipantId,
+            roomId: 'room_1' as RoomId,
+          },
+        }),
+      },
+    });
+    expect((await h.bootstrap()).status).toBe(200);
+    expect((await bootstrapSession(h, 'thread-existing-c', 'bootstrap-c-1')).body).toEqual({ code: 'binding_conflict' });
+    expect(h.admits).toHaveLength(1);
+
+    secondParticipant = 'agent_second';
+    const distinct = await bootstrapSession(h, 'thread-existing-c', 'bootstrap-c-2');
+    expect(distinct.status).toBe(200);
+    expect(distinct.body.binding.agentParticipantId).toBe('agent_second');
+  });
+
+  it('refuses a valid grant for a changed device before admission commit', async () => {
+    const h = setup();
+    expect((await h.bootstrap()).status).toBe(200);
+    const admitted = h.admits.length;
+    const response = await bootstrapSession(h, SESSION.session_id, 'bootstrap-device-2', 'KHALADEV2');
+    expect(response).toEqual({ status: 409, body: { code: 'binding_conflict' } });
+    expect(h.admits).toHaveLength(admitted);
+  });
+
   it('refuses a reconnect whose admission names another agent participant', async () => {
     let participant = 'agent_one';
     const h = setup({
-      agents: { admit: async () => ({ kind: 'ok', value: { agentParticipantId: participant as ParticipantId, roomId: 'room_1' as RoomId } }) },
+      agents: { inspect: async () => ({ kind: 'ok', value: { agentParticipantId: participant as ParticipantId, roomId: 'room_1' as RoomId } }) },
     });
     expect((await h.redeem(await h.grant())).status).toBe(200);
+    const admitted = h.admits.length;
     participant = 'agent_two';
     const response = await h.redeem(await h.grant(), 'bootstrap-b-2');
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ code: 'binding_conflict' });
+    expect(h.admits).toHaveLength(admitted);
   });
 
-  it('scopes the client operation ID to the owner and device before admission', async () => {
+  it('derives admission identity from the binding rather than the client operation ID', async () => {
     let owner = 'owner_a';
     const h = setup({ signedIn: () => owner });
     await h.redeem(await h.grant(), 'shared-operation');
@@ -571,14 +706,21 @@ describe('redeem', () => {
     expect(h.admitOperations.join()).not.toContain('shared-operation');
   });
 
-  it('refuses an admission into a room other than the invite resolved to', async () => {
-    const h = setup({
-      agents: {
-        room: async () => ({ kind: 'ok', value: 'room_1' as RoomId }),
-        admit: async () => ({ kind: 'ok', value: { agentParticipantId: 'agent_x' as ParticipantId, roomId: 'room_2' as RoomId } }),
-      },
-    });
-    expect(await (await h.redeem(await h.grant())).json()).toEqual({ code: 'admission_denied' });
+  it('refuses admission commit drift from the inspected room or participant', async () => {
+    for (const value of [
+      { agentParticipantId: 'agent_x' as ParticipantId, roomId: 'room_2' as RoomId },
+      { agentParticipantId: 'agent_y' as ParticipantId, roomId: 'room_1' as RoomId },
+    ]) {
+      const h = setup({
+        agents: {
+          inspect: async () => ({ kind: 'ok', value: { agentParticipantId: 'agent_x' as ParticipantId, roomId: 'room_1' as RoomId } }),
+          admit: async () => ({ kind: 'ok', value }),
+        },
+      });
+      const response = await h.redeem(await h.grant());
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ code: 'admission_denied' });
+    }
   });
 
   it('maps admission refusals and unknown outcomes', async () => {
@@ -594,6 +736,35 @@ describe('redeem', () => {
 });
 
 describe('adapter capability', () => {
+  it('migrates an active legacy binding while keeping its capability authorized', async () => {
+    const h = setup();
+    const bootstrapped = (await h.bootstrap()).body;
+    moveBindingToLegacy(h, bootstrapped.binding);
+
+    expect(await h.adapter(bootstrapped.adapter_capability.token, 'publish_own')).toMatchObject({
+      kind: 'authorized', binding: { bindingId: bootstrapped.binding.bindingId },
+    });
+    const legacy = h.store.records.get(agentBindingStoreKeys.legacy('owner_b', 'room_1'));
+    expect(legacy?.value).toMatchObject({ kind: 'binding_forward', agentParticipantId: bootstrapped.binding.agentParticipantId });
+  });
+
+  it('migrates a revoked legacy binding and only re-arms its later generation', async () => {
+    const h = setup();
+    const first = (await h.bootstrap()).body;
+    await h.handlers.capabilities.revokeAdapterCapability({
+      operationId: 'revoke-legacy', bindingId: first.binding.bindingId as BindingId, revokedGeneration: 4,
+    });
+    moveBindingToLegacy(h, first.binding);
+    const admitted = h.admits.length;
+
+    expect(await h.bootstrap(4, 'legacy-g4')).toEqual({ status: 409, body: { code: 'binding_revoked' } });
+    expect(h.admits).toHaveLength(admitted);
+    const rebound = await h.bootstrap(5, 'legacy-g5');
+    expect(rebound.status).toBe(200);
+    expect(rebound.body.binding.bindingId).not.toBe(first.binding.bindingId);
+    expect(await h.adapter(rebound.body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+  });
+
   it('grants exactly publish_own, receive_released and ack_delivery, and nothing that approves or sets policy', async () => {
     const h = setup();
     const { body } = await h.bootstrap();

@@ -87,7 +87,7 @@ describe('agent binding store migration', () => {
     expect(fake.value(agentBindingStoreKeys.participant(ownerId, roomId, participantA))).toBeUndefined();
   });
 
-  it('does not replace an authoritative legacy record while marker writes are disabled', async () => {
+  it('does not replace an active authoritative legacy record while marker writes are disabled', async () => {
     const fake = fakeStore();
     const legacy = binding();
     const replacement = binding(participantA, { bindingId: 'binding_replacement' as BindingId, generation: 4 });
@@ -96,7 +96,7 @@ describe('agent binding store migration', () => {
 
     expect(await bindings.putParticipant({
       ownerId, roomId, agentParticipantId: participantA, expectedBindingId: legacy.binding.bindingId, record: replacement,
-    })).toEqual({ kind: 'unavailable' });
+    })).toEqual({ kind: 'conflict', record: legacy });
     expect(fake.value(agentBindingStoreKeys.legacy(ownerId, roomId))).toEqual(legacy);
   });
 
@@ -110,7 +110,7 @@ describe('agent binding store migration', () => {
     expect(await bindings.findParticipant({ ownerId, roomId, agentParticipantId: participantA })).toEqual({ kind: 'found', record: legacy });
     expect(fake.value(agentBindingStoreKeys.participant(ownerId, roomId, participantA))).toEqual(legacy);
     expect(fake.value(agentBindingStoreKeys.legacy(ownerId, roomId))).toEqual({
-      v: 1, kind: 'binding_forward', agentParticipantId: participantA, bindingId: legacy.binding.bindingId,
+      v: 1, kind: 'binding_forward', agentParticipantId: participantA,
     });
     expect(fake.value(agentBindingStoreKeys.index(legacy.binding.bindingId))).toEqual({
       v: 1, ownerId, roomId, agentParticipantId: participantA,
@@ -123,7 +123,7 @@ describe('agent binding store migration', () => {
   it('fails closed on a forwarding marker whose target is missing', async () => {
     const fake = fakeStore();
     fake.seed(agentBindingStoreKeys.legacy(ownerId, roomId), {
-      v: 1, kind: 'binding_forward', agentParticipantId: participantA, bindingId: 'binding_missing',
+      v: 1, kind: 'binding_forward', agentParticipantId: participantA,
     });
     const bindings = createAgentBindingStore({ store: fake.store });
     expect(await bindings.findParticipant({ ownerId, roomId, agentParticipantId: participantA })).toEqual({ kind: 'unavailable' });
@@ -137,6 +137,70 @@ describe('agent binding store migration', () => {
 
     expect(await bindings.findParticipant({ ownerId, roomId, agentParticipantId: participantA })).toEqual({ kind: 'found', record: legacy });
     expect(fake.value(agentBindingStoreKeys.participant(ownerId, roomId, participantA))).toEqual(legacy);
+  });
+
+  it('follows a migrated participant after its revoked binding ID is replaced', async () => {
+    const fake = fakeStore();
+    const legacy = { ...binding(), revokedGeneration: 3, capability: null };
+    const replacement = { ...binding(participantA, { bindingId: 'binding_rearmed' as BindingId, generation: 4 }), capability: null };
+    fake.seed(agentBindingStoreKeys.legacy(ownerId, roomId), legacy);
+    const bindings = createAgentBindingStore({ store: fake.store, legacyMigrationWritesEnabled: true });
+
+    expect((await bindings.findParticipant({ ownerId, roomId, agentParticipantId: participantA })).kind).toBe('found');
+    expect(await bindings.putParticipant({
+      ownerId, roomId, agentParticipantId: participantA,
+      expectedBindingId: legacy.binding.bindingId,
+      record: replacement,
+    })).toEqual({ kind: 'applied', record: replacement });
+    expect(await bindings.findParticipant({ ownerId, roomId, agentParticipantId: participantA })).toEqual({
+      kind: 'found', record: replacement,
+    });
+    expect(await bindings.findBinding(legacy.binding.bindingId)).toEqual({ kind: 'absent' });
+    expect(await bindings.findBinding(replacement.binding.bindingId)).toEqual({ kind: 'found', record: replacement });
+  });
+
+  it('re-arms a revoked legacy binding in place while marker writes are disabled', async () => {
+    const fake = fakeStore();
+    const legacy = { ...binding(), revokedGeneration: 3, capability: null };
+    const replacement = { ...binding(participantA, { bindingId: 'binding_rearmed' as BindingId, generation: 4 }), capability: null };
+    const legacyKey = agentBindingStoreKeys.legacy(ownerId, roomId);
+    fake.seed(legacyKey, legacy);
+    fake.seed(agentBindingStoreKeys.index(legacy.binding.bindingId), { ownerId, roomId });
+    const bindings = createAgentBindingStore({ store: fake.store });
+
+    expect(await bindings.putParticipant({
+      ownerId, roomId, agentParticipantId: participantA,
+      expectedBindingId: legacy.binding.bindingId,
+      record: replacement,
+    })).toEqual({ kind: 'applied', record: replacement });
+    expect(fake.value(legacyKey)).toEqual(replacement);
+    expect(await bindings.findBinding(legacy.binding.bindingId)).toEqual({ kind: 'absent' });
+    expect(await bindings.findBinding(replacement.binding.bindingId)).toEqual({ kind: 'found', record: replacement });
+  });
+
+  it('rejects replacement unless the same revoked identity advances generation with a new binding ID', async () => {
+    const fake = fakeStore();
+    const current = { ...binding(), revokedGeneration: 4, capability: null };
+    const bindings = createAgentBindingStore({ store: fake.store, legacyMigrationWritesEnabled: true });
+    await bindings.putParticipant({ ownerId, roomId, agentParticipantId: participantA, expectedBindingId: null, record: current });
+
+    for (const replacement of [
+      { ...binding(participantA, { bindingId: 'binding_new' as BindingId, generation: 4 }), capability: null },
+      {
+        ...binding(participantA, {
+          bindingId: 'binding_new' as BindingId, generation: 5,
+          deviceId: 'device_other' as BindingRecord['binding']['deviceId'],
+        }),
+        capability: null,
+      },
+      { ...binding(participantA, { bindingId: 'binding_new' as BindingId, generation: 5 }), capability: 'b'.repeat(43) },
+    ]) {
+      expect(await bindings.putParticipant({
+        ownerId, roomId, agentParticipantId: participantA,
+        expectedBindingId: current.binding.bindingId,
+        record: replacement,
+      })).toEqual({ kind: 'conflict', record: current });
+    }
   });
 
   it.each(['copy', 'forward', 'index'] as const)('settles a lost %s response without widening authority', async stage => {
@@ -249,8 +313,8 @@ describe('agent binding store scoped state', () => {
 
   it('replaces one binding, treats its old index as absent, and resolves the new binding', async () => {
     const fake = fakeStore();
-    const first = binding();
-    const replacement = binding(participantA, { bindingId: 'binding_replacement' as BindingId, generation: 4 });
+    const first = { ...binding(), revokedGeneration: 3, capability: null };
+    const replacement = { ...binding(participantA, { bindingId: 'binding_replacement' as BindingId, generation: 4 }), capability: null };
     const bindings = createAgentBindingStore({ store: fake.store, legacyMigrationWritesEnabled: true });
     expect((await bindings.putParticipant({ ...address(participantA), expectedBindingId: null, record: first })).kind).toBe('applied');
     expect((await bindings.putParticipant({
