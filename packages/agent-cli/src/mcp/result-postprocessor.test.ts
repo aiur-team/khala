@@ -155,11 +155,14 @@ describe('MCP result postprocessor', () => {
       isCurrentBinding: currentBinding(),
       preselectedBatch,
     });
+    const reported: unknown[] = [];
+    const onSuppressed = (suppression: unknown) => { reported.push(suppression); };
     const drifted = await postprocessPreselectedMcpResult({
       responseId: 4,
       primaryResult,
       isCurrentBinding: currentBinding(true, false),
       preselectedBatch,
+      onSuppressed,
     });
     const invalid = await postprocessPreselectedMcpResult({
       responseId: 5,
@@ -168,11 +171,16 @@ describe('MCP result postprocessor', () => {
       preselectedBatch: inboxBatch('selected', [{
         ...item('selected', ''), payload: Uint8Array.from([0xff, 0xfe]),
       }]),
+      onSuppressed,
     });
 
     expect(composed).toMatchObject({ kind: 'composed', result: { content: [{}, {}] } });
     expect(drifted).toEqual({ kind: 'suppressed', code: 'binding_not_held' });
     expect(invalid).toEqual({ kind: 'suppressed', code: 'internal_error' });
+    expect(reported).toEqual([
+      { stage: 'status', code: 'binding_not_held' },
+      { stage: 'render', code: 'internal_error' },
+    ]);
   });
 
   it('derives a conservative raw budget for escaping-heavy data and permits one oversized head whole', async () => {
@@ -266,14 +274,17 @@ describe('MCP result postprocessor', () => {
       release: vi.fn(async () => undefined),
     };
     const isCurrentBinding = currentBinding(true, false);
+    const onSuppressed = vi.fn();
     const result = await postprocessMcpResult({
       responseId: 6,
       primaryResult,
       acknowledgeToken: 'exact-prior-token',
       isCurrentBinding,
       consumer,
+      onSuppressed,
     });
 
+    expect(onSuppressed).toHaveBeenCalledExactlyOnceWith({ stage: 'status', code: 'binding_not_held' });
     expect(acknowledged).toBe(true);
     expect(consumer.readBatch).toHaveBeenCalledWith(expect.objectContaining({ acknowledgeToken: 'exact-prior-token' }));
     expect(isCurrentBinding).toHaveBeenCalledTimes(2);
@@ -311,11 +322,18 @@ describe('MCP result postprocessor', () => {
       },
     ];
 
+    const reported: unknown[] = [];
     for (const input of failures) {
-      const result = await postprocessMcpResult(input);
+      const result = await postprocessMcpResult({ ...input, onSuppressed: suppression => reported.push(suppression) });
       expect(result).toBe(primaryResult);
       expect(result.content).toEqual(primaryResult.content);
     }
+    expect(reported).toEqual([
+      { stage: 'status', code: 'internal_error' },
+      { stage: 'read', code: 'internal_error' },
+      { stage: 'render', code: 'internal_error' },
+    ]);
+    expect(JSON.stringify(reported)).not.toMatch(/failed|invalid-utf8|\\u00ff/);
 
     expect(await postprocessMcpResult({
       responseId: 8,
