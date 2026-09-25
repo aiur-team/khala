@@ -61,6 +61,21 @@ importers:
         specifier: 4.20.6
         version: 4.20.6
 
+  apps/internal:
+    dependencies:
+      '@khala/connector':
+        specifier: workspace:*
+        version: link:../../packages/connector
+      '@khala/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@khala/messaging':
+        specifier: workspace:*
+        version: link:../../packages/messaging
+      '@khala/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+
   apps/web:
     dependencies:
       '@khala/contracts':
