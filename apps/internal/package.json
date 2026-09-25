@@ -9,6 +9,8 @@
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
   },
   "dependencies": {
-    "@khala/contracts": "workspace:*"
+    "@khala/connector": "workspace:*",
+    "@khala/contracts": "workspace:*",
+    "@khala/messaging": "workspace:*"
   }
 }
