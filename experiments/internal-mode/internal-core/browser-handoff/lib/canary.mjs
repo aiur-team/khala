@@ -10,13 +10,24 @@ export function createCanary() {
   return `khalacanary${randomBytes(16).toString('hex')}`;
 }
 
+// Base64 of a longer string (a whole URL) encodes the canary differently for
+// each of the three byte alignments it can start at, so each alignment gets a
+// form: the characters mixed with neighbouring bytes are trimmed off both ends.
+function base64Forms(canary) {
+  const forms = [];
+  for (let offset = 0; offset < 3; offset++) {
+    const bytes = Buffer.concat([Buffer.alloc(offset), Buffer.from(canary)]);
+    for (const encoding of ['base64', 'base64url']) {
+      const text = bytes.toString(encoding).replace(/=+$/, '');
+      const start = offset === 0 ? 0 : 4;
+      forms.push(text.slice(start, text.length - 4));
+    }
+  }
+  return forms;
+}
+
 export function leakForms(canary) {
-  return [...new Set([
-    canary,
-    encodeURIComponent(canary),
-    Buffer.from(canary).toString('base64').replace(/=+$/, ''),
-    Buffer.from(canary).toString('base64url'),
-  ])];
+  return [...new Set([canary, encodeURIComponent(canary), ...base64Forms(canary)])];
 }
 
 export function containsLeak(text, forms) {

@@ -5,7 +5,7 @@ import { automaticOpenDecision, procfsHidepid, profileMismatch } from '../lib/pr
 const proven = {
   os: 'linux',
   procfsHidepid: 'off',
-  opener: { implementation: 'xdg-utils xdg-open', version: '1.2.1', mode: 'generic' },
+  opener: { implementation: 'xdg-utils xdg-open', version: '1.2.1', mode: 'generic', display: 'present' },
   handler: { mimeType: 'text/html', exec: '/usr/bin/firefox --headless --no-remote --profile <PRIVATE_BROWSER_PROFILE> %u' },
   browser: { name: 'firefox', major: '152' },
   handoff: 'private-file',
@@ -31,6 +31,7 @@ test('automatic opening stays off when any match field differs from the proof', 
   for (const change of [
     { procfsHidepid: 'invisible' },
     { opener: { ...proven.opener, mode: 'gnome' } },
+    { opener: { ...proven.opener, display: 'absent' } },
     { handler: { ...proven.handler, exec: '/usr/bin/firefox %u' } },
     { browser: { name: 'firefox', major: '153' } },
     { handoff: 'argv-url' },

@@ -22,6 +22,9 @@ export const MATCH_FIELDS = Object.freeze([
   'opener.implementation',
   'opener.version',
   'opener.mode',
+  // Without a display xdg-open skips the mime handler and falls through to
+  // run-mailcap, mimeopen or its built-in browser list.
+  'opener.display',
   'handler.mimeType',
   'handler.exec',
   'browser.name',
@@ -84,6 +87,7 @@ export function captureProfile({ env, handoff, mimeType = 'text/html', normalize
       implementation: versionLine?.startsWith('xdg-open ') ? 'xdg-utils xdg-open' : undefined,
       version: versionLine?.split(' ')[1],
       mode: openerEnv.XDG_CURRENT_DESKTOP === 'X-Generic' ? 'generic' : undefined,
+      display: openerEnv.DISPLAY || openerEnv.WAYLAND_DISPLAY ? 'present' : 'absent',
     },
     handler: { mimeType, desktopId, exec: exec && normalize(exec) },
     browser: { name, version: browserVersion, major: browserVersion?.match(/(\d+)\./)?.[1] },

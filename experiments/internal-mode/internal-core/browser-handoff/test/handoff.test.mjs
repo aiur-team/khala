@@ -15,7 +15,11 @@ const forms = leakForms(canary);
 test('leak detection covers raw, percent-encoded and base64 forms, and redacts them', () => {
   assert.ok(containsLeak(`xdg-open ${url}`, forms));
   assert.ok(containsLeak(encodeURIComponent(url), forms));
-  assert.ok(containsLeak(Buffer.from(canary).toString('base64'), forms));
+  for (let pad = 0; pad < 3; pad++) {
+    const encoded = Buffer.from(`${'x'.repeat(pad)}${url}`);
+    assert.ok(containsLeak(encoded.toString('base64'), forms), `base64 alignment ${pad}`);
+    assert.ok(containsLeak(encoded.toString('base64url'), forms), `base64url alignment ${pad}`);
+  }
   assert.ok(!containsLeak('xdg-open /run/user/1000/handoff-x/open.html', forms));
   assert.doesNotMatch(redact(`a ${url} b`, forms), new RegExp(canary));
 });
@@ -45,7 +49,7 @@ test('private-file hands only a path; the URL lives in a 0600 file in a 0700 dir
 const proven = {
   os: 'linux',
   procfsHidepid: 'off',
-  opener: { implementation: 'xdg-utils xdg-open', version: '1.2.1', mode: 'generic' },
+  opener: { implementation: 'xdg-utils xdg-open', version: '1.2.1', mode: 'generic', display: 'present' },
   handler: { mimeType: 'text/html', exec: '/usr/bin/chromium --headless=new --user-data-dir=<PRIVATE_BROWSER_PROFILE> %U' },
   browser: { name: 'chromium', major: '150' },
   handoff: 'private-file',
@@ -68,7 +72,7 @@ async function open(overrides) {
   const result = await openBootstrap({
     bootstrapUrl: url,
     credential: canary,
-    runtimeProfile: proven,
+    capture: ({ env }) => ({ ...proven, capturedFrom: env }),
     matrix,
     handoffParent: parent,
     env: { PATH: '/usr/bin', BROWSER: 'firefox', XDG_CURRENT_DESKTOP: 'Hyprland' },
@@ -87,6 +91,7 @@ test('adapter opens a matching profile through xdg-open with a path and a scrubb
     assert.ok(!containsLeak(JSON.stringify([calls[0].argv, calls[0].options.env]), forms));
     assert.equal(calls[0].options.env.XDG_CURRENT_DESKTOP, 'X-Generic');
     assert.equal(calls[0].options.env.BROWSER, undefined);
+    assert.equal(result.profileId, "p");
     await result.cleanup();
   } finally {
     await rm(parent, { recursive: true, force: true });
@@ -95,11 +100,23 @@ test('adapter opens a matching profile through xdg-open with a path and a scrubb
 
 test('adapter keeps automatic opening off when the profile is unknown or differs', async () => {
   for (const runtimeProfile of [null, { ...proven, browser: { name: 'chromium', major: '151' } }, { ...proven, procfsHidepid: undefined }]) {
-    const { result, calls, parent } = await open(() => ({ runtimeProfile }));
+    const { result, calls, parent } = await open(() => ({ capture: () => runtimeProfile }));
     await rm(parent, { recursive: true, force: true });
     assert.equal(result.opened, false);
     assert.equal(calls.length, 0);
   }
+});
+
+test('adapter profiles the exact opener environment and stays off if profiling fails', async () => {
+  let seen;
+  const { result: opened, parent } = await open(() => ({ capture: ({ env }) => { seen = env; return proven; } }));
+  await opened.cleanup();
+  await rm(parent, { recursive: true, force: true });
+  assert.equal(seen.XDG_CURRENT_DESKTOP, 'X-Generic');
+  assert.equal(seen.BROWSER, undefined);
+  const failed = await open(() => ({ capture: () => { throw new Error('xdg-mime missing'); } }));
+  await rm(failed.parent, { recursive: true, force: true });
+  assert.deepEqual([failed.result.opened, failed.calls.length], [false, 0]);
 });
 
 test('adapter refuses when the credential would reach the opener environment', async () => {

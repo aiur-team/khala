@@ -34,7 +34,7 @@ test('a same-user or capable observer is not cross-user evidence', async () => {
   selected(evidence).observer.observerUid = evidence.targetUid;
   control(evidence).observer.observerCapEff = '000001ffffffffff';
   const failures = assess(evidence).failures.join('\n');
-  assert.match(failures, /ran as the launching user/);
+  assert.match(failures, /not a separate unprivileged user/);
   assert.match(failures, /held capabilities/);
 });
 
@@ -46,7 +46,25 @@ test('every process layer must be observed and the handoff file must stay unread
   trial.observer.privateProbes[path].readable = 1;
   const failures = assess(evidence).failures.join('\n');
   assert.match(failures, /opener layer was never observed/);
-  assert.match(failures, /could read private handoff path/);
+  assert.match(failures, /private handoff path .*: readable/);
+});
+
+test('probes that were never denied do not prove the handoff file was protected', async () => {
+  const evidence = await load(EVIDENCE[0]);
+  const trial = selected(evidence);
+  for (const outcomes of Object.values(trial.observer.privateProbes)) delete outcomes.EACCES;
+  trial.observer.environ = { ENOENT: 3 };
+  const failures = assess(evidence).failures.join('\n');
+  assert.match(failures, /never denied private handoff path/);
+  assert.match(failures, /never denied target environments/);
+});
+
+test('the negative control must be caught in both the opener and the browser', async () => {
+  const evidence = await load(EVIDENCE[1]);
+  const trial = control(evidence);
+  const layerOf = pid => trial.observer.processes.find(p => p.pid === pid)?.layer;
+  trial.observer.hits = trial.observer.hits.filter(h => layerOf(h.pid) !== 'browser');
+  assert.match(assess(evidence).failures.join('\n'), /not detected in browser argv/);
 });
 
 test('undelivered or too few trials do not prove a profile', async () => {

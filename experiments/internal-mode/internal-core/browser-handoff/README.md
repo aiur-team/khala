@@ -10,10 +10,14 @@ that with real processes observed from a separate unprivileged OS user.
   **private-file** handoff was clean in every trial. It passes only the path of
   a 0600 HTML file in a fresh 0700 directory, and the browser navigates to the
   fragment URL in-process.
-- **Supported environments:** two exact Linux profiles (xdg-open 1.2.1 in
-  generic mode, headless Chromium 150 or Firefox 152). See
-  [`report.md`](report.md) and [`matrix.json`](matrix.json). Every other
-  environment keeps automatic opening off.
+- **Supported environments:** two exact Linux profiles: xdg-open 1.2.1 in
+  generic mode, handing off to headless Chromium 150 or Firefox 152 through
+  an isolated desktop entry. See [`report.md`](report.md) and
+  [`matrix.json`](matrix.json). These profiles exist only inside the harness.
+  A real user's default handler (for example headful `/usr/bin/chromium %U`)
+  matches neither, so on real desktops automatic opening stays off and the
+  launcher prints the URL. That stays true until a headful profile is proven
+  with `--exec`.
 - **Launcher seam:** [`adapter-contract.md`](adapter-contract.md), with a
   reference implementation in `lib/opener-adapter.mjs`. Whatever this spike
   finds, the launcher prints the local URL for manual opening, so launch is

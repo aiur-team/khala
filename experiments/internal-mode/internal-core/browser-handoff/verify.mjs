@@ -18,8 +18,8 @@ export function trialFailures(trial) {
   const { layers, hits, privateProbes, environ, processes } = trial.observer;
   if (trial.strategy === NEGATIVE_CONTROL) {
     const leakingLayers = new Set(hits.map(h => processes.find(p => p.pid === h.pid)?.layer));
-    if (!leakingLayers.has('opener') && !leakingLayers.has('browser')) {
-      failures.push('negative control leak was not detected in opener or browser argv (observer blind)');
+    for (const layer of ['opener', 'browser']) {
+      if (!leakingLayers.has(layer)) failures.push(`negative control leak was not detected in ${layer} argv (observer blind)`);
     }
     return failures;
   }
@@ -30,10 +30,15 @@ export function trialFailures(trial) {
   for (const layer of ['launcher', 'opener', 'browser']) {
     if (!layers[layer]) failures.push(`${layer} layer was never observed`);
   }
-  if (environ.readable) failures.push('observer could read a target environment');
-  for (const [path, outcomes] of Object.entries(privateProbes)) {
-    if (outcomes.readable || outcomes.listable) failures.push(`observer could read private handoff path ${path}`);
-  }
+  // A denial must actually be observed: a probe that only ever saw ENOENT (a
+  // missing mount, a wrong path, a file already gone) proves nothing.
+  const denied = (what, outcomes) => {
+    const unexpected = Object.keys(outcomes).filter(k => !['EACCES', 'ENOENT', 'ESRCH'].includes(k));
+    if (unexpected.length) failures.push(`observer ${what}: ${unexpected.join(', ')}`);
+    else if (!outcomes.EACCES) failures.push(`observer was never denied ${what}`);
+  };
+  denied('target environments', environ);
+  for (const [path, outcomes] of Object.entries(privateProbes)) denied(`private handoff path ${path}`, outcomes);
   if (!Object.keys(privateProbes).length) failures.push('private handoff path was never probed');
   return failures;
 }
@@ -44,7 +49,10 @@ export function assess(evidence) {
   if (observer?.kind !== 'docker') failures.push('observer was not a separate OS user');
   for (const trial of evidence.trials) {
     const report = trial.observer;
-    if (report.observerUid === evidence.targetUid) failures.push('observer ran as the launching user');
+    const uid = report.observerUid;
+    if (!Number.isInteger(uid) || uid === 0 || uid === evidence.targetUid) {
+      failures.push('observer was not a separate unprivileged user');
+    }
     if (report.observerCapEff !== '0000000000000000') failures.push('observer held capabilities');
     const ownUid = report.processes.find(p => p.layer === 'launcher')?.uid;
     if (ownUid !== evidence.targetUid) failures.push('launcher process was not observed under the target uid');

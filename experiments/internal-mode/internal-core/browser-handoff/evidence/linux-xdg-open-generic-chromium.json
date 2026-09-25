@@ -1,6 +1,6 @@
 {
   "harness": "browser-handoff-spike",
-  "generatedAt": "2026-09-25T08:06:50.428Z",
+  "generatedAt": "2026-09-25T08:17:52.302Z",
   "targetUid": 1000,
   "observer": {
     "kind": "docker",
@@ -16,7 +16,8 @@
     "opener": {
       "implementation": "xdg-utils xdg-open",
       "version": "1.2.1",
-      "mode": "generic"
+      "mode": "generic",
+      "display": "present"
     },
     "handler": {
       "mimeType": "text/html",
@@ -35,17 +36,17 @@
       "strategy": "argv-url",
       "openerArgv": [
         "xdg-open",
-        "http://127.0.0.1:35299/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofpnh"
+        "http://127.0.0.1:42245/__khala/bootstrap#credential=<CANARY>&channel=channel-mugotxnr"
       ],
       "launcherEnvLeak": false,
       "delivered": true,
-      "deliveryMs": 273,
+      "deliveryMs": 204,
       "leak": true,
       "observer": {
         "observerUid": 65534,
         "observerCapEff": "0000000000000000",
-        "sweeps": 205,
-        "scannedProcesses": 768,
+        "sweeps": 212,
+        "scannedProcesses": 721,
         "layers": {
           "launcher": 1,
           "opener": 1,
@@ -54,140 +55,140 @@
         },
         "processes": [
           {
-            "pid": 1467485,
+            "pid": 1552373,
             "uid": 1000,
-            "ppid": 1467483,
+            "ppid": 1552370,
             "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
             ],
             "layer": "launcher"
           },
           {
-            "pid": 1467705,
+            "pid": 1552499,
             "uid": 1000,
-            "ppid": 1467485,
+            "ppid": 1552373,
             "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:35299/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofpnh"
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:42245/__khala/bootstrap#credential=<CANARY>&channel=channel-mugotxnr"
             ],
             "layer": "opener"
           },
           {
-            "pid": 1467743,
+            "pid": 1552538,
             "uid": 1000,
-            "ppid": 1467705,
+            "ppid": 1552499,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url http://127.0.0.1:35299/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofpnh",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url http://127.0.0.1:42245/__khala/bootstrap#credential=<CANARY>&channel=channel-mugotxnr",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1552547,
+            "uid": 1000,
+            "ppid": 1552538,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url ",
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1467776,
+            "pid": 1552548,
             "uid": 1000,
-            "ppid": 1467743,
+            "ppid": 1552538,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url ",
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1552551,
+            "uid": 1000,
+            "ppid": 1552548,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1552574,
+            "uid": 1000,
+            "ppid": 1552547,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h",
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1467778,
+            "pid": 1552576,
             "uid": 1000,
-            "ppid": 1467743,
+            "ppid": 1552538,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1467796,
-            "uid": 1000,
-            "ppid": 1467778,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1467818,
-            "uid": 1000,
-            "ppid": 1467776,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1467820,
-            "uid": 1000,
-            "ppid": 1467743,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1467834,
+            "pid": 1552586,
             "uid": 1000,
-            "ppid": 1467796,
+            "ppid": 1552551,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1467857,
+            "pid": 1552608,
             "uid": 1000,
-            "ppid": 1467796,
+            "ppid": 1552551,
             "cmdlines": [
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1467858,
+            "pid": 1552609,
             "uid": 1000,
-            "ppid": 1467796,
+            "ppid": 1552551,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --change-stack-guard-on-fork=enab"
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --change-stack-guard-on-fork=enab"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1467881,
+            "pid": 1552627,
             "uid": 1000,
-            "ppid": 1467796,
+            "ppid": 1552551,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --change-stack-guard-on-fork=enab"
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --change-stack-guard-on-fork=enab"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1467882,
+            "pid": 1552630,
             "uid": 1000,
-            "ppid": 1467796,
+            "ppid": 1552551,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1467765 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --extension-process --change-stac"
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1552541 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url --extension-process --change-stac"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468096,
+            "pid": 1552801,
             "uid": 1000,
-            "ppid": 1467485,
+            "ppid": 1552373,
             "cmdlines": [
               "pkill -TERM -f <TRIAL_ROOT>/browser-profile-0-argv-url"
             ],
             "layer": "helper"
           },
           {
-            "pid": 1468198,
+            "pid": 1552844,
             "uid": 1000,
-            "ppid": 1467485,
+            "ppid": 1552373,
             "cmdlines": [
               "pkill -KILL -f <TRIAL_ROOT>/browser-profile-0-argv-url"
             ],
@@ -195,19 +196,19 @@
           }
         ],
         "environ": {
-          "EACCES": 2005
+          "EACCES": 2022
         },
         "privateProbes": {},
         "hits": [
           {
-            "pid": 1467705,
+            "pid": 1552499,
             "field": "cmdline",
-            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:35299/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofpnh"
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:42245/__khala/bootstrap#credential=<CANARY>&channel=channel-mugotxnr"
           },
           {
-            "pid": 1467743,
+            "pid": 1552538,
             "field": "cmdline",
-            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url http://127.0.0.1:35299/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofpnh"
+            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-argv-url http://127.0.0.1:42245/__khala/bootstrap#credential=<CANARY>&channel=channel-mugotxnr"
           }
         ]
       }
@@ -216,17 +217,17 @@
       "strategy": "private-file",
       "openerArgv": [
         "xdg-open",
-        "<TRIAL_ROOT>/handoff-TgjpOz/open.html"
+        "<TRIAL_ROOT>/handoff-lurujx/open.html"
       ],
       "launcherEnvLeak": false,
       "delivered": true,
-      "deliveryMs": 279,
+      "deliveryMs": 229,
       "leak": false,
       "observer": {
         "observerUid": 65534,
         "observerCapEff": "0000000000000000",
-        "sweeps": 199,
-        "scannedProcesses": 778,
+        "sweeps": 206,
+        "scannedProcesses": 717,
         "layers": {
           "launcher": 1,
           "opener": 1,
@@ -235,1660 +236,153 @@
         },
         "processes": [
           {
-            "pid": 1467485,
+            "pid": 1552373,
             "uid": 1000,
-            "ppid": 1467483,
+            "ppid": 1552370,
             "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
             ],
             "layer": "launcher"
           },
           {
-            "pid": 1468419,
+            "pid": 1552946,
             "uid": 1000,
-            "ppid": 1467485,
+            "ppid": 1552373,
             "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-TgjpOz/open.html"
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-lurujx/open.html"
             ],
             "layer": "opener"
           },
           {
-            "pid": 1468468,
+            "pid": 1552992,
             "uid": 1000,
-            "ppid": 1468419,
+            "ppid": 1552946,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1468476,
-            "uid": 1000,
-            "ppid": 1468468,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-f",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file <TRIAL_ROOT>/handoff-luruj",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh",
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468477,
+            "pid": 1553002,
             "uid": 1000,
-            "ppid": 1468468,
+            "ppid": 1552992,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-g",
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-f",
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468479,
+            "pid": 1553003,
             "uid": 1000,
-            "ppid": 1468477,
+            "ppid": 1552992,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-g"
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-g"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468502,
+            "pid": 1553005,
             "uid": 1000,
-            "ppid": 1468476,
+            "ppid": 1553003,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h",
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553026,
+            "uid": 1000,
+            "ppid": 1553002,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553028,
+            "uid": 1000,
+            "ppid": 1552992,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468505,
+            "pid": 1553040,
             "uid": 1000,
-            "ppid": 1468468,
+            "ppid": 1553005,
             "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553060,
+            "uid": 1000,
+            "ppid": 1553005,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-guard-on-fork=",
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468516,
+            "pid": 1553061,
             "uid": 1000,
-            "ppid": 1468479,
+            "ppid": 1553005,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1468538,
-            "uid": 1000,
-            "ppid": 1468479,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-guard-on-fork=",
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-guard-on-fork=",
               "[chromium]"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468539,
+            "pid": 1553084,
             "uid": 1000,
-            "ppid": 1468479,
+            "ppid": 1553005,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-guard-on-fork=",
-              "[chromium]"
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-guard-on-fork="
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468559,
+            "pid": 1553085,
             "uid": 1000,
-            "ppid": 1468479,
+            "ppid": 1553005,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-guard-on-fork=",
-              "[chromium]"
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --extension-process --change-"
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468560,
+            "pid": 1553127,
             "uid": 1000,
-            "ppid": 1468479,
+            "ppid": 1553005,
             "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --extension-process --change-"
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1552996 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-guard-on-fork="
             ],
             "layer": "browser"
           },
           {
-            "pid": 1468595,
+            "pid": 1553289,
             "uid": 1000,
-            "ppid": 1468479,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1468470 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-0-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1468853,
-            "uid": 1000,
-            "ppid": 1467485,
+            "ppid": 1552373,
             "cmdlines": [
               "pkill -TERM -f <TRIAL_ROOT>/browser-profile-0-private-file"
             ],
             "layer": "helper"
           },
           {
-            "pid": 1468971,
+            "pid": 1553311,
             "uid": 1000,
-            "ppid": 1467485,
+            "ppid": 1552373,
             "cmdlines": [
               "pkill -KILL -f <TRIAL_ROOT>/browser-profile-0-private-file"
-            ],
-            "layer": "helper"
-          }
-        ],
-        "environ": {
-          "EACCES": 1818
-        },
-        "privateProbes": {
-          "<TRIAL_ROOT>/handoff-TgjpOz": {
-            "EACCES": 22,
-            "ENOENT": 177
-          },
-          "<TRIAL_ROOT>/handoff-TgjpOz/open.html": {
-            "EACCES": 22,
-            "ENOENT": 177
-          }
-        },
-        "hits": []
-      }
-    },
-    {
-      "strategy": "argv-url",
-      "openerArgv": [
-        "xdg-open",
-        "http://127.0.0.1:39925/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoftwz"
-      ],
-      "launcherEnvLeak": false,
-      "delivered": true,
-      "deliveryMs": 262,
-      "leak": true,
-      "observer": {
-        "observerUid": 65534,
-        "observerCapEff": "0000000000000000",
-        "sweeps": 194,
-        "scannedProcesses": 842,
-        "layers": {
-          "launcher": 1,
-          "opener": 1,
-          "browser": 11,
-          "helper": 2
-        },
-        "processes": [
-          {
-            "pid": 1467485,
-            "uid": 1000,
-            "ppid": 1467483,
-            "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
-            ],
-            "layer": "launcher"
-          },
-          {
-            "pid": 1469101,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:39925/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoftwz"
-            ],
-            "layer": "opener"
-          },
-          {
-            "pid": 1469138,
-            "uid": 1000,
-            "ppid": 1469101,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url http://127.0.0.1:39925/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoftwz",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469150,
-            "uid": 1000,
-            "ppid": 1469138,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url ",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469151,
-            "uid": 1000,
-            "ppid": 1469138,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469154,
-            "uid": 1000,
-            "ppid": 1469151,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469177,
-            "uid": 1000,
-            "ppid": 1469150,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469179,
-            "uid": 1000,
-            "ppid": 1469138,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469201,
-            "uid": 1000,
-            "ppid": 1469154,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469223,
-            "uid": 1000,
-            "ppid": 1469154,
-            "cmdlines": [
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469224,
-            "uid": 1000,
-            "ppid": 1469154,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --change-stack-guard-on-fork=enab"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469245,
-            "uid": 1000,
-            "ppid": 1469154,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --change-stack-guard-on-fork=enab"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469248,
-            "uid": 1000,
-            "ppid": 1469154,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1469142 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --extension-process --change-stac"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469632,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-1-argv-url"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1469725,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-1-argv-url"
-            ],
-            "layer": "helper"
-          }
-        ],
-        "environ": {
-          "EACCES": 1868
-        },
-        "privateProbes": {},
-        "hits": [
-          {
-            "pid": 1469101,
-            "field": "cmdline",
-            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:39925/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoftwz"
-          },
-          {
-            "pid": 1469138,
-            "field": "cmdline",
-            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url http://127.0.0.1:39925/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoftwz"
-          }
-        ]
-      }
-    },
-    {
-      "strategy": "private-file",
-      "openerArgv": [
-        "xdg-open",
-        "<TRIAL_ROOT>/handoff-ZX3d4p/open.html"
-      ],
-      "launcherEnvLeak": false,
-      "delivered": true,
-      "deliveryMs": 280,
-      "leak": false,
-      "observer": {
-        "observerUid": 65534,
-        "observerCapEff": "0000000000000000",
-        "sweeps": 201,
-        "scannedProcesses": 793,
-        "layers": {
-          "launcher": 1,
-          "opener": 1,
-          "browser": 12,
-          "helper": 2
-        },
-        "processes": [
-          {
-            "pid": 1467485,
-            "uid": 1000,
-            "ppid": 1467483,
-            "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
-            ],
-            "layer": "launcher"
-          },
-          {
-            "pid": 1469911,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-ZX3d4p/open.html"
-            ],
-            "layer": "opener"
-          },
-          {
-            "pid": 1469961,
-            "uid": 1000,
-            "ppid": 1469911,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file <TRIAL_ROOT>/handoff-ZX3d4",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469971,
-            "uid": 1000,
-            "ppid": 1469961,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-f",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469972,
-            "uid": 1000,
-            "ppid": 1469961,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-g"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469977,
-            "uid": 1000,
-            "ppid": 1469972,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-g"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1469999,
-            "uid": 1000,
-            "ppid": 1469971,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470001,
-            "uid": 1000,
-            "ppid": 1469961,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470013,
-            "uid": 1000,
-            "ppid": 1469977,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470043,
-            "uid": 1000,
-            "ppid": 1469977,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-guard-on-fork=",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470044,
-            "uid": 1000,
-            "ppid": 1469977,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-guard-on-fork=",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470065,
-            "uid": 1000,
-            "ppid": 1469977,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470066,
-            "uid": 1000,
-            "ppid": 1469977,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --extension-process --change-"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470110,
-            "uid": 1000,
-            "ppid": 1469977,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1469965 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470529,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-1-private-file"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1470588,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-1-private-file"
-            ],
-            "layer": "helper"
-          }
-        ],
-        "environ": {
-          "EACCES": 1899
-        },
-        "privateProbes": {
-          "<TRIAL_ROOT>/handoff-ZX3d4p": {
-            "EACCES": 20,
-            "ENOENT": 181
-          },
-          "<TRIAL_ROOT>/handoff-ZX3d4p/open.html": {
-            "EACCES": 20,
-            "ENOENT": 181
-          }
-        },
-        "hits": []
-      }
-    },
-    {
-      "strategy": "argv-url",
-      "openerArgv": [
-        "xdg-open",
-        "http://127.0.0.1:45851/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofy8y"
-      ],
-      "launcherEnvLeak": false,
-      "delivered": true,
-      "deliveryMs": 257,
-      "leak": true,
-      "observer": {
-        "observerUid": 65534,
-        "observerCapEff": "0000000000000000",
-        "sweeps": 209,
-        "scannedProcesses": 757,
-        "layers": {
-          "launcher": 1,
-          "opener": 1,
-          "browser": 11,
-          "helper": 2
-        },
-        "processes": [
-          {
-            "pid": 1467485,
-            "uid": 1000,
-            "ppid": 1467483,
-            "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
-            ],
-            "layer": "launcher"
-          },
-          {
-            "pid": 1470693,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:45851/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofy8y",
-              "[xdg-open]"
-            ],
-            "layer": "opener"
-          },
-          {
-            "pid": 1470732,
-            "uid": 1000,
-            "ppid": 1470693,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url http://127.0.0.1:45851/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofy8y",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470740,
-            "uid": 1000,
-            "ppid": 1470732,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url ",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470741,
-            "uid": 1000,
-            "ppid": 1470732,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470743,
-            "uid": 1000,
-            "ppid": 1470741,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470766,
-            "uid": 1000,
-            "ppid": 1470740,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470769,
-            "uid": 1000,
-            "ppid": 1470732,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470780,
-            "uid": 1000,
-            "ppid": 1470743,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470807,
-            "uid": 1000,
-            "ppid": 1470743,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard-on-fork=enab",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470808,
-            "uid": 1000,
-            "ppid": 1470743,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard-on-fork=enab",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470826,
-            "uid": 1000,
-            "ppid": 1470743,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard-on-fork=enab",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1470829,
-            "uid": 1000,
-            "ppid": 1470743,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1470734 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --extension-process --change-stac",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471036,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-2-argv-url"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1471165,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-2-argv-url"
-            ],
-            "layer": "helper"
-          }
-        ],
-        "environ": {
-          "EACCES": 2029
-        },
-        "privateProbes": {},
-        "hits": [
-          {
-            "pid": 1470693,
-            "field": "cmdline",
-            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:45851/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofy8y"
-          },
-          {
-            "pid": 1470732,
-            "field": "cmdline",
-            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url http://127.0.0.1:45851/__khala/bootstrap#credential=<CANARY>&channel=channel-mugofy8y"
-          }
-        ]
-      }
-    },
-    {
-      "strategy": "private-file",
-      "openerArgv": [
-        "xdg-open",
-        "<TRIAL_ROOT>/handoff-ZCSTMu/open.html"
-      ],
-      "launcherEnvLeak": false,
-      "delivered": true,
-      "deliveryMs": 300,
-      "leak": false,
-      "observer": {
-        "observerUid": 65534,
-        "observerCapEff": "0000000000000000",
-        "sweeps": 205,
-        "scannedProcesses": 762,
-        "layers": {
-          "launcher": 1,
-          "opener": 1,
-          "browser": 12,
-          "helper": 3
-        },
-        "processes": [
-          {
-            "pid": 1467485,
-            "uid": 1000,
-            "ppid": 1467483,
-            "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
-            ],
-            "layer": "launcher"
-          },
-          {
-            "pid": 1471363,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-ZCSTMu/open.html"
-            ],
-            "layer": "opener"
-          },
-          {
-            "pid": 1471383,
-            "uid": 1000,
-            "ppid": 1471363,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-mime query default text/html"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1471413,
-            "uid": 1000,
-            "ppid": 1471363,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file <TRIAL_ROOT>/handoff-ZCSTM",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471423,
-            "uid": 1000,
-            "ppid": 1471413,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-f",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471424,
-            "uid": 1000,
-            "ppid": 1471413,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-g"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471429,
-            "uid": 1000,
-            "ppid": 1471424,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-g"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471451,
-            "uid": 1000,
-            "ppid": 1471423,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471454,
-            "uid": 1000,
-            "ppid": 1471413,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471465,
-            "uid": 1000,
-            "ppid": 1471429,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471488,
-            "uid": 1000,
-            "ppid": 1471429,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-guard-on-fork=",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471489,
-            "uid": 1000,
-            "ppid": 1471429,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471511,
-            "uid": 1000,
-            "ppid": 1471429,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471512,
-            "uid": 1000,
-            "ppid": 1471429,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --extension-process --change-"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471557,
-            "uid": 1000,
-            "ppid": 1471429,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1471416 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1471751,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-2-private-file"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1471823,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-2-private-file"
-            ],
-            "layer": "helper"
-          }
-        ],
-        "environ": {
-          "EACCES": 1846
-        },
-        "privateProbes": {
-          "<TRIAL_ROOT>/handoff-ZCSTMu": {
-            "EACCES": 23,
-            "ENOENT": 182
-          },
-          "<TRIAL_ROOT>/handoff-ZCSTMu/open.html": {
-            "EACCES": 23,
-            "ENOENT": 182
-          }
-        },
-        "hits": []
-      }
-    },
-    {
-      "strategy": "argv-url",
-      "openerArgv": [
-        "xdg-open",
-        "http://127.0.0.1:37663/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog2gp"
-      ],
-      "launcherEnvLeak": false,
-      "delivered": true,
-      "deliveryMs": 260,
-      "leak": true,
-      "observer": {
-        "observerUid": 65534,
-        "observerCapEff": "0000000000000000",
-        "sweeps": 204,
-        "scannedProcesses": 762,
-        "layers": {
-          "launcher": 1,
-          "opener": 1,
-          "browser": 11,
-          "helper": 2
-        },
-        "processes": [
-          {
-            "pid": 1467485,
-            "uid": 1000,
-            "ppid": 1467483,
-            "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
-            ],
-            "layer": "launcher"
-          },
-          {
-            "pid": 1471987,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:37663/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog2gp"
-            ],
-            "layer": "opener"
-          },
-          {
-            "pid": 1472026,
-            "uid": 1000,
-            "ppid": 1471987,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url http://127.0.0.1:37663/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog2gp",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472034,
-            "uid": 1000,
-            "ppid": 1472026,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url ",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472035,
-            "uid": 1000,
-            "ppid": 1472026,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472039,
-            "uid": 1000,
-            "ppid": 1472035,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472062,
-            "uid": 1000,
-            "ppid": 1472034,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472064,
-            "uid": 1000,
-            "ppid": 1472026,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472074,
-            "uid": 1000,
-            "ppid": 1472039,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472094,
-            "uid": 1000,
-            "ppid": 1472039,
-            "cmdlines": [
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472095,
-            "uid": 1000,
-            "ppid": 1472039,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --change-stack-guard-on-fork=enab"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472114,
-            "uid": 1000,
-            "ppid": 1472039,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --change-stack-guard-on-fork=enab"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472117,
-            "uid": 1000,
-            "ppid": 1472039,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1472028 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --extension-process --change-stac"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472439,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-3-argv-url"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1472481,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-3-argv-url"
-            ],
-            "layer": "helper"
-          }
-        ],
-        "environ": {
-          "EACCES": 1959
-        },
-        "privateProbes": {},
-        "hits": [
-          {
-            "pid": 1471987,
-            "field": "cmdline",
-            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:37663/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog2gp"
-          },
-          {
-            "pid": 1472026,
-            "field": "cmdline",
-            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url http://127.0.0.1:37663/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog2gp"
-          }
-        ]
-      }
-    },
-    {
-      "strategy": "private-file",
-      "openerArgv": [
-        "xdg-open",
-        "<TRIAL_ROOT>/handoff-yHgMrN/open.html"
-      ],
-      "launcherEnvLeak": false,
-      "delivered": true,
-      "deliveryMs": 294,
-      "leak": false,
-      "observer": {
-        "observerUid": 65534,
-        "observerCapEff": "0000000000000000",
-        "sweeps": 204,
-        "scannedProcesses": 766,
-        "layers": {
-          "launcher": 1,
-          "opener": 1,
-          "browser": 12,
-          "helper": 3
-        },
-        "processes": [
-          {
-            "pid": 1467485,
-            "uid": 1000,
-            "ppid": 1467483,
-            "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
-            ],
-            "layer": "launcher"
-          },
-          {
-            "pid": 1472741,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-yHgMrN/open.html"
-            ],
-            "layer": "opener"
-          },
-          {
-            "pid": 1472761,
-            "uid": 1000,
-            "ppid": 1472741,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-mime query default text/html"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1472790,
-            "uid": 1000,
-            "ppid": 1472741,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file <TRIAL_ROOT>/handoff-yHgMr",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472800,
-            "uid": 1000,
-            "ppid": 1472790,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-f",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472801,
-            "uid": 1000,
-            "ppid": 1472790,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-g"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472805,
-            "uid": 1000,
-            "ppid": 1472801,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-g"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472826,
-            "uid": 1000,
-            "ppid": 1472800,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472828,
-            "uid": 1000,
-            "ppid": 1472790,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472863,
-            "uid": 1000,
-            "ppid": 1472805,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472884,
-            "uid": 1000,
-            "ppid": 1472805,
-            "cmdlines": [
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472885,
-            "uid": 1000,
-            "ppid": 1472805,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-guard-on-fork=",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472905,
-            "uid": 1000,
-            "ppid": 1472805,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472906,
-            "uid": 1000,
-            "ppid": 1472805,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --extension-process --change-"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1472941,
-            "uid": 1000,
-            "ppid": 1472805,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1472794 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473127,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-3-private-file"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1473152,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-3-private-file"
-            ],
-            "layer": "helper"
-          }
-        ],
-        "environ": {
-          "EACCES": 1933
-        },
-        "privateProbes": {
-          "<TRIAL_ROOT>/handoff-yHgMrN": {
-            "EACCES": 19,
-            "ENOENT": 185
-          },
-          "<TRIAL_ROOT>/handoff-yHgMrN/open.html": {
-            "EACCES": 19,
-            "ENOENT": 185
-          }
-        },
-        "hits": []
-      }
-    },
-    {
-      "strategy": "argv-url",
-      "openerArgv": [
-        "xdg-open",
-        "http://127.0.0.1:46807/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog6ph"
-      ],
-      "launcherEnvLeak": false,
-      "delivered": true,
-      "deliveryMs": 260,
-      "leak": true,
-      "observer": {
-        "observerUid": 65534,
-        "observerCapEff": "0000000000000000",
-        "sweeps": 216,
-        "scannedProcesses": 746,
-        "layers": {
-          "launcher": 1,
-          "opener": 1,
-          "browser": 11,
-          "helper": 2
-        },
-        "processes": [
-          {
-            "pid": 1467485,
-            "uid": 1000,
-            "ppid": 1467483,
-            "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
-            ],
-            "layer": "launcher"
-          },
-          {
-            "pid": 1473283,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:46807/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog6ph"
-            ],
-            "layer": "opener"
-          },
-          {
-            "pid": 1473321,
-            "uid": 1000,
-            "ppid": 1473283,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url http://127.0.0.1:46807/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog6ph",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473333,
-            "uid": 1000,
-            "ppid": 1473321,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url ",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473334,
-            "uid": 1000,
-            "ppid": 1473321,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473337,
-            "uid": 1000,
-            "ppid": 1473334,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --change-stack-guard"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473359,
-            "uid": 1000,
-            "ppid": 1473333,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473361,
-            "uid": 1000,
-            "ppid": 1473321,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473377,
-            "uid": 1000,
-            "ppid": 1473337,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473397,
-            "uid": 1000,
-            "ppid": 1473337,
-            "cmdlines": [
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473398,
-            "uid": 1000,
-            "ppid": 1473337,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --change-stack-guard-on-fork=enab"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473421,
-            "uid": 1000,
-            "ppid": 1473337,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --change-stack-guard-on-fork=enab"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473422,
-            "uid": 1000,
-            "ppid": 1473337,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1473327 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --extension-process --change-stac"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473594,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-4-argv-url"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1473654,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-4-argv-url"
-            ],
-            "layer": "helper"
-          }
-        ],
-        "environ": {
-          "EACCES": 2080
-        },
-        "privateProbes": {},
-        "hits": [
-          {
-            "pid": 1473283,
-            "field": "cmdline",
-            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:46807/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog6ph"
-          },
-          {
-            "pid": 1473321,
-            "field": "cmdline",
-            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url http://127.0.0.1:46807/__khala/bootstrap#credential=<CANARY>&channel=channel-mugog6ph"
-          }
-        ]
-      }
-    },
-    {
-      "strategy": "private-file",
-      "openerArgv": [
-        "xdg-open",
-        "<TRIAL_ROOT>/handoff-eARNJA/open.html"
-      ],
-      "launcherEnvLeak": false,
-      "delivered": true,
-      "deliveryMs": 273,
-      "leak": false,
-      "observer": {
-        "observerUid": 65534,
-        "observerCapEff": "0000000000000000",
-        "sweeps": 221,
-        "scannedProcesses": 725,
-        "layers": {
-          "launcher": 1,
-          "opener": 1,
-          "browser": 12,
-          "helper": 2
-        },
-        "processes": [
-          {
-            "pid": 1467485,
-            "uid": 1000,
-            "ppid": 1467483,
-            "cmdlines": [
-              "node run.mjs --browser chromium --trials 5 --out evidence/linux-xdg-open-generic-chromium.json"
-            ],
-            "layer": "launcher"
-          },
-          {
-            "pid": 1473762,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-eARNJA/open.html"
-            ],
-            "layer": "opener"
-          },
-          {
-            "pid": 1473810,
-            "uid": 1000,
-            "ppid": 1473762,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file <TRIAL_ROOT>/handoff-eARNJ",
-              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473818,
-            "uid": 1000,
-            "ppid": 1473810,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-f",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473819,
-            "uid": 1000,
-            "ppid": 1473810,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-g"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473821,
-            "uid": 1000,
-            "ppid": 1473819,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-g"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473844,
-            "uid": 1000,
-            "ppid": 1473818,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473847,
-            "uid": 1000,
-            "ppid": 1473810,
-            "cmdlines": [
-              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473857,
-            "uid": 1000,
-            "ppid": 1473821,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473878,
-            "uid": 1000,
-            "ppid": 1473821,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-guard-on-fork=",
-              "[chromium]"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473879,
-            "uid": 1000,
-            "ppid": 1473821,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473899,
-            "uid": 1000,
-            "ppid": 1473821,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473900,
-            "uid": 1000,
-            "ppid": 1473821,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --extension-process --change-"
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1473942,
-            "uid": 1000,
-            "ppid": 1473821,
-            "cmdlines": [
-              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1473812 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-guard-on-fork="
-            ],
-            "layer": "browser"
-          },
-          {
-            "pid": 1474164,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-4-private-file"
-            ],
-            "layer": "helper"
-          },
-          {
-            "pid": 1474198,
-            "uid": 1000,
-            "ppid": 1467485,
-            "cmdlines": [
-              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-4-private-file"
             ],
             "layer": "helper"
           }
@@ -1897,13 +391,1499 @@
           "EACCES": 1965
         },
         "privateProbes": {
-          "<TRIAL_ROOT>/handoff-eARNJA": {
-            "EACCES": 22,
-            "ENOENT": 199
+          "<TRIAL_ROOT>/handoff-lurujx": {
+            "EACCES": 18,
+            "ENOENT": 188
           },
-          "<TRIAL_ROOT>/handoff-eARNJA/open.html": {
-            "EACCES": 22,
-            "ENOENT": 199
+          "<TRIAL_ROOT>/handoff-lurujx/open.html": {
+            "EACCES": 18,
+            "ENOENT": 188
+          }
+        },
+        "hits": []
+      }
+    },
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:46445/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou1j5"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 215,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 199,
+        "scannedProcesses": 734,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 11,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1552373,
+            "uid": 1000,
+            "ppid": 1552370,
+            "cmdlines": [
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1553413,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:46445/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou1j5"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1553451,
+            "uid": 1000,
+            "ppid": 1553413,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url http://127.0.0.1:46445/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou1j5",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553460,
+            "uid": 1000,
+            "ppid": 1553451,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url ",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553462,
+            "uid": 1000,
+            "ppid": 1553451,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553467,
+            "uid": 1000,
+            "ppid": 1553462,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553489,
+            "uid": 1000,
+            "ppid": 1553460,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553491,
+            "uid": 1000,
+            "ppid": 1553451,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553505,
+            "uid": 1000,
+            "ppid": 1553467,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553528,
+            "uid": 1000,
+            "ppid": 1553467,
+            "cmdlines": [
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553529,
+            "uid": 1000,
+            "ppid": 1553467,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --change-stack-guard-on-fork=enab",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553548,
+            "uid": 1000,
+            "ppid": 1553467,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --change-stack-guard-on-fork=enab",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553551,
+            "uid": 1000,
+            "ppid": 1553467,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1553454 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url --extension-process --change-stac",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1553802,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-1-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1553850,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-1-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 1934
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1553413,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:46445/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou1j5"
+          },
+          {
+            "pid": 1553451,
+            "field": "cmdline",
+            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-argv-url http://127.0.0.1:46445/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou1j5"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-Hsg8N2/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 237,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 196,
+        "scannedProcesses": 728,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 12,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1552373,
+            "uid": 1000,
+            "ppid": 1552370,
+            "cmdlines": [
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1553975,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-Hsg8N2/open.html"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1554023,
+            "uid": 1000,
+            "ppid": 1553975,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file <TRIAL_ROOT>/handoff-Hsg8N",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554035,
+            "uid": 1000,
+            "ppid": 1554023,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-f",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554036,
+            "uid": 1000,
+            "ppid": 1554023,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554039,
+            "uid": 1000,
+            "ppid": 1554036,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554062,
+            "uid": 1000,
+            "ppid": 1554035,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554066,
+            "uid": 1000,
+            "ppid": 1554023,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554078,
+            "uid": 1000,
+            "ppid": 1554039,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554101,
+            "uid": 1000,
+            "ppid": 1554039,
+            "cmdlines": [
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554102,
+            "uid": 1000,
+            "ppid": 1554039,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-guard-on-fork=",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554123,
+            "uid": 1000,
+            "ppid": 1554039,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554124,
+            "uid": 1000,
+            "ppid": 1554039,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --extension-process --change-"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554167,
+            "uid": 1000,
+            "ppid": 1554039,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1554029 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-1-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554301,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-1-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1554383,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-1-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 1881
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-Hsg8N2": {
+            "EACCES": 17,
+            "ENOENT": 179
+          },
+          "<TRIAL_ROOT>/handoff-Hsg8N2/open.html": {
+            "EACCES": 17,
+            "ENOENT": 179
+          }
+        },
+        "hits": []
+      }
+    },
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:46683/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou5fd"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 200,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 205,
+        "scannedProcesses": 714,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 11,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1552373,
+            "uid": 1000,
+            "ppid": 1552370,
+            "cmdlines": [
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1554585,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:46683/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou5fd"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1554624,
+            "uid": 1000,
+            "ppid": 1554585,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url http://127.0.0.1:46683/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou5fd",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554632,
+            "uid": 1000,
+            "ppid": 1554624,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url ",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554633,
+            "uid": 1000,
+            "ppid": 1554624,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554635,
+            "uid": 1000,
+            "ppid": 1554633,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554660,
+            "uid": 1000,
+            "ppid": 1554632,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554662,
+            "uid": 1000,
+            "ppid": 1554624,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554672,
+            "uid": 1000,
+            "ppid": 1554635,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554692,
+            "uid": 1000,
+            "ppid": 1554635,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard-on-fork=enab",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554693,
+            "uid": 1000,
+            "ppid": 1554635,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard-on-fork=enab"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554711,
+            "uid": 1000,
+            "ppid": 1554635,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --change-stack-guard-on-fork=enab"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554714,
+            "uid": 1000,
+            "ppid": 1554635,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1554626 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url --extension-process --change-stac"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1554902,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-2-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1554930,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-2-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 1935
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1554585,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:46683/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou5fd"
+          },
+          {
+            "pid": 1554624,
+            "field": "cmdline",
+            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-argv-url http://127.0.0.1:46683/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou5fd"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-O1yF71/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 234,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 215,
+        "scannedProcesses": 732,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 12,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1552373,
+            "uid": 1000,
+            "ppid": 1552370,
+            "cmdlines": [
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1555038,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-O1yF71/open.html"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1555087,
+            "uid": 1000,
+            "ppid": 1555038,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file <TRIAL_ROOT>/handoff-O1yF7",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555099,
+            "uid": 1000,
+            "ppid": 1555087,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-f",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555100,
+            "uid": 1000,
+            "ppid": 1555087,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555105,
+            "uid": 1000,
+            "ppid": 1555100,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555126,
+            "uid": 1000,
+            "ppid": 1555099,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555128,
+            "uid": 1000,
+            "ppid": 1555087,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555143,
+            "uid": 1000,
+            "ppid": 1555105,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555164,
+            "uid": 1000,
+            "ppid": 1555105,
+            "cmdlines": [
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555165,
+            "uid": 1000,
+            "ppid": 1555105,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555186,
+            "uid": 1000,
+            "ppid": 1555105,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555188,
+            "uid": 1000,
+            "ppid": 1555105,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --extension-process --change-"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555231,
+            "uid": 1000,
+            "ppid": 1555105,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1555093 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-2-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555408,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-2-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1555449,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-2-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 1896
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-O1yF71": {
+            "EACCES": 18,
+            "ENOENT": 197
+          },
+          "<TRIAL_ROOT>/handoff-O1yF71/open.html": {
+            "EACCES": 18,
+            "ENOENT": 197
+          }
+        },
+        "hits": []
+      }
+    },
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:42105/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou9tw"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 207,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 203,
+        "scannedProcesses": 736,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 11,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1552373,
+            "uid": 1000,
+            "ppid": 1552370,
+            "cmdlines": [
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1555578,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:42105/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou9tw"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1555617,
+            "uid": 1000,
+            "ppid": 1555578,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url http://127.0.0.1:42105/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou9tw",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555628,
+            "uid": 1000,
+            "ppid": 1555617,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url ",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555629,
+            "uid": 1000,
+            "ppid": 1555617,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555633,
+            "uid": 1000,
+            "ppid": 1555629,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555654,
+            "uid": 1000,
+            "ppid": 1555628,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555657,
+            "uid": 1000,
+            "ppid": 1555617,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555671,
+            "uid": 1000,
+            "ppid": 1555633,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555695,
+            "uid": 1000,
+            "ppid": 1555633,
+            "cmdlines": [
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555696,
+            "uid": 1000,
+            "ppid": 1555633,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --change-stack-guard-on-fork=enab"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555714,
+            "uid": 1000,
+            "ppid": 1555633,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --change-stack-guard-on-fork=enab"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555717,
+            "uid": 1000,
+            "ppid": 1555633,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1555622 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url --extension-process --change-stac"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1555864,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-3-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1555991,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-3-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 1978
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1555578,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:42105/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou9tw"
+          },
+          {
+            "pid": 1555617,
+            "field": "cmdline",
+            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-argv-url http://127.0.0.1:42105/__khala/bootstrap#credential=<CANARY>&channel=channel-mugou9tw"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-nkTqy1/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 229,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 194,
+        "scannedProcesses": 763,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 12,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1552373,
+            "uid": 1000,
+            "ppid": 1552370,
+            "cmdlines": [
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1556124,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-nkTqy1/open.html"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1556177,
+            "uid": 1000,
+            "ppid": 1556124,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file <TRIAL_ROOT>/handoff-nkTqy",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556187,
+            "uid": 1000,
+            "ppid": 1556177,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-f",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556188,
+            "uid": 1000,
+            "ppid": 1556177,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556197,
+            "uid": 1000,
+            "ppid": 1556188,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556218,
+            "uid": 1000,
+            "ppid": 1556187,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556220,
+            "uid": 1000,
+            "ppid": 1556177,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556240,
+            "uid": 1000,
+            "ppid": 1556197,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556268,
+            "uid": 1000,
+            "ppid": 1556197,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-guard-on-fork=",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556269,
+            "uid": 1000,
+            "ppid": 1556197,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-guard-on-fork=",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556290,
+            "uid": 1000,
+            "ppid": 1556197,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556291,
+            "uid": 1000,
+            "ppid": 1556197,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --extension-process --change-"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556326,
+            "uid": 1000,
+            "ppid": 1556197,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1556181 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-3-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556736,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-3-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1556786,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-3-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 1817
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-nkTqy1": {
+            "EACCES": 17,
+            "ENOENT": 177
+          },
+          "<TRIAL_ROOT>/handoff-nkTqy1/open.html": {
+            "EACCES": 17,
+            "ENOENT": 177
+          }
+        },
+        "hits": []
+      }
+    },
+    {
+      "strategy": "argv-url",
+      "openerArgv": [
+        "xdg-open",
+        "http://127.0.0.1:40251/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoudpo"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 200,
+      "leak": true,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 201,
+        "scannedProcesses": 726,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 11,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1552373,
+            "uid": 1000,
+            "ppid": 1552370,
+            "cmdlines": [
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1556892,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open http://127.0.0.1:40251/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoudpo"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1556929,
+            "uid": 1000,
+            "ppid": 1556892,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url http://127.0.0.1:40251/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoudpo",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftshader"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556939,
+            "uid": 1000,
+            "ppid": 1556929,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url ",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556940,
+            "uid": 1000,
+            "ppid": 1556929,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556942,
+            "uid": 1000,
+            "ppid": 1556940,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --change-stack-guard"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556964,
+            "uid": 1000,
+            "ppid": 1556939,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556966,
+            "uid": 1000,
+            "ppid": 1556929,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556978,
+            "uid": 1000,
+            "ppid": 1556942,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556997,
+            "uid": 1000,
+            "ppid": 1556942,
+            "cmdlines": [
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1556998,
+            "uid": 1000,
+            "ppid": 1556942,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --change-stack-guard-on-fork=enab",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557021,
+            "uid": 1000,
+            "ppid": 1556942,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --change-stack-guard-on-fork=enab",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557022,
+            "uid": 1000,
+            "ppid": 1556942,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1556933 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url --extension-process --change-stac",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557251,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-4-argv-url"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1557279,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-4-argv-url"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 1902
+        },
+        "privateProbes": {},
+        "hits": [
+          {
+            "pid": 1556892,
+            "field": "cmdline",
+            "sample": "/bin/sh /usr/bin/xdg-open http://127.0.0.1:40251/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoudpo"
+          },
+          {
+            "pid": 1556929,
+            "field": "cmdline",
+            "sample": "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-argv-url http://127.0.0.1:40251/__khala/bootstrap#credential=<CANARY>&channel=channel-mugoudpo"
+          }
+        ]
+      }
+    },
+    {
+      "strategy": "private-file",
+      "openerArgv": [
+        "xdg-open",
+        "<TRIAL_ROOT>/handoff-84YwLt/open.html"
+      ],
+      "launcherEnvLeak": false,
+      "delivered": true,
+      "deliveryMs": 221,
+      "leak": false,
+      "observer": {
+        "observerUid": 65534,
+        "observerCapEff": "0000000000000000",
+        "sweeps": 206,
+        "scannedProcesses": 719,
+        "layers": {
+          "launcher": 1,
+          "opener": 1,
+          "browser": 12,
+          "helper": 2
+        },
+        "processes": [
+          {
+            "pid": 1552373,
+            "uid": 1000,
+            "ppid": 1552370,
+            "cmdlines": [
+              "node $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/run.mjs --browser chromium --trials 5 --out $HOME/.aiur/workspaces/aiur-team/khala/190/experiments/internal-mode/internal-core/browser-handoff/evidence/linux-xdg-open-generic-chr"
+            ],
+            "layer": "launcher"
+          },
+          {
+            "pid": 1557381,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "/bin/sh /usr/bin/xdg-open <TRIAL_ROOT>/handoff-84YwLt/open.html"
+            ],
+            "layer": "opener"
+          },
+          {
+            "pid": 1557427,
+            "uid": 1000,
+            "ppid": 1557381,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file <TRIAL_ROOT>/handoff-84YwL",
+              "/usr/lib/chromium/chromium --headless=new --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --noerrdialogs --no-first-run --ozone-platform=headless --ozone-override-screen-size=800,600 --use-angle=swiftsh"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557435,
+            "uid": 1000,
+            "ppid": 1557427,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --no-zygote-sandbox --headless=new --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-f",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557436,
+            "uid": 1000,
+            "ppid": 1557427,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557440,
+            "uid": 1000,
+            "ppid": 1557436,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=zygote --headless=new --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-g"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557462,
+            "uid": 1000,
+            "ppid": 1557435,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=gpu-process --headless=new --ozone-platform=headless --use-angle=swiftshader-webgl --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.aiur-runtime/tmp/khala-browser-h"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557464,
+            "uid": 1000,
+            "ppid": 1557427,
+            "cmdlines": [
+              "/proc/self/exe --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team/khala/190/.",
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --use-angle=swiftshader-webgl --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-team",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557476,
+            "uid": 1000,
+            "ppid": 1557440,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=utility --utility-sub-type=storage.mojom.StorageService --lang=en-US --service-sandbox-type=utility --use-angle=swiftshader-webgl --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=$HOME/.aiur/workspaces/aiur-t"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557495,
+            "uid": 1000,
+            "ppid": 1557440,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-guard-on-fork=",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557496,
+            "uid": 1000,
+            "ppid": 1557440,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-guard-on-fork=",
+              "[chromium]"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557517,
+            "uid": 1000,
+            "ppid": 1557440,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557518,
+            "uid": 1000,
+            "ppid": 1557440,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --extension-process --change-"
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557563,
+            "uid": 1000,
+            "ppid": 1557440,
+            "cmdlines": [
+              "/usr/lib/chromium/chromium --type=renderer --crashpad-handler-pid=1557429 --enable-crash-reporter=,Arch Linux --noerrdialogs --user-data-dir=<TRIAL_ROOT>/browser-profile-4-private-file --change-stack-guard-on-fork="
+            ],
+            "layer": "browser"
+          },
+          {
+            "pid": 1557716,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -TERM -f <TRIAL_ROOT>/browser-profile-4-private-file"
+            ],
+            "layer": "helper"
+          },
+          {
+            "pid": 1557739,
+            "uid": 1000,
+            "ppid": 1552373,
+            "cmdlines": [
+              "pkill -KILL -f <TRIAL_ROOT>/browser-profile-4-private-file"
+            ],
+            "layer": "helper"
+          }
+        ],
+        "environ": {
+          "EACCES": 1939
+        },
+        "privateProbes": {
+          "<TRIAL_ROOT>/handoff-84YwLt": {
+            "EACCES": 17,
+            "ENOENT": 189
+          },
+          "<TRIAL_ROOT>/handoff-84YwLt/open.html": {
+            "EACCES": 17,
+            "ENOENT": 189
           }
         },
         "hits": []

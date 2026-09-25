@@ -5,7 +5,7 @@
 
 import { spawn as childSpawn } from 'node:child_process';
 import { containsLeak, leakForms } from './canary.mjs';
-import { OPENER_ENV, OPENER_ENV_REMOVED, automaticOpenDecision } from './profile.mjs';
+import { OPENER_ENV, OPENER_ENV_REMOVED, automaticOpenDecision, captureProfile } from './profile.mjs';
 import { prepareHandoff } from './strategies.mjs';
 
 export const OPENER_COMMAND = 'xdg-open';
@@ -13,18 +13,24 @@ export const OPENER_COMMAND = 'xdg-open';
 export async function openBootstrap({
   bootstrapUrl,
   credential,
-  runtimeProfile,
   matrix,
   handoffParent,
   env,
+  capture = captureProfile,
   spawn = childSpawn,
 }) {
+  const openerEnv = { ...env, ...OPENER_ENV };
+  for (const key of OPENER_ENV_REMOVED) delete openerEnv[key];
+  // The profile is captured from the exact environment the opener will get, so
+  // the handler it names is the handler xdg-open resolves.
+  let runtimeProfile = null;
+  try {
+    runtimeProfile = capture({ env: openerEnv, handoff: 'private-file' });
+  } catch {}
   const decision = automaticOpenDecision(runtimeProfile, matrix);
   if (!decision.open) return { opened: false, reason: decision.reason };
 
   const handoff = await prepareHandoff('private-file', { url: bootstrapUrl, parentDir: handoffParent });
-  const openerEnv = { ...env, ...OPENER_ENV };
-  for (const key of OPENER_ENV_REMOVED) delete openerEnv[key];
   if (containsLeak(JSON.stringify([handoff.argv, openerEnv]), leakForms(credential))) {
     await handoff.cleanup();
     return { opened: false, reason: 'credential would reach opener argv or environment' };

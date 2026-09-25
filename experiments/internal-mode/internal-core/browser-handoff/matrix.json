@@ -8,7 +8,7 @@
       "profile": {
         "os": "linux",
         "procfsHidepid": "off",
-        "opener": { "implementation": "xdg-utils xdg-open", "version": "1.2.1", "mode": "generic" },
+        "opener": { "implementation": "xdg-utils xdg-open", "version": "1.2.1", "mode": "generic", "display": "present" },
         "handler": { "mimeType": "text/html", "exec": "/usr/bin/chromium --headless=new --user-data-dir=<PRIVATE_BROWSER_PROFILE> %U" },
         "browser": { "name": "chromium", "major": "150" },
         "handoff": "private-file"
@@ -21,7 +21,7 @@
       "profile": {
         "os": "linux",
         "procfsHidepid": "off",
-        "opener": { "implementation": "xdg-utils xdg-open", "version": "1.2.1", "mode": "generic" },
+        "opener": { "implementation": "xdg-utils xdg-open", "version": "1.2.1", "mode": "generic", "display": "present" },
         "handler": { "mimeType": "text/html", "exec": "/usr/bin/firefox --headless --no-remote --profile <PRIVATE_BROWSER_PROFILE> %u" },
         "browser": { "name": "firefox", "major": "152" },
         "handoff": "private-file"

@@ -12,7 +12,6 @@ type OpenOutcome =
 openBootstrap(input: {
   bootstrapUrl: string;        // http://127.0.0.1:<port>/__khala/bootstrap#credential=…&channel=…
   credential: string;          // the one-time credential inside bootstrapUrl
-  runtimeProfile: Profile | null;
   matrix: MatrixEntry[];       // matrix.json profiles
   handoffParent: string;       // user-owned directory, e.g. $XDG_RUNTIME_DIR/khala
   env: Record<string, string>;
@@ -24,10 +23,13 @@ openBootstrap(input: {
 1. **Launch never depends on it.** The launcher always prints the manual local
    URL. Every `opened: false` is a normal outcome, and the adapter never
    throws for an environment or opener failure.
-2. **Proven profiles only.** Capture the runtime profile (`captureProfile`).
-   Open only when `automaticOpenDecision` finds an exact match on every
-   `MATCH_FIELDS` entry of a `proven` matrix profile. If any field is missing
-   or unknown, or differs, automatic opening is off.
+2. **Proven profiles only.** The adapter captures the runtime profile
+   (`captureProfile`) itself, from the exact environment it will pass to the
+   opener, so the profiled handler is the one xdg-open resolves. It opens only
+   when `automaticOpenDecision` finds an exact match on every `MATCH_FIELDS`
+   entry of a `proven` matrix profile. That includes whether a display is
+   present. If profiling fails, or any field is missing, unknown or different,
+   automatic opening is off.
 3. **Private-file handoff only.** Create a fresh `0700` directory under
    `handoffParent` and write `open.html` into it with mode `0600` and
    exclusive create. The file holds only the fixed no-referrer document whose
