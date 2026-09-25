@@ -13,8 +13,13 @@ describe('eligibility and transactional claim', () => {
     await w.setPolicy(testPolicy({ version: 4, armedAt: 3, paused: true }));
     expect(await dispatcher.enqueue(job)).toBe('queued');
     await dispatcher.idle();
+    // A paused arrival only persists; it starts no pass.
+    expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: null });
+    dispatcher.wake();
+    await dispatcher.idle();
 
     expect(w.harness.submitted).toHaveLength(0);
+    expect(w.boundary.calls).toHaveLength(0);
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'paused', attemptId: null });
     expect(await w.ledger.transact(tx => tx.causalCount(job.causalRootId))).toBe(0);
 
@@ -103,6 +108,8 @@ describe('eligibility and transactional claim', () => {
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(job);
+    // With no policy the arrival does not wake; a later pass finds the binding gone.
+    dispatcher.wake();
     await dispatcher.idle();
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'rejected', reason: 'stale_binding' });
   });
@@ -142,9 +149,9 @@ describe('eligibility and transactional claim', () => {
 
   it.each([
     ['no policy', null],
-    ['an infinite causal limit', testPolicy({ maxJobsPerCausalRoot: Number.POSITIVE_INFINITY })],
-    ['a zero concurrency limit', testPolicy({ maxConcurrentJobs: 0 })],
-    ['a fractional limit', testPolicy({ maxJobsPerCausalRoot: 1.5 })],
+    ['a per-binding causal limit', malformed(policy => { policy.maxJobsPerCausalRoot = 10; })],
+    ['a per-binding concurrency limit', malformed(policy => { policy.maxConcurrentJobs = 10; })],
+    ['a per-binding busy policy', malformed(policy => { policy.busy = 'queue'; })],
     ['an unreadable expiry', testPolicy({ expiresAt: 'soon' })],
     ['an expiry with an offset', testPolicy({ expiresAt: '2026-09-18T03:00:00+02:00' })],
     ['an expiry on a date that does not exist', testPolicy({ expiresAt: '2026-02-30T00:00:00Z' })],
@@ -153,7 +160,6 @@ describe('eligibility and transactional claim', () => {
     ['a string pause flag', malformed(policy => { policy.paused = 'false'; })],
     ['no expiry field', malformed(policy => delete policy.expiresAt)],
     ['an unknown field', malformed(policy => { policy.resetBy = 'agent'; })],
-    ['a steer busy policy', malformed(policy => { policy.busy = 'steer'; })],
     ['a negative version', testPolicy({ version: -1 })],
     ['a fractional version', testPolicy({ version: 3.5 })],
     ['an arming version after the version', testPolicy({ version: 3, armedAt: 4 })],
@@ -165,6 +171,7 @@ describe('eligibility and transactional claim', () => {
     const { job } = w.add(makeRelease({ releaseId: 'release-1' }));
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(job);
+    dispatcher.wake();
     await dispatcher.idle();
     expect(w.harness.submitted).toHaveLength(0);
     expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'unconfigured' });

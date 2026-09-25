@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { deferred, makeRelease, ownerAuthority, receipt, recordOf, seed, testPolicy, world } from './fixtures/fakes';
+import {
+  deferred, makeRelease, ownerAuthority, receipt, recordOf, seed, testLimits, testPolicy, world,
+} from './fixtures/fakes';
 import type { DeliveryReceipt } from '@khala/contracts/delivery/index';
 
 describe('budget and causal accounting', () => {
   it('blocks the third dispatch under one causal root at maxJobsPerCausalRoot=2', async () => {
-    const w = await world(testPolicy({ maxJobsPerCausalRoot: 2 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxJobsPerCausalRoot: 2 }));
     const dispatcher = w.dispatcher();
     // A→B, B's reply and A's next reply all keep the trusted root `cause-1`.
     for (const [releaseId, bindingId] of [['a-to-b', 'bind-2'], ['b-to-a', 'bind-1'], ['a-to-b-2', 'bind-2']] as const) {
@@ -21,7 +23,7 @@ describe('budget and causal accounting', () => {
   });
 
   it('keeps counters across a restart and never lets a release rewrite its root', async () => {
-    const w = await world(testPolicy({ maxJobsPerCausalRoot: 1 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxJobsPerCausalRoot: 1 }));
     const first = w.dispatcher();
     await first.enqueue(w.add(makeRelease({ releaseId: 'release-1', root: 'cause-1' })).job);
     await first.idle();
@@ -53,7 +55,7 @@ describe('budget and causal accounting', () => {
   });
 
   it('grants the last allowance to only one of two concurrent dispatchers', async () => {
-    const w = await world(testPolicy({ maxJobsPerCausalRoot: 1 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxJobsPerCausalRoot: 1 }));
     await seed(w.ledger, w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-1' })).job);
     await seed(w.ledger, w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2' })).job);
     const a = w.dispatcher({ workerId: 'worker-a' });
@@ -66,7 +68,7 @@ describe('budget and causal accounting', () => {
   });
 
   it('does not refund an unknown outcome, even after the owner abandons it', async () => {
-    const w = await world(testPolicy({ maxJobsPerCausalRoot: 1 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxJobsPerCausalRoot: 1 }));
     w.harness.onSubmit = async () => { throw new Error('connection reset'); };
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
@@ -82,7 +84,7 @@ describe('budget and causal accounting', () => {
   });
 
   it('does not refund a definitive harness rejection', async () => {
-    const w = await world(testPolicy({ maxJobsPerCausalRoot: 1 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxJobsPerCausalRoot: 1 }));
     w.harness.onSubmit = async job => receipt(job, 'failed', { errorCode: 'harness_rejected' });
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
@@ -92,7 +94,7 @@ describe('budget and causal accounting', () => {
   });
 
   it('holds work at the concurrency limit until an active job completes', async () => {
-    const w = await world(testPolicy({ maxConcurrentJobs: 1 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxConcurrentJobs: 1 }));
     const pending = deferred<DeliveryReceipt>();
     w.harness.onSubmit = job => (job.releaseId === 'release-1' ? pending.promise : Promise.resolve(receipt(job, 'harness_queued')));
     const dispatcher = w.dispatcher();
@@ -113,7 +115,7 @@ describe('budget and causal accounting', () => {
 
   describe('busy session', () => {
     async function twoForOneBinding(busy: 'queue' | 'wait' | 'reject', harnessBusy: 'queue' | 'reject' = 'queue') {
-      const w = await world(testPolicy({ busy }));
+      const w = await world(testPolicy(), undefined, testLimits({ busy }));
       w.harness.busy = harnessBusy;
       const dispatcher = w.dispatcher();
       await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
