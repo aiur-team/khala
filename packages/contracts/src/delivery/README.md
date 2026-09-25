@@ -59,6 +59,13 @@ evidence link and configured `DeliveryLimits`. `support: tested` requires eviden
 protocol extension can describe any harness, but only a named version/evidence pair may
 claim tested support.
 
+Version 3 also carries an exact `modes` row for each of `steer`, `sync`, and `async`, plus
+an independent `acknowledgement` value. Mode rows refer only to the user's interactive
+CLI route: hosted app-server/SDK evidence remains secondary and cannot make those rows
+`proven`. `unknown` and `unsupported` always explain why; `proven`, `experimental`, and
+`blocked_without_wrapper` pin the tested version, evidence reference, and immutable
+evidence revision. Mode support never implies batch acknowledgement.
+
 No capability is a boolean. `existingSession`, `immediateNotification` and
 `reconcileByReleaseId` are each `unknown` (not investigated), `unsupported` (investigated
 and absent), or a value naming the proven scope:
@@ -124,8 +131,10 @@ in lockstep for a given contract version. Every envelope carries `v` (`EventRef`
 bump its `v`. A bump is a reviewed change on both producer and consumer. `EventRef` and
 `SessionBinding` mirror the messaging shapes and bump together with them.
 
-`HarnessCapabilities` is currently v2. Its route vocabulary widened from v1, so v1 is
-rejected rather than being reinterpreted under the newer delivery semantics.
+`HarnessCapabilities` is currently v3. Producers always emit v3. Retained v2 values
+decode into a conservative v3 view whose interactive mode rows and acknowledgement are
+`unknown`; legacy hosted/mechanical evidence is never reinterpreted as primary mode
+support. Version 1 remains rejected.
 
 ## Open product gates
 

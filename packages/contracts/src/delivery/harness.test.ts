@@ -32,6 +32,7 @@ describe('HarnessCapabilities', () => {
   it('claims for the proven Codex route only what KHA-104 observed', () => {
     expect(decodeHarnessCapabilities(exact.capabilities)).toEqual({ ok: true, value: exact.capabilities });
     expect(exact.capabilities).toMatchObject({
+      v: 3,
       harness: 'codex',
       version: '0.154.0',
       support: 'tested',
@@ -39,6 +40,10 @@ describe('HarnessCapabilities', () => {
       reconcileByReleaseId: 'while_queued',
       busy: 'queue',
       evidenceRef: 'docs/evidence/codex.md',
+      acknowledgement: 'unknown',
+    });
+    expect(exact.capabilities.modes).toMatchObject({
+      steer: { status: 'unknown' }, sync: { status: 'unknown' }, async: { status: 'unknown' },
     });
   });
 
@@ -83,6 +88,37 @@ describe('HarnessCapabilities', () => {
   it('rejects the v1 capabilities envelope after the v2 route expansion', () => {
     expect(decodeHarnessCapabilities({ ...exact.capabilities, v: 1 }))
       .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
+  });
+
+  it('decodes a retained v2 envelope into a conservative v3 view', () => {
+    const legacy = structuredClone(exact.capabilities) as Record<string, unknown>;
+    legacy.v = 2;
+    delete legacy.modes;
+    delete legacy.acknowledgement;
+    const decoded = decodeHarnessCapabilities(legacy);
+    expect(decoded).toMatchObject({
+      ok: true,
+      value: {
+        v: 3,
+        acknowledgement: 'unknown',
+        modes: {
+          steer: { status: 'unknown' },
+          sync: { status: 'unknown' },
+          async: { status: 'unknown' },
+        },
+      },
+    });
+    if (decoded.ok) {
+      expect(Object.values(decoded.value.modes).every(mode => mode.reason?.includes('v2'))).toBe(true);
+    }
+  });
+
+  it('keeps acknowledgement independent of otherwise identical mode support', () => {
+    for (const acknowledgement of ['unknown', 'unsupported', 'batch_token_next_call'] as const) {
+      expect(decodeHarnessCapabilities({ ...exact.capabilities, acknowledgement })).toEqual({
+        ok: true, value: { ...exact.capabilities, acknowledgement },
+      });
+    }
   });
 
   it('keeps the Claude session and every foreign or generic route out of support claims', () => {

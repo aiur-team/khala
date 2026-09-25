@@ -4,6 +4,7 @@ import {
   type DeliveryReceipt,
   type HarnessCapabilities,
   type HarnessPort,
+  unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/ids';
 import {
@@ -26,7 +27,7 @@ const decodedLimits = decodeDeliveryLimits({ maxSelectionEvents: 32, maxPayloadB
 if (!decodedLimits.ok) throw new Error('invalid limits');
 
 const capabilities: HarnessCapabilities = {
-  v: 2,
+  v: 3,
   harness: 'codex',
   version: '0.154.0',
   adapterVersion: 'native-cli-notification-1',
@@ -38,6 +39,8 @@ const capabilities: HarnessCapabilities = {
   reconcileByReleaseId: 'unsupported',
   limits: decodedLimits.value,
   evidenceRef: 'docs/evidence/codex-native-cli.md#queue-idle',
+  modes: unknownModeSupportMap('test-codex-native', 'Test fixture has no primary mode proof.', '0.154.0'),
+  acknowledgement: 'unknown',
 };
 
 test('selected native capability delivers exact released bytes and reaches channel presence without pending content', async () => {

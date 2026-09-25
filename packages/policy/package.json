@@ -6,6 +6,7 @@
   "exports": {
     "./release/*": "./src/release/*.ts",
     "./release/fixtures/sample": null,
+    "./listening-mode/*": "./src/listening-mode/*.ts",
     "./trust/*": "./src/trust/*.ts"
   },
   "scripts": {

@@ -1,4 +1,4 @@
-import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
+import { type HarnessCapabilities, unknownModeSupportMap } from '@khala/contracts/delivery/index';
 import {
   CLAUDE_ADAPTER_VERSION, CLAUDE_EVIDENCE_REF, CLAUDE_HARNESS, CLAUDE_TESTED_VERSION, type ClaudeNativeRoutePort,
   createClaudeHarness,
@@ -10,7 +10,7 @@ import type { HarnessSubjectFactory, SuiteEnvironment } from './suites';
 
 export function claudeCapabilities(): HarnessCapabilities {
   return {
-    v: 2,
+    v: 3,
     harness: CLAUDE_HARNESS,
     version: CLAUDE_TESTED_VERSION,
     adapterVersion: CLAUDE_ADAPTER_VERSION,
@@ -22,6 +22,12 @@ export function claudeCapabilities(): HarnessCapabilities {
     reconcileByReleaseId: 'unsupported',
     limits: fixtureLimits,
     evidenceRef: CLAUDE_EVIDENCE_REF,
+    modes: unknownModeSupportMap(
+      'claude-interactive-hooks',
+      'The retained negative predates the interactive hook routes; idle agents receive messages only at their next turn until those routes are proved.',
+      CLAUDE_TESTED_VERSION,
+    ),
+    acknowledgement: 'unknown',
   };
 }
 

@@ -3,6 +3,7 @@ import {
   type HarnessCapabilities,
   type HarnessPort,
   type SessionBinding,
+  unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import { describe, expect, it, vi } from 'vitest';
 import { createRuntimeHarnessSelection, type HarnessSelectionStore } from './harnesses';
@@ -23,10 +24,11 @@ const binding = {
 } as SessionBinding;
 
 function capabilities(input: Partial<HarnessCapabilities> = {}): HarnessCapabilities {
+  const version = input.version ?? '0.154.0';
   return {
-    v: 2,
+    v: 3,
     harness: 'codex',
-    version: '0.154.0',
+    version,
     adapterVersion: 'native-cli-notification-1',
     support: 'tested',
     existingSession: 'native_cli_queue',
@@ -36,6 +38,8 @@ function capabilities(input: Partial<HarnessCapabilities> = {}): HarnessCapabili
     reconcileByReleaseId: 'unsupported',
     limits,
     evidenceRef: 'docs/evidence/codex-native-cli.md#queue-idle',
+    modes: unknownModeSupportMap('test-codex-native', 'Test fixture has no primary mode proof.', version),
+    acknowledgement: 'unknown',
     ...input,
   };
 }

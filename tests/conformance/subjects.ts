@@ -4,6 +4,7 @@
 
 import {
   type DeliveryLimits, type HarnessCapabilities, decodeDeliveryLimits, decodeHarnessCapabilities,
+  unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import exact from '../../packages/contracts/fixtures/delivery/exact-release.json';
 import type { SourceVersion } from '../e2e/harness/evidence';
@@ -29,7 +30,7 @@ export const fixtureLimits: DeliveryLimits = unwrap(decodeDeliveryLimits(exact.l
  */
 export function fakeCapabilities(busy: HarnessCapabilities['busy']): HarnessCapabilities {
   return unwrap(decodeHarnessCapabilities({
-    v: 2,
+    v: 3,
     harness: 'fake-reference',
     version: '0',
     adapterVersion: 'tests-e2e-harness',
@@ -41,6 +42,8 @@ export function fakeCapabilities(busy: HarnessCapabilities['busy']): HarnessCapa
     reconcileByReleaseId: 'unknown',
     limits: exact.limits,
     evidenceRef: null,
+    modes: unknownModeSupportMap('fake-interactive', 'Fake subject has no primary mode proof.', '0'),
+    acknowledgement: 'unknown',
   }), 'capabilities');
 }
 
