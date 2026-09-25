@@ -146,23 +146,25 @@ async function handleMessage(
 
   const id = requestId(message);
   if (Object.hasOwn(message, 'id') && !validId(message.id)) return failure(null, -32600, 'Invalid Request');
+  const params = withoutMeta(message.params);
+  if (params === INVALID_META) return failure(id, -32602, 'Invalid params');
 
   switch (message.method) {
     case 'initialize':
-      if (!validInitializeParams(message.params)) return failure(id, -32602, 'Invalid params');
+      if (!validInitializeParams(params)) return failure(id, -32602, 'Invalid params');
       return success(id, {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'khala-agent-cli', version: '0.0.0' },
       });
     case 'ping':
-      return emptyParams(message.params) ? success(id, {}) : failure(id, -32602, 'Invalid params');
+      return emptyParams(params) ? success(id, {}) : failure(id, -32602, 'Invalid params');
     case 'tools/list':
-      return emptyParams(message.params)
+      return emptyParams(params)
         ? success(id, { tools: [sendToolDefinition(), readToolDefinition()] })
         : failure(id, -32602, 'Invalid params');
     case 'tools/call':
-      return callTool(id, message.params, sends, read, postprocessResult, postprocessReadResult, notification);
+      return callTool(id, params, sends, read, postprocessResult, postprocessReadResult, notification);
     default:
       return failure(id, -32601, 'Method not found');
   }
@@ -317,6 +319,17 @@ function validInitializeParams(value: unknown): value is { protocolVersion?: str
   if (Object.hasOwn(value, 'protocolVersion') && typeof value.protocolVersion !== 'string') return false;
   if (Object.hasOwn(value, 'capabilities') && !plainObject(value.capabilities)) return false;
   return !Object.hasOwn(value, 'clientInfo') || plainObject(value.clientInfo);
+}
+
+const INVALID_META = Symbol('invalid _meta');
+
+// MCP reserves `_meta` on every request's params; Codex 0.154.0 sends
+// `{ _meta: { progressToken } }` on `tools/list`. Accept and ignore an object
+// `_meta` so the strict per-method checks below see only method parameters.
+function withoutMeta(value: unknown): unknown {
+  if (!plainObject(value) || !Object.hasOwn(value, '_meta')) return value;
+  const { _meta: meta, ...rest } = value;
+  return plainObject(meta) ? rest : INVALID_META;
 }
 
 function emptyParams(value: unknown): boolean {

@@ -10,7 +10,7 @@ import {
 } from './types.js';
 import { plainObject, validBindingArgument, validIdentifier } from './validation.js';
 import {
-  postprocessMcpResult, postprocessPreselectedMcpResult,
+  postprocessMcpResult, postprocessPreselectedMcpResult, type McpPostprocessSuppression,
 } from '../mcp/result-postprocessor.js';
 import { runMcpServer } from '../mcp/server.js';
 
@@ -128,6 +128,11 @@ async function mcp(args: readonly string[], deps: CliDependencies): Promise<numb
       const latest = publicStatus(await deps.client.status(deps.signal));
       return latest.connected ? latest.binding : null;
     };
+    // Suppressed batches fail open to the plain tool result; report the
+    // content-free stage and code so the operator can see why nothing arrived.
+    const onSuppressed = (suppression: McpPostprocessSuppression) => {
+      deps.stderr.write(JSON.stringify({ ok: false, warning: 'batch_suppressed', ...suppression }) + '\n');
+    };
     await runMcpServer({
       input: deps.stdin,
       output: deps.stdout,
@@ -137,10 +142,12 @@ async function mcp(args: readonly string[], deps: CliDependencies): Promise<numb
         ...input,
         consumer,
         isCurrentBinding: async () => sameHeldBinding(heldBinding, await currentBinding()),
+        onSuppressed,
       }),
       postprocessReadResult: input => postprocessPreselectedMcpResult({
         ...input,
         isCurrentBinding: async () => sameHeldBinding(heldBinding, await currentBinding()),
+        onSuppressed,
       }),
       signal: deps.signal,
     });

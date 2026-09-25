@@ -119,6 +119,12 @@ foreign tokens replay the identical outstanding batch, including across process
 restart. MCP hosts must never keep a release-ID seen set or other replay
 deduplication state, and must never issue an acknowledgement-only call.
 
+Requests may carry the MCP-reserved `_meta` object on any method; it is
+accepted and ignored. When a binding check, inbox selection, or rendering step
+suppresses a batch, the tool result stays unchanged and stderr receives one
+content-free line such as
+`{"ok":false,"warning":"batch_suppressed","stage":"read","code":"storage_failed"}`.
+
 `mcp-serve` and `listen` share the inbox's single-consumer lease, so concurrent
 consumers fail with `listener_busy`. Explicit `khala_read` selects directly;
 every valid `khala_send` result may also select and append an incidental
