@@ -6,7 +6,7 @@
 import type {
   CausalRootId, EventRef, ReleaseApproval, ReleaseId, SessionBinding,
 } from '@khala/contracts/delivery/index';
-import { approvedAutomation, isAutomationConfig } from './gate';
+import { type AutomationAuthority, resolveAutomation } from './gate';
 import type { BindingStatus, TrustState } from './types';
 
 /**
@@ -77,19 +77,23 @@ export type AutomaticReleaseDecision =
 const held = (reason: HoldReason): AutomaticReleaseDecision => ({ kind: 'held', reason });
 
 /**
- * Decides whether one event may be released without owner review. While
- * G-AUTOMATION is open every event holds as `automation_gated` (see `gate.ts`).
+ * Decides whether one event may be released without owner review. Unless the
+ * injected `automation` authority approves limits, every event holds as
+ * `automation_gated` (see `gate.ts`); hosted composition always injects the closed one.
  * Beyond the gate every doubt still holds: missing or unconfirmed policy, a newer
  * request not yet enforced, a changed or revoked binding, a peer outside scope, an
  * event that predates activation, or an exhausted budget or causal chain. An event
  * that was already released keeps its release identity; delivered content cannot
  * be recalled, so a retry must not mint another release.
  */
-export function evaluateAutomaticRelease(input: AutomaticReleaseInput): AutomaticReleaseDecision {
+export function evaluateAutomaticRelease(
+  input: AutomaticReleaseInput,
+  authority: AutomationAuthority,
+): AutomaticReleaseDecision {
   const { state, freshness, binding, event } = input;
   if (input.priorReleaseId !== null) return { kind: 'duplicate', releaseId: input.priorReleaseId };
-  const automation = approvedAutomation();
-  if (!isAutomationConfig(automation)) return held('automation_gated');
+  const automation = resolveAutomation(authority);
+  if (automation === null) return held('automation_gated');
   if (input.bindingStatus !== 'active') return held('binding_revoked');
   if (state === null || state.effective === null) return held('policy_unknown');
   if (freshness.kind !== 'confirmed') return held('policy_unconfirmed');

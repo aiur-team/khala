@@ -1,18 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { BindingId, CommandId, DeliveryLimits, HarnessCapabilities, RoomId } from '@khala/contracts/delivery/index';
 import {
-  ALICE, BINDING, MALLORY, OTHER_PEER, PEER, ack, command, owner, start,
+  ALICE, BINDING, MALLORY, OTHER_PEER, PEER, ack, command, exampleAutomation, owner, start,
 } from '../../test/trust/fakes';
-import { applyPolicyAck, applyRebind, evaluatePolicyChange, trustView } from './transitions';
+import { applyPolicyAck, applyRebind, evaluatePolicyChange as evaluate, trustView } from './transitions';
 import type { TrustState } from './types';
 
-// These tests exercise transitions as they will behave once G-AUTOMATION opens,
-// using example limits that are not approved values. `gate.test.ts` proves the real
-// seam keeps every `auto` request refused.
-vi.mock('./gate', async importOriginal => ({
-  ...await importOriginal<typeof import('./gate')>(),
-  approvedAutomation: () => ({ maxCausalDepth: 3 }),
-}));
+// These tests exercise transitions under an injected bounded authority with example
+// limits that are not approved values. `gate.test.ts` proves the closed hosted
+// authority keeps every `auto` request refused.
+const evaluatePolicyChange = (...args: Parameters<typeof evaluate> extends [...infer A, unknown] ? A : never) =>
+  evaluate(...args, exampleAutomation());
 
 const id = (value: string) => value as CommandId;
 

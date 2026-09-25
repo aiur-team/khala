@@ -6,7 +6,7 @@ import {
   samePolicySetCommandInput,
 } from '@khala/contracts/delivery/index';
 import { initialListeningModeControl } from '../listening-mode/store';
-import { approvedAutomation, isAutomationConfig } from './gate';
+import { type AutomationAuthority, resolveAutomation } from './gate';
 import type {
   BindingStatus, JournalEntry, PolicyActor, PolicyChangeOutcome, PolicyChangeRejection, PolicyRevision,
   PublishPolicyEffect, TrustState, TrustView,
@@ -76,7 +76,8 @@ export function initialTrustState(input: Readonly<{
  * it with other input is refused, and replaying an accepted command after a
  * rebind is `stale_binding` rather than a success for the old generation.
  *
- * `auto` is refused while G-AUTOMATION is open (see `gate.ts`). The gate applies
+ * `auto` is refused unless the injected `automation` authority approves limits (see
+ * `gate.ts`); hosted composition always injects the closed one. The gate applies
  * only to the `auto` mode: review, pause and resume requests are evaluated as usual.
  */
 export function evaluatePolicyChange(
@@ -84,6 +85,7 @@ export function evaluatePolicyChange(
   actor: PolicyActor,
   command: PolicySetCommand,
   bindingStatus: BindingStatus,
+  automation: AutomationAuthority,
 ): PolicyChange {
   // Refusals to non-owners and on revoked bindings are not journaled, so they
   // cannot claim a command id.
@@ -103,7 +105,7 @@ export function evaluatePolicyChange(
     return { state, outcome: prior.outcome, effects: publishIfPending(state, prior) };
   }
 
-  const code = refusal(state, command);
+  const code = refusal(state, command, automation);
   if (code) return settle(state, command, { ok: false, code });
 
   const requested: PolicyRevision = {
@@ -118,11 +120,13 @@ export function evaluatePolicyChange(
   return { ...next, effects: [{ kind: 'publish_policy', bindingId: state.bindingId, revision: requested }] };
 }
 
-function refusal(state: TrustState, command: PolicySetCommand): PolicyChangeRejection | null {
+function refusal(
+  state: TrustState, command: PolicySetCommand, automation: AutomationAuthority,
+): PolicyChangeRejection | null {
   if (command.bindingId !== state.bindingId || command.roomId !== state.roomId) return 'binding_mismatch';
   if (command.expectedBindingGeneration !== state.generation) return 'stale_binding';
   if (command.expectedPolicyVersion !== state.requested.version) return 'stale_policy';
-  if (command.mode === 'auto' && !isAutomationConfig(approvedAutomation())) return 'automation_gated';
+  if (command.mode === 'auto' && resolveAutomation(automation) === null) return 'automation_gated';
   return null;
 }
 
