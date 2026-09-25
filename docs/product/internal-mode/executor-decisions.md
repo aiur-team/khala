@@ -106,3 +106,17 @@ Binding decisions for the internal-mode and agent-integration work (epic #137). 
     (agent-launched, normal trust settings, decision 33) and the operator reviews
     the evidence. `opencode-interactive-cli-proof` (#236), which requires a
     person-started TUI, stays parked unless the operator later runs it.
+44. **Serialize merges, not starts, on shared files (amends 8, 18 and 40).**
+    Executor, 2026-09-25, at the operator's request to parallelize the build. A ticket
+    that only shares files with another ticket (for example the four `agent-cli` registration files, the skill
+    doc, or the plugin package) is no longer blocked by it. Both start at once, and
+    the Executor merges them in the order that decisions 8 and 18 give, rebasing
+    between merges. #297 (`setup-cli-contract`) moves `agent-cli` command and tool
+    registration to registries, so later tickets add one file plus one registry line.
+    Interface-only dependencies are cut by landing the interface first: #297 (setup
+    types), #299 (`claude-plugin-scaffold`) and #300 (`externalization-journal-contract`).
+    #298 carries the hosted inbox mount, so #209 no longer waits on #41. File
+    ownership: #189 owns the internal descriptor (decision 15) and the bundle-directory
+    constant; #221 owns `externalization/{journal,service}.ts` and #223 owns
+    `history-export.ts`. Every HARD dependency is kept, and the integration and
+    acceptance tickets (#233, #237, #238, #240, #241, #262) stay the real gates.
