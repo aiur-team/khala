@@ -1,0 +1,30 @@
+{
+  "identity": {
+    "app": "claude",
+    "shape": "desktop_extension",
+    "appVersion": "unknown",
+    "accountTier": "unknown",
+    "administratorPolicyScope": "unknown",
+    "os": "Linux 7.1.4-arch1-1 x86_64"
+  },
+  "modes": {
+    "steer": {
+      "status": "unknown",
+      "route": "desktop_extension:steer-boundary",
+      "reason": "identity incomplete: appVersion, accountTier, administratorPolicyScope"
+    },
+    "sync": {
+      "status": "unknown",
+      "route": "desktop_extension:sync-boundary",
+      "reason": "identity incomplete: appVersion, accountTier, administratorPolicyScope"
+    },
+    "async": {
+      "status": "unknown",
+      "route": "desktop_extension:khala_read",
+      "reason": "identity incomplete: appVersion, accountTier, administratorPolicyScope"
+    }
+  },
+  "acknowledgement": "unknown",
+  "failures": [],
+  "ignoredSignals": null
+}

@@ -1,0 +1,11 @@
+{
+  "runId": "2026-09-25-blocked-browser",
+  "app": "claude",
+  "shape": "browser",
+  "appVersion": "unknown",
+  "accountTier": "unknown",
+  "administratorPolicyScope": "unknown",
+  "os": "Linux 7.1.4-arch1-1 x86_64",
+  "launch": "none: no live session",
+  "blocked": "No claude.ai test account was provided, and the agent must not drive the operator's personal browser session. A claude.ai custom connector also needs a publicly reachable HTTPS endpoint that only the operator may expose (../../host-inventory.txt)."
+}

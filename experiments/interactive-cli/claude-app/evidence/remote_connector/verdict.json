@@ -1,0 +1,30 @@
+{
+  "identity": {
+    "app": "claude",
+    "shape": "remote_connector",
+    "appVersion": "unknown",
+    "accountTier": "unknown",
+    "administratorPolicyScope": "unknown",
+    "os": "Linux 7.1.4-arch1-1 x86_64"
+  },
+  "modes": {
+    "steer": {
+      "status": "unknown",
+      "route": "remote_connector:steer-boundary",
+      "reason": "identity incomplete: appVersion, accountTier, administratorPolicyScope"
+    },
+    "sync": {
+      "status": "unknown",
+      "route": "remote_connector:sync-boundary",
+      "reason": "identity incomplete: appVersion, accountTier, administratorPolicyScope"
+    },
+    "async": {
+      "status": "unknown",
+      "route": "remote_connector:khala_read",
+      "reason": "identity incomplete: appVersion, accountTier, administratorPolicyScope"
+    }
+  },
+  "acknowledgement": "unknown",
+  "failures": [],
+  "ignoredSignals": null
+}

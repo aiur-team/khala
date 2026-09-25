@@ -1,0 +1,11 @@
+{
+  "runId": "2026-09-25-blocked-desktop-extension",
+  "app": "claude",
+  "shape": "desktop_extension",
+  "appVersion": "unknown",
+  "accountTier": "unknown",
+  "administratorPolicyScope": "unknown",
+  "os": "Linux 7.1.4-arch1-1 x86_64",
+  "launch": "none: no live session",
+  "blocked": "Claude Desktop has no official Linux build and is not installed on the proof host (../../host-inventory.txt). No app version exists to key a trial, so no khala_read round trip, restart replay, or push-boundary inspection was possible."
+}
