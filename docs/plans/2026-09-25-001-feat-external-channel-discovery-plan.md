@@ -74,16 +74,20 @@ SQLite adapter.
    - Stores the snapshot for five minutes with a requester binding: owner,
      principal, generation, origin, and proof thumbprint.
 
-   The cursor is `dcs_<snapshotId>_<offset>`. Each later page re-reads the
-   catalog and returns `cursor_unavailable` (HTTP 410) if any of these checks
-   fail:
-   - The epoch changed, meaning a title, visibility, or allowlist mutation.
+   The cursor is `dcs_<snapshotId>.<offset>`, and each snapshot item records
+   its entry revision. Each later page re-reads the catalog and returns
+   `cursor_unavailable` (HTTP 410) if any of these checks fail:
+   - A snapshotted entry's revision changed, meaning a title, visibility, or
+     allowlist mutation. Review replaced the original global epoch here: with
+     an epoch, any tenant's mutation would invalidate every cursor and leak
+     changes to invisible channels.
    - The binding differs.
    - The snapshot expired.
-   - Any page item is no longer eligible.
+   - Any snapshotted item is no longer eligible, or a page item's recorded
+     owner no longer owns it.
 
    Unknown, tampered, and foreign cursors return the same result.
-7. **Listing references** are `dlr_<snapshotId>_<token>`. The resolver
+7. **Listing references** are `dlr_<snapshotId>.<token>`. The resolver
    (`resolveListingRef`) reads the snapshot and checks the binding and expiry.
    It then rechecks current catalog eligibility and channel-owner authority. It
    returns only an `AuthorizedChannelRef` (the opaque key) or `unavailable`,

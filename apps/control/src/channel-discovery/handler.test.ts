@@ -330,6 +330,7 @@ describe('snapshot cursors', () => {
       await h.settings('owner_a', room!, 'public', title!);
     }
     await h.settings('owner_a', '!priv_a', 'private', 'Delta');
+    await h.allowlist('owner_a', 'allow', '!priv_a', 'agent_b', 4);
     const first = await h.page('b1', '?limit=1');
     expect(first.items.map(item => item.title)).toEqual(['Alpha']);
     return { h, cursor: first.nextCursor! };
@@ -340,14 +341,14 @@ describe('snapshot cursors', () => {
     const second = await h.page('b1', `?limit=1&cursor=${cursor}`);
     expect(second.items.map(item => item.title)).toEqual(['Bravo']);
     const third = await h.page('b1', `?limit=5&cursor=${second.nextCursor}`);
-    expect(third.items.map(item => item.title)).toEqual(['Charlie']);
+    expect(third.items.map(item => item.title)).toEqual(['Charlie', 'Delta']);
     expect(third.nextCursor).toBeNull();
   });
 
   it.each([
     ['title', (h: ReturnType<typeof setup>) => h.settings('owner_a', '!c3', 'public', 'Bravo renamed')],
     ['visibility', (h: ReturnType<typeof setup>) => h.settings('owner_a', '!c3', 'secret', null)],
-    ['allowlist', (h: ReturnType<typeof setup>) => h.allowlist('owner_a', 'allow', '!priv_a', 'agent_b', 4)],
+    ['allowlist', (h: ReturnType<typeof setup>) => h.allowlist('owner_a', 'revoke', '!priv_a', 'agent_b', 4)],
   ])('invalidates the snapshot after a %s mutation', async (_name, change) => {
     const { h, cursor } = await paged();
     expect((await change(h)).status).toBe(200);
@@ -374,6 +375,87 @@ describe('snapshot cursors', () => {
       expect(response.status).toBe(410);
       expect(await response.text()).toBe('{"error":"cursor_unavailable"}');
     }
+  });
+});
+
+describe('review regressions', () => {
+  it('keeps cursors valid across mutations to channels the caller cannot see', async () => {
+    const h = setup();
+    withAgents(h);
+    for (const [room, title] of [['!c1', 'Alpha'], ['!c2', 'Bravo']]) {
+      h.channel(room!, 'owner_a');
+      await h.settings('owner_a', room!, 'public', title!);
+    }
+    await h.settings('owner_a', '!priv_a', 'private', 'Hidden from b');
+    const first = await h.page('b1', '?limit=1');
+    await h.settings('owner_a', '!priv_a', 'private', 'Renamed, still hidden');
+    await h.settings('owner_a', '!secret_a', 'secret', null);
+    await h.settings('owner_b', '!priv_b', 'private', 'Beta');
+    expect((await h.page('b1', `?limit=1&cursor=${first.nextCursor}`)).items.map(item => item.title)).toEqual(['Bravo']);
+  });
+
+  it('enforces the list budget under a concurrent burst', async () => {
+    const h = setup();
+    withAgents(h);
+    const statuses = (await Promise.all(Array.from({ length: 25 }, () => h.list('b1')))).map(response => response.status);
+    // Contended writers fail closed (503) rather than being admitted twice.
+    expect(statuses.every(status => status === 200 || status === 429 || status === 503)).toBe(true);
+    let admitted = statuses.filter(status => status === 200).length;
+    for (;;) {
+      const status = (await h.list('b1')).status;
+      if (status === 429) break;
+      if (status === 200) admitted += 1;
+    }
+    expect(admitted).toBe(LIST_REQUESTS_PER_WINDOW);
+  });
+
+  it('hides a channel from listings once its recorded owner loses ownership', async () => {
+    const h = setup();
+    withAgents(h);
+    h.known.set('owner_a:agent_b', { agentOwnerId: 'owner_b', currentGeneration: 4 });
+    await h.settings('owner_a', '!priv_a', 'private', 'Alpha private');
+    await h.allowlist('owner_a', 'allow', '!priv_a', 'agent_b', 4);
+    expect(await h.titles('a1')).toEqual(['Alpha private']);
+    expect(await h.titles('b1')).toEqual(['Alpha private']);
+    h.owners.set('!priv_a', 'owner_c');
+    expect(await h.titles('a1')).toEqual([]);
+    expect(await h.titles('b1')).toEqual([]);
+  });
+
+  it('writes nothing for secret on a never-registered channel', async () => {
+    const h = setup();
+    withAgents(h);
+    const response = await h.settings('owner_a', '!absent_a', 'secret', null);
+    expect(await response.json()).toEqual({ v: 1, kind: 'applied', revision: null });
+    expect(h.store.records.has(CATALOG_KEY)).toBe(false);
+  });
+
+  it('never lets one owner operation ID name two different writes, even across channels', async () => {
+    const h = setup();
+    withAgents(h);
+    const body = { v: 1, operationId: 'owner-op', visibility: 'public', title: 'Alpha', expectedRevision: null };
+    expect((await h.mutate(SETTINGS_PATH, 'PUT', 'owner_a', { ...body, roomId: '!pub_a' })).status).toBe(200);
+    const reused = await h.mutate(SETTINGS_PATH, 'PUT', 'owner_a', { ...body, roomId: '!priv_a' });
+    expect(await reused.json()).toEqual({ v: 1, kind: 'rejected', code: 'operation_mismatch' });
+    expect(await h.titles('a1')).toEqual(['Alpha']);
+
+    // A late retry still replays its original result after later mutations to the same channel.
+    await h.mutate(SETTINGS_PATH, 'PUT', 'owner_a', { ...body, operationId: 'later', roomId: '!pub_a', title: 'Later', expectedRevision: '1' });
+    const retry = await h.mutate(SETTINGS_PATH, 'PUT', 'owner_a', { ...body, roomId: '!pub_a' });
+    expect(await retry.json()).toEqual({ v: 1, kind: 'applied', revision: '1' });
+    expect(await h.titles('a1')).toEqual(['Later']);
+  });
+
+  it('validates titles inside the catalog operation, not only at the route', async () => {
+    const h = setup();
+    withAgents(h);
+    const { setVisibility } = await import('./catalog');
+    const result = await setVisibility({
+      store: h.store.store, clock: () => T0, publicDiscovery: 'enabled',
+      ownerAuthority: { canManage: async () => 'allowed' }, principals: { inspect: async () => ({ kind: 'unknown' }) },
+    }, { v: 1, operationId: 'direct', roomId: '!pub_a' as never, visibility: 'public', title: null, expectedRevision: null }, principal('owner_a'));
+    expect(result).toEqual({ kind: 'rejected', code: 'invalid_title' });
+    expect(h.store.records.has(CATALOG_KEY)).toBe(false);
   });
 });
 
@@ -445,6 +527,10 @@ describe('wrong implementation: secret channels leak through enumeration', () =>
     for (;;) {
       const response = await h.list('a1', query);
       bodies.push(`${response.status} ${await response.text()}`);
+      if (withSecret && bodies.length === 1) {
+        // Mid-crawl churn on the invisible channel must not be observable either.
+        expect((await h.settings('owner_a', '!hidden', 'secret', null)).status).toBe(200);
+      }
       const next = response.status === 200 ? (JSON.parse(bodies.at(-1)!.slice(4)) as { nextCursor: string | null }).nextCursor : null;
       if (!next) break;
       query = `?limit=2&cursor=${next}`;

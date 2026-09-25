@@ -55,7 +55,7 @@ const REVISION = /^[1-9][0-9]{0,15}$/;
 const OPERATION = /^[A-Za-z0-9._:-]{1,128}$/;
 
 export function createChannelDiscoveryHandlers(deps: ChannelDiscoveryDeps): ChannelDiscoveryHandlers {
-  const catalog = { store: deps.store, ownerAuthority: deps.ownerAuthority, principals: deps.principals, publicDiscovery: deps.publicDiscovery };
+  const catalog = { store: deps.store, clock: deps.clock, ownerAuthority: deps.ownerAuthority, principals: deps.principals, publicDiscovery: deps.publicDiscovery };
   const listing = { store: deps.store, clock: deps.clock, random: deps.random, ownerAuthority: deps.ownerAuthority, publicDiscovery: deps.publicDiscovery };
   const eligibility = createPrivateEligibility(catalog);
 
@@ -170,7 +170,7 @@ function isRevision(value: unknown): value is string {
 
 function mutationResponse(result: Awaited<ReturnType<typeof setVisibility>>): Response {
   if (result.kind === 'ok') return body(200, { v: 1, kind: 'applied', revision: result.value.revision });
-  if (result.kind === 'rejected') return rejection(result.code === 'forbidden' || result.code === 'public_discovery_disabled' ? 403 : 409, result.code);
+  if (result.kind === 'rejected') return rejection(result.code === 'invalid_title' ? 400 : result.code === 'forbidden' || result.code === 'public_discovery_disabled' ? 403 : 409, result.code);
   return rejection(503, 'feature_unavailable');
 }
 

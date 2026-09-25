@@ -23,7 +23,7 @@ import {
   unavailable,
 } from '@khala/contracts/messaging/index';
 import { type Random, guardStore, randomToken, settleWrite } from '../auth/store';
-import { type ChannelOwnerAuthority, type PublicDiscovery, isEligible, readCatalog } from './catalog';
+import { type CatalogEntry, type ChannelOwnerAuthority, type PublicDiscovery, isEligible, readCatalog } from './catalog';
 
 export const SNAPSHOT_TTL_MS = 300_000;
 export const MAX_SNAPSHOT_ITEMS = 500;
@@ -49,7 +49,8 @@ export type ListingResolution =
   | Readonly<{ kind: 'unavailable' }>;
 
 type Binding = Readonly<{ ownerId: string; principal: string; generation: number; origin: string; jkt: string }>;
-type Snapshot = Readonly<{ v: 1; epoch: number; binding: Binding; items: readonly Readonly<{ key: string; token: string }>[] }>;
+type SnapshotItem = Readonly<{ key: string; token: string; revision: number }>;
+type Snapshot = Readonly<{ v: 1; binding: Binding; items: readonly SnapshotItem[] }>;
 
 const SNAPSHOT_ID = /^[A-Za-z0-9_-]{43}$/;
 const CURSOR = /^dcs_([A-Za-z0-9_-]{43})\.(0|[1-9][0-9]{0,3})$/;
@@ -96,7 +97,8 @@ export async function consumeListBudget(deps: ListingDeps, caller: ListingCaller
     if (count >= LIST_REQUESTS_PER_WINDOW) return 'limited';
     const written = await settleWrite<JsonValue>(store, {
       key, expectedRevision: read.kind === 'record' ? read.record.revision : null,
-      operationId: `channel-discovery.list-rate.${bucket}.${count + 1}`,
+      // A per-request nonce: concurrent requests must never replay one write.
+      operationId: `channel-discovery.list-rate.${bucket}.${randomToken(deps.random, 16)}`,
       next: { value: count + 1, expiresAt },
     });
     if (written.kind === 'applied') return 'allowed';
@@ -120,13 +122,18 @@ export async function listChannels(
   let snapshot: Snapshot;
   let offset: number;
   if (query.cursor === null) {
-    const items = Object.entries(read.catalog.entries)
+    const candidates = Object.entries(read.catalog.entries)
       .filter(([, entry]) => isEligible(entry, requester, deps.publicDiscovery))
-      .sort(([leftKey, left], [rightKey, right]) => compare(left.title!, right.title!) || compare(leftKey, rightKey))
-      .slice(0, MAX_SNAPSHOT_ITEMS)
-      .map(([key]) => ({ key, token: randomToken(deps.random, 16) }));
+      .sort(([leftKey, left], [rightKey, right]) => compare(left.title!, right.title!) || compare(leftKey, rightKey));
+    const items: SnapshotItem[] = [];
+    for (const [key, entry] of candidates) {
+      if (items.length >= MAX_SNAPSHOT_ITEMS) break;
+      const owned = await currentlyOwned(deps, entry, options);
+      if (owned === 'unavailable') return unavailable();
+      if (owned) items.push({ key, token: randomToken(deps.random, 16), revision: entry.revision });
+    }
     snapshotId = randomToken(deps.random, 32);
-    snapshot = { v: 1, epoch: read.catalog.epoch, binding: bindingOf(caller), items };
+    snapshot = { v: 1, binding: bindingOf(caller), items };
     const written = await settleWrite<JsonValue>(guardStore(deps.store), {
       key: snapshotKey(snapshotId), expectedRevision: null,
       operationId: `channel-discovery.snapshot.${digest('snapshot', snapshotId)}`,
@@ -140,8 +147,13 @@ export async function listChannels(
     const held = await readSnapshot(deps.store, parsed[1]!, options);
     if (held === 'unavailable') return unavailable();
     offset = Number(parsed[2]);
-    if (held === null || held.epoch !== read.catalog.epoch || !sameBinding(held.binding, bindingOf(caller))
-      || offset >= held.items.length) return rejected('cursor_unavailable');
+    if (held === null || !sameBinding(held.binding, bindingOf(caller)) || offset >= held.items.length) return rejected('cursor_unavailable');
+    // Only mutations to channels this caller could see invalidate its cursor;
+    // changes elsewhere in the catalog stay unobservable.
+    if (held.items.some(item => {
+      const entry = read.catalog.entries[item.key];
+      return !entry || entry.revision !== item.revision || !isEligible(entry, requester, deps.publicDiscovery);
+    })) return rejected('cursor_unavailable');
     snapshotId = parsed[1]!;
     snapshot = held;
   }
@@ -149,8 +161,10 @@ export async function listChannels(
   const slice = snapshot.items.slice(offset, offset + query.limit);
   const items: ChannelListing[] = [];
   for (const item of slice) {
-    const entry = read.catalog.entries[item.key];
-    if (!entry || !isEligible(entry, requester, deps.publicDiscovery)) return rejected('cursor_unavailable');
+    const entry = read.catalog.entries[item.key]!;
+    const owned = await currentlyOwned(deps, entry, options);
+    if (owned === 'unavailable') return unavailable();
+    if (!owned) return rejected('cursor_unavailable');
     items.push({
       v: 1,
       listingRef: `dlr_${snapshotId}.${item.token}`,
@@ -185,11 +199,20 @@ export async function resolveListingRef(
   if (read.kind === 'unavailable') return none;
   const entry = read.catalog.entries[item.key];
   if (!entry || !isEligible(entry, requesterOf(caller), deps.publicDiscovery)) return none;
+  return await currentlyOwned(deps, entry, options) === true ? { kind: 'resolved', channelRef: item.key as AuthorizedChannelRef } : none;
+}
+
+/**
+ * The recorded owner must still own the channel: same-owner and allowlist
+ * eligibility are scoped to it, so an ownership change hides the entry until
+ * the current owner republishes it.
+ */
+async function currentlyOwned(deps: ListingDeps, entry: CatalogEntry, options?: CallOptions): Promise<boolean | 'unavailable'> {
   try {
     const authority = await deps.ownerAuthority.canManage({ ownerId: entry.ownerId as OwnerId, roomId: entry.roomId as RoomId }, options);
-    return authority === 'allowed' ? { kind: 'resolved', channelRef: item.key as AuthorizedChannelRef } : none;
+    return authority === 'unavailable' ? 'unavailable' : authority === 'allowed';
   } catch {
-    return none;
+    return 'unavailable';
   }
 }
 
@@ -205,19 +228,19 @@ function decodeSnapshot(value: JsonValue): Snapshot | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, JsonValue>;
   const binding = record.binding as Record<string, JsonValue> | null;
-  if (record.v !== 1 || !Number.isSafeInteger(record.epoch) || !Array.isArray(record.items)
+  if (record.v !== 1 || !Array.isArray(record.items)
     || typeof binding !== 'object' || binding === null || Array.isArray(binding)) return null;
   const { ownerId, principal, generation, origin, jkt } = binding;
   if (typeof ownerId !== 'string' || typeof principal !== 'string' || !Number.isSafeInteger(generation)
     || typeof origin !== 'string' || typeof jkt !== 'string') return null;
-  const items: { key: string; token: string }[] = [];
+  const items: SnapshotItem[] = [];
   for (const item of record.items as readonly JsonValue[]) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return null;
-    const { key, token } = item as Record<string, JsonValue>;
-    if (typeof key !== 'string' || typeof token !== 'string') return null;
-    items.push({ key, token });
+    const { key, token, revision } = item as Record<string, JsonValue>;
+    if (typeof key !== 'string' || typeof token !== 'string' || !Number.isSafeInteger(revision)) return null;
+    items.push({ key, token, revision: revision as number });
   }
-  return { v: 1, epoch: record.epoch as number, binding: { ownerId, principal, generation: generation as number, origin, jkt }, items };
+  return { v: 1, binding: { ownerId, principal, generation: generation as number, origin, jkt }, items };
 }
 
 function compare(left: string, right: string): number {

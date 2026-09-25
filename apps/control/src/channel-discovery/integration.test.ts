@@ -4,7 +4,7 @@ import type { AuthPrincipal, OwnerId, StableAgentPrincipal } from '@khala/contra
 import { T0, fakeStore, secureRandom } from '../auth/support.test';
 import { thumbprint } from '../agent-bootstrap/proof';
 import { AUTHORIZE_PATH, CREDENTIAL_TTL_MS, TOKEN_PATH, createChannelDiscoveryBootstrapHandlers } from './bootstrap/handler';
-import { LIST_PATH, SETTINGS_PATH, createChannelDiscoveryHandlers } from './handler';
+import { ALLOWLIST_PATH, LIST_PATH, SETTINGS_PATH, createChannelDiscoveryHandlers } from './handler';
 
 const ORIGIN = 'https://khala.aiur.team';
 const REDIRECT_URI = 'http://127.0.0.1:49152/khala/discovery/callback';
@@ -23,15 +23,16 @@ function setup() {
   const clock = () => now;
   const store = fakeStore(clock);
   let authority: 'verified' | 'rebound' | 'removed' = 'verified';
+  let generation = SESSION.generation;
   const bootstrap = createChannelDiscoveryBootstrapHandlers({
     origin: ORIGIN, store: store.store, clock, random: secureRandom,
     async authenticate() {
       return { kind: 'authenticated', context: { principal: owner('owner_b'), csrfToken: 'csrf' } };
     },
     sessionAuthority: {
-      async inspect(input) {
+      async inspect() {
         return authority === 'verified'
-          ? { kind: 'verified', principal: 'agent_b' as StableAgentPrincipal, currentGeneration: input.session.generation }
+          ? { kind: 'verified', principal: 'agent_b' as StableAgentPrincipal, currentGeneration: generation }
           : { kind: authority };
       },
     },
@@ -45,7 +46,7 @@ function setup() {
     store: store.store, clock, random: secureRandom, credentials: bootstrap.credentials, publicDiscovery: 'enabled',
     authorizeMutation: async request => ({ kind: 'authorized', context: { principal: owner(request.headers.get('x-owner')!), csrfToken: 'csrf' } }),
     ownerAuthority: { canManage: async ({ ownerId }) => (ownerId === 'owner_a' ? 'allowed' : 'forbidden') },
-    principals: { inspect: async () => ({ kind: 'unknown' }) },
+    principals: { inspect: async () => ({ kind: 'known', agentOwnerId: 'owner_b' as OwnerId, currentGeneration: generation }) },
   });
 
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -63,7 +64,7 @@ function setup() {
     const form = new URLSearchParams({
       redirect_uri: REDIRECT_URI, state: 'state-0123456789abcdef', code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       code_challenge_method: 'S256', origin: ORIGIN, harness: SESSION.harness, session_id: SESSION.session_id,
-      generation: String(SESSION.generation), proof_jkt: thumbprint(x), csrf_token: 'csrf', decision: 'allow',
+      generation: String(generation), proof_jkt: thumbprint(x), csrf_token: 'csrf', decision: 'allow',
     });
     const consent = await bootstrap.human[0]!.handle(new Request(`${ORIGIN}${AUTHORIZE_PATH}`, {
       method: 'POST', body: form,
@@ -73,7 +74,7 @@ function setup() {
     const token = await bootstrap.agent[0]!.handle(new Request(`${ORIGIN}${TOKEN_PATH}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', dpop: proof('POST', `${ORIGIN}${TOKEN_PATH}`) },
-      body: JSON.stringify({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: REDIRECT_URI, ...SESSION }),
+      body: JSON.stringify({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: REDIRECT_URI, ...SESSION, generation }),
     }));
     return (await token.json() as { credential: { credentialRef: string } }).credential.credentialRef;
   }
@@ -84,15 +85,26 @@ function setup() {
     }));
   }
 
-  async function publish() {
+  async function publish(visibility = 'public') {
     const response = await discovery.human[0]!.handle(new Request(`${ORIGIN}${SETTINGS_PATH}`, {
       method: 'PUT', headers: { 'content-type': 'application/json', 'x-owner': 'owner_a' },
-      body: JSON.stringify({ v: 1, operationId: 'publish', roomId: '!room_a', visibility: 'public', title: 'Alpha', expectedRevision: null }),
+      body: JSON.stringify({ v: 1, operationId: 'publish', roomId: '!room_a', visibility, title: 'Alpha', expectedRevision: null }),
     }));
     expect(response.status).toBe(200);
   }
 
-  return { list, credential, publish, advance(ms: number) { now += ms; }, setAuthority(next: typeof authority) { authority = next; } };
+  async function allow() {
+    const response = await discovery.human[1]!.handle(new Request(`${ORIGIN}${ALLOWLIST_PATH}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-owner': 'owner_a' },
+      body: JSON.stringify({
+        v: 1, action: 'allow', operationId: 'allow', roomId: '!room_a', principal: 'agent_b',
+        expectedSessionGeneration: generation, expectedRevision: '1',
+      }),
+    }));
+    expect(response.status).toBe(200);
+  }
+
+  return { list, credential, publish, allow, rebind() { generation += 1; }, advance(ms: number) { now += ms; }, setAuthority(next: typeof authority) { authority = next; } };
 }
 
 describe('external discovery with a real bootstrap credential', () => {
@@ -115,6 +127,23 @@ describe('external discovery with a real bootstrap credential', () => {
     const credentialRef = await h.credential();
     h.setAuthority(state);
     expect((await h.list(credentialRef)).status).toBe(401);
+  });
+
+  it('invalidates the old credential on rebind while the stable allowlist admits the new generation', async () => {
+    const h = setup();
+    await h.publish('private');
+    await h.allow();
+    const before = await h.credential();
+    const listed = await h.list(before);
+    expect((await listed.json() as { items: Array<{ title: string }> }).items.map(item => item.title)).toEqual(['Alpha']);
+
+    h.rebind();
+    const stale = await h.list(before);
+    expect(stale.status).toBe(401);
+    expect(await stale.json()).toEqual({ error: 'invalid_credential' });
+    const after = await h.list(await h.credential());
+    expect(after.status).toBe(200);
+    expect((await after.json() as { items: Array<{ title: string }> }).items.map(item => item.title)).toEqual(['Alpha']);
   });
 
   it('refuses requests addressed to another origin and never redirects', async () => {

@@ -17,6 +17,7 @@ import {
   type PrivateEligibilityMutation,
   type RoomId,
   type StableAgentPrincipal,
+  type TrustedClock,
   decodeChannelListing,
   ok,
   rejected,
@@ -26,7 +27,9 @@ import { guardStore, settleWrite } from '../auth/store';
 
 export const CATALOG_KEY = 'channel-discovery:catalog:external';
 export const MAX_CATALOG_ENTRIES = 2_000;
+export const MAX_ENTRIES_PER_OWNER = 200;
 export const MAX_ALLOWLIST_PRINCIPALS = 50;
+export const OPERATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_CAS_ATTEMPTS = 4;
 
 export type ChannelOwnerAuthority = Readonly<{
@@ -72,7 +75,9 @@ export type DiscoveryRequesterContext = Readonly<{ ownerId: OwnerId; principal: 
 export type PublicDiscovery = 'enabled' | 'disabled';
 
 export type MutationRejection = 'forbidden' | 'stale_revision' | 'operation_mismatch';
-export type SettingsRejection = MutationRejection | 'public_discovery_disabled';
+export type SettingsRejection = MutationRejection | 'public_discovery_disabled' | 'invalid_title';
+/** `revision` is null when the operation left the channel unregistered (secret). */
+export type MutationApplied = Readonly<{ revision: string | null }>;
 
 export type VisibilitySettings = Readonly<{
   v: 1;
@@ -87,6 +92,7 @@ export type VisibilitySettings = Readonly<{
 
 export type CatalogDeps = Readonly<{
   store: ControlStore;
+  clock: TrustedClock;
   ownerAuthority: ChannelOwnerAuthority;
   principals: KnownPrincipalDirectory;
   publicDiscovery: PublicDiscovery;
@@ -137,12 +143,12 @@ type Change = Readonly<{
   operationId: string;
   fingerprint: JsonValue;
   expectedRevision: string | null;
-  apply(current: CatalogEntry | null): CatalogEntry | MutationRejection;
+  apply(current: CatalogEntry | null): CatalogEntry | MutationRejection | 'unchanged';
 }>;
 
 async function mutate(
   deps: CatalogDeps, change: Change, options?: CallOptions,
-): Promise<OperationResult<Readonly<{ revision: string }>, MutationRejection>> {
+): Promise<OperationResult<MutationApplied, MutationRejection>> {
   let authority: 'allowed' | 'forbidden' | 'unavailable';
   try {
     authority = await deps.ownerAuthority.canManage({ ownerId: change.owner.ownerId, roomId: change.roomId }, options);
@@ -156,17 +162,41 @@ async function mutate(
   const operation = digest('operation', `${change.owner.ownerId}\u0000${change.operationId}`);
   const fingerprint = digest('fingerprint', JSON.stringify(change.fingerprint));
   const store = guardStore(deps.store);
+  const operationKey = `channel-discovery:operation:${operation}`;
+  const prior = await store.read<JsonValue>(operationKey, options);
+  if (prior.kind === 'unavailable') return unavailable();
+  if (prior.kind === 'record') {
+    const held = prior.record.value as { fingerprint?: JsonValue; revision?: JsonValue };
+    if (held.fingerprint !== fingerprint) return rejected('operation_mismatch');
+    return ok({ revision: typeof held.revision === 'string' ? held.revision : null });
+  }
+
+  const settle = async (revision: string | null) => {
+    // Owner-scoped operation identity: a reused ID never names a second write.
+    await settleWrite<JsonValue>(store, {
+      key: operationKey, expectedRevision: null, operationId: `channel-discovery.operation.${operation}`,
+      next: { value: { fingerprint, revision }, expiresAt: new Date(deps.clock() + OPERATION_TTL_MS).toISOString() },
+    });
+    return ok({ revision });
+  };
+
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     const read = await readCatalog(store, options);
     if (read.kind === 'unavailable') return unavailable();
     const current = read.catalog.entries[key] ?? null;
     if (current && current.lastOperation === operation) {
-      return current.lastFingerprint === fingerprint ? ok({ revision: String(current.revision) }) : rejected('operation_mismatch');
+      // The catalog write landed but its operation record did not.
+      return current.lastFingerprint === fingerprint ? settle(String(current.revision)) : rejected('operation_mismatch');
     }
     if ((current ? String(current.revision) : null) !== change.expectedRevision) return rejected('stale_revision');
     const applied = change.apply(current);
+    if (applied === 'unchanged') return settle(null);
     if (typeof applied === 'string') return rejected(applied);
-    if (!current && Object.keys(read.catalog.entries).length >= MAX_CATALOG_ENTRIES) return unavailable();
+    if (!current) {
+      const entries = Object.values(read.catalog.entries);
+      if (entries.length >= MAX_CATALOG_ENTRIES
+        || entries.filter(entry => entry.ownerId === change.owner.ownerId).length >= MAX_ENTRIES_PER_OWNER) return rejected('forbidden');
+    }
     const next: CatalogEntry = {
       ...applied,
       roomId: change.roomId,
@@ -182,32 +212,39 @@ async function mutate(
       operationId: `channel-discovery.catalog.${operation}.${read.catalog.epoch + 1}`,
       next: { value: catalog as unknown as JsonValue, expiresAt: null },
     });
-    if (written.kind === 'applied') return ok({ revision: String(next.revision) });
+    if (written.kind === 'applied') return settle(String(next.revision));
     if (written.kind === 'unavailable') return unavailable();
     // Another channel's mutation moved the shared record; re-read and recheck.
   }
   return unavailable();
 }
 
-/** Owner-only visibility/title change. `secret` leaves a title-free tombstone. */
+/**
+ * Owner-only visibility/title change. `secret` leaves a title-free tombstone;
+ * `secret` on a never-registered channel writes nothing, since absence is secret.
+ */
 export function setVisibility(
   deps: CatalogDeps, input: VisibilitySettings, owner: AuthPrincipal, options?: CallOptions,
-): Promise<OperationResult<Readonly<{ revision: string }>, SettingsRejection>> {
+): Promise<OperationResult<MutationApplied, SettingsRejection>> {
   if (input.visibility === 'public' && deps.publicDiscovery !== 'enabled') {
     return Promise.resolve(rejected('public_discovery_disabled'));
+  }
+  const title = input.visibility === 'secret' ? null : normalizeTitle(input.title);
+  if ((input.visibility === 'secret') !== (title === null) || (input.visibility === 'secret' && input.title !== null)) {
+    return Promise.resolve(rejected('invalid_title'));
   }
   return mutate(deps, {
     roomId: input.roomId,
     owner,
     operationId: input.operationId,
-    fingerprint: { kind: 'visibility', roomId: input.roomId, visibility: input.visibility, title: input.title },
+    fingerprint: { kind: 'visibility', roomId: input.roomId, visibility: input.visibility, title },
     expectedRevision: input.expectedRevision,
-    apply: current => ({
+    apply: current => current === null && input.visibility === 'secret' ? 'unchanged' : {
       ...(current ?? { roomId: input.roomId, ownerId: owner.ownerId, revision: 0, lastOperation: '', lastFingerprint: '' }),
       visibility: input.visibility,
-      title: input.visibility === 'secret' ? null : input.title,
+      title,
       allowlist: current?.allowlist ?? [],
-    }),
+    },
   }, options);
 }
 
@@ -217,8 +254,8 @@ export function setVisibility(
  * at use, and `allow` requires the generation the owner inspected.
  */
 export function createPrivateEligibility(deps: CatalogDeps): ChannelPrivateEligibilityPort & Readonly<{
-  allowRoom(input: RoomEligibilityMutation, owner: AuthPrincipal, options?: CallOptions): Promise<OperationResult<Readonly<{ revision: string }>, MutationRejection>>;
-  revokeRoom(input: RoomEligibilityMutation, owner: AuthPrincipal, options?: CallOptions): Promise<OperationResult<Readonly<{ revision: string }>, MutationRejection>>;
+  allowRoom(input: RoomEligibilityMutation, owner: AuthPrincipal, options?: CallOptions): Promise<OperationResult<MutationApplied, MutationRejection>>;
+  revokeRoom(input: RoomEligibilityMutation, owner: AuthPrincipal, options?: CallOptions): Promise<OperationResult<MutationApplied, MutationRejection>>;
 }> {
   async function allowRoom(input: RoomEligibilityMutation, owner: AuthPrincipal, options?: CallOptions) {
     let known: KnownPrincipal;
