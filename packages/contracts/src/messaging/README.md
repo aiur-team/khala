@@ -128,6 +128,10 @@ which the transport deduplicates.
 | `RevocationPort` | KHA-128 |
 | `RecoveryPort` | KHA-129 |
 | `ControlStore` | Specified here, persistence adapter supplied by KHA-131 |
+| `ChannelDiscoveryPort` | `channel-discovery-contract`; agent-facing requests only |
+| `ChannelCreateAdapterPort` | Human-authorized provider composition only |
+| `ChannelPrivateEligibilityPort` | Owner-only private allowlist administration |
+| `AdmissionGrantExchangePort` | Connector-only sealed grant recovery |
 
 Observers receive full replacement snapshots tagged with the client lifecycle
 `generation`. Consumers drop stale generations with `isCurrentGeneration`. `DeviceView.generation` is also the
@@ -135,6 +139,56 @@ Observers receive full replacement snapshots tagged with the client lifecycle
 `expectedGeneration` of a binding revocation. Recovery
 secrets cross only the local `ProvideRecoverySecret` callback, and serialisable
 decoders reject unknown fields such as a smuggled `recoveryKey`.
+
+## Channel discovery is request-only
+
+`ChannelListing` is a strict pre-join projection: version, opaque listing reference,
+bounded untrusted title, `public` / `private` / `secret`, service kind and finite request
+state. It cannot carry a Matrix room ID, roster, participant count, activity, content,
+owner identity or grant. `secret` is representable for storage and owner tooling, but
+`ChannelDiscoveryPort.list` never promises to enumerate it. Pages contain at most 25
+items, expose no total count and continue only through an opaque cursor.
+
+Titles are capped at 256 UTF-8 bytes. Terminal controls, bidi overrides and unsafe
+invisible characters are replaced with U+FFFD so a title stays data in JSON and MCP
+output rather than becoming terminal control or instruction text. ZWNJ and ZWJ remain
+valid for scripts and emoji that require them.
+
+The agent-facing `ChannelDiscoveryPort` can list, journal an access request, journal a
+create intent and inspect finite status. It deliberately has no `create` or `admit`
+member. Canonical channel URLs are exact-origin locators: unlike listing references,
+they may privately locate a private or secret target for an otherwise unknown agent,
+but the only successful pre-join result is `pending_owner`. Invalid, stale and
+ineligible targets collapse to `unavailable`. Status is always grant-free.
+
+`ChannelCreateAdapterPort` is separate and requires both a
+`HumanAuthorizedWorkflowContext` and an idempotency key for create or reconciliation.
+Private eligibility is owner-only, keyed by `StableAgentPrincipal` rather than any
+display/device/session label, and carries the session generation that consumers must
+revalidate on use.
+
+Discovery credentials bind the exact service origin, stable requester, current session
+generation, Ed25519 proof key, expiry and exactly three scopes: `list_channels`,
+`request_channel_access` and `request_channel_create`. Grant exchange separately binds
+an X25519 encryption key to the proof-key thumbprint plus operation, device, requester,
+origin and generation; reusing that encryption key for another tuple is `key_reuse`.
+`validateDiscoveryCredential` compares the authenticated proof thumbprint as well as the
+requester tuple, after deriving the credential key's RFC 7638 SHA-256 OKP thumbprint.
+`validateGrantExchangeRequest` is the only route from decoded caller assertions to
+`ValidatedGrantExchangeRequest`: it derives both key thumbprints and compares the
+authenticated proof thumbprint plus the operation, device, origin, requester, generation
+and expiry. `AdmissionGrantExchangePort` accepts only that validated type.
+
+Grant recovery uses pinned `libsodium-wrappers` and `crypto_box_seal` (X25519 plus
+XSalsa20-Poly1305), never HPKE or local cryptographic primitives. The v1 envelope names
+`crypto_box_seal_x25519_xsalsa20poly1305`, the recipient-key thumbprint and unpadded
+base64url ciphertext; the sealed box embeds its ephemeral public key. The encrypted
+plaintext owns the operation/requester/origin/generation/device/thumbprint/expiry
+binding because sealed boxes have no separate associated-data input. The strict
+`SealedGrantPayload` decoder and validator enforce those fields again after open before
+local activation. Tests pin
+libsodium's published deterministic Curve25519 key vector and prove valid open,
+wrong-key rejection, truncation rejection and ciphertext-tamper rejection.
 
 ## Control store
 

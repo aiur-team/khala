@@ -87,3 +87,10 @@ Binding decisions for the internal-mode and agent-integration work (epic #137). 
 38. **Missing spikes get tickets:** `hard-cancel-claude-spike`, `hard-cancel-opencode-spike` and `claude-channel-push-spike` (I10). Each is complexity 2, experiment-only, and gates any hard-cancel or channel-push capability claim.
 39. **`external-channel-composition` is #41 (KHA-132).** `trust-transitions` is #29 (KHA-120), already merged.
 40. **`setup-cli-package`** is blocked on `listening-mode-pull`, to keep the `agent-cli` hotspot serialized.
+41. **Grant recovery uses libsodium sealed boxes, not HPKE.** Pin the maintained
+    `libsodium-wrappers` or `sodium-native` binding and use `crypto_box_seal`
+    (X25519 + XSalsa20-Poly1305). The versioned envelope names that algorithm,
+    recipient-key thumbprint, and ciphertext; authenticated request context lives
+    inside the sealed plaintext. Prove the binding on Node 22 with libsodium's
+    published known-answer tests and reject tampered ciphertext. Take no HPKE
+    dependency and do not implement cryptographic primitives locally.
