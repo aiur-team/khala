@@ -12,7 +12,7 @@ It detects Claude Code, Codex, and OpenCode and reconciles only the components
 required by each installed, supported harness. The interface is:
 
 ```text
-npx @aiur/khala setup [--dry-run] [--with-claude-hardening] [--confirm <plan-digest>]
+npx @aiur/khala setup [--dry-run] [--confirm <plan-digest>]
 npx @aiur/khala status [--check]
 npx @aiur/khala remove [--dry-run] [--confirm <plan-digest>]
 ```
@@ -55,7 +55,7 @@ supplied the initial reuse map. Both inputs were read from PR #136 head
 | Agent lifecycle | Setup configures the user's own already-started CLI session. Khala does not launch or host Claude, Codex, or OpenCode, and a `khala run <cli>` wrapper is not a v1 default. |
 | Immediate continuation | If newly written harness configuration is not effective in the initiating session, the result names an installed CLI fallback that the same agent can use immediately to finish the channel request; it never asks the person to restart or run a command. |
 | Runtime discovery | Installed entries resolve the active port and token from the owner-only runtime descriptor on every invocation; setup never embeds either value. |
-| Claude hardening | `--with-claude-hardening` opts into the separately planned restricted-profile configuration. Status always reports its validation result, but absence never blocks ordinary delivery. |
+| Claude hardening | Setup never installs a restricted profile. `setup` and `status` only report the optional hardening check; absence never blocks ordinary delivery (decision 25). |
 
 ## Findings and evidence
 
@@ -69,7 +69,7 @@ supplied the initial reuse map. Both inputs were read from PR #136 head
 | The executable is not yet connected to a real provider. | [`main.ts`](../../../packages/agent-cli/src/cli/main.ts) composes `createUnavailableClient()`. | Installation readiness and live route support must be reported separately. |
 | MCP has a narrow proven surface. | [`server.ts`](../../../packages/agent-cli/src/mcp/server.ts) implements stdio MCP `2025-03-26` with one `khala_send` tool. | Setup may register this server, but cannot claim broader MCP or listening support. |
 | Safe file primitives exist, not an installer. | [`inbox.ts`](../../../packages/agent-cli/src/cli/inbox.ts) uses owner-only directories/files, no-follow/exclusive creation, atomic rename, and quarantine. [`backup.ts`](../../../infra/operations/backup.ts) publishes completed artifacts before an atomic manifest. | Reuse these invariants in a new setup transaction module; do not import across the `infra`/package boundary. |
-| The fallback skill already names two install roots. | [`packages/agent-skill/README.md`](../../../packages/agent-skill/README.md) documents `~/.codex/skills/khala` and `~/.claude/skills/khala`, and requires both `khala` and `khala-fallback` on `PATH`. | Package reviewed skill assets and stable launchers. Codex installs the skill directly; Claude consumes it only inside the single plugin, replacing the legacy separate Claude skill layout. |
+| The fallback skill already names two install roots. | [`packages/agent-skill/README.md`](../../../packages/agent-skill/README.md) documents `~/.codex/skills/khala` and `~/.claude/skills/khala`, and requires both `khala` and `khala-fallback` on `PATH`. | Package reviewed skill assets and stable launchers. Codex installs the skill directly (plus hooks and MCP entry); Claude consumes it only inside the single plugin, replacing the legacy separate Claude skill layout. |
 
 ### Local proofs
 
@@ -97,7 +97,7 @@ do not replace that gate.
 | Harness | Documented integration surface | Design use |
 | --- | --- | --- |
 | Claude Code | [Plugins](https://code.claude.com/docs/en/plugins) can bundle skills, hooks, and MCP configuration. | Install the single producer-owned user-scope plugin containing the skill, hooks, and MCP entry. Snapshot every registry/config path the supported CLI version mutates. |
-| Codex | Codex exposes skill and MCP configuration surfaces in the inspected CLI. | Install the Khala skill and MCP entry. Codex needs no Khala plugin. |
+| Codex | Codex exposes skill and MCP configuration surfaces in the inspected CLI. | Install the Khala skill, the native Khala hooks (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and the MCP entry. Codex needs no Khala plugin. Hook config entries are removed exactly, and the one-time hook-trust approval is recorded (decisions 31, 33). |
 | OpenCode | [Plugins](https://opencode.ai/docs/plugins), [skills](https://opencode.ai/docs/skills), and [MCP servers](https://opencode.ai/docs/mcp-servers) are configured separately; global skills live below `~/.config/opencode/skills`. | Install the producer-owned plugin and skill, and patch the MCP/config entry transactionally. |
 
 Vendor documentation proves supported concepts, not exact rollback behavior.
@@ -250,8 +250,8 @@ XDG, and PATH inputs.
 | Harness | Desired components | Producer dependency | Adapter constraint |
 | --- | --- | --- | --- |
 | Claude Code | One user-scope plugin containing the skill, hooks, and MCP entry | `claude-plugin-hooks`, `claude-plugin-dispatch`, `mcp-result-piggyback` | Delivery targets the normal user-started Claude session. Optional hardening is reported separately and never gates readiness. |
-| Codex | Khala skill and MCP entry; no plugin | `mcp-result-piggyback`, `listening-mode-pull` | Preserve existing config; route support remains a separate capability label. |
-| OpenCode | OpenCode plugin, global skill, and MCP entry | `opencode-session-bridge`, `opencode-delivery-contract`, `mcp-result-piggyback` | Use a guarded direct config edit for removal unless a tested exact vendor removal surface appears. |
+| Codex | Khala skill, native hooks (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and MCP entry; no plugin | `mcp-result-piggyback`, `listening-mode-pull`, `interactive-codex` | Preserve existing config; route support remains a separate capability label. |
+| OpenCode | OpenCode plugin, global skill, and MCP entry | `opencode-session-bridge`, `opencode-delivery-contract`, `opencode-listening-routes`, `mcp-result-piggyback` | Use a guarded direct config edit for removal unless a tested exact vendor removal surface appears. |
 
 The Claude producer-owned plugin ships in a versioned local Khala marketplace
 catalog inside the immutable payload. Its adapter models marketplace
@@ -418,11 +418,11 @@ finishable by one agent in one PR.
 
 | Field | Contract |
 | --- | --- |
-| Scope | Detect/version Claude Code; inspect and plan a versioned local Khala marketplace registration plus user-scope installation/removal for the single producer-owned plugin containing its skill, hooks, and MCP entry; enumerate the complete mutation footprint. Own `--with-claude-hardening` restricted-profile setup and validation as a separately reported state. |
-| Out of scope | Authoring plugin hooks/slash commands, Claude authentication, project/local scope, direct mutation outside the transaction executor, or making hardening a delivery/readiness gate. |
+| Scope | Detect/version Claude Code; inspect and plan a versioned local Khala marketplace registration plus user-scope installation/removal for the single producer-owned plugin containing its skill, hooks, and MCP entry; enumerate the complete mutation footprint. Report the optional hardening check as a separate state without installing any profile. Check that the plugin's `/khala <verb>` commands do not collide with existing user or plugin commands. |
+| Out of scope | Authoring plugin hooks/slash commands, Claude authentication, project/local scope, direct mutation outside the transaction executor, installing a restricted profile, or making hardening a delivery/readiness gate. |
 | Files/packages | New `packages/agent-cli/src/setup/adapters/claude.ts` and tests; packaged Claude asset references; support matrix docs. |
-| Acceptance | Absent Claude is reported without creating `~/.claude`; supported versions install exactly one user-scope plugin; the normal user-started session can be ready when optional hardening is absent; status reports the hardening check separately; unknown versions fail closed; remove restores exact preimages; the installed entry reads port/token from the descriptor at runtime. |
-| Tests | Observe writes across clean, populated, hardened, and conflicting synthetic homes; assert every changed path is present in the plan and config contains no runtime port/token. **Wrong implementation killer:** remove the optional hardening profile and assert delivery remains ready while hardening reports absent; an implementation that gates delivery fails. |
+| Acceptance | Absent Claude is reported without creating `~/.claude`; supported versions install exactly one user-scope plugin; the normal user-started session can be ready when optional hardening is absent; status reports the hardening check separately; a `/khala <verb>` name collision is detected and fails the plan; unknown versions fail closed; remove restores exact preimages; the installed entry reads port/token from the descriptor at runtime. |
+| Tests | Observe writes across clean, populated, hardened, and conflicting synthetic homes (including a pre-existing `/khala` command); assert every changed path is present in the plan and config contains no runtime port/token. **Wrong implementation killer:** remove the optional hardening profile and assert delivery remains ready while hardening reports absent, and that setup writes no profile; an implementation that gates delivery or installs a profile fails. |
 | `blocked-by` | `setup-cli-transaction`, `claude-plugin-hooks`, `claude-plugin-dispatch`, `mcp-result-piggyback`. |
 | Conflict risk | **Medium** with Claude artifact producers; consume their exports and avoid editing their behavior or manifests. |
 
@@ -436,12 +436,12 @@ finishable by one agent in one PR.
 
 | Field | Contract |
 | --- | --- |
-| Scope | Detect/version Codex; inspect and plan global Khala skill and MCP registration with no plugin or marketplace; enumerate and test the complete mutation footprint; retain capability-honest route labels. |
+| Scope | Detect/version Codex; inspect and plan global Khala skill, native hook config entries (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and MCP registration with no plugin or marketplace; record the one-time hook-trust approval; enumerate and test the complete mutation footprint; retain capability-honest route labels. |
 | Out of scope | Changing Codex notification/listening semantics, Codex login, project scope, or reimplementing the MCP server. |
 | Files/packages | New `packages/agent-cli/src/setup/adapters/codex.ts` and tests; packaged skill assets; support matrix docs. |
-| Acceptance | Codex 0.154.0 fixture has a proven skill/MCP-only plan; absent/unknown versions are distinct; existing unrelated config survives byte-exact setup/remove; MCP command success without the expected postimage is not ready; the installed entry reads port/token from the descriptor at runtime. |
-| Tests | Observe writes across clean, populated, and conflicting `.codex` trees; fake command runner; pre/post byte assertions. **Wrong implementation killer:** fake exit 0 while omitting the MCP postimage and assert setup fails and rolls back. |
-| `blocked-by` | `setup-cli-transaction`, `mcp-result-piggyback`. |
+| Acceptance | Codex 0.154.0 fixture has a proven skill + hooks + MCP plan (no plugin); hook entries are removed exactly and unrelated hooks survive byte-exact; the one-time hook-trust approval is recorded and removed with the entries; absent/unknown versions are distinct; existing unrelated config survives byte-exact setup/remove; MCP command success without the expected postimage is not ready; the installed entry reads port/token from the descriptor at runtime. |
+| Tests | Observe writes across clean, populated, and conflicting `.codex` trees; fake command runner; pre/post byte assertions. **Wrong implementation killer:** fake exit 0 while omitting the MCP postimage and assert setup fails and rolls back; also leave a hook entry behind on remove and assert the byte-exact preimage check fails. |
+| `blocked-by` | `setup-cli-transaction`, `mcp-result-piggyback`, `interactive-codex`. |
 | Conflict risk | **Medium** with MCP/listening producers and the shared Codex config; adapter owns lifecycle only and must not introduce a plugin manifest. |
 
 ### 6. Add the OpenCode setup adapter
@@ -459,7 +459,7 @@ finishable by one agent in one PR.
 | Files/packages | New `packages/agent-cli/src/setup/adapters/opencode.ts` and tests; packaged OpenCode asset references; support matrix docs. |
 | Acceptance | Version 1.17.10 fixture configures all three components; absent OpenCode creates nothing; comments/formatting and unrelated config bytes return exactly after removal; unsupported schema/version refuses safely; the installed entry reads port/token from the descriptor at runtime. |
 | Tests | Synthetic XDG config/skill roots with unusual formatting and sentinel secrets. **Wrong implementation killer:** remove via parse-and-reserialize and assert the final file differs from its byte-exact preimage, failing the test. |
-| `blocked-by` | `setup-cli-transaction`, `opencode-session-bridge`, `opencode-delivery-contract`, `mcp-result-piggyback`. |
+| `blocked-by` | `setup-cli-transaction`, `opencode-session-bridge`, `opencode-delivery-contract`, `opencode-listening-routes`, `mcp-result-piggyback`. |
 | Conflict risk | **Medium** with bridge packaging/config work; the adapter must consume, not duplicate, its plugin entrypoint. |
 
 ### 7. Gate setup release with cross-harness acceptance
