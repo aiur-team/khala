@@ -87,9 +87,6 @@ async function mcp(args: readonly string[], deps: CliDependencies): Promise<numb
   if (args.length !== 0) throw new CliError('invalid_arguments');
   const current = publicStatus(await deps.client.status(deps.signal));
   if (!current.connected || current.binding === null) throw new CliError('not_connected');
-  // Keep the runtime value import behind the only command that needs it; the
-  // remaining CLI commands depend on delivery contracts only as types.
-  const { sameSessionBinding } = await import('@khala/contracts/delivery/index');
   const heldBinding = current.binding;
   const inbox = await deps.inbox(heldBinding.bindingId, heldBinding.generation);
   const consumer = await inbox.acquireListener();
@@ -103,7 +100,7 @@ async function mcp(args: readonly string[], deps: CliDependencies): Promise<numb
         consumer,
         isCurrentBinding: async () => {
           const latest = publicStatus(await deps.client.status(deps.signal));
-          return latest.connected && latest.binding !== null && sameSessionBinding(heldBinding, latest.binding);
+          return latest.connected && latest.binding !== null && sameHeldBinding(heldBinding, latest.binding);
         },
       }),
       signal: deps.signal,
@@ -203,6 +200,19 @@ function publicBinding(value: unknown): SessionBinding {
     sessionId: value.sessionId,
     generation: value.generation,
   } as SessionBinding;
+}
+
+// Keep the packaged CLI free of runtime imports from the source-only contracts
+// workspace package while preserving the complete SessionBinding identity.
+function sameHeldBinding(a: SessionBinding, b: SessionBinding): boolean {
+  return a.v === b.v
+    && a.bindingId === b.bindingId
+    && a.ownerId === b.ownerId
+    && a.agentParticipantId === b.agentParticipantId
+    && a.deviceId === b.deviceId
+    && a.harness === b.harness
+    && a.sessionId === b.sessionId
+    && a.generation === b.generation;
 }
 
 function publicSendOutput(result: Awaited<ReturnType<SendService['send']>>): Record<string, unknown> {

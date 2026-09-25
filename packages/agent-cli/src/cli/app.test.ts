@@ -261,6 +261,11 @@ describe('runCli', () => {
     ['revocation', { ...connectedStatus(BINDING), binding: null }],
     ['disconnect', { ...connectedStatus(BINDING), connected: false }],
     ['replacement binding', connectedStatus(replacementBinding())],
+    ['owner drift', connectedStatus(replacementBinding({ bindingId: BINDING.bindingId, ownerId: 'owner-2' }))],
+    ['agent drift', connectedStatus(replacementBinding({ bindingId: BINDING.bindingId, agentParticipantId: 'agent-2' }))],
+    ['device drift', connectedStatus(replacementBinding({ bindingId: BINDING.bindingId, deviceId: 'device-2' }))],
+    ['harness drift', connectedStatus(replacementBinding({ bindingId: BINDING.bindingId, harness: 'other-harness' }))],
+    ['session drift', connectedStatus(replacementBinding({ bindingId: BINDING.bindingId, sessionId: 'session-2' }))],
     ['generation drift', connectedStatus({ ...BINDING, generation: BINDING.generation + 1 })],
     ['invalid public status', { ...connectedStatus(BINDING), route: 'injected-route' }],
   ] as const)('keeps primary MCP results while %s suppresses future batches', async (_name, driftedStatus) => {
@@ -351,8 +356,8 @@ function connectedStatus(binding: SessionBinding) {
   return { v: 1 as const, connected: true, binding, route: 'unknown' as const, sourceCursor: 'source-1' };
 }
 
-function replacementBinding(): SessionBinding {
-  const decoded = decodeSessionBinding({ ...BINDING, bindingId: 'binding-2' });
+function replacementBinding(overrides: Record<string, unknown> = { bindingId: 'binding-2' }): SessionBinding {
+  const decoded = decodeSessionBinding({ ...BINDING, ...overrides });
   if (!decoded.ok) throw new Error('invalid replacement binding fixture');
   return decoded.value;
 }
