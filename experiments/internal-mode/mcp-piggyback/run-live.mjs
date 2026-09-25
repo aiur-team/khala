@@ -70,12 +70,12 @@ try {
     recordedAt: new Date().toISOString(),
     codexVersion: version.stdout.trim(),
     launchOwner: 'agent-launched proof process; not claimed as user-started',
-    trustSettings: 'normal',
+    approvalMode: '--approve-for-me',
     command: 'CODEX_HOME="$PROOF_HOME" codex exec --json --ephemeral --approve-for-me -C experiments/internal-mode/mcp-piggyback -c mcp_servers.khala_format.command="node" -c mcp_servers.khala_format.args=["server.mjs"] -c mcp_servers.khala_format.env={KHALA_FORMAT_SCENARIO="<scenario>",KHALA_FORMAT_LOG="$PROOF_LOG"} "<prompt>"',
     cases: {},
     negativeClaims: [
       'This fixture does not prove product inbox durability, idle wake, sync, steer, arbitrary-tool injection, or capability advertising.',
-      'The proof process was agent-launched with normal approval and sandbox settings; it is not evidence of a human-started interactive CLI.',
+      'The proof process was agent-launched with --approve-for-me; it is not evidence of a human-started interactive CLI.',
       'The proof requires no receiver-side release-ID set or duplicate filter: Codex returned only the opaque batch token and no release ID.',
     ],
   };

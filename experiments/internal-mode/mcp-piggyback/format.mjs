@@ -4,6 +4,8 @@ export const SOFT_RESPONSE_BYTES = 128 * 1024;
 export const MAX_RELEASE_BYTES = 128 * 1024;
 export const MAX_RELEASES = 8;
 
+const ESCAPE_HEAVY_PADDING = '"\\\n\u0001😀';
+
 const utf8Bytes = value => Buffer.byteLength(value, 'utf8');
 const digest = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 
@@ -72,12 +74,25 @@ export function selectBatch({ id, primaryText, batchToken, releases, softLimit =
   };
 }
 
-function padBodyToTarget(makeRelease, targetBytes) {
-  const base = makeRelease('');
-  const missing = targetBytes - utf8Bytes(base.payload);
-  if (missing < 0) throw new Error(`target ${targetBytes} is smaller than fixture envelope`);
-  const padded = makeRelease('x'.repeat(missing));
-  if (utf8Bytes(padded.payload) !== targetBytes) throw new Error('release padding was not byte-exact');
+function padEscapingBodyToTarget(makeRelease, measure, targetBytes) {
+  if (measure(makeRelease('')) > targetBytes) throw new Error(`target ${targetBytes} is smaller than fixture envelope`);
+
+  let low = 0;
+  let high = 1;
+  while (measure(makeRelease(ESCAPE_HEAVY_PADDING.repeat(high))) <= targetBytes) {
+    low = high;
+    high *= 2;
+  }
+  while (low + 1 < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (measure(makeRelease(ESCAPE_HEAVY_PADDING.repeat(middle))) <= targetBytes) low = middle;
+    else high = middle;
+  }
+
+  const escapeHeavy = ESCAPE_HEAVY_PADDING.repeat(low);
+  const missing = targetBytes - measure(makeRelease(escapeHeavy));
+  const padded = makeRelease(`${escapeHeavy}${'x'.repeat(missing)}`);
+  if (measure(padded) !== targetBytes) throw new Error('escape-heavy padding was not byte-exact');
   return padded;
 }
 
@@ -109,20 +124,17 @@ export function softBoundaryFixture(id, primaryText, batchToken) {
     channelName: 'Boundary Channel',
     authorId: 'author-boundary',
     authorName: 'Boundary Author',
-    body: `ESCAPING-START "quoted" \\ slash \n newline 😀 ${padding} ESCAPING-END`,
+    body: `ESCAPING-START ${padding} ESCAPING-END`,
   });
-  let paddingBytes = SOFT_RESPONSE_BYTES - utf8Bytes(serializedLine(id, primaryText, batchToken, [makeRelease('')]));
-  let item = makeRelease('x'.repeat(paddingBytes));
-  let lineBytes = utf8Bytes(serializedLine(id, primaryText, batchToken, [item]));
-  paddingBytes -= lineBytes - SOFT_RESPONSE_BYTES;
-  item = makeRelease('x'.repeat(paddingBytes));
-  lineBytes = utf8Bytes(serializedLine(id, primaryText, batchToken, [item]));
-  if (lineBytes !== SOFT_RESPONSE_BYTES) throw new Error(`soft fixture is ${lineBytes}, expected ${SOFT_RESPONSE_BYTES}`);
-  return item;
+  return padEscapingBodyToTarget(
+    makeRelease,
+    item => utf8Bytes(serializedLine(id, primaryText, batchToken, [item])),
+    SOFT_RESPONSE_BYTES,
+  );
 }
 
 export function oversizedHeadFixture() {
-  return padBodyToTarget(
+  return padEscapingBodyToTarget(
     padding => release({
       releaseId: 'release-oversized-head',
       channelId: 'channel-oversized',
@@ -131,6 +143,7 @@ export function oversizedHeadFixture() {
       authorName: 'Oversized Author',
       body: `OVERSIZED-START ${padding} OVERSIZED-END`,
     }),
+    item => utf8Bytes(item.payload),
     MAX_RELEASE_BYTES,
   );
 }

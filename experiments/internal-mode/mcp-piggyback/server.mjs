@@ -17,6 +17,10 @@ function write(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
+const releaseBody = item => JSON.parse(item.payload)[5][0].body;
+const bodyStart = item => Array.from(releaseBody(item)).slice(0, 80).join('');
+const bodyEnd = item => Array.from(releaseBody(item)).slice(-80).join('');
+
 function tool() {
   return {
     name: 'khala_read',
@@ -75,9 +79,10 @@ async function handle(request) {
     releaseIds: selected.releases.map(item => item.releaseId),
     payloadDigests: selected.releases.map(item => item.payloadDigest),
     payloadBytes: selected.releases.map(item => Buffer.byteLength(item.payload, 'utf8')),
+    bodyBytes: selected.releases.map(item => Buffer.byteLength(releaseBody(item), 'utf8')),
     serializedBytes: Buffer.byteLength(line, 'utf8'),
-    bodyStarts: selected.releases.map(item => JSON.parse(item.payload)[5][0].body.slice(0, 80)),
-    bodyEnds: selected.releases.map(item => JSON.parse(item.payload)[5][0].body.slice(-80)),
+    bodyStarts: selected.releases.map(bodyStart),
+    bodyEnds: selected.releases.map(bodyEnd),
   });
   process.stdout.write(line);
 }

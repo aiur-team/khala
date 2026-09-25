@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-25T03:24:35.880Z",
+  "recordedAt": "2026-09-25T03:45:08.035Z",
   "codexVersion": "codex-cli 0.154.0",
   "launchOwner": "agent-launched proof process; not claimed as user-started",
-  "trustSettings": "normal",
+  "approvalMode": "--approve-for-me",
   "command": "CODEX_HOME=\"$PROOF_HOME\" codex exec --json --ephemeral --approve-for-me -C experiments/internal-mode/mcp-piggyback -c mcp_servers.khala_format.command=\"node\" -c mcp_servers.khala_format.args=[\"server.mjs\"] -c mcp_servers.khala_format.env={KHALA_FORMAT_SCENARIO=\"<scenario>\",KHALA_FORMAT_LOG=\"$PROOF_LOG\"} \"<prompt>\"",
   "cases": {
     "ordered": {
-      "sessionId": "01a0d697-eedd-79b3-bf42-1a4c337d8bac",
+      "sessionId": "01a0d6aa-bc63-7e51-8697-cd491dc0567a",
       "toolCalls": [
         {
           "arguments": {}
@@ -52,6 +52,16 @@
           299,
           304,
           312
+        ],
+        "bodyBytes": [
+          24,
+          32,
+          49,
+          39,
+          25,
+          32,
+          38,
+          47
         ],
         "serializedBytes": 4597,
         "bodyStarts": [
@@ -101,7 +111,7 @@
       }
     },
     "soft-boundary": {
-      "sessionId": "01a0d698-54e7-74d1-a088-a5c4c308b591",
+      "sessionId": "01a0d6ab-2b2b-7743-acf8-fe770da61692",
       "toolCalls": [
         {
           "arguments": {}
@@ -121,17 +131,20 @@
           "release-soft-boundary"
         ],
         "payloadDigests": [
-          "sha256:7d377d3a828f5234d046b5305c6b48676d785497a5c89250cce1a6bf4de012c9"
+          "sha256:f649e8b98977779288c4b6b642d4dd6eef2d5f29ba1dbf60718fc34eaa5e7e68"
         ],
         "payloadBytes": [
-          130534
+          95034
+        ],
+        "bodyBytes": [
+          47385
         ],
         "serializedBytes": 131072,
         "bodyStarts": [
-          "ESCAPING-START \"quoted\" \\ slash \n newline 😀 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          "ESCAPING-START \"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀"
         ],
         "bodyEnds": [
-          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ESCAPING-END"
+          "\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀xxxxxxxxxxxxx ESCAPING-END"
         ]
       },
       "acknowledged": true,
@@ -142,7 +155,7 @@
       }
     },
     "oversized-head": {
-      "sessionId": "01a0d698-a939-7090-8bd0-eba649ea7e7d",
+      "sessionId": "01a0d6ab-9f50-7252-8612-93df748db469",
       "toolCalls": [
         {
           "arguments": {}
@@ -162,17 +175,20 @@
           "release-oversized-head"
         ],
         "payloadDigests": [
-          "sha256:80cafcb3761f7ac61f52bae14176b8d74086501b72a5b8603237a577a6647bdd"
+          "sha256:da550a8e6fb563e53bbde822b3d1186cc975972fd86995bdf1b8312fa6a7066a"
         ],
         "payloadBytes": [
           131072
         ],
-        "serializedBytes": 131605,
+        "bodyBytes": [
+          65400
+        ],
+        "serializedBytes": 180625,
         "bodyStarts": [
-          "OVERSIZED-START xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          "OVERSIZED-START \"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001"
         ],
         "bodyEnds": [
-          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx OVERSIZED-END"
+          "😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀\"\\\n\u0001😀xxxxxxxxxx OVERSIZED-END"
         ]
       },
       "acknowledged": true,
@@ -185,7 +201,7 @@
   },
   "negativeClaims": [
     "This fixture does not prove product inbox durability, idle wake, sync, steer, arbitrary-tool injection, or capability advertising.",
-    "The proof process was agent-launched with normal approval and sandbox settings; it is not evidence of a human-started interactive CLI.",
+    "The proof process was agent-launched with --approve-for-me; it is not evidence of a human-started interactive CLI.",
     "The proof requires no receiver-side release-ID set or duplicate filter: Codex returned only the opaque batch token and no release ID."
   ]
 }

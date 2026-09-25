@@ -8,6 +8,7 @@ import {
 const id = 2;
 const primaryText = 'Khala read completed.';
 const token = 'bt_test_opaque';
+const escapeHeavyPadding = '"\\\n\u0001😀';
 
 test('preserves primary content, FIFO releases, provenance, escaping, and eight-item limit', () => {
   const releases = orderedFixture();
@@ -26,18 +27,26 @@ test('preserves primary content, FIFO releases, provenance, escaping, and eight-
 test('measures an escaping-heavy response at the complete 128 KiB JSON-RPC boundary', () => {
   const item = softBoundaryFixture(id, primaryText, token);
   const selected = selectBatch({ id, primaryText, batchToken: token, releases: [item] });
+  const body = JSON.parse(item.payload)[5][0].body;
   assert.equal(selected.serializedBytes, SOFT_RESPONSE_BYTES);
   assert.equal(Buffer.byteLength(serializedLine(id, primaryText, token, selected.releases)), SOFT_RESPONSE_BYTES);
+  assert.ok(body.split(escapeHeavyPadding).length > 1_000);
+  assert.ok(Buffer.byteLength(item.payload) - Buffer.byteLength(body) >= 16 * 1024);
+  assert.ok(selected.serializedBytes - Buffer.byteLength(item.payload) >= 16 * 1024);
 });
 
 test('includes one maximum-size oversized head whole instead of truncating or skipping it', () => {
   const item = oversizedHeadFixture();
+  const body = JSON.parse(item.payload)[5][0].body;
   assert.equal(Buffer.byteLength(item.payload), MAX_RELEASE_BYTES);
   const selected = selectBatch({ id, primaryText, batchToken: token, releases: [item, ...orderedFixture()] });
   assert.deepEqual(selected.releases.map(value => value.releaseId), ['release-oversized-head']);
   assert.ok(selected.serializedBytes > SOFT_RESPONSE_BYTES);
   assert.match(selected.releases[0].payload, /OVERSIZED-START/);
   assert.match(selected.releases[0].payload, /OVERSIZED-END/);
+  assert.ok(body.split(escapeHeavyPadding).length > 1_000);
+  assert.ok(Buffer.byteLength(item.payload) - Buffer.byteLength(body) >= 16 * 1024);
+  assert.ok(selected.serializedBytes - Buffer.byteLength(item.payload) >= 16 * 1024);
 });
 
 test('leaves the first whole release that would cross the soft limit for a later call', () => {

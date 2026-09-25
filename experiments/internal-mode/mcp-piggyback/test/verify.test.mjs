@@ -42,6 +42,20 @@ test('raw-payload or pre-escaping byte accounting fails', async () => {
   assert.match(verdict.failures.join('\n'), /exactly 128 KiB/);
 });
 
+test('non-escaping padding fails the material expansion proof', async () => {
+  for (const name of ['soft-boundary', 'oversized-head']) {
+    const withoutJsonExpansion = await load();
+    const jsonDelivered = withoutJsonExpansion.cases[name].delivered;
+    jsonDelivered.bodyBytes[0] = jsonDelivered.payloadBytes[0];
+    assert.match(assess(withoutJsonExpansion).failures.join('\n'), new RegExp(`${name}: JSON escaping did not materially expand`));
+
+    const withoutJsonRpcExpansion = await load();
+    const jsonRpcDelivered = withoutJsonRpcExpansion.cases[name].delivered;
+    jsonRpcDelivered.payloadBytes[0] = jsonRpcDelivered.serializedBytes;
+    assert.match(assess(withoutJsonRpcExpansion).failures.join('\n'), new RegExp(`${name}: JSON-RPC escaping did not materially expand`));
+  }
+});
+
 test('truncating an oversized head fails', async () => {
   const report = await load();
   report.cases['oversized-head'].model.bodyEnd = 'truncated';

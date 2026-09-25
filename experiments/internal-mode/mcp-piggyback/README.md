@@ -27,7 +27,7 @@ node experiments/internal-mode/mcp-piggyback/verify.mjs \
 
 The runner creates a private directory under `$TMPDIR`, copies only the current
 Codex authentication file into it, and deletes the directory after all three
-cases. It uses normal trust settings and `--approve-for-me`; it never uses a
+cases. The agent launches each case with `--approve-for-me`; it never uses a
 dangerous approval, sandbox, hook-trust, or permissions bypass.
 
 ```sh

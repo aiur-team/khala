@@ -2,11 +2,21 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { MAX_RELEASE_BYTES, SOFT_RESPONSE_BYTES } from './format.mjs';
 
+const MATERIAL_ESCAPE_EXPANSION_BYTES = 16 * 1024;
+
+function verifyEscapeExpansion(failures, name, delivered) {
+  const bodyBytes = delivered?.bodyBytes?.[0];
+  const payloadBytes = delivered?.payloadBytes?.[0];
+  const serializedBytes = delivered?.serializedBytes;
+  if (!(payloadBytes - bodyBytes >= MATERIAL_ESCAPE_EXPANSION_BYTES)) failures.push(`${name}: JSON escaping did not materially expand the raw body`);
+  if (!(serializedBytes - payloadBytes >= MATERIAL_ESCAPE_EXPANSION_BYTES)) failures.push(`${name}: JSON-RPC escaping did not materially expand the canonical release`);
+}
+
 export function assess(report) {
   const failures = [];
   if (report.schemaVersion !== 1) failures.push('unsupported evidence schema');
   if (report.codexVersion !== 'codex-cli 0.154.0') failures.push('unproved Codex version');
-  if (report.trustSettings !== 'normal') failures.push('proof did not use normal trust settings');
+  if (report.approvalMode !== '--approve-for-me' || !report.command?.includes(' --approve-for-me ')) failures.push('proof was not launched with --approve-for-me');
   if (!report.command?.includes('codex exec') || report.command.includes('--dangerously-')) failures.push('unsafe or missing launch command');
 
   for (const name of ['ordered', 'soft-boundary', 'oversized-head']) {
@@ -42,11 +52,13 @@ export function assess(report) {
 
   const soft = report.cases?.['soft-boundary'];
   if (soft?.delivered?.serializedBytes !== SOFT_RESPONSE_BYTES) failures.push('soft-boundary: complete escaped JSON-RPC line was not exactly 128 KiB');
+  verifyEscapeExpansion(failures, 'soft-boundary', soft?.delivered);
   if (soft?.model?.bodyStart !== 'ESCAPING-START' || soft?.model?.bodyEnd !== 'ESCAPING-END') failures.push('soft-boundary: model did not accept the complete escaping-heavy body');
 
   const oversized = report.cases?.['oversized-head'];
   if (oversized?.delivered?.payloadBytes?.[0] !== MAX_RELEASE_BYTES) failures.push('oversized-head: release was not the configured maximum size');
   if (!(oversized?.delivered?.serializedBytes > SOFT_RESPONSE_BYTES)) failures.push('oversized-head: response did not exercise the soft-limit exception');
+  verifyEscapeExpansion(failures, 'oversized-head', oversized?.delivered);
   if (oversized?.delivered?.releaseIds?.length !== 1) failures.push('oversized-head: oldest release was skipped or split');
   if (oversized?.model?.bodyStart !== 'OVERSIZED-START' || oversized?.model?.bodyEnd !== 'OVERSIZED-END') failures.push('oversized-head: model did not accept the whole release');
 
