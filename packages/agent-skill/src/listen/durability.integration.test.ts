@@ -6,8 +6,8 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import { decodeSessionBinding, type EventRef } from '@khala/contracts/delivery/index';
-import { openInbox } from '@khala/agent-cli/cli/inbox';
-import type { InboxDelivery } from '@khala/agent-cli/cli/types';
+import { openInbox } from '@aiur/khala/cli/inbox';
+import type { InboxDelivery } from '@aiur/khala/cli/types';
 import { nodeListenerProcess } from './node-process.js';
 
 const roots: string[] = [];
@@ -54,7 +54,7 @@ function delivery(releaseId: string, body: string): InboxDelivery {
 }
 
 function childArguments(directory: string): string[] {
-  return ['--import', 'tsx', listenerFixture, directory, binding.bindingId];
+  return ['--conditions=khala-source', '--import', 'tsx', listenerFixture, directory, binding.bindingId];
 }
 
 function capture() {

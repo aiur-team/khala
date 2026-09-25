@@ -1,0 +1,38 @@
+name: Release @aiur/khala
+# Publishes the agent CLI with npm trusted publishing. GitHub's OIDC token
+# authenticates the publish and signs the provenance statement, so no
+# long-lived npm token exists anywhere. The npm package's trusted publisher must
+# name this workflow file and the `npm-publish` environment.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-khala-cli
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 bundles npm 10.
+      - run: npm install --global npm@11.16.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm --filter @aiur/khala test
+      # The gate packs the tarball and refuses it before anything is published.
+      - run: node scripts/agent-cli-package-gate.mjs --out "$RUNNER_TEMP/khala-package"
+      # Publish exactly the gated tarball; publishing a tarball skips prepack.
+      - run: npm publish "$RUNNER_TEMP"/khala-package/aiur-khala-*.tgz --provenance --access public
