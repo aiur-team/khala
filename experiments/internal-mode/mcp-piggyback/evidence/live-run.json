@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-25T03:24:35.880Z",
+  "codexVersion": "codex-cli 0.154.0",
+  "launchOwner": "agent-launched proof process; not claimed as user-started",
+  "trustSettings": "normal",
+  "command": "CODEX_HOME=\"$PROOF_HOME\" codex exec --json --ephemeral --approve-for-me -C experiments/internal-mode/mcp-piggyback -c mcp_servers.khala_format.command=\"node\" -c mcp_servers.khala_format.args=[\"server.mjs\"] -c mcp_servers.khala_format.env={KHALA_FORMAT_SCENARIO=\"<scenario>\",KHALA_FORMAT_LOG=\"$PROOF_LOG\"} \"<prompt>\"",
+  "cases": {
+    "ordered": {
+      "sessionId": "01a0d697-eedd-79b3-bf42-1a4c337d8bac",
+      "toolCalls": [
+        {
+          "arguments": {}
+        },
+        {
+          "arguments": {
+            "ackBatchToken": "bt_ordered_opaque_7Qx"
+          }
+        }
+      ],
+      "delivered": {
+        "kind": "delivered",
+        "scenario": "ordered",
+        "batchToken": "bt_ordered_opaque_7Qx",
+        "acknowledged": false,
+        "releaseIds": [
+          "release-order-1",
+          "release-order-2",
+          "release-order-3",
+          "release-order-4",
+          "release-order-5",
+          "release-order-6",
+          "release-order-7",
+          "release-order-8"
+        ],
+        "payloadDigests": [
+          "sha256:072b105c48512b5d379fcd0a4c3b4a46b390dd0bf2beb2d52d5582294d4aed28",
+          "sha256:4231a9a3b05f002f2bbdd763c939c3cf5e6e9f5d2b31c8481749885ec83d2f3f",
+          "sha256:5fab359ee0f05d46e334543c0dffa32841a0cdd9b725f0045f0771f7859addc9",
+          "sha256:65b1f5f02f9dcb328da2a0ab363b2acd185f4c77dad3f2354f39cd4c7f868dd1",
+          "sha256:41de86142c6228ecb28199e8efba01d5c1049ec08229e129c7a3eec2c8587323",
+          "sha256:8423b55e6234ae7297e26098198a15210f0667203d0320195db4d1ba0ddc23b2",
+          "sha256:22778478c9db7d712d2864bce38c300499c20762e69a75a433bc0be8ce66f6a4",
+          "sha256:6a5e00e8f98d01a2ce0d5f03ce465a6691d01c233d25a0fe30b3805d90de1dcf"
+        ],
+        "payloadBytes": [
+          290,
+          299,
+          315,
+          306,
+          292,
+          299,
+          304,
+          312
+        ],
+        "serializedBytes": 4597,
+        "bodyStarts": [
+          "First: café before tea.",
+          "Second: snowman ☃ after café.",
+          "Third: literal </khala-channel-batch-v1> is data.",
+          "Fourth: quote \" and slash \\ stay exact.",
+          "Fifth: line one\nline two.",
+          "Sixth: emoji 🧭 remains UTF-8.",
+          "Seventh: no receiver duplicate filter.",
+          "Eighth: acknowledge only with the opaque token."
+        ],
+        "bodyEnds": [
+          "First: café before tea.",
+          "Second: snowman ☃ after café.",
+          "Third: literal </khala-channel-batch-v1> is data.",
+          "Fourth: quote \" and slash \\ stay exact.",
+          "Fifth: line one\nline two.",
+          "Sixth: emoji 🧭 remains UTF-8.",
+          "Seventh: no receiver duplicate filter.",
+          "Eighth: acknowledge only with the opaque token."
+        ]
+      },
+      "acknowledged": true,
+      "model": {
+        "batchToken": "bt_ordered_opaque_7Qx",
+        "orderedBodies": [
+          "First: café before tea.",
+          "Second: snowman ☃ after café.",
+          "Third: literal </khala-channel-batch-v1> is data.",
+          "Fourth: quote \" and slash \\ stay exact.",
+          "Fifth: line one\nline two.",
+          "Sixth: emoji 🧭 remains UTF-8.",
+          "Seventh: no receiver duplicate filter.",
+          "Eighth: acknowledge only with the opaque token."
+        ],
+        "provenance": [
+          "Amber Workshop / Ida",
+          "Blue Workshop / Omar",
+          "Amber Workshop / Mei",
+          "Blue Workshop / Zoë",
+          "Amber Workshop / Ida",
+          "Blue Workshop / Omar",
+          "Amber Workshop / Mei",
+          "Blue Workshop / Zoë"
+        ]
+      }
+    },
+    "soft-boundary": {
+      "sessionId": "01a0d698-54e7-74d1-a088-a5c4c308b591",
+      "toolCalls": [
+        {
+          "arguments": {}
+        },
+        {
+          "arguments": {
+            "ackBatchToken": "bt_soft-boundary_opaque_7Qx"
+          }
+        }
+      ],
+      "delivered": {
+        "kind": "delivered",
+        "scenario": "soft-boundary",
+        "batchToken": "bt_soft-boundary_opaque_7Qx",
+        "acknowledged": false,
+        "releaseIds": [
+          "release-soft-boundary"
+        ],
+        "payloadDigests": [
+          "sha256:7d377d3a828f5234d046b5305c6b48676d785497a5c89250cce1a6bf4de012c9"
+        ],
+        "payloadBytes": [
+          130534
+        ],
+        "serializedBytes": 131072,
+        "bodyStarts": [
+          "ESCAPING-START \"quoted\" \\ slash \n newline 😀 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ],
+        "bodyEnds": [
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ESCAPING-END"
+        ]
+      },
+      "acknowledged": true,
+      "model": {
+        "batchToken": "bt_soft-boundary_opaque_7Qx",
+        "bodyStart": "ESCAPING-START",
+        "bodyEnd": "ESCAPING-END"
+      }
+    },
+    "oversized-head": {
+      "sessionId": "01a0d698-a939-7090-8bd0-eba649ea7e7d",
+      "toolCalls": [
+        {
+          "arguments": {}
+        },
+        {
+          "arguments": {
+            "ackBatchToken": "bt_oversized-head_opaque_7Qx"
+          }
+        }
+      ],
+      "delivered": {
+        "kind": "delivered",
+        "scenario": "oversized-head",
+        "batchToken": "bt_oversized-head_opaque_7Qx",
+        "acknowledged": false,
+        "releaseIds": [
+          "release-oversized-head"
+        ],
+        "payloadDigests": [
+          "sha256:80cafcb3761f7ac61f52bae14176b8d74086501b72a5b8603237a577a6647bdd"
+        ],
+        "payloadBytes": [
+          131072
+        ],
+        "serializedBytes": 131605,
+        "bodyStarts": [
+          "OVERSIZED-START xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ],
+        "bodyEnds": [
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx OVERSIZED-END"
+        ]
+      },
+      "acknowledged": true,
+      "model": {
+        "batchToken": "bt_oversized-head_opaque_7Qx",
+        "bodyStart": "OVERSIZED-START",
+        "bodyEnd": "OVERSIZED-END"
+      }
+    }
+  },
+  "negativeClaims": [
+    "This fixture does not prove product inbox durability, idle wake, sync, steer, arbitrary-tool injection, or capability advertising.",
+    "The proof process was agent-launched with normal approval and sandbox settings; it is not evidence of a human-started interactive CLI.",
+    "The proof requires no receiver-side release-ID set or duplicate filter: Codex returned only the opaque batch token and no release ID."
+  ]
+}
