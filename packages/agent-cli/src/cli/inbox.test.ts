@@ -537,6 +537,18 @@ describe('listener notifier', () => {
     await expect(inbox.notifyListener()).resolves.toBe('unavailable');
   });
 
+  it('releases promptly while a peer holds a connection open', async () => {
+    const directory = stateDirectory();
+    const inbox = await open(directory);
+    const listener = await acquireBatch(inbox);
+    const peer = net.createConnection(listenerSocket(directory));
+    peer.on('error', () => undefined);
+    await new Promise(resolve => peer.once('connect', resolve));
+
+    expect(await settledWithin(listener.release(), 1000)).toBe(true);
+    peer.destroy();
+  });
+
   it('keeps the long-path fallback socket private to the inbox', async () => {
     const inbox = await open(path.join(stateDirectory(), 'x'.repeat(120)));
     const listener = await acquireBatch(inbox);

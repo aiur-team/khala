@@ -190,7 +190,7 @@ class FileInbox implements BatchInbox {
       waiter = null;
       current.resolve();
     };
-    let server: net.Server | null = null;
+    let server: ListenerSocket | null = null;
     try {
       server = await listen(this.#socketPath, wake);
       if (server === null) {
@@ -225,7 +225,7 @@ class FileInbox implements BatchInbox {
           waiter = null;
           current.reject(new CliError('listener_busy'));
         }
-        await new Promise<void>(resolve => server!.close(() => resolve()));
+        await server!.close();
         let failed = false;
         try {
           await fsp.unlink(this.#socketPath);
@@ -845,8 +845,13 @@ async function notifySocket(socketPath: string): Promise<ListenerNotification> {
   });
 }
 
-async function listen(socketPath: string, onWake: () => void): Promise<net.Server | null> {
+type ListenerSocket = Readonly<{ close(): Promise<void> }>;
+
+async function listen(socketPath: string, onWake: () => void): Promise<ListenerSocket | null> {
+  const connections = new Set<net.Socket>();
   const server = net.createServer({ allowHalfOpen: true }, socket => {
+    connections.add(socket);
+    socket.once('close', () => connections.delete(socket));
     socket.on('error', () => undefined);
     // A peer that writes anything is not speaking the hint protocol; destroying its
     // socket suppresses `end`, so it wakes nothing.
@@ -866,7 +871,13 @@ async function listen(socketPath: string, onWake: () => void): Promise<net.Serve
     server.listen(socketPath, () => {
       server.off('error', onError);
       server.on('error', () => undefined);
-      resolve(server);
+      resolve({
+        // A peer that never half-closes must not hold the release open.
+        close: () => new Promise<void>(done => {
+          server.close(() => done());
+          for (const socket of connections) socket.destroy();
+        }),
+      });
     });
   });
 }
