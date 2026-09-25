@@ -50,15 +50,17 @@ function common(name, run, fail) {
     if (!/codex/.test(process.codexArgv.join(' '))) fail(`${name}: MCP server parent is not the Codex CLI`);
     if (!/^\/dev\/pts\/\d+$/.test(process.codexStdin ?? '')) fail(`${name}: Codex CLI is not on an interactive terminal`);
   }
+  if (run.modelInputMarkerHits !== 0) fail(`${name}: queued message appears in the model's input`);
   for (const prompt of run.prompts) {
     for (const item of run.enqueued) {
       if (prompt.includes(item.body) || prompt.includes(item.marker)) fail(`${name}: queued message appears in a prompt`);
     }
   }
   for (const call of run.calls) {
-    // Agent-issued means Codex's own rollout records the model choosing this
-    // exact tool with these exact arguments; anything else was injected.
-    if (!call.rollout || call.rollout.tool !== call.tool || !isDeepStrictEqual(call.rollout.arguments, call.arguments)) {
+    // Agent-issued means Codex's own rollout records the model writing the call
+    // to this exact tool with these exact arguments; anything else was injected.
+    if (!call.rollout || call.rollout.tool !== call.tool || !isDeepStrictEqual(call.rollout.arguments, call.arguments)
+      || !(call.rollout.modelCode ?? '').includes(`mcp__khala__${call.tool}(`)) {
       fail(`${name}: ${call.tool} call ${call.rpcId} is not agent-issued`);
     }
     const argumentText = JSON.stringify(call.arguments);
@@ -100,7 +102,8 @@ function advancedExactly(name, run, token, fail) {
       fail(`${name}: an acknowledged release was delivered again`);
     }
   }
-  if (run.inboxAfter?.offset !== run.enqueued.length) fail(`${name}: durable cursor did not advance exactly once past the batch`);
+  // The durable cursor is a byte offset; it must rest on the last queued release.
+  if (run.inboxAfter?.releaseId !== run.enqueued.at(-1)?.releaseId) fail(`${name}: durable cursor did not advance exactly once past the batch`);
 }
 
 function asyncRun(run, fail) {

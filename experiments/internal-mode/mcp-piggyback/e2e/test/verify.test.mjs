@@ -21,7 +21,9 @@ function response({ kind = 'accepted', token = null, ids = [], sha = null } = {}
 }
 
 function call(rpcId, tool, args, res, { serveId = 'serve-1', session = 'session-1' } = {}) {
-  return { rpcId, serveId, session, tool, arguments: args, response: res, rollout: { tool, arguments: structuredClone(args) } };
+  return { rpcId, serveId, session, tool, arguments: args, response: res, rollout: {
+    tool, arguments: structuredClone(args), modelCode: `text(await tools.mcp__khala__${tool}(${JSON.stringify(args)}));`,
+  } };
 }
 
 function serve(serveId) {
@@ -37,7 +39,8 @@ function run(name, calls, extra = {}) {
     calls,
     sends: [{ body: 'Got it, participant-mira.' }],
     agentMessages: [enqueued.map(entry => `${entry.channel} ${entry.author}: "${entry.body}"`).join('\n')],
-    inboxAfter: { offset: 2 },
+    modelInputMarkerHits: 0,
+    inboxAfter: { v: 1, offset: 1998, releaseId: enqueued.at(-1).releaseId },
     kills: [],
     ...extra,
   };
@@ -93,7 +96,7 @@ test('wrong implementation: no Khala next-call acknowledgement plus a Codex-side
     const calls = report.runs.nonRead.calls;
     calls.push(call(3, 'khala_read', { seenReleaseIds: ['release-nonRead-1', 'release-nonRead-2'] },
       response({ kind: 'batch', token: 'token-b', ids: ['release-nonRead-1', 'release-nonRead-2'], sha: 'sha-b' })));
-    report.runs.nonRead.inboxAfter = { offset: 0 };
+    report.runs.nonRead.inboxAfter = null;
   });
   assert.ok(failures.includes('nonRead: receiver-side release-ID state in call arguments'), failures.join('\n'));
   assert.ok(failures.includes('nonRead: Khala replayed the batch after the exact token echo'), failures.join('\n'));
@@ -136,6 +139,16 @@ test('queued message content in a prompt fails', () => {
   assert.ok(failures.includes('async: queued message appears in a prompt'), failures.join('\n'));
 });
 
+test('queued message content anywhere in the model input fails', () => {
+  const failures = failuresOf(report => { report.runs.restart.modelInputMarkerHits = 1; });
+  assert.ok(failures.includes("restart: queued message appears in the model's input"), failures.join('\n'));
+});
+
+test('a rollout call without the model-written tool code is not agent-issued', () => {
+  const failures = failuresOf(report => { report.runs.nonRead.calls[1].rollout.modelCode = null; });
+  assert.ok(failures.includes('nonRead: khala_send call 2 is not agent-issued'), failures.join('\n'));
+});
+
 test('a body the model never relayed fails', () => {
   const failures = failuresOf(report => { report.runs.nonRead.agentMessages = ['nothing new']; });
   assert.ok(failures.includes('nonRead: queued body KH201-nonRead-1 never reached the model\'s reply'), failures.join('\n'));
@@ -159,4 +172,25 @@ test('claiming user-started, codex exec, or a bypass flag fails', () => {
 test('retained live evidence passes', { skip: !existsSync(evidencePath) && 'no retained live evidence yet' }, () => {
   const verdict = assess(JSON.parse(readFileSync(evidencePath, 'utf8')));
   assert.deepEqual(verdict, { proved: true, failures: [] });
+});
+
+test('retained live evidence fails both wrong implementations', { skip: !existsSync(evidencePath) && 'no retained live evidence yet' }, () => {
+  const live = () => JSON.parse(readFileSync(evidencePath, 'utf8'));
+  const injected = live();
+  injected.runs.async.calls[0].rollout = null;
+  assert.ok(assess(injected).failures.some(failure => /^async: khala_read call .* is not agent-issued$/.test(failure)));
+
+  const seenSet = live();
+  const run = seenSet.runs.nonRead;
+  const delivered = run.calls[0];
+  const replay = structuredClone(delivered);
+  replay.tool = 'khala_read';
+  replay.arguments = { seenReleaseIds: delivered.response.releaseIds };
+  replay.rollout = { ...replay.rollout, tool: 'khala_read', arguments: structuredClone(replay.arguments),
+    modelCode: `text(await tools.mcp__khala__khala_read(${JSON.stringify(replay.arguments)}));` };
+  run.calls.push(replay);
+  run.inboxAfter = null;
+  const failures = assess(seenSet).failures;
+  assert.ok(failures.includes('nonRead: receiver-side release-ID state in call arguments'), failures.join('\n'));
+  assert.ok(failures.includes('nonRead: Khala replayed the batch after the exact token echo'), failures.join('\n'));
 });

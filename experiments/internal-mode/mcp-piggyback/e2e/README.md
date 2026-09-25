@@ -10,14 +10,14 @@ Results and commands are in
 | `khala.ts` | Khala side: `setup`, `enqueue` (canonical releases from stdin, never argv), and `status` (durable cursor). |
 | `setup-project.mjs` | Writes the project-scoped `[mcp_servers.khala]` entry and the skill stand-in `AGENTS.md` (from `AGENTS.proof.md`). Codex's folder-trust prompt still gates it. |
 | `kill-after-delivery.mjs` | Restart trial: SIGKILLs the interactive Codex process and the server right after a batch is written. |
-| `collect.mjs` | Builds `evidence/live-run.json` from the tap logs and the Khala-call, prompt, and reply items of Codex's own rollouts. |
+| `collect.mjs` | Builds `evidence/live-run.json` from the tap logs and Codex's own rollouts: `McpToolCall` items plus the model's `exec` code for each Khala call, `UserMessage` prompts, `AgentMessage` replies, and a marker-hit count over all model input. |
 | `verify.mjs` | Checks the retained evidence against the contract; `test/verify.test.mjs` mutates it. |
 | `headroom.ts` | Measures the product byte budget against complete serialized responses (`evidence/headroom.json`). |
 
 Run from the repository root after `pnpm install`:
 
 ```sh
-node --test experiments/internal-mode/mcp-piggyback/e2e/test/*.test.mjs
+node --test experiments/internal-mode/mcp-piggyback/e2e/test/*.test.mjs   # 16 pass
 node experiments/internal-mode/mcp-piggyback/e2e/verify.mjs \
   experiments/internal-mode/mcp-piggyback/e2e/evidence/live-run.json
 node_modules/.bin/tsx experiments/internal-mode/mcp-piggyback/e2e/headroom.ts

@@ -27,37 +27,39 @@ function textOf(content) {
   return (content ?? []).map(part => part.text ?? '').join('');
 }
 
-function parseArguments(value) {
-  if (typeof value !== 'string') return value ?? {};
-  try { return JSON.parse(value); } catch { return { unparsed: value }; }
-}
-
-// Khala tool calls the model issued, in rollout order. Codex 0.154.0 records
-// an MCP call as an `mcp_tool_call_begin` event with its invocation; a
-// `function_call` response item carries the same choice under a namespaced name.
+// Khala tool calls the model issued, in rollout order. Codex 0.154.0 runs MCP
+// tools from model-written code: a `custom_tool_call` named `exec` whose input
+// calls `tools.mcp__khala__<tool>(...)`, followed by an `item_completed`
+// McpToolCall item with the parsed server, tool, and arguments. Each call keeps
+// the model's own code line so the rollout shows who chose it.
 function rolloutCalls(lines) {
-  const begins = lines.filter(line => line.type === 'event_msg' && line.payload?.type === 'mcp_tool_call_begin'
-    && line.payload.invocation?.server === 'khala');
-  if (begins.length) {
-    return begins.map(line => ({
-      tool: line.payload.invocation.tool,
-      arguments: parseArguments(line.payload.invocation.arguments),
-      callId: line.payload.call_id ?? null,
-      at: line.timestamp,
-    }));
-  }
-  return lines.filter(line => line.type === 'response_item' && line.payload?.type === 'function_call'
-    && /khala_(read|send)$/.test(line.payload.name ?? '')).map(line => ({
-    tool: line.payload.name.match(/khala_(read|send)$/)[0],
-    arguments: parseArguments(line.payload.arguments),
-    callId: line.payload.call_id ?? null,
+  const code = lines.filter(line => line.type === 'response_item' && line.payload?.type === 'custom_tool_call'
+    && line.payload.name === 'exec').flatMap(line => (line.payload.input ?? '').split('\n')
+    .filter(text => /tools\.mcp__khala__khala_(read|send)\(/.test(text)));
+  return lines.filter(line => line.type === 'event_msg' && line.payload?.type === 'item_completed'
+    && line.payload.item?.type === 'McpToolCall' && line.payload.item.server === 'khala').map((line, index) => ({
+    tool: line.payload.item.tool,
+    arguments: line.payload.item.arguments ?? {},
+    callId: line.payload.item.id ?? null,
+    modelCode: code[index] ?? null,
     at: line.timestamp,
   }));
 }
 
-function messages(lines, role) {
+// The user's typed prompts and the model's replies, as Codex's own
+// UserMessage and AgentMessage items record them.
+function messages(lines, type) {
+  return lines.filter(line => line.type === 'event_msg' && line.payload?.type === 'item_completed'
+    && line.payload.item?.type === type).map(line => textOf(line.payload.item.content));
+}
+
+// Every model-input message other than tool output (instructions, environment
+// context, typed prompts) is scanned for queued markers; only the hit count is
+// kept, never the text.
+function modelInputMarkerHits(lines, markers) {
   return lines.filter(line => line.type === 'response_item' && line.payload?.type === 'message'
-    && line.payload.role === role).map(line => textOf(line.payload.content));
+    && line.payload.role !== 'assistant').map(line => textOf(line.payload.content))
+    .filter(text => markers.some(marker => text.includes(marker))).length;
 }
 
 function responseSummary(message) {
@@ -116,8 +118,9 @@ async function collectRun(spec) {
   const allRollout = [...rollouts.values()].flat();
   return {
     sessions: spec.sessions.map(session => session.id),
-    prompts: messages(allRollout, 'user'),
-    agentMessages: messages(allRollout, 'assistant'),
+    prompts: messages(allRollout, 'UserMessage'),
+    modelInputMarkerHits: modelInputMarkerHits(allRollout, enqueued.map(item => item.marker)),
+    agentMessages: messages(allRollout, 'AgentMessage'),
     enqueued,
     serveProcesses: serves.map(serve => {
       const codex = serve.ancestors.find(process => /^\/dev\/pts\//.test(process.stdin ?? ''))
