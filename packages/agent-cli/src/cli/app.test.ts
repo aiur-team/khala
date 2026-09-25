@@ -451,7 +451,7 @@ describe('runCli', () => {
     ['session drift', connectedStatus(replacementBinding({ bindingId: BINDING.bindingId, sessionId: 'session-2' }))],
     ['generation drift', connectedStatus({ ...BINDING, generation: BINDING.generation + 1 })],
     ['invalid public status', { ...connectedStatus(BINDING), route: 'injected-route' }],
-  ] as const)('keeps primary MCP results while %s suppresses future batches', async (_name, driftedStatus) => {
+  ] as const)('keeps primary MCP results while %s suppresses future batches', async (name, driftedStatus) => {
     const io = streams(mcpCalls(1, 2));
     let statusCalls = 0;
     const statuses: unknown[] = [
@@ -471,7 +471,8 @@ describe('runCli', () => {
     expect(responses[1]?.result.content).toHaveLength(1);
     expect(responses[1]?.result.structuredContent).toMatchObject({ kind: 'accepted' });
     expect(readBatch).toHaveBeenCalledOnce();
-    expect(io.error()).toBe('');
+    const code = name === 'invalid public status' ? 'transport_unavailable' : 'binding_not_held';
+    expect(io.error()).toBe(`${JSON.stringify({ ok: false, warning: 'batch_suppressed', stage: 'status', code })}\n`);
   });
 
   it('replays an identical durable batch across restart, then advances one exact next-call token without host release tracking', async () => {

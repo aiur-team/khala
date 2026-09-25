@@ -194,6 +194,23 @@ describe('MCP server', () => {
     expect(JSON.stringify(responses)).not.toContain('secret-b');
   });
 
+  it('accepts the reserved object _meta that Codex sends on every request method', async () => {
+    const client = fakeClient();
+    const meta = { _meta: { progressToken: 0 } };
+    const responses = await exchange(client, [
+      request(1, 'initialize', { ...meta, protocolVersion: '2025-06-18', capabilities: {} }),
+      request(2, 'tools/list', meta),
+      request(3, 'ping', meta),
+      request(4, 'tools/call', { ...meta, name: 'khala_send', arguments: { message: 'hello' } }),
+      request(5, 'tools/list', { _meta: 'not-an-object' }),
+      request(6, 'tools/list', { ...meta, cursor: 'next' }),
+    ]);
+
+    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read']);
+    expect(responses.map(response => response.error?.code ?? 'ok')).toEqual(['ok', 'ok', 'ok', 'ok', -32602, -32602]);
+    expect(client.sent).toEqual([{ bindingId: null, body: 'hello' }]);
+  });
+
   it('returns invalid params for an empty message without stopping the server', async () => {
     const client = fakeClient();
     const responses = await exchange(client, [
