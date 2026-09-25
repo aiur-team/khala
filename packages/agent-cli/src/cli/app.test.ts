@@ -189,23 +189,53 @@ describe('runCli', () => {
     expect(JSON.parse(io.error())).toEqual({ ok: false, error: 'listener_busy' });
   });
 
-  it('releases the MCP listener when writing a response fails', async () => {
+  it('releases the MCP listener and replays the durable batch when writing a response fails', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-mcp-app-'));
+    temporaryDirectories.push(root);
+    const inboxOptions = {
+      stateDirectory: path.join(root, 'state'), bindingId: BINDING.bindingId, generation: BINDING.generation,
+      maxPayloadBytes: 4096, maxSelectionEvents: 8,
+    };
+    const initial = await openInbox(inboxOptions);
+    await initial.enqueue(delivery('release-1', '["released"]'));
     const stdin = Readable.from([mcpCalls(1)]);
-    const stdout = new FailingWritable();
+    const stdout = new CapturingFailingWritable();
     const stderr = new PassThrough();
     let error = '';
     stderr.on('data', chunk => { error += String(chunk); });
     stdout.on('error', () => undefined);
-    const release = vi.fn(async () => undefined);
+    let released = false;
 
     expect(await runCli(['mcp-serve'], {
       client: client(),
-      inbox: async () => fakeBatchInbox(async () => ({ async readBatch() { return null; }, release })),
+      inbox: async () => {
+        const durable = await openInbox(inboxOptions);
+        return {
+          enqueue: input => durable.enqueue(input),
+          acquireListener: async () => {
+            const consumer = await durable.acquireListener();
+            return {
+              readBatch: input => consumer.readBatch(input),
+              release: async () => { released = true; await consumer.release(); },
+            };
+          },
+          readNext: () => durable.readNext(),
+          acknowledge: item => durable.acknowledge(item),
+          status: () => durable.status(),
+        };
+      },
       stdin, stdout, stderr,
     })).toBe(2);
 
-    expect(release).toHaveBeenCalledOnce();
+    expect(released).toBe(true);
     expect(JSON.parse(error)).toEqual({ ok: false, error: 'internal_error' });
+    const attemptedBatch = batchText(mcpResponses(stdout.output())[0]);
+    const attemptedToken = batchToken(attemptedBatch);
+
+    const restarted = await runMcpSession(async () => openInbox(inboxOptions), [mcpCall(2)]);
+    const replayedBatch = batchText(restarted[0]);
+    expect(replayedBatch).toBe(attemptedBatch);
+    expect(batchToken(replayedBatch)).toBe(attemptedToken);
   });
 
   it('releases the MCP listener when abort interrupts a blocked stdout write', async () => {
@@ -293,8 +323,11 @@ type McpResponse = Readonly<{
   }>;
 }>;
 
-class FailingWritable extends Writable {
-  override _write(_chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+class CapturingFailingWritable extends Writable {
+  #output = '';
+  output(): string { return this.#output; }
+  override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    this.#output += chunk.toString();
     callback(new Error('write failed'));
   }
 }

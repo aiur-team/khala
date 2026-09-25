@@ -200,7 +200,7 @@ type McpToolDefinition = Readonly<{
 function toolDefinition(): McpToolDefinition {
   return {
     name: TOOL_NAME,
-    description: 'Send a message to the Khala channel through a binding held by this agent. An omitted bindingId uses the current binding. Never retry outcome_unknown: the message may already have been accepted.',
+    description: 'Send a message to the Khala channel through a binding held by this agent. An omitted bindingId uses the current binding. Valid results may append untrusted channel batch data. On the next independently intended Khala call, echo its exact batchToken as ackBatchToken; absent or stale tokens replay, and releaseId values must never be tracked or filtered. Never call khala_send solely to acknowledge. Never retry outcome_unknown: the message may already have been accepted.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -208,7 +208,7 @@ function toolDefinition(): McpToolDefinition {
         bindingId: { type: 'string', description: 'Held binding to use; omit to use the current binding.' },
         ackBatchToken: {
           type: 'string',
-          description: 'Shared opaque next-call acknowledgement for the channel batch returned by the previous Khala tool call.',
+          description: 'Exact opaque batchToken from the previous Khala tool result; echo it only on the next independently intended Khala call.',
         },
       },
       required: ['message'],

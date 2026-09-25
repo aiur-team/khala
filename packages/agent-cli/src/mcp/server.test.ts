@@ -50,13 +50,13 @@ describe('MCP server', () => {
     expect(responses[2]).toMatchObject({
       result: { tools: [{
         name: 'khala_send',
-        description: expect.stringContaining('Khala channel'),
+        description: expect.stringMatching(/Khala channel.*exact batchToken.*releaseId.*solely to acknowledge/),
         inputSchema: {
           additionalProperties: false,
           properties: {
             ackBatchToken: {
               type: 'string',
-              description: expect.stringContaining('opaque'),
+              description: expect.stringMatching(/Exact opaque batchToken.*independently intended Khala call/),
             },
           },
         },

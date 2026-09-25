@@ -165,6 +165,31 @@ describe('MCP result postprocessor', () => {
       .toBeGreaterThan(MCP_SOFT_RESPONSE_BYTES);
   });
 
+  it('serializes mixed multibyte and escaping-heavy data at the exact soft boundary', async () => {
+    const responseId = 'exact-soft-boundary';
+    const canonical = (fillerBytes: number) => `["café","line\\none","quote \\\"","emoji 🧭","${'x'.repeat(fillerBytes)}"]`;
+    const resultFor = (payload: string) => postprocessMcpResult({
+      responseId,
+      primaryResult: acceptedResult(),
+      isCurrentBinding: currentBinding(),
+      preselectedBatch: inboxBatch('boundary-token', [item('release-boundary', payload)]),
+    });
+    const empty = await resultFor(canonical(0));
+    const emptyLine = `${JSON.stringify({ jsonrpc: '2.0', id: responseId, result: empty })}\n`;
+    let fillerBytes = MCP_SOFT_RESPONSE_BYTES - Buffer.byteLength(emptyLine);
+
+    expect(fillerBytes).toBeGreaterThan(0);
+    const candidate = await resultFor(canonical(fillerBytes));
+    const candidateLine = `${JSON.stringify({ jsonrpc: '2.0', id: responseId, result: candidate })}\n`;
+    fillerBytes -= Buffer.byteLength(candidateLine) - MCP_SOFT_RESPONSE_BYTES;
+    const boundary = await resultFor(canonical(fillerBytes));
+    const boundaryLine = `${JSON.stringify({ jsonrpc: '2.0', id: responseId, result: boundary })}\n`;
+
+    expect(Buffer.byteLength(boundaryLine)).toBe(MCP_SOFT_RESPONSE_BYTES);
+    expect((boundary.content.at(-1) as { text: string }).text).toContain('café');
+    expect((boundary.content.at(-1) as { text: string }).text).toContain('emoji 🧭');
+  });
+
   it('rejects an impossible soft-bound configuration before processing', () => {
     expect(() => createMcpResultPostprocessor({ softResponseBytes: 1 })).toThrow(RangeError);
   });
