@@ -140,6 +140,8 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/channel-access/decision', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-access/mute', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-discovery/bootstrap/authorize', methods: ['GET', 'POST'], domain: 'human' },
+      { path: '/api/human/channel-discovery/settings', methods: ['PUT'], domain: 'human' },
+      { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], domain: 'human' },
       { path: '/api/agent/status', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/pairing/claim', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/pairing/result', methods: ['POST'], domain: 'agent' },
@@ -147,6 +149,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/agent/channel-access/create', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-access/status', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/channels', methods: ['GET'], domain: 'agent' },
     ]);
     expect(JSON.stringify(manifest)).not.toContain('pairing/redeem');
     expect(JSON.stringify(manifest)).not.toMatch(/channel-access\/(exchange|grant)|:\w|\*/);

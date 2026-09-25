@@ -25,6 +25,8 @@ export type AgentHandlerDependencies = Readonly<{
   channelAccess?: () => readonly RouteRegistration[];
   /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
   channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
+  /** Request-lifetime channel-listing registrations supplied by the composition root. */
+  channelDiscovery?: () => readonly RouteRegistration[];
 }>;
 
 function json(status: number, body: unknown): Response {
@@ -82,6 +84,16 @@ const unavailableChannelDiscoveryRoutes = Object.freeze([
   }),
 ] satisfies readonly RouteRegistration[]);
 
+const unavailableChannelListingRoutes = Object.freeze([
+  Object.freeze({
+    path: '/api/agent/channels',
+    methods: Object.freeze(['GET']),
+    async handle() {
+      return json(503, { error: 'feature_unavailable' });
+    },
+  }),
+] satisfies readonly RouteRegistration[]);
+
 function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
   return {
     generation: snapshot.generation,
@@ -106,6 +118,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     ...unavailablePairingRoutes,
     ...unavailableChannelAccessRoutes,
     ...unavailableChannelDiscoveryRoutes,
+    ...unavailableChannelListingRoutes,
   ]);
   const status: RouteRegistration = Object.freeze({
     path: '/api/agent/status',
@@ -125,5 +138,6 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
+    ...(dependencies.channelDiscovery?.() ?? unavailableChannelListingRoutes),
   ]);
 }

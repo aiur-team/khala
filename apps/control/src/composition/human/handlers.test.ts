@@ -11,13 +11,15 @@ describe('registerHumanHandlers', () => {
       { path: '/api/human/channel-access/decision', methods: ['POST'] },
       { path: '/api/human/channel-access/mute', methods: ['POST'] },
       { path: '/api/human/channel-discovery/bootstrap/authorize', methods: ['GET', 'POST'] },
+      { path: '/api/human/channel-discovery/settings', methods: ['PUT'] },
+      { path: '/api/human/channel-discovery/allowlist', methods: ['POST'] },
     ]);
     expect(Object.isFrozen(registrations)).toBe(true);
     for (const registration of registrations) {
       expect(Object.isFrozen(registration)).toBe(true);
       const response = await registration.handle(new Request(`https://example.test${registration.path}`));
       expect(response.status).toBe(503);
-      expect(await response.json()).toEqual(registration.path.includes('channel-discovery')
+      expect(await response.json()).toEqual(registration.path.includes('channel-discovery/bootstrap')
         ? { error: 'feature_unavailable' }
         : { v: 1, kind: 'rejected', code: 'feature_unavailable' });
     }
@@ -44,10 +46,19 @@ describe('registerHumanHandlers', () => {
     } as const;
     const registrations = registerHumanHandlers({ channelDiscoveryBootstrap: () => [authorize] });
 
-    expect(registrations.at(-1)).toBe(authorize);
+    expect(registrations.at(-3)).toBe(authorize);
     expect(registrations.slice(0, 2).map(route => route.path)).toEqual([
       '/api/human/pairing/request',
       '/api/human/pairing/decision',
     ]);
+  });
+
+  it('substitutes only the live channel-discovery settings registrations', () => {
+    const settings = { path: '/api/human/channel-discovery/settings', methods: ['PUT'], handle: async () => new Response('settings') } as const;
+    const allowlist = { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], handle: async () => new Response('allowlist') } as const;
+    const registrations = registerHumanHandlers({ channelDiscovery: () => [settings, allowlist] });
+
+    expect(registrations.slice(-2)).toEqual([settings, allowlist]);
+    expect(registrations.at(-3)?.path).toBe('/api/human/channel-discovery/bootstrap/authorize');
   });
 });
