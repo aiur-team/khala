@@ -63,6 +63,15 @@ test('workspace subpath exports enforce the same boundaries before install', t =
   });
   assert(errors.some(error => error.includes('browser reaches owner/server')));
 });
+test('source-conditioned exports of the published CLI resolve before install', t => {
+  const errors = fixture(t, {
+    'packages/agent-skill/src/listen/run.ts': "import '@aiur/khala/cli/app';",
+    'packages/agent-cli/package.json': { name: '@aiur/khala', exports: { './cli/*': { 'khala-source': './src/cli/*.ts' } } },
+    'packages/agent-cli/src/cli/app.ts': 'export {};',
+  });
+  assert(errors.some(error => error.includes('cross-component implementation requires a composition root')));
+  assert(!errors.some(error => error.includes('unresolved workspace')));
+});
 test('contracts cannot reach apps or the other contract domain', t => {
   const errors = fixture(t, {
     'packages/contracts/src/messaging/room.ts': "import '../../../../apps/control/src/auth'; import '../delivery/approval';",
