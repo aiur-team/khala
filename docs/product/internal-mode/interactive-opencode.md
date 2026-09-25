@@ -158,7 +158,7 @@ parallel ones (decision 32).
   #157 remains the sole owner of that contract.
 - Live runs belong to the acceptance area (decisions 10 and 11).
 
-### `opencode-delivery-contract`
+### Amendment to canonical `opencode-delivery-contract` in `opencode-bridge.md`
 
 | Field | Contract |
 |---|---|
@@ -187,7 +187,7 @@ parallel ones (decision 32).
 - `uncertain`
 - `acknowledged` (next Khala call)
 
-### `opencode-session-bridge`
+### Amendment to canonical `opencode-session-bridge` in `opencode-bridge.md`
 
 | Field | Contract |
 |---|---|

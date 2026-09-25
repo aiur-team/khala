@@ -34,7 +34,7 @@ and the OpenCode routes. It consumes `listening-mode-contract`,
 
 ## Findings and evidence
 
-### Interactive proof (#166, PR #180; not yet merged)
+### Interactive proof (#166, PR #180)
 
 Source: `docs/product/internal-mode/interactive-opencode.md` and
 `experiments/interactive-cli/opencode/evidence/` on PR #180. OpenCode `1.17.10`,
@@ -225,7 +225,7 @@ endpoint discovery alone.
 | Scope | Add evidence-scoped `opencode_plugin` route/capability vocabulary and project it through delivery fixtures, agent CLI decoding, connector admission, and presence label `OpenCode plugin`. Keep listening mode separate from harness `busy`; consume `acknowledgement: unknown | unsupported | batch_token_next_call` from `HarnessCapabilities`. |
 | Out of scope | Plugin implementation, OpenCode setup, shared mode semantics, acceptance orchestration. |
 | Files/packages | `packages/contracts/src/delivery/`; `packages/contracts/fixtures/delivery/`; `packages/agent-cli/src/cli/types.ts`; `packages/connector/src/route-admission.ts`; `apps/connector/src/composition/agent/{harnesses,presence}.ts` and adjacent tests. |
-| Acceptance criteria | `HarnessCapabilities` is the only support source; a route is selectable only for its exact evidence key; stale/unknown versions fail closed; automation is refused unless `acknowledgement` is `batch_token_next_call`; presence displays `OpenCode plugin`. **OpenCode `steer` stays `unproven` in `HarnessCapabilities` until it is re-proven from the user-started TUI with retained commands**; the server-session busy `promptAsync` observation never populates it. The same rule applies to `sync` and `async`. |
+| Acceptance criteria | `HarnessCapabilities` is the only support source; a route is selectable only for its exact evidence key; stale/unknown versions fail closed; automation is refused unless `acknowledgement` is `batch_token_next_call`; presence displays `OpenCode plugin`. **OpenCode `steer` stays `unproven` in `HarnessCapabilities` until the accepted agent-launched, default-settings TUI proof with retained commands merges**; the server-session busy `promptAsync` observation never populates it. The same rule applies to `sync` and `async`. |
 | Tests | Contract fixtures and connector projection tests. **Wrong implementation test:** an `opencode_plugin` fixture that claims `steer` with only server-session evidence, or with no retained interactive commands, must resolve to `unproven` and be refused. The same holds for acknowledgement other than `batch_token_next_call`. |
 | Blocked by | `opencode-interactive-cli-proof`, `listening-mode-contract`, `setup-cli-plan`. |
 | Conflict risk | **High:** connector contract unions and fixtures are single-writer surfaces. Keep edits minimal and land after `listening-mode-contract`. |
