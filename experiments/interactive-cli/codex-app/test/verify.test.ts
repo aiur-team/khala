@@ -3,7 +3,7 @@ import { cp, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { verify } from "../verify.ts";
+import { trustBypass, verify } from "../verify.ts";
 
 const SESSION = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const VERSION = "26.925.0";
@@ -134,7 +134,13 @@ test("starting codex app-server from Khala cannot satisfy delivery", () => rejec
   // Khala runs under the app (as its MCP server) and starts its own app server.
   addProcess(events, { pid: 5000, ppid: APP_PID, argv:["node", "/usr/lib/node_modules/@aiur/khala/dist/cli.js"] });
   addProcess(events, { pid: 5001, ppid: 5000, argv: ["codex", "app-server"] });
-}, /local_chat\/async hosted model session in census: codex app-server/));
+}, /local_chat\/async codex process started by Khala in census: codex app-server/));
+
+test("an Agents API run Khala started under the app cannot satisfy delivery", () => rejects((record) => {
+  const events = prove(record, "local_chat", "async");
+  addProcess(events, { pid: 5000, ppid: APP_PID, argv: ["node", "/usr/lib/node_modules/@aiur/khala/dist/cli.js"] });
+  addProcess(events, { pid: 5001, ppid: 5000, argv: ["node", "node_modules/@openai/agents/dist/run.js"] });
+}, /local_chat\/async hosted model session in census: node node_modules\/@openai\/agents\/dist\/run.js/));
 
 test("an app-server the desktop app did not start cannot satisfy delivery", () => rejects((record) => {
   addProcess(prove(record, "local_chat", "steer"), { pid: 5001, ppid: 1, argv: ["codex", "app-server"] });
@@ -177,6 +183,64 @@ test("a bypassed codex process in the census cannot pass", () => rejects((record
     argv: ["codex", "--dangerously-bypass-approvals-and-sandbox"],
   });
 }, /local_chat\/steer census process bypasses normal trust settings/));
+
+test("a launch command with --yolo cannot pass", () => rejects((record) => {
+  for (const event of prove(record, "local_chat", "async")) event.launchCommand = ["codex", "--yolo"];
+}, /local_chat\/async launch command bypasses normal trust settings: --yolo/));
+
+test("a --yolo codex process in the census cannot pass", () => rejects((record) => {
+  addProcess(prove(record, "cloud_task", "async"), { pid: 5001, ppid: APP_PID, argv: ["codex", "--yolo"] });
+}, /cloud_task\/async census process bypasses normal trust settings: codex --yolo/));
+
+test("a full-access sandbox cannot pass", () => rejects((record) => {
+  addProcess(prove(record, "local_chat", "steer"), {
+    pid: 5001,
+    ppid: APP_PID,
+    argv: ["codex", "-s", "danger-full-access"],
+  });
+}, /local_chat\/steer census process bypasses normal trust settings: codex -s danger-full-access/));
+
+test("an attached full-access sandbox cannot pass", () => rejects((record) => {
+  addProcess(prove(record, "local_chat", "steer"), { pid: 5001, ppid: APP_PID, argv: ["codex", "-sdanger-full-access"] });
+}, /local_chat\/steer census process bypasses normal trust settings: codex -sdanger-full-access/));
+
+test("approvals set to never cannot pass", () => rejects((record) => {
+  for (const event of prove(record, "cloud_task", "steer")) {
+    event.launchCommand = ["codex", "--ask-for-approval=never"];
+  }
+}, /cloud_task\/steer launch command bypasses normal trust settings: --ask-for-approval never/));
+
+test("approvals disabled by a config override cannot pass", () => rejects((record) => {
+  addProcess(prove(record, "local_chat", "sync"), {
+    pid: 5001,
+    ppid: APP_PID,
+    argv: ["codex", "-c", "approval_policy=never"],
+  });
+}, /local_chat\/sync census process bypasses normal trust settings: codex -c approval_policy=never/));
+
+test("sandbox disabled by a config override cannot pass", () => rejects((record) => {
+  addProcess(prove(record, "local_chat", "sync"), {
+    pid: 5001,
+    ppid: APP_PID,
+    argv: ["codex", "--config", 'sandbox_mode="danger-full-access"'],
+  });
+}, /local_chat\/sync census process bypasses normal trust settings/));
+
+test("any codex process Khala started cannot pass", () => rejects((record) => {
+  const events = prove(record, "local_chat", "steer");
+  addProcess(events, { pid: 5000, ppid: APP_PID, argv: ["node", "/usr/lib/node_modules/@aiur/khala/dist/cli.js"] });
+  addProcess(events, { pid: 5001, ppid: 5000, argv: ["codex", "resume", "--last"] });
+}, /local_chat\/steer codex process started by Khala in census: codex resume --last/));
+
+test("a plain codex prompt Khala started cannot pass", () => rejects((record) => {
+  const events = prove(record, "cloud_task", "sync");
+  addProcess(events, { pid: 5000, ppid: APP_PID, argv: ["node", "/usr/lib/node_modules/@aiur/khala/dist/cli.js"] });
+  addProcess(events, { pid: 5001, ppid: 5000, argv: ["codex", "hi"] });
+}, /cloud_task\/sync codex process started by Khala in census: codex hi/));
+
+test("normal sandbox and approval options still pass", () => {
+  assert.equal(trustBypass(["codex", "-s", "workspace-write", "-a", "on-request", "-c", "model=x"]), undefined);
+});
 
 test("a trial without the launch command cannot pass", () => rejects((record) => {
   for (const event of prove(record, "local_chat", "sync")) event.launchCommand = [];

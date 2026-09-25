@@ -15,13 +15,27 @@ const BOUNDARIES: Record<string, string> = { steer: "PostToolUse", sync: "Stop",
 // Decisions 34 and 37: `steer` and `sync` must also reach an idle session.
 const IDLE_MODES = new Set(["steer", "sync"]);
 
-// Decision 33: every proof runs with normal trust settings.
+// Decision 33: every proof runs with normal trust settings. `--yolo` is Codex's
+// hidden alias for `--dangerously-bypass-approvals-and-sandbox`.
 const TRUST_BYPASS = [
   "--dangerously-bypass-hook-trust",
   "--dangerously-skip-permissions",
   "--dangerously-bypass-approvals-and-sandbox",
+  "--yolo",
   "--setting-sources",
   "--port",
+];
+
+// Option values that turn off the sandbox or approvals just as those flags do,
+// passed directly or as a `-c key=value` config override.
+const TRUST_BYPASS_VALUES: { options: string[]; bypass: (value: string) => boolean }[] = [
+  { options: ["-s", "--sandbox"], bypass: (value) => value === "danger-full-access" },
+  { options: ["-a", "--ask-for-approval"], bypass: (value) => value === "never" },
+  {
+    options: ["-c", "--config"],
+    bypass: (value) =>
+      /^\s*(?:approval_policy\s*=\s*["']?never|sandbox_mode\s*=\s*["']?danger-full-access)["']?\s*$/.test(value),
+  },
 ];
 
 // A second model session in place of the user's: an app server, a headless run,
@@ -75,8 +89,29 @@ export function hostedSession(argv: string[]) {
   return HOSTED_API.some((pattern) => pattern.test(argv.join(" ")));
 }
 
-const bypassFlag = (argv: string[]) =>
-  TRUST_BYPASS.find((flag) => argv.some((token) => token === flag || token.startsWith(`${flag}=`)));
+// An option's value follows as the next token, after `=`, or, for a short
+// option, attached (`-sdanger-full-access`).
+function optionValues(argv: string[], option: string) {
+  const short = /^-[a-z]$/.test(option);
+  return argv.flatMap((token, index) => {
+    if (token === option) return index + 1 < argv.length ? [argv[index + 1]] : [];
+    if (token.startsWith(`${option}=`)) return [token.slice(option.length + 1)];
+    if (short && token.startsWith(option) && token.length > 2) return [token.slice(2)];
+    return [];
+  });
+}
+
+export function trustBypass(argv: string[]) {
+  const flag = TRUST_BYPASS.find((name) => argv.some((token) => token === name || token.startsWith(`${name}=`)));
+  if (flag) return flag;
+  for (const { options, bypass } of TRUST_BYPASS_VALUES) {
+    for (const option of options) {
+      const value = optionValues(argv, option).find(bypass);
+      if (value !== undefined) return `${option} ${value}`;
+    }
+  }
+  return undefined;
+}
 
 function ancestors(proc: Proc, byPid: Map<number, Proc>) {
   const chain: Proc[] = [];
@@ -118,7 +153,7 @@ async function verifyProven(cell: Cell, label: string, shapeVersion: string | nu
     assert.equal(event.appVersion, shapeVersion, `${label} app version differs from the shape tuple`);
     assert.deepEqual(event.launchCommand, start.launchCommand, `${label} ${event.kind} launch command differs`);
   }
-  const launchBypass = bypassFlag(start.launchCommand);
+  const launchBypass = trustBypass(start.launchCommand);
   assert.equal(launchBypass, undefined, `${label} launch command bypasses normal trust settings: ${launchBypass}`);
 
   // Same session: the user started it before the trial.
@@ -131,9 +166,10 @@ async function verifyProven(cell: Cell, label: string, shapeVersion: string | nu
     assert.ok(at(task?.at, `${label} task creation`) < trialStart, `${label} cloud task created during the trial`);
   }
 
-  // Census. A hosted model session passes only when the desktop app itself
-  // started it (its backend app server); anything started by Khala, orphaned,
-  // or of unknown parentage fails.
+  // Census. Decision 24: Khala never launches an agent, so any codex process
+  // with a Khala ancestor fails, whatever its subcommand. A hosted model session
+  // passes only when the desktop app itself started it (its backend app
+  // server); anything started by Khala, orphaned, or of unknown parentage fails.
   const census = find("census")?.processes;
   assert.ok(census, `${label} trial has no process census`);
   const byPid = new Map(census.map((proc) => [proc.pid, proc]));
@@ -143,12 +179,14 @@ async function verifyProven(cell: Cell, label: string, shapeVersion: string | nu
   }
   for (const proc of census) {
     const argv = proc.argv.join(" ");
+    const chain = ancestors(proc, byPid);
     if (codexIndex(proc.argv) >= 0) {
-      const bypass = bypassFlag(proc.argv);
+      const bypass = trustBypass(proc.argv);
       assert.equal(bypass, undefined, `${label} census process bypasses normal trust settings: ${argv}`);
+      const khalaParent = chain.some((parent) => KHALA.test(parent.argv.join(" ")));
+      assert.ok(!khalaParent, `${label} codex process started by Khala in census: ${argv}`);
     }
     if (!hostedSession(proc.argv)) continue;
-    const chain = ancestors(proc, byPid);
     const appStarted = cell.shape === "local_chat" && chain.some((parent) => parent.pid === start.appPid);
     const khalaStarted = [proc, ...chain].some((parent) => KHALA.test(parent.argv.join(" ")));
     assert.ok(appStarted && !khalaStarted, `${label} hosted model session in census: ${argv}`);

@@ -143,9 +143,10 @@ The current record of uninspected, Blocked cells is at
 [`experiments/interactive-cli/desktop-apps/`](../../../experiments/interactive-cli/desktop-apps/README.md).
 The Codex desktop and cloud cells were rechecked on 2026-09-25 in
 [`experiments/interactive-cli/codex-app/`](../../../experiments/interactive-cli/codex-app/README.md).
-That directory's verifier also rejects Khala-started `codex app-server` or `exec`
-sessions, Agents API runs, and new cloud tasks as delivery. It rejects trust-bypass
-flags (decision 33), and it requires an idle-session trial for `steer` and `sync`
+That directory's verifier also rejects any Khala-started `codex` process (decision 24),
+hosted sessions the desktop app did not start, Agents API runs, and new cloud tasks as
+delivery. It rejects trust-bypass flags and their equivalents, including `--yolo`,
+`danger-full-access`, and `never` approvals (decision 33), and it requires an idle-session trial for `steer` and `sync`
 (decisions 34 and 37). It derives every trial fact from the raw trial file.
 
 ## Risks

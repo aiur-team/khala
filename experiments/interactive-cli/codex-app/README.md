@@ -44,12 +44,17 @@ ChatGPT account ID. It was deleted and is not committed.
   - Every event records the same session ID, app version, and exact launch command
     (decision 33). The launch command has none of decision 33's bypass flags
     (`--dangerously-bypass-hook-trust`, `--dangerously-skip-permissions`,
-    `--dangerously-bypass-approvals-and-sandbox`, `--setting-sources`, `--port`),
-    and neither does any `codex` process in the census. For a desktop cell, the launch
+    `--dangerously-bypass-approvals-and-sandbox` or its hidden alias `--yolo`,
+    `--setting-sources`, `--port`) and none of the equivalent option values
+    (`-s`/`--sandbox danger-full-access`, `-a`/`--ask-for-approval never`, or
+    `-c approval_policy=never` / `-c sandbox_mode=danger-full-access`). Neither does
+    any `codex` process in the census. For a desktop cell, the launch
     command is the argv of the app process named by `appPid`.
   - The user started the session before the trial. For a cloud cell, the user also
     created the task before the trial.
-  - The process census holds `pid`, `ppid`, and argv for each process. A hosted model
+  - The process census holds `pid`, `ppid`, and argv for each process. Any `codex`
+    process with a Khala process in its parent chain fails, whatever its subcommand
+    (decision 24). A hosted model
     session is a `codex` process with `app-server`, `exec`, `e`, or `remote-control`
     anywhere after the binary, so global options such as `-c` or `--profile` do not
     hide it. A Responses or Agents API call and an Agents SDK run also count. Such a
@@ -90,7 +95,8 @@ their tests:
 | a blocked cell cannot claim support | `blocked cell must report unknown` |
 | a blocked reason must cite captured inventory | `inventory fact not captured` |
 | trial fields typed into cells.json are rejected | `carries trial fields in cells.json` |
-| starting codex app-server from Khala cannot satisfy delivery | `khalaStarted` (the Khala parent chain) |
+| starting codex app-server from Khala cannot satisfy delivery | `codex process started by Khala in census` |
+| an Agents API run Khala started under the app cannot satisfy delivery | `khalaStarted` (the Khala parent chain) |
 | an app-server the desktop app did not start cannot satisfy delivery | `appStarted` (the app parent chain) |
 | app-server behind a global option cannot satisfy delivery | the subcommand search after the `codex` binary |
 | exec behind a profile option cannot satisfy delivery | the subcommand search after the `codex` binary |
@@ -100,6 +106,15 @@ their tests:
 | a cloud task Khala submitted cannot satisfy delivery | `cloud task was not created by the user` |
 | a launch command that bypasses approvals cannot pass | `launch command bypasses normal trust settings` |
 | a bypassed codex process in the census cannot pass | `census process bypasses normal trust settings` |
+| a launch command with --yolo cannot pass | `"--yolo"` in `TRUST_BYPASS` |
+| a --yolo codex process in the census cannot pass | `"--yolo"` in `TRUST_BYPASS` |
+| a full-access sandbox cannot pass | the `-s`/`--sandbox` entry in `TRUST_BYPASS_VALUES` |
+| an attached full-access sandbox cannot pass | the attached short-option branch in `optionValues` |
+| approvals set to never cannot pass | the `-a`/`--ask-for-approval` entry in `TRUST_BYPASS_VALUES` |
+| approvals disabled by a config override cannot pass | the `-c`/`--config` entry in `TRUST_BYPASS_VALUES` |
+| sandbox disabled by a config override cannot pass | the `-c`/`--config` entry in `TRUST_BYPASS_VALUES` |
+| any codex process Khala started cannot pass | `codex process started by Khala in census` |
+| a plain codex prompt Khala started cannot pass | `codex process started by Khala in census` |
 | a trial without the launch command cannot pass | `launch command not recorded` |
 | a launch command that is not the running app cannot pass | `launch command is not the running app process` |
 | a hook that fired without model context cannot pass | the required model-context timestamp |
