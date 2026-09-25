@@ -8,6 +8,7 @@ import { decodeSessionBinding, type EventRef, type SessionBinding } from '@khala
 import { runCli } from './app.js';
 import { openInbox, type BatchInbox, type InboxBatch, type InboxConsumer } from './inbox.js';
 import { CliError } from './errors.js';
+import { renderReadOutput } from './read.js';
 import type { AgentClientPort, InboxDelivery } from './types.js';
 
 const decodedBinding = decodeSessionBinding({
@@ -97,6 +98,134 @@ describe('runCli', () => {
     expect(io.error()).toContain('binding_not_held');
     expect(opened).toBe(false);
   });
+  it('reads a durable batch, replays without acknowledgement, then advances with the exact token', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-read-app-'));
+    temporaryDirectories.push(root);
+    const options = {
+      stateDirectory: path.join(root, 'state'), bindingId: BINDING.bindingId, generation: BINDING.generation,
+      maxPayloadBytes: 4096, maxSelectionEvents: 8,
+    };
+    const seeded = await openInbox(options);
+    await seeded.enqueue(delivery('release-1', '["first"]'));
+
+    const firstIo = streams();
+    expect(await runCli(['read'], { client: client(), inbox: async () => openInbox(options), ...firstIo })).toBe(0);
+    const first = firstIo.output().trim();
+    const token = batchToken(first);
+    expect(first).toContain('["first"]');
+
+    const replayIo = streams();
+    expect(await runCli(['read'], { client: client(), inbox: async () => openInbox(options), ...replayIo })).toBe(0);
+    expect(replayIo.output().trim()).toBe(first);
+
+    const partialIo = streams();
+    expect(await runCli(['read', '--ack', `${token}-partial`], {
+      client: client(), inbox: async () => openInbox(options), ...partialIo,
+    })).toBe(0);
+    expect(partialIo.output().trim()).toBe(first);
+
+    const reopened = await openInbox(options);
+    await reopened.enqueue(delivery('release-2', '["second"]'));
+    const nextIo = streams();
+    expect(await runCli(['read', '--ack', token], {
+      client: client(), inbox: async () => openInbox(options), ...nextIo,
+    })).toBe(0);
+    expect(nextIo.output()).toContain('["second"]');
+    const nextToken = batchToken(nextIo.output());
+    expect(nextToken).not.toBe(token);
+
+    const emptyIo = streams();
+    expect(await runCli(['read', '--ack', nextToken], {
+      client: client(), inbox: async () => openInbox(options), ...emptyIo,
+    })).toBe(0);
+    expect(JSON.parse(emptyIo.output())).toEqual({ ok: true, kind: 'empty' });
+  });
+
+  it('prints typed empty after exact acknowledgement and always releases the CLI consumer', async () => {
+    const io = streams();
+    const release = vi.fn(async () => undefined);
+    const readBatch = vi.fn(async () => null);
+    const acquireListener = vi.fn(async (): Promise<InboxConsumer> => ({ readBatch, release }));
+
+    expect(await runCli(['read', '--binding', BINDING.bindingId, '--ack', 'prior-token'], {
+      client: client(), inbox: async () => fakeBatchInbox(acquireListener), ...io,
+    })).toBe(0);
+    expect(JSON.parse(io.output())).toEqual({ ok: true, kind: 'empty' });
+    expect(readBatch).toHaveBeenCalledWith({ maxBytes: 65_536, acknowledgeToken: 'prior-token' });
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('releases the CLI consumer when writing the selected batch fails', async () => {
+    const io = streams();
+    const stdout = new CapturingFailingWritable();
+    stdout.on('error', () => undefined);
+    const release = vi.fn(async () => undefined);
+    const readBatch = vi.fn(async () => mcpBatch('batch-token', 'release-1', '["selected"]'));
+
+    expect(await runCli(['read'], {
+      client: client(),
+      inbox: async () => fakeBatchInbox(async () => ({ readBatch, release })),
+      ...io,
+      stdout,
+    })).toBe(2);
+
+    expect(readBatch).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+    expect(io.error()).toContain('internal_error');
+  });
+
+  it('refuses malformed or foreign read arguments before opening an inbox', async () => {
+    for (const args of [['read', '--ack'], ['read', '--binding', 'binding-2']] as const) {
+      let opened = false;
+      const io = streams();
+      expect(await runCli(args, {
+        client: client(), inbox: async () => { opened = true; return await unusedInbox(); }, ...io,
+      })).toBe(2);
+      expect(opened).toBe(false);
+      expect(io.output()).toBe('');
+    }
+  });
+
+  it('fails read closed while disconnected and preserves existing listener contention', async () => {
+    const disconnectedIo = streams();
+    let opened = false;
+    expect(await runCli(['read'], {
+      client: client({
+        async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
+      }),
+      inbox: async () => { opened = true; return await unusedInbox(); },
+      ...disconnectedIo,
+    })).toBe(2);
+    expect(opened).toBe(false);
+    expect(disconnectedIo.error()).toContain('not_connected');
+
+    const contentionIo = streams();
+    expect(await runCli(['read'], {
+      client: client(),
+      inbox: async () => fakeBatchInbox(async () => { throw new CliError('listener_busy'); }),
+      ...contentionIo,
+    })).toBe(2);
+    expect(contentionIo.output()).toBe('');
+    expect(contentionIo.error()).toContain('listener_busy');
+  });
+
+  it('releases the CLI consumer and suppresses payload when the binding drifts after selection', async () => {
+    const io = streams();
+    const release = vi.fn(async () => undefined);
+    const readBatch = vi.fn(async () => mcpBatch('batch-token', 'release-1', '["secret"]'));
+    let statusCalls = 0;
+    const statuses = [connectedStatus(BINDING), connectedStatus(BINDING), connectedStatus(replacementBinding())];
+
+    expect(await runCli(['read'], {
+      client: client({ async status() { return statuses[Math.min(statusCalls++, statuses.length - 1)]!; } }),
+      inbox: async () => fakeBatchInbox(async () => ({ readBatch, release })),
+      ...io,
+    })).toBe(2);
+    expect(readBatch).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+    expect(io.output() + io.error()).not.toContain('secret');
+    expect(io.error()).toContain('binding_not_held');
+  });
   it('fails closed on an invalid status route without printing injected fields', async () => {
     const io = streams();
     const malicious = client({
@@ -176,6 +305,60 @@ describe('runCli', () => {
     ]);
   });
 
+  it('uses the MCP lifetime consumer once for khala_read and appends its selected batch once', async () => {
+    const io = streams(`${JSON.stringify({
+      jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'khala_read', arguments: {} },
+    })}\n`);
+    const release = vi.fn(async () => undefined);
+    const selected = mcpBatch('read-token', 'release-read', '["read-body"]');
+    const readBatch = vi.fn(async () => selected);
+
+    expect(await runCli(['mcp-serve'], {
+      client: client(),
+      inbox: async () => fakeBatchInbox(async () => ({ readBatch, release })),
+      ...io,
+    })).toBe(0);
+
+    const [response] = mcpResponses(io.output());
+    expect(readBatch).toHaveBeenCalledOnce();
+    expect(response?.result.structuredContent).toEqual({ kind: 'batch' });
+    expect(response?.result.content).toHaveLength(2);
+    expect(batchText(response).match(/batchToken: read-token/g)).toHaveLength(1);
+    expect(batchText(response)).toBe(renderReadOutput({ kind: 'batch', batch: selected }));
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('returns a typed refusal when the binding drifts after explicit-read selection but before composition', async () => {
+    const io = streams([
+      JSON.stringify(mcpReadCall(10)),
+      JSON.stringify({ jsonrpc: '2.0', id: 11, method: 'ping', params: {} }),
+    ].join('\n') + '\n');
+    const selected = mcpBatch('secret-token', 'release-secret', '["secret-body"]');
+    const statuses = [
+      connectedStatus(BINDING), connectedStatus(BINDING), connectedStatus(BINDING),
+      connectedStatus(replacementBinding()),
+    ];
+    let statusCalls = 0;
+
+    expect(await runCli(['mcp-serve'], {
+      client: client({
+        async status() { return statuses[Math.min(statusCalls++, statuses.length - 1)]!; },
+      }),
+      inbox: async () => fakeBatchInbox(async () => ({
+        async readBatch() { return selected; }, async release() {},
+      })),
+      ...io,
+    })).toBe(0);
+
+    const responses = mcpResponses(io.output());
+    expect(responses).toMatchObject([
+      { result: { isError: true, structuredContent: { kind: 'refused', code: 'binding_not_held' } } },
+      { result: {} },
+    ]);
+    expect(io.output()).not.toContain('secret-token');
+    expect(io.output()).not.toContain('secret-body');
+  });
+
   it('reports listener contention and does not start the MCP server', async () => {
     const io = streams(mcpCalls(1));
     const acquireListener = vi.fn(async (): Promise<InboxConsumer> => { throw new CliError('listener_busy'); });
@@ -198,7 +381,7 @@ describe('runCli', () => {
     };
     const initial = await openInbox(inboxOptions);
     await initial.enqueue(delivery('release-1', '["released"]'));
-    const stdin = Readable.from([mcpCalls(1)]);
+    const stdin = Readable.from([`${JSON.stringify(mcpReadCall(1))}\n`]);
     const stdout = new CapturingFailingWritable();
     const stderr = new PassThrough();
     let error = '';
@@ -232,7 +415,7 @@ describe('runCli', () => {
     const attemptedBatch = batchText(mcpResponses(stdout.output())[0]);
     const attemptedToken = batchToken(attemptedBatch);
 
-    const restarted = await runMcpSession(async () => openInbox(inboxOptions), [mcpCall(2)]);
+    const restarted = await runMcpSession(async () => openInbox(inboxOptions), [mcpReadCall(2)]);
     const replayedBatch = batchText(restarted[0]);
     expect(replayedBatch).toBe(attemptedBatch);
     expect(batchToken(replayedBatch)).toBe(attemptedToken);
@@ -301,16 +484,16 @@ describe('runCli', () => {
     const initial = await openInbox(inboxOptions);
     await initial.enqueue(delivery('release-1', '["first"]'));
 
-    const first = await runMcpSession(async () => openInbox(inboxOptions), [mcpCall(1)]);
+    const first = await runMcpSession(async () => openInbox(inboxOptions), [mcpReadCall(1)]);
     const firstBatch = batchText(first[0]);
     const firstToken = batchToken(firstBatch);
 
     const reopened = await openInbox(inboxOptions);
     await reopened.enqueue(delivery('release-2', '["second"]'));
     const restarted = await runMcpSession(async () => openInbox(inboxOptions), [
-      mcpCall(2),
-      mcpCall(3, firstToken),
-      mcpCall(4, firstToken),
+      mcpReadCall(2),
+      mcpReadCall(3, firstToken),
+      mcpReadCall(4, firstToken),
     ]);
 
     expect(batchText(restarted[0])).toBe(firstBatch);
@@ -318,6 +501,62 @@ describe('runCli', () => {
     expect(advanced).toContain('["second"]');
     expect(batchToken(advanced)).not.toBe(firstToken);
     expect(batchText(restarted[2])).toBe(advanced);
+  });
+
+  it('shares read-token acknowledgement across khala_read and khala_send without selecting twice', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-mcp-read-app-'));
+    temporaryDirectories.push(root);
+    const inboxOptions = {
+      stateDirectory: path.join(root, 'state'), bindingId: BINDING.bindingId, generation: BINDING.generation,
+      maxPayloadBytes: 4096, maxSelectionEvents: 8,
+    };
+    const initial = await openInbox(inboxOptions);
+    await initial.enqueue(delivery('release-1', '["first-read"]'));
+
+    const [first] = await runMcpSession(async () => openInbox(inboxOptions), [mcpReadCall(70)]);
+    const firstBatch = batchText(first);
+    const firstToken = batchToken(firstBatch);
+
+    const reopened = await openInbox(inboxOptions);
+    await reopened.enqueue(delivery('release-2', '["second-read"]'));
+    const responses = await runMcpSession(async () => openInbox(inboxOptions), [
+      mcpReadCall(71),
+      mcpReadCall(72, firstToken),
+      mcpCall(73, firstToken),
+    ]);
+
+    expect(batchText(responses[0])).toBe(firstBatch);
+    const secondBatch = batchText(responses[1]);
+    expect(secondBatch).toContain('["second-read"]');
+    expect(batchToken(secondBatch)).not.toBe(firstToken);
+    expect(batchText(responses[2])).toBe(secondBatch);
+    expect(responses[1]?.result.content).toHaveLength(2);
+  });
+
+  it('shares send-token acknowledgement with the next khala_read call', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-mcp-send-read-app-'));
+    temporaryDirectories.push(root);
+    const inboxOptions = {
+      stateDirectory: path.join(root, 'state'), bindingId: BINDING.bindingId, generation: BINDING.generation,
+      maxPayloadBytes: 4096, maxSelectionEvents: 8,
+    };
+    const initial = await openInbox(inboxOptions);
+    await initial.enqueue(delivery('release-1', '["first-send"]'));
+
+    const [first] = await runMcpSession(async () => openInbox(inboxOptions), [mcpCall(80)]);
+    const firstBatch = batchText(first);
+    const firstToken = batchToken(firstBatch);
+
+    const reopened = await openInbox(inboxOptions);
+    await reopened.enqueue(delivery('release-2', '["second-read"]'));
+    const [advanced, replay] = await runMcpSession(async () => openInbox(inboxOptions), [
+      mcpReadCall(81, firstToken),
+      mcpReadCall(82, firstToken),
+    ]);
+
+    expect(batchText(advanced)).toContain('["second-read"]');
+    expect(batchToken(batchText(advanced))).not.toBe(firstToken);
+    expect(batchText(replay)).toBe(batchText(advanced));
   });
 });
 
@@ -378,6 +617,12 @@ function fakeBatchInbox(acquireListener: BatchInbox['acquireListener']): BatchIn
 function mcpCall(id: number, ackBatchToken?: string): Record<string, unknown> {
   return { jsonrpc: '2.0', id, method: 'tools/call', params: {
     name: 'khala_send', arguments: { message: `message-${id}`, ...(ackBatchToken === undefined ? {} : { ackBatchToken }) },
+  } };
+}
+
+function mcpReadCall(id: number, ackBatchToken?: string): Record<string, unknown> {
+  return { jsonrpc: '2.0', id, method: 'tools/call', params: {
+    name: 'khala_read', arguments: { ...(ackBatchToken === undefined ? {} : { ackBatchToken }) },
   } };
 }
 

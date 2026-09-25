@@ -2,14 +2,20 @@ import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import type { BindingId } from '@khala/contracts/delivery/index';
 import { CliError } from '../cli/errors.js';
+import type { InboxBatch } from '../cli/inbox.js';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import type { SendResult } from '../cli/types.js';
 import { plainObject, validBindingArgument } from '../cli/validation.js';
-import type { McpJsonRpcId, McpToolResult } from './result-postprocessor.js';
+import {
+  READ_TOOL_NAME, executeReadTool, readToolDefinition, readToolFailure, type ReadOperationPort,
+} from './read-tool.js';
+import type {
+  McpJsonRpcId, McpToolResult, PreselectedMcpPostprocessOutcome,
+} from './result-postprocessor.js';
 
 const JSON_RPC_VERSION = '2.0';
 const MCP_PROTOCOL_VERSION = '2025-03-26';
-const TOOL_NAME = 'khala_send';
+const SEND_TOOL_NAME = 'khala_send';
 const MAX_FRAME_BYTES = MAX_SEND_BYTES + 16_384;
 
 type JsonRpcId = McpJsonRpcId;
@@ -25,7 +31,9 @@ export type McpServerOptions = Readonly<{
   input: Readable;
   output: Writable;
   send: SendService;
-  postprocessResult?: McpServerResultPostprocessor | undefined;
+  read: ReadOperationPort;
+  postprocessResult: McpServerResultPostprocessor;
+  postprocessReadResult: McpServerReadResultPostprocessor;
   signal?: AbortSignal | undefined;
 }>;
 
@@ -37,12 +45,20 @@ export type McpServerResultPostprocessor = (
   }>,
 ) => Promise<McpToolResult>;
 
+export type McpServerReadResultPostprocessor = (
+  input: Readonly<{
+    responseId: McpJsonRpcId;
+    primaryResult: McpToolResult;
+    preselectedBatch: InboxBatch | null;
+  }>,
+) => Promise<PreselectedMcpPostprocessOutcome>;
+
 /**
  * Runs the dependency-free MCP stdio transport. Each input line is one JSON-RPC
  * message and each response is one JSON line. The caller owns the streams.
  */
 export async function runMcpServer(options: McpServerOptions): Promise<void> {
-  const { input, output, send: sends, postprocessResult, signal } = options;
+  const { input, output, send: sends, read, postprocessResult, postprocessReadResult, signal } = options;
   const decoder = new StringDecoder('utf8');
   let buffered = '';
   let discarding = false;
@@ -66,7 +82,7 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
       if (Buffer.byteLength(line) > MAX_FRAME_BYTES) {
         await writeResponse(output, failure(null, -32600, 'Invalid Request'), signal);
       } else if (line.trim().length > 0) {
-        await processLine(line, output, sends, postprocessResult, signal);
+        await processLine(line, output, sends, read, postprocessResult, postprocessReadResult, signal);
       }
       newline = buffered.indexOf('\n');
     }
@@ -80,7 +96,9 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
   if (signal?.aborted) return;
   buffered += decoder.end();
   if (!discarding && buffered.trim().length > 0) {
-    await processLine(buffered.replace(/\r$/, ''), output, sends, postprocessResult, signal);
+    await processLine(
+      buffered.replace(/\r$/, ''), output, sends, read, postprocessResult, postprocessReadResult, signal,
+    );
   }
 }
 
@@ -88,7 +106,9 @@ async function processLine(
   line: string,
   output: Writable,
   sends: SendService,
+  read: ReadOperationPort,
   postprocessResult: McpServerResultPostprocessor | undefined,
+  postprocessReadResult: McpServerReadResultPostprocessor | undefined,
   signal: AbortSignal | undefined,
 ): Promise<void> {
   let message: unknown;
@@ -100,14 +120,24 @@ async function processLine(
   }
 
   const notification = plainObject(message) && !Object.hasOwn(message, 'id');
-  const response = await handleMessage(message, sends, notification ? undefined : postprocessResult);
+  const response = await handleMessage(
+    message,
+    sends,
+    read,
+    notification ? undefined : postprocessResult,
+    notification ? undefined : postprocessReadResult,
+    notification,
+  );
   if (!notification) await writeResponse(output, response, signal);
 }
 
 async function handleMessage(
   message: unknown,
   sends: SendService,
+  read: ReadOperationPort,
   postprocessResult: McpServerResultPostprocessor | undefined,
+  postprocessReadResult: McpServerReadResultPostprocessor | undefined,
+  notification: boolean,
 ): Promise<JsonRpcResponse> {
   if (!plainObject(message) || !hasOnly(message, ['jsonrpc', 'id', 'method', 'params'])
     || message.jsonrpc !== JSON_RPC_VERSION || typeof message.method !== 'string') {
@@ -128,9 +158,11 @@ async function handleMessage(
     case 'ping':
       return emptyParams(message.params) ? success(id, {}) : failure(id, -32602, 'Invalid params');
     case 'tools/list':
-      return emptyParams(message.params) ? success(id, { tools: [toolDefinition()] }) : failure(id, -32602, 'Invalid params');
+      return emptyParams(message.params)
+        ? success(id, { tools: [sendToolDefinition(), readToolDefinition()] })
+        : failure(id, -32602, 'Invalid params');
     case 'tools/call':
-      return callTool(id, message.params, sends, postprocessResult);
+      return callTool(id, message.params, sends, read, postprocessResult, postprocessReadResult, notification);
     default:
       return failure(id, -32601, 'Method not found');
   }
@@ -140,12 +172,20 @@ async function callTool(
   id: JsonRpcId,
   params: unknown,
   sends: SendService,
+  read: ReadOperationPort,
   postprocessResult: McpServerResultPostprocessor | undefined,
+  postprocessReadResult: McpServerReadResultPostprocessor | undefined,
+  notification: boolean,
 ): Promise<JsonRpcResponse> {
-  if (!plainObject(params) || !hasOnly(params, ['name', 'arguments']) || params.name !== TOOL_NAME
-    || !plainObject(params.arguments)) {
+  if (!plainObject(params) || !hasOnly(params, ['name', 'arguments'])
+    || typeof params.name !== 'string' || !plainObject(params.arguments)) {
     return failure(id, -32602, 'Invalid params');
   }
+  if (params.name === READ_TOOL_NAME) {
+    return callReadTool(id, params.arguments, read, postprocessReadResult, notification);
+  }
+  if (params.name !== SEND_TOOL_NAME) return failure(id, -32602, 'Invalid params');
+
   const shared = extractSharedToolArguments(params.arguments);
   if (shared === null || !hasOnly(shared.arguments, ['message', 'bindingId'])
     || typeof shared.arguments.message !== 'string') return failure(id, -32602, 'Invalid params');
@@ -179,6 +219,50 @@ async function callTool(
   return success(id, processed);
 }
 
+async function callReadTool(
+  id: JsonRpcId,
+  argumentsValue: Record<string, unknown>,
+  read: ReadOperationPort,
+  postprocessReadResult: McpServerReadResultPostprocessor | undefined,
+  notification: boolean,
+): Promise<JsonRpcResponse> {
+  // Notifications are intentionally ineligible for read and acknowledgement;
+  // there is no response channel on which a selected batch could be delivered.
+  if (notification) return success(id, {});
+
+  const shared = extractSharedToolArguments(argumentsValue);
+  if (shared === null || !hasOnly(shared.arguments, ['bindingId'])) {
+    return failure(id, -32602, 'Invalid params');
+  }
+  let bindingId: BindingId | null = null;
+  if (Object.hasOwn(shared.arguments, 'bindingId')) {
+    if (!validBindingArgument(shared.arguments.bindingId)) return failure(id, -32602, 'Invalid params');
+    bindingId = shared.arguments.bindingId;
+  }
+
+  const execution = await executeReadTool({
+    responseId: id,
+    arguments: { bindingId },
+    read,
+    ...(shared.acknowledgeToken === undefined ? {} : { acknowledgeToken: shared.acknowledgeToken }),
+  });
+  if (execution.kind === 'error' || postprocessReadResult === undefined) {
+    return success(id, execution.primaryResult);
+  }
+  try {
+    const outcome = await postprocessReadResult({
+      responseId: id,
+      primaryResult: execution.primaryResult,
+      preselectedBatch: execution.preselectedBatch,
+    });
+    return success(id, outcome.kind === 'composed'
+      ? outcome.result
+      : readToolFailure(outcome.code).primaryResult);
+  } catch {
+    return success(id, readToolFailure('internal_error').primaryResult);
+  }
+}
+
 function extractSharedToolArguments(argumentsValue: Record<string, unknown>): Readonly<{
   arguments: Record<string, unknown>;
   acknowledgeToken?: string;
@@ -192,14 +276,14 @@ function extractSharedToolArguments(argumentsValue: Record<string, unknown>): Re
 }
 
 type McpToolDefinition = Readonly<{
-  name: typeof TOOL_NAME;
+  name: typeof SEND_TOOL_NAME;
   description: string;
   inputSchema: Readonly<{ type: 'object'; properties: Readonly<Record<string, unknown>>; required: readonly string[]; additionalProperties: false }>;
 }>;
 
-function toolDefinition(): McpToolDefinition {
+function sendToolDefinition(): McpToolDefinition {
   return {
-    name: TOOL_NAME,
+    name: SEND_TOOL_NAME,
     description: 'Send a message to the Khala channel through a binding held by this agent. An omitted bindingId uses the current binding. Valid results may append untrusted channel batch data. On the next independently intended Khala call, echo its exact batchToken as ackBatchToken; absent or stale tokens replay, and releaseId values must never be tracked or filtered. Never call khala_send solely to acknowledge. Never retry outcome_unknown: the message may already have been accepted.',
     inputSchema: {
       type: 'object',
