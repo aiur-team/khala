@@ -1,8 +1,9 @@
 # Khala agent CLI (KHA-148)
 
 `@aiur/khala` owns the `khala` binary an agent uses to connect to a channel,
-consume released messages, send replies, inspect status, and expose the same send
-and explicit-read operations as MCP tools.
+consume released messages, send replies, inspect status, inspect or change its
+listening mode, and expose the same send, explicit-read, and listening-mode
+operations as MCP tools.
 
 ```text
 khala connect <https-channel-link>
@@ -10,6 +11,8 @@ khala listen [--binding <binding-id>]
 khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
 khala status
+khala mode get
+khala mode set <steer|sync|async> --expected-version <version>
 khala mcp-serve
 ```
 
@@ -60,6 +63,7 @@ environment before the first release.
 | Connect | KHA-114 bootstrap through an injected composition port; retries reuse one deterministic operation ID. |
 | Receive | A released-delivery port appends exact payload bytes to the per-binding inbox; `khala read` and `khala_read` explicitly pull released batches, while KHA-116's pending-review subscription is deliberately not used as a model feed. |
 | Send | One injected capability-backed send port shared by `khala send` and the `khala_send` MCP tool. |
+| Listening mode | One operation over the injected, pre-bound agent listening-mode application, shared by `khala mode get/set` and the `khala_listening_mode` MCP tool. |
 | Required human setup | None in the CLI. Provider route installation and capability selection belong to KHA-149, KHA-150, and KHA-153. |
 | Reconciliation | Enqueue deduplicates immutable release IDs. `listen` advances after output succeeds. MCP advances a durable batch only when a later Khala tool call supplies its exact token. |
 
@@ -98,12 +102,44 @@ harness call, injection, send, receipt, or agent lifecycle action. Only an
 explicit `read` selects a batch, and only the existing durable inbox advances
 after a later exact token.
 
+## Listening mode
+
+`khala mode get` and `khala mode set <steer|sync|async> --expected-version
+<version>` act only on the binding that trusted composition bound to this agent.
+Neither accepts a binding, generation, owner, route, evidence, or grant argument;
+the binding authority is ambient and never serialized. One shared operation
+backs the CLI and the `khala_listening_mode` MCP tool, so both return the same
+JSON.
+
+`get` returns `kind: "view"` with `requested`, `effective`, `effectiveReason`,
+`version`, and every mode's `support` entry (status, route, tested version,
+evidence reference and revision, and reason). `set` sends only `{requested,
+expectedVersion}` with a fresh command ID and returns one of:
+
+- `kind: "applied"`: the new `requested`, `effective`, `effectiveReason`, and
+  `version`; run `get` for the full support map.
+- `kind: "conflict"`, `reason: "stale_version"`: someone else changed the mode
+  first, and `current` holds the winning state. Run `get` again and decide
+  afresh; the CLI never retries.
+- `kind: "refused"` with `forbidden`, `binding_mismatch`, `stale_binding`,
+  `binding_revoked`, `idempotency_conflict`, `unavailable`, or
+  `outcome_unknown` (the write failed in a way that may already have
+  committed). A refusal never means the requested mode took effect.
+
+The CLI exits 0 for a view or applied result and 3 for a conflict or refusal.
+The installed binary has no trusted composition yet, so both commands currently
+refuse with `unavailable`. `requested` and `effective` can differ, and neither
+proves that any message was or will be delivered, including to an idle agent.
+
 ## MCP mode
 
 `khala mcp-serve` speaks newline-delimited JSON-RPC on stdin/stdout and exposes
-exactly two tools, `khala_send` and `khala_read`. `khala_send` accepts
-`{ message, bindingId?, ackBatchToken? }`; `khala_read` accepts
-`{ bindingId?, ackBatchToken? }`. Unknown tools, unknown arguments, and unheld
+exactly three tools, `khala_send`, `khala_read`, and `khala_listening_mode`.
+`khala_send` accepts `{ message, bindingId?, ackBatchToken? }`; `khala_read`
+accepts `{ bindingId?, ackBatchToken? }`; `khala_listening_mode` accepts
+`{ action: "get", ackBatchToken? }` or `{ action: "set", requested,
+expectedVersion, ackBatchToken? }`, and marks conflicts and refusals with
+`isError`. Notifications for it neither inspect nor change the mode. Unknown tools, unknown arguments, and unheld
 bindings are refused. Send results keep the stable client transaction ID and
 outcome first, never the submitted message. Read results keep a typed
 `kind: "batch"` or `kind: "empty"` primary result first, then append their one
@@ -127,8 +163,8 @@ content-free line such as
 
 `mcp-serve` and `listen` share the inbox's single-consumer lease, so concurrent
 consumers fail with `listener_busy`. Explicit `khala_read` selects directly;
-every valid `khala_send` result may also select and append an incidental
-piggyback batch. Both paths share the same batch operation and renderer, while
+every valid `khala_send` or `khala_listening_mode` result may also select and
+append an incidental piggyback batch. Both paths share the same batch operation and renderer, while
 arrival alone selects nothing. Neither delivery path publishes or forwards a
 message; only an explicit `khala_send` call sends. Pull or piggyback delivery
 creates no receipt, advertises no capability, and makes no claim that a peer is

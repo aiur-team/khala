@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { runCli, type CliDependencies } from '@aiur/khala/cli/app';
 import { describe, expect, it } from 'vitest';
+import { FALLBACK_MODE_REASON } from './capabilities.js';
 
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
 
@@ -24,9 +25,12 @@ const cliClient: CliDependencies['client'] = {
   },
 };
 
+// Commands whose bare name is not a complete invocation are exercised with their documented subcommand.
+const DOCUMENTED_INVOCATIONS: Readonly<Record<string, readonly string[]>> = { mode: ['mode', 'get'] };
+
 async function invokeCli(command: string) {
   const io = cliStreams();
-  const exitCode = await runCli([command], {
+  const exitCode = await runCli(DOCUMENTED_INVOCATIONS[command] ?? [command], {
     client: cliClient,
     inbox: async () => { throw new Error('disconnected commands should not open an inbox'); },
     ...io,
@@ -67,7 +71,7 @@ describe('fallback skill documentation', () => {
       .filter((command, index, commands) => commands.indexOf(command) === index)
       .sort();
 
-    expect(documentedCommands).toEqual(['connect', 'listen', 'read', 'send', 'status']);
+    expect(documentedCommands).toEqual(['connect', 'listen', 'mode', 'read', 'send', 'status']);
     for (const command of documentedCommands) {
       const result = await invokeCli(command);
       expect(result.error, `documented command "${command}" was rejected by runCli`).not.toContain('invalid_arguments');
@@ -93,10 +97,37 @@ describe('fallback skill documentation', () => {
     expect(combined).toMatch(/never .*release-ID .*set.*deduplic/i);
     expect(combined).toMatch(/async`? arrival alone.*no .*wake.*harness.*send.*receipt/i);
     expect(combined).toMatch(/fallback listener.*distinct/i);
-    expect(cliReadme).toMatch(/exactly two tools, `khala_send` and `khala_read`/);
+    expect(cliReadme).toMatch(/exactly three tools, `khala_send`, `khala_read`, and `khala_listening_mode`/);
     expect(cliReadme).toMatch(/explicit.*`khala_read`.*incidental\s+piggyback/is);
-    expect(cliReadme).toMatch(/every valid `khala_send` result may also select/i);
+    expect(cliReadme).toMatch(/every valid `khala_send` or `khala_listening_mode` result may also select/i);
     expect(cliReadme).toMatch(/arrival alone selects nothing/i);
+  });
+
+  it('documents inspect-before-set, fresh-get conflict recovery, and honest mode limits for the held binding only', async () => {
+    const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+    const normalized = skill.replace(/\s+/g, ' ');
+
+    expect(normalized).toContain('khala mode set <steer|sync|async> --expected-version <version>');
+    expect(skill).toContain('`khala_listening_mode`');
+    expect(normalized).toMatch(/always inspect first.*using the `version` from that `get`/);
+    expect(normalized).toMatch(/`stale_version`.*Run `get` again.*never retry the same set automatically/);
+    expect(normalized).toMatch(/only act on your own binding.*no argument for another binding, a generation, an owner, or a grant/);
+    expect(normalized).toMatch(/`requested` and `effective` can differ.*support reasons explain why/);
+    expect(normalized).toContain('Neither value proves that any message was or will be delivered');
+    expect(normalized).toMatch(/never starts, stops, or interrupts any agent process/);
+    expect(FALLBACK_MODE_REASON).toMatch(/idle agents receive messages only at their next turn/);
+    expect(normalized).toMatch(/idle agent still receives messages only at its next turn/);
+
+    const io = cliStreams();
+    let stdout = '';
+    io.stdout.on('data', chunk => { stdout += String(chunk); });
+    const exitCode = await runCli(['mode', 'get'], {
+      client: cliClient,
+      inbox: async () => { throw new Error('mode should not open an inbox'); },
+      ...io,
+    });
+    expect(exitCode).toBe(3);
+    expect(JSON.parse(stdout)).toEqual({ ok: false, kind: 'refused', reason: 'unavailable' });
   });
 
   it('keeps the package files at the documented install root', () => {

@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openInbox, type InboxBatch, type InboxConsumer } from '../cli/inbox.js';
 import { CliError } from '../cli/errors.js';
 import { SendService } from '../cli/send.js';
+import { fakeModeApplication } from '../composition/fixtures/listening-mode.js';
+import { ListeningModeOperation } from '../composition/listening-mode.js';
 import type { AgentClientPort, InboxDelivery } from '../cli/types.js';
 import { postprocessMcpResult, postprocessPreselectedMcpResult } from './result-postprocessor.js';
 import type { ReadOperationPort } from './read-tool.js';
@@ -38,7 +40,7 @@ afterEach(async () => {
 });
 
 describe('MCP server', () => {
-  it('initializes, lists exactly khala_send and khala_read, pings and sends through SendService', async () => {
+  it('initializes, lists exactly khala_send, khala_read, and khala_listening_mode, pings and sends through SendService', async () => {
     const client = fakeClient();
     const responses = await exchange(client, [
       request(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test' } }),
@@ -49,7 +51,7 @@ describe('MCP server', () => {
 
     expect(responses[0]).toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26' } });
     expect(responses[1]).toEqual({ jsonrpc: '2.0', id: 2, result: {} });
-    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read']);
+    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode']);
     expect(responses[2]).toMatchObject({
       result: { tools: [ {
         name: 'khala_send',
@@ -68,6 +70,10 @@ describe('MCP server', () => {
         name: 'khala_read',
         description: expect.stringMatching(/untrusted.*exact batchToken.*releaseId/i),
         inputSchema: { additionalProperties: false, required: [] },
+      }, {
+        name: 'khala_listening_mode',
+        description: expect.stringMatching(/held by this agent.*untrusted channel batch.*exact batchToken/),
+        inputSchema: { additionalProperties: false, required: ['action'] },
       }] },
     });
     expect(client.sent).toEqual([{ bindingId: 'binding-1', body: 'hello' }]);
@@ -206,7 +212,7 @@ describe('MCP server', () => {
       request(6, 'tools/list', { ...meta, cursor: 'next' }),
     ]);
 
-    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read']);
+    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode']);
     expect(responses.map(response => response.error?.code ?? 'ok')).toEqual(['ok', 'ok', 'ok', 'ok', -32602, -32602]);
     expect(client.sent).toEqual([{ bindingId: null, body: 'hello' }]);
   });
@@ -399,6 +405,89 @@ describe('MCP server', () => {
     expect(postprocessResult).not.toHaveBeenCalled();
   });
 
+  it('runs khala_listening_mode through generic postprocessing for every valid outcome with the stripped token', async () => {
+    const fake = fakeModeApplication();
+    const listeningMode = new ListeningModeOperation({ application: fake.application });
+    const postprocessResult = vi.fn<McpServerOptions['postprocessResult']>(async input => input.primaryResult);
+
+    const responses = await exchangeWithOptions(fakeClient(), [
+      request(60, 'tools/call', { name: 'khala_listening_mode', arguments: { action: 'get', ackBatchToken: 'token-a' } }),
+      request(61, 'tools/call', {
+        name: 'khala_listening_mode', arguments: { action: 'set', requested: 'async', expectedVersion: 4 },
+      }),
+      request(62, 'tools/call', {
+        name: 'khala_listening_mode', arguments: { action: 'set', requested: 'steer', expectedVersion: 4, ackBatchToken: 'token-b' },
+      }),
+    ], { postprocessResult, listeningMode });
+
+    expect(responses.map(response => response.result?.structuredContent?.kind)).toEqual(['view', 'applied', 'conflict']);
+    expect(responses[2]).toMatchObject({ result: { isError: true, structuredContent: { reason: 'stale_version' } } });
+    expect(postprocessResult.mock.calls.map(([input]) => input.acknowledgeToken)).toEqual(['token-a', undefined, 'token-b']);
+    expect(fake.sets.map(set => set.expectedVersion)).toEqual([4, 4]);
+    expect(new Set(fake.sets.map(set => set.commandId)).size).toBe(2);
+
+    const [unavailable] = await exchangeWithOptions(fakeClient(), [
+      request(63, 'tools/call', { name: 'khala_listening_mode', arguments: { action: 'get' } }),
+    ], {});
+    expect(unavailable).toMatchObject({ result: { isError: true, structuredContent: { kind: 'refused', reason: 'unavailable' } } });
+  });
+
+  it('rejects malformed and target-shaped mode calls and ignores notifications before any mode or batch access', async () => {
+    const listeningMode = { get: vi.fn(), set: vi.fn() };
+    const postprocessResult = vi.fn();
+    const invalid = [
+      { action: 'get', ackBatchToken: 7 },
+      { action: 'get', bindingId: 'binding-2' },
+      { action: 'set', requested: 'sync' },
+      { action: 'set', requested: 'sync', expectedVersion: 1, bindingId: 'binding-2' },
+      { action: 'set', requested: 'sync', expectedVersion: 1, expectedBindingGeneration: 0 },
+      { action: 'set', requested: 'sync', expectedVersion: 1, kind: 'grant_hard_cancel' },
+    ];
+    const chunks = [
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: {
+        name: 'khala_listening_mode', arguments: { action: 'set', requested: 'sync', expectedVersion: 1, ackBatchToken: 'opaque' },
+      } })}\n`,
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: {
+        name: 'khala_listening_mode', arguments: { action: 'get' },
+      } })}\n`,
+      ...invalid.map((args, index) => `${JSON.stringify(request(70 + index, 'tools/call', {
+        name: 'khala_listening_mode', arguments: args,
+      }))}\n`),
+    ];
+
+    const responses = await exchangeChunksWithOptions(fakeClient(), chunks, { postprocessResult, listeningMode });
+
+    expect(responses).toHaveLength(invalid.length);
+    expect(responses.every(response => response.error?.code === -32602)).toBe(true);
+    expect(listeningMode.get).not.toHaveBeenCalled();
+    expect(listeningMode.set).not.toHaveBeenCalled();
+    expect(postprocessResult).not.toHaveBeenCalled();
+  });
+
+  it('keeps pipelined mode calls ordered behind the previous response write', async () => {
+    const fake = fakeModeApplication();
+    const output = new BlockingWritable();
+    const input = Readable.from([[
+      request(80, 'tools/call', { name: 'khala_listening_mode', arguments: { action: 'set', requested: 'async', expectedVersion: 4 } }),
+      request(81, 'tools/call', { name: 'khala_listening_mode', arguments: { action: 'set', requested: 'steer', expectedVersion: 5 } }),
+    ].map(item => JSON.stringify(item)).join('\n') + '\n']);
+
+    const running = runMcpServer({
+      input, output, send: new SendService(fakeClient()), read: emptyReadOperation(),
+      listeningMode: new ListeningModeOperation({ application: fake.application }),
+      postprocessResult: identityPostprocessor, postprocessReadResult: identityReadPostprocessor,
+    });
+    await output.waitForWrite();
+    expect(fake.sets.map(set => set.requested)).toEqual(['async']);
+
+    output.completeWrite();
+    await output.waitForWrite(2);
+    output.completeWrite();
+    await running;
+    expect(fake.sets.map(set => [set.requested, set.expectedVersion])).toEqual([['async', 4], ['steer', 5]]);
+    expect(fake.state).toEqual({ requested: 'steer', version: 6 });
+  });
+
   it('allows an injected future preselected-batch composition exactly once', async () => {
     const selected = preselectedBatch('future-token', 'release-future', '["future-pull"]');
     const postprocessResult = vi.fn(async input => postprocessMcpResult({
@@ -534,7 +623,7 @@ async function exchangeChunks(client: AgentClientPort, chunks: readonly (string 
 async function exchangeWithOptions(
   client: AgentClientPort,
   requests: readonly Request[],
-  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read'>>,
+  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
 ): Promise<Response[]> {
   return exchangeChunksWithOptions(client, requests.map(item => `${JSON.stringify(item)}\n`), options);
 }
@@ -542,7 +631,7 @@ async function exchangeWithOptions(
 async function exchangeChunksWithOptions(
   client: AgentClientPort,
   chunks: readonly (string | Buffer)[],
-  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read'>>,
+  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
 ): Promise<Response[]> {
   let stdout = '';
   const output = new Writable({
@@ -556,6 +645,7 @@ async function exchangeChunksWithOptions(
     output,
     send: new SendService(client),
     read: options.read ?? emptyReadOperation(),
+    ...(options.listeningMode ? { listeningMode: options.listeningMode } : {}),
     postprocessResult: options.postprocessResult ?? identityPostprocessor,
     postprocessReadResult: options.postprocessReadResult ?? identityReadPostprocessor,
   });

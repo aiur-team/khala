@@ -7,6 +7,9 @@ import {
 
 export const FALLBACK_SKILL_VERSION = 'skill-1';
 export const FALLBACK_ADAPTER_VERSION = 'agent-listener-1';
+/** Listening-mode control never upgrades this: mode state is not delivery evidence. */
+export const FALLBACK_MODE_REASON =
+  'The fallback listener has no retained primary-mode proof; idle agents receive messages only at their next turn.';
 
 export function fallbackSkillCapabilities(harness: string, limits: DeliveryLimits): HarnessCapabilities {
   const decoded = decodeHarnessCapabilities({
@@ -24,7 +27,7 @@ export function fallbackSkillCapabilities(harness: string, limits: DeliveryLimit
     evidenceRef: null,
     modes: unknownModeSupportMap(
       `${harness}-agent-listener`,
-      'The fallback listener has no retained primary-mode proof; idle agents receive messages only at their next turn.',
+      FALLBACK_MODE_REASON,
       FALLBACK_SKILL_VERSION,
     ),
     acknowledgement: 'unknown',

@@ -5,6 +5,8 @@ import path from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeSessionBinding, type EventRef, type SessionBinding } from '@khala/contracts/delivery/index';
+import type { AgentListeningModeApplication } from '../composition/listening-mode.js';
+import { fakeModeApplication } from '../composition/fixtures/listening-mode.js';
 import { runCli } from './app.js';
 import { openInbox, type BatchInbox, type InboxBatch, type InboxConsumer } from './inbox.js';
 import { CliError } from './errors.js';
@@ -561,6 +563,122 @@ describe('runCli', () => {
   });
 });
 
+describe('listening-mode controls', () => {
+  it('inspects and sets mode through the bound application without opening an inbox or reading status', async () => {
+    const fake = fakeModeApplication();
+    const status = vi.fn(client().status);
+    const deps = { client: client({ status }), inbox: unusedInbox, listeningMode: fake.application };
+
+    const get = streams();
+    expect(await runCli(['mode', 'get'], { ...deps, ...get })).toBe(0);
+    expect(JSON.parse(get.output())).toMatchObject({ ok: true, kind: 'view', requested: 'sync', version: 4 });
+
+    const set = streams();
+    expect(await runCli(['mode', 'set', 'async', '--expected-version', '4'], { ...deps, ...set })).toBe(0);
+    expect(JSON.parse(set.output())).toEqual({
+      ok: true, kind: 'applied', requested: 'async', effective: 'async', effectiveReason: null, version: 5,
+    });
+    expect(fake.sets).toEqual([expect.objectContaining({ requested: 'async', expectedVersion: 4 })]);
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('prints a typed stale-version conflict with the concurrent winner and exits 3 without retrying', async () => {
+    const fake = fakeModeApplication();
+    fake.ownerWrite('steer');
+    const io = streams();
+
+    expect(await runCli(['mode', 'set', 'async', '--expected-version', '4'], {
+      client: client(), inbox: unusedInbox, listeningMode: fake.application, ...io,
+    })).toBe(3);
+
+    expect(JSON.parse(io.output())).toEqual({
+      ok: false, kind: 'conflict', reason: 'stale_version',
+      current: { requested: 'steer', effective: 'steer', effectiveReason: null, version: 5 },
+    });
+    expect(fake.application.set).toHaveBeenCalledOnce();
+    expect(fake.state).toEqual({ requested: 'steer', version: 5 });
+  });
+
+  it('refuses as unavailable when no trusted composition is installed and rejects target flags before any call', async () => {
+    const unavailable = streams();
+    expect(await runCli(['mode', 'get'], { client: client(), inbox: unusedInbox, ...unavailable })).toBe(3);
+    expect(JSON.parse(unavailable.output())).toEqual({ ok: false, kind: 'refused', reason: 'unavailable' });
+
+    const fake = fakeModeApplication();
+    const targeted = streams();
+    expect(await runCli(['mode', 'set', 'sync', '--expected-version', '4', '--binding', 'binding-2'], {
+      client: client(), inbox: unusedInbox, listeningMode: fake.application, ...targeted,
+    })).toBe(2);
+    expect(JSON.parse(targeted.error())).toEqual({ ok: false, error: 'invalid_arguments' });
+    expect(fake.application.read).not.toHaveBeenCalled();
+    expect(fake.application.set).not.toHaveBeenCalled();
+  });
+
+  it('returns the same normalized get, applied, and conflict payloads over MCP as over the CLI', async () => {
+    const cli = fakeModeApplication();
+    const cliOutputs: unknown[] = [];
+    for (const args of [['mode', 'get'], ['mode', 'set', 'async', '--expected-version', '4'], ['mode', 'set', 'steer', '--expected-version', '4']]) {
+      const io = streams();
+      await runCli(args, { client: client(), inbox: unusedInbox, listeningMode: cli.application, ...io });
+      const payload = JSON.parse(io.output()) as Record<string, unknown>;
+      delete payload.ok;
+      cliOutputs.push(payload);
+    }
+
+    const mcp = fakeModeApplication();
+    const responses = await runMcpSession(await emptyInboxFactory('khala-mcp-mode-parity-'), [
+      modeCall(90, { action: 'get' }),
+      modeCall(91, { action: 'set', requested: 'async', expectedVersion: 4 }),
+      modeCall(92, { action: 'set', requested: 'steer', expectedVersion: 4 }),
+    ], mcp.application);
+
+    expect(responses.map(response => response.result.structuredContent)).toEqual(cliOutputs);
+    expect(responses.map(response => (response.result as { isError?: boolean }).isError)).toEqual([undefined, undefined, true]);
+  });
+
+  it('shares next-call acknowledgement and incidental batch piggyback with mode calls', async () => {
+    const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-mcp-mode-app-'));
+    temporaryDirectories.push(root);
+    const inboxOptions = {
+      stateDirectory: path.join(root, 'state'), bindingId: BINDING.bindingId, generation: BINDING.generation,
+      maxPayloadBytes: 4096, maxSelectionEvents: 8,
+    };
+    const initial = await openInbox(inboxOptions);
+    await initial.enqueue(delivery('release-1', '["first-mode"]'));
+    const fake = fakeModeApplication();
+
+    const responses = await runMcpSession(async () => openInbox(inboxOptions), [
+      modeCall(100, { action: 'get' }),
+      modeCall(101, { action: 'set', requested: 'async', expectedVersion: 3 }),
+    ], fake.application);
+    const firstBatch = batchText(responses[0]);
+    expect(firstBatch).toContain('["first-mode"]');
+    expect(responses[0]?.result.structuredContent).toMatchObject({ kind: 'view' });
+    expect(batchText(responses[1])).toBe(firstBatch);
+    expect(responses[1]?.result.structuredContent).toMatchObject({ kind: 'conflict' });
+
+    const reopened = await openInbox(inboxOptions);
+    await reopened.enqueue(delivery('release-2', '["second-mode"]'));
+    const [advanced] = await runMcpSession(async () => openInbox(inboxOptions), [
+      modeCall(102, { action: 'get', ackBatchToken: batchToken(firstBatch) }),
+    ], fake.application);
+    expect(batchText(advanced)).toContain('["second-mode"]');
+  });
+});
+
+function modeCall(id: number, args: Record<string, unknown>) {
+  return { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'khala_listening_mode', arguments: args } };
+}
+
+async function emptyInboxFactory(prefix: string): Promise<() => Promise<BatchInbox>> {
+  const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), prefix));
+  temporaryDirectories.push(root);
+  return async () => openInbox({
+    stateDirectory: path.join(root, 'state'), bindingId: BINDING.bindingId, generation: BINDING.generation,
+    maxPayloadBytes: 4096, maxSelectionEvents: 8,
+  });
+}
+
 type McpResponse = Readonly<{
   result: Readonly<{
     content: readonly Readonly<{ type: string; text: string }>[];
@@ -664,9 +782,10 @@ function delivery(releaseId: string, canonical: string): InboxDelivery {
 async function runMcpSession(
   inbox: () => Promise<BatchInbox>,
   calls: readonly Record<string, unknown>[],
+  listeningMode?: AgentListeningModeApplication,
 ): Promise<McpResponse[]> {
   const io = streams(calls.map(call => JSON.stringify(call)).join('\n') + '\n');
-  expect(await runCli(['mcp-serve'], { client: client(), inbox, ...io })).toBe(0);
+  expect(await runCli(['mcp-serve'], { client: client(), inbox, ...io, ...(listeningMode ? { listeningMode } : {}) })).toBe(0);
   expect(io.error()).toBe('');
   return mcpResponses(io.output());
 }

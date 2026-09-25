@@ -1,8 +1,10 @@
 import type { Readable, Writable } from 'node:stream';
 import type { BindingId, SessionBinding } from '@khala/contracts/delivery/index';
+import { ListeningModeOperation, type AgentListeningModeApplication } from '../composition/listening-mode.js';
 import { ReadOperation, sameHeldBinding } from '../composition/read.js';
 import { CliError, cliErrorCode } from './errors.js';
 import type { BatchInbox, InboxItem } from './inbox.js';
+import { modeExitCode, parseModeArguments, renderModeOutput } from './mode.js';
 import { parseReadArguments, renderReadOutput } from './read.js';
 import { MAX_SEND_BYTES, SendService } from './send.js';
 import {
@@ -17,6 +19,8 @@ import { runMcpServer } from '../mcp/server.js';
 export type CliDependencies = Readonly<{
   client: AgentClientPort;
   inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
+  /** Pre-bound to the held binding by trusted composition; absent or null means no mode control is composed. */
+  listeningMode?: AgentListeningModeApplication | null;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
 }>;
 
@@ -26,6 +30,7 @@ export async function runCli(argv: readonly string[], deps: CliDependencies): Pr
     switch (command) {
       case 'connect': return await connect(args, deps);
       case 'listen': return await listen(args, deps);
+      case 'mode': return await mode(args, deps);
       case 'read': return await read(args, deps);
       case 'send': return await send(args, deps);
       case 'status': return await status(args, deps);
@@ -107,6 +112,14 @@ async function read(args: readonly string[], deps: CliDependencies): Promise<num
   return 0;
 }
 
+async function mode(args: readonly string[], deps: CliDependencies): Promise<number> {
+  const input = parseModeArguments(args);
+  const operation = new ListeningModeOperation({ application: deps.listeningMode ?? null });
+  const outcome = input.action === 'get' ? await operation.get() : await operation.set(input.request);
+  await write(deps.stdout, renderModeOutput(outcome) + '\n');
+  return modeExitCode(outcome);
+}
+
 async function status(args: readonly string[], deps: CliDependencies): Promise<number> {
   if (args.length !== 0) throw new CliError('invalid_arguments');
   const current = publicStatus(await deps.client.status(deps.signal));
@@ -138,6 +151,7 @@ async function mcp(args: readonly string[], deps: CliDependencies): Promise<numb
       output: deps.stdout,
       send: new SendService(deps.client),
       read: new ReadOperation({ heldBinding, consumer, currentBinding }),
+      listeningMode: new ListeningModeOperation({ application: deps.listeningMode ?? null }),
       postprocessResult: input => postprocessMcpResult({
         ...input,
         consumer,

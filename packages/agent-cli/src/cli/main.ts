@@ -16,6 +16,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     return await runCli(argv, {
       client: createUnavailableClient(),
+      // No trusted connector composition is installed yet, so mode calls refuse as unavailable.
+      listeningMode: null,
       inbox: (bindingId, generation) => openInbox({
         stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
       }),
