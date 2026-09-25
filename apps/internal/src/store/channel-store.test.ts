@@ -139,6 +139,8 @@ describe('channel store identity and authority', () => {
     });
     expect(again.binding(bobBinding)).toMatchObject({ kind: 'done', binding: { status: 'revoked' } });
     expect(again.binding(nextBinding)).toMatchObject({ kind: 'done', binding: { status: 'active', generation: 5 } });
+    expect(again.latestBindingGeneration(bobBinding.bindingId)).toEqual({ kind: 'done', generation: 5 });
+    expect(again.latestBindingGeneration('binding-unknown')).toEqual({ kind: 'done', generation: null });
     expect(again.timeline({ channelId, participantId: alice.participantId, cursor: null, limit: 10 }))
       .toMatchObject({
         kind: 'done',

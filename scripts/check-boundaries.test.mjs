@@ -85,6 +85,21 @@ test('sibling features and unresolved workspace imports fail', t => {
   assert(errors.some(error => error.includes('sibling feature')));
   assert(errors.some(error => error.includes('unresolved workspace')));
 });
+test('loopback server imports only built-ins, the internal store and contracts', t => {
+  assert.deepEqual(fixture(t, {
+    'apps/internal/src/server/server.ts': "import http from 'node:http'; import { store } from '../store/channel-store'; import type { Room } from '../../../../packages/contracts/src/messaging/room';",
+    'apps/internal/src/store/channel-store.ts': 'export const store = 1;',
+    'packages/contracts/src/messaging/room.ts': 'export type Room = string;',
+  }), []);
+  const errors = fixture(t, {
+    'apps/internal/src/server/server.ts': "import '../composition/root'; import '../../../web/src/app'; import 'express'; import './helper.test';",
+    'apps/internal/src/composition/root.ts': 'export {};',
+    'apps/web/src/app.ts': 'export {};',
+  });
+  for (const specifier of ['../composition/root', '../../../web/src/app', 'express']) {
+    assert(errors.some(error => error.includes('loopback server may import only') && error.includes(`(${specifier})`)), specifier);
+  }
+});
 
 test('invalid browser import makes the command fail for CI', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-boundary-cli-'));
