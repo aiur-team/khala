@@ -69,13 +69,14 @@ export function buildGraph(root) {
         const specifier = literal.text;
         let resolved = ts.resolveModuleName(specifier, filename, options, ts.sys).resolvedModule?.resolvedFileName;
         // Resolve workspace exports even before pnpm has linked the workspace.
-        if (!resolved && specifier.startsWith('@khala/')) {
+        if (!resolved && /^@(?:khala\/|aiur\/khala(?:\/|$))/.test(specifier)) {
           const name = specifier.split('/').slice(0, 2).join('/');
           const dir = packages.get(name);
           if (dir) {
             const subpath = './' + specifier.split('/').slice(2).join('/');
             const exports = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).exports ?? {};
-            for (const [key, target] of Object.entries(exports)) {
+            for (const [key, entry] of Object.entries(exports)) {
+              const target = typeof entry === 'string' ? entry : entry?.['khala-source'];
               if (typeof target !== 'string') continue;
               const [prefix, suffix = ''] = key.split('*');
               if (key === subpath || (key.includes('*') && subpath.startsWith(prefix) && subpath.endsWith(suffix))) {

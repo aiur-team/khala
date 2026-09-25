@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { registerAgentHandlers } from './handlers';
 
 describe('registerAgentHandlers', () => {
-  it('reserves status and pairing routes without import-time dependencies', async () => {
+  it('reserves status, pairing and channel-access routes without import-time dependencies', async () => {
     const registrations = registerAgentHandlers();
 
     expect(registrations.map(({ path, methods }) => ({ path, methods }))).toEqual([
       { path: '/api/agent/status', methods: ['GET'] },
       { path: '/api/agent/pairing/claim', methods: ['POST'] },
       { path: '/api/agent/pairing/result', methods: ['POST'] },
+      { path: '/api/agent/channel-access/request', methods: ['POST'] },
+      { path: '/api/agent/channel-access/create', methods: ['POST'] },
+      { path: '/api/agent/channel-access/status', methods: ['GET'] },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'] },
       { path: '/api/agent/channels', methods: ['GET'] },
     ]);
@@ -19,7 +22,7 @@ describe('registerAgentHandlers', () => {
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
       expect(await response.json()).toEqual(index === 0
         ? { code: 'feature_unavailable' }
-        : index < 3
+        : index < 6
           ? { v: 1, kind: 'rejected', code: 'feature_unavailable' }
           : { error: 'feature_unavailable' });
     }
@@ -34,6 +37,23 @@ describe('registerAgentHandlers', () => {
       pairing: () => [claim, result],
     });
     expect(registrations.slice(1, 3)).toEqual([claim, result]);
+  });
+
+  it('places live channel-access registrations after status and pairing', () => {
+    const access = { path: '/api/agent/channel-access/request', methods: ['POST'], handle: async () => new Response('access') } as const;
+    const create = { path: '/api/agent/channel-access/create', methods: ['POST'], handle: async () => new Response('create') } as const;
+    const status = { path: '/api/agent/channel-access/status', methods: ['GET'], handle: async () => new Response('status') } as const;
+    const registrations = registerAgentHandlers({
+      authorize: async () => 'allowed',
+      status: { snapshot: async () => ({ generation: 0, agents: [] }) },
+      channelAccess: () => [access, create, status],
+    });
+    const start = registrations.indexOf(access);
+    expect(registrations.slice(start, start + 3)).toEqual([access, create, status]);
+    expect(registrations.slice(0, start).map(({ path }) => path)).toEqual([
+      '/api/agent/status',
+      ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/pairing/')),
+    ]);
   });
 
   it('substitutes only the live channel-discovery bootstrap registration', () => {

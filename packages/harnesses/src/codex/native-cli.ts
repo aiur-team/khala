@@ -41,7 +41,7 @@ export interface CodexNativeCliPort {
   run(argv: readonly string[]): Promise<CodexNativeCliOutcome>;
 }
 
-/** Shape accepted by the durable inbox implemented by @khala/agent-cli. */
+/** Shape accepted by the durable inbox implemented by @aiur/khala. */
 export type CodexNativeInboxDelivery = Readonly<{
   v: 1;
   releaseId: ReleasedJob['releaseId'];
