@@ -58,6 +58,11 @@
     "./features/recovery/model": "./src/features/recovery/model.ts",
     "./features/recovery/ports": "./src/features/recovery/ports.ts",
     "./features/recovery/recovery.css": "./src/features/recovery/recovery.css",
+    "./features/channel-settings/ChannelSettingsPanel": "./src/features/channel-settings/ChannelSettingsPanel.tsx",
+    "./features/channel-settings/controller": "./src/features/channel-settings/controller.ts",
+    "./features/channel-settings/model": "./src/features/channel-settings/model.ts",
+    "./features/channel-settings/ports": "./src/features/channel-settings/ports.ts",
+    "./features/channel-settings/channel-settings.css": "./src/features/channel-settings/channel-settings.css",
     "./features/*": "./src/features/*.ts",
     "./composition/*": "./src/composition/*.ts"
   },
