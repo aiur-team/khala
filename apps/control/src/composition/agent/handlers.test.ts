@@ -10,6 +10,7 @@ describe('registerAgentHandlers', () => {
       { path: '/api/agent/pairing/claim', methods: ['POST'] },
       { path: '/api/agent/pairing/result', methods: ['POST'] },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'] },
+      { path: '/api/agent/channels', methods: ['GET'] },
     ]);
     for (const [index, registration] of registrations.entries()) {
       const response = await registration.handle(new Request(`https://example.test${registration.path}`));
@@ -47,11 +48,23 @@ describe('registerAgentHandlers', () => {
       channelDiscoveryBootstrap: () => [token],
     });
 
-    expect(registrations.at(-1)).toBe(token);
+    expect(registrations.at(-2)).toBe(token);
     expect(registrations.slice(1, 3).map(route => route.path)).toEqual([
       '/api/agent/pairing/claim',
       '/api/agent/pairing/result',
     ]);
+  });
+
+  it('substitutes only the live channel-listing registration', () => {
+    const channels = { path: '/api/agent/channels', methods: ['GET'], handle: async () => new Response('channels') } as const;
+    const registrations = registerAgentHandlers({
+      authorize: async () => 'allowed',
+      status: { snapshot: async () => ({ generation: 0, agents: [] }) },
+      channelDiscovery: () => [channels],
+    });
+
+    expect(registrations.at(-1)).toBe(channels);
+    expect(registrations.at(-2)?.path).toBe('/api/agent/channel-discovery/bootstrap/token');
   });
 
   it('authorizes and returns the content-free room presence snapshot', async () => {
