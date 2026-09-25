@@ -131,7 +131,7 @@
     "errorCode": null
   },
   "capabilities": {
-    "v": 2,
+    "v": 3,
     "harness": "codex",
     "version": "0.154.0",
     "adapterVersion": "probe-driver@9a28af84",
@@ -145,6 +145,12 @@
       "maxSelectionEvents": 50,
       "maxPayloadBytes": 1048576
     },
-    "evidenceRef": "docs/evidence/codex.md"
+    "evidenceRef": "docs/evidence/codex.md",
+    "modes": {
+      "steer": { "status": "unknown", "route": "codex-interactive-hooks-steer", "testedVersion": "0.154.0", "evidenceRef": null, "evidenceRevision": null, "reason": "Khala-hosted app-server evidence is secondary and cannot prove delivery into the user-owned Codex TUI." },
+      "sync": { "status": "unknown", "route": "codex-interactive-hooks-sync", "testedVersion": "0.154.0", "evidenceRef": null, "evidenceRevision": null, "reason": "Khala-hosted app-server evidence is secondary and cannot prove delivery into the user-owned Codex TUI." },
+      "async": { "status": "unknown", "route": "codex-interactive-hooks-async", "testedVersion": "0.154.0", "evidenceRef": null, "evidenceRevision": null, "reason": "Khala-hosted app-server evidence is secondary and cannot prove delivery into the user-owned Codex TUI." }
+    },
+    "acknowledgement": "unknown"
   }
 }
