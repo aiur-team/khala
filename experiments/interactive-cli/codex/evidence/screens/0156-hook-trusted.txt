@@ -1,0 +1,16 @@
+│ directory: ~/.aiur/workspaces/aiur-team/…/codex164/p0156 │
+╰──────────────────────────────────────────────────────────╯
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+  Hooks
+  Lifecycle hooks from config and enabled plugins.
+  Event                 Installed   Active      Description
+› PreToolUse            1           1           Before a tool executes
+  PermissionRequest     0           0           When permission is requested
+  PostToolUse           1           1           After a tool executes
+  PreCompact            0           0           Before context compaction
+  PostCompact           0           0           After context compaction
+  SessionStart          0           0           When a new session starts
+  SessionEnd            0           0           Right before a session ends
+  UserPromptSubmit      1           1           When the user submits a prompt
+↓
+  enter details · esc close

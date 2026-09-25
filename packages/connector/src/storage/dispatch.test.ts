@@ -5,13 +5,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import type { BindingId, CausalRootId, DeviceId, ReleaseId } from '@khala/contracts/delivery/index';
+import type {
+  BindingId, CausalRootId, DeliveryReceiptTransport, DeviceId, ReleaseId,
+} from '@khala/contracts/delivery/index';
 import { queuedRecord } from '../dispatch/claim';
 import { testPolicy } from '../dispatch/fixtures/fakes';
 import type { DispatchRecord } from '../dispatch/types';
 import { createConnectorDispatchStorage } from './dispatch';
 import {
-  approval, binding, bindingId, commandRecord, content, eventRef, limits, pendingInput, release, scratchDirectory,
+  agentAcknowledgement, approval, binding, bindingId, commandRecord, content, eventRef, limits, pendingInput, receipt,
+  release, scratchDirectory,
 } from './fixtures/fakes';
 import type { ConnectorStorage } from './open';
 import { openConnectorStorage } from './open';
@@ -87,7 +90,85 @@ function hasCommandIdLeadingIndex(state: string): boolean {
   }
 }
 
+function storedDispatchRecord(state: string, releaseId: string): string | undefined {
+  const db = new DatabaseSync(path.join(state, LEDGER_FILE), { readOnly: true });
+  try {
+    return (db.prepare('SELECT record FROM dispatch_records WHERE release_id = ?').get(releaseId) as
+      | { record: string }
+      | undefined)?.record;
+  } finally {
+    db.close();
+  }
+}
+
+function receiptPair(job: Awaited<ReturnType<typeof durableRelease>>['job']) {
+  return [
+    {
+      ...receipt(job.releaseId, 'harness_queued', job.binding.generation, `receipt-${job.releaseId}-queued`),
+      bindingId: job.binding.bindingId,
+      observedAt: '2026-09-18T10:10:00.000Z',
+      source: 'harness' as const,
+      evidenceRef: `codex:userMessage:${job.releaseId}`,
+    },
+    {
+      ...agentAcknowledgement(job.releaseId, `receipt-${job.releaseId}-acknowledged`),
+      bindingId: job.binding.bindingId,
+      generation: job.binding.generation,
+      observedAt: '2026-09-18T10:11:00.000Z',
+      evidenceRef: `ack:${job.releaseId}`,
+    },
+  ] as const;
+}
+
 describe('durable dispatch storage', () => {
+  it('preserves mixed-version dispatch receipts across restart', async () => {
+    const { state, storage } = await fresh();
+    let dispatch = createConnectorDispatchStorage(storage);
+    const durable = await durableRelease(storage, 'dispatch-mixed-receipts');
+    const receipts = receiptPair(durable.job);
+    const expected = await dispatch.ledger.transact(tx => {
+      const record: DispatchRecord = {
+        ...queuedRecord(durable.job, tx.nextSeq()),
+        state: 'accepted',
+        attemptId: 'attempt-mixed-receipts',
+        workerId: 'worker-before-restart',
+        claimedAt: '2026-09-18T10:09:00.000Z',
+        receipts,
+      };
+      tx.put(record);
+      return record;
+    });
+    await storage.close();
+    const before = storedDispatchRecord(state, durable.job.releaseId);
+    expect(before).toBeDefined();
+    const reopened = await openConnectorStorage({ directory: state, mode: 'existing', limits });
+    opened.push(reopened);
+    dispatch = createConnectorDispatchStorage(reopened);
+    expect(await dispatch.ledger.transact(tx => tx.record(durable.job.releaseId))).toEqual(expected);
+    await reopened.close();
+    expect(storedDispatchRecord(state, durable.job.releaseId)).toBe(before);
+  });
+
+  it('rejects invalid v2 acknowledgement pairings in durable records', async () => {
+    const { storage } = await fresh();
+    const dispatch = createConnectorDispatchStorage(storage);
+    const durable = await durableRelease(storage, 'dispatch-invalid-ack');
+    const [, acknowledgement] = receiptPair(durable.job);
+    const invalid = { ...acknowledgement, source: 'harness' } as unknown as DeliveryReceiptTransport;
+
+    await expect(dispatch.ledger.transact(tx => {
+      tx.put({
+        ...queuedRecord(durable.job, tx.nextSeq()),
+        state: 'accepted',
+        attemptId: 'attempt-invalid-ack',
+        workerId: 'worker-invalid-ack',
+        claimedAt: '2026-09-18T10:09:00.000Z',
+        receipts: [invalid],
+      });
+    })).rejects.toMatchObject({ code: 'invalid_input' });
+    expect(await dispatch.ledger.transact(tx => tx.record(durable.job.releaseId))).toBeNull();
+  });
+
   it('fences dispatch adapters after a device identity conflict', async () => {
     const { storage } = await fresh();
     const identity = { deviceId: 'device_connector_b' as DeviceId, fingerprint: 'device-fingerprint-1' };

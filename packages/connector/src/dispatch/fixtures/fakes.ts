@@ -5,9 +5,9 @@
 import { createHash } from 'node:crypto';
 import {
   type ApprovalCommand, type AuthorizationId, type BindingId, type CausalRootId, type CommandId, type DeliveryReceipt,
-  type EventRef, type HarnessCapabilities, type HarnessPort, type OwnerAuthority, type ReceiptKind, type ReleasedJob,
-  type SessionBinding, type UnverifiedReleasedJob, decodeDeliveryLimits, releaseFromApproval,
-  unknownModeSupportMap,
+  type DeliveryReceiptV2, type EventRef, type HarnessCapabilities, type HarnessPort, type OwnerAuthority,
+  type ReceiptKind, type ReleasedJob, type SessionBinding, type UnverifiedReleasedJob, decodeDeliveryLimits,
+  releaseFromApproval, unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import { queuedRecord } from '../claim';
 import { createMemoryLedger, type MemoryLedger } from './memory-ledger';
@@ -121,6 +121,27 @@ export function receipt(job: UnverifiedReleasedJob, kind: ReceiptKind, extra: Pa
     source: 'harness',
     evidenceRef: `codex:userMessage:${job.releaseId}`,
     errorCode: kind === 'failed' ? 'harness_rejected' : null,
+    ...extra,
+  };
+}
+
+type AgentAcknowledgement = Extract<DeliveryReceiptV2, { kind: 'agent_acknowledged' }>;
+
+export function agentAcknowledgement(
+  job: UnverifiedReleasedJob,
+  extra: Partial<AgentAcknowledgement> = {},
+): AgentAcknowledgement {
+  return {
+    v: 2,
+    receiptId: `receipt-${job.releaseId}-agent-acknowledged` as AgentAcknowledgement['receiptId'],
+    releaseId: job.releaseId,
+    bindingId: job.binding.bindingId,
+    generation: job.binding.generation,
+    kind: 'agent_acknowledged',
+    observedAt: '2026-09-18T02:38:01.125Z',
+    source: 'agent',
+    evidenceRef: `ack:${job.releaseId}`,
+    errorCode: null,
     ...extra,
   };
 }

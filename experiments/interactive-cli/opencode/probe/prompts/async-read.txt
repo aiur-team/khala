@@ -1,0 +1,1 @@
+Decide now to check the channel by calling khala_read, then handle whatever it returns under my standing channel instruction.

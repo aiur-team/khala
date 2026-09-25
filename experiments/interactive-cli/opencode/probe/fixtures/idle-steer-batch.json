@@ -1,0 +1,14 @@
+{
+  "mode": "steer",
+  "batch": {
+    "token": "batch-idle-steer-004",
+    "messages": [
+      {
+        "id": "message-batch-idle-steer-004",
+        "channel": "interactive-opencode-proof",
+        "sender": "proof-peer",
+        "text": "IDLE-STEER-NONCE-529: Call khala_send with response IDLE-STEER-ACK-529."
+      }
+    ]
+  }
+}
