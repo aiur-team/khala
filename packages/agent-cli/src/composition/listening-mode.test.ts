@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type {
-  AgentListeningModeApplication, AgentListeningModeSetInput,
+import {
+  createAgentListeningModeApplication,
+  type AgentListeningModeApplication, type AgentListeningModePort, type AgentListeningModeSetInput,
 } from '@khala/connector/agent/listening-mode';
 import type {
-  BindingId, CommandId, ListeningModeResult, ListeningModeView,
+  AgentBindingAuthority, BindingId, CommandId, ListeningModeCommand, ListeningModeResult, ListeningModeView,
 } from '@khala/contracts/delivery/index';
 import { EXPECTED_VIEW, MODE_VIEW, fakeModeApplication } from './fixtures/listening-mode.js';
 import { ListeningModeOperation, parseSetRequest } from './listening-mode.js';
@@ -104,6 +105,40 @@ describe('ListeningModeOperation', () => {
     };
     await expect(operation(foreign).set({ requested: 'sync', expectedVersion: 4 }))
       .resolves.toEqual({ kind: 'refused', reason: 'outcome_unknown' });
+  });
+
+  it('composes with the trusted connector application so only captured authority reaches the port', async () => {
+    let currentGeneration = 3;
+    const commands: ListeningModeCommand[] = [];
+    const port = {
+      read: vi.fn<AgentListeningModePort['read']>(async authority => authority.generation === currentGeneration
+        ? { ok: true, view: MODE_VIEW }
+        : { ok: false, code: 'stale_binding' }),
+      set: vi.fn<AgentListeningModePort['set']>(async (authority, command) => {
+        commands.push(command);
+        const refused = authority.generation !== currentGeneration || command.expectedBindingGeneration !== currentGeneration;
+        return {
+          v: 1, commandId: command.commandId, bindingId: command.bindingId, generation: authority.generation,
+          outcome: refused ? 'refused' : 'applied', version: refused ? 4 : 5, requested: command.requested,
+          effective: refused ? null : command.requested, reason: refused ? 'stale_binding' : null,
+        };
+      }),
+    };
+    const authority = { kind: 'agent_binding', bindingId: 'binding-1', generation: 3 } as unknown as AgentBindingAuthority;
+    const application = createAgentListeningModeApplication(authority, port);
+    const mode = operation(application);
+
+    await expect(mode.set({ requested: 'async', expectedVersion: 4 })).resolves.toMatchObject({ kind: 'applied', version: 5 });
+    expect(commands).toEqual([{
+      v: 1, commandId: 'command-1', bindingId: 'binding-1', expectedBindingGeneration: 3, expectedVersion: 4,
+      requested: 'async', issuedAt: '2026-09-25T12:00:00.000Z',
+    }]);
+    expect(port.set.mock.calls[0]?.[0]).toBe(authority);
+
+    currentGeneration = 4;
+    await expect(mode.get()).resolves.toEqual({ kind: 'refused', reason: 'stale_binding' });
+    await expect(mode.set({ requested: 'sync', expectedVersion: 5 })).resolves.toEqual({ kind: 'refused', reason: 'stale_binding' });
+    expect(Object.keys(application).sort()).toEqual(['read', 'set']);
   });
 
   it('rejects partial, extra, target-, generation-, authority-, and grant-shaped input before the application', async () => {
