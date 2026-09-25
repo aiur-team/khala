@@ -1,7 +1,7 @@
 import process from 'node:process';
-import { runCli } from '@khala/agent-cli/cli/app';
-import { openInbox } from '@khala/agent-cli/cli/inbox';
-import type { AgentClientPort } from '@khala/agent-cli/cli/types';
+import { runCli } from '@aiur/khala/cli/app';
+import { openInbox } from '@aiur/khala/cli/inbox';
+import type { AgentClientPort } from '@aiur/khala/cli/types';
 import { decodeSessionBinding } from '@khala/contracts/delivery/index';
 
 const [stateDirectory, bindingId] = process.argv.slice(2);

@@ -1,22 +1,36 @@
 {
-  "name": "@khala/agent-cli",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@aiur/khala",
+  "version": "0.1.0",
+  "description": "Khala agent CLI: connect an agent to a Khala channel, read released messages, and send replies.",
+  "license": "UNLICENSED",
+  "homepage": "https://khala.aiur.team",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiur-team/khala.git",
+    "directory": "packages/agent-cli"
+  },
+  "bugs": "https://github.com/aiur-team/khala/issues",
   "type": "module",
-  "bin": { "khala": "./dist/cli/main.js" },
+  "engines": { "node": ">=22.23.2" },
+  "bin": { "khala": "./dist/khala.js" },
+  "files": ["dist/khala.js"],
   "exports": {
-    "./cli/*": "./src/cli/*.ts",
-    "./composition/*": "./src/composition/*.ts",
-    "./mcp/*": "./src/mcp/*.ts",
+    "./package.json": "./package.json",
+    "./cli/*": { "khala-source": "./src/cli/*.ts" },
+    "./composition/*": { "khala-source": "./src/composition/*.ts" },
+    "./mcp/*": { "khala-source": "./src/mcp/*.ts" },
     "./fixtures/*": null
   },
+  "publishConfig": { "access": "public", "provenance": true },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
-    "build": "node ../../scripts/package-task.mjs build",
+    "build": "node scripts/bundle.mjs",
+    "prepack": "node scripts/bundle.mjs",
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
   },
-  "dependencies": {
+  "devDependencies": {
     "@khala/connector": "workspace:*",
-    "@khala/contracts": "workspace:*"
+    "@khala/contracts": "workspace:*",
+    "esbuild": "0.28.2"
   }
 }

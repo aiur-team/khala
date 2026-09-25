@@ -1,6 +1,6 @@
 # Khala agent CLI (KHA-148)
 
-`@khala/agent-cli` owns the `khala` binary an agent uses to connect to a channel,
+`@aiur/khala` owns the `khala` binary an agent uses to connect to a channel,
 consume released messages, send replies, inspect status, and expose the same send
 and explicit-read operations as MCP tools.
 
@@ -19,11 +19,44 @@ variables, status, errors, or logs. `listen` writes released bytes directly;
 `mcp-serve` may include them only inside a valid JSON-RPC tool result and reserves
 stdout for JSON-RPC.
 
+## Package and release
+
+The published package is one self-contained file. `scripts/bundle.mjs` (run by
+`build` and `prepack`) bundles `src/cli/main.ts` and its whole runtime closure,
+including the workspace connector and contracts, into `dist/khala.js`. The
+tarball carries only that file, this README and `package.json`; it declares no
+runtime dependencies, so installing it fetches nothing and runs no lifecycle
+script. On Node 22.23.2 or later:
+
+```text
+npx @aiur/khala status
+```
+
+The `cli/*`, `composition/*` and `mcp/*` source exports exist only for tests
+inside this workspace, under the opt-in `khala-source` condition; a consumer of
+the published package cannot resolve them.
+
+`node scripts/agent-cli-package-gate.mjs` (from the repository root) is the
+release gate. It packs the package as npm would publish it, then refuses the
+tarball if the file list leaves the allowlist; if the name, version, license,
+repository, engine or provenance metadata is wrong; if the package or any
+package bundled into it declares a consumer lifecycle hook (`preinstall`,
+`install`, `postinstall`, `prepublish` or a `prepare` hook); or if the bundle
+keeps any import except a Node built-in. It then installs the tarball into an
+empty prefix without network access and runs `npx @aiur/khala status`. It also
+fails if a live file outside `docs/` still names the old workspace package.
+
+`.github/workflows/release-khala-cli.yml` publishes the tarball the gate
+accepted, using npm trusted publishing: GitHub OIDC authenticates the publish
+and signs provenance, and no long-lived npm token exists. The npm package needs
+a trusted publisher bound to that workflow file and its `npm-publish`
+environment before the first release.
+
 ## Support row
 
 | Field | Value |
 | --- | --- |
-| Package | `@khala/agent-cli`, binary `khala` |
+| Package | `@aiur/khala`, binary `khala` |
 | Connect | KHA-114 bootstrap through an injected composition port; retries reuse one deterministic operation ID. |
 | Receive | A released-delivery port appends exact payload bytes to the per-binding inbox; `khala read` and `khala_read` explicitly pull released batches, while KHA-116's pending-review subscription is deliberately not used as a model feed. |
 | Send | One injected capability-backed send port shared by `khala send` and the `khala_send` MCP tool. |
