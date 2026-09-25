@@ -53,3 +53,11 @@ export {
   type ResolveResult, type TrustedClock, type WriteResult,
   MAX_JSON_DEPTH, decodeControlRecord, isRecordLive, sameJsonValue,
 } from './control-store';
+export {
+  type PairingApprovalResult, type PairingClaimProjection, type PairingClaimRequest, type PairingCreateRequest,
+  type PairingDecisionRequest, type PairingFailure, type PairingFailureCode, type PairingFailureRoute, type PairingGrantRedemptionRequest,
+  type PairingOwnerProjection, type PairingResultRequest,
+  PAIRING_FAILURE_CODES, decodePairingApprovalResult, decodePairingClaimRequest, decodePairingCreateRequest, decodePairingFailure,
+  decodePairingDecisionRequest, decodePairingGrantRedemptionRequest, decodePairingOwnerProjection,
+  decodePairingResultRequest, readCanonicalCode, readCanonicalOrigin,
+} from './pairing';
