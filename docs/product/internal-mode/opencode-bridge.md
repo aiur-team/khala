@@ -1,223 +1,206 @@
 # OpenCode bridge and DeepSeek acceptance
 
-Research for I3 and the OpenCode half of Acceptance 2. Evidence was gathered on
-2026-09-24 against the locally installed OpenCode `1.17.10`,
+Research for I3 and the OpenCode harness inputs to Acceptance 2. Evidence was
+gathered on 2026-09-24 against the locally installed OpenCode `1.17.10`,
 `@opencode-ai/plugin`/`@opencode-ai/sdk` `1.17.10`, Node `22.23.2`, and the
 configured DeepSeek provider. This is a design, not a compatibility claim for
 other versions.
 
 ## Summary
 
-Install a user-scope OpenCode plugin through `npx @aiur/khala setup`. The plugin
-runs inside the person's already-started interactive OpenCode TUI and binds one
-human-admitted Khala channel to that exact session. Khala never starts or hosts
-OpenCode. The production route must consume the one bounded Khala inbox-batch
-operation; Khala owns acknowledgement through the batch token, so OpenCode
-never adds a second lease, cursor, acknowledgement, or deduplication scheme.
+`setup-cli-opencode` installs a user-scope OpenCode plugin through
+`npx @aiur/khala setup`. The plugin ships inside the `@aiur/khala` package, not
+as a separate `@khala/*` workspace package. It runs inside the person's
+already-started interactive OpenCode TUI and binds one human-admitted Khala
+channel to that exact session. Khala never starts or hosts OpenCode. Every
+route consumes the one bounded Khala inbox batch. Khala acknowledges through
+the batch token, so OpenCode never adds a second lease, cursor, acknowledgement,
+or deduplication scheme.
 
-| Mode | OpenCode delivery | Support decision |
+The interactive proof for #166 (PR #180) replaces this document's earlier
+provisional routes. It shows `sync` is feasible on `1.17.10`, and that busy
+`promptAsync` is **not** a `steer` route.
+
+| Mode | OpenCode route (in-process plugin, same session) | Evidence status |
 |---|---|---|
-| `sync` (default) | No proved route into the user-started TUI session. | Blocking/unproven for product acceptance. During proof work the binding reports unsupported, defaults to `async`, and explains why; that fallback does not satisfy final three-mode acceptance. |
-| `async` | Never inject automatically. Expose the shared `khala_read` operation owned by `listening-mode-pull` inside the same TUI session. | Design supported by the durable inbox batch; delivery into the interactive session remains unproven. |
-| `steer` | From the plugin, submit once to the event-correlated TUI session with `session.promptAsync`; never abort by default. | A server-side busy-session observation exists, but equivalence to the person's interactive TUI is unproven and must not populate capabilities yet. |
+| `sync` (default) | Queue while busy. On the bound session's `session.idle`, recheck controls and call session-addressed `promptAsync` once. | Observed in a user-started TUI by #180. Stays `unproven` in `HarnessCapabilities` until retained interactive evidence merges and matches the exact evidence key. |
+| `async` | No automatic call. The plugin's `khala_read` tool delegates to the shared `listening-mode-pull` operation. | Observed in a user-started TUI by #180; same admission rule. |
+| `steer` | On the bound session's `tool.execute.after`, take the pending batch; add its envelope at that session's next `experimental.chat.messages.transform`. Never abort. | Observed in a user-started TUI by #180. Stays `unproven` until re-proven from the user-started TUI with retained commands (see `opencode-delivery-contract`). |
 
-The OpenCode bridge owns its interactive-session proof, OpenCode routes, and
-server-auth proof. It consumes
-`listening-mode-contract`, `listening-mode-pull`, `mcp-inbox-batch`, and
-`mcp-result-piggyback`; `acceptance` owns both acceptance runs.
+This area owns `opencode-interactive-cli-proof`, `opencode-server-auth-proof`,
+and the OpenCode routes. It consumes `listening-mode-contract`,
+`listening-mode-pull`, `mcp-inbox-batch`, and `mcp-result-piggyback`.
+`acceptance` owns both acceptance runs.
 
 ## Findings and evidence
 
-### Local proofs
+### Interactive proof (#166, PR #180; not yet merged)
+
+Source: `docs/product/internal-mode/interactive-opencode.md` and
+`experiments/interactive-cli/opencode/evidence/` on PR #180. OpenCode `1.17.10`,
+`deepseek/deepseek-flash`, TUI started by the person. A pass required DeepSeek to
+call `khala_send` with a nonce derived from the batch. API acceptance alone did
+not count.
+
+| Capability | Observation | Result |
+|---|---|---|
+| `steer` | Transform applied 95 ms after the stage-1 `tool.execute.after`; `STEER-ACK-731` sent before tool 2 began; no abort. | Proven by native hooks. |
+| Busy `promptAsync` (negative control) | Accepted mid-turn, but tool 2 ran before the batch was consumed. | Not a `steer` route. |
+| `sync` | Both tools completed with no channel action. `promptAsync` was called 19 ms after `session.idle`, and `SYNC-ACK-482` followed. | Proven by `session.idle` plus session-addressed `promptAsync`. |
+| `async` | The batch survived a dwell and an unrelated turn; only an explicit `khala_read` returned it (`ASYNC-ACK-964`). | Proven by an explicit tool. |
+| Restart before acknowledgement | After a TUI restart, the retained token was acknowledged by the next `khala_read`, which returned `NO-DUPLICATE`. | No host dedupe needed. |
+| Embedded server auth | Headless `opencode serve` rejects missing or wrong Basic auth (`401`). With auth enabled, the user-started TUI exits on its own unauthenticated `/config/providers` call. | External control of the TUI server is **blocked** on `1.17.10`; keep delivery in-process. |
+
+### Earlier local proofs (secondary)
 
 The throwaway plugin is retained at
 `experiments/internal-mode/opencode-bridge/.opencode/plugins/khala-proof.js`.
-Secrets were read only by the launched process; no token, full transcript, or
-message body beyond fixed proof markers is retained here. Sanitized raw command
-output, the host, and the versioned executable path are retained in
-[`evidence.md`](../../../experiments/internal-mode/opencode-bridge/evidence.md).
+Sanitized raw output, the host, and the versioned executable path are retained
+in [`evidence.md`](../../../experiments/internal-mode/opencode-bridge/evidence.md).
+The session-addressed probes below did not retain evidence tying them to a
+person-started TUI, so they cannot populate `HarnessCapabilities`.
 
 | Capability | Method and observation | Result |
 |---|---|---|
-| Exact installation | `opencode --version`; inspected the locally installed package metadata and SDK types. | OpenCode, plugin, and SDK `1.17.10`; proven locally. The retained proof itself imports no packages and pins the OpenCode binary version. |
-| DeepSeek catalog | `opencode models deepseek`, then `/provider`. | `deepseek/deepseek-flash` and `deepseek/deepseek-v4-pro` were available; the active proof model was `deepseek/deepseek-flash` (displayed as “DeepSeek V4.1 Flash”). |
-| Reproduction drift | Repeated the catalog check from a fresh OpenCode data directory during final review. | The fresh catalog listed `deepseek/deepseek-v4-flash`, `deepseek/deepseek-v4-flash-vision-exp`, and `deepseek/deepseek-v4-pro`, but not the proved `deepseek/deepseek-flash`. An exact replay is currently unavailable and must fail closed rather than substitute. |
-| Configuration drift | A request using configured `deepseek/deepseek-v4-flash` returned `ProviderModelNotFoundError` and suggested the two catalog entries above. | Acceptance must record the resolved provider/model and fail clearly on stale configuration. |
-| Session API, idle | Created a session, posted a session-addressed message, and read the session messages. | DeepSeek replied exactly `SYNC-DEEPSEEK-OK`; observed on a server-created session, not proved in the person's TUI. The original command transcript was not retained, so this cannot populate `HarnessCapabilities`. |
-| Session API, busy | Started an asynchronous prompt containing an 8-second tool call, observed `busy`, then posted a second asynchronous prompt. | At the tool boundary DeepSeek consumed the second prompt and replied `BUSY-SECOND-OK.` This is evidence for server-side `steer`, not proof that the route reaches the user-started interactive session. |
-| TUI append + submit | Appended a fixed marker through `/tui/append-prompt`, submitted through `/tui/submit-prompt`, and read the resulting session. | DeepSeek replied exactly `TUI-PUSH-DEEPSEEK-OK`; mechanism proven, target-session safety unproven. |
-| Real plugin push | The person started a TUI with the retained local plugin. On `session.idle` it appended and submitted a Khala-shaped marker. | The same session grew from two to four messages and DeepSeek replied exactly `PLUGIN-PUSH-DEEPSEEK-OK`; interactive I3 is feasible, but the directory-scoped route's target safety and all three mode boundaries remain unproven. |
-| Hard abort | During a 15-second tool call, posted `/session/{id}/abort`, observed `true`, `idle`, and `MessageAbortedError`; then sent a follow-up to the same session. | The follow-up returned `AFTER-ABORT-DEEPSEEK-OK`; exact-version server abort is proven. Abort is not rollback and tool side effects remain a risk. |
-
-The installed SDK also exposes `session.status`, `session.idle` events,
-session-addressed `promptAsync`, `abort`, and message reads. The TUI append and
-submit calls are directory-scoped rather than session-ID-scoped. Endpoint
-presence and a Khala-started server session are both insufficient: capability
-evidence must show delivery into the person's own user-started TUI session.
+| Exact installation | `opencode --version`; installed package metadata and SDK types. | OpenCode, plugin, and SDK `1.17.10`. |
+| DeepSeek catalog | `opencode models deepseek`, then `/provider`. | The proof used `deepseek/deepseek-flash`. |
+| Reproduction drift | Fresh-data catalog check during review. | Listed `deepseek/deepseek-v4-flash`, `-v4-flash-vision-exp`, and `-v4-pro`, not `deepseek/deepseek-flash`. Replay must fail closed, not substitute. |
+| Configuration drift | Configured `deepseek/deepseek-v4-flash` returned `ProviderModelNotFoundError`. | Preflight must record the resolved provider/model and fail on stale configuration. |
+| Session API, idle | Server-created session; DeepSeek replied `SYNC-DEEPSEEK-OK`. | Secondary. |
+| Session API, busy | Second `promptAsync` during an 8-second tool; reply `BUSY-SECOND-OK.` | Secondary, and superseded: #180 shows the route misses the next-tool boundary in the TUI. |
+| TUI append + submit | `/tui/append-prompt` + `/tui/submit-prompt`; reply `TUI-PUSH-DEEPSEEK-OK`. | Directory-scoped; can hit the wrong session or submit a draft. Not a product route. |
+| Real plugin push | Plugin in a person-started TUI appended and submitted on `session.idle`; `PLUGIN-PUSH-DEEPSEEK-OK`. | Plugin loading in the TUI is feasible; route superseded by #180. |
+| Hard abort | `/session/{id}/abort` during a tool; follow-up `AFTER-ABORT-DEEPSEEK-OK`. | Server abort works; not rollback. Separate `hard-cancel` only. |
 
 ### Repository evidence
 
 | Existing seam | Consequence |
 |---|---|
-| `packages/agent-cli/src/cli/inbox.ts` stores per-binding/generation JSONL. | Consume the single bounded peek and batch token from `mcp-inbox-batch`; Khala acknowledges the token on the agent's next Khala call. The OpenCode host does not deduplicate. |
-| `packages/contracts/src/delivery/harness.ts` describes observed harness `busy` behavior, while connector dispatch policy uses `queue | wait | reject` and refuses steering routes. | Derive `steer | sync | async` support from `HarnessCapabilities` in `listening-mode-contract`; do not overload `busy`. |
-| `packages/harnesses/src/codex/` is port-first, exact-version/evidence-scoped, and fail-closed. | Mirror that shape: inject an OpenCode client port, isolate SDK calls in composition, and derive advertised support from evidence. |
-| Route names, fixtures, CLI decoding, connector admission, and presence labels are closed projections. | Add an evidence-scoped `opencode_plugin` route in one coordinated contract ticket before the plugin advertises tested delivery. |
-| `tests/e2e/harness/{live,scenario,evidence}.ts` records source versions and rejects all-skipped live runs. | `acceptance` consumes the OpenCode harness pieces and owns the live driver, Aiur ticket creation, log verification, and cleanup. |
+| `packages/agent-cli/src/cli/inbox.ts` stores per-binding/generation JSONL. | Consume the single bounded peek and batch token from `mcp-inbox-batch`; Khala acknowledges on the agent's next Khala call. |
+| `packages/contracts/src/delivery/harness.ts` describes observed harness `busy`, and connector dispatch refuses steering routes. | Derive `steer | sync | async` support from `HarnessCapabilities` in `listening-mode-contract`; do not overload `busy`. |
+| `packages/harnesses/src/codex/` is port-first, exact-version/evidence-scoped, and fail-closed. | Mirror that shape: inject an OpenCode client port, isolate SDK calls in composition, derive support from evidence. |
+| Route names, fixtures, CLI decoding, connector admission, and presence labels are closed projections. | Add an evidence-scoped `opencode_plugin` route in one contract ticket before the plugin advertises delivery. |
+| Workspace packages are named `@khala/*`. | The OpenCode plugin is not one of them. It ships in `@aiur/khala`. |
 
 ## Design
 
 ### Boundary and state
 
 One human-admitted binding generation maps to exactly one `{sessionID,
-directory, opencodeVersion, providerID, modelID}` tuple supplied by the plugin
-running in the user-started TUI. If the interactive proof establishes a stable
-TUI-owned server identity, its authenticated URL may be recorded as secondary
-transport metadata. A deleted session, changed server identity, version/model
-drift, or stale generation degrades the binding; the bridge never starts an
-agent, selects another session, or creates a replacement silently.
+directory, opencodeVersion, providerID, modelID}` tuple, supplied by the plugin
+running in the user-started TUI. All calls use the in-process plugin API and
+its session-addressed client. The bridge never uses the TUI's embedded server
+from outside the process. A deleted session, version/model drift, or stale
+generation degrades the binding. The bridge never starts an agent, selects
+another session, or creates a replacement silently.
 
 The plugin consumes only canonical released Khala messages. It does not capture
 assistant output, tool output, history, or the user's TUI draft. Replies remain
 deliberate `khala_send`/`khala send` operations (D3).
 
-Persist per binding:
-
-| State | Why |
+| Persisted per binding | Why |
 |---|---|
-| binding generation and exact OpenCode session tuple | Continue only the admitted session after restart. |
+| binding generation and exact session tuple | Continue only the admitted session after restart. |
 | in-flight OpenCode request identity and outcome | Reconcile API uncertainty without inventing an inbox acknowledgement. |
 | exact OpenCode/provider/model evidence key | Prevent stale support claims. |
 
-The person starts OpenCode and then asks it to open a channel URL or create a
+The person starts OpenCode, then asks it to open a channel URL or create a
 channel. Joining consumes `channel-access-cli-mcp`, `channel-access-journal`,
 and `channel-access-inbox`; listing consumes `channel-agent-listing`. Channel
-creation is a human-confirmed shared CLI/MCP operation, not an OpenCode-specific
-agent launcher. Setup is agent-runnable but must preview its plan and relay the
-person's confirmation before `@aiur/khala` writes user-scope plugin config.
+creation is a human-confirmed shared CLI/MCP operation.
 
-Human `stop` outranks `pause`, and both outrank the agent-selected mode from the
-shared listening-mode store. Pause retains backlog. Stop invokes the shared
-`stop-control` contract to end the bound OpenCode agent session, then disposes
-the listener while leaving the local server and channel available for resume.
-Neither control may claim to roll back a prompt OpenCode already accepted.
+Human `stop` outranks `pause`, and both outrank the agent-selected mode. Pause
+retains backlog. Stop invokes `stop-control` to end the bound OpenCode agent
+session. The local server and channel stay available for resume. Neither
+control claims to roll back a prompt OpenCode already accepted.
 
-The plugin consumes the same bounded inbox batch and token as every other agent
-surface. A connector-side OpenCode harness may send a content-free hint over an
-owner-only Unix socket, but the plugin always re-reads through
-`mcp-inbox-batch`; the hint carries no message. In `async`, the plugin's tool
-facade delegates to the one `khala_read` operation from `listening-mode-pull`.
-There is no OpenCode cursor, lease, acknowledgement, dedupe table, second pull
-operation, or parser of `khala listen` stdout.
+A connector-side harness may send a content-free hint over the encapsulated
+inbox notifier. The plugin always re-reads through `mcp-inbox-batch`, and the
+hint carries no message. There is no OpenCode cursor, lease, acknowledgement,
+dedupe table, second pull operation, or parser of `khala listen` stdout.
 
 ### Delivery state machine
 
 1. Peek one bounded ordered batch and its stable token without acknowledging it;
-   reject a stale binding generation. If no batch is pending, submit nothing,
-   persist no request, and wait for the next hint or explicit read.
-2. Recheck human controls, the exact event-correlated interactive session,
-   model/version evidence, and authoritative session status immediately before
-   acting.
+   reject a stale generation. With nothing pending, submit nothing.
+2. Recheck human controls, the exact bound session, model/version evidence, and
+   session status immediately before acting.
 3. Apply the mode:
-   - `async`: retain the batch. On explicit `khala_read`, delegate to the shared
-     pull operation and return its batch/token shape through the plugin tool.
-   - `sync`: until the interactive proof finds a native boundary, report
-     unsupported; effective mode defaults to `async`, and the UI states that no
-     interactive atomic idle route is proved. Product acceptance remains
-     blocked because the final experience requires all three modes.
-   - `steer`: if busy, persist `submitting` and call session-addressed
-     `promptAsync` once. Do not abort by default. If idle, submit once; a race
-     that makes the session busy still preserves `steer` semantics.
-4. Treat API acceptance as queued, not consumed. If the token matches a
-   persisted submitting, accepted, stored, or outcome-unknown request, a
-   duplicate, catch-up, or restart hint reconciles that request and never
-   resubmits it. Clear the token-scoped delivery outcome only after a subsequent
-   Khala call acknowledges the token. This is delivery reconciliation, not a
-   second inbox cursor or release-deduplication scheme. The canonical envelope
-   carries the batch token; the agent's next Khala call returns that token and
-   Khala atomically acknowledges the contiguous batch. The OpenCode host never
-   advances an inbox cursor or deduplicates releases. If API reconciliation
-   cannot decide whether a prompt was stored, report `outcome_unknown`, leave
-   the Khala token unchanged, and block that binding until a human confirms the
-   stored prompt or explicitly authorizes replay. Record that decision; never
-   replay automatically. A successful next Khala call acknowledges that token
-   and exposes any following bounded batch through `mcp-result-piggyback`; the
-   plugin does not wait for another connector release or create a second hint
-   cursor. Read-receipt semantics remain outside this bridge.
+   - `async`: retain the batch. On `khala_read`, delegate to the shared pull
+     operation and return its batch/token shape.
+   - `sync`: while busy, keep the batch pending. On `session.idle` for the bound
+     session, persist `submitting` and call session-addressed `promptAsync`
+     once. An idle event for another session changes nothing.
+   - `steer`: on `tool.execute.after` for the bound session, mark the batch
+     in flight. At the next `experimental.chat.messages.transform` whose last
+     user message carries the bound `sessionID`, append the envelope. Skip a
+     mismatch without dropping the batch. Never abort; never use busy
+     `promptAsync`.
+4. Treat API acceptance as queued, not consumed. A duplicate, catch-up, or
+   restart hint for a token that is already submitting, stored, or
+   `outcome_unknown` reconciles that request and never resubmits it. The
+   agent's next Khala call returns the token and Khala atomically acknowledges
+   the batch; any following batch arrives through `mcp-result-piggyback`. If
+   reconciliation cannot decide whether a prompt was stored, report
+   `outcome_unknown`, leave the token unchanged, and block the binding until a
+   human confirms or authorizes replay. Never replay automatically.
 
-The prompt is one canonical, length-delimited JSON envelope containing the
-Khala batch token, release IDs/digests, channel/sender metadata, and deliberate
-message bodies. Reconciliation parses only that exact outer structure and binds
-it to the expected session and retrieved OpenCode message/part identity;
-marker-like text inside a peer body has no control meaning. The envelope reminds
-the model that peer content is untrusted data and replies require explicit
-`khala_send`. Peer text is never interpolated into system instructions.
+The prompt is one canonical, length-delimited JSON envelope with the batch
+token, release IDs/digests, channel/sender metadata, and message bodies.
+Reconciliation parses only that outer structure, bound to the expected session
+and OpenCode message/part identity; marker-like text in a peer body has no
+control meaning. The envelope frames peer content as untrusted data and says
+replies require explicit `khala_send`. Peer text is never interpolated into
+system instructions.
 
-Bridge delivery must preserve OpenCode's existing tool permission policy: it
-never elevates permissions, auto-approves a tool, or weakens a human gate. A
-turn triggered by peer content remains tainted. Even when `khala_send` is
-otherwise allowlisted, outbound use requires either owner approval that previews
-the exact destination and bytes, or execution without private session context
-and with a destination-scoped send capability. Acceptance exercises the chosen
-shared-policy posture with a canary secret; the bridge does not redefine that
-policy, but it may not bypass it.
+`khala_send` follows OpenCode's normal permission policy. The bridge never
+elevates permissions, auto-approves a tool, or weakens a human gate.
 
-### Interactive route choices
+### Route choices
 
-| Choice | Benefit | Cost / decision |
-|---|---|---|
-| Plugin event + session-addressed client | Can correlate a plugin event to the person's existing TUI session, preserve the unsent draft, and support reconciliation. | Preferred only after `opencode-interactive-cli-proof` proves the correlation and all three boundaries in the user-started TUI. |
-| TUI append + submit | Small and proved through a plugin in a real TUI. | Global/directory-scoped; can target the wrong session or submit a human draft. Proof-only until target safety is established. |
-| `promptAsync` while busy | Server-side observation suggests next-tool-boundary `steer` without hard abort. | Interactive equivalence is unproven and it does not supply `sync`. |
-| Abort then submit | Locally interrupts and recovers the same session. | Tool side effects are not rolled back; SDK/plugin regressions have existed. Opt-in proof profile only. |
-| Khala-started OpenCode server or SDK session | Easy to address and inspect. | Secondary research only; it is another agent process and cannot satisfy the product path. |
-| `khala run <cli>` PTY wrapper | Could observe boundaries unavailable to a native plugin. | Not approved. If the proof finds it is the only route, report `blocked_without_wrapper` and request an operator decision before designing it. |
-
-`setup-cli-plan` owns `npx @aiur/khala setup|status|remove`. This area owns
-`opencode-server-auth-proof`: before product bridge work, it must determine
-whether the user-started OpenCode `1.17.10` TUI exposes a supported authenticated
-server route, prove unauthenticated access fails closed when that route is used,
-and retain negative evidence if it does not. Khala must not launch a server to
-make the proof pass. Any setup-managed credential is never logged or embedded
-in installed configuration. The descriptor carries only data approved by
-`authenticated-loopback-server`; no message body or provider credential is
-copied into it. A hosted-only success remains secondary and cannot unlock the
-interactive bridge.
-
-## Acceptance 2: OpenCode + DeepSeek run
-
-`acceptance` owns the test script and composes this run after the required
-contracts land. This document supplies OpenCode harness inputs only.
-
-| Step | Required evidence |
+| Choice | Decision |
 |---|---|
-| Preflight | The person starts OpenCode TUI with DeepSeek and a separate Claude Code CLI agent. Record OpenCode/plugin/SDK/Node versions, resolved DeepSeek provider/model, bridge capability record, and the already-existing TUI session ID. Reject configured-model drift rather than substituting silently. |
-| Admission and binding | From the user-started TUI, the agent opens a channel URL or creates a channel with human confirmation; every participant follows the channel access request/grant flow. Evidence maps one binding generation to that existing session ID. A second OpenCode session is the wrong-target oracle. |
-| Bidirectional channel exchange | The OpenCode + DeepSeek agent and Claude agent exchange deliberate markers through the channel. Executor logs correlate release/event IDs without full content. Neither agent is launched by Khala. |
-| `sync` | Deliver at the proved interactive end-of-turn/idle boundary into the bound TUI session. Until such a boundary is proved, report unsupported and default to `async`, but mark Acceptance 2 blocked rather than treating the fallback as success. |
-| `async` | Send more markers than one bounded batch. Assert no OpenCode prompt before shared `khala_read`, then the same ordered batch/token shape used by CLI and MCP. Each next Khala call acknowledges through its token and exposes the following batch through `mcp-result-piggyback`, without a new release; the OpenCode host has no dedupe state. |
-| `steer` | In separate idle and long-tool cases, send one marker from the plugin to the event-correlated TUI session. On a matching evidence key, assert only the bound interactive session changes and busy delivery is consumed at the next safe boundary. If the key does not match, the UI and run must say unsupported. |
-| Controls and restart | Pause before submission, resume, restart before token acknowledgement, then stop. Assert the same stable Khala batch/token is retained, the host created no dedupe state, Stop ends the bound OpenCode agent session through `stop-control`, the local server/channel remain resumable, and no delivery occurs after stop. |
-| Safety oracle | The unbound session and an unsent TUI draft remain byte-for-byte unchanged; an unauthenticated server request is rejected; an injected request for a denied filesystem/network action remains denied or human-gated; with `khala_send` otherwise pre-authorized, the selected owner-approval or context-isolation posture prevents a canary secret from leaving the bound session; no transcript/tool output appears in Khala; evidence contains no credentials or full messages. |
-| Cleanup | `acceptance` removes test tickets/channels/processes and records the Executor verdict. The run fails if cleanup or any required evidence is missing. |
+| `tool.execute.after` + next message transform | `steer` route. The transform hook is experimental and has no session argument, so correlate through `messages[*].info.sessionID` and gate it by version. |
+| `session.idle` + session-addressed `promptAsync` | `sync` route. Idle and submit are not atomic, so serialize per binding and re-read state before submitting. |
+| Busy `promptAsync` | Rejected for `steer`. It is accepted but misses the next-tool boundary. |
+| TUI append + submit | Rejected. It is directory-scoped and can hit another session or submit a draft. |
+| Abort then submit | Separate opt-in `hard-cancel` only. Tool side effects are not rolled back. |
+| External client of the embedded TUI server | Blocked on `1.17.10`: the TUI exits when auth is enabled, and an unauthenticated server is not acceptable. |
+| Khala-started server or SDK session | Secondary research only; it is another agent process. |
+| `khala run <cli>` PTY wrapper | Not needed: #180 found native routes for all three modes. |
 
-The run may report the separate `hard-cancel` capability unsupported without
-changing the non-abort `steer` result. It may not claim support from an HTTP
-`200`, an abort boolean, or endpoint discovery alone.
+`opencode-server-auth-proof` retains the negative embedded-server evidence and
+makes the in-process-only rule verifiable. The descriptor carries only data that
+`authenticated-loopback-server` approves. It never contains a message body or a
+provider credential.
+
+## Acceptance 2 harness inputs
+
+`acceptance` owns the test script, the run (`opencode-deepseek-claude-live-acceptance`),
+log verification, and cleanup. This area supplies:
+
+| Input | Supplied by |
+|---|---|
+| Preflight record: OpenCode/plugin/SDK/Node versions, resolved DeepSeek provider/model, capability record, existing TUI session ID; fail on model drift. | `opencode-session-bridge` (`status` output via `setup-cli-opencode`) |
+| Binding evidence: one generation mapped to the user-started session ID, with release/event IDs and no message content. | `opencode-session-bridge` |
+| Per-mode timing oracles: `steer` consumed before the next tool, `sync` only after idle, `async` only on `khala_read`. | `opencode-listening-routes` |
+| Restart and stop hooks: stable token across restart, no delivery after Stop. | `opencode-session-bridge` |
+
+`hard-cancel` may be reported unsupported without changing the non-abort `steer`
+result. Support is never claimed from an HTTP `200`, an abort boolean, or
+endpoint discovery alone.
 
 ## Risks and open assumptions
 
 | Risk / assumption | Treatment |
 |---|---|
-| OpenCode message storage does not prove model consumption. | A verified stored user message permits only a queued claim. OpenCode read receipts belong to the read-receipt contract, not this bridge. |
-| An idle status read and `promptAsync` submission are not atomic. | Keep `sync` unsupported until an atomic idle-queue or exclusive all-producer lease is proved; test the race explicitly. |
-| Status and idle events race with pause, restart, and new work. | Serialize per binding; treat events as hints and re-read authoritative state at the submission linearization point. |
-| Hard abort can leave external tool side effects. | Never describe abort as rollback; keep it off by default and evidence-gated. |
-| Plugin disposal or server restart changes the URL. | Degrade and require explicit rebind; never follow a new server/session automatically. |
-| The configured DeepSeek model name can be stale. | Preflight compares configuration with the live provider catalog and records the resolved identity. |
-| Shared mode and receipt vocabulary may change in parallel. | `listening-mode-contract` is the capability single writer; OpenCode read receipts remain outside these contracts. |
-| Assumption: `local-sqlite-channel-store` supplies durable channel/binding state and `listening-mode-pull` supplies explicit read surfaces. | The plugin does not recreate either responsibility. |
-| A plugin can correlate an event/session ID with the person's active TUI and submit without touching the draft. | `opencode-interactive-cli-proof` must prove this for each mode; otherwise the bridge is blocked, not redirected to a Khala-hosted agent. |
+| OpenCode message storage does not prove model consumption. | A stored user message permits only a queued claim. OpenCode read receipts belong to `opencode-read-receipts`. |
+| `experimental.chat.messages.transform` may change or disappear. | Gate `steer` to the retained version evidence; re-run the two-boundary oracle before adding a version. |
+| Idle and submit are not atomic, and events race pause, restart, and new work. | Serialize per binding; treat events as hints and re-read state at submission. |
+| #180 is unmerged, and its contracts overlap this area (`opencode-listening-routes` in both). | Decision 16 makes this area the owner of the OpenCode routes. The Executor reconciles the duplicate slug when promoting; this document already adopts #180's routes. |
+| Hard abort can leave external tool side effects. | Never describe abort as rollback; keep it off by default. |
+| The configured DeepSeek model name can be stale. | Preflight compares configuration with the live catalog and records the resolved identity. |
+| Assumption: `local-sqlite-channel-store` supplies durable channel/binding state and `listening-mode-pull` supplies explicit reads. | The plugin does not recreate either. |
 
 ## Non-goals
 
@@ -225,10 +208,9 @@ changing the non-abort `steer` result. It may not claim support from an HTTP
 - Defining shared `steer | sync | async` semantics or UI controls.
 - Building the local server, admission, or durable channel substrate.
 - Implementing `@aiur/khala` setup/remove/status or publishing packages.
-- Launching or hosting OpenCode, or designing an unapproved PTY wrapper.
-- Creating Aiur tickets, judging Executor logs, or owning global cleanup.
-- Capturing model output as channel messages, dumping transcripts, or admitting an agent
-  without a human.
+- Launching or hosting OpenCode, or designing a PTY wrapper.
+- Owning the acceptance script, Aiur test tickets, log verdicts, or cleanup.
+- Capturing model output as channel messages or admitting an agent without a human.
 - Compatibility claims beyond the recorded exact-version evidence.
 
 ## Ticket contracts
@@ -240,12 +222,12 @@ changing the non-abort `steer` result. It may not claim support from an HTTP
 | Title | Add the evidence-scoped OpenCode delivery route |
 | Complexity | `complexity:3` |
 | Scope | Add evidence-scoped `opencode_plugin` route/capability vocabulary and project it through delivery fixtures, agent CLI decoding, connector admission, and presence label `OpenCode plugin`. Keep listening mode separate from harness `busy`; consume `acknowledgement: unknown | unsupported | batch_token_next_call` from `HarnessCapabilities`. |
-| Out of scope | Plugin implementation, OpenCode setup, shared mode semantics, Aiur acceptance orchestration. |
-| Files/packages | `packages/contracts/src/delivery/`; `packages/contracts/fixtures/delivery/`; `packages/agent-cli/src/cli/types.ts`; `packages/connector/src/route-admission.ts`; `apps/connector/src/composition/agent/{harnesses,presence}.ts` and adjacent tests/docs. |
-| Acceptance criteria | `HarnessCapabilities` is the only support source; a route is selectable only for its exact evidence key; stale/unknown versions fail closed; automation is refused unless `acknowledgement` is `batch_token_next_call`; presence displays `OpenCode plugin`; no route stores a second copy of mode support. |
-| Tests | Extend contract fixtures and connector projection tests. **Wrong implementation test:** an `opencode_plugin` claim with no matching evidence, unsupported `steer`, or acknowledgement other than `batch_token_next_call` must be refused rather than admitted as a generic listener. |
+| Out of scope | Plugin implementation, OpenCode setup, shared mode semantics, acceptance orchestration. |
+| Files/packages | `packages/contracts/src/delivery/`; `packages/contracts/fixtures/delivery/`; `packages/agent-cli/src/cli/types.ts`; `packages/connector/src/route-admission.ts`; `apps/connector/src/composition/agent/{harnesses,presence}.ts` and adjacent tests. |
+| Acceptance criteria | `HarnessCapabilities` is the only support source; a route is selectable only for its exact evidence key; stale/unknown versions fail closed; automation is refused unless `acknowledgement` is `batch_token_next_call`; presence displays `OpenCode plugin`. **OpenCode `steer` stays `unproven` in `HarnessCapabilities` until it is re-proven from the user-started TUI with retained commands**; the server-session busy `promptAsync` observation never populates it. The same rule applies to `sync` and `async`. |
+| Tests | Contract fixtures and connector projection tests. **Wrong implementation test:** an `opencode_plugin` fixture that claims `steer` with only server-session evidence, or with no retained interactive commands, must resolve to `unproven` and be refused. The same holds for acknowledgement other than `batch_token_next_call`. |
 | Blocked by | `opencode-interactive-cli-proof`, `listening-mode-contract`, `setup-cli-plan`. |
-| Conflict risk | **High:** connector contract unions and fixtures are single-writer surfaces. Keep shared-file edits minimal and land after `listening-mode-contract`. |
+| Conflict risk | **High:** connector contract unions and fixtures are single-writer surfaces. Keep edits minimal and land after `listening-mode-contract`. |
 
 ### 2. `opencode-inbox-notifier`
 
@@ -253,27 +235,27 @@ changing the non-abort `steer` result. It may not claim support from an HTTP
 |---|---|
 | Title | Wake the OpenCode plugin after durable inbox release |
 | Complexity | `complexity:3` |
-| Scope | Add a connector-side OpenCode `HarnessPort` whose `submit` verifies the matching shared batch is durable and ignores the supplied payload for transport. Extend the post-`mcp-inbox-batch` `Inbox` port with a content-free `notifyListener` operation that encapsulates the existing per-binding/generation Unix-socket path; the adapter calls that port and never derives the path. Define the hint contract consumed by `opencode-session-bridge`; that bridge owns listener registration and performs the plugin-side batch peek. `reconcile` returns no stronger evidence unless the plugin supplies correlated evidence. Duplicate and catch-up hints are harmless. |
-| Out of scope | Exposing a socket path; another inbox append/read/batch/lease API; payloads in argv/environment/socket hints/logs; prompt injection; mode scheduling; setup/authentication; direct OpenCode API calls. |
-| Files/packages | New `packages/harnesses/src/opencode/` adapter and tests; `packages/agent-cli/src/cli/inbox.ts` and its test for the minimal notifier port; minimal registration in `apps/connector/src/composition/agent/harnesses.ts`. |
-| Acceptance criteria | The release is durable before notification; only the encapsulated notifier port can address the matching binding/generation listener; a dead or mismatched listener fails closed while the shared batch remains recoverable; startup or listener reconnect emits one coalesced catch-up hint for pending work; hints contain no message or token; repeated hints reconcile an already-submitted token and never create another prompt, inbox record, or acknowledgement; receipts claim no boundary stronger than observed. |
-| Tests | Fake batch/notifier component tests plus connector composition coverage. **Wrong implementation test:** crash after durable release but before the hint, restart, and require a catch-up wake that exposes the same batch/token from `mcp-inbox-batch` without a second append; after submission but before acknowledgement, the same catch-up must reconcile without a second OpenCode prompt. |
+| Scope | Add a connector-side OpenCode `HarnessPort` whose `submit` verifies the matching batch is durable and ignores the supplied payload for transport. Extend the post-`mcp-inbox-batch` `Inbox` port with a content-free `notifyListener` operation that encapsulates the per-binding/generation Unix-socket path. Define the hint contract consumed by `opencode-session-bridge`. Duplicate and catch-up hints are harmless. |
+| Out of scope | Exposing a socket path; another inbox or batch API; payloads in argv/environment/hints/logs; prompt injection; mode scheduling; setup; direct OpenCode API calls. |
+| Files/packages | New `packages/harnesses/src/opencode/` adapter and tests; `packages/agent-cli/src/cli/inbox.ts` and its test for the notifier port; minimal registration in `apps/connector/src/composition/agent/harnesses.ts`. |
+| Acceptance criteria | The release is durable before notification; only the notifier port addresses the matching listener; a dead or mismatched listener fails closed and the batch stays recoverable; startup or reconnect emits one coalesced catch-up hint; hints contain no message or token; repeated hints never create another prompt, inbox record, or acknowledgement. |
+| Tests | Fake batch/notifier component tests plus connector composition coverage. **Wrong implementation test:** crash after durable release but before the hint, restart, and require one catch-up wake that exposes the same batch/token without a second append. After submission but before acknowledgement, the same catch-up must not cause a second OpenCode prompt. |
 | Blocked by | `opencode-delivery-contract`, `mcp-inbox-batch`, `listening-mode-dispatch`, `local-sqlite-channel-store`, `setup-cli-plan`. |
-| Conflict risk | **High:** connector composition and `inbox.ts` are shared. Land after `mcp-inbox-batch`, add only the notifier method/test to the inbox port, keep the socket path private, and make the minimal route registration edit after dispatch settles. |
+| Conflict risk | **High:** connector composition and `inbox.ts` are shared. Land after `mcp-inbox-batch`, add only the notifier method, and edit route registration minimally. |
 
 ### 3. `opencode-server-auth-proof`
 
 | Field | Contract |
 |---|---|
-| Title | Prove authenticated OpenCode access and refresh delivery evidence |
-| Complexity | `complexity:3` |
-| Scope | On OpenCode `1.17.10`, determine whether the person's user-started TUI exposes a supported authenticated server route; prove authenticated SDK/session calls and rejection without or with the wrong setup-managed credential when applicable. Against the exact configured DeepSeek model, rerun idle and busy probes from that TUI and retain exact redacted commands, host, version path, sanitized raw output, and negative claims. Never start OpenCode on Khala's behalf or substitute a catalog model silently. |
-| Out of scope | Product plugin code, generic Khala loopback auth, setup file mutation, provider credentials, other OpenCode versions. |
+| Title | Retain OpenCode server-auth evidence and enforce in-process delivery |
+| Complexity | `complexity:2` |
+| Scope | Promote #180's headless Basic-auth and embedded-TUI results into retained evidence with exact redacted commands, host, and version path. Add a verifier that rejects any OpenCode evidence or route record relying on an external client of the TUI's embedded server. |
+| Out of scope | Product plugin code, generic Khala loopback auth, setup changes, provider credentials, other OpenCode versions. |
 | Files/packages | `experiments/internal-mode/opencode-bridge/auth/`; `docs/evidence/opencode-server-auth.md`; no product packages. |
-| Acceptance criteria | Evidence distinguishes the user-started TUI route from a separately hosted server; an authenticated client reaches only the TUI-owned loopback server if supported; missing/wrong credentials fail before session data; credentials appear in neither argv nor logs; the exact configured provider/model resolves; retained probes prove only the bound TUI session changed. A hosted-only route, auth absence, or drift blocks the product bridge rather than permitting fallback or a capability claim. |
-| Tests | Scripted positive/negative auth, idle, and busy probes with redaction and exact-model assertions. **Wrong implementation test:** start the server without authentication and require the evidence verifier to reject the run even when the session endpoint returns success. |
+| Acceptance criteria | Evidence shows missing/wrong credentials rejected by headless `opencode serve`, and the authenticated user-started TUI blocked on `1.17.10`. Credentials appear in neither argv nor logs. The verifier admits only in-process plugin routes. Khala never launches a server to make a proof pass. |
+| Tests | Verifier fixtures for an in-process route, an authenticated external route, and an unauthenticated external route. **Wrong implementation test:** a record whose session calls went through an unauthenticated embedded server must be rejected even though every call returned `200`. |
 | Blocked by | None. |
-| Conflict risk | Low: isolated proof, but its result is a hard gate for `opencode-session-bridge` and must align with descriptor handling from `authenticated-loopback-server`. |
+| Conflict risk | Low: isolated evidence. Must match the descriptor rules of `authenticated-loopback-server`. |
 
 ### 4. `opencode-interactive-cli-proof`
 
@@ -281,46 +263,46 @@ changing the non-abort `steer` result. It may not claim support from an HTTP
 |---|---|
 | Title | Prove all OpenCode modes in the user's TUI |
 | Complexity | `complexity:3` |
-| Scope | With the person starting OpenCode TUI, prove how a user-scope plugin identifies the event-correlated session and delivers `steer`, `sync`, and `async` into that same session without touching another session or draft. Record native plugin/client hooks and explicit negative results. If any mode is possible only through `khala run <cli>`, report `blocked_without_wrapper` for an operator decision; do not implement the wrapper. |
-| Out of scope | Product bridge code, Khala-launched OpenCode processes, hosted SDK sessions as acceptance evidence, choosing a wrapper without approval, Claude/Codex proofs. |
-| Files/packages | `experiments/internal-mode/opencode-bridge/interactive/`; `docs/evidence/opencode-interactive-cli.md`; no product packages. |
-| Acceptance criteria | Evidence begins from a user-started TUI; correlates plugin event, session ID, provider/model, and observed prompt boundary; demonstrates all three modes or marks the missing mode blocking; proves another session and unsent draft are unchanged; no Khala process launches OpenCode. Hosted-only observations are labelled secondary. |
-| Tests | Scripted/manual probe matrix for idle, long-tool, explicit read, restart, wrong session, and draft preservation. **Wrong implementation test:** a probe that succeeds only against a separately launched OpenCode server must fail interactive-route admission. |
-| Blocked by | `opencode-server-auth-proof`, `listening-mode-contract`, `listening-mode-pull`. |
-| Conflict risk | Low: isolated evidence, but its capability result is a hard gate for `opencode-session-bridge` and `opencode-listening-routes`. |
+| Scope | From a person-started TUI, prove per-mode delivery into the event-correlated session with retained commands and events. #166 (PR #180) already covers this scope. If #180 merges with retained `steer`, `sync`, and `async` evidence meeting these criteria, it satisfies this contract and the Executor does not promote it. Otherwise, this ticket completes the missing modes. |
+| Out of scope | Product bridge code, Khala-launched OpenCode, hosted sessions as evidence, a wrapper without approval, Claude/Codex proofs. |
+| Files/packages | `experiments/internal-mode/opencode-bridge/interactive/` (or #180's `experiments/interactive-cli/opencode/`); `docs/evidence/opencode-interactive-cli.md`. |
+| Acceptance criteria | Evidence begins from a user-started TUI and correlates plugin event, session ID, provider/model, and observed boundary. `steer` is consumed before the next tool with no abort, `sync` only after the original turn's idle, and `async` only on `khala_read`. Another session and an unsent draft are unchanged. Retained commands allow a replay. |
+| Tests | Two-tool probe matrix for idle, long-tool, explicit read, restart, wrong session, and draft preservation. **Wrong implementation test:** busy `promptAsync` offered as `steer` must fail because tool 2 starts before consumption, and a probe that succeeds only against a separately launched server must fail admission. |
+| Blocked by | `listening-mode-contract`, `listening-mode-pull`. |
+| Conflict risk | Low: isolated evidence, but it gates `opencode-session-bridge` and `opencode-listening-routes`. |
 
 ### 5. `opencode-session-bridge`
 
 | Field | Contract |
 |---|---|
-| Title | Bind and reconcile one authenticated OpenCode session |
+| Title | Bind and reconcile one user-started OpenCode session |
 | Complexity | `complexity:4` |
-| Scope | Add `packages/opencode-plugin/` as a user-scope plugin loaded by the person's existing TUI, with an event-correlated session binding, canonical batch-token envelope, native session-addressed submission, ambiguous-outcome reconciliation, pause/stop checks, preserved tool permissions, and fail-closed drift handling. |
-| Out of scope | `khala_read`, selecting or advertising listening modes, host-side inbox dedupe/acknowledgement, setup/remove, hard abort by default, read receipts, transcript capture, other OpenCode versions. |
-| Files/packages | New `packages/opencode-plugin/{package.json,src/**,README.md}` with SDK and descriptor imports confined to `src/composition/`; export-map/workspace metadata and package-local tests. |
-| Acceptance criteria | Runs only inside and targets only the person's admitted interactive TUI session; never launches OpenCode or touches another session/draft; submits the canonical channel/sender batch envelope within the shared batch byte/token ceiling; leaves acknowledgement to the next Khala call; blocks for audited human resolution on `outcome_unknown` instead of blind replay; marks peer-triggered turns tainted and enforces the configured owner-approval or context-isolation posture before `khala_send`; stale generations, auth absence, oversized envelopes, and version/model drift fail closed; human controls and existing tool gates win. |
-| Tests | Inject fake OpenCode/auth/batch ports; cover wrong session, hostile marker bodies, oversized envelopes, auth refusal, denied tools, a pre-authorized `khala_send` that still cannot exfiltrate a canary secret, pause/stop races, stored/not-stored/ambiguous outcomes and human resolution, restart with a stable token, drift, and stale generations. **Wrong implementation test:** focus session B while the binding names A; only A may receive the envelope and B's draft must remain byte-for-byte unchanged. |
-| Blocked by | `opencode-delivery-contract`, `opencode-inbox-notifier`, `opencode-server-auth-proof`, `opencode-interactive-cli-proof`, `mcp-inbox-batch`, `listening-mode-contract`, `authenticated-loopback-server`, `stop-control`, `setup-cli-plan`, `channel-access-cli-mcp`, `channel-access-journal`, `channel-access-inbox`. |
-| Conflict risk | **Medium/high:** new package isolation reduces overlap, but descriptor composition must follow `setup-cli-plan` and read-receipt work must remain outside this ticket. |
+| Scope | Add the OpenCode plugin entry to the `@aiur/khala` package (for example an `@aiur/khala/opencode` export), installed by `setup-cli-opencode`. Provide an event-correlated session binding, the canonical batch-token envelope, session-addressed submission, ambiguous-outcome reconciliation, pause/stop checks, and fail-closed drift handling. |
+| Out of scope | A separate `@khala/*` plugin package; `khala_read`; selecting or advertising modes; host-side dedupe or acknowledgement; setup/remove; hard abort; read receipts; transcript capture; other OpenCode versions. |
+| Files/packages | The plugin module inside the `@aiur/khala` package layout owned by `setup-cli-plan`, with SDK and descriptor imports confined to a composition module; package-local tests. |
+| Acceptance criteria | Runs in-process and targets only the admitted TUI session; never launches OpenCode or touches another session or draft; submits the canonical channel/sender envelope within the shared batch ceiling; leaves acknowledgement to the next Khala call; blocks for human resolution on `outcome_unknown`; frames peer content as untrusted, and `khala_send` follows OpenCode's normal permission policy; stale generations, oversized envelopes, and version/model drift fail closed; human controls win. |
+| Tests | Fake OpenCode/batch ports: wrong session, hostile marker bodies, oversized envelopes, denied tools, pause/stop races, stored/not-stored/ambiguous outcomes, restart with a stable token, drift, stale generations. **Wrong implementation test:** focus session B while the binding names A; only A may receive the envelope and B's draft must stay byte-for-byte unchanged. |
+| Blocked by | `opencode-delivery-contract`, `opencode-inbox-notifier`, `opencode-server-auth-proof`, `opencode-interactive-cli-proof`, `mcp-inbox-batch`, `listening-mode-contract`, `authenticated-loopback-server`, `stop-control`, `setup-cli-plan`, `setup-cli-opencode`, `channel-access-cli-mcp`, `channel-access-journal`, `channel-access-inbox`. |
+| Conflict risk | **Medium/high:** the package layout belongs to `setup-cli-plan`; add only the OpenCode module. Read receipts stay in `opencode-read-receipts`. |
 
 ### 6. `opencode-listening-routes`
 
 | Field | Contract |
 |---|---|
-| Title | Add shared pull and evidence-gated OpenCode modes |
-| Complexity | `complexity:3` |
-| Scope | Register the user-scope plugin's `khala_read` facade over the single `listening-mode-pull` operation; map only interactively proved native boundaries to `steer` and `sync`; derive effective support and acknowledgement only from `HarnessCapabilities`; keep the separate `hard-cancel` capability off. While `sync` remains unproven, report it unsupported and default to `async` with a reason, without claiming three-mode acceptance. |
-| Out of scope | Reimplementing batch/pull/acknowledgement, binding/session reconciliation, read-receipt emission, generic UI, acceptance orchestration, hard abort enabled by default. |
-| Files/packages | `packages/opencode-plugin/src/{tools,modes,composition}/` and tests; minimal package registration; no broad edits to `packages/agent-cli/src/cli/app.ts` or `mcp/server.ts`. |
-| Acceptance criteria | All calls execute in the user-started TUI session; `async` makes no automatic prompt submission and `khala_read` returns the shared batch/token shape; `steer` and `sync` are enabled only for retained interactive evidence keys; missing `sync` is visibly unsupported, defaults to `async`, and blocks final acceptance; version/provider drift disables the route; hard abort requires a distinct future `hard-cancel` capability. |
-| Tests | Mode matrix with fake pull and OpenCode ports, capability drift, proved busy/idle `steer` boundaries, multi-batch piggyback drain without a new release, no-abort assertion, token pass-through, and no-host-dedupe assertion. **Wrong implementation test:** without matching retained interactive `sync` evidence, an OpenCode `1.17.10` binding requesting `sync` must fail if any prompt is submitted automatically or if the effective mode is not `async` with an unsupported reason; with matching evidence, require exactly one submission at the proved boundary. |
-| Blocked by | `opencode-session-bridge`, `opencode-interactive-cli-proof`, `listening-mode-pull`, `listening-mode-contract`, `mcp-result-piggyback`, `mcp-piggyback-evidence`, `setup-cli-plan`. |
-| Conflict risk | **High:** `listening-mode-pull` owns CLI/MCP names and batch semantics, while this ticket owns only the OpenCode facade and routes. Land after `mcp-inbox-batch` → `mcp-result-piggyback` → `listening-mode-pull`; `acceptance` consumes the result later. |
+| Title | Add the proven OpenCode steer, sync, and async routes |
+| Complexity | `complexity:4` |
+| Scope | In the `@aiur/khala` OpenCode plugin: register the `khala_read` facade over `listening-mode-pull`. `steer` takes the batch at the bound session's `tool.execute.after` and applies it at that session's next message transform. `sync` submits once through session-addressed `promptAsync` on the bound session's `session.idle`. Support comes only from `HarnessCapabilities`, and `hard-cancel` stays off. |
+| Out of scope | Reimplementing batch/pull/acknowledgement, binding reconciliation, read receipts, generic UI, acceptance orchestration, abort. |
+| Files/packages | The OpenCode plugin's `tools`, `modes`, and `hooks` modules in `@aiur/khala`, with tests; no broad edits to `packages/agent-cli/src/cli/app.ts` or `mcp/server.ts`. |
+| Acceptance criteria | `async` submits nothing automatically, and `khala_read` returns the shared batch/token; `steer` is consumed before the next tool without abort; `sync` is visible only after the original turn's idle; a mode is enabled only for a matching retained interactive evidence key and otherwise reported `unproven`; drift disables the route; mismatched session events leave the batch pending. |
+| Tests | Two-tool mode matrix with fake pull and OpenCode ports, capability drift, piggyback drain without a new release, no-abort and no-host-dedupe assertions. **Wrong implementation test:** fail if `steer` uses busy `promptAsync`, if tool 2 starts before a `steer` batch is consumed, if `sync` is submitted before idle, or if a batch reaches another session. |
+| Blocked by | `opencode-session-bridge`, `opencode-interactive-cli-proof`, `listening-mode-pull`, `listening-mode-contract`, `listening-mode-dispatch`, `mcp-result-piggyback`, `mcp-piggyback-evidence`, `setup-cli-plan`. |
+| Conflict risk | **High:** `listening-mode-pull` owns CLI/MCP names and batch semantics; land after `mcp-inbox-batch` → `mcp-result-piggyback` → `listening-mode-pull`. PR #180 proposes a contract with the same slug; promote only one. |
 
-Recommended order: run `opencode-server-auth-proof` independently. After
-`listening-mode-contract` and `listening-mode-pull` land, run
-`opencode-interactive-cli-proof`; both proofs must start from the person's TUI.
-Wait for the remaining shared merge chain through `setup-cli-plan`. After setup
-lands, run `opencode-delivery-contract` → `opencode-inbox-notifier` →
-`opencode-session-bridge` → `opencode-listening-routes`. `acceptance` owns the
-live OpenCode + DeepSeek to Claude driver after these contracts settle.
+Recommended order: `opencode-server-auth-proof` runs independently. Accept #180
+as `opencode-interactive-cli-proof` or run the remainder after
+`listening-mode-contract` and `listening-mode-pull`. After the shared merge chain
+through `setup-cli-plan`, run `opencode-delivery-contract` →
+`opencode-inbox-notifier` → `opencode-session-bridge` →
+`opencode-listening-routes`. `acceptance` then runs
+`opencode-deepseek-claude-live-acceptance`.

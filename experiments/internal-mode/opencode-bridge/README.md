@@ -42,6 +42,8 @@ preflight or marker mismatch.
 The plugin is deliberately not product code: it has no binding, durable cursor,
 dedupe, pause/stop, or capability gate.
 
-The proof uses the global TUI append/submit API. The proposed product design in
-`docs/product/internal-mode/opencode-bridge.md` instead uses the
-session-addressed API so it cannot submit a different session's draft.
+The proof uses the global TUI append/submit API, which is not a product route.
+The design in `docs/product/internal-mode/opencode-bridge.md` adopts the
+interactive routes proved in PR #180: `steer` through `tool.execute.after` plus
+the next message transform, and `sync` through `session.idle` plus
+session-addressed `promptAsync`.
