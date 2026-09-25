@@ -4,11 +4,11 @@ import {
   type DeliveryReceipt,
   type HarnessCapabilities,
   type HarnessPort,
-  unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/ids';
 import {
   makeRelease,
+  provenModes,
   seed,
   testPolicy,
   world,
@@ -39,8 +39,9 @@ const capabilities: HarnessCapabilities = {
   reconcileByReleaseId: 'unsupported',
   limits: decodedLimits.value,
   evidenceRef: 'docs/evidence/codex-native-cli.md#queue-idle',
-  modes: unknownModeSupportMap('test-codex-native', 'Test fixture has no primary mode proof.', '0.154.0'),
-  acknowledgement: 'unknown',
+  // Dispatch delivers only on a route with evidenced support for the binding's effective mode.
+  modes: provenModes(),
+  acknowledgement: 'batch_token_next_call',
 };
 
 test('selected native capability delivers exact released bytes and reaches channel presence without pending content', async () => {
@@ -96,7 +97,13 @@ test('selected native capability delivers exact released bytes and reaches chann
     openDispatcher: async ({ harness }) => {
       const adapter = harness.selected?.();
       if (!adapter) throw new Error('selected_harness_unavailable');
-      const dispatcher = dispatchWorld.dispatcher({ harness: adapter });
+      const dispatcher = dispatchWorld.dispatcher({
+        harness: adapter,
+        // The selected route reaches its proved boundary at once, reporting its own capabilities.
+        boundary: {
+          await: async ({ job }) => ({ binding: job.binding, capabilities: await adapter.inspect(job.binding) }),
+        },
+      });
       dispatcherIdle = () => dispatcher.idle();
       return {
         async reconcilePending() {},

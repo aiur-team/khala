@@ -33,13 +33,52 @@ short-lived discovery credential; this module consumes it.
   - `GET /api/agent/channels`
   - `PUT /api/human/channel-discovery/settings`
   - `POST /api/human/channel-discovery/allowlist`
+  - `PUT /api/human/channel-discovery/rollout` (operators only)
 
   The gateway routes exact paths only, so the channel travels in the request
   body.
 
-Public listing requires `publicDiscovery: 'enabled'`. Hosted deployments keep it
-disabled until the rollout ticket enables it. Responses are `no-store`, and
-nothing in this module logs.
+## Hosted rollout
+
+`publicDiscovery` is either a static value, used by tests and internal
+compositions, or the hosted rollout control from `rollout.ts`. The rollout
+control reads one ControlStore record on every request. The record is absent
+by default, which means public discovery is disabled. A store failure
+also disables public listing. It never affects private listings.
+
+- The operator route requires an authenticated owner mutation plus the
+  injected `OperatorAuthority`. Its actions are:
+  - `record_drill`: stores a passing drill report
+  - `enable` and `disable`: `enable` refuses with `drill_required` unless a
+    passing drill is under 30 days old
+  - `engage_kill_switch` and `release_kill_switch`
+- The kill switch removes public results from listings, cursors and
+  listing-reference resolution on the next request. Owner settings still
+  work, including setting `public` while the rollout is enabled. Private and
+  secret behavior does not change.
+- `telemetry.ts` builds events from a fixed set of fields: purpose-tagged
+  digests of the account, session and operator, plus result codes and counts.
+  Events never carry titles, listing references, cursors, channel URLs, room
+  IDs, or raw owner or session identifiers.
+- `crawl.ts` counts listing requests per account across all of that account's
+  sessions in a 10-minute window. The operator gets one alert per account and
+  window through `OperatorAlertSink` when either of these happens:
+  - the account makes more than 100 requests
+  - 5 of its requests are rate-limited
+
+  Operators can lower either threshold but cannot raise it. A failed delivery
+  retries on the next request. `createWebhookAlertSink` posts the alert to one
+  HTTPS endpoint and refuses redirects.
+- `drill.ts` is the operations drill that runs before enabling. It targets a
+  staging composition with public discovery enabled and checks four things:
+  - the page cap and the per-session limiter boundary
+  - delivery of the crawl alert
+  - removal of public results within five minutes of engaging the kill switch
+  - private results still listed while the kill switch is engaged
+
+  Its report is the `record_drill` input.
+
+Responses are `no-store`, and nothing in this module logs.
 
 Storage is one `ControlStore` record, because the store cannot enumerate keys.
 The record is capped at 2,000 channels and 200 per owner, with 50

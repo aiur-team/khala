@@ -139,6 +139,24 @@ test('hosted roots cannot reach local automation directly, through a package, or
   assert(has('apps/connector/src/composition/controls/automation.ts', 'hosted graph reaches local automation (@khala/connector/relay -> ./opener)'));
   assert(has('apps/web/src/marked.ts', 'hosted source carries the local automation marker'));
 });
+test('dispatch limits come from the internal composition, never a hosted connector root', t => {
+  const files = {
+    'apps/internal/src/composition/local-automation/dispatch.ts': "import '@khala/connector/dispatch/index'; import './provider';",
+    'apps/internal/src/composition/local-automation/provider.ts': "import '@khala/policy/listening-mode/limits'; export const marker = 'khala:local-automation-authority';",
+    'packages/connector/package.json': { name: '@khala/connector', exports: { './dispatch/*': './src/dispatch/*.ts' } },
+    'packages/connector/src/dispatch/index.ts': 'export const createDispatcher = () => null;',
+    'packages/policy/package.json': policyPackage,
+    'packages/policy/src/listening-mode/limits.ts': 'export const limits = {};',
+  };
+  assert.deepEqual(fixture(t, files), []);
+  const errors = fixture(t, {
+    ...files,
+    'apps/connector/src/composition/agent/dispatch-limits.ts': "import '@khala/connector/dispatch/index'; import '@khala/policy/listening-mode/limits';",
+  });
+  const origin = 'apps/connector/src/composition/agent/dispatch-limits.ts';
+  assert(errors.some(error => error.startsWith(origin) && error.includes('hosted graph reaches local automation')));
+  assert(errors.some(error => error.startsWith(origin) && error.includes('importable only from the internal composition')));
+});
 test('repository: only the internal composition graph carries the local automation marker', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const { graph, marked } = buildGraph(root);
