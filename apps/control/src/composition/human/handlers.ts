@@ -5,6 +5,8 @@ export type HumanHandlerDependencies = Readonly<{
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
   channelAccess?: () => readonly RouteRegistration[];
+  /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
+  channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
 }>;
 
 function json(status: number, body: unknown): Response {
@@ -39,9 +41,20 @@ const unavailableChannelAccessRoutes = Object.freeze([
   unavailable('/api/human/channel-access/mute', ['POST']),
 ]);
 
+const unavailableChannelDiscoveryRoutes = Object.freeze([
+  Object.freeze({
+    path: '/api/human/channel-discovery/bootstrap/authorize',
+    methods: Object.freeze(['GET', 'POST']),
+    async handle() {
+      return json(503, { error: 'feature_unavailable' });
+    },
+  }),
+]);
+
 export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {
   return Object.freeze([
     ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
+    ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
   ]);
 }

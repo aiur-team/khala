@@ -23,6 +23,8 @@ export type AgentHandlerDependencies = Readonly<{
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
   channelAccess?: () => readonly RouteRegistration[];
+  /** Request-lifetime discovery-bootstrap registrations supplied by the composition root. */
+  channelDiscoveryBootstrap?: () => readonly RouteRegistration[];
 }>;
 
 function json(status: number, body: unknown): Response {
@@ -70,6 +72,15 @@ const unavailableChannelAccessRoutes = Object.freeze([
     },
   }),
 ]);
+const unavailableChannelDiscoveryRoutes = Object.freeze([
+  Object.freeze({
+    path: '/api/agent/channel-discovery/bootstrap/token',
+    methods: Object.freeze(['POST']),
+    async handle() {
+      return json(503, { error: 'feature_unavailable' });
+    },
+  }),
+] satisfies readonly RouteRegistration[]);
 
 function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
   return {
@@ -90,7 +101,12 @@ function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
 }
 
 export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): readonly RouteRegistration[] {
-  if (!dependencies) return Object.freeze([unavailableStatus, ...unavailablePairingRoutes, ...unavailableChannelAccessRoutes]);
+  if (!dependencies) return Object.freeze([
+    unavailableStatus,
+    ...unavailablePairingRoutes,
+    ...unavailableChannelAccessRoutes,
+    ...unavailableChannelDiscoveryRoutes,
+  ]);
   const status: RouteRegistration = Object.freeze({
     path: '/api/agent/status',
     methods: Object.freeze(['GET']),
@@ -108,5 +124,6 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     status,
     ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
+    ...(dependencies.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
   ]);
 }

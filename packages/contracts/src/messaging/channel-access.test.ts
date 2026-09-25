@@ -13,7 +13,6 @@ import {
   type ChannelAccessAuthorization,
   type ChannelAccessDecisionPort,
   type ChannelAccessFulfillmentPort,
-  type ChannelAccessOwnerProjection,
   type ChannelAccessResolutionPort,
   type ChannelAccessRequesterContext,
   type ChannelCreateAuthorization,
