@@ -11,12 +11,13 @@ const ownerId = 'owner_a' as OwnerId;
 const roomId = 'room_a' as RoomId;
 const participantA = 'participant_a' as ParticipantId;
 const participantB = 'participant_b' as ParticipantId;
+const deviceId = 'device_a' as BindingRecord['binding']['deviceId'];
 
 function binding(participantId = participantA, overrides: Partial<BindingRecord['binding']> = {}): BindingRecord {
   return {
     binding: {
       v: 1, bindingId: `binding_${participantId}` as BindingId, ownerId, agentParticipantId: participantId,
-      deviceId: 'device_a' as BindingRecord['binding']['deviceId'], harness: 'codex', sessionId: `session_${participantId}`,
+      deviceId, harness: 'codex', sessionId: `session_${participantId}`,
       generation: 3, ...overrides,
     },
     revokedGeneration: null,
@@ -178,6 +179,54 @@ describe('agent binding store migration', () => {
     expect(await bindings.findBinding(replacement.binding.bindingId)).toEqual({ kind: 'found', record: replacement });
   });
 
+  it.each(['no legacy record', 'an unrelated legacy participant'] as const)(
+    're-arms a revoked scoped binding with migration writes disabled and %s',
+    async legacyState => {
+      const fake = fakeStore();
+      const targetParticipant = legacyState === 'no legacy record' ? participantA : participantB;
+      const current = binding(targetParticipant);
+      const replacement = {
+        ...binding(targetParticipant, { bindingId: 'binding_rearmed_scoped' as BindingId, generation: 4 }),
+        capability: null,
+      };
+      const scopedKey = agentBindingStoreKeys.participant(ownerId, roomId, targetParticipant);
+      if (legacyState === 'an unrelated legacy participant') {
+        fake.seed(agentBindingStoreKeys.legacy(ownerId, roomId), binding(participantA));
+      }
+      const bindings = createAgentBindingStore({ store: fake.store });
+
+      expect((await bindings.putParticipant({
+        ownerId, roomId, agentParticipantId: targetParticipant, expectedBindingId: null, record: current,
+      })).kind).toBe('applied');
+      expect(await bindings.updateBinding(current.binding.bindingId, record => ({
+        ...record, revokedGeneration: 3, capability: null,
+      }))).toBe('applied');
+
+      expect(await bindings.putParticipant({
+        ownerId, roomId, agentParticipantId: targetParticipant,
+        expectedBindingId: current.binding.bindingId,
+        record: replacement,
+      })).toEqual({ kind: 'applied', record: replacement });
+      expect(fake.value(scopedKey)).toEqual(replacement);
+    },
+  );
+
+  it('revokes an authoritative legacy binding in place while marker writes are disabled', async () => {
+    const fake = fakeStore();
+    const legacy = binding();
+    const legacyKey = agentBindingStoreKeys.legacy(ownerId, roomId);
+    const scopedKey = agentBindingStoreKeys.participant(ownerId, roomId, participantA);
+    fake.seed(legacyKey, legacy);
+    fake.seed(agentBindingStoreKeys.index(legacy.binding.bindingId), { ownerId, roomId });
+    const bindings = createAgentBindingStore({ store: fake.store });
+
+    expect(await bindings.updateBinding(legacy.binding.bindingId, record => ({
+      ...record, revokedGeneration: 4, capability: null,
+    }))).toBe('applied');
+    expect(fake.value(legacyKey)).toEqual({ ...legacy, revokedGeneration: 4, capability: null });
+    expect(fake.value(scopedKey)).toBeUndefined();
+  });
+
   it('rejects replacement unless the same revoked identity advances generation with a new binding ID', async () => {
     const fake = fakeStore();
     const current = { ...binding(), revokedGeneration: 4, capability: null };
@@ -234,6 +283,30 @@ describe('agent binding store migration', () => {
     expect(fake.value(agentBindingStoreKeys.participant(ownerId, roomId, participantA))).toEqual(revoked);
   });
 
+  it('returns current scoped authority when revocation follows forwarding', async () => {
+    const fake = fakeStore();
+    const legacy = binding();
+    const revoked = { ...legacy, revokedGeneration: 4, capability: null };
+    const legacyKey = agentBindingStoreKeys.legacy(ownerId, roomId);
+    const scopedKey = agentBindingStoreKeys.participant(ownerId, roomId, participantA);
+    const indexKey = agentBindingStoreKeys.index(legacy.binding.bindingId);
+    fake.seed(legacyKey, legacy);
+    fake.beforeEachWrite(input => {
+      if (input.key !== indexKey) return;
+      fake.beforeEachWrite(null);
+      expect(fake.value(legacyKey)).toEqual({
+        v: 1, kind: 'binding_forward', agentParticipantId: participantA,
+      });
+      fake.seed(scopedKey, revoked);
+    });
+    const bindings = createAgentBindingStore({ store: fake.store, legacyMigrationWritesEnabled: true });
+
+    expect(await bindings.findParticipant({ ownerId, roomId, agentParticipantId: participantA })).toEqual({
+      kind: 'found', record: revoked,
+    });
+    expect(await bindings.findBinding(legacy.binding.bindingId)).toEqual({ kind: 'found', record: revoked });
+  });
+
   it('refuses a competing legacy session claim while migration is between copy and forwarding', async () => {
     const fake = fakeStore();
     const legacy = binding();
@@ -255,6 +328,7 @@ describe('agent binding store migration', () => {
 
     expect(await bindings.claimSession({
       ownerId, roomId, agentParticipantId: participantB, harness: legacy.binding.harness, sessionId: legacy.binding.sessionId,
+      deviceId: legacy.binding.deviceId, generation: legacy.binding.generation,
     })).toEqual({ kind: 'conflict', agentParticipantId: participantA });
     release();
     expect(await migration).toEqual({ kind: 'found', record: legacy });
@@ -301,13 +375,20 @@ describe('agent binding store scoped state', () => {
     const fake = fakeStore();
     const bindings = createAgentBindingStore({ store: fake.store, legacyMigrationWritesEnabled: true });
     expect(await bindings.claimSession({
-      ...address(participantA), harness: 'codex', sessionId: 'shared-session',
+      ...address(participantA), harness: 'codex', sessionId: 'shared-session', deviceId, generation: 3,
     })).toEqual({ kind: 'claimed' });
     expect(await bindings.claimSession({
-      ...address(participantB), harness: 'codex', sessionId: 'shared-session',
+      ...address(participantA), harness: 'codex', sessionId: 'shared-session',
+      deviceId: 'device_b' as BindingRecord['binding']['deviceId'], generation: 3,
     })).toEqual({ kind: 'conflict', agentParticipantId: participantA });
     expect(await bindings.claimSession({
-      ...address(participantB), harness: 'codex', sessionId: 'other-session',
+      ...address(participantA), harness: 'codex', sessionId: 'shared-session', deviceId, generation: 4,
+    })).toEqual({ kind: 'conflict', agentParticipantId: participantA });
+    expect(await bindings.claimSession({
+      ...address(participantB), harness: 'codex', sessionId: 'shared-session', deviceId, generation: 3,
+    })).toEqual({ kind: 'conflict', agentParticipantId: participantA });
+    expect(await bindings.claimSession({
+      ...address(participantB), harness: 'codex', sessionId: 'other-session', deviceId, generation: 3,
     })).toEqual({ kind: 'claimed' });
   });
 
@@ -361,7 +442,7 @@ describe('agent binding store scoped state', () => {
     const bindings = createAgentBindingStore({ store: fake.store, legacyMigrationWritesEnabled: true });
 
     expect(await bindings.claimSession({
-      ...address(participantA), harness: 'codex', sessionId: 'broken',
+      ...address(participantA), harness: 'codex', sessionId: 'broken', deviceId, generation: 3,
     })).toEqual({ kind: 'unavailable' });
     expect(await bindings.findBinding('binding_broken')).toEqual({ kind: 'unavailable' });
   });

@@ -460,6 +460,33 @@ describe('redeem', () => {
     expect(await h.adapter(second.body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
   });
 
+  it('passes the inspected verified session and address to admission', async () => {
+    const inspected = {
+      agentParticipantId: 'agent_distinctive' as ParticipantId,
+      roomId: 'room_distinctive' as RoomId,
+    };
+    let admissionInput: Parameters<AgentAdmissionPort['admit']>[0] | undefined;
+    const h = setup({
+      agents: {
+        inspect: async () => ({ kind: 'ok', value: inspected }),
+        admit: async input => {
+          admissionInput = input;
+          expect(input.session).toEqual({ harness: 'codex', sessionId: 'thread-existing-b', generation: 3 });
+          expect(input.expectedAgentParticipantId).toBe(inspected.agentParticipantId);
+          expect(input.expectedRoomId).toBe(inspected.roomId);
+          return { kind: 'ok', value: inspected };
+        },
+      },
+    });
+
+    expect((await h.redeem(await h.grant())).status).toBe(200);
+    expect(admissionInput).toMatchObject({
+      session: { harness: 'codex', sessionId: 'thread-existing-b', generation: 3 },
+      expectedAgentParticipantId: inspected.agentParticipantId,
+      expectedRoomId: inspected.roomId,
+    });
+  });
+
   it('refreshes and revokes one participant without changing another participant authority', async () => {
     const h = setup({
       agents: {
@@ -504,6 +531,40 @@ describe('redeem', () => {
     const authorization = await Promise.all(bodies.map(body => h.adapter(body.adapter_capability.token, 'publish_own')));
     expect(authorization.filter(result => result.kind === 'authorized')).toHaveLength(1);
     expect(authorization.filter(result => result.kind === 'refused' && result.code === 'binding_superseded')).toHaveLength(1);
+  });
+
+  it('admits only the winner when different first-time sessions race for one participant', async () => {
+    const h = setup();
+    const otherSession = { session_id: 'thread-existing-c' };
+    const [grantA, grantB] = await Promise.all([
+      h.grant(),
+      h.grant(otherSession, otherSession),
+    ]);
+
+    const responses = await Promise.all([
+      h.redeem(grantA, 'session-race-a'),
+      h.redeem(grantB, 'session-race-b', otherSession),
+    ]);
+
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    expect(h.admits).toHaveLength(1);
+  });
+
+  it('admits only the winner when different first-time devices race for one participant', async () => {
+    const h = setup();
+    const otherDevice = { device_id: 'KHALADEV2' };
+    const [grantA, grantB] = await Promise.all([
+      h.grant(),
+      h.grant(otherDevice, otherDevice),
+    ]);
+
+    const responses = await Promise.all([
+      h.redeem(grantA, 'device-race-a'),
+      h.redeem(grantB, 'device-race-b', otherDevice),
+    ]);
+
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    expect(h.admits).toHaveLength(1);
   });
 
   it('binds the owner, agent participant, device and existing session, with the narrow adapter capability', async () => {

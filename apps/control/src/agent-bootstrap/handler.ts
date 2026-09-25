@@ -350,7 +350,10 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       const verdict = bindingVerdict(current.record, held, address.agentParticipantId);
       if (verdict !== 'reuse' && verdict !== 'replace') return json(409, { code: verdict });
     }
-    const claimed = await bindings.claimSession({ ...address, harness: held.harness, sessionId: held.sessionId });
+    const claimed = await bindings.claimSession({
+      ...address, harness: held.harness, sessionId: held.sessionId,
+      deviceId: held.deviceId as SessionBinding['deviceId'], generation: held.generation,
+    });
     if (claimed.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (claimed.kind === 'conflict') return json(409, { code: 'binding_conflict' });
 

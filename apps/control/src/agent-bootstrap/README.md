@@ -44,7 +44,8 @@ The redeem response is `{ binding, adapter_capability: { token, token_type: 'DPo
 - **Binding.** Bindings are scoped by owner, channel and verified agent participant, so distinct verified
   sessions may coexist as distinct participants in one channel. A side-effect-free inspection resolves the
   session's participant before the handler checks that participant's binding and claims the durable session
-  locator. The same participant, session, generation and device get the same binding back; participant,
+  locator plus a participant-scoped pre-admission reservation. The same participant, session, generation and
+  device get the same binding back; participant,
   session or device substitution is `409 binding_conflict`. Those checks run before admission, so a
   conflicting device never joins the channel.
 - **Legacy migration.** Existing owner/channel singleton records are read compatibly and, when

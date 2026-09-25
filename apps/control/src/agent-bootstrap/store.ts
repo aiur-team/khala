@@ -26,6 +26,13 @@ export type SessionClaim =
   | Readonly<{ kind: 'conflict'; agentParticipantId: ParticipantId }>
   | Readonly<{ kind: 'unavailable' }>;
 
+type ParticipantClaimInput = BindingAddress & Readonly<{
+  harness: string;
+  sessionId: string;
+  deviceId: SessionBinding['deviceId'];
+  generation: number;
+}>;
+
 export type BindingWrite =
   | Readonly<{ kind: 'applied'; record: BindingRecord }>
   | Readonly<{ kind: 'conflict'; record: BindingRecord | null }>
@@ -39,7 +46,7 @@ type LocatedBinding =
 
 export type AgentBindingStore = Readonly<{
   findParticipant(address: BindingAddress): Promise<BindingLookup>;
-  claimSession(input: BindingAddress & Readonly<{ harness: string; sessionId: string }>): Promise<SessionClaim>;
+  claimSession(input: ParticipantClaimInput): Promise<SessionClaim>;
   putParticipant(input: BindingAddress & Readonly<{ expectedBindingId: BindingId | null; record: BindingRecord }>): Promise<BindingWrite>;
   findBinding(bindingId: BindingId | string): Promise<BindingLookup>;
   updateBinding(bindingId: BindingId | string, change: (record: BindingRecord) => BindingRecord | null): Promise<BindingMutation>;
@@ -50,6 +57,17 @@ type BindingIndex = Readonly<{ v: 1; ownerId: OwnerId; roomId: RoomId; agentPart
 type LegacyBindingIndex = Readonly<{ ownerId: OwnerId; roomId: RoomId }>;
 type SessionLocator = Readonly<{
   v: 1; ownerId: OwnerId; roomId: RoomId; harness: string; sessionId: string; agentParticipantId: ParticipantId;
+}>;
+type PendingBinding = Readonly<{
+  v: 1;
+  kind: 'binding_pending';
+  ownerId: OwnerId;
+  roomId: RoomId;
+  agentParticipantId: ParticipantId;
+  harness: string;
+  sessionId: string;
+  deviceId: SessionBinding['deviceId'];
+  generation: number;
 }>;
 
 const CAPABILITY_DIGEST = /^[A-Za-z0-9_-]{43}$/;
@@ -101,6 +119,8 @@ export function createAgentBindingStore(deps: Readonly<{
   async function readScoped(address: BindingAddress, repairIndex = true): Promise<BindingLookup> {
     const read = await readJson(agentBindingStoreKeys.participant(address.ownerId, address.roomId, address.agentParticipantId));
     if (read.kind !== 'record') return read.kind === 'absent' ? { kind: 'absent' } : { kind: 'unavailable' };
+    const pending = decodePendingBinding(read.record.value);
+    if (pending && pendingMatchesAddress(pending, address)) return { kind: 'absent' };
     const record = decodeBindingRecord(read.record.value);
     if (!record || !bindingMatchesAddress(record, address)) return { kind: 'unavailable' };
     if (repairIndex && !await ensureIndex(address, record.binding.bindingId)) return { kind: 'unavailable' };
@@ -183,7 +203,7 @@ export function createAgentBindingStore(deps: Readonly<{
       const forwarded = await write(legacyKey, read.record.revision, marker);
       if (forwarded.kind === 'conflict') continue;
       if (forwarded.kind !== 'applied' || !await ensureIndex(address, legacy.binding.bindingId)) return { kind: 'unavailable' };
-      return { kind: 'found', record: legacy };
+      return readScoped(address);
     }
     return { kind: 'unavailable' };
   }
@@ -214,7 +234,33 @@ export function createAgentBindingStore(deps: Readonly<{
     return resolveParticipant(address, legacy, repairIndex);
   }
 
-  async function claimSession(input: BindingAddress & Readonly<{ harness: string; sessionId: string }>): Promise<SessionClaim> {
+  async function claimParticipant(input: ParticipantClaimInput): Promise<SessionClaim> {
+    const storeKey = agentBindingStoreKeys.participant(input.ownerId, input.roomId, input.agentParticipantId);
+    const desired: PendingBinding = { v: 1, kind: 'binding_pending', ...input };
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const read = await readJson(storeKey);
+      if (read.kind === 'unavailable') return { kind: 'unavailable' };
+      if (read.kind === 'record') {
+        const pending = decodePendingBinding(read.record.value);
+        if (pending) {
+          if (!pendingMatchesAddress(pending, input)) return { kind: 'unavailable' };
+          return samePendingIdentity(pending, desired)
+            ? { kind: 'claimed' }
+            : { kind: 'conflict', agentParticipantId: input.agentParticipantId };
+        }
+        const current = decodeBindingRecord(read.record.value);
+        return current && bindingMatchesAddress(current, input)
+          ? { kind: 'claimed' }
+          : { kind: 'unavailable' };
+      }
+      const claimed = await write(storeKey, null, desired);
+      if (claimed.kind === 'applied') return { kind: 'claimed' };
+      if (claimed.kind !== 'conflict') return { kind: 'unavailable' };
+    }
+    return { kind: 'unavailable' };
+  }
+
+  async function claimSession(input: ParticipantClaimInput): Promise<SessionClaim> {
     const legacy = await readJson(agentBindingStoreKeys.legacy(input.ownerId, input.roomId));
     if (legacy.kind === 'unavailable') return { kind: 'unavailable' };
     let existing: BindingLookup;
@@ -239,7 +285,9 @@ export function createAgentBindingStore(deps: Readonly<{
     if (existing.kind === 'found' && (existing.record.binding.harness !== input.harness || existing.record.binding.sessionId !== input.sessionId)) {
       return { kind: 'conflict', agentParticipantId: input.agentParticipantId };
     }
-    return claimLocator(input);
+    const located = await claimLocator(input);
+    if (located.kind !== 'claimed') return located;
+    return existing.kind === 'found' ? located : claimParticipant(input);
   }
 
   async function putParticipant(
@@ -252,6 +300,7 @@ export function createAgentBindingStore(deps: Readonly<{
     const claim = await claimSession({
       ownerId: input.ownerId, roomId: input.roomId, agentParticipantId: input.agentParticipantId,
       harness: input.record.binding.harness, sessionId: input.record.binding.sessionId,
+      deviceId: input.record.binding.deviceId, generation: input.record.binding.generation,
     });
     if (claim.kind === 'conflict') return { kind: 'conflict', record: null };
     if (claim.kind === 'unavailable') return { kind: 'unavailable' };
@@ -270,19 +319,21 @@ export function createAgentBindingStore(deps: Readonly<{
       if (!migrationEnabled && current.kind === 'found') {
         const legacyKey = agentBindingStoreKeys.legacy(input.ownerId, input.roomId);
         const legacy = await readJson(legacyKey);
-        if (legacy.kind !== 'record') return { kind: 'unavailable' };
-        const decoded = decodeBindingRecord(legacy.record.value);
-        if (!decoded || decoded.binding.bindingId !== current.record.binding.bindingId
-          || !bindingMatchesAddress(decoded, input)) return { kind: 'unavailable' };
-        const replaced = await write(legacyKey, legacy.record.revision, input.record);
-        if (replaced.kind === 'conflict') continue;
-        const address: BindingAddress = {
-          ownerId: input.ownerId, roomId: input.roomId, agentParticipantId: input.agentParticipantId,
-        };
-        if (replaced.kind !== 'applied' || !await ensureIndex(address, input.record.binding.bindingId)) {
-          return { kind: 'unavailable' };
+        if (legacy.kind === 'unavailable') return { kind: 'unavailable' };
+        if (legacy.kind === 'record') {
+          const decoded = decodeBindingRecord(legacy.record.value);
+          if (decoded?.binding.bindingId === current.record.binding.bindingId && bindingMatchesAddress(decoded, input)) {
+            const replaced = await write(legacyKey, legacy.record.revision, input.record);
+            if (replaced.kind === 'conflict') continue;
+            const address: BindingAddress = {
+              ownerId: input.ownerId, roomId: input.roomId, agentParticipantId: input.agentParticipantId,
+            };
+            if (replaced.kind !== 'applied' || !await ensureIndex(address, input.record.binding.bindingId)) {
+              return { kind: 'unavailable' };
+            }
+            return { kind: 'applied', record: input.record };
+          }
         }
-        return { kind: 'applied', record: input.record };
       }
 
       const scoped = await readJson(storeKey);
@@ -290,8 +341,11 @@ export function createAgentBindingStore(deps: Readonly<{
       const expectedRevision = scoped.kind === 'record' ? scoped.record.revision : null;
       if (scoped.kind === 'record') {
         const decoded = decodeBindingRecord(scoped.record.value);
-        if (!decoded || !bindingMatchesAddress(decoded, input)
-          || (current.kind === 'found' && decoded.binding.bindingId !== current.record.binding.bindingId)) return { kind: 'unavailable' };
+        const pending = decodePendingBinding(scoped.record.value);
+        const finalizingClaim = current.kind === 'absent' && input.expectedBindingId === null
+          && pending !== null && pendingMatchesRecord(pending, input.record);
+        if (!finalizingClaim && (!decoded || !bindingMatchesAddress(decoded, input)
+          || (current.kind === 'found' && decoded.binding.bindingId !== current.record.binding.bindingId))) return { kind: 'unavailable' };
       }
       const written = await write(storeKey, expectedRevision, input.record);
       if (written.kind === 'conflict') continue;
@@ -410,8 +464,36 @@ function decodeSessionLocator(value: unknown): SessionLocator | null {
   return object as SessionLocator;
 }
 
+function decodePendingBinding(value: unknown): PendingBinding | null {
+  const object = exactObject(value, [
+    'v', 'kind', 'ownerId', 'roomId', 'agentParticipantId', 'harness', 'sessionId', 'deviceId', 'generation',
+  ]);
+  if (!object || object.v !== 1 || object.kind !== 'binding_pending'
+    || !identifier(object.ownerId) || !identifier(object.roomId) || !identifier(object.agentParticipantId)
+    || !identifier(object.harness) || !identifier(object.sessionId) || !identifier(object.deviceId)
+    || !Number.isSafeInteger(object.generation) || (object.generation as number) < 0) return null;
+  return object as PendingBinding;
+}
+
 function bindingMatchesAddress(record: BindingRecord, address: BindingAddress): boolean {
   return record.binding.ownerId === address.ownerId && record.binding.agentParticipantId === address.agentParticipantId;
+}
+
+function pendingMatchesAddress(pending: PendingBinding, address: BindingAddress): boolean {
+  return pending.ownerId === address.ownerId && pending.roomId === address.roomId
+    && pending.agentParticipantId === address.agentParticipantId;
+}
+
+function samePendingIdentity(left: PendingBinding, right: PendingBinding): boolean {
+  return left.harness === right.harness && left.sessionId === right.sessionId
+    && left.deviceId === right.deviceId && left.generation === right.generation;
+}
+
+function pendingMatchesRecord(pending: PendingBinding, record: BindingRecord): boolean {
+  return pendingMatchesAddress(pending, {
+    ownerId: record.binding.ownerId, roomId: pending.roomId, agentParticipantId: record.binding.agentParticipantId,
+  }) && pending.harness === record.binding.harness && pending.sessionId === record.binding.sessionId
+    && pending.deviceId === record.binding.deviceId && pending.generation === record.binding.generation;
 }
 
 function validReplacement(current: BindingRecord, replacement: BindingRecord): boolean {
