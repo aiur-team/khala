@@ -10,6 +10,7 @@ describe('registerHumanHandlers', () => {
       { path: '/api/human/channel-discovery/bootstrap/authorize', methods: ['GET', 'POST'] },
       { path: '/api/human/channel-discovery/settings', methods: ['PUT'] },
       { path: '/api/human/channel-discovery/allowlist', methods: ['POST'] },
+      { path: '/api/human/channel-discovery/rollout', methods: ['PUT'] },
     ]);
     expect(Object.isFrozen(registrations)).toBe(true);
     for (const registration of registrations) {
@@ -36,7 +37,7 @@ describe('registerHumanHandlers', () => {
     } as const;
     const registrations = registerHumanHandlers({ channelDiscoveryBootstrap: () => [authorize] });
 
-    expect(registrations.at(-3)).toBe(authorize);
+    expect(registrations.at(-4)).toBe(authorize);
     expect(registrations.slice(0, 2).map(route => route.path)).toEqual([
       '/api/human/pairing/request',
       '/api/human/pairing/decision',
@@ -46,9 +47,10 @@ describe('registerHumanHandlers', () => {
   it('substitutes only the live channel-discovery settings registrations', () => {
     const settings = { path: '/api/human/channel-discovery/settings', methods: ['PUT'], handle: async () => new Response('settings') } as const;
     const allowlist = { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], handle: async () => new Response('allowlist') } as const;
-    const registrations = registerHumanHandlers({ channelDiscovery: () => [settings, allowlist] });
+    const rollout = { path: '/api/human/channel-discovery/rollout', methods: ['PUT'], handle: async () => new Response('rollout') } as const;
+    const registrations = registerHumanHandlers({ channelDiscovery: () => [settings, allowlist, rollout] });
 
-    expect(registrations.slice(-2)).toEqual([settings, allowlist]);
-    expect(registrations.at(-3)?.path).toBe('/api/human/channel-discovery/bootstrap/authorize');
+    expect(registrations.slice(-3)).toEqual([settings, allowlist, rollout]);
+    expect(registrations.at(-4)?.path).toBe('/api/human/channel-discovery/bootstrap/authorize');
   });
 });
