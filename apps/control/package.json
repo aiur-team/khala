@@ -8,6 +8,7 @@
     "./invitations/*": "./src/invitations/*.ts",
     "./agent-bootstrap/*": "./src/agent-bootstrap/*.ts",
     "./channel-discovery/bootstrap/*": "./src/channel-discovery/bootstrap/*.ts",
+    "./channel-discovery/*": "./src/channel-discovery/*.ts",
     "./runtime/*": "./src/runtime/*.ts",
     "./composition/*": "./src/composition/*.ts"
   },
