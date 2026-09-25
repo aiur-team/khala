@@ -11,6 +11,7 @@
   "dependencies": {
     "@khala/connector": "workspace:*",
     "@khala/contracts": "workspace:*",
-    "@khala/messaging": "workspace:*"
+    "@khala/messaging": "workspace:*",
+    "@khala/policy": "workspace:*"
   }
 }

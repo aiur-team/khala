@@ -72,6 +72,9 @@ importers:
       '@khala/messaging':
         specifier: workspace:*
         version: link:../../packages/messaging
+      '@khala/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
 
   apps/web:
     dependencies:
