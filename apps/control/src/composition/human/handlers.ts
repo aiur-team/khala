@@ -48,6 +48,7 @@ const unavailableChannelDiscoveryRoutes = Object.freeze([
 const unavailableChannelSettingsRoutes = Object.freeze([
   unavailable('/api/human/channel-discovery/settings', ['PUT']),
   unavailable('/api/human/channel-discovery/allowlist', ['POST']),
+  unavailable('/api/human/channel-discovery/rollout', ['PUT']),
 ]);
 
 export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {

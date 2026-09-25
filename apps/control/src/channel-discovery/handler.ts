@@ -1,7 +1,9 @@
 // Authenticated discovery routes. The agent listing route accepts only a live
 // RD2A discovery credential; human routes accept only an authenticated owner
-// mutation. Every response is JSON, `no-store`, and never a redirect. Nothing
-// here logs: titles, references, cursors and room IDs stay out of telemetry.
+// mutation; the rollout route also requires operator authority. Every response
+// is JSON, `no-store`, and never a redirect. Nothing here logs, and telemetry
+// carries only digests, result codes and counts: titles, references, cursors
+// and room IDs never reach it.
 
 import {
   type ControlStore,
@@ -19,16 +21,26 @@ import type { DiscoveryCredentials } from './bootstrap/handler';
 import {
   type ChannelOwnerAuthority,
   type KnownPrincipalDirectory,
-  type PublicDiscovery,
   createPrivateEligibility,
   normalizeTitle,
   setVisibility,
 } from './catalog';
+import type { CrawlDetector } from './crawl';
 import { type ListingCaller, type ListingResolution, listChannels, resolveListingRef } from './listing';
+import {
+  type OperatorAuthority,
+  type PublicDiscoverySource,
+  type RolloutAction,
+  applyRollout,
+  decodeDrillReport,
+  resolveGates,
+} from './rollout';
+import { type DiscoveryTelemetrySink, type ListOutcome, accountDigest, emit, sessionDigest, telemetryDigest } from './telemetry';
 
 export const LIST_PATH = '/api/agent/channels';
 export const SETTINGS_PATH = '/api/human/channel-discovery/settings';
 export const ALLOWLIST_PATH = '/api/human/channel-discovery/allowlist';
+export const ROLLOUT_PATH = '/api/human/channel-discovery/rollout';
 
 export type ChannelDiscoveryDeps = Readonly<{
   store: ControlStore;
@@ -39,8 +51,15 @@ export type ChannelDiscoveryDeps = Readonly<{
   authorizeMutation(request: Request): Promise<MutationAuthorization>;
   ownerAuthority: ChannelOwnerAuthority;
   principals: KnownPrincipalDirectory;
-  /** Hosted public discovery stays disabled until the rollout ticket enables it. */
-  publicDiscovery: PublicDiscovery;
+  /**
+   * A static value, or the hosted rollout record read on every request. Hosted
+   * public discovery stays disabled until an operator enables it after a drill.
+   */
+  publicDiscovery: PublicDiscoverySource;
+  /** Hosted rollout controls. Without them the rollout route answers `feature_unavailable`. */
+  operators?: OperatorAuthority;
+  telemetry?: DiscoveryTelemetrySink;
+  crawl?: CrawlDetector;
 }>;
 
 export type ChannelDiscoveryHandlers = Readonly<{
@@ -53,11 +72,17 @@ export type ChannelDiscoveryHandlers = Readonly<{
 const HEADERS = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } as const;
 const REVISION = /^[1-9][0-9]{0,15}$/;
 const OPERATION = /^[A-Za-z0-9._:-]{1,128}$/;
+const ROLLOUT_ACTIONS: readonly RolloutAction[] = ['enable', 'disable', 'engage_kill_switch', 'release_kill_switch', 'record_drill'];
 
 export function createChannelDiscoveryHandlers(deps: ChannelDiscoveryDeps): ChannelDiscoveryHandlers {
-  const catalog = { store: deps.store, clock: deps.clock, ownerAuthority: deps.ownerAuthority, principals: deps.principals, publicDiscovery: deps.publicDiscovery };
-  const listing = { store: deps.store, clock: deps.clock, random: deps.random, ownerAuthority: deps.ownerAuthority, publicDiscovery: deps.publicDiscovery };
-  const eligibility = createPrivateEligibility(catalog);
+  // Every request re-reads the rollout record: the kill switch applies to the next request.
+  const catalogFor = async () => ({
+    store: deps.store, clock: deps.clock, ownerAuthority: deps.ownerAuthority, principals: deps.principals,
+    publicDiscovery: (await resolveGates(deps.publicDiscovery)).settings,
+  });
+  const listingFor = (publicDiscovery: 'enabled' | 'disabled') => ({
+    store: deps.store, clock: deps.clock, random: deps.random, ownerAuthority: deps.ownerAuthority, publicDiscovery,
+  });
 
   async function list(request: Request): Promise<Response> {
     const query = readListQuery(new URL(request.url).searchParams);
@@ -70,7 +95,23 @@ export function createChannelDiscoveryHandlers(deps: ChannelDiscoveryDeps): Chan
     }
     if (authorization.kind === 'unavailable') return error(503, 'feature_unavailable');
     if (authorization.kind === 'refused') return error(authorization.status, authorization.code);
-    const result = await listChannels(listing, { ownerId: authorization.ownerId, requester: authorization.requester }, query);
+    const gates = await resolveGates(deps.publicDiscovery);
+    const caller = { ownerId: authorization.ownerId, requester: authorization.requester };
+    const result = await listChannels(listingFor(gates.listing), caller, query);
+    const outcome: ListOutcome = result.kind === 'ok' ? 'ok' : result.kind === 'rejected' ? result.code : 'unavailable';
+    const items = result.kind === 'ok' ? result.value.items : [];
+    const publicItems = items.filter(item => item.visibility === 'public').length;
+    await emit(deps.telemetry, {
+      v: 1, event: 'channel_discovery.list', at: new Date(deps.clock()).toISOString(),
+      account: accountDigest(caller.ownerId),
+      session: sessionDigest(caller.ownerId, caller.requester.principal, caller.requester.sessionGeneration),
+      page: query.cursor === null ? 'first' : 'next', result: outcome, items: items.length, publicItems, publicDiscovery: gates.label,
+    });
+    try {
+      await deps.crawl?.observe({ ownerId: caller.ownerId, result: outcome, publicItems });
+    } catch {
+      // Detection is best effort; the hard limits in `listing.ts` still hold.
+    }
     if (result.kind === 'ok') return body(200, result.value);
     if (result.kind === 'rejected') return error(result.code === 'rate_limited' ? 429 : 410, result.code);
     return error(503, 'feature_unavailable');
@@ -85,7 +126,7 @@ export function createChannelDiscoveryHandlers(deps: ChannelDiscoveryDeps): Chan
       || (input.visibility !== 'public' && input.visibility !== 'private' && input.visibility !== 'secret')) return rejection(400, 'invalid_request');
     const title = input.visibility === 'secret' ? (input.title === null ? null : undefined) : normalizeTitle(input.title) ?? undefined;
     if (title === undefined) return rejection(400, 'invalid_request');
-    return mutationResponse(await setVisibility(catalog, {
+    return mutationResponse(await setVisibility(await catalogFor(), {
       v: 1, operationId: input.operationId, roomId, visibility: input.visibility, title, expectedRevision: input.expectedRevision,
     }, owner));
   }
@@ -103,9 +144,35 @@ export function createChannelDiscoveryHandlers(deps: ChannelDiscoveryDeps): Chan
       v: 1 as const, operationId: input.operationId, roomId, principal: input.principal as StableAgentPrincipal,
       expectedSessionGeneration: input.expectedSessionGeneration as number, expectedRevision: input.expectedRevision,
     };
+    const eligibility = createPrivateEligibility(await catalogFor());
     return mutationResponse(input.action === 'allow'
       ? await eligibility.allowRoom(mutation, owner)
       : await eligibility.revokeRoom(mutation, owner));
+  }
+
+  async function rollout(request: Request): Promise<Response> {
+    if (!deps.operators) return rejection(503, 'feature_unavailable');
+    const operator = await mutationOwner(request);
+    if (operator instanceof Response) return operator;
+    const input = await readJson(request, ['v', 'action', 'operationId', 'expectedRevision', 'drill']);
+    const action = input?.action;
+    if (!input || input.v !== 1 || !isOperation(input.operationId) || (input.expectedRevision !== null && typeof input.expectedRevision !== 'string')
+      || !ROLLOUT_ACTIONS.includes(action as RolloutAction)) return rejection(400, 'invalid_request');
+    const drill = input.drill === null ? null : decodeDrillReport(input.drill);
+    if (input.drill !== null && drill === null) return rejection(400, 'invalid_request');
+    const result = await applyRollout({ store: deps.store, clock: deps.clock, operators: deps.operators }, {
+      v: 1, action: action as RolloutAction, operationId: input.operationId, expectedRevision: input.expectedRevision, drill,
+    }, operator);
+    await emit(deps.telemetry, {
+      v: 1, event: 'channel_discovery.rollout', at: new Date(deps.clock()).toISOString(),
+      operator: telemetryDigest('operator', operator.ownerId), action: action as RolloutAction,
+      result: result.kind === 'ok' ? 'applied' : result.kind === 'rejected' ? result.code : 'unavailable',
+    });
+    if (result.kind === 'ok') return body(200, { v: 1, kind: 'applied', revision: result.value.revision });
+    if (result.kind === 'rejected') {
+      return rejection(result.code === 'forbidden' ? 403 : result.code === 'drill_failed' ? 400 : 409, result.code);
+    }
+    return rejection(503, 'feature_unavailable');
   }
 
   async function mutationOwner(request: Request) {
@@ -125,8 +192,10 @@ export function createChannelDiscoveryHandlers(deps: ChannelDiscoveryDeps): Chan
     human: [
       Object.freeze({ path: SETTINGS_PATH, methods: Object.freeze(['PUT']), handle: settings }),
       Object.freeze({ path: ALLOWLIST_PATH, methods: Object.freeze(['POST']), handle: allowlist }),
+      Object.freeze({ path: ROLLOUT_PATH, methods: Object.freeze(['PUT']), handle: rollout }),
     ],
-    resolveListingRef: (caller, listingRef) => resolveListingRef(listing, caller, listingRef),
+    resolveListingRef: async (caller, listingRef) =>
+      resolveListingRef(listingFor((await resolveGates(deps.publicDiscovery)).listing), caller, listingRef),
   };
 }
 

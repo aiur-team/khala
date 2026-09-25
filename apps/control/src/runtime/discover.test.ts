@@ -139,6 +139,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/channel-discovery/bootstrap/authorize', methods: ['GET', 'POST'], domain: 'human' },
       { path: '/api/human/channel-discovery/settings', methods: ['PUT'], domain: 'human' },
       { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/channel-discovery/rollout', methods: ['PUT'], domain: 'human' },
       { path: '/api/agent/status', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/pairing/claim', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/pairing/result', methods: ['POST'], domain: 'agent' },
