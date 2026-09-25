@@ -37,7 +37,7 @@ The ordinary user is collaborating with another human and their already-working 
 
 - R1. Authenticated human approval targets exact event versions and the correct owner/session binding.
 - R2. Durable release and bounded dispatch preserve decisions through restart and replay.
-- R3. Human approval authority is unavailable to model tools and ordinary chat events.
+- R3. Human approval authority is unavailable to model tools and ordinary channel events.
 - R4. UI receipt labels reflect connector and harness evidence without claiming model consumption from transport delivery.
 
 ### Actors and flow
@@ -75,7 +75,7 @@ Product Contract unchanged. Implementation details below do not settle questions
 
 - KTD1. `registerReview` installs125's browser facade and119/121's owner-runtime release flow. Browser submits106 `ApprovalCommand` with expected binding generation and policy version; trusted control/owner-endpoint composition derives `OwnerAuthority` from the authenticated session, never request JSON.
 - KTD2. Use the protected control transport selected by144/133. A generic Matrix message or model tool request is not a control channel. If the proven transport requires a Netlify function adapter, have the131/132 handler owner register the existing composition entry; do not introduce an undeclared new server in this ticket.
-- KTD3. Preview reads authorized human room content and owner-local pending references, then checks exact105 digest before enabling review. Approve carries references only. The owner endpoint verifies binding ownership/generation, content digest and current policy before119 records release and121 dispatches it.
+- KTD3. Preview reads authorized human channel content and owner-local pending references, then checks exact105 digest before enabling review. Approve carries references only. The owner endpoint verifies binding ownership/generation, content digest and current policy before119 records release and121 dispatches it.
 - KTD4. Release acceptance and receipt evidence are separate. A human command that may have reached the endpoint retains commandId and is resolved via durable ledger; browser reconnection cannot invent another command. A harness write without acknowledgment remains outcome_unknown.
 
 ### Exports and read facade

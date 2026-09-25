@@ -77,7 +77,7 @@ Proposed logical records:
 
 Encrypt content-bearing references and approval details where possible. Routing metadata still reveals conversations, endpoint activity, sizes and timing. Define that leakage explicitly rather than calling the relay metadata-blind. Presence, typing and socket liveness remain ephemeral; read receipts and model-consumption receipts are optional disclosure choices.
 
-Do not store a growing conversation transcript as one CAS blob. Archon's guarded writes remain useful for small singleton policy records, but chat needs append-only envelopes, independent cursors and atomic membership/policy checks. Use blob/object storage for encrypted attachments, not an unguarded dual-write authority system.
+Do not store a growing conversation transcript as one CAS blob. Archon's guarded writes remain useful for small singleton policy records, but channel messaging needs append-only envelopes, independent cursors and atomic membership/policy checks. Use blob/object storage for encrypted attachments, not an unguarded dual-write authority system.
 
 ## Historical/fallback runtime comparison
 

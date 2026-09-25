@@ -15,7 +15,7 @@ The user's priorities are TypeScript application code, maximum off-the-shelf OSS
 | Agent side | Owner's TypeScript connector: decrypt, review gate, subscribe, wake existing session | Same owner-side responsibilities, using our message protocol |
 | Khala-specific control state | Connector-local durable state; minimal Netlify functions/state only where needed | Connector-local state plus Netlify policy/invitation/message state |
 | Separate custom Hono daemon | Not needed by this architecture | Not needed if Functions plus external realtime meet requirements |
-| Canonical chat history | Matrix | Khala's Blobs-backed message model |
+| Canonical channel history | Matrix | Khala's Blobs-backed message model |
 
 Matrix is a protocol; Synapse is its established Python/Rust server implementation. It is an external dependency rather than TypeScript application code we maintain. Synapse's installation documentation provides container deployment and recommends Postgres for production. [Synapse source](https://github.com/element-hq/synapse), [installation](https://element-hq.github.io/synapse/latest/setup/installation.html), [Postgres guidance](https://element-hq.github.io/synapse/latest/postgres.html).
 
@@ -59,7 +59,7 @@ Railway supports Docker-based services, persistent volumes and a deployable Post
 - **Group E2EE is more than encryption/decryption.** Devices, verification, key distribution, membership changes, durable crypto state, history disclosure and recovery all need application integration and tests. A small AES wrapper is not an equivalent replacement for Matrix's client stack.
 - **Blobs needs an intentionally constrained state design.** It supports conditional writes and strong reads, but has no documented multi-object transaction. Related changes must be co-located or reconciled; large rooms cannot casually rewrite an ever-growing transcript blob. [Netlify Blobs](https://docs.netlify.com/build/data-and-storage/netlify-blobs/).
 - **Immediate pub/sub still needs a transport.** Blobs is storage, not a subscription service. Bounded serverless execution does not create a durable background listener. A broker can remove socket-server operations, but adds a service dependency and usually is not itself an OSS deployment. [Functions overview](https://docs.netlify.com/build/functions/overview/).
-- **More failure behavior belongs to us.** A stored message whose publish fails, a retried approval, a stale policy, and a connector that crashes between decrypt and delivery each need explicit handling. Archon's optional hint stream is helpful reference, not complete chat delivery semantics.
+- **More failure behavior belongs to us.** A stored message whose publish fails, a retried approval, a stale policy, and a connector that crashes between decrypt and delivery each need explicit handling. Archon's optional hint stream is helpful reference, not complete channel delivery semantics.
 - **No established-client fallback.** Generic Matrix clients can diagnose a Matrix room; our custom encrypted protocol initially has only our own clients and tests.
 
 ## What both options still need
@@ -77,7 +77,7 @@ Neither option requires Khala to host model inference. Neither can keep an agent
 
 Matrix is likely to save substantial development **if the encrypted headless connector and UI integration work with supported components**. The saving comes from not owning a new messaging substrate and client crypto lifecycle. This is an engineering assessment based on the facilities available, not a measured percentage or calendar estimate.
 
-Railway by itself does not save that implementation work. Hosting a new Hono service there would still leave us designing chat, crypto integration and recovery. The useful combination is Railway running an existing backend such as Synapse.
+Railway by itself does not save that implementation work. Hosting a new Hono service there would still leave us designing channel messaging, crypto integration and recovery. The useful combination is Railway running an existing backend such as Synapse.
 
 Blobs remains useful for small Khala-specific metadata where needed, but duplicating the Matrix transcript or treating Blobs and Matrix as two competing authorities would erase much of the benefit. Keep one owner for each state category.
 

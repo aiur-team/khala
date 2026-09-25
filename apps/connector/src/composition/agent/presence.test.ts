@@ -73,10 +73,10 @@ const receipt = {
 
 describe('connector agent presence source', () => {
   it('renders a shell-safe HTTPS connect command and rejects unsafe links', () => {
-    expect(agentInstallCommand("https://khala.example/room/o'wner"))
-      .toBe("khala connect 'https://khala.example/room/o'\"'\"'wner'");
-    expect(() => agentInstallCommand('http://khala.example/room/1')).toThrow('invalid_room_link');
-    expect(() => agentInstallCommand('https://user:secret@khala.example/room/1')).toThrow('invalid_room_link');
+    expect(agentInstallCommand("https://khala.example/channel/o'wner"))
+      .toBe("khala connect 'https://khala.example/channel/o'\"'\"'wner'");
+    expect(() => agentInstallCommand('http://khala.example/channel/1')).toThrow('invalid_room_link');
+    expect(() => agentInstallCommand('https://user:secret@khala.example/channel/1')).toThrow('invalid_room_link');
   });
 
   it('projects one content-free connected row from runtime and ledger metadata', async () => {
@@ -87,7 +87,7 @@ describe('connector agent presence source', () => {
         ownerDisplayName: 'Owner',
       }),
       lastReceipt: async () => receipt,
-      installCommand: async () => "khala connect 'https://khala.example/room/link'",
+      installCommand: async () => "khala connect 'https://khala.example/channel/link'",
       subscribe: () => () => undefined,
     }, { now: () => new Date('2026-09-19T12:00:01.000Z') });
 
@@ -100,7 +100,7 @@ describe('connector agent presence source', () => {
         connection: 'connected',
         routeLabel: 'Codex CLI',
         lastReceipt: { kind: 'context_consumed', observedAt: receipt.observedAt },
-        installCommand: "khala connect 'https://khala.example/room/link'",
+        installCommand: "khala connect 'https://khala.example/channel/link'",
       }],
     });
   });
@@ -128,7 +128,7 @@ describe('connector agent presence source', () => {
     expect(snapshot.agents[0]).toMatchObject({ connection: 'offline', routeLabel: 'Khala skill' });
   });
 
-  it('does not expose a binding to another room and forwards metadata subscriptions', async () => {
+  it('does not expose a binding to another channel and forwards metadata subscriptions', async () => {
     const unsubscribe = vi.fn();
     const subscribe = vi.fn(() => unsubscribe);
     const source = createAgentPresenceSource(runtime(status()), {

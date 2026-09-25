@@ -1,7 +1,7 @@
 # Invitation admission
 
 `createAdmissionService` implements the KHA-105 `AdmissionPort` against injected
-identity, control-store, room-authority, and membership/history ports. The module
+identity, control-store, channel-authority, and membership/history ports. The module
 does not choose a messaging substrate.
 
 The creator selects one versioned policy on each `share` call:

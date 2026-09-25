@@ -1,5 +1,5 @@
 ---
-title: "KHA-116 Subscribe to encrypted chat events - Plan"
+title: "KHA-116 Subscribe to encrypted channel events - Plan"
 type: feat
 date: 2026-09-16
 topic: encrypted-live-subscription
@@ -10,17 +10,17 @@ execution: code
 origin: docs/product/tickets/KHA-116.md
 ---
 
-# KHA-116 Subscribe to encrypted chat events - Plan
+# KHA-116 Subscribe to encrypted channel events - Plan
 
 ## Goal Capsule
 
-Keep an attached owner connector aware of chat events through live subscription plus durable catch-up. Dependencies: KHA-101, KHA-105, KHA-106. Follow the approved scope card and the units below. A plan is not evidence that the proposed integration works. All implementation surfaces listed here are proposed unless a source explicitly identifies existing code.
+Keep an attached owner connector aware of channel events through live subscription plus durable catch-up. Dependencies: KHA-101, KHA-105, KHA-106. Follow the approved scope card and the units below. A plan is not evidence that the proposed integration works. All implementation surfaces listed here are proposed unless a source explicitly identifies existing code.
 
 ## Product Contract
 
 ### Summary
 
-Keep an attached owner connector aware of chat events through live subscription plus durable catch-up.
+Keep an attached owner connector aware of channel events through live subscription plus durable catch-up.
 
 ### Problem Frame
 

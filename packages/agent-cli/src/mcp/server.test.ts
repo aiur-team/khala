@@ -10,7 +10,7 @@ type Response = Readonly<{
   id: string | number | null;
   result?: Readonly<{
     protocolVersion?: string;
-    tools?: readonly Readonly<{ name: string; inputSchema: Readonly<{ additionalProperties: boolean }> }>[];
+    tools?: readonly Readonly<{ name: string; description: string; inputSchema: Readonly<{ additionalProperties: boolean }> }>[];
     structuredContent?: Readonly<Record<string, unknown>>;
     isError?: boolean;
   }>;
@@ -30,7 +30,11 @@ describe('MCP server', () => {
     expect(responses[0]).toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26' } });
     expect(responses[1]).toEqual({ jsonrpc: '2.0', id: 2, result: {} });
     expect(responses[2]).toMatchObject({
-      result: { tools: [{ name: 'khala_send', inputSchema: { additionalProperties: false } }] },
+      result: { tools: [{
+        name: 'khala_send',
+        description: expect.stringContaining('Khala channel'),
+        inputSchema: { additionalProperties: false },
+      }] },
     });
     expect(client.sent).toEqual([{ bindingId: 'binding-1', body: 'hello' }]);
     expect(responses[3]).toMatchObject({ id: 4, result: { structuredContent: { kind: 'accepted', eventId: 'event-1' } } });

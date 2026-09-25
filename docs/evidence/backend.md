@@ -54,7 +54,7 @@ The comparison is an engineering inventory, not a measured time-saving percentag
 and [Postgres configuration](https://element-hq.github.io/synapse/latest/postgres.html)
 were refreshed at implementation. [Netlify Blobs documentation](https://docs.netlify.com/build/data-and-storage/netlify-blobs/)
 describes consistency and conditional writes; these are inputs to future control
-state design, not evidence that a full chat protocol is already implemented.
+state design, not evidence that a full channel protocol is already implemented.
 
 ## Conditional adoption decision
 

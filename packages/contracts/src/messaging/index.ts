@@ -24,10 +24,12 @@ export {
   decodeUnavailableEventRef, digestMessageContent, encodeMessageContent, isContentDigest, sameEventRef, verifyContentDigest,
 } from './events';
 export {
+  type ChannelMembership, type ChannelPort, type ChannelRejection, type ChannelSnapshot, type ChannelSummary,
   type IntroBatch, type RoomMembership, type RoomPort, type RoomRejection, type RoomSnapshot, type RoomSummary,
   type SendState, type TimelinePage,
-  decodeRoomSnapshot, decodeRoomSummary, decodeSendState, decodeTimelinePage,
-} from './rooms';
+  decodeChannelSnapshot, decodeChannelSummary, decodeRoomSnapshot, decodeRoomSummary, decodeSendState, decodeTimelinePage,
+  readChannelSummary, readRoomSummary,
+} from './channels';
 export {
   type DevicePort, type DeviceReason, type DeviceRejection, type DeviceState, type DeviceView,
   DEVICE_REASONS, decodeDeviceView,

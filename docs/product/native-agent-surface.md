@@ -1,6 +1,6 @@
 # Native agent surface — summary for the owner
 
-2026-09-18. Answers the direction recorded as [P15](decisions.md): agents install a CLI, native mechanism first, a Khala skill as the fallback, humans get a UI in the same room.
+2026-09-18. Answers the direction recorded as [P15](decisions.md): agents install a CLI, native mechanism first, a Khala skill as the fallback, humans get a UI in the same channel.
 
 Every CLI claim below was produced by running the command on the planning host on 2026-09-18. Nothing is asserted from documentation or memory. Full detail and the ticket decomposition are in [the plan](../plans/2026-09-18-kha-145-native-agent-surface-plan.md); the product contract is in [the requirements](../plans/2026-09-18-kha-145-native-agent-surface-requirements.md).
 
@@ -79,10 +79,10 @@ The composer, live timeline, attribution, review selection and approval controls
 
 | Gap | Owner | Status |
 | --- | --- | --- |
-| Browser entry point, bundle, router, live `RoomPort` | KHA-132 | Not landed. `netlify.toml` publishes `apps/web/dist`, which no build step produces |
+| Browser entry point, bundle, router, live `ChannelPort` | KHA-132 | Not landed. `netlify.toml` publishes `apps/web/dist`, which no build step produces |
 | Real `ReviewUiPort` and an owner-authenticated approval route | KHA-134 | Not landed |
-| A messaging substrate behind `RoomSubstrate` | G-SUBSTRATE | Open. No live transport exists, so nothing receives yet |
-| **A room page that puts composer, timeline and review together** | **KHA-152, new** | Nothing composes them today |
+| A messaging substrate behind `ChannelSubstrate` | G-SUBSTRATE | Open. No live transport exists, so nothing receives yet |
+| **A channel page that puts composer, timeline and review together** | **KHA-152, new** | Nothing composes them today |
 | **Agent presence: which agent is connected, on which route, and the install command to hand over** | **KHA-152, new** | No such surface exists anywhere |
 | `/api/human/*` and `/api/agent/*` return 503 `feature_unavailable` | KHA-132, KHA-133 | Their producer modules are absent by design until those tickets land |
 
@@ -95,7 +95,7 @@ So the genuinely new UI work is one page and one panel. Everything else is an ex
 3. **Hidden and undocumented surfaces move.** `crossSessionInbound`, the messaging socket and the session registry are not in either CLI's public help. A minor version bump can remove them without a deprecation. Every capability record is pinned to an exact version and no semver promotion is allowed, which contains the blast radius but does not prevent it.
 4. **G-SUBSTRATE gates the proof of the whole loop.** Without a transport, KHA-153 can only demonstrate against fakes. The native surface can be complete and still unprovable end to end.
 5. **The airlock is only as strong as the connector host.** Every route delivers released bytes to a process on the same machine as the agent. P04 already disclaims resistance to an agent with unrestricted access to the connector host; nothing here changes that, and the presence panel must not imply otherwise.
-6. **Cloud and desktop are unplanned.** `codex remote-control pair` and `claude --cloud` exist and are out of scope per P15. If the owner later wants an agent in a cloud session to join a room, that is new work, not a configuration of this one.
+6. **Cloud and desktop are unplanned.** `codex remote-control pair` and `claude --cloud` exist and are out of scope per P15. If the owner later wants an agent in a cloud session to join a channel, that is new work, not a configuration of this one.
 
 ## What changes in the tracker
 
@@ -104,5 +104,5 @@ So the genuinely new UI work is one page and one panel. Everything else is an ex
 | KHA-103 | Amended. Its "no supported route" conclusion is scoped to third-party attachment; KHA-145 asks the agent-installed question instead |
 | KHA-117 (issue #26) | Amended by KHA-149. The fail-closed adapter keeps its checks; only the final refusal is replaced, and only if KHA-145 pins a route |
 | KHA-118 | Amended by KHA-150. `codex queue` is added as route A; the proven app-server route stays as route B |
-| KHA-133 (issue #42) | Amended by KHA-153. Adapter selection moves from a single fail-closed adapter to a capability-driven choice, and the runtime must expose agent presence to the room page. Issue #42's bootstrap-restart trap and terminal-revocation rule are carried into KHA-153's test scenarios |
+| KHA-133 (issue #42) | Amended by KHA-153. Adapter selection moves from a single fail-closed adapter to a capability-driven choice, and the runtime must expose agent presence to the channel page. Issue #42's bootstrap-restart trap and terminal-revocation rule are carried into KHA-153's test scenarios |
 | KHA-106 | Amended by KHA-147, the only ticket permitted to write `packages/contracts/src/delivery/` |

@@ -63,7 +63,7 @@ const HISTORY_PRESENTATION: Record<RecoveryView['history'], Readonly<{
   available: {
     label: 'History available',
     tone: 'positive',
-    message: 'This device can decrypt the available room history.',
+    message: 'This device can decrypt the available channel history.',
   },
   partial: {
     label: 'History partially available',
@@ -73,7 +73,7 @@ const HISTORY_PRESENTATION: Record<RecoveryView['history'], Readonly<{
   unavailable: {
     label: 'History keys unavailable',
     tone: 'critical',
-    message: 'This device cannot decrypt earlier messages. This does not mean the room has no messages.',
+    message: 'This device cannot decrypt earlier messages. This does not mean the channel has no messages.',
   },
 };
 
@@ -122,16 +122,16 @@ const OPERATION_PRESENTATIONS: Record<string, OperationPresentation> = {
       label: 'Revocation outcome unknown', tone: 'critical', message: 'Inspect this operation before taking another action.', alert: true,
     },
     'closure:pending': {
-      label: 'Closure pending', tone: 'neutral', message: 'Room closure is in progress.', alert: false,
+      label: 'Closure pending', tone: 'neutral', message: 'Channel closure is in progress.', alert: false,
     },
     'closure:complete': {
-      label: 'Closure complete', tone: 'positive', message: 'New messages stopped and the room was removed from your view. Local cleanup was requested.', alert: false,
+      label: 'Closure complete', tone: 'positive', message: 'New messages stopped and the channel was removed from your view. Local cleanup was requested.', alert: false,
     },
     'closure:partial': {
-      label: 'Closure partially complete', tone: 'caution', message: 'Completed: new messages stopped and the room was removed from your view. Remaining: local cleanup did not complete on every owner device.', alert: true,
+      label: 'Closure partially complete', tone: 'caution', message: 'Completed: new messages stopped and the channel was removed from your view. Remaining: local cleanup did not complete on every owner device.', alert: true,
     },
     'closure:failed': {
-      label: 'Closure failed', tone: 'critical', message: 'No complete room closure was confirmed.', alert: true,
+      label: 'Closure failed', tone: 'critical', message: 'No complete channel closure was confirmed.', alert: true,
     },
     'closure:outcome_unknown': {
       label: 'Closure outcome unknown', tone: 'critical', message: 'Inspect this operation before taking another action.', alert: true,
@@ -143,7 +143,7 @@ function operationPresentation(operation: Exclude<RecoveryOperation, { kind: 'id
     return {
       label: 'Closure partially complete',
       tone: 'caution',
-      message: 'Some room-closure effects completed and some remain unresolved. Inspect the operation before taking another action.',
+      message: 'Some channel-closure effects completed and some remain unresolved. Inspect the operation before taking another action.',
       alert: true,
     };
   }
@@ -173,7 +173,7 @@ function ConsequenceList({ consequences }: { consequences: ClosureConsequences }
   return (
     <ul className="recovery-panel__consequences">
       {consequences.stopsNewMessages ? <li>New messages will stop.</li> : null}
-      {consequences.removesFromOwnerView ? <li>The room will be removed from your view.</li> : null}
+      {consequences.removesFromOwnerView ? <li>The channel will be removed from your view.</li> : null}
       {consequences.requestsLocalCleanup ? <li>Local cleanup will be requested on your devices.</li> : null}
       {!consequences.recallsDeliveredCopies ? (
         <li>Copies already delivered to participants or models cannot be recalled.</li>
@@ -248,7 +248,7 @@ function RecoveryPanelContent({
   }
 
   return (
-    <Panel heading="Recovery and room access">
+    <Panel heading="Recovery and channel access">
       <div className="recovery-panel__facts" aria-describedby={historyDescriptionId}>
         <StatusBadge
           tone={view.identityState === 'signed_in' ? 'positive' : 'critical'}
@@ -280,7 +280,7 @@ function RecoveryPanelContent({
 
       {view.operation.kind === 'closure' && view.closure ? (
         <div className="recovery-panel__confirmation">
-          <h3>Room {view.closure.roomId}</h3>
+          <h3>Channel {view.closure.roomId}</h3>
           {view.operation.state === 'failed' || view.operation.state === 'outcome_unknown' ? (
             <ClosureLimits />
           ) : (
@@ -293,7 +293,7 @@ function RecoveryPanelContent({
       ) : null}
 
       {actionsAvailable ? (
-        <div className="recovery-panel__actions" aria-label="Available recovery and room actions">
+        <div className="recovery-panel__actions" aria-label="Available recovery and channel actions">
           {view.revocationTargets.map(target => {
             const targetAllowed = view.allowedActions.includes(target.targetKind === 'device' ? 'revoke_device' : 'revoke_binding');
             return (
@@ -319,7 +319,7 @@ function RecoveryPanelContent({
                 setSelection({ kind: 'closure' });
               }}
             >
-              Close room
+              Close channel
             </button>
           ) : null}
         </div>
@@ -332,7 +332,7 @@ function RecoveryPanelContent({
       {view.identityState !== 'signed_in'
       || (view.operation.kind === 'idle' && view.allowedActions.length === 0 && view.recoveryUnavailableReason === null) ? (
         <p className="recovery-panel__unavailable" role="note">
-          Room actions are unavailable for the current account and capability context.
+          Channel actions are unavailable for the current account and capability context.
           {view.closure?.unavailableReason ? ` Closure: ${humanize(view.closure.unavailableReason)}.` : ''}
         </p>
       ) : null}
@@ -350,11 +350,11 @@ function RecoveryPanelContent({
 
       {selection?.kind === 'closure' && closureCurrent && view.closure && actionsAvailable ? (
         <div className="recovery-panel__confirmation" role="alert">
-          <h3>Close room {view.closure.roomId}?</h3>
+          <h3>Close channel {view.closure.roomId}?</h3>
           <ConsequenceList consequences={view.closure.consequences} />
           <p>Service retention is governed separately; closure promises no retention window or global erasure.</p>
           <div className="recovery-panel__confirmation-actions">
-            <button type="button" onClick={submitSelection}>Confirm room closure</button>
+            <button type="button" onClick={submitSelection}>Confirm channel closure</button>
             <button type="button" onClick={cancelLocal}>Cancel</button>
           </div>
         </div>
@@ -368,7 +368,7 @@ function RecoveryPanelContent({
                 ? 'Recovery in progress'
                 : view.operation.kind === 'revocation'
                   ? 'Revocation in progress'
-                  : 'Close room'}
+                  : 'Close channel'}
             </button>
           ) : null}
           {operationIsInspectable(view.operation) ? (
@@ -416,7 +416,7 @@ function OwnedRecoveryPanel({
     : null;
 
   if (controller === null) {
-    return <Panel heading="Recovery and room access"><p role="status">Loading room access…</p></Panel>;
+    return <Panel heading="Recovery and channel access"><p role="status">Loading channel access…</p></Panel>;
   }
 
   return (

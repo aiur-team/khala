@@ -68,7 +68,7 @@ The rule sits after `/api/*` and before the SPA fallback, and it needs
 at `/` without consulting the rule.
 
 `/api/*` rewrites to the generated control function before the SPA fallback is
-considered, so a reload on a deep link (e.g. a shared chat room) serves
+considered, so a reload on a deep link (for example, a shared channel) serves
 `index.html` while an API error stays a structured JSON response — never HTML.
 Direct invocation of the Netlify function URL
 (`/.netlify/functions/khala-control/...`) is normalized back to the same

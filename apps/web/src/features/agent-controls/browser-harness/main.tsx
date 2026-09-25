@@ -32,7 +32,7 @@ const CONFIG: AgentControlsConfig = {
   // enables controls — matching the real host's authenticated-owner case.
   viewerOwnerId: OWNER_ID,
   agentLabel: 'agent-harness',
-  roomLabel: 'room-harness',
+  roomLabel: 'channel-harness',
 };
 
 const generation = 0;

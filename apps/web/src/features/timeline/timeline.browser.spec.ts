@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = join(here, 'browser-harness');
 
 // Real headless Chromium against the production TimelineScreen/controller/
-// message-renderer, driven by a synthetic in-memory RoomPort (no real
+// message-renderer, driven by a synthetic in-memory ChannelPort (no real
 // network, credentials or endpoints). Named `.browser.spec.ts` (not
 // `.browser.test.ts`) to stay outside vitest's `*.test.{ts,tsx}` glob, same
 // as `shell.browser.spec.ts`.

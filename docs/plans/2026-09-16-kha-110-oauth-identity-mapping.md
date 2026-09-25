@@ -153,7 +153,7 @@ G-ADMISSION determines account-linking/ownership semantics; G-SUBSTRATE determin
 
 - Remote account created with lost response is adopted on retry without duplicate account.
 - Competing same-owner requests converge; conflicting provider mapping fails explicitly.
-- Messaging outage leaves retryable pending mapping, not authenticated ready chat.
+- Messaging outage leaves retryable pending mapping, not authenticated ready channel.
 
 **Verification:** The listed scenarios pass in the owned tests; record the observed result and relevant version/generation. A mocked result proves only module behavior, not a provider capability.
 

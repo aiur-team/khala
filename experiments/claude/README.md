@@ -1,7 +1,7 @@
 # Claude existing-session attachment probe (KHA-103)
 
 A bounded experiment that asks whether an **already existing** Claude Code session can arrange its own
-notification from a Khala chat link, consume a released message while idle and while busy, and keep its
+notification from a Khala channel link, consume a released message while idle and while busy, and keep its
 identity and context. Results and the route decision live in [`docs/evidence/claude.md`](../../docs/evidence/claude.md).
 
 This is an isolated npm package. It does not touch root manifests and needs no root install.
