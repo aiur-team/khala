@@ -238,6 +238,11 @@ Acceptance:
 - Hard abort is disabled. Capability text says `steer` means "next tool
   boundary". Untrusted or unverified installations report `unknown` or
   **awaiting hook review** with a reason.
+- Stop (decision 36; revocation is owned by `stop-control`): once the binding
+  is revoked, every hook returns without injecting anything, no pull or
+  acknowledgement runs for that binding, and the channel stays viewable. The
+  adapter never kills, signals, or asserts the exit of the user's Codex
+  process; the TUI keeps running as a plain Codex session.
 
 **Wrong-implementation test:** start a real Codex TUI with default settings,
 trust the hooks once, and run a 20-second tool. Enqueue a body containing a
@@ -247,7 +252,10 @@ TUI, if the marker appears in any argv or environment, if `sync` injects at
 `PostToolUse`, if `async` injects before an explicit read, if `steer` waits past
 the next tool boundary, if a same-turn hook duplicates the batch, if the rollout
 never shows the batch, or if a SIGKILL between offer and acknowledgement loses
-the batch or double-delivers it after acknowledgement.
+the batch or double-delivers it after acknowledgement. Then revoke the binding
+through `stop-control`, enqueue another marked batch, and run a tool and end a
+turn: fail if any hook injects it, or if the Codex process ID is gone or was
+sent a signal.
 
 ### Contract 2: Idle wake
 
@@ -269,9 +277,13 @@ Acceptance:
 - For an unsupported version, or when the queue command fails, capabilities
   state that idle agents receive messages only at their next turn (decision 34).
   Never fall back to launching Codex or typing into a screen.
+- After Stop revokes the binding (decision 36, `stop-control`), no `codex queue`
+  wake runs for that session, including a wake already in flight, and the
+  Codex process is never killed or signalled.
 
 **Wrong-implementation test:** enqueue a marked batch while the TUI is idle,
 trigger the wake, and poll `/proc`. Fail if the marker or token appears in any
 `cmdline` or `environ`, if delivery bypasses `listening-mode-pull`, if two
-notices produce two offers in the same turn, or if an idle `async` session is
-woken.
+notices produce two offers in the same turn, if an idle `async` session is
+woken, or if any `codex queue` process runs for the session after its binding
+is revoked by Stop.
