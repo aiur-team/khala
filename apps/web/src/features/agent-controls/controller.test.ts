@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   BindingId, CommandId, OwnerId, ParticipantId, PolicyAck, RoomId, SessionBinding,
 } from '@khala/contracts/delivery/index';
-import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
+import { decodeDeliveryLimits, unknownModeSupportMap } from '@khala/contracts/delivery/index';
 import type { Disposer } from '@khala/contracts/messaging/index';
 import { createAgentControlsController } from './controller';
 import type { AgentControlsConfig } from './controller';
@@ -39,6 +39,7 @@ const LIMITS = (() => {
   if (!decoded.ok) throw new Error('invalid fixture limits');
   return decoded.value;
 })();
+const MODES = unknownModeSupportMap('test-codex-interactive', 'Test fixture has no primary mode proof.', '1.0.0');
 
 function policy(overrides: Partial<PolicySnapshot> = {}): PolicySnapshot {
   return {
@@ -56,7 +57,7 @@ function snapshot(overrides: Partial<AgentControlsSnapshot> = {}): AgentControls
     binding: BINDING,
     bindingStatus: 'active',
     capabilities: {
-      v: 2,
+      v: 3,
       harness: 'codex',
       version: '1.0.0',
       adapterVersion: '1.0.0',
@@ -68,6 +69,8 @@ function snapshot(overrides: Partial<AgentControlsSnapshot> = {}): AgentControls
       reconcileByReleaseId: 'while_queued',
       limits: LIMITS,
       evidenceRef: 'evidence-1',
+      modes: MODES,
+      acknowledgement: 'unknown',
     },
     policy: policy(),
     connection: 'connected',
@@ -156,9 +159,9 @@ describe('createAgentControlsController — initial state', () => {
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot({
       capabilities: {
-        v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'unsupported',
+        v: 3, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'unsupported',
         existingSession: 'unknown', immediateNotification: 'unknown', busy: 'unknown', receiptEvidence: [],
-        reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: null,
+        reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: null, modes: MODES, acknowledgement: 'unknown',
       },
     }));
     const view = controller.getView();
@@ -172,9 +175,9 @@ describe('createAgentControlsController — initial state', () => {
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot({
       capabilities: {
-        v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
+        v: 3, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
         existingSession: 'unsupported', immediateNotification: 'unknown', busy: 'unknown', receiptEvidence: [],
-        reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: 'evidence-1',
+        reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: 'evidence-1', modes: MODES, acknowledgement: 'unknown',
       },
     }));
     const view = controller.getView();
@@ -187,9 +190,9 @@ describe('createAgentControlsController — initial state', () => {
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot({
       capabilities: {
-        v: 2, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
+        v: 3, harness: 'codex', version: '1.0.0', adapterVersion: '1.0.0', support: 'tested',
         existingSession: 'unknown', immediateNotification: 'unknown', busy: 'unknown', receiptEvidence: [],
-        reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: 'evidence-1',
+        reconcileByReleaseId: 'unknown', limits: LIMITS, evidenceRef: 'evidence-1', modes: MODES, acknowledgement: 'unknown',
       },
     }));
     const view = controller.getView();

@@ -35,6 +35,7 @@ describe('HarnessCapabilities', () => {
   it('claims for the proven Codex route only what KHA-104 observed', () => {
     expect(decodeHarnessCapabilities(exact.capabilities)).toEqual({ ok: true, value: exact.capabilities });
     expect(exact.capabilities).toMatchObject({
+      v: 3,
       harness: 'codex',
       version: '0.154.0',
       support: 'tested',
@@ -42,6 +43,10 @@ describe('HarnessCapabilities', () => {
       reconcileByReleaseId: 'while_queued',
       busy: 'queue',
       evidenceRef: 'docs/evidence/codex.md',
+      acknowledgement: 'unknown',
+    });
+    expect(exact.capabilities.modes).toMatchObject({
+      steer: { status: 'unknown' }, sync: { status: 'unknown' }, async: { status: 'unknown' },
     });
   });
 
@@ -86,6 +91,77 @@ describe('HarnessCapabilities', () => {
   it('rejects the v1 capabilities envelope after the v2 route expansion', () => {
     expect(decodeHarnessCapabilities({ ...exact.capabilities, v: 1 }))
       .toEqual({ ok: false, code: 'invalid_version', field: 'v' });
+  });
+
+  it('rejects malformed v3 capability envelopes', () => {
+    const missingModes = structuredClone(exact.capabilities) as Record<string, unknown>;
+    delete missingModes.modes;
+    expect(decodeHarnessCapabilities(missingModes))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'modes' });
+
+    const missingAcknowledgement = structuredClone(exact.capabilities) as Record<string, unknown>;
+    delete missingAcknowledgement.acknowledgement;
+    expect(decodeHarnessCapabilities(missingAcknowledgement))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'acknowledgement' });
+
+    expect(decodeHarnessCapabilities({ ...exact.capabilities, unexpected: true }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'unexpected' });
+    expect(decodeHarnessCapabilities({ ...exact.capabilities, acknowledgement: 'immediate' }))
+      .toEqual({ ok: false, code: 'invalid_field', field: 'acknowledgement' });
+    expect(decodeHarnessCapabilities({
+      ...exact.capabilities,
+      modes: {
+        ...exact.capabilities.modes,
+        steer: { ...exact.capabilities.modes.steer, testedVersion: 'different-version' },
+      },
+    })).toEqual({ ok: false, code: 'invalid_field', field: 'modes.steer.testedVersion' });
+  });
+
+  it('decodes a retained v2 envelope into a conservative v3 view', () => {
+    const legacy = structuredClone(exact.capabilities) as Record<string, unknown>;
+    legacy.v = 2;
+    delete legacy.modes;
+    delete legacy.acknowledgement;
+    const decoded = decodeHarnessCapabilities(legacy);
+    expect(decoded).toMatchObject({
+      ok: true,
+      value: {
+        v: 3,
+        acknowledgement: 'unknown',
+        modes: {
+          steer: { status: 'unknown' },
+          sync: { status: 'unknown' },
+          async: { status: 'unknown' },
+        },
+      },
+    });
+    if (decoded.ok) {
+      expect(Object.values(decoded.value.modes).every(mode => mode.reason?.includes('v2'))).toBe(true);
+    }
+  });
+
+  it('normalizes maximum-length v2 identifiers into a decodable v3 envelope', () => {
+    const legacy = structuredClone(exact.capabilities) as Record<string, unknown>;
+    legacy.v = 2;
+    legacy.harness = 'h'.repeat(512);
+    legacy.adapterVersion = 'a'.repeat(512);
+    delete legacy.modes;
+    delete legacy.acknowledgement;
+
+    const normalized = decodeHarnessCapabilities(legacy);
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      expect(normalized.value.modes.steer.route).toBe('legacy-v2-unknown-steer');
+      expect(decodeHarnessCapabilities(normalized.value)).toEqual({ ok: true, value: normalized.value });
+    }
+  });
+
+  it('keeps acknowledgement independent of otherwise identical mode support', () => {
+    for (const acknowledgement of ['unknown', 'unsupported', 'batch_token_next_call'] as const) {
+      expect(decodeHarnessCapabilities({ ...exact.capabilities, acknowledgement })).toEqual({
+        ok: true, value: { ...exact.capabilities, acknowledgement },
+      });
+    }
   });
 
   it('keeps the Claude session and every foreign or generic route out of support claims', () => {

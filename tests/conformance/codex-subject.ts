@@ -9,7 +9,7 @@
 // Each seam calls `checkpoint` at the fault's boundary, so an injected fault that the
 // adapter never reaches is reported unfired.
 
-import type { DeliveryReceipt, HarnessCapabilities, HarnessPort } from '@khala/contracts/delivery/index';
+import { type DeliveryReceipt, type HarnessCapabilities, type HarnessPort, unknownModeSupportMap } from '@khala/contracts/delivery/index';
 import {
   CODEX_ADAPTER_VERSION, CODEX_EVIDENCE_REF, CODEX_HARNESS, CODEX_RECEIPT_EVIDENCE, type Clock, type EvidenceSink,
   TESTED_CODEX_VERSIONS, createCodexHarness, createCodexReceiptTracker,
@@ -29,7 +29,7 @@ const FAKE_EPOCH_MS = Date.UTC(2026, 8, 18);
 /** The capability record the adapter must report for a healthy tested host, stated independently. */
 export function codexCapabilities(): HarnessCapabilities {
   return {
-    v: 2,
+    v: 3,
     harness: CODEX_HARNESS,
     version: CODEX_VERSION,
     adapterVersion: CODEX_ADAPTER_VERSION,
@@ -41,6 +41,12 @@ export function codexCapabilities(): HarnessCapabilities {
     reconcileByReleaseId: 'while_queued',
     limits: fixtureLimits,
     evidenceRef: CODEX_EVIDENCE_REF,
+    modes: unknownModeSupportMap(
+      'codex-interactive-hooks',
+      'Khala-hosted app-server evidence is secondary and cannot prove delivery into the user-owned Codex TUI.',
+      CODEX_VERSION,
+    ),
+    acknowledgement: 'unknown',
   };
 }
 

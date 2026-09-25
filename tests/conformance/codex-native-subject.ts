@@ -1,4 +1,4 @@
-import type { DeliveryReceipt, HarnessCapabilities, HarnessPort } from '@khala/contracts/delivery/index';
+import { type DeliveryReceipt, type HarnessCapabilities, type HarnessPort, unknownModeSupportMap } from '@khala/contracts/delivery/index';
 import {
   CODEX_HARNESS, CODEX_NATIVE_CLI_ADAPTER_VERSION, CODEX_NATIVE_CLI_EVIDENCE_REF,
   CODEX_NATIVE_CLI_RECEIPT_EVIDENCE, TESTED_CODEX_VERSIONS, type CodexNativeCliOutcome,
@@ -17,7 +17,7 @@ const FAKE_EPOCH_MS = Date.UTC(2026, 8, 18);
 
 export function codexNativeCapabilities(): HarnessCapabilities {
   return {
-    v: 2,
+    v: 3,
     harness: CODEX_HARNESS,
     version: CODEX_VERSION,
     adapterVersion: CODEX_NATIVE_CLI_ADAPTER_VERSION,
@@ -29,6 +29,12 @@ export function codexNativeCapabilities(): HarnessCapabilities {
     reconcileByReleaseId: 'unsupported',
     limits: fixtureLimits,
     evidenceRef: CODEX_NATIVE_CLI_EVIDENCE_REF,
+    modes: unknownModeSupportMap(
+      'codex-interactive-native',
+      'The native queue proves notification only; idle agents receive messages only at their next turn until payload delivery is proved.',
+      CODEX_VERSION,
+    ),
+    acknowledgement: 'unknown',
   };
 }
 

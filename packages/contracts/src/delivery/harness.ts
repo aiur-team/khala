@@ -5,6 +5,10 @@ import {
   type Decoded, type DeliveryLimits, array, decodeWith, elementField, fail, identifier, literal, nullable,
   object, readDeliveryLimits,
 } from './decode';
+import {
+  ACKNOWLEDGEMENT_SUPPORT, type AcknowledgementSupport, type ModeSupportMap,
+  readModeSupportMap, unknownModeSupportMap,
+} from './listening-mode';
 import type { SessionBinding } from './binding';
 import type { ReleaseId } from './ids';
 import type { ReleasedJob } from './jobs';
@@ -45,8 +49,13 @@ export const IMMEDIATE_NOTIFICATION_SUPPORT = [
  */
 export const RECONCILE_SUPPORT = ['unknown', 'unsupported', 'while_queued'] as const;
 
+// Retained v2 envelopes have no listening-mode route evidence. Keep the
+// synthesized route independent of their (individually valid) identifiers so
+// the normalized v3 value remains within the identifier byte limit.
+const LEGACY_V2_UNKNOWN_ROUTE = 'legacy-v2-unknown';
+
 export type HarnessCapabilities = Readonly<{
-  v: 2;
+  v: 3;
   harness: string;
   version: string;
   adapterVersion: string;
@@ -58,6 +67,8 @@ export type HarnessCapabilities = Readonly<{
   reconcileByReleaseId: (typeof RECONCILE_SUPPORT)[number];
   limits: DeliveryLimits;
   evidenceRef: string | null;
+  modes: ModeSupportMap;
+  acknowledgement: AcknowledgementSupport;
 }>;
 
 export interface Clock {
@@ -84,6 +95,8 @@ export interface HarnessPort {
 
 export function decodeHarnessCapabilities(input: unknown): Decoded<HarnessCapabilities> {
   return decodeWith(() => {
+    const record = input as { v?: unknown } | null;
+    const legacy = typeof record === 'object' && record !== null && record.v === 2;
     const r = object(input, '', [
       'v',
       'harness',
@@ -97,9 +110,10 @@ export function decodeHarnessCapabilities(input: unknown): Decoded<HarnessCapabi
       'reconcileByReleaseId',
       'limits',
       'evidenceRef',
+      ...(legacy ? [] : ['modes', 'acknowledgement']),
     ]);
     const v = r.field('v');
-    if (v !== 2) fail(r.at('v'), 'invalid_version');
+    if (v !== 2 && v !== 3) fail(r.at('v'), 'invalid_version');
     const evidenceValues = array(r.field('receiptEvidence'), r.at('receiptEvidence'));
     const seen = new Set<ReceiptKind>();
     const receiptEvidence = evidenceValues.map((value, index) => {
@@ -112,11 +126,26 @@ export function decodeHarnessCapabilities(input: unknown): Decoded<HarnessCapabi
     const support = literal(r.field('support'), r.at('support'), HARNESS_SUPPORT);
     const evidenceRef = nullable(r.field('evidenceRef'), value => identifier(value, r.at('evidenceRef')));
     if (support === 'tested' && evidenceRef === null) fail(r.at('evidenceRef'), 'invalid_field');
+    const harness = identifier(r.field('harness'), r.at('harness'));
+    const harnessVersion = identifier(r.field('version'), r.at('version'));
+    const adapterVersion = identifier(r.field('adapterVersion'), r.at('adapterVersion'));
+    const modes = v === 2
+      ? unknownModeSupportMap(
+        LEGACY_V2_UNKNOWN_ROUTE,
+        'Retained v2 capability data contains no primary interactive listening-mode evidence.',
+        harnessVersion,
+      )
+      : readModeSupportMap(r.field('modes'), r.at('modes'));
+    for (const [modeName, mode] of Object.entries(modes)) {
+      if (mode.testedVersion !== undefined && mode.testedVersion !== harnessVersion) {
+        fail(`${r.at('modes')}.${modeName}.testedVersion`, 'invalid_field');
+      }
+    }
     return {
-      v,
-      harness: identifier(r.field('harness'), r.at('harness')),
-      version: identifier(r.field('version'), r.at('version')),
-      adapterVersion: identifier(r.field('adapterVersion'), r.at('adapterVersion')),
+      v: 3,
+      harness,
+      version: harnessVersion,
+      adapterVersion,
       support,
       existingSession: literal(r.field('existingSession'), r.at('existingSession'), EXISTING_SESSION_SUPPORT),
       immediateNotification: literal(
@@ -129,6 +158,10 @@ export function decodeHarnessCapabilities(input: unknown): Decoded<HarnessCapabi
       reconcileByReleaseId: literal(r.field('reconcileByReleaseId'), r.at('reconcileByReleaseId'), RECONCILE_SUPPORT),
       limits: readDeliveryLimits(r.field('limits'), r.at('limits')),
       evidenceRef,
+      modes,
+      acknowledgement: v === 2
+        ? 'unknown'
+        : literal(r.field('acknowledgement'), r.at('acknowledgement'), ACKNOWLEDGEMENT_SUPPORT),
     };
   });
 }

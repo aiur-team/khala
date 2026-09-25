@@ -7,7 +7,7 @@ import {
   type ApprovalCommand, type AuthorizationId, type BindingId, type CausalRootId, type CommandId, type DeliveryReceipt,
   type DeliveryReceiptV2, type EventRef, type HarnessCapabilities, type HarnessPort, type OwnerAuthority,
   type ReceiptKind, type ReleasedJob, type SessionBinding, type UnverifiedReleasedJob, decodeDeliveryLimits,
-  releaseFromApproval,
+  releaseFromApproval, unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import { queuedRecord } from '../claim';
 import { createMemoryLedger, type MemoryLedger } from './memory-ledger';
@@ -159,7 +159,7 @@ export function capabilities(
   overrides: Partial<HarnessCapabilities> = {},
 ): HarnessCapabilities {
   return {
-    v: 2,
+    v: 3,
     harness: 'codex',
     version: '0.154.0',
     adapterVersion: 'test-adapter',
@@ -171,6 +171,8 @@ export function capabilities(
     reconcileByReleaseId: 'while_queued',
     limits: LIMITS,
     evidenceRef: 'docs/evidence/codex.md',
+    modes: unknownModeSupportMap('test-codex-interactive', 'Test fixture has no primary mode proof.', '0.154.0'),
+    acknowledgement: 'unknown',
     ...overrides,
   };
 }

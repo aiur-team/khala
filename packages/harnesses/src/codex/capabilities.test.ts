@@ -14,11 +14,30 @@ describe('inspect', () => {
     const capabilities = await harness.inspect(binding());
     expect(decodeHarnessCapabilities(capabilities)).toEqual({ ok: true, value: capabilities });
     expect(capabilities).toEqual({
-      v: 2, harness: 'codex', version: '0.154.0', adapterVersion: 'khala-hosted-queue-1', support: 'tested',
+      v: 3, harness: 'codex', version: '0.154.0', adapterVersion: 'khala-hosted-queue-1', support: 'tested',
       existingSession: 'khala_hosted_resume', immediateNotification: 'khala_hosted_idle', busy: 'queue',
       receiptEvidence: ['transport_written', 'harness_queued', 'context_consumed', 'completed', 'outcome_unknown', 'failed'],
       reconcileByReleaseId: 'while_queued', limits, evidenceRef: 'docs/evidence/codex.md',
+      modes: {
+        steer: {
+          status: 'unknown', route: 'codex-interactive-hooks-steer', testedVersion: '0.154.0',
+          evidenceRef: null, evidenceRevision: null,
+          reason: 'Khala-hosted app-server evidence is secondary and cannot prove delivery into the user-owned Codex TUI.',
+        },
+        sync: {
+          status: 'unknown', route: 'codex-interactive-hooks-sync', testedVersion: '0.154.0',
+          evidenceRef: null, evidenceRevision: null,
+          reason: 'Khala-hosted app-server evidence is secondary and cannot prove delivery into the user-owned Codex TUI.',
+        },
+        async: {
+          status: 'unknown', route: 'codex-interactive-hooks-async', testedVersion: '0.154.0',
+          evidenceRef: null, evidenceRevision: null,
+          reason: 'Khala-hosted app-server evidence is secondary and cannot prove delivery into the user-owned Codex TUI.',
+        },
+      },
+      acknowledgement: 'unknown',
     });
+    expect(Object.values(capabilities.modes).every(mode => mode.status === 'unknown')).toBe(true);
     // Metadata-only read; the probe never resumes, starts or queues anything.
     expect(server.calls).toEqual([{ method: 'thread/read', params: { threadId: 'session-b', includeTurns: false } }]);
     expect(server.closed).toBe(server.opened);

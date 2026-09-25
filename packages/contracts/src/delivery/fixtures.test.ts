@@ -261,7 +261,10 @@ describe('public surface', () => {
   });
 
   it('imports nothing from the messaging domain', () => {
-    for (const file of ['decode.ts', 'ids.ts', 'events.ts', 'binding.ts', 'jobs.ts', 'commands.ts', 'receipts.ts', 'harness.ts']) {
+    for (const file of [
+      'decode.ts', 'ids.ts', 'events.ts', 'binding.ts', 'jobs.ts', 'commands.ts', 'receipts.ts', 'listening-mode.ts',
+      'harness.ts',
+    ]) {
       expect(readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')).not.toMatch(/messaging/);
     }
   });

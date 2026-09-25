@@ -1,0 +1,11 @@
+{
+  "name": "khala-proof",
+  "owner": { "name": "Khala interactive-claude proof" },
+  "plugins": [
+    {
+      "name": "khala-proof",
+      "source": "./plugins/khala-proof",
+      "description": "Throwaway Khala listening-mode proof plugin: hooks plus khala_* MCP tools."
+    }
+  ]
+}
