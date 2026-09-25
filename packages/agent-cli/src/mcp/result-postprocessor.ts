@@ -66,10 +66,11 @@ const worstCaseFramingBatch = {
     canonicalReleaseJson: '',
   })),
 };
+const worstCaseFraming = renderReleaseBatch(worstCaseFramingBatch.token, worstCaseFramingBatch.releases);
 
 export const MCP_MIN_SOFT_RESPONSE_BYTES = serializedResponseBytes(
   null,
-  appendBatchItem({ content: [] }, renderReleaseBatch(worstCaseFramingBatch.token, worstCaseFramingBatch.releases)),
+  appendBatchItem({ content: [] }, worstCaseFraming),
 );
 
 /**
@@ -143,8 +144,7 @@ function conservativePayloadBudget(
   primaryResult: McpToolResult,
   softResponseBytes: number,
 ): number {
-  const worstFraming = renderReleaseBatch(worstCaseFramingBatch.token, worstCaseFramingBatch.releases);
-  const fixedBytes = serializedResponseBytes(responseId, appendBatchItem(primaryResult, worstFraming));
+  const fixedBytes = serializedResponseBytes(responseId, appendBatchItem(primaryResult, worstCaseFraming));
   const available = Math.max(0, softResponseBytes - fixedBytes);
   return Math.floor(available / MAX_JSON_STRING_EXPANSION);
 }
