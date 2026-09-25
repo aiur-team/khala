@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { DeliveryReceipt, OwnerAuthority } from '@khala/contracts/delivery/index';
 import {
-  deferred, faultyLedger, makeRelease, ownerAuthority, receipt, recordOf, seed, testPolicy, world,
+  agentAcknowledgement, deferred, faultyLedger, makeRelease, ownerAuthority, receipt, recordOf, seed, testPolicy, world,
 } from './fixtures/fakes';
-import { markUnknown } from './reconcile';
+import { applyReceipt, markUnknown } from './reconcile';
 import { MAX_RECEIPTS } from './types';
 
 async function dispatchingWithoutReceipt() {
@@ -94,6 +94,43 @@ describe('restart reconciliation', () => {
 });
 
 describe('later observations', () => {
+  it('refuses agent receipts at the generic observer boundary', async () => {
+    const w = await world();
+    const dispatcher = w.dispatcher();
+    const { job } = w.add(makeRelease({ releaseId: 'release-agent-observer' }));
+    await dispatcher.enqueue(job);
+    await dispatcher.idle();
+    const before = await recordOf(w.ledger, job.releaseId);
+    const acknowledgement = agentAcknowledgement(job, {
+      observedAt: '2026-09-18T02:40:00.000Z',
+      evidenceRef: 'ack:release-agent-observer',
+    });
+
+    expect(await dispatcher.observe(acknowledgement)).toBe(false);
+    expect(await recordOf(w.ledger, job.releaseId)).toEqual(before);
+  });
+
+  it('stores trusted acknowledgement evidence idempotently without completing the job', async () => {
+    const { w, job } = await dispatchingWithoutReceipt();
+    const acknowledgement = agentAcknowledgement(job, {
+      observedAt: '2026-09-18T02:41:00.000Z',
+      evidenceRef: 'ack:release-trusted-agent',
+    });
+
+    expect(await w.ledger.transact(tx => applyReceipt(tx, acknowledgement))).toBe(true);
+    expect(await w.ledger.transact(tx => applyReceipt(tx, acknowledgement))).toBe(true);
+    const afterDuplicate = await recordOf(w.ledger, job.releaseId);
+    expect(afterDuplicate?.state).toBe('accepted');
+    expect(afterDuplicate?.receipts.filter(seen => seen.receiptId === acknowledgement.receiptId))
+      .toEqual([acknowledgement]);
+
+    expect(await w.ledger.transact(tx => applyReceipt(tx, {
+      ...acknowledgement,
+      evidenceRef: 'ack:changed-fact',
+    }))).toBe(false);
+    expect(await recordOf(w.ledger, job.releaseId)).toEqual(afterDuplicate);
+  });
+
   it('stores each receipt once and never moves a settled job backwards', async () => {
     const w = await world();
     const dispatcher = w.dispatcher();

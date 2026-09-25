@@ -105,7 +105,15 @@ but must not declare adapter-specific copies.
 
 A receipt `errorCode` comes from the closed `RECEIPT_ERROR_CODES` list and never carries
 free text. Only `failed` and `outcome_unknown` receipts carry a code, and `failed` always
-does.
+does. `DeliveryReceiptV1` preserves this original vocabulary. `DeliveryReceiptV2` adds
+exactly one paired observation: `kind: 'agent_acknowledged'` if and only if
+`source: 'agent'`; it requires a shared, non-secret `evidenceRef` and has no error code.
+
+Existing UI, harness capability, and producer APIs intentionally keep importing the
+v1-only `DeliveryReceipt`, `ReceiptKind`, and `decodeDeliveryReceipt` compatibility
+names. Durable consumers opt in to `DeliveryReceiptTransport` and
+`decodeDeliveryReceiptTransport`, which preserve either explicit version without
+promotion or fallback. This package defines no v2 producer.
 
 ## Configurable limits
 
@@ -125,7 +133,11 @@ bump its `v`. A bump is a reviewed change on both producer and consumer. `EventR
 `SessionBinding` mirror the messaging shapes and bump together with them.
 
 `HarnessCapabilities` is currently v2. Its route vocabulary widened from v1, so v1 is
-rejected rather than being reinterpreted under the newer delivery semantics.
+rejected rather than being reinterpreted under the newer delivery semantics. Delivery
+receipts instead expose explicit `decodeDeliveryReceiptV1` and
+`decodeDeliveryReceiptV2` decoders plus the storage/transport union decoder. Each
+version-specific decoder rejects the other version and the union fails closed on an
+unknown or missing discriminator.
 
 ## Open product gates
 
