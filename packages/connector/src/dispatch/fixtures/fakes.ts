@@ -310,6 +310,8 @@ export type World = {
   add(release: Release): Release;
   /** Sets the effective policy of every binding. */
   setPolicy(policy: DispatchPolicy | null): Promise<void>;
+  /** The dependencies `dispatcher()` constructs with, for compositions that build their own. */
+  deps(overrides?: Partial<DispatchDeps>): DispatchDeps;
   dispatcher(overrides?: Partial<DispatchDeps>): Dispatcher;
 };
 
@@ -351,7 +353,10 @@ export async function world(
       return release;
     },
     dispatcher(overrides = {}) {
-      return createDispatcher({
+      return createDispatcher(state.deps(overrides));
+    },
+    deps(overrides = {}) {
+      return {
         ledger,
         limits: state.limits,
         harness: state.harness,
@@ -375,7 +380,7 @@ export async function world(
         workerId: 'worker-1',
         onError: error => void state.errors.push(error),
         ...overrides,
-      });
+      };
     },
   };
   return state;

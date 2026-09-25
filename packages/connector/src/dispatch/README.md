@@ -9,7 +9,7 @@ subscription and harness; KHA-135 binds pause and budget status.
 | Port | Responsibility |
 |---|---|
 | `DispatchLedger` | One local transaction at a time: each binding's effective policy, binding state, dispatch records and causal counters. Must be serializable across processes. Work runs synchronously; a throw rolls it back. No external effect runs inside it |
-| `limits` | The dispatch share of the approved local automation profile: `maxJobsPerCausalRoot`, `maxConcurrentJobs` and `busy`. Composition injects it (`LOCAL_DISPATCH_LIMITS` in `apps/connector`); construction refuses any other shape |
+| `limits` | The dispatch share of the approved local automation profile: `maxJobsPerCausalRoot`, `maxConcurrentJobs` and `busy`. Only the internal composition injects it (`createLocalDispatcher` in `apps/internal`); hosted roots get no local limits. Construction refuses any other shape |
 | `HarnessPort` (contract) | `inspect`, `submit`, `reconcile` for the bound session |
 | `DeliveryBoundary` | The route's harness-neutral proved-boundary callback: resolves with the session and current capabilities when a claimed attempt may be delivered, or null. It delivers nothing itself and takes the dispatcher's `AbortSignal`. The signal only ends the wait: an integration must never use it to interrupt, signal or kill the user's CLI (decision 36) |
 | `approvals` | The approval a release names, from the owner connector's own ledger |
@@ -152,12 +152,26 @@ a timeout does not show whether the harness accepted the job.
 
 ## Limits
 
-The limits are an injected `DispatchLimits` value, never a caller option or a policy field. Local
-composition passes `LOCAL_DISPATCH_LIMITS`, which copies `maxJobsPerCausalRoot`,
-`maxConcurrentJobs` and `busy` from `LOCAL_AUTOMATION_LIMITS` (`{3, 1, wait}` today).
-`createDispatcher` throws a `RangeError` for limits with any other key, a limit that is not a
+The limits are an injected `DispatchLimits` value, never a caller option or a policy field. Only
+the internal composition builds them: `createLocalDispatcher` (`apps/internal/src/composition/
+local-automation/dispatch.ts`) copies `maxJobsPerCausalRoot`, `maxConcurrentJobs` and `busy` from
+the `LocalAutomationProvider`'s `limits` (`{3, 1, wait}` today) and overrides any `limits` the
+caller passes. Hosted roots (`apps/connector`, `apps/control`, `apps/web`) get no local limits and
+stay `automation_gated`; `scripts/check-boundaries.mjs` fails a hosted graph that reaches the
+profile. `createDispatcher` throws a `RangeError` for limits with any other key, a limit that is not a
 positive safe integer, or an unknown `busy` value. Automatic release is the sole enforcer of
 `maxCausalDepth`: dispatch neither requires nor derives it, and refuses limits carrying it.
+
+Which layer owns which limit:
+
+| Limit | Owner | Where |
+|---|---|---|
+| `maxCausalDepth` | Automatic release | `evaluateLocalAutomaticRelease` (`apps/internal`) |
+| `maxJobsPerCausalRoot`, `maxConcurrentJobs`, `busy` | Dispatch, per the contract | `createDispatcher`, fed by `createLocalDispatcher` |
+
+`evaluateLocalAutomaticRelease` also pre-checks the per-root and concurrency counts against its
+own release ledger before a release exists. It reads the same provider value, so it is an earlier
+gate on one profile rather than a second profile. No other layer enforces these limits.
 
 `DispatchPolicy` holds only per-binding controls: `version`, `armedAt`, `paused`, `expiresAt` and
 the `listening` projection. The ledger holds one effective policy per binding. A missing policy,

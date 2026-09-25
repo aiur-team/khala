@@ -13,7 +13,6 @@ import {
   testPolicy,
   world,
 } from '../../../../../packages/connector/src/dispatch/fixtures/fakes';
-import { LOCAL_DISPATCH_LIMITS } from './dispatch-limits';
 import { createRuntimeHarnessSelection } from './harnesses';
 import { createAgentPresenceSource, agentInstallCommand } from './presence';
 import {
@@ -48,7 +47,7 @@ const capabilities: HarnessCapabilities = {
 test('selected native capability delivers exact released bytes and reaches channel presence without pending content', async () => {
   const pendingPlaintext = 'pending plaintext must never reach an agent-facing surface';
   const releasedBytes = new TextEncoder().encode('approved release bytes');
-  const dispatchWorld = await world(testPolicy(), ['binding-integration-1'], LOCAL_DISPATCH_LIMITS);
+  const dispatchWorld = await world(testPolicy(), ['binding-integration-1']);
   const release = dispatchWorld.add(makeRelease({
     releaseId: 'release-integration-1',
     bindingId: 'binding-integration-1',
