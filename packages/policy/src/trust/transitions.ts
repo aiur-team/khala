@@ -2,8 +2,10 @@
 // returned state with their own compare-and-set and deliver the returned effects.
 
 import {
-  type BindingId, type OwnerId, type PolicyAck, type PolicySetCommand, type RoomId, samePolicySetCommandInput,
+  type BindingId, type HarnessCapabilities, type OwnerId, type PolicyAck, type PolicySetCommand, type RoomId,
+  samePolicySetCommandInput,
 } from '@khala/contracts/delivery/index';
+import { initialListeningModeControl } from '../listening-mode/store';
 import { approvedAutomation, isAutomationConfig } from './gate';
 import type {
   BindingStatus, JournalEntry, PolicyActor, PolicyChangeOutcome, PolicyChangeRejection, PolicyRevision,
@@ -48,6 +50,7 @@ export function initialTrustState(input: Readonly<{
   ownerId: OwnerId;
   generation: number;
   policyVersion: number;
+  capabilities?: HarnessCapabilities | null;
 }>): TrustState {
   const revision = baseline(input.policyVersion, input.generation);
   return {
@@ -59,6 +62,8 @@ export function initialTrustState(input: Readonly<{
     effective: revision,
     connector: null,
     journal: new Map(),
+    listeningMode: initialListeningModeControl(input, input.capabilities ?? null),
+    listeningModeJournal: new Map(),
   };
 }
 
@@ -172,11 +177,27 @@ export function applyPolicyAck(state: TrustState, ack: PolicyAck): AckTransition
  * request or acknowledgment made for the old generation is stale. A revoked
  * binding cannot be rebound into a usable trust state.
  */
-export function applyRebind(state: TrustState, generation: number, bindingStatus: BindingStatus): RebindOutcome {
+export function applyRebind(
+  state: TrustState,
+  generation: number,
+  bindingStatus: BindingStatus,
+  capabilities: HarnessCapabilities | null = null,
+): RebindOutcome {
   if (bindingStatus !== 'active') return { ok: false, code: 'binding_revoked' };
   if (!Number.isSafeInteger(generation) || generation <= state.generation) return { ok: false, code: 'stale_binding' };
   const revision = baseline(state.requested.version + 1, generation);
-  return { ok: true, state: { ...state, generation, requested: revision, effective: revision, connector: null } };
+  return {
+    ok: true,
+    state: {
+      ...state,
+      generation,
+      requested: revision,
+      effective: revision,
+      connector: null,
+      listeningMode: initialListeningModeControl({ bindingId: state.bindingId, generation }, capabilities),
+      listeningModeJournal: new Map(),
+    },
+  };
 }
 
 /** The claims a status surface may make about this binding's trust policy. */

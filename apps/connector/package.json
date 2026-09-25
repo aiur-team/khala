@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@khala/connector": "workspace:*",
-    "@khala/contracts": "workspace:*"
+    "@khala/contracts": "workspace:*",
+    "@khala/policy": "workspace:*"
   }
 }

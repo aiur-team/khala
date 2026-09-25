@@ -108,10 +108,14 @@ describe('mode commands and results', () => {
     kind => {
       const grant = {
         v: 1, kind, commandId: `command-${kind}`, bindingId: 'binding-1', expectedBindingGeneration: 2,
-        expectedVersion: 4, route: 'codex-hooks-sync', harnessVersion: '0.154.0',
+        expectedVersion: 4, mode: 'sync', route: 'codex-hooks-sync', harnessVersion: '0.154.0',
         evidenceRevision: proven.evidenceRevision, issuedAt: '2026-09-24T12:00:00Z',
-      };
+      } as const;
       expect(decodeOwnerRouteGrantCommand(grant)).toEqual({ ok: true, value: grant });
+      const withoutMode: Record<string, unknown> = { ...grant };
+      Reflect.deleteProperty(withoutMode, 'mode');
+      expect(decodeOwnerRouteGrantCommand(withoutMode))
+        .toEqual({ ok: false, code: 'invalid_field', field: 'mode' });
     },
   );
 });
@@ -146,14 +150,17 @@ describe('initial selection and grant invalidation', () => {
     };
     const input = {
       bindingId: grant.bindingId, generation: 2, grantRevision: 7, mode: 'sync' as const,
+      expectedKind: 'experimental_route' as const,
       support: { ...proven, status: 'experimental' as const },
     };
     expect(routeGrantMatches(grant, input)).toBe(true);
+    expect(routeGrantMatches({ ...grant, kind: 'hard_cancel' }, { ...input, expectedKind: 'hard_cancel' })).toBe(true);
+    expect(routeGrantMatches({ ...grant, kind: 'hard_cancel' }, input)).toBe(false);
+    expect(routeGrantMatches(grant, { ...input, expectedKind: 'hard_cancel' })).toBe(false);
     expect(routeGrantMatches(grant, { ...input, generation: 3 })).toBe(false);
     expect(routeGrantMatches(grant, { ...input, grantRevision: 8 })).toBe(false);
     expect(routeGrantMatches(grant, { ...input, support: { ...input.support, route: 'other-route' } })).toBe(false);
     expect(routeGrantMatches(grant, { ...input, support: { ...input.support, testedVersion: '0.155.0' } })).toBe(false);
     expect(routeGrantMatches(grant, { ...input, support: { ...input.support, evidenceRevision: 'changed' } })).toBe(false);
-    expect(routeGrantMatches({ ...grant, kind: 'hard_cancel' }, input)).toBe(false);
   });
 });

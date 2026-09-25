@@ -75,6 +75,7 @@ export type OwnerRouteGrantCommand = Readonly<{
   bindingId: BindingId;
   expectedBindingGeneration: number;
   expectedVersion: number;
+  mode: ListeningMode;
   route: string;
   harnessVersion: string;
   evidenceRevision: string;
@@ -91,6 +92,36 @@ export type RouteGrant = Readonly<{
   harnessVersion: string;
   evidenceRevision: string;
   grantRevision: number;
+}>;
+
+declare const agentBindingAuthority: unique symbol;
+
+/**
+ * Proof that trusted connector composition holds this exact binding generation.
+ * This is deliberately type-only: untrusted JSON has no decoder that can create it.
+ */
+export type AgentBindingAuthority = Readonly<{
+  kind: 'agent_binding';
+  bindingId: BindingId;
+  generation: number;
+  [agentBindingAuthority]: true;
+}>;
+
+/** Durable listening-mode state. Capability support and effective mode are derived. */
+export type ListeningModeControl = Readonly<{
+  bindingId: BindingId;
+  generation: number;
+  requested: ListeningMode;
+  version: number;
+  experimentalGrants: readonly RouteGrant[];
+  hardCancelGrants: readonly RouteGrant[];
+}>;
+
+/** Current-capability projection of one durable control record. */
+export type ListeningModeView = ListeningModeControl & Readonly<{
+  effective: ListeningMode | null;
+  effectiveReason: string | null;
+  support: ModeSupportMap;
 }>;
 
 const join = (field: string, key: string) => field.length === 0 ? key : `${field}.${key}`;
@@ -206,12 +237,13 @@ export function routeGrantMatches(
     generation: number;
     grantRevision: number;
     mode: ListeningMode;
+    expectedKind: RouteGrant['kind'];
     support: ModeSupport;
   }>,
 ): boolean {
   const { support } = input;
   if (support.status !== 'proven' && support.status !== 'experimental') return false;
-  return grant.kind === 'experimental_route'
+  return grant.kind === input.expectedKind
     && grant.bindingId === input.bindingId
     && grant.generation === input.generation
     && grant.grantRevision === input.grantRevision
@@ -261,7 +293,7 @@ export function decodeOwnerRouteGrantCommand(input: unknown): Decoded<OwnerRoute
   return decodeWith(() => {
     const r = object(input, '', [
       'v', 'kind', 'commandId', 'bindingId', 'expectedBindingGeneration', 'expectedVersion',
-      'route', 'harnessVersion', 'evidenceRevision', 'issuedAt',
+      'mode', 'route', 'harnessVersion', 'evidenceRevision', 'issuedAt',
     ]);
     return {
       v: version(r.field('v'), r.at('v')),
@@ -270,6 +302,7 @@ export function decodeOwnerRouteGrantCommand(input: unknown): Decoded<OwnerRoute
       bindingId: readId<'BindingId'>(r.field('bindingId'), r.at('bindingId')),
       expectedBindingGeneration: safeInteger(r.field('expectedBindingGeneration'), r.at('expectedBindingGeneration')),
       expectedVersion: safeInteger(r.field('expectedVersion'), r.at('expectedVersion')),
+      mode: literal(r.field('mode'), r.at('mode'), LISTENING_MODES),
       route: identifier(r.field('route'), r.at('route')),
       harnessVersion: identifier(r.field('harnessVersion'), r.at('harnessVersion')),
       evidenceRevision: identifier(r.field('evidenceRevision'), r.at('evidenceRevision')),
