@@ -51,6 +51,6 @@ describe('agent-readable landing instructions', () => {
     }
 
     expect(guide).toContain('`khala_send`');
-    expect(mcpSource).toContain("const TOOL_NAME = 'khala_send'");
+    expect(mcpSource).toContain("const SEND_TOOL_NAME = 'khala_send'");
   });
 });

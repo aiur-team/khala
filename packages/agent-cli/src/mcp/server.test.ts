@@ -6,9 +6,11 @@ import { Readable, Writable } from 'node:stream';
 import type { BindingId, EventRef } from '@khala/contracts/delivery/index';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openInbox, type InboxBatch, type InboxConsumer } from '../cli/inbox.js';
+import { CliError } from '../cli/errors.js';
 import { SendService } from '../cli/send.js';
 import type { AgentClientPort, InboxDelivery } from '../cli/types.js';
-import { postprocessMcpResult } from './result-postprocessor.js';
+import { postprocessMcpResult, postprocessPreselectedMcpResult } from './result-postprocessor.js';
+import type { ReadOperationPort } from './read-tool.js';
 import { runMcpServer, type McpServerOptions } from './server.js';
 
 type Request = Readonly<Record<string, unknown>>;
@@ -36,7 +38,7 @@ afterEach(async () => {
 });
 
 describe('MCP server', () => {
-  it('initializes, lists exactly khala_send, pings and sends through SendService', async () => {
+  it('initializes, lists exactly khala_send and khala_read, pings and sends through SendService', async () => {
     const client = fakeClient();
     const responses = await exchange(client, [
       request(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test' } }),
@@ -47,8 +49,9 @@ describe('MCP server', () => {
 
     expect(responses[0]).toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26' } });
     expect(responses[1]).toEqual({ jsonrpc: '2.0', id: 2, result: {} });
+    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read']);
     expect(responses[2]).toMatchObject({
-      result: { tools: [{
+      result: { tools: [ {
         name: 'khala_send',
         description: expect.stringMatching(/Khala channel.*exact batchToken.*releaseId.*solely to acknowledge/),
         inputSchema: {
@@ -61,6 +64,10 @@ describe('MCP server', () => {
             },
           },
         },
+      }, {
+        name: 'khala_read',
+        description: expect.stringMatching(/untrusted.*exact batchToken.*releaseId/i),
+        inputSchema: { additionalProperties: false, required: [] },
       }] },
     });
     expect(client.sent).toEqual([{ bindingId: 'binding-1', body: 'hello' }]);
@@ -81,6 +88,96 @@ describe('MCP server', () => {
       result: { isError: true, structuredContent: { kind: 'refused', code: 'binding_not_held' } },
     });
     expect(JSON.stringify(response)).not.toContain(secret);
+  });
+
+  it('runs khala_read through one preselected-batch postprocessing pass', async () => {
+    const selected = preselectedBatch('read-token', 'release-read', '["read-body"]');
+    const read = vi.fn<ReadOperationPort['read']>(async () => ({ kind: 'batch', batch: selected }));
+    const postprocessReadResult = vi.fn(async input => postprocessPreselectedMcpResult({
+      ...input,
+      isCurrentBinding: async () => true,
+    }));
+
+    const [response] = await exchangeWithOptions(fakeClient(), [
+      request(5, 'tools/call', {
+        name: 'khala_read', arguments: { bindingId: 'binding-1', ackBatchToken: 'prior-token' },
+      }),
+    ], { read: { read }, postprocessReadResult });
+
+    expect(read).toHaveBeenCalledOnce();
+    expect(read.mock.calls[0]?.[0]).toMatchObject({ bindingId: 'binding-1', acknowledgeToken: 'prior-token' });
+    expect(postprocessReadResult).toHaveBeenCalledOnce();
+    expect(postprocessReadResult.mock.calls[0]?.[0]).toMatchObject({ preselectedBatch: selected });
+    expect(postprocessReadResult.mock.calls[0]?.[0]).not.toHaveProperty('acknowledgeToken');
+    expect(response).toMatchObject({ result: { structuredContent: { kind: 'batch' }, content: [{}, {}] } });
+    expect(batchText(response).match(/batchToken: read-token/g)).toHaveLength(1);
+    expect(batchText(response).match(/canonicalReleaseJson:\n\["read-body"\]/g)).toHaveLength(1);
+  });
+
+  it('returns typed empty and contains operational read failures without stopping the server', async () => {
+    const read = vi.fn<ReadOperationPort['read']>()
+      .mockRejectedValueOnce(new CliError('listener_busy'))
+      .mockResolvedValueOnce({ kind: 'empty' });
+    const postprocessReadResult = vi.fn(async input => ({ kind: 'composed' as const, result: input.primaryResult }));
+
+    const responses = await exchangeWithOptions(fakeClient(), [
+      request(6, 'tools/call', { name: 'khala_read', arguments: {} }),
+      request(7, 'tools/call', { name: 'khala_read', arguments: {} }),
+      request(8, 'ping', {}),
+    ], { read: { read }, postprocessReadResult });
+
+    expect(responses).toMatchObject([
+      { id: 6, result: { isError: true, structuredContent: { kind: 'refused', code: 'listener_busy' } } },
+      { id: 7, result: { structuredContent: { kind: 'empty' }, content: [{}] } },
+      { id: 8, result: {} },
+    ]);
+    expect(postprocessReadResult).toHaveBeenCalledOnce();
+  });
+
+  it('returns a typed error when explicit-read composition is suppressed and keeps serving', async () => {
+    const selected = preselectedBatch('secret-token', 'secret-release', '["secret-body"]');
+    const read = vi.fn<ReadOperationPort['read']>(async () => ({ kind: 'batch', batch: selected }));
+    const postprocessReadResult = vi.fn()
+      .mockResolvedValueOnce({ kind: 'suppressed', code: 'binding_not_held' })
+      .mockRejectedValueOnce(new Error('secret-render-failure'));
+
+    const responses = await exchangeWithOptions(fakeClient(), [
+      request(9, 'tools/call', { name: 'khala_read', arguments: {} }),
+      request(10, 'tools/call', { name: 'khala_read', arguments: {} }),
+      request(11, 'ping', {}),
+    ], { read: { read }, postprocessReadResult });
+
+    expect(responses).toMatchObject([
+      { id: 9, result: { isError: true, structuredContent: { kind: 'refused', code: 'binding_not_held' } } },
+      { id: 10, result: { isError: true, structuredContent: { kind: 'refused', code: 'internal_error' } } },
+      { id: 11, result: {} },
+    ]);
+    expect(JSON.stringify(responses)).not.toContain('secret-token');
+    expect(JSON.stringify(responses)).not.toContain('secret-body');
+    expect(JSON.stringify(responses)).not.toContain('secret-render-failure');
+  });
+
+  it('does not read or acknowledge for notifications, invalid params, or non-tool protocol paths', async () => {
+    const read = vi.fn<ReadOperationPort['read']>(async () => ({ kind: 'empty' }));
+    const postprocessReadResult = vi.fn(async input => ({ kind: 'composed' as const, result: input.primaryResult }));
+    const chunks = [
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: {
+        name: 'khala_read', arguments: { ackBatchToken: 'notification-token' },
+      } })}\n`,
+      ...[
+        request(60, 'tools/call', { name: 'khala_read', arguments: { bindingId: 7, ackBatchToken: 'bad-binding' } }),
+        request(61, 'tools/call', { name: 'khala_read', arguments: { extra: true, ackBatchToken: 'unknown-field' } }),
+        request(62, 'tools/call', { name: 'khala_read', arguments: { ackBatchToken: 7 } }),
+        request(63, 'ping', {}),
+        request(64, 'tools/call', { name: 'unknown', arguments: { ackBatchToken: 'unknown-tool' } }),
+      ].map(item => `${JSON.stringify(item)}\n`),
+    ];
+
+    const responses = await exchangeChunksWithOptions(fakeClient(), chunks, { read: { read }, postprocessReadResult });
+
+    expect(responses.map(response => response.error?.code ?? 0)).toEqual([-32602, -32602, -32602, 0, -32602]);
+    expect(read).not.toHaveBeenCalled();
+    expect(postprocessReadResult).not.toHaveBeenCalled();
   });
 
   it('refuses unknown tools and unknown fields before calling the send port', async () => {
@@ -147,7 +244,11 @@ describe('MCP server', () => {
     const input = new Readable({ read() {} });
     const output = new WritableCapture();
     const abort = new AbortController();
-    const running = runMcpServer({ input, output, send: new SendService(fakeClient()), signal: abort.signal });
+    const running = runMcpServer({
+      input, output, send: new SendService(fakeClient()), read: emptyReadOperation(),
+      postprocessResult: identityPostprocessor, postprocessReadResult: identityReadPostprocessor,
+      signal: abort.signal,
+    });
     abort.abort();
     await expect(running).resolves.toBeUndefined();
   });
@@ -160,6 +261,9 @@ describe('MCP server', () => {
       input: Readable.from([oversized, `\n${JSON.stringify(request(2, 'ping', {}))}\n`]),
       output,
       send: new SendService(client),
+      read: emptyReadOperation(),
+      postprocessResult: identityPostprocessor,
+      postprocessReadResult: identityReadPostprocessor,
     });
     const responses = output.lines();
     expect(responses).toMatchObject([{ error: { code: -32600 } }, { id: 2, result: {} }]);
@@ -305,7 +409,10 @@ describe('MCP server', () => {
       request(41, 'tools/call', { name: 'khala_send', arguments: { message: 'second' } }),
     ].map(item => JSON.stringify(item)).join('\n') + '\n']);
 
-    const running = runMcpServer({ input, output, send: new SendService(client), postprocessResult });
+    const running = runMcpServer({
+      input, output, send: new SendService(client), read: emptyReadOperation(), postprocessResult,
+      postprocessReadResult: identityReadPostprocessor,
+    });
     await output.waitForWrite();
     expect(client.sent.map(item => item.body)).toEqual(['first']);
     expect(postprocessResult).toHaveBeenCalledOnce();
@@ -335,7 +442,8 @@ describe('MCP server', () => {
     const abort = new AbortController();
     const postprocessResult = vi.fn(async postprocessInput => postprocessInput.primaryResult);
     const running = runMcpServer({
-      input, output, send: new SendService(client), signal: abort.signal, postprocessResult,
+      input, output, send: new SendService(client), read: emptyReadOperation(), signal: abort.signal,
+      postprocessResult, postprocessReadResult: identityReadPostprocessor,
     });
     await output.waitForWrite();
 
@@ -409,7 +517,7 @@ async function exchangeChunks(client: AgentClientPort, chunks: readonly (string 
 async function exchangeWithOptions(
   client: AgentClientPort,
   requests: readonly Request[],
-  options: Pick<McpServerOptions, 'postprocessResult'>,
+  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read'>>,
 ): Promise<Response[]> {
   return exchangeChunksWithOptions(client, requests.map(item => `${JSON.stringify(item)}\n`), options);
 }
@@ -417,7 +525,7 @@ async function exchangeWithOptions(
 async function exchangeChunksWithOptions(
   client: AgentClientPort,
   chunks: readonly (string | Buffer)[],
-  options: Pick<McpServerOptions, 'postprocessResult'>,
+  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read'>>,
 ): Promise<Response[]> {
   let stdout = '';
   const output = new Writable({
@@ -430,12 +538,23 @@ async function exchangeChunksWithOptions(
     input: Readable.from(chunks),
     output,
     send: new SendService(client),
-    ...options,
+    read: options.read ?? emptyReadOperation(),
+    postprocessResult: options.postprocessResult ?? identityPostprocessor,
+    postprocessReadResult: options.postprocessReadResult ?? identityReadPostprocessor,
   });
   return stdout.trim().length === 0
     ? []
     : stdout.trim().split('\n').map(line => JSON.parse(line) as Response);
 }
+
+function emptyReadOperation(): ReadOperationPort {
+  return { async read() { return { kind: 'empty' }; } };
+}
+
+const identityPostprocessor: McpServerOptions['postprocessResult'] = async input => input.primaryResult;
+const identityReadPostprocessor: McpServerOptions['postprocessReadResult'] = async input => ({
+  kind: 'composed', result: input.primaryResult,
+});
 
 async function testInbox() {
   const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-mcp-server-'));

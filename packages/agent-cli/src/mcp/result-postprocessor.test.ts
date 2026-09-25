@@ -3,7 +3,9 @@ import type { InboxBatch, InboxConsumer, InboxItem } from '../cli/inbox.js';
 import {
   MCP_SOFT_RESPONSE_BYTES,
   createMcpResultPostprocessor,
+  mcpPayloadBudget,
   postprocessMcpResult,
+  postprocessPreselectedMcpResult,
   renderInboxBatch,
   type McpToolResult,
 } from './result-postprocessor.js';
@@ -12,6 +14,21 @@ const textEncoder = new TextEncoder();
 const digest = `sha256:${'a'.repeat(64)}`;
 
 describe('MCP result postprocessor', () => {
+  it('exports the same response-aware conservative budget used by consumer selection', async () => {
+    const responseId = `long-${'\\"'.repeat(300)}`;
+    const primaryResult = acceptedResult();
+    let observed = -1;
+    const consumer = consumerSelectingToBudget(
+      [item('release-budget', '["budget"]')],
+      budget => { observed = budget; },
+    );
+
+    await postprocessMcpResult({ responseId, primaryResult, isCurrentBinding: currentBinding(), consumer });
+
+    expect(observed).toBe(mcpPayloadBudget(responseId, primaryResult));
+    expect(mcpPayloadBudget(responseId, primaryResult)).toBeLessThan(mcpPayloadBudget(1, primaryResult));
+  });
+
   it('renders the shared batch format exactly for one release', () => {
     const canonical = '["khala.release.v1","release-1","binding-1",3,"policy-1",[]]';
     const batch = inboxBatch('token-opaque', [item('release-1', canonical)]);
@@ -127,6 +144,35 @@ describe('MCP result postprocessor', () => {
     } as never);
     expect(invalidBoth).toBe(primaryResult);
     expect(consumer.readBatch).not.toHaveBeenCalled();
+  });
+
+  it('reports whether an explicit-read batch was composed or suppressed', async () => {
+    const primaryResult = acceptedResult();
+    const preselectedBatch = inboxBatch('selected', [item('selected', '["selected"]')]);
+    const composed = await postprocessPreselectedMcpResult({
+      responseId: 3,
+      primaryResult,
+      isCurrentBinding: currentBinding(),
+      preselectedBatch,
+    });
+    const drifted = await postprocessPreselectedMcpResult({
+      responseId: 4,
+      primaryResult,
+      isCurrentBinding: currentBinding(true, false),
+      preselectedBatch,
+    });
+    const invalid = await postprocessPreselectedMcpResult({
+      responseId: 5,
+      primaryResult,
+      isCurrentBinding: currentBinding(),
+      preselectedBatch: inboxBatch('selected', [{
+        ...item('selected', ''), payload: Uint8Array.from([0xff, 0xfe]),
+      }]),
+    });
+
+    expect(composed).toMatchObject({ kind: 'composed', result: { content: [{}, {}] } });
+    expect(drifted).toEqual({ kind: 'suppressed', code: 'binding_not_held' });
+    expect(invalid).toEqual({ kind: 'suppressed', code: 'internal_error' });
   });
 
   it('derives a conservative raw budget for escaping-heavy data and permits one oversized head whole', async () => {
