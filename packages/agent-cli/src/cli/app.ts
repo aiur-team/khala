@@ -1,13 +1,17 @@
 import type { Readable, Writable } from 'node:stream';
 import type { BindingId, SessionBinding } from '@khala/contracts/delivery/index';
+import { ReadOperation, sameHeldBinding } from '../composition/read.js';
 import { CliError, cliErrorCode } from './errors.js';
 import type { BatchInbox, InboxItem } from './inbox.js';
+import { parseReadArguments, renderReadOutput } from './read.js';
 import { MAX_SEND_BYTES, SendService } from './send.js';
 import {
   AGENT_ROUTES, CONNECT_REFUSAL_CODES, type AgentClientPort, type AgentStatus, type ConnectRefusalCode,
 } from './types.js';
 import { plainObject, validBindingArgument, validIdentifier } from './validation.js';
-import { postprocessMcpResult } from '../mcp/result-postprocessor.js';
+import {
+  postprocessMcpResult, postprocessPreselectedMcpResult,
+} from '../mcp/result-postprocessor.js';
 import { runMcpServer } from '../mcp/server.js';
 
 export type CliDependencies = Readonly<{
@@ -22,6 +26,7 @@ export async function runCli(argv: readonly string[], deps: CliDependencies): Pr
     switch (command) {
       case 'connect': return await connect(args, deps);
       case 'listen': return await listen(args, deps);
+      case 'read': return await read(args, deps);
       case 'send': return await send(args, deps);
       case 'status': return await status(args, deps);
       case 'mcp-serve': return await mcp(args, deps);
@@ -74,6 +79,34 @@ async function listen(args: readonly string[], deps: CliDependencies): Promise<n
   return 0;
 }
 
+async function read(args: readonly string[], deps: CliDependencies): Promise<number> {
+  const input = parseReadArguments(args);
+  const current = publicStatus(await deps.client.status(deps.signal));
+  if (!current.connected || current.binding === null) throw new CliError('not_connected');
+  const heldBinding = current.binding;
+  if (input.bindingId !== null && input.bindingId !== heldBinding.bindingId) {
+    throw new CliError('binding_not_held');
+  }
+
+  const inbox = await deps.inbox(heldBinding.bindingId, heldBinding.generation);
+  const consumer = await inbox.acquireListener();
+  try {
+    const operation = new ReadOperation({
+      heldBinding,
+      consumer,
+      currentBinding: async () => {
+        const latest = publicStatus(await deps.client.status(deps.signal));
+        return latest.connected ? latest.binding : null;
+      },
+    });
+    const result = await operation.read({ ...input, maxBytes: MAX_SEND_BYTES });
+    await write(deps.stdout, renderReadOutput(result) + '\n');
+  } finally {
+    await consumer.release();
+  }
+  return 0;
+}
+
 async function status(args: readonly string[], deps: CliDependencies): Promise<number> {
   if (args.length !== 0) throw new CliError('invalid_arguments');
   const current = publicStatus(await deps.client.status(deps.signal));
@@ -91,17 +124,23 @@ async function mcp(args: readonly string[], deps: CliDependencies): Promise<numb
   const inbox = await deps.inbox(heldBinding.bindingId, heldBinding.generation);
   const consumer = await inbox.acquireListener();
   try {
+    const currentBinding = async () => {
+      const latest = publicStatus(await deps.client.status(deps.signal));
+      return latest.connected ? latest.binding : null;
+    };
     await runMcpServer({
       input: deps.stdin,
       output: deps.stdout,
       send: new SendService(deps.client),
+      read: new ReadOperation({ heldBinding, consumer, currentBinding }),
       postprocessResult: input => postprocessMcpResult({
         ...input,
         consumer,
-        isCurrentBinding: async () => {
-          const latest = publicStatus(await deps.client.status(deps.signal));
-          return latest.connected && latest.binding !== null && sameHeldBinding(heldBinding, latest.binding);
-        },
+        isCurrentBinding: async () => sameHeldBinding(heldBinding, await currentBinding()),
+      }),
+      postprocessReadResult: input => postprocessPreselectedMcpResult({
+        ...input,
+        isCurrentBinding: async () => sameHeldBinding(heldBinding, await currentBinding()),
       }),
       signal: deps.signal,
     });
@@ -200,19 +239,6 @@ function publicBinding(value: unknown): SessionBinding {
     sessionId: value.sessionId,
     generation: value.generation,
   } as SessionBinding;
-}
-
-// Keep the packaged CLI free of runtime imports from the source-only contracts
-// workspace package while preserving the complete SessionBinding identity.
-function sameHeldBinding(a: SessionBinding, b: SessionBinding): boolean {
-  return a.v === b.v
-    && a.bindingId === b.bindingId
-    && a.ownerId === b.ownerId
-    && a.agentParticipantId === b.agentParticipantId
-    && a.deviceId === b.deviceId
-    && a.harness === b.harness
-    && a.sessionId === b.sessionId
-    && a.generation === b.generation;
 }
 
 function publicSendOutput(result: Awaited<ReturnType<SendService['send']>>): Record<string, unknown> {
