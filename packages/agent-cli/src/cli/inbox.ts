@@ -847,15 +847,11 @@ async function notifySocket(socketPath: string): Promise<ListenerNotification> {
 
 async function listen(socketPath: string, onWake: () => void): Promise<net.Server | null> {
   const server = net.createServer({ allowHalfOpen: true }, socket => {
-    let empty = true;
     socket.on('error', () => undefined);
-    // A peer that writes anything is not speaking the hint protocol and wakes nothing.
-    socket.on('data', () => {
-      empty = false;
-      socket.destroy();
-    });
+    // A peer that writes anything is not speaking the hint protocol; destroying its
+    // socket suppresses `end`, so it wakes nothing.
+    socket.on('data', () => socket.destroy());
     socket.once('end', () => {
-      if (!empty) return;
       onWake();
       socket.end();
     });
