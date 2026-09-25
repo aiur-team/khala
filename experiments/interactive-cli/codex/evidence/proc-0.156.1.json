@@ -1,0 +1,620 @@
+{
+  "finishedAt": "2026-09-25T01:14:23.227Z",
+  "scans": 29479,
+  "markerCount": 12,
+  "processCounts": {
+    "hook": 30,
+    "read": 5,
+    "enqueue": 7,
+    "queue-wake": 6,
+    "other": 0
+  },
+  "markerHits": [],
+  "processes": [
+    {
+      "pid": 3037567,
+      "firstSeenAt": "2026-09-25T00:50:00.408Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3037875,
+      "firstSeenAt": "2026-09-25T00:50:03.504Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3038222,
+      "firstSeenAt": "2026-09-25T00:50:08.582Z",
+      "kind": "enqueue",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "enqueue"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3039128,
+      "firstSeenAt": "2026-09-25T00:50:23.607Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3039467,
+      "firstSeenAt": "2026-09-25T00:50:28.260Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3039509,
+      "firstSeenAt": "2026-09-25T00:50:28.372Z",
+      "kind": "read",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "read",
+        "--ack",
+        "steer-0156-r2"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3039524,
+      "firstSeenAt": "2026-09-25T00:50:28.482Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3039729,
+      "firstSeenAt": "2026-09-25T00:50:31.347Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3043427,
+      "firstSeenAt": "2026-09-25T00:51:19.974Z",
+      "kind": "enqueue",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "enqueue"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3044352,
+      "firstSeenAt": "2026-09-25T00:51:35.012Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3044495,
+      "firstSeenAt": "2026-09-25T00:51:36.512Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3044886,
+      "firstSeenAt": "2026-09-25T00:51:41.632Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3049439,
+      "firstSeenAt": "2026-09-25T00:52:25.166Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3051297,
+      "firstSeenAt": "2026-09-25T00:52:45.314Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3052110,
+      "firstSeenAt": "2026-09-25T00:52:52.573Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3052216,
+      "firstSeenAt": "2026-09-25T00:52:52.755Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3053025,
+      "firstSeenAt": "2026-09-25T00:53:01.283Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3053429,
+      "firstSeenAt": "2026-09-25T00:53:07.513Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3055843,
+      "firstSeenAt": "2026-09-25T00:53:40.011Z",
+      "kind": "queue-wake",
+      "commandLine": [
+        "node",
+        "~/.aiur/repo/aiur-team/khala/.aiur-npm-cache/_npx/2f9d908f9cfda204/node_modules/.bin/codex",
+        "queue",
+        "--thread",
+        "01a0d60a-2956-7021-a1b4-5a7f971e0b5f",
+        "--message",
+        "Khala: new channel activity. This notice carries no message content."
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3055850,
+      "firstSeenAt": "2026-09-25T00:53:40.011Z",
+      "kind": "queue-wake",
+      "commandLine": [
+        "~/.aiur/repo/aiur-team/khala/.aiur-npm-cache/_npx/2f9d908f9cfda204/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+        "queue",
+        "--thread",
+        "01a0d60a-2956-7021-a1b4-5a7f971e0b5f",
+        "--message",
+        "Khala: new channel activity. This notice carries no message content."
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3057226,
+      "firstSeenAt": "2026-09-25T00:53:52.104Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3059672,
+      "firstSeenAt": "2026-09-25T00:54:20.340Z",
+      "kind": "queue-wake",
+      "commandLine": [
+        "node",
+        "~/.aiur/repo/aiur-team/khala/.aiur-npm-cache/_npx/2f9d908f9cfda204/node_modules/.bin/codex",
+        "queue",
+        "--thread",
+        "01a0d60a-2956-7021-a1b4-5a7f971e0b5f",
+        "--message",
+        "Khala: new channel activity. This notice carries no message content."
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3059680,
+      "firstSeenAt": "2026-09-25T00:54:20.340Z",
+      "kind": "queue-wake",
+      "commandLine": [
+        "~/.aiur/repo/aiur-team/khala/.aiur-npm-cache/_npx/2f9d908f9cfda204/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+        "queue",
+        "--thread",
+        "01a0d60a-2956-7021-a1b4-5a7f971e0b5f",
+        "--message",
+        "Khala: new channel activity. This notice carries no message content."
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3060313,
+      "firstSeenAt": "2026-09-25T00:54:29.646Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3060358,
+      "firstSeenAt": "2026-09-25T00:54:29.761Z",
+      "kind": "read",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "read",
+        "--ack",
+        "wakesteer-0156"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3060380,
+      "firstSeenAt": "2026-09-25T00:54:29.871Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3060762,
+      "firstSeenAt": "2026-09-25T00:54:34.716Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3062796,
+      "firstSeenAt": "2026-09-25T00:55:09.169Z",
+      "kind": "queue-wake",
+      "commandLine": [
+        "node",
+        "~/.aiur/repo/aiur-team/khala/.aiur-npm-cache/_npx/2f9d908f9cfda204/node_modules/.bin/codex",
+        "queue",
+        "--thread",
+        "01a0d60a-2956-7021-a1b4-5a7f971e0b5f",
+        "--message",
+        "Khala: new channel activity. This notice carries no message content."
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3062806,
+      "firstSeenAt": "2026-09-25T00:55:09.170Z",
+      "kind": "queue-wake",
+      "commandLine": [
+        "~/.aiur/repo/aiur-team/khala/.aiur-npm-cache/_npx/2f9d908f9cfda204/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+        "queue",
+        "--thread",
+        "01a0d60a-2956-7021-a1b4-5a7f971e0b5f",
+        "--message",
+        "Khala: new channel activity. This notice carries no message content."
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3063185,
+      "firstSeenAt": "2026-09-25T00:55:14.906Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3064055,
+      "firstSeenAt": "2026-09-25T00:55:27.200Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3064397,
+      "firstSeenAt": "2026-09-25T00:55:32.573Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3064688,
+      "firstSeenAt": "2026-09-25T00:55:36.700Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3068156,
+      "firstSeenAt": "2026-09-25T00:56:22.410Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3068305,
+      "firstSeenAt": "2026-09-25T00:56:24.574Z",
+      "kind": "hook",
+      "commandLine": [
+        "node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3090733,
+      "firstSeenAt": "2026-09-25T01:01:44.438Z",
+      "kind": "hook",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3090753,
+      "firstSeenAt": "2026-09-25T01:01:44.498Z",
+      "kind": "hook",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3090769,
+      "firstSeenAt": "2026-09-25T01:01:44.558Z",
+      "kind": "enqueue",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "enqueue"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3090785,
+      "firstSeenAt": "2026-09-25T01:01:44.612Z",
+      "kind": "hook",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3090962,
+      "firstSeenAt": "2026-09-25T01:01:45.406Z",
+      "kind": "read",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "read",
+        "--ack",
+        "a-2"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3090975,
+      "firstSeenAt": "2026-09-25T01:01:45.464Z",
+      "kind": "read",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "read",
+        "--ack",
+        "a-2"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3090989,
+      "firstSeenAt": "2026-09-25T01:01:45.524Z",
+      "kind": "enqueue",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "enqueue"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3091099,
+      "firstSeenAt": "2026-09-25T01:01:45.695Z",
+      "kind": "enqueue",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "enqueue"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3091310,
+      "firstSeenAt": "2026-09-25T01:01:46.171Z",
+      "kind": "read",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "read"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3091323,
+      "firstSeenAt": "2026-09-25T01:01:46.228Z",
+      "kind": "enqueue",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "enqueue"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3091338,
+      "firstSeenAt": "2026-09-25T01:01:46.285Z",
+      "kind": "hook",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3091351,
+      "firstSeenAt": "2026-09-25T01:01:46.338Z",
+      "kind": "enqueue",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "enqueue"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    },
+    {
+      "pid": 3091364,
+      "firstSeenAt": "2026-09-25T01:01:46.393Z",
+      "kind": "hook",
+      "commandLine": [
+        "~/.local/share/mise/installs/node/24.18.0/bin/node",
+        "~/.aiur/workspaces/aiur-team/khala/164/experiments/interactive-cli/codex/bridge.ts",
+        "hook"
+      ],
+      "commandLineMarkerMatch": false,
+      "environmentMarkerMatch": false
+    }
+  ]
+}
