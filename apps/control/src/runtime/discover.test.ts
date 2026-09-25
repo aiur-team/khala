@@ -137,10 +137,13 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'], domain: 'human' },
       { path: '/api/human/pairing/decision', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-discovery/bootstrap/authorize', methods: ['GET', 'POST'], domain: 'human' },
+      { path: '/api/human/channel-discovery/settings', methods: ['PUT'], domain: 'human' },
+      { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], domain: 'human' },
       { path: '/api/agent/status', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/pairing/claim', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/pairing/result', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/channels', methods: ['GET'], domain: 'agent' },
     ]);
     expect(JSON.stringify(manifest)).not.toContain('pairing/redeem');
   });

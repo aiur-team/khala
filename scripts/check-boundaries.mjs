@@ -88,6 +88,12 @@ export function checkBoundaries(root) {
     const owner = packageOf(origin);
     const composition = origin.includes('/composition/');
     for (const edge of edges) {
+      // The loopback server is a transport edge: Node built-ins, the internal store and contracts only.
+      if (origin.startsWith('apps/internal/src/server/')) {
+        const builtin = builtins.has(edge.specifier.replace(/^node:/, ''));
+        const local = edge.target && /^(?:apps\/internal\/src\/(?:server|store)\/|packages\/contracts\/)/.test(edge.target);
+        if (!builtin && !local) errors.add(`${origin}: loopback server may import only Node built-ins, the internal store and contracts (${edge.specifier})`);
+      }
       if (!edge.target) continue;
       const destination = packageOf(edge.target);
       if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(edge.target) || edge.target.includes('/fixtures/')) errors.add(`${origin}: production cannot import tests or fixtures (${edge.specifier})`);
