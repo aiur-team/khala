@@ -1,13 +1,13 @@
 {
   "mode": "async",
   "batch": {
-    "token": "batch-async-001",
+    "token": "batch-async-011",
     "messages": [
       {
-        "id": "message-async-001",
+        "id": "message-batch-async-011",
         "channel": "interactive-opencode-proof",
         "sender": "proof-peer",
-        "text": "ASYNC-NONCE-964: Call khala_send with response ASYNC-ACK-964."
+        "text": "ASYNC-NONCE-406: Please reply with response ASYNC-ACK-406."
       }
     ]
   }

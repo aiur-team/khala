@@ -54,6 +54,7 @@ the server reads `OPENCODE_SERVER_PASSWORD` and
 and debug operations. There was no interactive stdin queue or remote-attach
 command that supplied the three listening semantics by itself.
 
-Message bodies were typed through the TUI's PTY. The OpenCode launch argv
-contained the project path, loopback host/port, model, and logging flags, but no
-proof nonce or channel message. Hard abort was not invoked in any mode proof.
+Message bodies were typed through the TUI's PTY. The OpenCode launch argv for
+the 2026-09-25 mode proofs was `opencode --model deepseek/deepseek-flash`,
+plus `--session <id>` on relaunch. It had no port, host, nonce, or channel
+message. Hard abort was not invoked in any mode proof.

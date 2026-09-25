@@ -120,7 +120,8 @@ try {
     parts: [{ type: "text", text: "continue original turn" }],
   }]
   await plugin["experimental.chat.messages.transform"]({}, { messages: admittedMessages })
-  assert.match(admittedMessages[0].parts[0].text, /khala\.channel\.batch/)
+  assert.equal(admittedMessages[0].parts[0].text, "continue original turn")
+  assert.match(admittedMessages[1].parts[0].text, /khala\.channel\.batch/)
   assert.equal((await state()).inFlight.status, "delivered")
 
   process.stdout.write(`${JSON.stringify({

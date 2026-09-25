@@ -19,7 +19,7 @@ mode.
 
 ## Embedded interactive-TUI blocker
 
-The same authentication setting was applied to a user-started TUI with an
+The same authentication setting was applied to an agent-launched TUI with an
 explicit loopback port. The plugin loaded, but the TUI exited before it became
 usable because its own client request did not authenticate to its embedded
 server:
@@ -29,9 +29,13 @@ Error: opencode server GET http://127.0.0.1:41069/config/providers?directory=<pr
 → 401 Unauthorized: (empty response body)
 ```
 
-Result: **Blocked** for an authenticated companion using the TUI's built-in
-server on OpenCode `1.17.10`. Running the same port without authentication made
-the TUI work and enabled the empirical mode probes, but an unauthenticated API
-is not an acceptable product route. The recommended product route is therefore
-the in-process plugin API, with the built-in server treated as diagnostic only
-until OpenCode fixes or documents authenticated embedded-TUI operation.
+Result: **Blocked** for an authenticated *external* companion that uses the
+TUI's built-in server on OpenCode `1.17.10`. An unauthenticated port is not an
+acceptable route (decision 33).
+
+The product route does not need a port. The 2026-09-25 mode proofs launched the
+TUI with no `--port` and no password, and `ss -ltnp` showed no OpenCode
+listener. The plugin reached the session through the in-process SDK client
+that OpenCode passes to every plugin. See [`results.md`](results.md). The
+built-in server stays out of scope until OpenCode fixes or documents
+authenticated embedded-TUI operation.

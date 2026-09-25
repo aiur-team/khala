@@ -6,6 +6,11 @@
     "*": "ask",
     "proof_gate": "allow",
     "khala_read": "allow",
-    "khala_send": "allow"
+    "khala_send": "allow",
+    "bash": {
+      "*": "ask",
+      "sleep *": "allow",
+      "echo *": "allow"
+    }
   }
 }
