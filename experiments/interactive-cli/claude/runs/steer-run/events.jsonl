@@ -1,5 +1,0 @@
-{"at":"2026-09-24T22:14:16.251Z","kind":"hook","mode":"steer","event":"UserPromptSubmit","sessionId":"0595a54a-1686-49c7-b3d7-299a7ec179d0","promptId":"a2ea01dd-fcd1-4b0c-9a6d-9b0cc16d7e6e","stopHookActive":null,"toolName":null}
-{"at":"2026-09-24T22:14:38.059Z","kind":"hook","mode":"steer","event":"PostToolUse","sessionId":"0595a54a-1686-49c7-b3d7-299a7ec179d0","promptId":"a2ea01dd-fcd1-4b0c-9a6d-9b0cc16d7e6e","stopHookActive":null,"toolName":"Bash"}
-{"at":"2026-09-24T22:14:38.061Z","kind":"claimed","mode":"steer","event":"PostToolUse","sessionId":"0595a54a-1686-49c7-b3d7-299a7ec179d0","promptId":"a2ea01dd-fcd1-4b0c-9a6d-9b0cc16d7e6e","stopHookActive":null,"toolName":"Bash","batchToken":"batch-steer-165","bytes":15,"sha256":"83593857b749d72b54259d0c4c313852490ceb33209dd5ac74830dfdbb6f894c"}
-{"at":"2026-09-24T22:14:39.053Z","kind":"hook","mode":"steer","event":"Stop","sessionId":"0595a54a-1686-49c7-b3d7-299a7ec179d0","promptId":"a2ea01dd-fcd1-4b0c-9a6d-9b0cc16d7e6e","stopHookActive":false,"toolName":null}
-{"at":"2026-09-24T22:15:11.296Z","kind":"acknowledged","mode":"steer","sessionId":"0595a54a-1686-49c7-b3d7-299a7ec179d0","batchToken":"batch-steer-165"}

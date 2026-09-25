@@ -1,51 +1,25 @@
-# Claude Code 2.1.282 interactive proof log
+# Claude Code 2.1.282 interactive proof log (normal trust)
 
-Host timestamps are UTC unless an offset is shown. These are sanitized excerpts from real interactive TTY sessions; `events.jsonl` beside each run is the raw hook/server timing log. Message bodies appear here only as synthetic markers. Private Claude configuration and transcripts are excluded.
+All runs happened on 2026-09-25 (UTC). Each session was agent-launched with default settings:
 
-## Steer — `PostToolUse`
+```text
+cd <proof-project> && env -i HOME=~ USER PATH TERM=xterm-256color LANG=en_US.UTF-8 SHELL=/bin/bash claude
+```
 
-- Session: `0595a54a-1686-49c7-b3d7-299a7ec179d0`
-- Tool output: `2026-09-24T15:14:18.025920467-07:00`, then `2026-09-24T15:14:38.028612180-07:00`
-- Message `STEER-PROOF-165` was staged during the 20-second sleep with batch `batch-steer-165`.
-- `PostToolUse` began at `22:14:38.059Z`; its atomic claim completed at `22:14:38.061Z`, about 32 ms after the tool's second timestamp.
-- The interactive session rendered `[khala:batch-steer-165] STEER-PROOF-165` before its first `Stop` at `22:14:39.053Z`.
-- No interrupt or abort signal was sent. The tool completed normally.
+There were no CLI flags. The plugin was installed once with `claude plugin marketplace add … --scope local` and `claude plugin install khala-proof@khala-proof --scope local`. The folder-trust dialog was accepted once on first launch. The user-default `auto` permission mode approved every Bash and `khala_*` call without prompting. Each run starts a fresh interactive session and fresh proof state.
 
-## Sync — `Stop`
+| Run | Session | What it shows | Key timestamps |
+|---|---|---|---|
+| [`steer`](runs/steer/) | `567bbda0-5e29-412c-b61e-85d661475577` | `PostToolUse` delivery after a 20 s tool; the next Khala call acknowledges | tool start `00:34:42.979`, arrived `00:34:47.245`, tool end `00:35:04.229`, released `00:35:04.231`, acknowledged via `khala_send` `00:35:08.253` |
+| [`sync`](runs/sync/) | `1cb99244-84c5-4e69-b331-fe1e4e728641` | `PostToolUse` skipped; `Stop` block; no loop | arrived `00:35:31.065`, tool end `00:35:47.829` (no release), released at `Stop` `00:35:49.202`, acknowledged `00:35:53.832`, `stop_hook_active=true` `00:35:56.748` |
+| [`async`](runs/async/) | `bfed27a9-31aa-4313-baef-0e726d14273b` | No automatic activity; the agent chooses `khala_read`, bound to the MCP server's `CLAUDE_CODE_SESSION_ID` | arrived `00:36:09.690`, first activity is the human prompt `00:36:40.151`, released via `khala_read` `00:36:44.534`, acknowledged `00:36:47.899` |
+| [`rewake-prompt40`](runs/rewake-prompt40/) | `1a1e7433-b9f2-4b7e-93b3-e8b86e737e7c` | The committed 40 s route: the wake works, but the backgrounded claim is lost and later acknowledged unseen; spurious wake while busy | armed `00:37:03.345`, arrived `00:37:20.107`, wake `00:37:20.190`, claimed by the async hook `00:37:20.231` (the model reports nothing received), acknowledged unseen `00:39:33.422`; busy wake `00:39:25.577` |
+| [`rewake-prompt40-expiry`](runs/rewake-prompt40-expiry/) | `a36f2deb-655e-451d-890a-db077e0d54c4` | The 40 s bound: no wake after expiry | armed `00:49:21.378`, expired `00:50:01.477`, arrived `00:50:01.692`, no activity until the human prompt `00:51:02.153`, released at `Stop` `00:51:03.724` |
+| [`rewake-stop-long`](runs/rewake-stop-long/) | `09c03b7e-04f8-4d1d-9e6a-696bcb9edd47` | Replacement: a `Stop`-armed watcher wakes after 150 s idle, a synchronous hook claims, the watcher re-arms, and it wakes again in `steer` mode | idle `00:40:38.597`; arrived `00:43:08.645`, wake `00:43:08.651`, released `00:43:08.705`, acknowledged `00:43:13.809`; re-armed `00:43:15.227`; arrived `00:44:34.735`, wake `00:44:34.893`, acknowledged `00:44:38.914`; no watcher process after `/exit` |
+| [`restart`](runs/restart/) | `cf0e976e-46ee-4874-9d48-6b41adebf0db` → `f61a8ab1-3ab8-4979-ac89-fd507b23bcee` | SIGKILL after delivery; fencing; fresh-token redelivery; duplicate rejection | released `00:48:22.759` (token `f6567bf7110b`), SIGKILL `00:48:29.452`, generation 2 fenced/requeued `00:48:29.802`, old-token replay `stale_generation` `00:48:33.496`, redelivered with `ebfe00b497b5` `00:48:38.234`, acknowledged `00:48:42.893`, replay `duplicate` `00:48:46.827`, next turn empty |
 
-- Session: `65ddfc20-7a0d-4397-b7d9-377c4bddd879`
-- Tool output: `2026-09-24T15:15:34.687402977-07:00`, then `2026-09-24T15:15:54.690358212-07:00`
-- Message `SYNC-PROOF-165` was staged during the sleep with batch `batch-sync-165`.
-- `PostToolUse` ran at `22:15:54.722Z` and did not claim the sync batch.
-- Claude reported `TOOL-DONE-165`, then `Stop` began at `22:15:55.538Z` and claimed the batch at `22:15:55.540Z`.
-- The decision-block reason delivered `[khala:batch-sync-165] SYNC-PROOF-165`; Claude continued once. The next `Stop` had `stop_hook_active=true` at `22:15:56.329Z`, preventing a loop.
+A first `steer` attempt kept proof state inside the project directory. Claude 2.1.282's per-command "what this command changed" view then rendered an inbox file to the model, so that run was discarded and state moved beside the project. That attempt also acknowledged through a later hook pull, which led to the rule that only agent-initiated Khala calls acknowledge.
 
-## Idle wake primitive — `UserPromptSubmit` + `asyncRewake`
+## Preview-gated channel (not in the matrix)
 
-- Session: `50d9052e-45c5-4e24-a908-4d919cde4934`
-- Claude said `IDLE-READY-165` and stopped at `22:16:43.872Z`.
-- Without another user prompt, `REWAKE-PROOF-165` was staged about 17 seconds later.
-- The original live spike claimed it at `22:17:00.846Z`, returned the synthetic marker through the exit-2 wake, and caused Claude to emit a synthetic `UserPromptSubmit` at `22:17:00.884Z` in the same session with a new prompt ID. The review-hardened committed probe now uses a fixed content-free wake marker and claims the batch as structured `additionalContext` on that second hook invocation; its regression test pins the two-step shape.
-- This proves a bounded idle-wake primitive. It is not the product's `async` mode, which must remain agent-initiated.
-
-## Async — explicit pull
-
-- Interactive Claude session: `69c1cbf1-555b-4cba-a27d-38733fe03de0`; proof binding key: `pull-session-165`.
-- `ASYNC-PROOF-165` was staged before the prompt with batch `batch-pull-165`. Arrival caused no hook, prompt, or model activity.
-- The user asked Claude to decide whether to check the channel. Claude chose to invoke `read-pending.mjs` as one Bash tool call.
-- The explicit pull was recorded at `22:19:04.246Z`; the same interactive session reported `[khala:batch-pull-165] ASYNC-PROOF-165`.
-
-## Experimental native channel
-
-- Interactive session: `6d57a3a2-ffd1-492a-a32c-7ddd5cdcfc48`.
-- Launch required the hidden `--dangerously-load-development-channels server:khala-proof` flag and an explicit full-screen local-development confirmation.
-- The MCP server declared `experimental["claude/channel"]` and sent `notifications/claude/channel` over stdio. Its localhost HTTP ingress put message bytes in the POST body, not process argv.
-- Idle: server listening `22:20:39.456Z`; notification `CHANNEL-IDLE-PROOF-165` sent `22:20:46.211Z`; the idle Claude session woke and reported it.
-- Busy: Bash ran from `15:21:25` to `15:21:45 -07:00`; notification `CHANNEL-BUSY-PROOF-165` was sent at `22:21:29.847Z` during the sleep. The UI displayed the channel event while the tool was busy, and Claude consumed it after the tool completed, reporting both `TOOL-DONE-CHANNEL-165` and the channel marker. The tool was not aborted.
-- The CLI warning says approved channels should use `--channels`; official documentation says the development flag bypasses only the allowlist and does not bypass the `channelsEnabled` organization policy.
-
-## Restart/deduplication safety
-
-The proof helpers simulate the shared E09 batch-token contract: delivery moves a batch to `delivered`, and the next trusted Khala call moves it to acknowledged state. After acknowledging `batch-steer-165`, staging the same token failed with `batch already acknowledged`. The committed Node test repeats that assertion and proves a pull cannot consume another session's batch.
-
-This is transport/release evidence, not a claim that Claude provides a durable model-consumption receipt. Production acknowledgement remains Khala-owned.
+[`runs/channel-run`](runs/channel-run/events.jsonl) is from the earlier research pass. The custom `notifications/claude/channel` push woke an idle session and queued behind a busy tool, but it needed `--dangerously-load-development-channels server:khala-proof` and a full-screen confirmation. Decision 33 excludes that flag, so this is evidence about the preview's gates, not a proven route.

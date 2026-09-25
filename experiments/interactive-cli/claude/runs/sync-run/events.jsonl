@@ -1,6 +1,0 @@
-{"at":"2026-09-24T22:15:33.346Z","kind":"hook","mode":"sync","event":"UserPromptSubmit","sessionId":"65ddfc20-7a0d-4397-b7d9-377c4bddd879","promptId":"b7140237-d1a8-4069-a1ab-2c2213396993","stopHookActive":null,"toolName":null}
-{"at":"2026-09-24T22:15:54.722Z","kind":"hook","mode":"sync","event":"PostToolUse","sessionId":"65ddfc20-7a0d-4397-b7d9-377c4bddd879","promptId":"b7140237-d1a8-4069-a1ab-2c2213396993","stopHookActive":null,"toolName":"Bash"}
-{"at":"2026-09-24T22:15:55.538Z","kind":"hook","mode":"sync","event":"Stop","sessionId":"65ddfc20-7a0d-4397-b7d9-377c4bddd879","promptId":"b7140237-d1a8-4069-a1ab-2c2213396993","stopHookActive":false,"toolName":null}
-{"at":"2026-09-24T22:15:55.540Z","kind":"claimed","mode":"sync","event":"Stop","sessionId":"65ddfc20-7a0d-4397-b7d9-377c4bddd879","promptId":"b7140237-d1a8-4069-a1ab-2c2213396993","stopHookActive":false,"toolName":null,"batchToken":"batch-sync-165","bytes":14,"sha256":"90c8032c29f7b7064f8ab0c6d45f68c46facc1574ff1639ba2bcc678053b2726"}
-{"at":"2026-09-24T22:15:56.329Z","kind":"hook","mode":"sync","event":"Stop","sessionId":"65ddfc20-7a0d-4397-b7d9-377c4bddd879","promptId":"b7140237-d1a8-4069-a1ab-2c2213396993","stopHookActive":true,"toolName":null}
-{"at":"2026-09-24T22:16:15.611Z","kind":"acknowledged","mode":"sync","sessionId":"65ddfc20-7a0d-4397-b7d9-377c4bddd879","batchToken":"batch-sync-165"}

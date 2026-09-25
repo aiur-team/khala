@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-09-24T22:22:00Z",
+  "recordedAt": "2026-09-25T00:51:30Z",
   "host": {
     "hostname": "<executor-host>",
     "kernel": "Linux 7.1.4-arch1-1",
@@ -26,6 +26,18 @@
   "configuration": {
     "authentication": "first-party Claude Max",
     "managedSettingsFound": false,
-    "agentPushNotifEnabled": "present in user settings; unrelated to claude/channel"
+    "agentPushNotifEnabled": "present in user settings; unrelated to claude/channel",
+    "sessionIdentity": "hook session_id equals plugin MCP server CLAUDE_CODE_SESSION_ID"
+  },
+  "launch": {
+    "command": "cd <proof-project> && env -i HOME=~ USER PATH TERM=xterm-256color LANG=en_US.UTF-8 SHELL=/bin/bash claude",
+    "flags": [],
+    "forbiddenFlagsUsed": false,
+    "oneTimeApprovals": [
+      "claude plugin marketplace add <repo>/experiments/interactive-cli/claude/marketplace --scope local",
+      "claude plugin install khala-proof@khala-proof --scope local",
+      "folder-trust dialog: Yes, I trust this folder"
+    ],
+    "permissionMode": "auto (user default)"
   }
 }

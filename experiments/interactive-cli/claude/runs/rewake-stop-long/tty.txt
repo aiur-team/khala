@@ -1,0 +1,16 @@
+(Pane excerpts captured while the session was live. The pane closed with /exit, so these are the captures printed during the run.)
+--- after LONGWAKE-PROOF-165 (sync mode, 150 s idle)
+❯ Say IDLE-READY and stop. Whenever a Khala channel message reaches you later, reply to it through the khala_send tool with one short sentence.
+● IDLE-READY
+✻ Churned for 1s · done 5:40 PM
+● Stop hook feedback
+  Called plugin:khala-proof:khala
+● I got the Khala message "LONGWAKE-PROOF-165: sent 150 seconds into idle." and sent a one-sentence reply through khala_send confirming it arrived.
+✻ Cogitated for 6s · done 5:43 PM
+--- after REARM-PROOF-165 (mode switched to steer, 60 s idle, re-armed watcher)
+● Stop hook feedback
+  Called plugin:khala-proof:khala
+● A second Khala message came in: "REARM-PROOF-165: second idle message after the watcher re-armed, steer mode." I sent a one-sentence reply through khala_send confirming it arrived.
+✻ Cooked for 5s · done 5:44 PM
+--- after /exit
+ps: no hook.mjs process remained; the armed watcher logged no orphan-exit, so Claude terminated it with the session.
