@@ -92,7 +92,7 @@ The tool result is unchanged.
 
 ```sh
 node --test experiments/internal-mode/mcp-piggyback/e2e/test/verify.test.mjs
-pnpm --filter @khala/agent-cli exec vitest run --config ../../vitest.config.ts
+pnpm --filter @aiur/khala exec vitest run --config ../../vitest.config.ts
 ```
 
 `retained live evidence passes` runs the verifier on the real data, and
