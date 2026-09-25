@@ -1,0 +1,14 @@
+{
+  "kind": "opencode-delivery-route/v1",
+  "opencodeVersion": "1.17.10",
+  "route": {
+    "transport": "in_process_plugin",
+    "client": "plugin_sdk_client",
+    "server": "none",
+    "externalClient": false
+  },
+  "khalaLaunchedServer": false,
+  "sessionCalls": [
+    { "operation": "promptAsync", "result": "accepted" }
+  ]
+}

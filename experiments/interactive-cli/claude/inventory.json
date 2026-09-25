@@ -1,0 +1,43 @@
+{
+  "recordedAt": "2026-09-25T00:51:30Z",
+  "host": {
+    "hostname": "<executor-host>",
+    "kernel": "Linux 7.1.4-arch1-1",
+    "architecture": "x86_64"
+  },
+  "claude": {
+    "versionOutput": "2.1.282 (Claude Code)",
+    "launcher": "~/.local/bin/claude",
+    "resolvedBinary": "~/.local/share/claude/versions/2.1.282",
+    "sha256": "3afe8535c0cc33f0e24f7b25dab7a1727b8b592196f8496a8bc302ba2161eed3",
+    "bytes": 238767288,
+    "installedMtime": "2026-09-24T12:02:48.098888445-07:00",
+    "embeddedBuildTime": "2026-09-24T03:59:36Z",
+    "embeddedGitSha": "88e628ac87357ab077f78e21f78aee6156f01ab3"
+  },
+  "visibleHelp": {
+    "inputFormat": "only works with --print",
+    "mcpConfig": true,
+    "pluginDir": true,
+    "remoteControl": true,
+    "channelsFlag": false,
+    "developmentChannelsFlag": false
+  },
+  "configuration": {
+    "authentication": "first-party Claude Max",
+    "managedSettingsFound": false,
+    "agentPushNotifEnabled": "present in user settings; unrelated to claude/channel",
+    "sessionIdentity": "hook session_id equals plugin MCP server CLAUDE_CODE_SESSION_ID"
+  },
+  "launch": {
+    "command": "cd <proof-project> && env -i HOME=~ USER PATH TERM=xterm-256color LANG=en_US.UTF-8 SHELL=/bin/bash claude",
+    "flags": [],
+    "forbiddenFlagsUsed": false,
+    "oneTimeApprovals": [
+      "claude plugin marketplace add <repo>/experiments/interactive-cli/claude/marketplace --scope local",
+      "claude plugin install khala-proof@khala-proof --scope local",
+      "folder-trust dialog: Yes, I trust this folder"
+    ],
+    "permissionMode": "auto (user default)"
+  }
+}

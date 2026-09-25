@@ -1,0 +1,8 @@
+{
+  "name": "khala-proof",
+  "version": "0.2.3",
+  "description": "Throwaway Khala listening-mode proof: steer, sync, async and idle wake inside an interactive Claude Code session.",
+  "author": {
+    "name": "Khala"
+  }
+}
