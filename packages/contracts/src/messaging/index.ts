@@ -54,6 +54,28 @@ export {
   MAX_JSON_DEPTH, decodeControlRecord, isRecordLive, sameJsonValue,
 } from './control-store';
 export {
+  type AccessRequestOutcome, type AccessRequestStatus, type AdmissionGrantExchangePort, type AuthorizedChannelRef,
+  type ChannelAccessRequest, type ChannelCreateAdapterPort, type ChannelCreateIntent, type ChannelCreateOutcome,
+  type ChannelCreateReconciliation,
+  type ChannelDiscoveryPort, type ChannelDiscoveryRejection, type ChannelListQuery, type ChannelListing,
+  type ChannelListingPage, type ChannelPrivateEligibilityPort, type ChannelServiceKind, type ChannelUrlAccessRequest,
+  type ChannelVisibility, type DiscoveryCredential, type DiscoveryCredentialValidity, type DiscoveryRequester,
+  type DiscoveryScope, type Ed25519ProofKey, type GrantExchangeBinding, type GrantExchangeBindingMatch,
+  type GrantExchangeRejection, type GrantExchangeRequest, type GrantExchangeValidation,
+  type HumanAuthorizedWorkflowContext, type KeyThumbprintResult, type ListingRefAccessRequest, type PrivateEligibilityMutation,
+  type SealedGrantEnvelope, type SealedGrantPayload, type SealedGrantPayloadValidity, type StableAgentPrincipal,
+  type ValidatedGrantExchangeRequest, type X25519EncryptionKey,
+  ACCESS_REQUEST_OUTCOMES, CHANNEL_CREATE_OUTCOMES, CHANNEL_DISCOVERY_SCOPES, CHANNEL_SEALED_BOX_ALGORITHM,
+  MAX_CHANNEL_LIST_PAGE_SIZE,
+  MAX_CHANNEL_TITLE_BYTES, MAX_CHANNEL_URL_BYTES, MAX_SEALED_GRANT_BYTES, classifyGrantExchangeBinding,
+  deriveOkpKeyThumbprint,
+  decodeAccessRequestStatus, decodeChannelAccessRequest, decodeChannelCreateIntent, decodeChannelCreateReconciliation,
+  decodeChannelListQuery,
+  decodeChannelListing, decodeChannelListingPage, decodeDiscoveryCredential, decodeGrantExchangeRequest,
+  decodeSealedGrantEnvelope, decodeSealedGrantPayload, validateDiscoveryCredential, validateGrantExchangeRequest,
+  validateSealedGrantPayload,
+} from './discovery';
+export {
   type PairingApprovalResult, type PairingClaimProjection, type PairingClaimRequest, type PairingClaimResult,
   type PairingCreateRequest, type PairingCreateResult, type PairingDecisionRequest, type PairingDecisionResult,
   type PairingFailure, type PairingFailureCode, type PairingFailureRoute, type PairingGrantRedemptionRequest,
