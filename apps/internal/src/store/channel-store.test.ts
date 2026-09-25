@@ -46,14 +46,35 @@ const bobBinding: SessionBinding = {
   generation: 4,
 };
 
-function fresh(): Readonly<{ directory: string; handle: InternalStoreHandle; store: ChannelStore }> {
+function fresh(onReadPrepare?: (sql: string) => void): Readonly<{
+  directory: string;
+  handle: InternalStoreHandle;
+  store: ChannelStore;
+}> {
   const root = fs.mkdtempSync('/tmp/khala-channel-store-');
   roots.push(root);
   fs.chmodSync(root, 0o700);
   const directory = path.join(root, 'state');
   const handle = openChannelStore({ directory, mode: 'create' });
   handles.push(handle);
-  return { directory, handle, store: createChannelStore(handle) };
+  const storeHandle: InternalStoreHandle = onReadPrepare ? {
+    ...handle,
+    read(run) {
+      return handle.read(db => run(new Proxy(db, {
+        get(target, property) {
+          if (property === 'prepare') {
+            return (sql: string) => {
+              onReadPrepare(sql);
+              return target.prepare(sql);
+            };
+          }
+          const value = Reflect.get(target, property, target) as unknown;
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      })));
+    },
+  } : handle;
+  return { directory, handle, store: createChannelStore(storeHandle) };
 }
 
 function seed(store: ChannelStore): void {
@@ -169,6 +190,30 @@ describe('channel creation and sends', () => {
       .toEqual({ kind: 'done', participantId: bob.participantId });
   });
 
+  it('reconciles settled channel creation with the creator current membership', () => {
+    const { store } = fresh();
+    seed(store);
+    const retry = () => store.createChannel({
+      operationId: 'create-one', channelId: 'ignored-on-retry' as RoomId, title: 'One',
+      creatorOwnerId: alice.ownerId, creatorParticipantId: alice.participantId,
+      creatorDeviceId: aliceDevice, createdAt: '2099-01-01T00:00:00.000Z',
+    });
+    const find = () => store.findCreatedChannel({
+      operationId: 'create-one', creatorOwnerId: alice.ownerId,
+      creatorParticipantId: alice.participantId, creatorDeviceId: aliceDevice,
+    });
+
+    expect(store.setMembership({ channelId, participantId: alice.participantId, membership: 'left' }))
+      .toMatchObject({ kind: 'done', changed: true });
+    expect(retry()).toMatchObject({ kind: 'replayed', channel: { channelId, membership: 'left' } });
+    expect(find()).toMatchObject({ kind: 'found', channel: { channelId, membership: 'left' } });
+
+    expect(store.setMembership({ channelId, participantId: alice.participantId, membership: 'revoked' }))
+      .toMatchObject({ kind: 'done', changed: true });
+    expect(retry()).toMatchObject({ kind: 'replayed', channel: { channelId, membership: 'revoked' } });
+    expect(find()).toMatchObject({ kind: 'found', channel: { channelId, membership: 'revoked' } });
+  });
+
   it('deduplicates exact device transaction retries and rejects changed reuse', () => {
     const { handle, store } = fresh();
     seed(store);
@@ -216,6 +261,47 @@ describe('channel creation and sends', () => {
     stopHint();
     expect(send(store, { eventId: '3', body: 'after all disposal' })).toMatchObject({ kind: 'stored' });
     expect(observed).toEqual(['channel:committed', 'healthy:1', 'hint', 'hint']);
+  });
+
+  it('keeps full observer snapshots without rereading the full timeline on each append', () => {
+    const preparedReads: string[] = [];
+    const { store } = fresh(sql => preparedReads.push(sql));
+    seed(store);
+    expect(send(store, { eventId: '1' })).toMatchObject({ kind: 'stored' });
+    const observed: string[][] = [];
+    const dispose = store.subscribeChannel(
+      { channelId, participantId: alice.participantId },
+      update => observed.push(update.events.map(event => event.eventId)),
+    );
+    const fullTimelineReads = () => preparedReads.filter(sql => (
+      sql.includes('SELECT * FROM events WHERE channel_id = ? ORDER BY sequence')
+    )).length;
+    expect(fullTimelineReads()).toBe(1);
+
+    expect(send(store, { eventId: '2' })).toMatchObject({ kind: 'stored' });
+    expect(send(store, { eventId: '3' })).toMatchObject({ kind: 'stored' });
+    expect(observed).toEqual([['1', '2'], ['1', '2', '3']]);
+    expect(fullTimelineReads()).toBe(1);
+    dispose();
+  });
+
+  it('publishes the committed non-joined summary to an attached observer', () => {
+    const { store } = fresh();
+    seed(store);
+    expect(send(store, { eventId: '1' })).toMatchObject({ kind: 'stored' });
+    const observed: Array<{ membership: string; eventIds: string[] }> = [];
+    const dispose = store.subscribeChannel(
+      { channelId, participantId: alice.participantId },
+      update => observed.push({
+        membership: update.channel.membership,
+        eventIds: update.events.map(event => event.eventId),
+      }),
+    );
+
+    expect(store.setMembership({ channelId, participantId: alice.participantId, membership: 'revoked' }))
+      .toMatchObject({ kind: 'done', changed: true });
+    expect(observed).toEqual([{ membership: 'revoked', eventIds: ['1'] }]);
+    dispose();
   });
 
   it('round-trips injection-shaped trusted values only as bound data', () => {

@@ -59,7 +59,7 @@ function initialUpdate(input: LocalChannelSubstrateInput, roomId: RoomId): Subst
   if (room.kind !== 'done') return { generation: input.generation, room: null, events: [] };
 
   let cursor: string | null = null;
-  let events: SubstrateEvent[] = [];
+  const pages: SubstrateEvent[][] = [];
   do {
     const page = input.store.timeline({
       channelId: roomId,
@@ -68,11 +68,15 @@ function initialUpdate(input: LocalChannelSubstrateInput, roomId: RoomId): Subst
       limit: 1_000,
     });
     if (page.kind !== 'done') return { generation: input.generation, room: null, events: [] };
-    events = [...page.events.map(event), ...events];
+    pages.push(page.events.map(event));
     cursor = page.nextCursor;
   } while (cursor !== null);
 
-  return { generation: input.generation, room: summary(room.channel), events };
+  return {
+    generation: input.generation,
+    room: summary(room.channel),
+    events: pages.reverse().flat(),
+  };
 }
 
 /** Builds one channel transport fixed to composition-trusted actor and device identity. */

@@ -6,10 +6,9 @@ import {
 } from './path';
 import { type MigrationFault, prepareSchema, validateRawHeader } from './schema';
 
-export type StoreNotification = Readonly<{
-  kind: 'channel' | 'subscription';
-  channelId: string;
-}>;
+export type StoreNotification =
+  | Readonly<{ kind: 'channel'; channelId: string; eventSequence?: number }>
+  | Readonly<{ kind: 'subscription'; channelId: string }>;
 
 export type StoreNotificationListener = (notification: StoreNotification) => void;
 

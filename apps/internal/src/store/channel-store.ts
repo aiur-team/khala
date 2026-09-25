@@ -271,7 +271,12 @@ type ChannelLookup =
   | Readonly<{ kind: 'missing' }>
   | Readonly<{ kind: 'not_joined' }>;
 
-function channelFor(db: DatabaseSync, channelId: string, participantId: string): ChannelLookup {
+type ChannelSnapshotLookup =
+  | Readonly<{ kind: 'found'; channel: StoredChannel }>
+  | Readonly<{ kind: 'missing' }>
+  | Readonly<{ kind: 'not_member' }>;
+
+function channelSnapshotFor(db: DatabaseSync, channelId: string, participantId: string): ChannelSnapshotLookup {
   const row = db.prepare(`
     SELECT c.channel_id, c.title, c.revision, m.membership
     FROM channels c
@@ -279,7 +284,7 @@ function channelFor(db: DatabaseSync, channelId: string, participantId: string):
     WHERE c.channel_id = ?
   `).get(participantId, channelId) as ChannelRow | undefined;
   if (!row) return { kind: 'missing' };
-  if (row.membership !== 'joined') return { kind: 'not_joined' };
+  if (row.membership === null) return { kind: 'not_member' };
   return {
     kind: 'found',
     channel: {
@@ -291,9 +296,22 @@ function channelFor(db: DatabaseSync, channelId: string, participantId: string):
   };
 }
 
+function channelFor(db: DatabaseSync, channelId: string, participantId: string): ChannelLookup {
+  const snapshot = channelSnapshotFor(db, channelId, participantId);
+  if (snapshot.kind === 'missing') return snapshot;
+  if (snapshot.kind === 'not_member' || snapshot.channel.membership !== 'joined') return { kind: 'not_joined' };
+  return snapshot;
+}
+
 function allEvents(db: DatabaseSync, channelId: string): readonly StoredEvent[] | null {
   const rows = db.prepare('SELECT * FROM events WHERE channel_id = ? ORDER BY sequence').all(channelId) as unknown as EventRow[];
   return storedEvents(db, rows);
+}
+
+function eventAtSequence(db: DatabaseSync, channelId: string, sequence: number): StoredEvent | null {
+  const row = db.prepare('SELECT * FROM events WHERE channel_id = ? AND sequence = ?')
+    .get(channelId, sequence) as EventRow | undefined;
+  return row ? storedEvent(db, row) : null;
 }
 
 function unavailable(): Readonly<{ kind: 'unavailable' }> {
@@ -359,6 +377,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
     listener: (update: ChannelUpdate) => void;
   }>;
   const channelListeners = new Map<string, Set<ChannelListener>>();
+  const channelEventCaches = new Map<string, readonly StoredEvent[]>();
   const hintListeners = new Map<string, Set<() => void>>();
   const api: ChannelStore = {
     registerParticipant(participant) {
@@ -503,7 +522,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
             .get(input.operationId) as { fingerprint: string; channel_id: string } | undefined;
           if (operation) {
             if (operation.fingerprint !== fingerprint) return { kind: 'rejected', code: 'operation_mismatch' } as const;
-            const replayed = channelFor(db, operation.channel_id, input.creatorParticipantId);
+            const replayed = channelSnapshotFor(db, operation.channel_id, input.creatorParticipantId);
             return replayed.kind === 'found'
               ? { kind: 'replayed', channel: replayed.channel } as const
               : { kind: 'unavailable' } as const;
@@ -559,7 +578,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
             || row.creator_device_id !== input.creatorDeviceId) {
             return { kind: 'rejected', code: 'operation_mismatch' } as const;
           }
-          const channel = channelFor(db, row.channel_id, input.creatorParticipantId);
+          const channel = channelSnapshotFor(db, row.channel_id, input.creatorParticipantId);
           return channel.kind === 'found'
             ? { kind: 'found', channel: channel.channel } as const
             : { kind: 'unavailable' } as const;
@@ -606,7 +625,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
             SELECT d.participant_id
             FROM devices d
             JOIN memberships m ON m.participant_id = d.participant_id
-            WHERE d.device_id = ? AND m.channel_id = ? AND m.membership = 'joined'
+            WHERE d.device_id = ? AND m.channel_id = ?
           `).get(input.deviceId, input.channelId) as { participant_id: string } | undefined;
           return {
             kind: 'done',
@@ -663,7 +682,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           return event ? { kind: 'stored', event } as const : { kind: 'unavailable' } as const;
         });
         if (result.kind === 'stored') {
-          handle.publish({ kind: 'channel', channelId: input.channelId });
+          handle.publish({ kind: 'channel', channelId: input.channelId, eventSequence: result.event.sequence });
           handle.publish({ kind: 'subscription', channelId: input.channelId });
         }
         return result;
@@ -749,12 +768,22 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
 
     subscribeChannel(input, listener) {
       const entry: ChannelListener = { participantId: input.participantId, listener };
-      const listeners = channelListeners.get(input.channelId) ?? new Set<ChannelListener>();
+      let listeners = channelListeners.get(input.channelId);
+      if (!listeners) {
+        listeners = new Set<ChannelListener>();
+        try {
+          const events = handle.read(db => allEvents(db, input.channelId));
+          if (events) channelEventCaches.set(input.channelId, events);
+        } catch { /* A failed snapshot leaves this observer fail-closed. */ }
+      }
       listeners.add(entry);
       channelListeners.set(input.channelId, listeners);
       return () => {
         listeners.delete(entry);
-        if (listeners.size === 0) channelListeners.delete(input.channelId);
+        if (listeners.size === 0) {
+          channelListeners.delete(input.channelId);
+          channelEventCaches.delete(input.channelId);
+        }
       };
     },
 
@@ -777,22 +806,33 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
     }
     const listeners = channelListeners.get(notification.channelId);
     if (!listeners || listeners.size === 0) return;
-    let updates: Map<string, ChannelUpdate> | null = null;
+    const cachedEvents = channelEventCaches.get(notification.channelId);
+    if (!cachedEvents) return;
+    let refreshed: Readonly<{
+      events: readonly StoredEvent[];
+      updates: Map<string, ChannelUpdate>;
+    }> | null = null;
     try {
-      updates = handle.read(db => {
-        const events = allEvents(db, notification.channelId);
-        if (!events) return null;
-        const result = new Map<string, ChannelUpdate>();
-        for (const participantId of new Set([...listeners].map(entry => entry.participantId))) {
-          const lookup = channelFor(db, notification.channelId, participantId);
-          if (lookup.kind === 'found') result.set(participantId, { channel: lookup.channel, events });
+      refreshed = handle.read(db => {
+        let events = cachedEvents;
+        if (notification.eventSequence !== undefined
+          && events.at(-1)?.sequence !== notification.eventSequence) {
+          const event = eventAtSequence(db, notification.channelId, notification.eventSequence);
+          if (!event || (events.at(-1)?.sequence ?? 0) > event.sequence) return null;
+          events = [...events, event];
         }
-        return result;
+        const updates = new Map<string, ChannelUpdate>();
+        for (const participantId of new Set([...listeners].map(entry => entry.participantId))) {
+          const lookup = channelSnapshotFor(db, notification.channelId, participantId);
+          if (lookup.kind === 'found') updates.set(participantId, { channel: lookup.channel, events });
+        }
+        return { events, updates };
       });
     } catch { return; }
-    if (!updates) return;
+    if (!refreshed) return;
+    channelEventCaches.set(notification.channelId, refreshed.events);
     for (const entry of listeners) {
-      const update = updates.get(entry.participantId);
+      const update = refreshed.updates.get(entry.participantId);
       if (!update) continue;
       try { entry.listener(update); } catch { /* Isolate listener failures from later listeners. */ }
     }

@@ -229,9 +229,10 @@ describe('local subscription source replay', () => {
     expect(hint).toHaveBeenCalledOnce();
   });
 
-  it('exposes matching joined-device provenance only', async () => {
+  it('preserves historical device provenance after an author leaves or is revoked', async () => {
     const store = fresh();
-    const { provenance } = transport(store);
+    const { provenance, source } = transport(store);
+    expect(send(store, 1, alice, 'before leaving')).toMatchObject({ kind: 'stored' });
     expect(await provenance.participantForDevice({ roomId: channelId, deviceId: alice.deviceIds[0]! }))
       .toBe(alice.participantId);
     expect(await provenance.participantForDevice({ roomId: channelId, deviceId: bob.deviceIds[0]! }))
@@ -241,6 +242,14 @@ describe('local subscription source replay', () => {
     expect(store.setMembership({ channelId, participantId: alice.participantId, membership: 'left' }))
       .toMatchObject({ kind: 'done' });
     expect(await provenance.participantForDevice({ roomId: channelId, deviceId: alice.deviceIds[0]! }))
-      .toBeNull();
+      .toBe(alice.participantId);
+    expect(store.setMembership({ channelId, participantId: alice.participantId, membership: 'revoked' }))
+      .toMatchObject({ kind: 'done' });
+    expect(await provenance.participantForDevice({ roomId: channelId, deviceId: alice.deviceIds[0]! }))
+      .toBe(alice.participantId);
+    expect(await source.read({ cursor: null, limit: 10 })).toMatchObject({
+      kind: 'page',
+      events: [{ ref: { eventId: 'event-1', authorParticipantId: alice.participantId } }],
+    });
   });
 });

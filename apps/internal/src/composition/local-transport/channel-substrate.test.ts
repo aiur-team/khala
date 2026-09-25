@@ -137,7 +137,7 @@ describe('local channel substrate', () => {
       .toEqual({ kind: 'rejected', code: 'operation_mismatch' });
   });
 
-  it('synchronously emits a current full update, post-commit replacements, generation, and disposal', async () => {
+  it('synchronously emits current, post-commit, and membership-loss replacements with generation', async () => {
     const store = fresh();
     const { local, roomId } = await createOne(store);
     const updates: SubstrateUpdate[] = [];
@@ -159,9 +159,47 @@ describe('local channel substrate', () => {
 
     await local.sendEvent({ roomId, clientTxnId: 'txn-one', content: text('first') });
     expect(updates).toHaveLength(2);
+    expect(store.setMembership({ channelId: roomId, participantId: alice.participantId, membership: 'revoked' }))
+      .toMatchObject({ kind: 'done', changed: true });
+    expect(updates).toHaveLength(3);
+    expect(updates[2]).toMatchObject({
+      generation: 7,
+      room: { membership: 'revoked', revision: '2' },
+      events: [{ eventId: 'generated-2' }],
+    });
     dispose();
     await local.sendEvent({ roomId, clientTxnId: 'txn-two', content: text('second') });
-    expect(updates).toHaveLength(2);
+    expect(updates).toHaveLength(3);
+  });
+
+  it('synchronously emits every persisted event once in order across timeline pages', async () => {
+    const store = fresh();
+    const { local, roomId } = await createOne(store);
+    const eventIds = Array.from(
+      { length: 1_001 },
+      (_, index) => `event-${String(index + 1).padStart(4, '0')}` as EventId,
+    );
+
+    for (const [index, eventId] of eventIds.entries()) {
+      expect(store.send({
+        channelId: roomId,
+        eventId,
+        authorParticipantId: alice.participantId,
+        authorDeviceId: alice.deviceIds[0]!,
+        clientTxnId: `txn-${eventId}`,
+        content: text(eventId),
+        receivedAt: new Date(Date.parse('2026-09-24T20:00:00.000Z') + index).toISOString(),
+      })).toMatchObject({ kind: 'stored' });
+    }
+
+    const updates: SubstrateUpdate[] = [];
+    const dispose = local.subscribe(roomId, update => updates.push(update));
+
+    expect(updates).toHaveLength(1);
+    const receivedIds = updates[0]!.events.map(event => event.eventId);
+    expect(receivedIds).toEqual(eventIds);
+    expect(new Set(receivedIds)).toHaveLength(eventIds.length);
+    dispose();
   });
 
   it('maps unavailable effect storage conservatively to unknown and read storage to unavailable', async () => {
