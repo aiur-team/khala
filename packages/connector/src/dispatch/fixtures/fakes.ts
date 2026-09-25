@@ -14,7 +14,7 @@ import { createMemoryLedger, type MemoryLedger } from './memory-ledger';
 import { createDispatcher } from '../run';
 import type {
   AttemptSnapshot, BoundaryObservation, DeliveryBoundary, DispatchDeps, DispatchLedger, DispatchListening,
-  DispatchPolicy, Dispatcher,
+  DispatchLimits, DispatchPolicy, Dispatcher,
 } from '../types';
 
 export const POLICY_VERSION = 3;
@@ -41,13 +41,18 @@ export function testPolicy(overrides: Partial<DispatchPolicy> = {}): DispatchPol
     version: POLICY_VERSION,
     armedAt: POLICY_VERSION,
     paused: false,
-    maxJobsPerCausalRoot: 10,
-    maxConcurrentJobs: 10,
     expiresAt: null,
-    busy: 'queue',
     listening: listening(),
     ...overrides,
   };
+}
+
+/**
+ * Explicit test limits, injected into the dispatcher the way composition injects the local profile.
+ * These are fixture values, looser than the product profile so tests isolate one limit at a time.
+ */
+export function testLimits(overrides: Partial<DispatchLimits> = {}): DispatchLimits {
+  return { maxJobsPerCausalRoot: 10, maxConcurrentJobs: 10, busy: 'queue', ...overrides };
 }
 
 /** Proven support for every mode on the fixture's exact interactive route. */
@@ -294,6 +299,8 @@ export type World = {
   releases: Map<string, Release>;
   errors: unknown[];
   now: Date;
+  /** The limits every dispatcher from this world is constructed with. */
+  limits: DispatchLimits;
   /** Payload refs read, with the byte limit each read was given. */
   reads: Array<Readonly<{ ref: string; maxBytes: number }>>;
   /** Approval command IDs looked up, in order. */
@@ -306,7 +313,11 @@ export type World = {
   dispatcher(overrides?: Partial<DispatchDeps>): Dispatcher;
 };
 
-export async function world(policy: DispatchPolicy | null = testPolicy(), bindingIds = ['bind-1', 'bind-2', 'bind-3']): Promise<World> {
+export async function world(
+  policy: DispatchPolicy | null = testPolicy(),
+  bindingIds = ['bind-1', 'bind-2', 'bind-3'],
+  limits: DispatchLimits = testLimits(),
+): Promise<World> {
   const ledger = createMemoryLedger();
   await ledger.transact(tx => {
     for (const id of bindingIds) {
@@ -326,6 +337,7 @@ export async function world(policy: DispatchPolicy | null = testPolicy(), bindin
     releases,
     errors: [],
     now: new Date('2026-09-18T01:00:00Z'),
+    limits,
     reads: [],
     lookups: [],
     onApproval: () => undefined,
@@ -341,6 +353,7 @@ export async function world(policy: DispatchPolicy | null = testPolicy(), bindin
     dispatcher(overrides = {}) {
       return createDispatcher({
         ledger,
+        limits: state.limits,
         harness: state.harness,
         boundary: state.boundary,
         approvals: {

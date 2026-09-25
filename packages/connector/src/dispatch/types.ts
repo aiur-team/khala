@@ -20,11 +20,21 @@ export type DispatchListening = Readonly<{
 }>;
 
 /**
- * Candidate automation controls for one binding. Dispatch consumes only the approved local profile's
- * `maxJobsPerCausalRoot`, `maxConcurrentJobs` and `busy`; automatic release alone enforces
- * `maxCausalDepth`, and a policy carrying it is unusable here. A missing or malformed policy blocks
- * every claim on its binding. `maxJobsPerCausalRoot` counts dispatch attempts; it is not a token or
- * spend cap.
+ * The dispatch share of the approved local automation profile, injected by composition and never
+ * read from a binding's policy. Automatic release alone enforces `maxCausalDepth`, so it is not part
+ * of this value. `maxJobsPerCausalRoot` counts dispatch attempts; it is not a token or spend cap.
+ */
+export type DispatchLimits = Readonly<{
+  maxJobsPerCausalRoot: number;
+  maxConcurrentJobs: number;
+  /** What to do when the bound session already has active work. */
+  busy: 'queue' | 'wait' | 'reject';
+}>;
+
+/**
+ * Candidate controls for one binding. It carries no limits: those come only from the injected
+ * `DispatchLimits`, and a policy carrying a limit field is unusable. A missing or malformed policy
+ * blocks every claim on its binding.
  */
 export type DispatchPolicy = Readonly<{
   /**
@@ -40,12 +50,8 @@ export type DispatchPolicy = Readonly<{
    */
   armedAt: number;
   paused: boolean;
-  maxJobsPerCausalRoot: number;
-  maxConcurrentJobs: number;
   /** UTC timestamp after which no new claim is made, or null for no expiry. */
   expiresAt: string | null;
-  /** What to do when the bound session already has active work. */
-  busy: 'queue' | 'wait' | 'reject';
   /** Only an effective `steer` or `sync` equal to the requested mode may claim. */
   listening: DispatchListening;
 }>;
@@ -190,6 +196,10 @@ export type BoundaryObservation = Readonly<{
  * when the claimed attempt's route reaches a safe delivery boundary, or with null when that boundary
  * cannot be observed. It delivers nothing itself. The dispatcher aborts `signal` on stop; any exit
  * before resolution returns the release to pending with its one reservation intact.
+ *
+ * `signal` only ends the wait. An integration must never use it, or anything else here, to
+ * interrupt, signal or kill the user's CLI: stop revokes delivery and leaves the agent running
+ * (decision 36).
  */
 export interface DeliveryBoundary {
   await(input: Readonly<{
@@ -201,6 +211,8 @@ export interface DeliveryBoundary {
 
 export type DispatchDeps = Readonly<{
   ledger: DispatchLedger;
+  /** The approved local profile's job, concurrency and busy limits. Invalid limits refuse construction. */
+  limits: DispatchLimits;
   harness: HarnessPort;
   boundary: DeliveryBoundary;
   /** The approval a release names, from the owner connector's own ledger. */
@@ -216,6 +228,11 @@ export type DispatchDeps = Readonly<{
   newId(kind: 'attempt' | 'receipt'): string;
   /** Identifies this dispatcher process in the records it claims. */
   workerId: string;
+  /**
+   * First retry delay for a release returned to pending at its boundary (route drift, boundary
+   * unavailable or over its limits). Doubles per consecutive miss up to a minute. Defaults to 1000.
+   */
+  retryDelayMs?: number;
   /** Explicit opt-in for the unproven agent-installed listener fallback. Defaults to false. */
   allowExperimentalAgentListener?: boolean;
   /** Called with an error a background pass could not handle; the job stays as persisted. */

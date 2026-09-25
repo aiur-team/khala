@@ -6,7 +6,7 @@ export { createDispatcher } from './run';
 export { claim, promote, sameRelease, type PromoteResult } from './claim';
 export {
   ACTIVE_STATES, MAX_RECEIPTS, type AttemptSnapshot, type BindingState, type BlockCode, type BoundaryObservation,
-  type ClaimResult, type DeliveryBoundary, type DispatchDeps, type DispatchLedger, type DispatchListening,
+  type ClaimResult, type DeliveryBoundary, type DispatchDeps, type DispatchLedger, type DispatchLimits, type DispatchListening,
   type DispatchMode, type DispatchPolicy, type DispatchRecord, type DispatchState, type DispatchTx, type Dispatcher,
   type EnqueueResult, type QuarantineCode,
 } from './types';

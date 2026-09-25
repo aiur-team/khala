@@ -1,16 +1,16 @@
 // Listening-mode dispatch: requested/effective gating, `modeAtClaim`, the proved boundary, drift
 // back to pending, pause/wake and the dispatch-owned limits (E09 `listening-mode-dispatch`).
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   type BindingId, type HarnessCapabilities, type SessionBinding, decodeDeliveryLimits,
 } from '@khala/contracts/delivery/index';
 import { usablePolicy } from './budget';
 import {
   EVIDENCE_REVISION, HARNESS_VERSION, type World, binding, capabilities, deferred, faultyLedger, listening, makeRelease,
-  provenModes, receipt, recordOf, testPolicy, world,
+  provenModes, receipt, recordOf, testLimits, testPolicy, world,
 } from './fixtures/fakes';
-import type { DispatchLedger, DispatchPolicy, DispatchTx } from './types';
+import type { DispatchLedger, DispatchLimits, DispatchPolicy, DispatchTx } from './types';
 
 const replacement = (generation = 1): SessionBinding => ({ ...binding('bind-1', generation), sessionId: 'thread-new' });
 
@@ -400,7 +400,7 @@ describe('dispatch-owned local limits and pause/wake', () => {
   });
 
   it('resume does not reset causal counters', async () => {
-    const w = await world(testPolicy({ maxJobsPerCausalRoot: 1 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxJobsPerCausalRoot: 1 }));
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1', root: 'cause-a' })).job);
     await dispatcher.idle();
@@ -410,10 +410,10 @@ describe('dispatch-owned local limits and pause/wake', () => {
     expect(await recordOf(w.ledger, 'release-2')).toMatchObject({ state: 'queued', reason: 'budget_exhausted' });
 
     // Pause at v4 and resume at v5, waking repeatedly: the exhausted root stays held.
-    await w.setPolicy(testPolicy({ maxJobsPerCausalRoot: 1, version: 4, armedAt: 3, paused: true }));
+    await w.setPolicy(testPolicy({ version: 4, armedAt: 3, paused: true }));
     dispatcher.wake();
     await dispatcher.idle();
-    await w.setPolicy(testPolicy({ maxJobsPerCausalRoot: 1, version: 5, armedAt: 3 }));
+    await w.setPolicy(testPolicy({ version: 5, armedAt: 3 }));
     dispatcher.wake();
     dispatcher.wake();
     await dispatcher.idle();
@@ -473,6 +473,106 @@ describe('dispatch-owned local limits and pause/wake', () => {
     await dispatcher.idle();
     expect(w.harness.submittedIds()).toEqual(['release-1']);
     expect(await causalCount(w)).toBe(1);
+  });
+});
+
+describe('injected local limits', () => {
+  /** The approved local profile's dispatch share, as composition injects it. */
+  const PROFILE = { maxJobsPerCausalRoot: 3, maxConcurrentJobs: 1, busy: 'wait' } as const;
+
+  it('a policy carrying looser limits cannot loosen the injected profile', async () => {
+    const loosening = { ...testPolicy(), maxConcurrentJobs: 10, busy: 'queue' } as unknown as DispatchPolicy;
+    expect(usablePolicy(loosening)).toBe(false);
+    const w = await world(loosening, ['bind-1', 'bind-2'], PROFILE);
+    const dispatcher = w.dispatcher();
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1', bindingId: 'bind-1' })).job);
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2' })).job);
+    dispatcher.wake();
+    await dispatcher.idle();
+    // The policy's limits are never adopted: it is unusable, so nothing reaches the harness.
+    expect(w.harness.inspected).toBe(0);
+    expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'unconfigured' });
+
+    // With a limit-free policy, the injected `maxConcurrentJobs: 1` holds the second binding.
+    await w.setPolicy(testPolicy());
+    dispatcher.wake();
+    await dispatcher.idle();
+    expect(w.harness.submittedIds()).toEqual(['release-1']);
+    expect(await recordOf(w.ledger, 'release-2')).toMatchObject({ state: 'queued', reason: 'at_capacity' });
+  });
+
+  it('under the injected `wait` a later release on a busy binding waits, never queues behind it', async () => {
+    const w = await world(testPolicy(), ['bind-1'], { ...PROFILE, maxConcurrentJobs: 2 });
+    const dispatcher = w.dispatcher();
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+    await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2' })).job);
+    await dispatcher.idle();
+    expect(w.harness.submittedIds()).toEqual(['release-1']);
+    expect(await recordOf(w.ledger, 'release-2')).toMatchObject({ state: 'queued', reason: 'busy' });
+  });
+
+  it.each([
+    ['a maxCausalDepth', { ...PROFILE, maxCausalDepth: 3 }],
+    ['an infinite causal limit', { ...PROFILE, maxJobsPerCausalRoot: Number.POSITIVE_INFINITY }],
+    ['a zero concurrency limit', { ...PROFILE, maxConcurrentJobs: 0 }],
+    ['a fractional limit', { ...PROFILE, maxJobsPerCausalRoot: 1.5 }],
+    ['a steer busy policy', { ...PROFILE, busy: 'steer' }],
+    ['no busy policy', { maxJobsPerCausalRoot: 3, maxConcurrentJobs: 1 }],
+  ])('refuses to construct with %s', async (_, limits) => {
+    const w = await world(testPolicy(), ['bind-1'], limits as unknown as DispatchLimits);
+    expect(() => w.dispatcher()).toThrow(RangeError);
+  });
+});
+
+describe('retry wake after a pre-effect return to pending', () => {
+  it('retries a release returned from an unavailable boundary without any other wake', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const w = await world();
+      let misses = 1;
+      const reached = w.boundary.onAwait;
+      w.boundary.onAwait = async call => (misses-- > 0 ? null : reached(call));
+      const dispatcher = w.dispatcher({ retryDelayMs: 100 });
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+      await dispatcher.idle();
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'boundary_unavailable' });
+
+      await vi.advanceTimersByTimeAsync(100);
+      await dispatcher.idle();
+      expect(w.harness.submittedIds()).toEqual(['release-1']);
+      expect(await causalCount(w)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries route drift and backs off while the boundary stays unavailable, and stop cancels it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const w = await world();
+      boundaryReports(w, capabilities('queue', { version: '0.155.0' }));
+      const dispatcher = w.dispatcher({ retryDelayMs: 100 });
+      await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1' })).job);
+      await dispatcher.idle();
+      expect(await recordOf(w.ledger, 'release-1')).toMatchObject({ state: 'queued', reason: 'route_drift' });
+      expect(w.boundary.calls).toHaveLength(1);
+
+      // Delays of 100, 200 and 400 ms: three retries in 700 ms, none sooner.
+      await vi.advanceTimersByTimeAsync(99);
+      expect(w.boundary.calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(601);
+      await dispatcher.idle();
+      expect(w.boundary.calls).toHaveLength(4);
+      expect(w.harness.submitted).toHaveLength(0);
+      expect(await causalCount(w)).toBe(1);
+
+      await dispatcher.stop();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(w.boundary.calls).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

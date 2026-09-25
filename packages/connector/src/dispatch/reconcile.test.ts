@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { DeliveryReceipt, OwnerAuthority } from '@khala/contracts/delivery/index';
 import {
-  agentAcknowledgement, deferred, faultyLedger, makeRelease, ownerAuthority, receipt, recordOf, seed, testPolicy, world,
+  agentAcknowledgement, deferred, faultyLedger, makeRelease, ownerAuthority, receipt, recordOf, seed, testLimits,
+  testPolicy, world,
 } from './fixtures/fakes';
 import { applyReceipt, markUnknown } from './reconcile';
 import { MAX_RECEIPTS } from './types';
@@ -229,8 +230,8 @@ describe('later observations', () => {
 });
 
 describe('unknown outcomes', () => {
-  async function unknownOn(bindingId: string, policy = testPolicy()) {
-    const w = await world(policy);
+  async function unknownOn(bindingId: string, limits = testLimits()) {
+    const w = await world(testPolicy(), undefined, limits);
     w.harness.onSubmit = async () => { throw new Error('connection reset'); };
     const dispatcher = w.dispatcher();
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-1', bindingId, root: 'cause-1' })).job);
@@ -241,7 +242,7 @@ describe('unknown outcomes', () => {
   }
 
   it('keeps the binding busy', async () => {
-    const { w, dispatcher } = await unknownOn('bind-1', testPolicy({ busy: 'wait' }));
+    const { w, dispatcher } = await unknownOn('bind-1', testLimits({ busy: 'wait' }));
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-1', root: 'cause-2' })).job);
     await dispatcher.idle();
     expect(w.harness.submittedIds()).toEqual(['release-1']);
@@ -249,7 +250,7 @@ describe('unknown outcomes', () => {
   });
 
   it('holds its concurrency slot', async () => {
-    const { w, dispatcher } = await unknownOn('bind-1', testPolicy({ maxConcurrentJobs: 1 }));
+    const { w, dispatcher } = await unknownOn('bind-1', testLimits({ maxConcurrentJobs: 1 }));
     await dispatcher.enqueue(w.add(makeRelease({ releaseId: 'release-2', bindingId: 'bind-2', root: 'cause-2' })).job);
     await dispatcher.idle();
     expect(w.harness.submittedIds()).toEqual(['release-1']);

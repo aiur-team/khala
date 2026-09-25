@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  MAX_PAYLOAD_BYTES, deferred, faultyLedger, makeRelease, receipt, recordOf, seed, testPolicy, world,
+  MAX_PAYLOAD_BYTES, deferred, faultyLedger, makeRelease, receipt, recordOf, seed, testLimits, testPolicy,
+  world,
 } from './fixtures/fakes';
 import type { DispatchLedger } from './types';
 
@@ -241,7 +242,7 @@ describe('receipt ownership and slot release', () => {
   });
 
   it('starts waiting work when a submission settles and frees the slot', async () => {
-    const w = await world(testPolicy({ maxConcurrentJobs: 1 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxConcurrentJobs: 1 }));
     const gate = deferred<void>();
     w.harness.onSubmit = async job => {
       await gate.promise;
@@ -257,7 +258,7 @@ describe('receipt ownership and slot release', () => {
   });
 
   it('refuses a second release of one approval under a fresh causal root', async () => {
-    const w = await world(testPolicy({ maxJobsPerCausalRoot: 1 }));
+    const w = await world(testPolicy(), undefined, testLimits({ maxJobsPerCausalRoot: 1 }));
     const dispatcher = w.dispatcher();
     const release = w.add(makeRelease({ releaseId: 'release-1', root: 'cause-1' }));
     await dispatcher.enqueue(release.job);

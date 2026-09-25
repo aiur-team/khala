@@ -41,7 +41,11 @@ const SNAPSHOT_KEYS = [
   'adapterVersion', 'bindingGeneration', 'evidenceRevision', 'harness', 'harnessVersion', 'modeAtClaim', 'route',
   'sessionId',
 ];
-/** Policies applied before listening modes. They decode, but block dispatch until a projection is applied. */
+/**
+ * Policies applied before listening modes, which also carried the per-binding limits that dispatch now
+ * takes only from its injected profile. They decode with those limits dropped, but block dispatch until
+ * a projection is applied.
+ */
 const LEGACY_POLICY_KEYS = [
   'armedAt', 'busy', 'expiresAt', 'maxConcurrentJobs', 'maxJobsPerCausalRoot', 'paused', 'version',
 ];
@@ -185,10 +189,16 @@ type StoredPolicy = Readonly<{ policy: Omit<DispatchPolicy, 'listening'>; listen
 
 const LEGACY_LISTENING_PROBE: DispatchListening = { version: 0, requested: 'sync', effective: null, evidenceRevision: null };
 
+function legacyPolicy(parsed: Record<string, unknown>): DispatchPolicy {
+  const limits = ['busy', 'maxConcurrentJobs', 'maxJobsPerCausalRoot'];
+  const rest = Object.fromEntries(Object.entries(parsed).filter(([key]) => !limits.includes(key)));
+  return { ...rest, listening: LEGACY_LISTENING_PROBE } as DispatchPolicy;
+}
+
 function decodePolicy(json: string, bindingId: string, generation: number, version: number): StoredPolicy {
   const parsed = parseJson(json);
   const legacy = typeof parsed === 'object' && parsed !== null && sameKeys(parsed, LEGACY_POLICY_KEYS);
-  const policy = (legacy ? { ...parsed, listening: LEGACY_LISTENING_PROBE } : parsed) as DispatchPolicy;
+  const policy = (legacy ? legacyPolicy(parsed as Record<string, unknown>) : parsed) as DispatchPolicy;
   if (!usablePolicy(policy) || policy.version !== version) throw new StorageError('corrupt');
   requireIdentifier(bindingId);
   requireCount(generation);
@@ -201,10 +211,7 @@ function canonicalPolicy(policy: DispatchPolicy): DispatchPolicy {
     version: policy.version,
     armedAt: policy.armedAt,
     paused: policy.paused,
-    maxJobsPerCausalRoot: policy.maxJobsPerCausalRoot,
-    maxConcurrentJobs: policy.maxConcurrentJobs,
     expiresAt: policy.expiresAt,
-    busy: policy.busy,
     listening: {
       version: policy.listening.version,
       requested: policy.listening.requested,

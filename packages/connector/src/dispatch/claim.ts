@@ -12,11 +12,13 @@ import {
   checkLimits, currentRelease, dispatchMode, expired, reserve, routeSnapshot, sameSnapshot, supportedRoute,
   usablePolicy,
 } from './budget';
-import type { BlockCode, ClaimResult, DispatchRecord, DispatchTx } from './types';
+import type { BlockCode, ClaimResult, DispatchLimits, DispatchRecord, DispatchTx } from './types';
 
 export type ClaimInput = Readonly<{
   /** The stored release, already verified against its approval and payload digest. */
   job: ReleasedJob;
+  /** The injected local profile; never read from the binding's policy. */
+  limits: DispatchLimits;
   /** The harness route the payload will be submitted to. */
   capabilities: HarnessCapabilities;
   /** Read inside the claiming transaction. */
@@ -73,6 +75,7 @@ function refusal(
   tx: DispatchTx,
   record: DispatchRecord,
   now: Date,
+  limits: DispatchLimits,
   capabilities: HarnessCapabilities | null,
   allowExperimentalAgentListener = false,
 ): Refusal | null {
@@ -93,7 +96,7 @@ function refusal(
     || routeSnapshot(capabilities, job.binding, mode, policy.listening.evidenceRevision) === null)) {
     return { code: 'harness_unsupported', terminal: false };
   }
-  return checkLimits(tx, policy, record, capabilities?.busy ?? null);
+  return checkLimits(tx, limits, record, capabilities?.busy ?? null);
 }
 
 function block(tx: DispatchTx, record: DispatchRecord, { code, terminal }: Refusal): ClaimResult {
@@ -114,13 +117,14 @@ export function precheck(
   tx: DispatchTx,
   releaseId: DispatchRecord['releaseId'],
   now: Date,
+  limits: DispatchLimits,
   held: ReadonlySet<string> = new Set(),
 ): PrecheckResult {
   const record = tx.record(releaseId);
   if (record?.state !== 'queued') return { kind: 'skip' };
   const bindingId = record.job.binding.bindingId;
   if (held.has(bindingId)) return { kind: 'held', bindingId };
-  const refused = refusal(tx, record, now, null);
+  const refused = refusal(tx, record, now, limits, null);
   if (refused === null) return { kind: 'proceed', record };
   block(tx, record, refused);
   return refused.terminal || refused.code === 'budget_exhausted' ? { kind: 'skip' } : { kind: 'held', bindingId };
@@ -153,7 +157,9 @@ export function claim(tx: DispatchTx, input: ClaimInput): ClaimResult {
     return { kind: 'blocked', code: 'claimed_elsewhere' };
   }
 
-  const refused = refusal(tx, record, input.now, input.capabilities, input.allowExperimentalAgentListener ?? false);
+  const refused = refusal(
+    tx, record, input.now, input.limits, input.capabilities, input.allowExperimentalAgentListener ?? false,
+  );
   if (refused !== null) return block(tx, record, refused);
   // `refusal` has already required a usable policy and an evidenced route for its dispatch mode.
   const { listening } = tx.policy(job.binding.bindingId)!;

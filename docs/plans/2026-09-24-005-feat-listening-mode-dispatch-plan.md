@@ -185,9 +185,11 @@ sequenceDiagram
 
 ## Implementation Deviations
 
-- KTD1: rather than a separate `DispatchControlProjection` and `DispatchLimits` port, the listening
-  projection is a strict `listening` field on the existing `DispatchPolicy`, whose limit fields are
-  already exactly the three dispatch-owned limits. The SQLite adapter compares `version` and
+- KTD1: rather than a separate `DispatchControlProjection`, the listening projection is a strict
+  `listening` field on `DispatchPolicy`. The limits follow KTD1 as planned: after review, the three
+  limit fields moved off `DispatchPolicy` into an injected `DispatchLimits` dependency, filled from
+  `LOCAL_AUTOMATION_LIMITS` in composition, and a policy carrying any of them is unusable. The
+  first implementation had kept them on the policy, which let a caller set them. The SQLite adapter compares `version` and
   `listening.version` independently, which gives the componentwise-monotonic guarantee through one
   transactional read.
 - KTD6: a distinct `budgetEpoch` would key `dispatch_causal_counts` by a second column, which is a

@@ -8,6 +8,7 @@ import {
   type BindingId, type DeliveryReceipt, type HarnessCapabilities, type OwnerAuthority, type ReleaseId,
   type ReleasedJob, type UnverifiedReleasedJob, decodeHarnessCapabilities, validatePayloadBytes, verifyReleasedJob,
 } from '@khala/contracts/delivery/index';
+import { assertDispatchLimits } from './budget';
 import { claim, precheck, promote, queuedRecord, requeue, sameRelease, wakeable } from './claim';
 import { abandonUnknown, applyReceipt, decodeReceipt, markUnknown } from './reconcile';
 import type {
@@ -16,13 +17,23 @@ import type {
 
 type Verified = Readonly<{ ok: true; job: ReleasedJob }> | Readonly<{ ok: false; code: QuarantineCode }>;
 
+/** First delay before a release returned to pending from its boundary is tried again. */
+export const RETRY_BASE_MS = 1_000;
+/** The retry delay doubles per consecutive miss up to this bound. */
+export const RETRY_MAX_MS = 60_000;
+
 export function createDispatcher(deps: DispatchDeps): Dispatcher {
   const { ledger, harness, boundary } = deps;
+  const limits = assertDispatchLimits(deps.limits);
+  const retryBaseMs = deps.retryDelayMs ?? RETRY_BASE_MS;
   const allowExperimentalAgentListener = deps.allowExperimentalAgentListener ?? false;
   let stopped = false;
   const lifetime = new AbortController();
   let pass: Promise<void> | null = null;
   let again = false;
+  /** At most one pending retry wake, whatever the number of releases waiting on it. */
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryDelay = retryBaseMs;
   /** Boundary waits and submissions this instance is making. Their records are not reconciled from outside. */
   const inFlight = new Map<ReleaseId, Promise<void>>();
 
@@ -97,7 +108,8 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
   /**
    * Waits at the claimed route's proved boundary, then promotes and submits. Any exit before the
    * promotion commits, including stop, returns the claim to pending with its reservation kept. A
-   * requeued release waits for a later wake rather than spinning on a boundary it just missed.
+   * requeued release does not spin on a boundary it just missed: it waits for a bounded, backed-off
+   * retry wake, or an earlier one.
    */
   async function deliver(job: ReleasedJob, payload: Uint8Array, attemptId: string, snapshot: AttemptSnapshot): Promise<void> {
     let observation: BoundaryObservation | null = null;
@@ -108,6 +120,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     }
     if (stopped || observation === null) {
       await ledger.transact(tx => requeue(tx, job.releaseId, 'boundary_unavailable', attemptId));
+      retryLater();
       return;
     }
     const decoded = decodeHarnessCapabilities(observation.capabilities);
@@ -126,13 +139,17 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       // Nothing was promoted, so nothing was sent. Leave no claim stranded on this binding.
       report(error);
       await ledger.transact(tx => requeue(tx, job.releaseId, 'boundary_unavailable', attemptId));
+      retryLater();
       return;
     }
     if (promoted.kind === 'dispatching') {
+      retryDelay = retryBaseMs;
       // The intent is durable; the submission starts now and is never repeated.
       await submit(job, payload, attemptId);
     } else if (promoted.kind === 'rejected') {
       wake();
+    } else if (promoted.kind === 'requeued') {
+      retryLater();
     }
   }
 
@@ -142,7 +159,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
    */
   async function attempt(releaseId: ReleaseId, held: ReadonlySet<BindingId>): Promise<BindingId | null> {
     // A job the controls hold now is not verified again until they change.
-    const checked = await ledger.transact(tx => precheck(tx, releaseId, deps.clock.now(), held));
+    const checked = await ledger.transact(tx => precheck(tx, releaseId, deps.clock.now(), limits, held));
     if (checked.kind !== 'proceed') return checked.kind === 'held' ? checked.bindingId : null;
     const { record } = checked;
     const bindingId = record.job.binding.bindingId;
@@ -177,7 +194,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
 
     const attemptId = deps.newId('attempt');
     const claimed = await ledger.transact(tx => claim(tx, {
-      job, capabilities, now: deps.clock.now(), attemptId, workerId: deps.workerId, allowExperimentalAgentListener,
+      job, limits, capabilities, now: deps.clock.now(), attemptId, workerId: deps.workerId, allowExperimentalAgentListener,
     }));
     if (claimed.kind !== 'claimed') {
       return claimed.code === 'budget_exhausted' || claimed.code === 'claimed_elsewhere' ? null : bindingId;
@@ -222,6 +239,22 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         pass = null;
       }
     })();
+  }
+
+  /**
+   * Schedules one wake for releases returned to pending before any effect. Pending retries coalesce
+   * into one timer, and the delay doubles per consecutive miss up to `RETRY_MAX_MS`, so a boundary
+   * that stays unavailable is retried at a bounded rate rather than waiting for an unrelated arrival.
+   */
+  function retryLater(): void {
+    if (stopped || retryTimer !== null) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      wake();
+    }, retryDelay);
+    // A pending retry never keeps the process alive on its own.
+    (retryTimer as { unref?: () => void }).unref?.();
+    retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
   }
 
   async function idle(): Promise<void> {
@@ -289,6 +322,8 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
 
   async function stop(): Promise<void> {
     stopped = true;
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
     lifetime.abort();
     await idle();
   }

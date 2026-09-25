@@ -8,7 +8,7 @@ import {
   type HarnessPort,
   type SessionBinding,
 } from '@khala/contracts/delivery/index';
-import { capabilities, receipt, testPolicy } from '../../../../packages/connector/src/dispatch/fixtures/fakes';
+import { capabilities, receipt, testLimits, testPolicy } from '../../../../packages/connector/src/dispatch/fixtures/fakes';
 import { createDispatcher } from '../../../../packages/connector/src/dispatch/run';
 import type { Dispatcher, DispatchLedger } from '../../../../packages/connector/src/dispatch/types';
 import {
@@ -173,6 +173,9 @@ describe('real storage runtime composition', () => {
           };
           activeDispatcher = createDispatcher({
             ledger,
+            // Two releases must both reach the harness across a restart, so this persistence test
+            // injects the looser fixture limits; the product profile is covered by native-surface.
+            limits: testLimits(),
             harness,
             // The route's proved boundary is reached at once and reports the claimed session.
             boundary: {

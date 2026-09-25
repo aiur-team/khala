@@ -7,12 +7,12 @@ import { decodeWith, utcTimestamp } from '@khala/contracts/delivery/decode';
 import { type HarnessCapabilities, LISTENING_MODES, type SessionBinding } from '@khala/contracts/delivery/index';
 import { admitsExistingSessionRoute } from '../route-admission';
 import type {
-  AttemptSnapshot, BlockCode, DispatchListening, DispatchMode, DispatchPolicy, DispatchRecord, DispatchTx,
+  AttemptSnapshot, BlockCode, DispatchLimits, DispatchListening, DispatchMode, DispatchPolicy, DispatchRecord,
+  DispatchTx,
 } from './types';
 
-const POLICY_KEYS = [
-  'armedAt', 'busy', 'expiresAt', 'listening', 'maxConcurrentJobs', 'maxJobsPerCausalRoot', 'paused', 'version',
-];
+const POLICY_KEYS = ['armedAt', 'expiresAt', 'listening', 'paused', 'version'];
+const LIMIT_KEYS = ['busy', 'maxConcurrentJobs', 'maxJobsPerCausalRoot'];
 const LISTENING_KEYS = ['effective', 'evidenceRevision', 'requested', 'version'];
 const BUSY_POLICIES: readonly unknown[] = ['queue', 'wait', 'reject'];
 const MODES: readonly unknown[] = LISTENING_MODES;
@@ -37,18 +37,30 @@ function usableListening(input: unknown): input is DispatchListening {
 
 /**
  * A policy is usable only with exactly the known fields, an explicit pause flag, an arming version
- * no later than its version, finite limits, a strict UTC expiry and a well-formed listening
- * projection. Anything else, including a missing field or a `maxCausalDepth`, blocks dispatch.
+ * no later than its version, a strict UTC expiry and a well-formed listening projection. Anything
+ * else blocks dispatch, including a missing field or any limit field: a policy can neither loosen
+ * nor tighten the injected `DispatchLimits`.
  */
 export function usablePolicy(policy: DispatchPolicy | null): policy is DispatchPolicy {
   if (typeof policy !== 'object' || policy === null || !exactKeys(policy, POLICY_KEYS)) return false;
   if (typeof policy.paused !== 'boolean') return false;
   if (!Number.isSafeInteger(policy.version) || policy.version < 0) return false;
   if (!Number.isSafeInteger(policy.armedAt) || policy.armedAt < 0 || policy.armedAt > policy.version) return false;
-  if (!positive(policy.maxJobsPerCausalRoot) || !positive(policy.maxConcurrentJobs)) return false;
   if (policy.expiresAt !== null && !decodeWith(() => utcTimestamp(policy.expiresAt, 'expiresAt')).ok) return false;
-  if (!usableListening(policy.listening)) return false;
-  return BUSY_POLICIES.includes(policy.busy);
+  return usableListening(policy.listening);
+}
+
+/**
+ * Checks the injected profile once, at construction: exactly the three dispatch limits, each finite.
+ * A `maxCausalDepth` is refused, since automatic release alone enforces it.
+ */
+export function assertDispatchLimits(limits: DispatchLimits): DispatchLimits {
+  if (typeof limits !== 'object' || limits === null || !exactKeys(limits, LIMIT_KEYS)
+    || !positive(limits.maxJobsPerCausalRoot) || !positive(limits.maxConcurrentJobs)
+    || !BUSY_POLICIES.includes(limits.busy)) {
+    throw new RangeError('dispatch limits must be exactly maxJobsPerCausalRoot, maxConcurrentJobs and busy');
+  }
+  return Object.freeze({ ...limits });
 }
 
 /** Whether a release's policy version lies within the binding's current arming. */
@@ -133,15 +145,15 @@ export function sameSnapshot(a: AttemptSnapshot, b: AttemptSnapshot): boolean {
  */
 export function checkLimits(
   tx: DispatchTx,
-  policy: DispatchPolicy,
+  limits: DispatchLimits,
   record: DispatchRecord,
   harnessBusy: HarnessCapabilities['busy'] | null,
 ): Readonly<{ code: BlockCode; terminal: boolean }> | null {
   const active = tx.active();
-  if (!record.reserved && tx.causalCount(record.job.causalRootId) >= policy.maxJobsPerCausalRoot) {
+  if (!record.reserved && tx.causalCount(record.job.causalRootId) >= limits.maxJobsPerCausalRoot) {
     return { code: 'budget_exhausted', terminal: false };
   }
-  if (active.length >= policy.maxConcurrentJobs) return { code: 'at_capacity', terminal: false };
+  if (active.length >= limits.maxConcurrentJobs) return { code: 'at_capacity', terminal: false };
   const bindingId = record.job.binding.bindingId;
   const onBinding = active.filter(other => other.job.binding.bindingId === bindingId);
   // A claim still waiting at its boundary, or an earlier release returned to pending from one, keeps
@@ -154,10 +166,10 @@ export function checkLimits(
   });
   if (heldEarlier) return { code: 'busy', terminal: false };
   if (onBinding.length > 0) {
-    if (policy.busy === 'reject') return { code: 'busy', terminal: true };
+    if (limits.busy === 'reject') return { code: 'busy', terminal: true };
     // Queueing behind active work needs a harness route proven to queue. Without it the job waits;
     // it never starts a replacement turn.
-    if (policy.busy === 'wait' || (harnessBusy !== null && harnessBusy !== 'queue')) return { code: 'busy', terminal: false };
+    if (limits.busy === 'wait' || (harnessBusy !== null && harnessBusy !== 'queue')) return { code: 'busy', terminal: false };
   }
   return null;
 }

@@ -552,12 +552,18 @@ describe('listening-mode dispatch persistence', () => {
     expect(await dispatch.applyEffectivePolicy({ binding: binding(0), policy })).toEqual({ kind: 'applied' });
     await storage.close();
     const db = new DatabaseSync(path.join(state, LEDGER_FILE));
-    db.prepare('UPDATE dispatch_policies SET policy = ?').run(JSON.stringify(without(policy, 'listening')));
+    // The shape main stored before listening modes, with the per-binding limits it carried then.
+    const stored = { ...without(policy, 'listening'), maxJobsPerCausalRoot: 99, maxConcurrentJobs: 99, busy: 'queue' };
+    db.prepare('UPDATE dispatch_policies SET policy = ?').run(JSON.stringify(stored));
     db.close();
     const reopened = await openConnectorStorage({ directory: state, mode: 'existing', limits });
     opened.push(reopened);
     const legacy = createConnectorDispatchStorage(reopened);
     expect(await legacy.ledger.transact(tx => tx.policy(bindingId))).toBeNull();
+    // A new write may not carry limits either: those come only from the dispatcher's injected profile.
+    const withLimits = { ...policy, version: 4, maxConcurrentJobs: 10, busy: 'queue' } as unknown as DispatchPolicy;
+    await expect(legacy.applyEffectivePolicy({ binding: binding(0), policy: withLimits }))
+      .rejects.toMatchObject({ code: 'invalid_input' });
     expect(await legacy.applyEffectivePolicy({ binding: binding(0), policy: { ...policy, version: 4 } }))
       .toEqual({ kind: 'applied' });
     expect(await legacy.ledger.transact(tx => tx.policy(bindingId))).toEqual({ ...policy, version: 4 });

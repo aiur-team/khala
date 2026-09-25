@@ -9,8 +9,9 @@ subscription and harness; KHA-135 binds pause and budget status.
 | Port | Responsibility |
 |---|---|
 | `DispatchLedger` | One local transaction at a time: each binding's effective policy, binding state, dispatch records and causal counters. Must be serializable across processes. Work runs synchronously; a throw rolls it back. No external effect runs inside it |
+| `limits` | The dispatch share of the approved local automation profile: `maxJobsPerCausalRoot`, `maxConcurrentJobs` and `busy`. Composition injects it (`LOCAL_DISPATCH_LIMITS` in `apps/connector`); construction refuses any other shape |
 | `HarnessPort` (contract) | `inspect`, `submit`, `reconcile` for the bound session |
-| `DeliveryBoundary` | The route's harness-neutral proved-boundary callback: resolves with the session and current capabilities when a claimed attempt may be delivered, or null. It delivers nothing itself and takes the dispatcher's `AbortSignal` |
+| `DeliveryBoundary` | The route's harness-neutral proved-boundary callback: resolves with the session and current capabilities when a claimed attempt may be delivered, or null. It delivers nothing itself and takes the dispatcher's `AbortSignal`. The signal only ends the wait: an integration must never use it to interrupt, signal or kill the user's CLI (decision 36) |
 | `approvals` | The approval a release names, from the owner connector's own ledger |
 | `payloads` | Owner-local payload bytes by `payloadRef`, reading at most the harness byte limit plus one |
 | `digest` | KHA-119 canonical payload digest |
@@ -65,7 +66,9 @@ from. The listening-mode store derives `effective`; dispatch only reads it.
 - An arrival wakes the dispatcher only when its binding has a usable, unpaused policy in `steer`
   or `sync`. An `async` or paused arrival only persists: it makes no harness, boundary or
   notification call. Resume is a later policy with `paused: false` followed by one `wake()`;
-  wakes coalesce, and none resets or refunds a causal count.
+  wakes coalesce, and none resets or refunds a causal count. Nothing in production applies an owner
+  resume yet: KHA-135 (#44) wires owner pause and resume into `applyEffectivePolicy` and must call
+  `wake()` after a resume is applied.
 - The claim snapshots `modeAtClaim`, the binding generation and session, the harness, harness
   version, adapter version, route and evidence revision. The capabilities must report `proven`
   or `experimental` support for that mode on the bound harness, at the tested version, under the
@@ -116,7 +119,9 @@ It keeps `reserved: true`, so a later claim does not reserve again. A record nev
 Waiting reasons (`paused`, `mode_async`, `mode_unavailable`, `expired`, `unconfigured`,
 `budget_exhausted`, `at_capacity`, `busy`, `harness_unsupported`, `route_drift`,
 `boundary_unavailable`, `boundary_limit`) leave the record queued for a later `wake()`. A release
-returned from its boundary waits for the next wake rather than retrying at once.
+returned from its boundary does not retry at once: it schedules one retry wake after
+`retryDelayMs` (default 1 s), doubling per consecutive miss up to a minute and reset by the next
+promotion. Pending retries share one timer, and `stop()` cancels it.
 `stale_binding`, `stale_policy`, `revoked` and `busy` under a `reject` policy reject it.
 
 Records written before listening modes decode without a snapshot. A queued one claims normally. A
@@ -147,20 +152,27 @@ a timeout does not show whether the harness accepted the job.
 
 ## Limits
 
-`DispatchPolicy` is candidate configuration, not an approved product default. Local composition
-fills its limits from the approved local automation profile, and dispatch consumes only
-`maxJobsPerCausalRoot`, `maxConcurrentJobs` and `busy` from it. Automatic release is the sole
-enforcer of `maxCausalDepth`: dispatch neither requires nor derives it, and a policy carrying it
-is unusable. The ledger holds one effective policy per binding. A missing policy, or one with an
-unknown or missing field, a non-boolean `paused`, an invalid `armedAt`, a limit that is not a
-positive safe integer, an expiry that is not a strict UTC timestamp, an unknown `busy` value or a
-malformed `listening` projection, blocks every claim on that binding.
+The limits are an injected `DispatchLimits` value, never a caller option or a policy field. Local
+composition passes `LOCAL_DISPATCH_LIMITS`, which copies `maxJobsPerCausalRoot`,
+`maxConcurrentJobs` and `busy` from `LOCAL_AUTOMATION_LIMITS` (`{3, 1, wait}` today).
+`createDispatcher` throws a `RangeError` for limits with any other key, a limit that is not a
+positive safe integer, or an unknown `busy` value. Automatic release is the sole enforcer of
+`maxCausalDepth`: dispatch neither requires nor derives it, and refuses limits carrying it.
+
+`DispatchPolicy` holds only per-binding controls: `version`, `armedAt`, `paused`, `expiresAt` and
+the `listening` projection. The ledger holds one effective policy per binding. A missing policy,
+or one with an unknown or missing field, blocks every claim on that binding. That includes any
+limit field or a `maxCausalDepth`, so a policy can never loosen the injected profile. A
+non-boolean `paused`, an invalid `armedAt`, an expiry that is not a strict UTC timestamp or a
+malformed `listening` projection also blocks it.
 
 The SQLite adapter's `applyEffectivePolicy` compares the policy `version` and the
 `listening.version` independently. A write may advance either one, but a write that moves either
 back is `stale_version`, and one that changes content under an unchanged version is
 `version_conflict`. A replacement generation starts a fresh listening version. A policy stored
-before listening modes blocks dispatch until a policy with a projection is applied.
+before listening modes decodes with the limits it carried dropped, and blocks dispatch until a
+policy with a projection is applied. `applyEffectivePolicy` refuses a policy carrying limits as
+`invalid_input`.
 
 - `maxJobsPerCausalRoot` counts dispatch attempts under the trusted causal root the
   releaser sets. It is a job-count cap, not a spend or token cap. Nothing in this module
@@ -171,7 +183,7 @@ before listening modes blocks dispatch until a policy with a projection is appli
   release: enqueueing the same release ID with another root, or a second release of an approval
   that already has one, is a `conflict`.
 - `maxConcurrentJobs` counts `claimed`, `dispatching`, `accepted` and `outcome_unknown` records
-  across all bindings, against the claiming binding's limit.
+  across all bindings, against the injected limit.
   Accepted work holds its slot until `observe` records `completed`, `failed` or
   `cancelled`. An unknown outcome holds its slot until evidence arrives or it is abandoned.
 - `busy` applies when the bound session already has active work: `wait` holds the job,
@@ -191,5 +203,6 @@ before listening modes blocks dispatch until a policy with a projection is appli
 ## Open gate
 
 **G-AUTOMATION remains open.** Budget units and limits, reset authority, refund on
-definitive rejection, pause scope and busy behavior are not decided. Tests use explicit
-fixture values only. Without launch configuration, dispatch stays blocked.
+definitive rejection, pause scope and busy behavior are not decided for hosted use. Local
+composition injects the provisional local profile; tests use explicit fixture values
+(`testLimits()`). Without launch configuration, dispatch stays blocked.
