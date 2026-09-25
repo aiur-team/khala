@@ -202,7 +202,7 @@ function participantViews(db: DatabaseSync, participantIds: readonly string[]): 
   return participantViewsFromRows(rows);
 }
 
-function decodeCanonical(bytes: Uint8Array, expectedDigest: string): MessageContent | null {
+export function decodeCanonical(bytes: Uint8Array, expectedDigest: string): MessageContent | null {
   if (digest(bytes) !== expectedDigest) return null;
   try {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
