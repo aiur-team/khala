@@ -3,6 +3,7 @@
 // CAS. Raw submitted locators never cross this boundary.
 
 import type {
+  CallOptions,
   ControlRecord,
   ControlStore,
   JsonValue,
@@ -144,25 +145,28 @@ export type ChannelAccessNotification = Readonly<{
 }>;
 
 export interface ChannelAccessStore {
-  create(input: ChannelAccessCreateInput): Promise<
+  create(input: ChannelAccessCreateInput, options?: CallOptions): Promise<
     | Readonly<{ kind: 'accepted'; requestHandle: string; revision: number; deadline: string; outcome: ChannelAccessOutcome }>
     | Readonly<{ kind: 'unavailable' }>
   >;
-  inspect(input: ChannelAccessBindingInput | ChannelAccessCreateInput): Promise<
+  inspect(input: ChannelAccessBindingInput | ChannelAccessCreateInput, options?: CallOptions): Promise<
     | Readonly<{ kind: 'found'; status: ChannelAccessStatus }>
     | Readonly<{ kind: 'unavailable' }>
   >;
-  inspectRequester(input: ChannelAccessRequesterLookup): ReturnType<ChannelAccessStore['inspect']>;
-  listOwner(input: Readonly<{ ownerId: string }>): Promise<
+  inspectRequester(input: ChannelAccessRequesterLookup, options?: CallOptions): Promise<
+    | Readonly<{ kind: 'found'; status: ChannelAccessStatus; context: ChannelAccessStoredContext }>
+    | Readonly<{ kind: 'unavailable' }>
+  >;
+  listOwner(input: Readonly<{ ownerId: string }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'found'; requests: readonly ChannelAccessOwnerProjection[] }>
     | Readonly<{ kind: 'unavailable' }>
   >;
-  readOwner(input: Readonly<{ ownerId: string; requestHandle: string }>): Promise<
+  readOwner(input: Readonly<{ ownerId: string; requestHandle: string }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'found'; request: ChannelAccessOwnerProjection }>
     | Readonly<{ kind: 'not_found' }>
     | Readonly<{ kind: 'unavailable' }>
   >;
-  readContext(input: Readonly<{ requestHandle: string }>): Promise<
+  readContext(input: Readonly<{ requestHandle: string }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'found'; context: ChannelAccessStoredContext }>
     | Readonly<{ kind: 'not_found' | 'unavailable' }>
   >;
@@ -172,7 +176,7 @@ export interface ChannelAccessStore {
     expectedRevision: number;
     decision: 'approve' | 'deny';
     operationId: string;
-  }>): Promise<
+  }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'decided'; outcome: 'approved' | 'denied'; revision: number }>
     | Readonly<{ kind: 'stale' | 'conflict' | 'expired' | 'not_found' | 'unavailable' }>
   >;
@@ -184,7 +188,7 @@ export interface ChannelAccessStore {
     action: 'mute' | 'unmute';
     expectedRevision: number | null;
     operationId: string;
-  }>): Promise<
+  }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'updated'; enabled: boolean; revision: number }>
     | Readonly<{ kind: 'stale' | 'conflict' | 'unavailable' }>
   >;
@@ -194,16 +198,16 @@ export interface ChannelAccessStore {
     action: 'mute' | 'unmute';
     expectedRevision: number | null;
     operationId: string;
-  }>): ReturnType<ChannelAccessStore['setMute']>;
-  claimAccess(input: FulfillmentClaimInput): Promise<ClaimResult<'access'>>;
-  claimCreate(input: FulfillmentClaimInput): Promise<ClaimResult<'create'>>;
+  }>, options?: CallOptions): ReturnType<ChannelAccessStore['setMute']>;
+  claimAccess(input: FulfillmentClaimInput, options?: CallOptions): Promise<ClaimResult<'access'>>;
+  claimCreate(input: FulfillmentClaimInput, options?: CallOptions): Promise<ClaimResult<'create'>>;
   updateLifecycle(input: Readonly<{
     requestHandle: string;
     expectedRevision: number;
     consumerId: string;
     outcome: 'connected' | 'repair_required' | 'revoked';
     operationId: string;
-  }>): Promise<
+  }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'updated'; outcome: 'connected' | 'repair_required' | 'revoked'; revision: number }>
     | Readonly<{ kind: 'stale' | 'conflict' | 'not_found' | 'unavailable' }>
   >;
@@ -211,11 +215,11 @@ export interface ChannelAccessStore {
     binding: ChannelAccessBindingInput | ChannelAccessCreateInput;
     expectedRevision: number;
     operationId: string;
-  }>): Promise<
+  }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'updated'; outcome: 'revoked'; revision: number }>
     | Readonly<{ kind: 'stale' | 'not_found' | 'unavailable' }>
   >;
-  listNotifications(input: Readonly<{ ownerId: string }>): Promise<
+  listNotifications(input: Readonly<{ ownerId: string; limit?: number }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'found'; notifications: readonly ChannelAccessNotification[] }>
     | Readonly<{ kind: 'unavailable' }>
   >;
@@ -224,7 +228,7 @@ export interface ChannelAccessStore {
     notificationId: string;
     revision: number;
     operationId: string;
-  }>): Promise<Readonly<{ kind: 'acknowledged' | 'stale' | 'not_found' | 'unavailable' }>>;
+  }>, options?: CallOptions): Promise<Readonly<{ kind: 'acknowledged' | 'stale' | 'not_found' | 'unavailable' }>>;
 }
 
 export type FulfillmentClaimInput = Readonly<{
@@ -252,6 +256,7 @@ type StoredClaim = Readonly<{
   operationId: string;
   consumerId: string;
   claimedAt: string;
+  revision: number;
 }>;
 
 type StoredLifecycle = Readonly<{
@@ -302,7 +307,7 @@ type StoredMute = Readonly<{
 type StoredNotification = Readonly<{
   id: string;
   ownerId: string;
-  operationKey: string | null;
+  operationKeys: readonly string[];
   requestHandle: string | null;
   kind: 'request' | 'batch';
   window: number;
@@ -342,10 +347,10 @@ export function createChannelAccessStore(deps: Readonly<{
 }>): ChannelAccessStore {
   const { policy } = deps;
 
-  async function readAggregate(): Promise<Loaded | typeof STORE_UNAVAILABLE> {
+  async function readAggregate(options?: CallOptions): Promise<Loaded | typeof STORE_UNAVAILABLE> {
     let result;
     try {
-      result = await deps.store.read<JournalAggregate>(JOURNAL_KEY);
+      result = await deps.store.read<JournalAggregate>(JOURNAL_KEY, options);
     } catch {
       return STORE_UNAVAILABLE;
     }
@@ -359,7 +364,7 @@ export function createChannelAccessStore(deps: Readonly<{
     expectedRevision: string | null;
     operationId: string;
     value: JournalAggregate;
-  }>): Promise<Settled> {
+  }>, options?: CallOptions): Promise<Settled> {
     const write = {
       key: JOURNAL_KEY,
       expectedRevision: input.expectedRevision,
@@ -368,21 +373,21 @@ export function createChannelAccessStore(deps: Readonly<{
     } as const;
     let first: WriteResult<JournalAggregate>;
     try {
-      first = await deps.store.compareAndSet(write);
+      first = await deps.store.compareAndSet(write, options);
     } catch {
       return { kind: 'unavailable' };
     }
     if (first.kind !== 'outcome_unknown') return first;
     let resolved;
     try {
-      resolved = await deps.store.resolve<JournalAggregate>({ key: JOURNAL_KEY, operationId: input.operationId });
+      resolved = await deps.store.resolve<JournalAggregate>({ key: JOURNAL_KEY, operationId: input.operationId }, options);
     } catch {
       return { kind: 'unavailable' };
     }
     if (resolved.kind === 'applied') return resolved;
     if (resolved.kind !== 'not_applied') return { kind: 'unavailable' };
     try {
-      const retried = await deps.store.compareAndSet(write);
+      const retried = await deps.store.compareAndSet(write, options);
       return retried.kind === 'outcome_unknown' ? { kind: 'unavailable' } : retried;
     } catch {
       return { kind: 'unavailable' };
@@ -393,11 +398,12 @@ export function createChannelAccessStore(deps: Readonly<{
     action: string,
     clientOperationId: string,
     apply: (aggregate: JournalAggregate, now: number) => Mutation<R>,
+    options?: CallOptions,
   ): Promise<R | typeof STORE_UNAVAILABLE> {
-    const now = deps.clock();
     for (let attempt = 0; attempt < 32; attempt += 1) {
-      const loaded = await readAggregate();
+      const loaded = await readAggregate(options);
       if (loaded === STORE_UNAVAILABLE) return STORE_UNAVAILABLE;
+      const now = deps.clock();
       const maintained = maintain(loaded.value, now);
       const mutation = apply(maintained.value, now);
       if (!maintained.changed && mutation.value === null) return mutation.result;
@@ -411,7 +417,7 @@ export function createChannelAccessStore(deps: Readonly<{
         expectedRevision: loaded.revision,
         operationId,
         value: mutation.value ?? maintained.value,
-      });
+      }, options);
       if (settled.kind === 'applied') return mutation.result;
       if (settled.kind === 'unavailable' || settled.kind === 'operation_mismatch') return STORE_UNAVAILABLE;
     }
@@ -425,7 +431,7 @@ export function createChannelAccessStore(deps: Readonly<{
     return { result, value: null };
   }
 
-  async function create(input: ChannelAccessCreateInput): ReturnType<ChannelAccessStore['create']> {
+  async function create(input: ChannelAccessCreateInput, options?: CallOptions): ReturnType<ChannelAccessStore['create']> {
     let artifacts;
     try {
       artifacts = policy.derive(derivation(input));
@@ -487,11 +493,11 @@ export function createChannelAccessStore(deps: Readonly<{
       value.requests[artifacts.operationKey] = row;
       reserveNotification(value, row, policy, now);
       return changed(value, acceptedResponse(row));
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function inspect(input: ChannelAccessBindingInput | ChannelAccessCreateInput): ReturnType<ChannelAccessStore['inspect']> {
+  async function inspect(input: ChannelAccessBindingInput | ChannelAccessCreateInput, options?: CallOptions): ReturnType<ChannelAccessStore['inspect']> {
     let artifacts;
     try {
       artifacts = policy.derive(derivation(input));
@@ -506,11 +512,11 @@ export function createChannelAccessStore(deps: Readonly<{
           : { kind: 'unavailable' as const });
       }
       return unchanged({ kind: 'unavailable' as const });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function inspectRequester(input: ChannelAccessRequesterLookup): ReturnType<ChannelAccessStore['inspectRequester']> {
+  async function inspectRequester(input: ChannelAccessRequesterLookup, options?: CallOptions): ReturnType<ChannelAccessStore['inspectRequester']> {
     const operationKey = policy.digest('operation', [
       ['requester', input.requester],
       ['operationId', input.operationId],
@@ -524,44 +530,44 @@ export function createChannelAccessStore(deps: Readonly<{
         && row.origin === input.origin
         && row.detail.kind === input.kind;
       return unchanged(matches
-        ? { kind: 'found' as const, status: status(row) }
+        ? { kind: 'found' as const, status: status(row), context: storedContext(row) }
         : { kind: 'unavailable' as const });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function listOwner(input: Readonly<{ ownerId: string }>): ReturnType<ChannelAccessStore['listOwner']> {
+  async function listOwner(input: Readonly<{ ownerId: string }>, options?: CallOptions): ReturnType<ChannelAccessStore['listOwner']> {
     const result = await mutate('owner-list', input.ownerId, aggregate => unchanged({
       kind: 'found' as const,
       requests: Object.values(aggregate.requests)
         .filter(request => request.ownerId === input.ownerId)
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .map(request => ownerProjection(request, aggregate.mutes[request.muteKey])),
-    }));
+    }), options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function readOwner(input: Readonly<{ ownerId: string; requestHandle: string }>): ReturnType<ChannelAccessStore['readOwner']> {
+  async function readOwner(input: Readonly<{ ownerId: string; requestHandle: string }>, options?: CallOptions): ReturnType<ChannelAccessStore['readOwner']> {
     const result = await mutate('owner-read', input.requestHandle, aggregate => {
       const row = findHandle(aggregate, input.requestHandle);
       return unchanged(row?.ownerId === input.ownerId
         ? { kind: 'found' as const, request: ownerProjection(row, aggregate.mutes[row.muteKey]) }
         : { kind: 'not_found' as const });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function readContext(input: Readonly<{ requestHandle: string }>): ReturnType<ChannelAccessStore['readContext']> {
+  async function readContext(input: Readonly<{ requestHandle: string }>, options?: CallOptions): ReturnType<ChannelAccessStore['readContext']> {
     const result = await mutate('context-read', input.requestHandle, aggregate => {
       const row = findHandle(aggregate, input.requestHandle);
       return unchanged(row
         ? { kind: 'found' as const, context: storedContext(row) }
         : { kind: 'not_found' as const });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function decide(input: Parameters<ChannelAccessStore['decide']>[0]): ReturnType<ChannelAccessStore['decide']> {
+  async function decide(input: Parameters<ChannelAccessStore['decide']>[0], options?: CallOptions): ReturnType<ChannelAccessStore['decide']> {
     const result = await mutate<Awaited<ReturnType<ChannelAccessStore['decide']>>>('decision', input.operationId, (aggregate, now) => {
       const row = findHandle(aggregate, input.requestHandle);
       if (!row || row.ownerId !== input.ownerId) return unchanged({ kind: 'not_found' as const });
@@ -584,12 +590,13 @@ export function createChannelAccessStore(deps: Readonly<{
         decision: { operationId: input.operationId, decision: input.decision, decidedAt: iso(now) },
       };
       value.requests[row.operationKey] = next;
+      if (outcome === 'denied') suppressNotification(value, row.operationKey);
       return changed(value, { kind: 'decided' as const, outcome, revision: next.revision });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function setMute(input: Parameters<ChannelAccessStore['setMute']>[0]): ReturnType<ChannelAccessStore['setMute']> {
+  async function setMute(input: Parameters<ChannelAccessStore['setMute']>[0], options?: CallOptions): ReturnType<ChannelAccessStore['setMute']> {
     const muteKey = scopeKey(policy, 'mute', input);
     const result = await mutate<Awaited<ReturnType<ChannelAccessStore['setMute']>>>('mute', input.operationId, (aggregate, now) => {
       const current = aggregate.mutes[muteKey];
@@ -612,14 +619,15 @@ export function createChannelAccessStore(deps: Readonly<{
         updatedAt: iso(now),
       };
       return changed(value, { kind: 'updated' as const, enabled, revision });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
   async function setMuteForRequest(
     input: Parameters<ChannelAccessStore['setMuteForRequest']>[0],
+    options?: CallOptions,
   ): ReturnType<ChannelAccessStore['setMuteForRequest']> {
-    const located = await readContext({ requestHandle: input.requestHandle });
+    const located = await readContext({ requestHandle: input.requestHandle }, options);
     if (located.kind !== 'found' || located.context.ownerId !== input.ownerId) {
       return located.kind === 'unavailable' ? { kind: 'unavailable' } : { kind: 'conflict' };
     }
@@ -631,10 +639,10 @@ export function createChannelAccessStore(deps: Readonly<{
       action: input.action,
       expectedRevision: input.expectedRevision,
       operationId: input.operationId,
-    });
+    }, options);
   }
 
-  async function claim<K extends 'access' | 'create'>(kind: K, input: FulfillmentClaimInput): Promise<ClaimResult<K>> {
+  async function claim<K extends 'access' | 'create'>(kind: K, input: FulfillmentClaimInput, options?: CallOptions): Promise<ClaimResult<K>> {
     let artifacts;
     try {
       artifacts = policy.derive(derivation(input.binding));
@@ -648,7 +656,7 @@ export function createChannelAccessStore(deps: Readonly<{
       }
       if (row.claim?.operationId === input.operationId) {
         return unchanged(row.claim.consumerId === input.consumerId
-          ? { kind: 'claimed' as const, authorization: authorization(row) as Extract<ChannelAccessAuthorization, { kind: K }>, revision: row.revision }
+          ? { kind: 'claimed' as const, authorization: authorization(row) as Extract<ChannelAccessAuthorization, { kind: K }>, revision: row.claim.revision }
           : { kind: 'conflict' as const });
       }
       if (row.outcome === 'expired') return unchanged({ kind: 'expired' as const });
@@ -659,7 +667,7 @@ export function createChannelAccessStore(deps: Readonly<{
         ...row,
         outcome: 'connecting',
         revision: row.revision + 1,
-        claim: { operationId: input.operationId, consumerId: input.consumerId, claimedAt: iso(now) },
+        claim: { operationId: input.operationId, consumerId: input.consumerId, claimedAt: iso(now), revision: row.revision + 1 },
       };
       value.requests[row.operationKey] = next;
       return changed(value, {
@@ -667,11 +675,11 @@ export function createChannelAccessStore(deps: Readonly<{
         authorization: authorization(next) as Extract<ChannelAccessAuthorization, { kind: K }>,
         revision: next.revision,
       });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function updateLifecycle(input: Parameters<ChannelAccessStore['updateLifecycle']>[0]): ReturnType<ChannelAccessStore['updateLifecycle']> {
+  async function updateLifecycle(input: Parameters<ChannelAccessStore['updateLifecycle']>[0], options?: CallOptions): ReturnType<ChannelAccessStore['updateLifecycle']> {
     const result = await mutate<Awaited<ReturnType<ChannelAccessStore['updateLifecycle']>>>('lifecycle', input.operationId, (aggregate, now) => {
       const row = findHandle(aggregate, input.requestHandle);
       if (!row) return unchanged({ kind: 'not_found' as const });
@@ -692,12 +700,13 @@ export function createChannelAccessStore(deps: Readonly<{
         lifecycle: { operationId: input.operationId, outcome: input.outcome },
       };
       value.requests[row.operationKey] = next;
+      suppressNotification(value, row.operationKey);
       return changed(value, { kind: 'updated' as const, outcome: input.outcome, revision: next.revision });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function revoke(input: Parameters<ChannelAccessStore['revoke']>[0]): ReturnType<ChannelAccessStore['revoke']> {
+  async function revoke(input: Parameters<ChannelAccessStore['revoke']>[0], options?: CallOptions): ReturnType<ChannelAccessStore['revoke']> {
     let artifacts;
     try {
       artifacts = policy.derive(derivation(input.binding));
@@ -721,23 +730,26 @@ export function createChannelAccessStore(deps: Readonly<{
         lifecycle: { operationId: input.operationId, outcome: 'revoked' },
       };
       value.requests[row.operationKey] = next;
+      suppressNotification(value, row.operationKey);
       return changed(value, { kind: 'updated' as const, outcome: 'revoked' as const, revision: next.revision });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function listNotifications(input: Parameters<ChannelAccessStore['listNotifications']>[0]): ReturnType<ChannelAccessStore['listNotifications']> {
+  async function listNotifications(input: Parameters<ChannelAccessStore['listNotifications']>[0], options?: CallOptions): ReturnType<ChannelAccessStore['listNotifications']> {
+    const limit = Number.isSafeInteger(input.limit) && input.limit! > 0 ? input.limit! : 10;
     const result = await mutate('notification-list', input.ownerId, aggregate => unchanged({
       kind: 'found' as const,
       notifications: Object.values(aggregate.notifications)
         .filter(item => item.ownerId === input.ownerId && item.revision > item.deliveredRevision)
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .slice(0, limit)
         .map(notificationProjection),
-    }));
+    }), options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
-  async function ackNotification(input: Parameters<ChannelAccessStore['ackNotification']>[0]): ReturnType<ChannelAccessStore['ackNotification']> {
+  async function ackNotification(input: Parameters<ChannelAccessStore['ackNotification']>[0], options?: CallOptions): ReturnType<ChannelAccessStore['ackNotification']> {
     const result = await mutate<Awaited<ReturnType<ChannelAccessStore['ackNotification']>>>('notification-ack', input.operationId, aggregate => {
       const item = aggregate.notifications[input.notificationId];
       if (!item || item.ownerId !== input.ownerId) return unchanged({ kind: 'not_found' as const });
@@ -748,7 +760,7 @@ export function createChannelAccessStore(deps: Readonly<{
       const value = cloneAggregate(aggregate);
       value.notifications[item.id] = { ...item, deliveredRevision: input.revision, ackOperationId: input.operationId };
       return changed(value, { kind: 'acknowledged' as const });
-    });
+    }, options);
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
@@ -762,8 +774,8 @@ export function createChannelAccessStore(deps: Readonly<{
     decide,
     setMute,
     setMuteForRequest,
-    claimAccess: input => claim('access', input),
-    claimCreate: input => claim('create', input),
+    claimAccess: (input, options) => claim('access', input, options),
+    claimCreate: (input, options) => claim('create', input, options),
     updateLifecycle,
     revoke,
     listNotifications,
@@ -826,11 +838,13 @@ function maintain(aggregate: JournalAggregate, now: number): Readonly<{ value: J
     let current = row;
     if (now >= Date.parse(row.deadline)) {
       if (row.outcome === 'pending_owner' || row.outcome === 'approved') {
-        current = { ...row, outcome: 'expired', revision: row.revision + 1, terminalAt: iso(now) };
+        current = { ...row, outcome: 'expired', revision: row.revision + 1, terminalAt: row.deadline };
         mutable().requests[row.operationKey] = current;
+        suppressNotification(mutable(), row.operationKey);
       } else if (row.outcome === 'connecting') {
-        current = { ...row, outcome: 'repair_required', revision: row.revision + 1, terminalAt: iso(now) };
+        current = { ...row, outcome: 'repair_required', revision: row.revision + 1, terminalAt: row.deadline };
         mutable().requests[row.operationKey] = current;
+        suppressNotification(mutable(), row.operationKey);
       }
     }
     if (current.terminalAt !== null && now >= Date.parse(current.terminalAt) + CHANNEL_ACCESS_PURGE_MS) {
@@ -838,9 +852,7 @@ function maintain(aggregate: JournalAggregate, now: number): Readonly<{ value: J
       if (outcome) {
         delete mutable().requests[row.operationKey];
         mutable().tombstones[row.operationKey] = { outcome };
-        for (const notification of Object.values(mutable().notifications)) {
-          if (notification.operationKey === row.operationKey) delete mutable().notifications[notification.id];
-        }
+        suppressNotification(mutable(), row.operationKey, true);
       }
     }
   }
@@ -866,7 +878,7 @@ function reserveNotification(
     aggregate.notifications[row.notificationId] = {
       id: row.notificationId,
       ownerId: row.ownerId,
-      operationKey: row.operationKey,
+      operationKeys: [row.operationKey],
       requestHandle: row.requestHandle,
       kind: 'request',
       window,
@@ -881,11 +893,17 @@ function reserveNotification(
   const id = policy.digest('notification', [['ownerId', row.ownerId], ['window', window]]);
   const existing = aggregate.notifications[id];
   aggregate.notifications[id] = existing
-    ? { ...existing, revision: existing.revision + 1, count: existing.count + 1, ackOperationId: null }
+    ? {
+      ...existing,
+      operationKeys: [...existing.operationKeys, row.operationKey],
+      revision: existing.revision + 1,
+      count: existing.count + 1,
+      ackOperationId: null,
+    }
     : {
       id,
       ownerId: row.ownerId,
-      operationKey: null,
+      operationKeys: [row.operationKey],
       requestHandle: null,
       kind: 'batch',
       window,
@@ -895,6 +913,37 @@ function reserveNotification(
       ackOperationId: null,
       createdAt: iso(now),
     };
+}
+
+function suppressNotification(
+  aggregate: ReturnType<typeof cloneAggregate>,
+  operationKey: string,
+  forgetDelivered = false,
+): void {
+  for (const notification of Object.values(aggregate.notifications)) {
+    if ((!forgetDelivered && notification.revision <= notification.deliveredRevision)
+      || !notification.operationKeys.includes(operationKey)) continue;
+    const operationKeys = notification.operationKeys.filter(key => key !== operationKey);
+    if (operationKeys.length === 0) {
+      delete aggregate.notifications[notification.id];
+      continue;
+    }
+    const revision = forgetDelivered && notification.revision <= notification.deliveredRevision
+      ? notification.revision
+      : notification.revision + 1;
+    aggregate.notifications[notification.id] = {
+      ...notification,
+      operationKeys,
+      count: operationKeys.length,
+      revision,
+      deliveredRevision: forgetDelivered && notification.revision <= notification.deliveredRevision
+        ? revision
+        : notification.deliveredRevision,
+      ackOperationId: forgetDelivered && notification.revision <= notification.deliveredRevision
+        ? notification.ackOperationId
+        : null,
+    };
+  }
 }
 
 function acceptedResponse(row: StoredRequest) {
@@ -1061,8 +1110,9 @@ function validDecision(value: JsonValue | undefined): boolean {
 
 function validClaim(value: JsonValue | undefined): boolean {
   return value === null || (object(value)
-    && exactKeys(value, ['operationId', 'consumerId', 'claimedAt'])
+    && exactKeys(value, ['operationId', 'consumerId', 'claimedAt', 'revision'])
     && strings(value, ['operationId', 'consumerId'])
+    && Number.isSafeInteger(value.revision) && (value.revision as number) >= 1
     && validTimestamp(value.claimedAt));
 }
 
@@ -1086,11 +1136,13 @@ function validMute(value: JsonValue): boolean {
 
 function validNotification(value: JsonValue): boolean {
   if (!object(value) || !exactKeys(value, [
-    'id', 'ownerId', 'operationKey', 'requestHandle', 'kind', 'window', 'revision', 'count', 'deliveredRevision',
+    'id', 'ownerId', 'operationKeys', 'requestHandle', 'kind', 'window', 'revision', 'count', 'deliveredRevision',
     'ackOperationId', 'createdAt',
   ])) return false;
   return strings(value, ['id', 'ownerId'])
-    && nullableString(value.operationKey) && nullableString(value.requestHandle)
+    && Array.isArray(value.operationKeys) && value.operationKeys.length === value.count
+    && value.operationKeys.every(nonempty) && new Set(value.operationKeys).size === value.operationKeys.length
+    && nullableString(value.requestHandle)
     && (value.kind === 'request' || value.kind === 'batch')
     && Number.isSafeInteger(value.window)
     && Number.isSafeInteger(value.revision) && (value.revision as number) >= 1

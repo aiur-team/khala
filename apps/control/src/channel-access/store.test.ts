@@ -291,6 +291,24 @@ describe('channel access fulfillment and retention', () => {
       .toEqual({ kind: 'acknowledged' });
   });
 
+  it('suppresses undelivered notifications when a request reaches a terminal state', async () => {
+    const h = harness({ requesterMax: 5, ownerMax: 50 });
+    const handles: string[] = [];
+    for (let index = 0; index < 11; index += 1) {
+      const created = await accepted(h, request({ requester: `principal_${index}`, operationId: `op_${index}`, targetFingerprint: `target_${index}` }));
+      handles.push(created.requestHandle);
+    }
+    await h.journal.decide({ ownerId: 'owner_1', requestHandle: handles[0]!, expectedRevision: 1, decision: 'deny', operationId: 'deny_0' });
+    await h.journal.decide({ ownerId: 'owner_1', requestHandle: handles[10]!, expectedRevision: 1, decision: 'deny', operationId: 'deny_10' });
+    const listed = await h.journal.listNotifications({ ownerId: 'owner_1' });
+    if (listed.kind !== 'found') throw new Error('notification read failed');
+    expect(listed.notifications.filter(item => item.kind === 'request')).toHaveLength(8);
+    expect(listed.notifications.find(item => item.kind === 'batch')).toMatchObject({ count: 1, revision: 3 });
+
+    h.setNow(T0 + CHANNEL_ACCESS_DEADLINE_MS);
+    expect(await h.journal.listNotifications({ ownerId: 'owner_1' })).toEqual({ kind: 'found', notifications: [] });
+  });
+
   it('compacts terminal sensitive rows to an outcome-only operation tombstone after 30 days', async () => {
     const h = harness();
     const created = await accepted(h);

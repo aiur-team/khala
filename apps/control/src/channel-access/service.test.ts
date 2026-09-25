@@ -44,7 +44,8 @@ const owner: AuthPrincipal = {
 function harness() {
   const creates: ChannelAccessCreateInput[] = [];
   const notifications: ChannelAccessNotification[] = [];
-  let outcome: 'pending_owner' | 'approved' | 'connecting' = 'pending_owner';
+  let outcome: 'pending_owner' | 'approved' | 'connecting' | 'revoked' = 'pending_owner';
+  let requesterState: 'current' | 'revoked' = 'current';
   let revision = 1;
   const detail = {
     kind: 'access' as const,
@@ -94,8 +95,14 @@ function harness() {
     },
     async inspectRequester(input: { sessionGeneration: number }) {
       return input.sessionGeneration === context.sessionGeneration
-        ? { kind: 'found' as const, status: { outcome, revision, deadline: DEADLINE } }
+        ? { kind: 'found' as const, status: { outcome, revision, deadline: DEADLINE }, context: storedContext() }
         : { kind: 'unavailable' as const };
+    },
+    async revoke(input: { expectedRevision: number }) {
+      if (input.expectedRevision !== revision) return { kind: 'stale' as const };
+      outcome = 'revoked';
+      revision += 1;
+      return { kind: 'updated' as const, outcome: 'revoked' as const, revision };
     },
     async listOwner() { return { kind: 'found' as const, requests: [ownerProjection()] }; },
     async readOwner(input: { ownerId: string }) {
@@ -145,7 +152,7 @@ function harness() {
         ? { kind: 'owned', ownerId: owner.ownerId, targetRevision: detail.targetRevision }
         : { kind: 'forbidden' };
     },
-    async checkRequester() { return { kind: 'current' }; },
+    async checkRequester() { return { kind: requesterState }; },
   };
   const notification: ChannelAccessNotificationPort = {
     async publish(value) { notifications.push(value); return { kind: 'ok', value: null }; },
@@ -156,7 +163,13 @@ function harness() {
     policy: createChannelAccessPolicy({ key: new Uint8Array(32).fill(5) }),
     notification,
   });
-  return { service, creates, notifications };
+  return {
+    service,
+    creates,
+    notifications,
+    revokeRequester() { requesterState = 'revoked'; },
+    outcome: () => outcome,
+  };
 }
 
 describe('channel-access service', () => {
@@ -196,6 +209,21 @@ describe('channel-access service', () => {
     }
 
     expect(downstream).toEqual(before);
+  });
+
+  it('revokes active work on status and inbox reads once the requester generation is revoked', async () => {
+    const h = harness();
+    h.revokeRequester();
+    expect(await h.service.journal.inspect({ v: 1, operationId: 'request_1', operationKind: 'access' }, requester, context))
+      .toEqual({ v: 1, operationId: 'request_1', outcome: 'revoked' });
+    expect(h.outcome()).toBe('revoked');
+  });
+
+  it('drops revoked rows from the owner inbox', async () => {
+    const h = harness();
+    h.revokeRequester();
+    expect(await h.service.decisions.inbox(owner)).toEqual({ kind: 'ok', value: [] });
+    expect(h.outcome()).toBe('revoked');
   });
 
   it('collapses wrong-owner and cross-session reads without mutating the journal', async () => {
