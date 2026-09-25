@@ -56,6 +56,9 @@ if (event === 'sessionStart') {
   const session = typeof input.session_id === 'string' ? input.session_id : randomBytes(6).toString('hex');
   await store.bind(bindingKey(conversationId, session), 'sessionStart');
   emit({ env: { [SESSION_ENV]: session } });
+} else if (event === 'beforeSubmitPrompt') {
+  // The person's turn starts. Only the fact is logged, never the prompt.
+  await store.log('user-prompt', { ...common, sessionKey: await currentKey() });
 } else if (event === 'preToolUse') {
   await store.log('tool-start', { ...common, sessionKey: await currentKey(), toolName: input.tool_name ?? null, toolUseId: input.tool_use_id ?? null });
 } else if (event === 'postToolUse') {

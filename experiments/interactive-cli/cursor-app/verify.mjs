@@ -2,14 +2,18 @@
 //   node verify.mjs <evidence-dir>            print the matrix
 //   node verify.mjs <evidence-dir> --check    fail unless <evidence-dir>/matrix.json matches
 //
-// A trial directory is the kit's state directory (run.json, events.jsonl) plus
-// the person's observations.json: the process census and each model-context
-// sighting taken from the chat transcript. A cell is proven only when one trial
-// shows the batch in the same session's model context, at the mode's boundary,
-// acknowledged on a later agent call, replayed across a restart, and never
-// delivered again after acknowledgement. Anything less leaves it unknown.
+// A trial directory is the kit's state directory (run.json, events.jsonl, and
+// the launch.json and census.json the kit captured) plus the person's
+// observations.json: each model-context sighting taken from the chat
+// transcript. A cell is proven only when one trial shows the batch in the same
+// session's model context, at the mode's boundary, acknowledged on a later
+// agent call, replayed across a restart, and never delivered again after
+// acknowledgement, in a session the person started with normal trust settings.
+// `steer` and `sync` also need a batch delivered to an idle chat. Anything less
+// leaves the cell unknown.
 import { readFile, readdir } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 export const SHAPES = ['local_chat', 'cloud_task'];
 export const MODES = ['steer', 'sync', 'async'];
@@ -17,6 +21,35 @@ export const BOUNDARY = { steer: 'postToolUse', sync: 'stop', async: 'khala_read
 export const ROUTE = { steer: 'cursor.postToolUse', sync: 'cursor.stop', async: 'mcp.khala_read' };
 export const LONG_TOOL_MS = 20_000;
 const AGENT_CALLS = new Set(['khala_read', 'khala_status']);
+
+// Decisions 34 and 37: `steer` and `sync` must also reach an idle chat.
+export const IDLE_MODES = new Set(['steer', 'sync']);
+
+// Decision 33: normal trust settings. Cursor's Agent auto-run must ask, follow
+// an allowlist, or run in the sandbox; "Run Everything" and MCP auto-run skip
+// approval. The flags are cursor-agent's approval and sandbox bypasses.
+export const NORMAL_AUTO_RUN = new Set(['ask', 'allowlist', 'sandbox']);
+const TRUST_BYPASS = ['--force', '-f', '--yolo', '--approve-mcps', '--trust', '--disable-workspace-trust'];
+
+const cursorProcess = argv => argv.slice(0, 2).some(
+  token => /^cursor(?:-agent)?(?:\.exe|\.js)?$/i.test(basename(token)) || token.includes('/cursor-agent/'),
+);
+const headless = argv => argv.some(token => token === '-p' || token === '--print');
+const khalaProcess = argv => argv.slice(0, 3).some(token => /^khala(?:[-.]|$)/i.test(basename(token)))
+  || argv.some(token => token.includes('@aiur/khala'));
+
+export function bypassFlags(argv) {
+  const flags = argv.filter(token => TRUST_BYPASS.some(flag => token === flag || token.startsWith(`${flag}=`)));
+  const sandbox = argv.findIndex(token => token === '--sandbox' || token.startsWith('--sandbox='));
+  if (sandbox >= 0 && (argv[sandbox] === '--sandbox=disabled' || argv[sandbox + 1] === 'disabled')) flags.push('--sandbox disabled');
+  return flags;
+}
+
+function ancestors(proc, byPid) {
+  const chain = [];
+  for (let next = byPid.get(proc.ppid); next && !chain.includes(next); next = byPid.get(next.ppid)) chain.push(next);
+  return chain;
+}
 
 const ms = value => Date.parse(value);
 
@@ -34,6 +67,8 @@ export async function loadTrial(dir) {
   return {
     dir,
     run: await readJson(join(dir, 'run.json')),
+    launch: await readJson(join(dir, 'launch.json')),
+    census: await readJson(join(dir, 'census.json')),
     observations: await readJson(join(dir, 'observations.json')),
     raw,
     events: raw.trim() ? raw.trim().split('\n').map(line => JSON.parse(line)) : [],
@@ -58,19 +93,63 @@ function identityReasons(trial, shape) {
   return reasons;
 }
 
+// Every census fact comes from the raw process list the kit captured, never
+// from counts the person types.
 function sessionReasons(trial) {
-  const { events, observations } = trial;
-  const census = observations?.census;
-  if (!census) return ['no process census'];
+  const { events, census } = trial;
   const reasons = [];
-  for (const field of ['backgroundAgentsCreated', 'cloudAgentsCreated', 'khalaStartedModelProcesses']) {
-    if (census[field] !== 0) reasons.push(`census ${field} is ${JSON.stringify(census[field])}, not 0`);
+  if (!Array.isArray(census?.processes)) {
+    reasons.push('no raw process census');
+  } else {
+    if (!(events.length > 0 && ms(census.at) >= ms(events[0].at))) reasons.push('the process census was not taken during the trial');
+    const byPid = new Map(census.processes.map(proc => [proc.pid, proc]));
+    for (const proc of census.processes.filter(item => cursorProcess(item.argv))) {
+      const argv = proc.argv.join(' ');
+      const khala = [proc, ...ancestors(proc, byPid)].find(item => khalaProcess(item.argv));
+      if (khala) reasons.push(`census Cursor process ${proc.pid} has a Khala ancestor ${khala.pid}: ${argv}`);
+      if (headless(proc.argv)) reasons.push(`census shows a headless Cursor agent, a second model session: ${argv}`);
+      const bypass = bypassFlags(proc.argv);
+      if (bypass.length > 0) reasons.push(`census Cursor process ${proc.pid} bypasses normal trust settings (${bypass.join(', ')}): ${argv}`);
+    }
   }
   if (events.some(event => event.event === 'sessionStart' && event.isBackgroundAgent === true)) {
     reasons.push('a background agent session ran during the trial');
   }
   const conversations = new Set(events.map(event => event.conversationId).filter(Boolean));
   if (conversations.size !== 1) reasons.push(`hooks saw ${conversations.size} Cursor conversations, not exactly the person's one chat`);
+  return reasons;
+}
+
+// Decision 33: the launch is what actually ran, recorded before any batch
+// arrived and stamped on every event, with normal trust settings.
+function launchReasons(trial, shape) {
+  const { launch, census, events } = trial;
+  if (!launch) return ['launch.json was not recorded'];
+  const reasons = [];
+  const { autoRun, mcpAutoRun } = launch.trust ?? {};
+  if (!NORMAL_AUTO_RUN.has(autoRun)) reasons.push(`auto-run setting ${JSON.stringify(autoRun)} is not a normal trust setting`);
+  if (mcpAutoRun !== 'off') reasons.push(`MCP auto-run is ${JSON.stringify(mcpAutoRun)}, not off`);
+  const arrival = events.find(event => event.kind === 'arrived');
+  if (arrival && !(ms(launch.recordedAt) <= ms(arrival.at))) reasons.push('the launch was recorded after the first batch arrived');
+  let command;
+  if (shape === 'local_chat') {
+    const { app } = launch;
+    if (!Array.isArray(app?.argv) || !cursorProcess(app.argv)) return [...reasons, 'launch.json does not record a Cursor app process'];
+    command = app.argv;
+    const bypass = bypassFlags(app.argv);
+    if (bypass.length > 0) reasons.push(`launch command bypasses normal trust settings (${bypass.join(', ')})`);
+    const khala = (app.ancestors ?? []).find(item => khalaProcess(item.argv ?? []));
+    if (khala) reasons.push(`the Cursor app was started under Khala process ${khala.pid}`);
+    const running = census?.processes?.find(proc => proc.pid === app.pid);
+    if (!isDeepStrictEqual(running?.argv, app.argv)) reasons.push('the recorded launch command is not a running Cursor app process in the census');
+  } else {
+    const agent = launch.cloudAgent;
+    if (!agent?.id) return [...reasons, 'launch.json does not name the existing cloud agent'];
+    command = ['cursor-cloud-agent', agent.id];
+    if (!(ms(agent.createdAt) < ms(events[0]?.at))) reasons.push('the cloud agent was not created before the trial');
+  }
+  const unstamped = events.filter(event => !isDeepStrictEqual(event.launch, command));
+  if (unstamped.length > 0) reasons.push(`${unstamped.length} events do not carry the recorded launch command`);
   return reasons;
 }
 
@@ -146,6 +225,30 @@ function replayReasons(trial) {
   return reasons;
 }
 
+// An idle batch arrives after the chat's last turn ended, reaches the same
+// conversation's model context before the person starts another turn or any
+// tool runs, and is then acknowledged by a later agent call.
+function idleReasons(trial, mode) {
+  if (!IDLE_MODES.has(mode)) return [];
+  const { events, observations } = trial;
+  const sightings = observations?.modelContext ?? [];
+  const busy = event => event.kind === 'user-prompt' || event.kind === 'tool-start';
+  const turnEnd = event => event.kind === 'hook' && event.event === 'stop';
+  const idle = events.filter(event => event.kind === 'arrived').some(arrival => {
+    const since = events.filter(event => ms(event.at) <= ms(arrival.at) && (busy(event) || turnEnd(event))).at(-1);
+    if (!since || !turnEnd(since)) return false;
+    const release = events.find(event => event.kind === 'released' && event.releaseIds.includes(arrival.releaseId));
+    if (!release) return false;
+    const sighting = sightings.find(item => item.sha256 === arrival.sha256
+      && item.conversationId === release.sessionId?.split('/')[0] && ms(item.observedAt) >= ms(release.at));
+    if (!sighting) return false;
+    if (events.some(event => busy(event) && ms(event.at) >= ms(since.at) && ms(event.at) <= ms(sighting.observedAt))) return false;
+    return events.some(event => event.kind === 'acknowledged' && AGENT_CALLS.has(event.via)
+      && event.releaseIds.includes(arrival.releaseId) && ms(event.at) >= ms(sighting.observedAt));
+  });
+  return idle ? [] : [`${mode} has no idle-session trial: no batch that arrived while the chat sat idle reached model context before the next turn`];
+}
+
 function leakReasons(trial) {
   return /bt_[0-9a-f]/.test(trial.raw) ? ['a raw batch token reached the event log'] : [];
 }
@@ -154,10 +257,12 @@ export function gradeTrial(trial, shape, mode) {
   return [
     ...identityReasons(trial, shape),
     ...sessionReasons(trial),
+    ...launchReasons(trial, shape),
     ...boundaryReasons(trial, mode),
     ...contextReasons(trial),
     ...ackReasons(trial),
     ...replayReasons(trial),
+    ...idleReasons(trial, mode),
     ...leakReasons(trial),
   ];
 }

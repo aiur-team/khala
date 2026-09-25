@@ -1,5 +1,6 @@
 // Prepare a person's scratch Cursor project for one trial. Run by hand, before
 // the person opens the project in Cursor and starts Agent Chat themselves.
+// Nothing has launched yet, so the launch is left for record-launch.mjs.
 //   node install.mjs <project> <run-id> <local_chat|cloud_task> <cursor-version> <account-tier> <policy-scope>
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -18,6 +19,7 @@ await writeFile(join(root, '.cursor/hooks.json'), `${JSON.stringify({
   version: 1,
   hooks: {
     sessionStart: [hook],
+    beforeSubmitPrompt: [hook],
     preToolUse: [hook],
     postToolUse: [hook],
     beforeMCPExecution: [hook],
@@ -31,6 +33,6 @@ await writeFile(join(root, '.cursor/mcp.json'), `${JSON.stringify({
 
 await mkdir(state, { recursive: true, mode: 0o700 });
 await writeFile(join(state, 'run.json'), `${JSON.stringify({
-  runId, app: 'cursor', shape, cliVersion: appVersion, accountTier, administratorPolicyScope, launch: 'user-started Cursor Agent Chat',
+  runId, app: 'cursor', shape, cliVersion: appVersion, accountTier, administratorPolicyScope,
 })}\n`);
 process.stdout.write(`${state}\n`);

@@ -17,10 +17,13 @@ retained evidence. `blocked.json` gives the reason for each shape.
 ## What is here
 
 - `kit/` holds what a person installs into their own scratch Cursor project:
-  - project `.cursor/hooks.json` entries for `sessionStart`, `preToolUse`,
-    `postToolUse`, `beforeMCPExecution`, and `stop`;
+  - project `.cursor/hooks.json` entries for `sessionStart`, `beforeSubmitPrompt`,
+    `preToolUse`, `postToolUse`, `beforeMCPExecution`, and `stop`;
   - one hook script, `hook.mjs`;
-  - a stdio MCP server exposing `khala_read` and `khala_status`.
+  - a stdio MCP server exposing `khala_read` and `khala_status`;
+  - `record-launch.mjs`, which records the running Cursor app process (argv and
+    parent chain) and the trust settings. It launches nothing;
+  - `census.mjs`, which captures the raw process list (pid, parent pid, argv).
 
   The Khala side of the contract is the [Claude proof's store](../claude/marketplace/plugins/khala-proof/lib/store.mjs):
   - batch tokens, generation fencing, and acknowledgement on the next agent call;
@@ -48,7 +51,8 @@ Cursor-specific design points the live trial must confirm:
   - an `aborted` or `error` turn never resumes.
 
   `sync` delivers only at the end of a turn. An idle chat receives nothing until the
-  person's next turn ends, and this kit claims no idle wake.
+  person's next turn ends, and this kit claims no idle wake. Because decisions 34 and
+  37 require idle delivery, a trial run with this kit cannot prove `steer` or `sync`.
 
 ## The verifier
 
@@ -57,8 +61,18 @@ below. Anything less leaves the cell `unknown` with the failed checks as its rea
 
 - **Identity.** The trial's version, account tier, and policy are exact values, and
   every hook reported that same `cursor_version`.
-- **Session census.** There is exactly one Cursor conversation. No background agent,
-  cloud agent, or Khala-started model process exists.
+- **Session census.** Every census fact comes from the raw process list in
+  `census.json`, taken during the trial, never from typed counts. A Cursor or
+  `cursor-agent` process fails the trial if it has a Khala ancestor, runs headless
+  (`-p`/`--print`), or carries a bypass flag (`--force`, `--yolo`,
+  `--approve-mcps`, `--trust`, `--sandbox disabled`). Hooks saw exactly one Cursor
+  conversation, and no background agent session.
+- **Launch and trust (decision 33).** `launch.json` records the running Cursor app
+  process before the first batch arrives, and that process is in the census with the
+  same argv. It has no Khala ancestor and no bypass flag. Every event carries that
+  launch command. Agent auto-run is `ask`, `allowlist`, or `sandbox`, never
+  `run-everything`, and MCP auto-run is `off`. A cloud trial names an existing cloud
+  agent created before the trial.
 - **Boundary.** Every release happened at the mode's boundary: `postToolUse`,
   `stop`, or `khala_read`.
 - **`steer` timing.** For `steer`, the batch arrived while a completed tool of at
@@ -68,6 +82,9 @@ below. Anything less leaves the cell `unknown` with the failed checks as its rea
 - **Acknowledgement.** Acknowledgement came from a later `khala_read` or
   `khala_status` call, never from a hook.
 - **Replay.** A restart between fetch and acknowledgement replayed the batch.
+- **Idle delivery (`steer` and `sync`, decisions 34 and 37).** A batch that arrived
+  after the chat's turn ended reached model context before any new prompt or tool
+  call, and a later agent call acknowledged it.
 - **No duplicates.** No release was acknowledged twice or delivered after
   acknowledgement.
 - **No leaked tokens.** No raw `bt_` token appears in the event log.
@@ -79,27 +96,31 @@ state=$(node experiments/interactive-cli/cursor-app/kit/install.mjs <project> <r
 node experiments/interactive-cli/claude/khala-admin.mjs mode "$state" steer   # or sync / async
 ```
 
-1. Open `<project>` in Cursor with normal trust settings and start Agent Chat yourself.
-2. Ask for `sleep 25`.
+1. Open `<project>` in Cursor yourself, with your normal trust settings. Before you
+   start Agent Chat, record the launch. Pass the Cursor app's main process ID and the
+   settings shown under Cursor Settings → Agents:
+
+   ```sh
+   node experiments/interactive-cli/cursor-app/kit/record-launch.mjs "$state" --app-pid <pid> --auto-run <ask|allowlist|sandbox|run-everything> --mcp-auto-run <on|off>
+   ```
+
+2. Start Agent Chat and ask for `sleep 25`.
 3. While it runs, from another terminal:
 
    ```sh
    printf 'KHALA-NONCE-<hex>' | node experiments/interactive-cli/claude/khala-admin.mjs release "$state"
+   node experiments/interactive-cli/cursor-app/kit/census.mjs "$state"
    ```
 
 4. Ask the agent to repeat any Khala nonce it sees.
-5. Quit and reopen Cursor before the agent makes a `khala_*` call, then resume the
-   chat, so the batch replays.
+5. Quit Cursor before the agent makes a `khala_*` call. Reopen it the same way, then
+   resume the chat so the batch replays.
 6. Ask for `khala_status`.
 7. Restart once more and confirm nothing is delivered again.
 
 To record the trial, copy `"$state"` to `evidence/trials/<run-id>/`. Add
-`observations.json` containing:
-
-- `census`: counts of `backgroundAgentsCreated`, `cloudAgentsCreated`, and
-  `khalaStartedModelProcesses`;
-- `modelContext`: each sighting's `conversationId`, the nonce `sha256`, and
-  `observedAt`, taken from the chat transcript.
+`observations.json` whose `modelContext` lists each sighting's `conversationId`,
+nonce `sha256`, and `observedAt`, taken from the chat transcript.
 
 Then regenerate the matrix:
 
@@ -108,8 +129,9 @@ node experiments/interactive-cli/cursor-app/verify.mjs experiments/interactive-c
 ```
 
 For a cloud agent, commit `kit/` and a `.cursor/hooks.json` with repository-relative
-paths into that agent's existing repository. Record the run with shape `cloud_task`.
-Never create a new cloud agent for the trial.
+paths into that agent's existing repository. Record the run with shape `cloud_task`,
+and record the launch with `--cloud-agent <id> --cloud-created-at <iso>` in place of
+`--app-pid`. Never create a new cloud agent for the trial.
 
 ## Validation
 
