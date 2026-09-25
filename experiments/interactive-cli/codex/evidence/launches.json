@@ -1,0 +1,55 @@
+{
+  "date": "2026-09-25",
+  "host": "Linux x86_64, real PTY from a private tmux server (180x50)",
+  "startedBy": "agent-launched with default settings: the Aiur agent working #164 started every TUI below; no human started them",
+  "codexHome": "~/.codex, the host user's real Codex home and existing config (not isolated, not overridden)",
+  "trustBypassFlagsUsed": [],
+  "flagsForbiddenByDecision33": [
+    "--dangerously-bypass-hook-trust",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-skip-permissions",
+    "--setting-sources",
+    "unauthenticated --port"
+  ],
+  "sandboxAndApprovals": "defaults from ~/.codex/config.toml; no -s, -a, -c, --enable, or --disable",
+  "hookPlacement": "project config layer <project>/.codex/hooks.json, written by setup-fixture.ts; loads only after the TUI's own folder-trust prompt and hook review",
+  "skillStandIn": "<project>/AGENTS.md generated from AGENTS.proof.md",
+  "launches": [
+    {
+      "codexVersion": "codex-cli 0.154.0",
+      "binary": "~/.local/share/mise/installs/node/lts/bin/codex (npm global install)",
+      "cwd": "~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0154",
+      "commands": [
+        { "command": "codex", "purpose": "one-time folder trust and hook review; no prompts sent" },
+        { "command": "codex", "session": "01a0d5fe-a047-7141-a470-35d2127aeec9", "purpose": "baseline sleep, steer r2 (offered, not acted on)" },
+        { "command": "codex", "session": "01a0d601-cf4a-7ee2-9b74-af0cdcc51cac", "purpose": "steer r2 re-offer, steer r3, sync, async, idle wakes, restart trial offer" },
+        { "command": "codex resume 01a0d601-cf4a-7ee2-9b74-af0cdcc51cac", "purpose": "restart trial: first resume after SIGKILL" },
+        { "command": "codex resume 01a0d601-cf4a-7ee2-9b74-af0cdcc51cac", "purpose": "restart trial: second resume after acknowledgement" }
+      ],
+      "wakeCommand": "codex queue --thread <session> --message \"Khala: new channel activity. This notice carries no message content.\""
+    },
+    {
+      "codexVersion": "codex-cli 0.156.1",
+      "binary": "~/.aiur/repo/aiur-team/khala/.aiur-npm-cache/_npx/2f9d908f9cfda204/node_modules/.bin/codex (npm exec --package=@openai/codex@0.156.1)",
+      "cwd": "~/.aiur/workspaces/aiur-team/khala/164/.aiur-runtime/tmp/codex164/p0156",
+      "commands": [
+        { "command": "codex", "session": "01a0d60a-2956-7021-a1b4-5a7f971e0b5f", "purpose": "folder trust and hook review, then steer, sync, async, idle wakes, restart trial offer" },
+        { "command": "codex resume 01a0d60a-2956-7021-a1b4-5a7f971e0b5f", "purpose": "restart trial: first resume after SIGKILL" },
+        { "command": "codex resume 01a0d60a-2956-7021-a1b4-5a7f971e0b5f", "purpose": "restart trial: second resume after acknowledgement" }
+      ],
+      "wakeCommand": "codex queue --thread <session> --message \"Khala: new channel activity. This notice carries no message content.\""
+    }
+  ],
+  "humanStyleApprovals": [
+    "0.154.0 update notice: chose Skip on every launch, keeping the installed version",
+    "Folder trust: accepted once per project (0.154.0 'Yes, continue'; 0.156.1 'Trust and continue'); persisted as projects.<path>.trust_level",
+    "Hooks need review: opened Review hooks, pressed t (trust all) once per project; persisted as hooks.state.<hooks.json path>:<event>:0:0 trusted_hash; later launches and resumes did not prompt again"
+  ],
+  "evidence": {
+    "trustRecords": "hook-trust.toml",
+    "trustScreens": "screens/",
+    "rawEvents": ["events-0.154.0.jsonl", "events-0.156.1.jsonl"],
+    "modelContext": "rollout-excerpts.jsonl",
+    "processCapture": ["proc-0.154.0.json", "proc-0.156.1.json"]
+  }
+}

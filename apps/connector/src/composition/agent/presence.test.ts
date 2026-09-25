@@ -3,6 +3,7 @@ import {
   type DeliveryReceipt,
   type HarnessCapabilities,
   type SessionBinding,
+  unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/ids';
 import { describe, expect, it, vi } from 'vitest';
@@ -25,7 +26,7 @@ const binding = {
 } as SessionBinding;
 
 const capabilities: HarnessCapabilities = {
-  v: 2,
+  v: 3,
   harness: 'codex',
   version: '0.154.0',
   adapterVersion: 'native-cli-notification-1',
@@ -37,6 +38,8 @@ const capabilities: HarnessCapabilities = {
   reconcileByReleaseId: 'unsupported',
   limits: decodedLimits.value,
   evidenceRef: 'docs/evidence/codex-native-cli.md#queue-idle',
+  modes: unknownModeSupportMap('test-codex-native', 'Test fixture has no primary mode proof.', '0.154.0'),
+  acknowledgement: 'unknown',
 };
 
 function status(overrides: Partial<RuntimeStatus> = {}): RuntimeStatus {

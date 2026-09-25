@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { BindingId, EventRef } from '@khala/contracts/delivery/index';
 import { CliError } from './errors.js';
 import { openInbox } from './inbox.js';
+import type { BatchInbox, InboxConsumer } from './inbox.js';
 import type { InboxDelivery } from './types.js';
 
 const roots: string[] = [];
+const consumers: InboxConsumer[] = [];
 const bindingId = 'binding-1' as BindingId;
 const payload = new TextEncoder().encode('released payload');
 const digest = (bytes: Uint8Array) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -46,7 +48,19 @@ function delivery(overrides: Partial<InboxDelivery> = {}): InboxDelivery {
   };
 }
 
-afterEach(() => {
+function released(releaseId: string, body: string, generation = 3): InboxDelivery {
+  const bytes = new TextEncoder().encode(body);
+  return delivery({ releaseId, generation, payload: bytes, payloadDigest: digest(bytes) });
+}
+
+async function acquireBatch(inbox: BatchInbox): Promise<InboxConsumer> {
+  const consumer = await inbox.acquireListener();
+  consumers.push(consumer);
+  return consumer;
+}
+
+afterEach(async () => {
+  for (const consumer of consumers.splice(0).reverse()) await consumer.release().catch(() => undefined);
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -204,5 +218,169 @@ describe('durable inbox', () => {
     expect(fs.existsSync(fallbackSocket)).toBe(true);
     await held.release();
     expect(fs.existsSync(fallbackSocket)).toBe(false);
+  });
+});
+
+describe('durable inbox batches', () => {
+  it('requires the single-consumer lease for every batch transition', async () => {
+    const directory = stateDirectory();
+    const first = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    const second = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    const reader = await acquireBatch(first);
+    await expect(second.acquireListener()).rejects.toEqual(new CliError('listener_busy'));
+    await reader.release();
+    await expect(reader.readBatch({ maxBytes: 1024 })).rejects.toEqual(new CliError('listener_busy'));
+  });
+
+  it('returns null for an empty inbox and stages at most eight FIFO records', async () => {
+    const inbox = await openInbox({
+      stateDirectory: stateDirectory(), bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    const reader = await acquireBatch(inbox);
+    expect(await reader.readBatch({ maxBytes: 1024 })).toBeNull();
+    for (let index = 1; index <= 10; index += 1) await inbox.enqueue(released(`release-${index}`, `body-${index}`));
+
+    const batch = await reader.readBatch({ maxBytes: 1024 });
+    expect(batch?.items.map(item => item.record.releaseId)).toEqual([
+      'release-1', 'release-2', 'release-3', 'release-4', 'release-5', 'release-6', 'release-7', 'release-8',
+    ]);
+    expect((await inbox.status()).cursor).toEqual({ v: 1, offset: 0, releaseId: null });
+  });
+
+  it('uses the maximal whole-record byte prefix and permits one oversized head', async () => {
+    const inbox = await openInbox({
+      stateDirectory: stateDirectory(), bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    const reader = await acquireBatch(inbox);
+    await inbox.enqueue(released('release-1', 'aa'));
+    await inbox.enqueue(released('release-2', 'bbb'));
+    await inbox.enqueue(released('release-3', 'cccc'));
+
+    const exact = await reader.readBatch({ maxBytes: 5 });
+    expect(exact?.items.map(item => item.record.releaseId)).toEqual(['release-1', 'release-2']);
+    expect(exact?.items.map(item => item.payload.byteLength)).toEqual([2, 3]);
+
+    const next = await reader.readBatch({ maxBytes: 1, acknowledgeToken: exact!.token });
+    expect(next?.items.map(item => item.record.releaseId)).toEqual(['release-3']);
+    expect(next?.items[0]?.payload.byteLength).toBe(4);
+  });
+
+  it('durably replays the identical outstanding batch until its exact token advances', async () => {
+    const directory = stateDirectory();
+    const first = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    await first.enqueue(released('release-1', 'first'));
+    await first.enqueue(released('release-2', 'second'));
+    const firstReader = await acquireBatch(first);
+    const staged = await firstReader.readBatch({ maxBytes: 1024 });
+    expect(staged).not.toBeNull();
+    expect((await first.status()).cursor.offset).toBe(0);
+    const persisted = fs.readFileSync(path.join(bindingDirectory(directory), 'batch.json'));
+
+    await first.enqueue(released('release-3', 'arrived-later'));
+    await firstReader.release();
+    const restarted = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    const restartedReader = await acquireBatch(restarted);
+    for (const acknowledgeToken of [undefined, 'foreign-token', staged!.token.slice(0, -1)]) {
+      const replay = await restartedReader.readBatch({
+        maxBytes: 1,
+        ...(acknowledgeToken === undefined ? {} : { acknowledgeToken }),
+      });
+      expect(replay).toEqual(staged);
+      expect(fs.readFileSync(path.join(bindingDirectory(directory), 'batch.json'))).toEqual(persisted);
+      expect((await restarted.status()).cursor.offset).toBe(0);
+    }
+
+    const advanced = await restartedReader.readBatch({ maxBytes: 1024, acknowledgeToken: staged!.token });
+    expect(advanced?.items.map(item => item.record.releaseId)).toEqual(['release-3']);
+    expect((await restarted.status()).cursor.releaseId).toBe('release-2');
+    expect(await restartedReader.readBatch({ maxBytes: 1, acknowledgeToken: staged!.token })).toEqual(advanced);
+  });
+
+  it('recovers an acknowledgement committed before outstanding-state cleanup', async () => {
+    const directory = stateDirectory();
+    const first = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    await first.enqueue(released('release-1', 'first'));
+    const firstReader = await acquireBatch(first);
+    const batch = await firstReader.readBatch({ maxBytes: 1024 });
+    const generationDirectory = bindingDirectory(directory);
+    const state = JSON.parse(fs.readFileSync(path.join(generationDirectory, 'batch.json'), 'utf8')) as {
+      endOffset: number; releaseId: string;
+    };
+    fs.writeFileSync(path.join(generationDirectory, 'cursor.json'), JSON.stringify({
+      v: 1, offset: state.endOffset, releaseId: state.releaseId,
+    }) + '\n', { mode: 0o600 });
+    await firstReader.release();
+
+    const restarted = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    const restartedReader = await acquireBatch(restarted);
+    expect(await restartedReader.readBatch({ maxBytes: 1024, acknowledgeToken: batch!.token })).toBeNull();
+    expect(fs.existsSync(path.join(generationDirectory, 'batch.json'))).toBe(false);
+  });
+
+  it('fences acknowledgements by binding generation and rejects invalid byte budgets', async () => {
+    const directory = stateDirectory();
+    const prior = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    await prior.enqueue(released('release-prior', 'prior'));
+    const priorReader = await acquireBatch(prior);
+    const priorBatch = await priorReader.readBatch({ maxBytes: 1024 });
+
+    const current = await openInbox({
+      stateDirectory: directory, bindingId, generation: 4, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    await current.enqueue(released('release-current', 'current', 4));
+    const currentReader = await acquireBatch(current);
+    const currentBatch = await currentReader.readBatch({ maxBytes: 1024, acknowledgeToken: priorBatch!.token });
+    expect(currentBatch?.items.map(item => item.record.releaseId)).toEqual(['release-current']);
+    expect((await current.status()).cursor.offset).toBe(0);
+    await expect(currentReader.readBatch({ maxBytes: -1 })).rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(currentReader.readBatch({ maxBytes: 1.5 })).rejects.toMatchObject({ code: 'invalid_input' });
+  });
+
+  it('fails closed for corrupt or invalid UTF-8 durable batch state', async () => {
+    const directory = stateDirectory();
+    const first = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    await first.enqueue(released('release-1', 'first'));
+    const firstReader = await acquireBatch(first);
+    await firstReader.readBatch({ maxBytes: 1024 });
+    fs.writeFileSync(path.join(bindingDirectory(directory), 'batch.json'), Buffer.from([0xff, 0xfe]), { mode: 0o600 });
+    await firstReader.release();
+
+    const restarted = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    const restartedReader = await acquireBatch(restarted);
+    await expect(restartedReader.readBatch({ maxBytes: 1024 })).rejects.toMatchObject({ code: 'storage_failed' });
+  });
+
+  it('fails closed for invalid UTF-8 in a complete inbox record', async () => {
+    const directory = stateDirectory();
+    const inbox = await openInbox({
+      stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32,
+    });
+    await inbox.enqueue(released('release-1', 'first'));
+    const reader = await acquireBatch(inbox);
+    const inboxPath = path.join(bindingDirectory(directory), 'inbox.jsonl');
+    const bytes = fs.readFileSync(inboxPath);
+    const quote = bytes.indexOf(Buffer.from('release-1'));
+    bytes[quote] = 0xff;
+    fs.writeFileSync(inboxPath, bytes);
+
+    await expect(reader.readBatch({ maxBytes: 1024 })).rejects.toMatchObject({ code: 'storage_failed' });
   });
 });
