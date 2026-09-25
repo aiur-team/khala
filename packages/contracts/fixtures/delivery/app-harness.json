@@ -1,0 +1,172 @@
+{
+  "_comment": "Representative app-harness identities. Candidate boundaries do not imply support: every valid tuple remains uninspected in the shared mode and acknowledgement fields.",
+  "valid": [
+    {
+      "name": "uninspected Cursor local chat",
+      "input": {
+        "v": 1,
+        "app": "cursor",
+        "shape": "local_chat",
+        "appVersion": "1.7.3",
+        "accountTier": "business",
+        "administratorPolicyScope": "workspace-managed",
+        "boundaries": { "steer": "postToolUse", "sync": "stop", "async": "khala_read" },
+        "capabilities": {
+          "v": 3,
+          "harness": "cursor",
+          "version": "1.7.3",
+          "adapterVersion": "app-contract-v1",
+          "support": "unsupported",
+          "existingSession": "unknown",
+          "immediateNotification": "unknown",
+          "busy": "unknown",
+          "receiptEvidence": [],
+          "reconcileByReleaseId": "unknown",
+          "limits": { "maxSelectionEvents": 20, "maxPayloadBytes": 65536 },
+          "evidenceRef": "docs/app-candidate-inventory",
+          "modes": {
+            "steer": { "status": "unknown", "route": "cursor-app-steer", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "sync": { "status": "unknown", "route": "cursor-app-sync", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "async": { "status": "unknown", "route": "cursor-app-async", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." }
+          },
+          "acknowledgement": "unknown"
+        }
+      }
+    },
+    {
+      "name": "uninspected Claude browser",
+      "input": {
+        "v": 1,
+        "app": "claude",
+        "shape": "browser",
+        "appVersion": "2026-09-24",
+        "accountTier": "enterprise",
+        "administratorPolicyScope": "organization-default",
+        "boundaries": { "steer": null, "sync": null, "async": "khala_read" },
+        "capabilities": {
+          "v": 3,
+          "harness": "claude",
+          "version": "2026-09-24",
+          "adapterVersion": "app-contract-v1",
+          "support": "unsupported",
+          "existingSession": "unknown",
+          "immediateNotification": "unknown",
+          "busy": "unknown",
+          "receiptEvidence": [],
+          "reconcileByReleaseId": "unknown",
+          "limits": { "maxSelectionEvents": 20, "maxPayloadBytes": 65536 },
+          "evidenceRef": "docs/app-candidate-inventory",
+          "modes": {
+            "steer": { "status": "unknown", "route": "claude-app-steer", "testedVersion": "2026-09-24", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "sync": { "status": "unknown", "route": "claude-app-sync", "testedVersion": "2026-09-24", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "async": { "status": "unknown", "route": "claude-app-async", "testedVersion": "2026-09-24", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." }
+          },
+          "acknowledgement": "unknown"
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "vendor-only app identity",
+      "input": {
+        "v": 1,
+        "vendor": "cursor",
+        "shape": "local_chat",
+        "appVersion": "1.7.3",
+        "accountTier": "business",
+        "administratorPolicyScope": "workspace-managed",
+        "boundaries": { "steer": "postToolUse", "sync": "stop", "async": "khala_read" },
+        "capabilities": {
+          "v": 3,
+          "harness": "cursor",
+          "version": "1.7.3",
+          "adapterVersion": "app-contract-v1",
+          "support": "unsupported",
+          "existingSession": "unknown",
+          "immediateNotification": "unknown",
+          "busy": "unknown",
+          "receiptEvidence": [],
+          "reconcileByReleaseId": "unknown",
+          "limits": { "maxSelectionEvents": 20, "maxPayloadBytes": 65536 },
+          "evidenceRef": "docs/app-candidate-inventory",
+          "modes": {
+            "steer": { "status": "unknown", "route": "cursor-app-steer", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "sync": { "status": "unknown", "route": "cursor-app-sync", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "async": { "status": "unknown", "route": "cursor-app-async", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." }
+          },
+          "acknowledgement": "unknown"
+        }
+      },
+      "error": { "code": "invalid_field", "field": "vendor" }
+    },
+    {
+      "name": "app-local support redefinition",
+      "input": {
+        "v": 1,
+        "app": "cursor",
+        "shape": "local_chat",
+        "appVersion": "1.7.3",
+        "accountTier": "business",
+        "administratorPolicyScope": "workspace-managed",
+        "boundaries": { "steer": "postToolUse", "sync": "stop", "async": "khala_read" },
+        "capabilities": {
+          "v": 3,
+          "harness": "cursor",
+          "version": "1.7.3",
+          "adapterVersion": "app-contract-v1",
+          "support": "unsupported",
+          "existingSession": "unknown",
+          "immediateNotification": "unknown",
+          "busy": "unknown",
+          "receiptEvidence": [],
+          "reconcileByReleaseId": "unknown",
+          "limits": { "maxSelectionEvents": 20, "maxPayloadBytes": 65536 },
+          "evidenceRef": "docs/app-candidate-inventory",
+          "modes": {
+            "steer": { "status": "unknown", "route": "cursor-app-steer", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "sync": { "status": "unknown", "route": "cursor-app-sync", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "async": { "status": "unknown", "route": "cursor-app-async", "testedVersion": "1.7.3", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." }
+          },
+          "acknowledgement": "unknown"
+        },
+        "support": "tested"
+      },
+      "error": { "code": "invalid_field", "field": "support" }
+    },
+    {
+      "name": "app-local evidence redefinition",
+      "input": {
+        "v": 1,
+        "app": "claude",
+        "shape": "browser",
+        "appVersion": "2026-09-24",
+        "accountTier": "enterprise",
+        "administratorPolicyScope": "organization-default",
+        "boundaries": { "steer": null, "sync": null, "async": "khala_read" },
+        "capabilities": {
+          "v": 3,
+          "harness": "claude",
+          "version": "2026-09-24",
+          "adapterVersion": "app-contract-v1",
+          "support": "unsupported",
+          "existingSession": "unknown",
+          "immediateNotification": "unknown",
+          "busy": "unknown",
+          "receiptEvidence": [],
+          "reconcileByReleaseId": "unknown",
+          "limits": { "maxSelectionEvents": 20, "maxPayloadBytes": 65536 },
+          "evidenceRef": "docs/app-candidate-inventory",
+          "modes": {
+            "steer": { "status": "unknown", "route": "claude-app-steer", "testedVersion": "2026-09-24", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "sync": { "status": "unknown", "route": "claude-app-sync", "testedVersion": "2026-09-24", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." },
+            "async": { "status": "unknown", "route": "claude-app-async", "testedVersion": "2026-09-24", "evidenceRef": null, "evidenceRevision": null, "reason": "This exact app tuple has not been inspected." }
+          },
+          "acknowledgement": "unknown"
+        },
+        "evidenceRef": "app-local-evidence"
+      },
+      "error": { "code": "invalid_field", "field": "evidenceRef" }
+    }
+  ]
+}
