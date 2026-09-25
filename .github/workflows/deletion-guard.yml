@@ -1,0 +1,40 @@
+name: Deletion guard
+# Server-side backstop for the Aiur pre-push deletion guard. The worker-side
+# guard is advisory: a 2026-09-25 audit found 70 of 289 agent pushes where it
+# never ran (masked by a pipe, `;`, `|| true`, or skipped outright). This check
+# runs on GitHub, where no worker shell can reach it, and is required by branch
+# protection on `main`. A PR that removes files fails unless a human adds the
+# `allow-deletions` label after reviewing the list printed below.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  deletion-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse unapproved file deletions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          ALLOWED: ${{ contains(github.event.pull_request.labels.*.name, 'allow-deletions') }}
+        run: |
+          set -euo pipefail
+          removed="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | select(.status == "removed") | .filename')"
+          if [ -z "$removed" ]; then
+            echo "No files removed."
+            exit 0
+          fi
+          echo "This PR removes $(printf '%s\n' "$removed" | wc -l) file(s):"
+          printf '  %s\n' $removed
+          if [ "$ALLOWED" = "true" ]; then
+            echo "Allowed: the PR carries the allow-deletions label."
+            exit 0
+          fi
+          echo "::error::This PR deletes files. A human must review the list above and add the 'allow-deletions' label."
+          exit 1
