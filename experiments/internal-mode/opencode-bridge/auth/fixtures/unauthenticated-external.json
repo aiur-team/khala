@@ -1,0 +1,15 @@
+{
+  "kind": "opencode-delivery-route/v1",
+  "opencodeVersion": "1.17.10",
+  "route": {
+    "transport": "embedded_server_http",
+    "client": "external_companion",
+    "server": "tui_embedded",
+    "externalClient": true,
+    "authentication": "none"
+  },
+  "khalaLaunchedServer": false,
+  "sessionCalls": [
+    { "operation": "session.status", "status": 401 }
+  ]
+}
