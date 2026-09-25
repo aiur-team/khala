@@ -74,6 +74,7 @@ export type PairingCreateArtifacts = PairingCodeCandidate & Readonly<{
 }>;
 
 export type PairingSecret = Readonly<{ value: string; digest: string; keyId: string }>;
+export type PairingDigestCandidate = Readonly<{ keyId: string; digest: string }>;
 
 export type PairingAttemptReserveInput = Readonly<{
   /** Stable claim-attempt operation; retries must reconcile the same permit. */
@@ -129,6 +130,8 @@ export type PairingPolicy = Readonly<{
   digestClaimReceipt(receipt: string, keyId?: string): string;
   deriveGrant(input: Readonly<{ requestHandle: string; approvedRevision: string; fingerprint: string; keyId?: string }>): PairingSecret;
   digestGrant(grant: string, keyId?: string): string;
+  /** Active first, then retained keys, for raw-grant lookup during rotation. */
+  digestGrantCandidates(grant: string): readonly PairingDigestCandidate[];
   replayHandle(input: Readonly<{ jkt: string; jti: string }>, keyId?: string): string;
   sourceBucket(trustedSource: string): string;
   codeBucket(code: string): string;
@@ -220,6 +223,10 @@ export function createPairingPolicy(input: PairingKeyring): PairingPolicy {
     digestGrant(grant, keyId) {
       assertText(grant, 'grant');
       return digestForSecret('grant-digest', grant, selected(keyId).key);
+    },
+    digestGrantCandidates(grant) {
+      assertText(grant, 'grant');
+      return orderedKeys.map(([keyId, key]) => ({ keyId, digest: digestForSecret('grant-digest', grant, key) }));
     },
     replayHandle(replay, keyId) {
       assertText(replay.jkt, 'proof thumbprint');

@@ -129,6 +129,10 @@ describe('versioned keyring validation and purpose separation', () => {
     expect(grant.value).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(p.digestClaimReceipt(receipt.value)).toBe(receipt.digest);
     expect(p.digestGrant(grant.value)).toBe(grant.digest);
+    expect(p.digestGrantCandidates(grant.value)).toEqual([
+      { keyId: 'key-2', digest: grant.digest },
+      { keyId: 'key-1', digest: p.digestGrant(grant.value, 'key-1') },
+    ]);
   });
 
   it('copies injected key bytes so later caller mutation cannot change derivations', () => {
