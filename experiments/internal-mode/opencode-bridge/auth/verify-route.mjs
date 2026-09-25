@@ -13,16 +13,8 @@ export function verifyRoute(record) {
     throw new Error(`unsupported OpenCode version: ${record.opencodeVersion ?? 'missing'}`);
   }
 
-  // Guarded line: removing this check admits external embedded-server clients.
-  if (record.route?.transport !== IN_PROCESS_ROUTE) throw new Error('delivery route must use the in-process plugin client');
-
-  if (record.route.client !== 'plugin_sdk_client') {
-    throw new Error('in-process delivery must use the plugin SDK client');
-  }
-
-  if (record.route.server !== 'none' || record.route.externalClient !== false) {
-    throw new Error('in-process delivery must not depend on an embedded server');
-  }
+  // Guarded predicate: removing it admits external embedded-server clients.
+  if (record.route?.transport !== IN_PROCESS_ROUTE || record.route.client !== 'plugin_sdk_client' || record.route.server !== 'none' || record.route.externalClient !== false) throw new Error('delivery route must use the in-process plugin client');
 
   if (record.khalaLaunchedServer !== false) {
     throw new Error('Khala must not launch an OpenCode server');
