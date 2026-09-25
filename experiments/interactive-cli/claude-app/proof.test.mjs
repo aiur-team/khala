@@ -2,7 +2,7 @@
 // the app; their runs exercise the checker and are never evidence.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -240,9 +240,67 @@ test('missing model echo or restart replay leaves async unknown', async () => {
   await fullAsyncRun(dir);
   const log = await events(dir);
   const noEcho = verify(identity('desktop_extension'), log.filter(e => e.observation !== 'model-echo'));
-  assert.match(noEcho.modes.async.reason, /model-echo/);
+  assert.equal(noEcho.modes.async.status, 'unknown');
+  assert.match(noEcho.modes.async.reason, /no model-echo observation/);
   const noReplay = verify(identity('desktop_extension'), log.filter(e => !(e.kind === 'delivered' && e.replay)));
-  assert.match(noReplay.modes.async.reason, /replayed/);
+  assert.equal(noReplay.modes.async.status, 'unknown');
+  assert.match(noReplay.modes.async.reason, /no restart between fetch and acknowledgement/);
+});
+
+test('a replay counts only after a recorded before-ack restart on a connection opened after it', async () => {
+  const dir = await stateDir();
+  await fullAsyncRun(dir);
+  const log = await events(dir);
+  const isBeforeAck = e => e.observation === 'restart' && e.phase === 'before-ack';
+  const gap = /missing evidence: .*no restart between fetch and acknowledgement/;
+  const unrecorded = verify(identity('desktop_extension'), log.filter(e => !isBeforeAck(e)));
+  assert.match(unrecorded.modes.async.reason, gap);
+  // The same restart recorded only after the replay proves nothing.
+  const replayAt = log.findIndex(e => e.kind === 'delivered' && e.replay);
+  const late = log.filter(e => !isBeforeAck(e));
+  late.splice(replayAt, 0, log.find(isBeforeAck));
+  const result = verify(identity('desktop_extension'), late);
+  assert.equal(result.modes.async.status, 'unknown');
+  assert.match(result.modes.async.reason, gap);
+});
+
+test('the after-ack restart counts only when a later connection reads again', async () => {
+  const dir = await stateDir();
+  await fullAsyncRun(dir);
+  const log = await events(dir);
+  const restartAt = log.findIndex(e => e.observation === 'restart' && e.phase === 'after-ack');
+  const result = verify(identity('desktop_extension'), log.slice(0, restartAt + 1));
+  assert.equal(result.modes.async.status, 'unknown');
+  assert.match(result.modes.async.reason, /after a restart that followed acknowledgement/);
+});
+
+test('operator observations cannot forge reserved event fields', async () => {
+  const dir = await stateDir();
+  await admin(dir, 'observe', 'census', 'kind=acknowledged', 'runId=forged', 'processes=1');
+  const [event] = await events(dir);
+  assert.equal(event.kind, 'observed');
+  assert.equal(event.runId, 'test');
+});
+
+test('a lock left by a server killed mid-read is broken', async () => {
+  const dir = await stateDir();
+  await release(dir, 'after a crash');
+  const lock = join(dir, 'lock');
+  await mkdir(lock);
+  const old = new Date(Date.now() - 60_000);
+  await utimes(lock, old, old);
+  const client = stdioClient(dir);
+  try {
+    await client.initialize();
+    assert.match(await client.read(), /after a crash/);
+  } finally {
+    await client.close();
+  }
+});
+
+test('notify probes are refused on the HTTP shapes', async () => {
+  const dir = await stateDir('browser');
+  await assert.rejects(admin(dir, 'notify', 'tools_list_changed'), /stdio desktop extension/);
 });
 
 test('a duplicate after acknowledgement or a reordered release fails the run', async () => {

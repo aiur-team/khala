@@ -95,13 +95,24 @@ function asyncGaps(events, connections) {
   const gaps = [];
   if (acks.length === 0) gaps.push('no batch acknowledged by token from an identified app client');
   if (!acks.some(e => e.releaseIds.some(id => echoed.has(id)))) gaps.push('no model-echo observation for an acknowledged release');
-  const replayed = acks.some(e => {
-    const deliveries = delivered.get(e.tokenId);
-    return deliveries.some(d => d.replay) && new Set(deliveries.map(d => d.connectionId)).size > 1;
+  // Restarts are ordered facts: a replay counts only on a connection opened
+  // after a before-ack restart that followed the first fetch, and the
+  // after-ack restart counts only when a later connection reads again.
+  const index = new Map(events.map((e, i) => [e, i]));
+  const opened = new Map(events.filter(e => e.kind === 'connected').map(e => [e.connectionId, index.get(e)]));
+  const restarts = phase => events.filter(e => e.kind === 'observed' && e.observation === 'restart' && e.phase === phase).map(e => index.get(e));
+  const replayed = acks.some(ack => {
+    const deliveries = delivered.get(ack.tokenId);
+    const first = index.get(deliveries.find(d => !d.replay));
+    return deliveries.some(d => d.replay && index.get(d) < index.get(ack) && restarts('before-ack').some(at => (
+      first < at && at < index.get(d) && opened.get(d.connectionId) > at
+    )));
   });
   if (!replayed) gaps.push('no restart between fetch and acknowledgement that replayed the unacknowledged batch');
-  const restartAfterAck = events.some(e => e.kind === 'observed' && e.observation === 'restart' && e.phase === 'after-ack');
-  if (!restartAfterAck) gaps.push('no restart after acknowledgement');
+  const readAfterRestart = acks.some(ack => restarts('after-ack').some(at => at > index.get(ack) && events.some(e => (
+    (e.kind === 'empty' || e.kind === 'delivered') && index.get(e) > at && opened.get(e.connectionId) > at
+  ))));
+  if (!readAfterRestart) gaps.push('no khala_read after a restart that followed acknowledgement');
   return gaps;
 }
 

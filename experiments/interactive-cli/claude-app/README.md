@@ -26,8 +26,10 @@ result then grades each row.
   in the `khala_read` tool result. When the next `khala_read` call presents that token, the result
   must have reached a model context. `verify.mjs` also requires all of the following:
   - an operator-recorded echo of the marker in the target conversation;
-  - an app or connector restart between fetch and acknowledgement that replays the same batch;
-  - a restart after acknowledgement with no duplicate;
+  - a restart recorded after the first fetch, with the same batch replayed on a connection
+    opened after that restart and before acknowledgement;
+  - a restart recorded after acknowledgement, followed by a read on a new connection with no
+    duplicate;
   - a single app MCP client for the whole run.
 - **Never delivery:** a server notification (`notifications/tools/list_changed`,
   `notifications/message`), a change in tool availability, or any call from a different MCP
@@ -38,7 +40,10 @@ result then grades each row.
   `unknown`. A cell becomes `unsupported` only when an operator records a proven negative for that
   exact app version (`observe negative`). Polling is never mapped to `sync`.
 - Evidence is keyed by the full tuple: app, shape, app version, account tier, administrator policy,
-  and OS. A stdio (extension) run cannot grade a connector or browser row.
+  and OS. A stdio (extension) run cannot grade a connector or browser row. The server cannot tell
+  a Claude Desktop remote connector from claude.ai: Anthropic's cloud brokers both over the same
+  HTTP route. For those two rows, the shape rests on the operator-recorded identity and
+  conversation, so run each one separately with its own state directory.
 
 ## Files
 
@@ -51,7 +56,7 @@ result then grades each row.
 - `server/http.mjs`: the remote connector, a minimal Streamable HTTP endpoint on loopback. It is
   proof-only and has no auth, so use synthetic markers only. An adapter must add OAuth.
 - `khala-admin.mjs`: operator controls: `init`, `release` (the body on stdin only), `notify` (a
-  content-free probe), and `observe`.
+  content-free probe for the stdio extension only), and `observe`.
 - `verify.mjs`: grades one run into mode support. It exits 1 on a wrong implementation.
 - `proof.test.mjs` and `mutations.mjs`: tests for the kit and checker.
 
@@ -80,9 +85,9 @@ would, and record that approval.
    again: the same batch must replay. Let the model acknowledge it with `ackBatchToken`.
 5. Restart again and run `observe <state> restart phase=after-ack`. Then `khala_read` must return
    no messages.
-6. Investigate push boundaries without inferring them. While the model is idle, and again
-   mid-turn, run `node khala-admin.mjs notify <state> tools_list_changed` (and `log_message`), and
-   note whether the conversation changes. Record `observe <state> negative mode=<steer|sync>
+6. Investigate push boundaries without inferring them. For the local extension, while the model is
+   idle and again mid-turn, run `node khala-admin.mjs notify <state> tools_list_changed` (and
+   `log_message`), and note whether the conversation changes. Record `observe <state> negative mode=<steer|sync>
    reason=<text>` only for a proven absence in that exact version. Record a process census with
    `observe <state> census processes=<n> note=<text>`.
 7. Run `node verify.mjs <state>`. Copy `run.json`, `events.jsonl`, and the verdict into
@@ -106,11 +111,16 @@ table lists each line, the test that fails when it is reverted, and whether that
 | `store.mjs` duplicate-ack refusal (`if (batch.ackedAt)`) | fetching never acknowledges… | KILLED |
 | `store.mjs` arrival-order `.sort()` | batches are bounded and leave in arrival order | KILLED |
 | `store.mjs` logs a hash, not the body | payload bytes and raw batch tokens never reach the event log | KILLED |
+| `store.mjs` reserved log fields written last | operator observations cannot forge reserved event fields | KILLED |
+| `store.mjs` breaks a stale lock | a lock left by a server killed mid-read is broken | KILLED |
+| `khala-admin.mjs` refuses `notify` on HTTP shapes | notify probes are refused on the HTTP shapes | KILLED |
 | `http.mjs` 404 for an unknown session | remote connector speaks Streamable HTTP… | KILLED |
 | `verify.mjs` async evidence gaps | wrong implementation: an MCP notification or tool-list change is not delivery | KILLED |
 | `verify.mjs` non-app client refusal | wrong implementation: a run driven wholly by another Claude session… | KILLED |
 | `verify.mjs` one client per run | wrong implementation: an acknowledgement from a second Claude session… | KILLED |
 | `verify.mjs` ack needs an identified client | an acknowledgement on a connection with no recorded client… | KILLED |
+| `verify.mjs` replay ordered after a before-ack restart | a replay counts only after a recorded before-ack restart… | KILLED |
+| `verify.mjs` read on a new connection after the after-ack restart | the after-ack restart counts only when a later connection reads again | KILLED |
 | `verify.mjs` shape/transport match | wrong implementation: stdio evidence cannot claim the browser… | KILLED |
 | `verify.mjs` no delivery after ack | a duplicate after acknowledgement or a reordered release fails the run | KILLED |
 | `verify.mjs` arrival order | a duplicate after acknowledgement or a reordered release fails the run | KILLED |

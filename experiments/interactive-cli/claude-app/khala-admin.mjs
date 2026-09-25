@@ -1,7 +1,7 @@
 // Operator/Khala-side controls for the Claude app proof.
 //   init <state-dir> <run.json>          copy an identity record (see README) into the state dir
 //   release <state-dir>                  stdin → one released message
-//   notify <state-dir> <tools_list_changed|log_message>   content-free wrong-implementation probe
+//   notify <state-dir> <tools_list_changed|log_message>   content-free wrong-implementation probe (stdio only)
 //   observe <state-dir> <kind> [key=value ...]            operator-recorded observation
 //     kinds: model-echo release=<id> conversation=<id>    the target conversation restated the marker
 //            restart phase=<before-ack|after-ack>         app or connector restarted
@@ -29,6 +29,8 @@ if (command === 'release') {
   if (!message) throw new Error('message stdin is empty');
   process.stdout.write(`${await store.release(message)}\n`);
 } else if (command === 'notify') {
+  // The HTTP connector returns JSON responses only and has no stream to push on.
+  if (store.run.shape !== 'desktop_extension') throw new Error('notify probes need the stdio desktop extension');
   const name = `notify-${Date.now()}-${randomBytes(3).toString('hex')}.json`;
   await writeFile(join(dir, 'control', name), JSON.stringify({ kind: rest[0] }));
   await store.log('notify-requested', { notification: rest[0] });

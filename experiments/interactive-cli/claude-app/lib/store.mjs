@@ -2,11 +2,12 @@
 // Claude Desktop and claude.ai. Message bytes enter only through stdin (release)
 // and leave only through a khala_read tool result. Logs carry sizes, hashes,
 // release ids, and a 12-hex tokenId; never bodies or raw batch tokens.
-import { appendFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 export const MAX_BATCH = 5;
+const STALE_LOCK_MS = 5000;
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 export const tokenId = token => sha(token).slice(0, 12);
@@ -47,13 +48,14 @@ export class Store {
   }
 
   async log(kind, fields = {}) {
+    // Reserved keys come last so operator-supplied fields cannot forge them.
     await appendFile(this.path('events.jsonl'), `${JSON.stringify({
+      ...fields,
       at: new Date().toISOString(),
       kind,
       runId: this.run.runId,
       shape: this.run.shape,
       appVersion: this.run.appVersion,
-      ...fields,
     })}\n`, { mode: 0o600 });
   }
 
@@ -65,6 +67,10 @@ export class Store {
         break;
       } catch (error) {
         if (error?.code !== 'EEXIST' || attempt > 400) throw error;
+        // The runbook restarts the app on purpose; a server killed mid-read
+        // leaves its lock behind, so break a lock older than any real read.
+        const held = await stat(lock).catch(() => null);
+        if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) await rm(lock, { recursive: true, force: true });
         await new Promise(resolve => setTimeout(resolve, 25));
       }
     }
