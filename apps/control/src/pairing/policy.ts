@@ -3,12 +3,16 @@
 // limiter can satisfy the required multi-instance atomicity.
 
 import { createHmac } from 'node:crypto';
-import type { DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import {
+  readCanonicalCode,
+  readCanonicalOrigin,
+  type DeviceId,
+  type OwnerId,
+  type RoomId,
+} from '@khala/contracts/messaging/index';
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const CANONICAL_CODE = /^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$/;
 const KEY_ID = /^[A-Za-z0-9._-]{1,64}$/;
-const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 const DOMAIN = 'khala.pairing.v1';
 
 export const MAX_PAIRING_KEY_COUNT = 4;
@@ -35,7 +39,12 @@ type Purpose =
 export type PairingKeyring = Readonly<{
   v: 1;
   activeKeyId: string;
-  /** Active key plus bounded retained keys used during rotation. */
+  /**
+   * Active/newest key first, followed by retained keys newest-to-oldest.
+   * The oldest key must remain until every replay and limiter window derived
+   * from it has drained; only then may rotation retire it and cut the stable
+   * replay/limiter namespace over to the next-oldest key.
+   */
   keys: readonly Readonly<{ id: string; key: Uint8Array }>[];
 }>;
 
@@ -144,6 +153,7 @@ export type PairingPolicy = Readonly<{
 export function createPairingPolicy(input: PairingKeyring): PairingPolicy {
   const keys = validateKeyring(input);
   const active = keys.get(input.activeKeyId)!;
+  const namespace = keys.get(input.keys.at(-1)!.id)!;
   const orderedKeys = [
     [input.activeKeyId, active] as const,
     ...[...keys].filter(([id]) => id !== input.activeKeyId),
@@ -231,15 +241,15 @@ export function createPairingPolicy(input: PairingKeyring): PairingPolicy {
     replayHandle(replay, keyId) {
       assertText(replay.jkt, 'proof thumbprint');
       assertText(replay.jti, 'proof replay identifier');
-      return digest('proof-replay-handle', [['jkt', replay.jkt], ['jti', replay.jti]], selected(keyId).key);
+      return digest('proof-replay-handle', [['jkt', replay.jkt], ['jti', replay.jti]], keyId ? selected(keyId).key : namespace);
     },
     sourceBucket(trustedSource) {
       assertText(trustedSource, 'trusted source');
-      return `pair_source_${digest('rate-source-bucket', [['trustedSource', trustedSource]])}`;
+      return `pair_source_${digest('rate-source-bucket', [['trustedSource', trustedSource]], namespace)}`;
     },
     codeBucket(code) {
       assertCanonicalCode(code);
-      return `pair_code_${digest('rate-code-bucket', [['code', code]])}`;
+      return `pair_code_${digest('rate-code-bucket', [['code', code]], namespace)}`;
     },
     attemptBuckets(attempt) {
       // operationId is validated for stable retry identity but intentionally does
@@ -248,8 +258,8 @@ export function createPairingPolicy(input: PairingKeyring): PairingPolicy {
       assertText(attempt.trustedSource, 'trusted source');
       assertCanonicalCode(attempt.code);
       return {
-        sourceBucket: `pair_source_${digest('rate-source-bucket', [['trustedSource', attempt.trustedSource]])}`,
-        codeBucket: `pair_code_${digest('rate-code-bucket', [['code', attempt.code]])}`,
+        sourceBucket: `pair_source_${digest('rate-source-bucket', [['trustedSource', attempt.trustedSource]], namespace)}`,
+        codeBucket: `pair_code_${digest('rate-code-bucket', [['code', attempt.code]], namespace)}`,
       };
     },
   };
@@ -277,6 +287,9 @@ function validateKeyring(input: PairingKeyring): Map<string, Uint8Array> {
     keys.set(entry.id, Uint8Array.from(entry.key));
   }
   if (!keys.has(input.activeKeyId)) throw new TypeError('pairing active key must be present');
+  if (input.keys[0]!.id !== input.activeKeyId) {
+    throw new TypeError('pairing active key must be first in newest-to-oldest key order');
+  }
   return keys;
 }
 
@@ -360,18 +373,17 @@ function assertText(value: string, label: string): void {
 }
 
 function assertCanonicalCode(code: string): void {
-  if (!CANONICAL_CODE.test(code)) throw new TypeError('expected one canonical pairing code');
+  try {
+    readCanonicalCode(code, 'code');
+  } catch {
+    throw new TypeError('expected one canonical pairing code');
+  }
 }
 
 function assertCanonicalOrigin(origin: string): void {
-  let parsed: URL;
   try {
-    parsed = new URL(origin);
+    readCanonicalOrigin(origin, 'origin');
   } catch {
-    throw new TypeError('pairing origin must be canonical');
-  }
-  if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash || origin !== parsed.origin
-    || !(parsed.protocol === 'https:' || (parsed.protocol === 'http:' && LOOPBACK.has(parsed.hostname)))) {
     throw new TypeError('pairing origin must be canonical');
   }
 }

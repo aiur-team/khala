@@ -533,22 +533,27 @@ export function createPairingStore(deps: Readonly<{
       binding,
       redemption: null,
     };
-    const issued = await write({
+    await write({
       key: grantKey(secret.digest),
       expectedRevision: null,
       operationId: operation('grant-issue', input.requestHandle, current.envelope.revision, input.operationId),
       next: permanent(grant),
     });
-    if (issued.kind === 'unavailable' || issued.kind === 'operation_mismatch') return { kind: 'unavailable' };
     // `applied` may be the historical result of this stable issue operation
-    // even when a later redemption has superseded it. Disclosure therefore
-    // depends only on a fresh read of the authoritative current grant record.
+    // even when a later redemption has superseded it. An unavailable write
+    // result can carry that same ambiguity, so disclosure depends only on a
+    // fresh read of the authoritative current grant record.
     const authoritative = await readGrant(secret.digest);
     if (authoritative === 'unavailable' || authoritative === 'absent' || !sameGrantBinding(authoritative.value, grant)) {
       return { kind: 'unavailable' };
     }
     if (authoritative.value.resultOperationId !== input.operationId) return { kind: 'invalid' };
     if (authoritative.value.state !== 'unspent') return { kind: 'result', value: { v: 1, state: 'expired' } };
+    if (clock() >= Date.parse(authoritative.value.binding.expiresAt)) {
+      const expired = await expireGrant(secret.digest, authoritative);
+      if (expired === 'unavailable') return { kind: 'unavailable' };
+      return { kind: 'result', value: { v: 1, state: 'expired' } };
+    }
     return { kind: 'result', value: { v: 1, state: 'approved', grant: secret.value, expiresAt: grantExpiresAt } };
   }
 
@@ -717,7 +722,7 @@ function decidedProjection(handle: string, record: DomainRecord<RequestRecord>) 
 function sameGrantBinding(left: GrantRecord, right: GrantRecord): boolean {
   return left.keyId === right.keyId
     && left.requestHandle === right.requestHandle
-    && JSON.stringify(left.binding) === JSON.stringify(right.binding);
+    && sameAuthorization(left.binding, right.binding);
 }
 
 function decodeRequest(input: JsonValue): RequestRecord | null {

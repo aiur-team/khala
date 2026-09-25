@@ -530,6 +530,27 @@ describe('PairingStore approved result and internal grant redemption', () => {
     expect([...denied.records.keys()].filter(key => key.startsWith('pairing.grant.'))).toHaveLength(0);
   });
 
+  it('expires an issued grant when persistence reaches its exact lifetime boundary', async () => {
+    const h = harness();
+    const { created, result: winner } = await claimed(h);
+    await approve(h, created.requestHandle);
+    h.interceptWrites(input => {
+      const value = input.next.value as { recordType?: unknown; state?: unknown; binding?: { expiresAt?: unknown } };
+      if (value.recordType === 'pairing_grant' && value.state === 'unspent' && typeof value.binding?.expiresAt === 'string') {
+        h.setNow(Date.parse(value.binding.expiresAt));
+      }
+    });
+
+    expect(await h.pairing.result({
+      requestHandle: created.requestHandle,
+      receipt: winner.receipt,
+      operationId: 'result_boundary',
+      jkt: JKT,
+    })).toEqual({ kind: 'result', value: { v: 1, state: 'expired' } });
+    expect([...h.records.values()].find(record => record.key.startsWith('pairing.grant.'))?.value)
+      .toMatchObject({ state: 'expired' });
+  });
+
   it('persists the exact immutable approval/denial binding without raw receipt', async () => {
     for (const decision of ['approve', 'deny'] as const) {
       const h = harness();
@@ -598,6 +619,28 @@ describe('PairingStore approved result and internal grant redemption', () => {
 });
 
 describe('PairingStore DPoP replay and secrecy', () => {
+  it('preserves a claimed replay identity while the old namespace key is retained during rotation', async () => {
+    const backing = fakeControlStore();
+    const replay = { jkt: JKT, jti: 'proof_before_rotation', expiresAt: new Date(T0 + 60_000).toISOString() };
+    const beforeRotation = createPairingStore({
+      store: backing.store,
+      policy: createPairingPolicy(keyring('key-1', [{ id: 'key-1', key: key(1) }])),
+      clock: () => T0,
+    });
+    const duringRotation = createPairingStore({
+      store: backing.store,
+      policy: createPairingPolicy(keyring('key-2', [
+        { id: 'key-2', key: key(2) },
+        { id: 'key-1', key: key(1) },
+      ])),
+      clock: () => T0,
+    });
+
+    expect(await beforeRotation.claimProofReplay(replay)).toEqual({ kind: 'claimed' });
+    expect(await duringRotation.claimProofReplay(replay)).toEqual({ kind: 'replayed' });
+    expect([...backing.records.keys()].filter(recordKey => recordKey.startsWith('pairing.replay.'))).toHaveLength(1);
+  });
+
   it('atomically claims an expiring (jkt,jti) replay record and fails closed', async () => {
     const h = harness();
     const replay = { jkt: JKT, jti: 'proof_1', expiresAt: new Date(T0 + 60_000).toISOString() };
@@ -749,6 +792,12 @@ describe('PairingStore real ControlStore adapter chain', () => {
     const result = await pairing.result({ requestHandle: created.requestHandle, receipt: winner.receipt, operationId: 'result_1', jkt: JKT });
     if (result.kind !== 'result' || result.value.state !== 'approved') throw new Error('result failed');
     expect((await pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT })).kind).toBe('redeemed');
+    expect(await pairing.result({
+      requestHandle: created.requestHandle,
+      receipt: winner.receipt,
+      operationId: 'result_1',
+      jkt: JKT,
+    })).toEqual({ kind: 'result', value: { v: 1, state: 'expired' } });
     now += 60_000;
   });
 

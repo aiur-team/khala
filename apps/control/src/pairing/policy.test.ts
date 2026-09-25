@@ -77,7 +77,7 @@ describe('canonical pairing codes', () => {
   });
 
   it('maps one canonical presented code across every live key without persisting it', () => {
-    const oldPolicy = policy('key-1');
+    const oldPolicy = policy('key-1', [{ id: 'key-1', key: key(1) }]);
     const issued = oldPolicy.deriveCreate(tuple);
     const candidates = policy().locateCode(issued.code);
     expect(candidates).toHaveLength(2);
@@ -90,7 +90,7 @@ describe('canonical pairing codes', () => {
   });
 
   it('recovers an identical create inside the retained-key window but not after retirement', () => {
-    const issued = policy('key-1').deriveCreate(tuple);
+    const issued = policy('key-1', [{ id: 'key-1', key: key(1) }]).deriveCreate(tuple);
     expect(policy().deriveCreateCandidates(tuple)).toContainEqual(issued);
     expect(policy('key-2', [{ id: 'key-2', key: key(2) }]).deriveCreateCandidates(tuple)).not.toContainEqual(issued);
   });
@@ -106,6 +106,7 @@ describe('versioned keyring validation and purpose separation', () => {
     ['short keys', { v: 1, activeKeyId: 'a', keys: [{ id: 'a', key: new Uint8Array(31) }] }],
     ['duplicate ids', { v: 1, activeKeyId: 'a', keys: [{ id: 'a', key: key(1) }, { id: 'a', key: key(2) }] }],
     ['missing active key', { v: 1, activeKeyId: 'missing', keys: [{ id: 'a', key: key(1) }] }],
+    ['active key not first', { v: 1, activeKeyId: 'b', keys: [{ id: 'a', key: key(1) }, { id: 'b', key: key(2) }] }],
     ['empty keyring', { v: 1, activeKeyId: 'a', keys: [] }],
     ['too many retained keys', { v: 1, activeKeyId: 'a', keys: Array.from({ length: MAX_PAIRING_KEY_COUNT + 1 }, (_, index) => ({ id: `k-${index}`, key: key(index) })) }],
   ])('rejects %s', (_name, input) => {
@@ -141,6 +142,27 @@ describe('versioned keyring validation and purpose separation', () => {
     const before = p.deriveCreate(tuple);
     mutable.fill(8);
     expect(p.deriveCreate(tuple)).toEqual(before);
+  });
+
+  it('keeps replay and limiter namespaces stable until the oldest retained key is retired', () => {
+    const beforeRotation = policy('key-1', [{ id: 'key-1', key: key(1) }]);
+    const duringRotation = policy('key-2', [
+      { id: 'key-2', key: key(2) },
+      { id: 'key-1', key: key(1) },
+    ]);
+    const afterRetirement = policy('key-2', [{ id: 'key-2', key: key(2) }]);
+    const replay = { jkt: evidence.jkt, jti: 'replay_identifier_1' };
+    const code = beforeRotation.deriveCreate(tuple).code;
+    const attempt = { trustedSource: '203.0.113.7', code, operationId: 'claim_1' };
+
+    expect(duringRotation.replayHandle(replay)).toBe(beforeRotation.replayHandle(replay));
+    expect(duringRotation.sourceBucket(attempt.trustedSource)).toBe(beforeRotation.sourceBucket(attempt.trustedSource));
+    expect(duringRotation.codeBucket(code)).toBe(beforeRotation.codeBucket(code));
+    expect(duringRotation.attemptBuckets(attempt)).toEqual(beforeRotation.attemptBuckets(attempt));
+
+    expect(afterRetirement.replayHandle(replay)).not.toBe(beforeRotation.replayHandle(replay));
+    expect(afterRetirement.sourceBucket(attempt.trustedSource)).not.toBe(beforeRotation.sourceBucket(attempt.trustedSource));
+    expect(afterRetirement.codeBucket(code)).not.toBe(beforeRotation.codeBucket(code));
   });
 
   it('fingerprints every immutable evidence field with stable canonical bytes', () => {
