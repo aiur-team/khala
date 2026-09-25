@@ -128,4 +128,18 @@ describe('renderRouteManifest', () => {
     const manifest = JSON.parse(renderRouteManifest({ presentDomains: [], absentPrefixes: [], routeManifest: [] }));
     expect(manifest.routes).toEqual([{ path: '/api/health', methods: ['GET'], domain: 'runtime' }]);
   });
+
+  it('pins the production discovery manifest and exposes no public pairing redeem route', async () => {
+    const actualRoot = repoRootFrom(import.meta.dirname);
+    const manifest = JSON.parse(renderRouteManifest(await discoverRoutes(actualRoot)));
+    expect(manifest.routes).toEqual([
+      { path: '/api/health', methods: ['GET'], domain: 'runtime' },
+      { path: '/api/human/pairing/request', methods: ['POST', 'GET'], domain: 'human' },
+      { path: '/api/human/pairing/decision', methods: ['POST'], domain: 'human' },
+      { path: '/api/agent/status', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/pairing/claim', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/pairing/result', methods: ['POST'], domain: 'agent' },
+    ]);
+    expect(JSON.stringify(manifest)).not.toContain('pairing/redeem');
+  });
 });

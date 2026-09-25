@@ -19,6 +19,8 @@ export type AgentStatusSnapshot = Readonly<{
 export type AgentHandlerDependencies = Readonly<{
   authorize(request: Request, roomId: RoomId): Promise<AgentAuthorization>;
   status: Readonly<{ snapshot(roomId: RoomId, signal: AbortSignal): Promise<AgentStatusSnapshot> }>;
+  /** Request-lifetime live pairing registrations supplied by the composition root. */
+  pairing?: () => readonly RouteRegistration[];
 }>;
 
 function json(status: number, body: unknown): Response {
@@ -40,6 +42,21 @@ const unavailableStatus: RouteRegistration = Object.freeze({
   },
 });
 
+function unavailablePairing(path: string): RouteRegistration {
+  return Object.freeze({
+    path,
+    methods: Object.freeze(['POST']),
+    async handle() {
+      return json(503, { v: 1, kind: 'rejected', code: 'feature_unavailable' });
+    },
+  });
+}
+
+const unavailablePairingRoutes = Object.freeze([
+  unavailablePairing('/api/agent/pairing/claim'),
+  unavailablePairing('/api/agent/pairing/result'),
+]);
+
 function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
   return {
     generation: snapshot.generation,
@@ -59,7 +76,7 @@ function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
 }
 
 export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): readonly RouteRegistration[] {
-  if (!dependencies) return Object.freeze([unavailableStatus]);
+  if (!dependencies) return Object.freeze([unavailableStatus, ...unavailablePairingRoutes]);
   const status: RouteRegistration = Object.freeze({
     path: '/api/agent/status',
     methods: Object.freeze(['GET']),
@@ -73,5 +90,5 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
       return json(200, project(await dependencies.status.snapshot(room.value, request.signal)));
     },
   });
-  return Object.freeze([status]);
+  return Object.freeze([status, ...(dependencies.pairing?.() ?? unavailablePairingRoutes)]);
 }

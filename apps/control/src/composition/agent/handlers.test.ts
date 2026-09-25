@@ -2,17 +2,34 @@ import { describe, expect, it } from 'vitest';
 import { registerAgentHandlers } from './handlers';
 
 describe('registerAgentHandlers', () => {
-  it('reserves one content-free status route without import-time dependencies', async () => {
+  it('reserves status and pairing routes without import-time dependencies', async () => {
     const registrations = registerAgentHandlers();
 
     expect(registrations.map(({ path, methods }) => ({ path, methods }))).toEqual([
       { path: '/api/agent/status', methods: ['GET'] },
+      { path: '/api/agent/pairing/claim', methods: ['POST'] },
+      { path: '/api/agent/pairing/result', methods: ['POST'] },
     ]);
-    const response = await registrations[0]!.handle(
-      new Request('https://example.test/api/agent/status'),
-    );
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ code: 'feature_unavailable' });
+    for (const [index, registration] of registrations.entries()) {
+      const response = await registration.handle(new Request(`https://example.test${registration.path}`));
+      expect(response.status).toBe(503);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(await response.json()).toEqual(index === 0
+        ? { code: 'feature_unavailable' }
+        : { v: 1, kind: 'rejected', code: 'feature_unavailable' });
+    }
+  });
+
+  it('substitutes live pairing registrations while preserving live status behavior', () => {
+    const claim = { path: '/api/agent/pairing/claim', methods: ['POST'], handle: async () => new Response('claim') } as const;
+    const result = { path: '/api/agent/pairing/result', methods: ['POST'], handle: async () => new Response('result') } as const;
+    const registrations = registerAgentHandlers({
+      authorize: async () => 'allowed',
+      status: { snapshot: async () => ({ generation: 0, agents: [] }) },
+      pairing: () => [claim, result],
+    });
+    expect(registrations.slice(1)).toEqual([claim, result]);
   });
 
   it('authorizes and returns the content-free room presence snapshot', async () => {
