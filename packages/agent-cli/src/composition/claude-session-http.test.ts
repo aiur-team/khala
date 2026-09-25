@@ -151,6 +151,22 @@ describe('Claude session adapter over the loopback server', () => {
     expect(launched.logs).toEqual([`POST ${CLAUDE_SESSION_PATH}`, 'status 200']);
   });
 
+  it('resolves a rotated descriptor on the next call of a long-lived client', async () => {
+    const root = workspace();
+    const services = fakeServices();
+    const first = await launch(path.join(root, 'state'), services, 'G'.repeat(43));
+    const second = await launch(path.join(root, 'state'), services, 'H'.repeat(43));
+    const descriptor = path.join(root, 'active.json');
+    const client = createClaudeSessionClient({ descriptorPath: descriptor });
+
+    writeDescriptor(descriptor, first);
+    await expect(client.pending('s-1')).resolves.toEqual({ kind: 'idle' });
+    writeDescriptor(descriptor, second);
+    await expect(client.pending('s-1')).resolves.toEqual({ kind: 'idle' });
+    expect(first.logs).toHaveLength(2);
+    expect(second.logs).toHaveLength(2);
+  });
+
   it('rejects requests without a well-formed bearer credential', async () => {
     const services = fakeServices();
     const adapter = createClaudeSessionAdapter({
