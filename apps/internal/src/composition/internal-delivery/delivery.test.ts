@@ -108,10 +108,10 @@ function delivery(h: Harness, extra: Partial<Parameters<typeof createInternalDel
 const held = { bindingId: bobBinding.bindingId, generation: bobBinding.generation };
 
 /** Every record durable in the inbox, oldest first. */
-async function records(open: () => Promise<BatchInbox>): Promise<string[]> {
+async function records(open: () => Promise<BatchInbox>, maxBytes = 1024 * 1024): Promise<string[]> {
   const inbox = await open();
   const batch = await inbox.acquireListener().then(async listener => {
-    try { return await listener.readBatch({ maxBytes: 1024 * 1024 }); } finally { await listener.release(); }
+    try { return await listener.readBatch({ maxBytes }); } finally { await listener.release(); }
   });
   return batch?.items.map(item => item.record.releaseId) ?? [];
 }
@@ -255,6 +255,23 @@ describe('internal inbox delivery', () => {
     expect(status.out + status.err + read.err).not.toContain(BODY);
     expect(JSON.stringify(h.logs)).not.toContain(BODY);
     expect(h.logs.some(event => 'route' in event && event.route === '/api/v1/channels/:channelId/releases')).toBe(true);
+  });
+
+  it('splits a page of near-limit messages so the response stays under the client limit', async () => {
+    const h = await start();
+    // Each escapes to ~64.8 KB, under the record limit; 50 of them exceed the client's 4 MiB response cap.
+    const ids = Array.from({ length: 50 }, () => say(h, '\u0001'.repeat(10_800)));
+    const after = say(h, 'still arriving');
+    let outcome = await delivery(h).pull(held, inboxFor(h));
+    for (let pulls = 1; pulls < 60 && outcome !== 'caught_up'; pulls += 1) {
+      expect(outcome).not.toBe('unavailable');
+      outcome = await delivery(h).pull(held, inboxFor(h));
+    }
+    expect(outcome).toBe('caught_up');
+    // One batch read is size-capped, so compare the delivered prefix in order.
+    const delivered = await records(inboxFor(h), 16 * 1024 * 1024);
+    expect(delivered.length).toBeGreaterThan(0);
+    expect(delivered).toEqual([...ids, after].map(id => internalReleaseId(bobBinding, id)).slice(0, delivered.length));
   });
 
   it('placeholders an escape-heavy message over the record limit and keeps delivering', async () => {
