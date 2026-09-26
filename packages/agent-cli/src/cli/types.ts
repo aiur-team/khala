@@ -5,7 +5,7 @@ import type {
 import type { InternalRuntime } from '@khala/contracts/internal/command';
 import type { AccessRequestOutcome } from '@khala/contracts/messaging/discovery';
 import type { AgentListeningModeApplication } from '../composition/listening-mode.js';
-import type { ChannelListingPort } from './channels/types.js';
+import type { ChannelAccessPort, ChannelListingPort } from './channels/types.js';
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { BatchInbox } from './inbox.js';
 
@@ -70,6 +70,9 @@ export interface AgentClientPort {
   status(signal?: AbortSignal): Promise<AgentStatus>;
   /** Absent until live composition supplies the listening-mode store; native hooks then deliver nothing. */
   listeningMode?(signal?: AbortSignal): Promise<AgentListeningModeStatus>;
+  /** Absent until composition supplies the discovery-credentialed access client; both operations then report `unavailable`. */
+  requestChannelAccess?: ChannelAccessPort['requestChannelAccess'];
+  channelAccessStatus?: ChannelAccessPort['channelAccessStatus'];
   listChannels: ChannelListingPort['listChannels'];
   listAgents: ChannelListingPort['listAgents'];
 }

@@ -14,6 +14,8 @@ khala status
 khala mode get
 khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
+khala channels request-access <channel-url-or-listing-ref> [--operation <id>] [--origin <trusted-origin>]
+khala channels access-status --operation <id> [--origin <trusted-origin>]
 khala agents list --channel <held-binding-id>
 khala mcp-serve
 khala internal
@@ -264,12 +266,52 @@ Failures print `{"ok":false,"error":<code>}` on stdout. `not_connected`,
 `cursor_unavailable`, and `rate_limited` exit 3. `unavailable` exits 4. Malformed
 arguments exit 2 with `invalid_arguments` on stderr.
 
+## Channel access requests
+
+`khala channels request-access <channel-url-or-listing-ref>` asks the channel
+owner for access and returns promptly. `/khala join` uses this same operation
+for a channel URL; there is no second join or admission path. The argument is a
+`listingRef` from `khala channels list` or a channel URL (`https:`, or `http:`
+on loopback, with no credentials, query, or fragment). The command prints one
+JSON object:
+`{"ok":true,"v":1,"operationId":...,"outcome":...,"next":null}`. It waits for
+nothing: `pending_owner` is the normal first answer, and the owner decides in
+their own UI. Nothing here grants access.
+
+`khala channels access-status --operation <id>` reads the same operation once.
+There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
+`expired`, `revoked`) apart from connector readiness (`approved`, `connecting`,
+`connected`, `repair_required`); `connected` appears only after the connector
+has activated the grant. Output is decoded with the closed
+`decodeAccessRequestStatus` decoder, so any extra field is reported as
+`unavailable` and not printed.
+
+The operation ID is idempotent. Without `--operation` it is derived from the
+target, so repeating the command reuses it; pass `--operation` to name your own,
+or a new one to deliberately start over after a denial or expiry. Every result,
+including failures, echoes the ID. `next` says what to do:
+`repair_connector` (outcome `repair_required`) means repair the connector, and
+`reuse_operation_id` (outcome or error `unavailable`) means any retry must reuse
+that same ID, because a new one could create a second request. The command
+never retries on its own.
+
+Exit codes: 0 for `pending_owner`, `approved`, `connecting`, and `connected`; 3
+for `denied`, `expired`, `revoked`, `repair_required`, and refusals
+(`untrusted_origin`, `discovery_required`, `discovery_denied`,
+`invalid_request`, `operation_conflict`, `not_found`, `rate_limited`); 4 for
+`unavailable`. `--origin` is exact-allowlisted like listing, and a channel URL
+whose origin differs from `--origin` is `untrusted_origin`. Requests never
+follow redirects.
+
 ## MCP mode
 
 `khala mcp-serve` speaks newline-delimited JSON-RPC on stdin/stdout and exposes
 `khala_send`, `khala_read`, and `khala_listening_mode`, plus `khala_list_channels`
 (`{ origin?, cursor?, ackBatchToken? }`) and `khala_list_agents`
-(`{ channel, ackBatchToken? }`). `khala_send` accepts
+(`{ channel, ackBatchToken? }`). The access tools are `khala_request_channel_access`
+(`{ target, operationId?, origin?, ackBatchToken? }`) and `khala_channel_access_status`
+(`{ operationId, origin?, ackBatchToken? }`); they return the access commands'
+JSON object as `structuredContent`, with `isError` set on failures. `khala_send` accepts
 `{ message, bindingId?, ackBatchToken? }`; `khala_read` accepts
 `{ bindingId?, ackBatchToken? }`; `khala_listening_mode` accepts
 `{ action: "get", ackBatchToken? }` or `{ action: "set", requested,
@@ -472,7 +514,10 @@ and MCP modules depend on package-owned ports and shared contract types.
 `createConnectorBootstrapClient` adapts KHA-114; KHA-153 supplies the live agent
 capability routes and runtime state. `createHttpChannelListing` composes
 `listChannels` over `GET /api/agent/channels` with the connector's discovery
-credential client and proof signer. `listAgents` is an injected port.
+credential client and proof signer. `createHttpChannelAccess` composes
+`requestChannelAccess` and `channelAccessStatus` over
+`POST /api/agent/channel-access/request` and `GET /api/agent/channel-access/status`
+the same way. `listAgents` is an injected port.
 
 ## Not proven here
 
@@ -487,4 +532,7 @@ setup composes the HTTP listing client. The control plane has no
 binding-authorized joined-channel roster route yet, so `listAgents` has no
 HTTP composition in this package. `mcp-serve` still requires a held binding,
 so the MCP listing tools are unavailable before an agent joins its first
-channel. Use `khala channels list` before that.
+channel. Use `khala channels list` before that. The access commands are
+likewise `unavailable` until setup composes the HTTP access client, and the MCP
+access tools share the held-binding requirement, so use `khala channels
+request-access` for a first join.
