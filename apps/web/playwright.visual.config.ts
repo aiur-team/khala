@@ -18,7 +18,7 @@ const here = import.meta.dirname;
 // The site-wide header from netlify.toml (`[[headers]] for = "/*"`). The splash
 // spec checks the served header still equals the netlify.toml value.
 export const PRODUCTION_CSP =
-  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
+  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
 
 export const LANDING_PORT = 4311;
 export const SHELL_PORT = 4312;
