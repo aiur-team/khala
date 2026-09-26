@@ -44,11 +44,19 @@ export type ReadBatchInput = Readonly<{
   /**
    * Opaque boundary identity, such as a hashed harness session and turn. When
    * present, the outstanding batch is returned only if it was not already
-   * offered to this exact scope; the scope is kept in the batch state, so it
-   * ends with that batch's acknowledgement.
+   * offered to this exact scope, nor returned by an explicit Khala call since its
+   * last offer unless `turnStart` is set. The mark lives in the outstanding batch
+   * state, so it ends with that batch's acknowledgement.
    */
   offerScope?: string;
+  /** With `offerScope`: this boundary starts a turn, so a batch the agent already read is offered again. */
+  turnStart?: boolean;
+  /** An agent's own Khala call (explicit read or piggyback): always returns the batch and marks it seen. */
+  explicitRead?: boolean;
 }>;
+
+/** The offer mark left by an explicit Khala call; boundary scopes can never equal it. */
+const EXPLICIT_READ_SCOPE = 'khala-call';
 
 export type InboxConsumer = Readonly<{
   readBatch(input: ReadBatchInput): Promise<InboxBatch | null>;
@@ -294,7 +302,11 @@ class FileInbox implements BatchInbox {
     if (input === null || typeof input !== 'object' || !Number.isSafeInteger(input.maxBytes) || input.maxBytes < 0
       || !(input.acknowledgeToken === undefined || input.acknowledgeToken === null
         || typeof input.acknowledgeToken === 'string')
-      || !(input.offerScope === undefined || validIdentifier(input.offerScope))) throw new CliError('invalid_input');
+      || !(input.offerScope === undefined
+        || (validIdentifier(input.offerScope) && input.offerScope !== EXPLICIT_READ_SCOPE))
+      || !(input.turnStart === undefined || (typeof input.turnStart === 'boolean' && input.offerScope !== undefined))
+      || !(input.explicitRead === undefined || typeof input.explicitRead === 'boolean')
+      || (input.explicitRead === true && input.offerScope !== undefined)) throw new CliError('invalid_input');
     return this.#serial(async () => {
       if (!ownsListener()) throw new CliError('listener_busy');
       let cursor = await readCursor(this.#cursorPath);
@@ -320,11 +332,14 @@ class FileInbox implements BatchInbox {
         outstanding = null;
       }
       if (outstanding !== null) {
-        if (input.offerScope === undefined) return outstanding.batch;
-        if (outstanding.state.offeredScope === input.offerScope) return null;
-        await writeBatchStateAtomic(this.#batchPath, this.#bindingDirectory, {
-          ...outstanding.state, offeredScope: input.offerScope,
-        });
+        const mark = input.explicitRead === true ? EXPLICIT_READ_SCOPE : input.offerScope;
+        if (mark === undefined) return outstanding.batch;
+        const previous = outstanding.state.offeredScope;
+        if (mark !== EXPLICIT_READ_SCOPE
+          && (previous === mark || (previous === EXPLICIT_READ_SCOPE && input.turnStart !== true))) return null;
+        if (previous !== mark) {
+          await writeBatchStateAtomic(this.#batchPath, this.#bindingDirectory, { ...outstanding.state, offeredScope: mark });
+        }
         return outstanding.batch;
       }
 
@@ -353,7 +368,8 @@ class FileInbox implements BatchInbox {
         endOffset: offset,
         releaseId,
         records,
-        ...(input.offerScope === undefined ? {} : { offeredScope: input.offerScope }),
+        ...(input.explicitRead === true ? { offeredScope: EXPLICIT_READ_SCOPE }
+          : input.offerScope === undefined ? {} : { offeredScope: input.offerScope }),
       };
       await writeBatchStateAtomic(this.#batchPath, this.#bindingDirectory, state);
       return { token: state.token, items };

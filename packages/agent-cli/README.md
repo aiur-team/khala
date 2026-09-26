@@ -158,7 +158,9 @@ skill. `codexHooksFragment()` in `src/codex/hooks-config.ts` is the exact
 command when the user trusts it, so it must stay byte-stable across releases.
 Setup never writes Codex's hook trust. `codexHookReviewState()` reads
 `config.toml` and reports `trusted`, `awaiting_hook_review` or `unknown` with a
-reason.
+reason. It checks that a trust record exists at each Khala handler's position;
+it cannot recompute Codex's `trusted_hash`, so setup must append the Khala groups
+after the user's own hooks and keep the handler byte-stable.
 
 The handler reads Codex's hook JSON on stdin and acts only when that session is
 the held `codex` binding's session. It then reads the binding's effective
@@ -173,9 +175,13 @@ boundaries that mode owns:
 
 A `Stop` with `stop_hook_active` never pulls. The hook never acknowledges: the
 batch stays outstanding until the agent's next Khala call presents its token.
-The inbox records which Codex turn a batch was offered to, so a batch is offered
-at most once per turn. A later turn or a resumed session is offered it again,
-and an acknowledged batch is never offered. An unbound, revoked or foreign
+The inbox records, in the outstanding batch's own state, which Codex turn a
+batch was offered to, and whether the agent's own Khala call (`khala read`,
+`khala_read` or a piggyback) returned it. A hook therefore never repeats a batch
+within a turn. The next turn start (`UserPromptSubmit`, including a resumed
+session's) offers an unacknowledged batch again, and an acknowledged batch is
+never offered. A hook response is capped at 256 KiB; a larger staged batch is
+left for `khala_read`. An unbound, revoked or foreign
 session, an unavailable mode, or any failure returns without output, exits 0,
 and writes only a content-free code to stderr. The handler never starts,
 signals or waits on Codex. Channel bytes reach Codex only on the hook's stdout,

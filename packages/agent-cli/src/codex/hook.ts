@@ -15,6 +15,11 @@ export type CodexHookEvent = (typeof CODEX_HOOK_EVENTS)[number];
 
 /** Upper bound for released payload bytes placed in one hook response. */
 export const CODEX_HOOK_MAX_PAYLOAD_BYTES = 64 * 1024;
+/**
+ * Hard bound for one hook response. A batch staged larger (one oversized release, or a
+ * batch an MCP call selected with a bigger budget) is left for `khala_read`.
+ */
+export const CODEX_HOOK_MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_HOOK_INPUT_BYTES = 1024 * 1024;
 
 export type CodexHookInput = Readonly<{
@@ -130,9 +135,12 @@ export async function runCodexHook(deps: CodexHookDependencies): Promise<void> {
       bindingId: binding.bindingId,
       maxBytes: CODEX_HOOK_MAX_PAYLOAD_BYTES,
       offerScope: codexOfferScope(input),
+      turnStart: input.event === 'UserPromptSubmit',
     });
     if (result.kind === 'empty') return;
-    await write(deps.stdout, renderCodexHookOutput(input.event, delivery, renderInboxBatch(result.batch)));
+    const output = renderCodexHookOutput(input.event, delivery, renderInboxBatch(result.batch));
+    if (Buffer.byteLength(output) > CODEX_HOOK_MAX_OUTPUT_BYTES) throw new CliError('invalid_input');
+    await write(deps.stdout, output);
   } catch (error) {
     await write(deps.stderr, JSON.stringify({ ok: false, warning: 'codex_hook_suppressed', code: cliErrorCode(error) }) + '\n')
       .catch(() => undefined);

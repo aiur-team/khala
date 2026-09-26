@@ -19,7 +19,7 @@ export const mcpServeCommand: CliCommand = {
     const inbox = await deps.inbox(heldBinding.bindingId, heldBinding.generation);
     // Hold the listener lock per call, not for the server lifetime, so the harness's
     // native hooks and explicit reads for this binding can pull between tool calls.
-    const consumer = callScopedConsumer(inbox, { signal: deps.signal });
+    const consumer = callScopedConsumer(inbox, { signal: deps.signal, explicitRead: true });
     const currentBinding = async () => {
       const latest = publicStatus(await deps.client.status(deps.signal));
       return latest.connected ? latest.binding : null;

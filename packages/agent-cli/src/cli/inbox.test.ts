@@ -333,6 +333,24 @@ describe('durable inbox batches', () => {
     await expect(restartedReader.readBatch({ maxBytes: 1024, offerScope: '' })).rejects.toMatchObject({ code: 'invalid_input' });
   });
 
+  it('marks batches returned to an explicit call so scoped offers wait for a turn start', async () => {
+    const options = { stateDirectory: stateDirectory(), bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 };
+    const inbox = await openInbox(options);
+    await inbox.enqueue(released('release-1', 'first'));
+    const reader = await acquireBatch(inbox);
+    const explicit = await reader.readBatch({ maxBytes: 1024, explicitRead: true });
+    expect(await reader.readBatch({ maxBytes: 1024, explicitRead: true })).toEqual(explicit);
+    expect(await reader.readBatch({ maxBytes: 1024, offerScope: 'turn-1' })).toBeNull();
+    expect(await reader.readBatch({ maxBytes: 1024, offerScope: 'turn-2', turnStart: true })).toEqual(explicit);
+    expect(await reader.readBatch({ maxBytes: 1024, offerScope: 'turn-2', turnStart: true })).toBeNull();
+
+    for (const invalid of [
+      { maxBytes: 1, explicitRead: true, offerScope: 'turn-3' },
+      { maxBytes: 1, turnStart: true },
+      { maxBytes: 1, offerScope: 'khala-call' },
+    ]) await expect(reader.readBatch(invalid)).rejects.toMatchObject({ code: 'invalid_input' });
+  });
+
   it('recovers an acknowledgement committed before outstanding-state cleanup', async () => {
     const directory = stateDirectory();
     const first = await openInbox({

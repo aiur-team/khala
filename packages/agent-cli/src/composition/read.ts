@@ -8,6 +8,7 @@ export type ReadInput = Readonly<{
   acknowledgeToken?: string;
   maxBytes: number;
   offerScope?: string;
+  turnStart?: boolean;
 }>;
 
 export type ReadResult =
@@ -53,6 +54,7 @@ export class ReadOperation {
       maxBytes: input.maxBytes,
       ...(input.acknowledgeToken === undefined ? {} : { acknowledgeToken: input.acknowledgeToken }),
       ...(input.offerScope === undefined ? {} : { offerScope: input.offerScope }),
+      ...(input.turnStart === undefined ? {} : { turnStart: input.turnStart }),
     });
 
     if (!sameHeldBinding(this.#heldBinding, await this.#currentBinding())) {

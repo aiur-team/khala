@@ -5,7 +5,12 @@ import type { BatchInbox, InboxConsumer } from './inbox.js';
 export const CALL_LISTENER_WAIT_MS = 2_000;
 const RETRY_MS = 20;
 
-export type CallConsumerOptions = Readonly<{ waitMs?: number; signal?: AbortSignal | undefined }>;
+export type CallConsumerOptions = Readonly<{
+  waitMs?: number;
+  signal?: AbortSignal | undefined;
+  /** Marks every selection as the agent's own Khala call, so native hooks do not repeat it this turn. */
+  explicitRead?: boolean;
+}>;
 
 /**
  * Acquires the existing single-consumer listener lock, retrying only while another
@@ -38,7 +43,7 @@ export function callScopedConsumer(inbox: BatchInbox, options: CallConsumerOptio
     async readBatch(input) {
       const consumer = await acquireListenerWithin(inbox, options);
       try {
-        return await consumer.readBatch(input);
+        return await consumer.readBatch(options.explicitRead === true ? { ...input, explicitRead: true } : input);
       } finally {
         await consumer.release();
       }

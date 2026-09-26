@@ -151,7 +151,7 @@ describe('runCli', () => {
       client: client(), inbox: async () => fakeBatchInbox(acquireListener), ...io,
     })).toBe(0);
     expect(JSON.parse(io.output())).toEqual({ ok: true, kind: 'empty' });
-    expect(readBatch).toHaveBeenCalledWith({ maxBytes: 65_536, acknowledgeToken: 'prior-token' });
+    expect(readBatch).toHaveBeenCalledWith({ maxBytes: 65_536, acknowledgeToken: 'prior-token', explicitRead: true });
     expect(release).toHaveBeenCalledOnce();
   });
 

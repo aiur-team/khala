@@ -37,7 +37,10 @@ const TRUST_EVENT: Readonly<Record<CodexHookEvent, string>> = {
  * Whether the user has trusted every installed Khala handler in Codex's
  * **Hooks need review** dialog. Codex records that trust as
  * `[hooks.state."<hooks.json path>:<event>:<group>:<handler>"] trusted_hash`
- * in `config.toml`. This only reads that record; setup must never write it.
+ * in `config.toml`. This only reads that record; setup must never write it. The hash
+ * itself is Codex's and is not recomputed here, so a record left at the same position by
+ * a different handler would read as trusted: setup appends Khala's groups after the
+ * user's own and never changes the handler.
  */
 export function codexHookReviewState(input: Readonly<{
   hooksPath: string;

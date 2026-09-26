@@ -44,7 +44,7 @@ function world(mode: ListeningMode | null): World {
 function open(w: World): Promise<BatchInbox> {
   return openInbox({
     stateDirectory: w.stateDirectory, bindingId: BINDING.bindingId, generation: BINDING.generation,
-    maxPayloadBytes: 4096, maxSelectionEvents: 8,
+    maxPayloadBytes: 512 * 1024, maxSelectionEvents: 8,
   });
 }
 
@@ -197,6 +197,37 @@ describe('khala codex-hook', () => {
     expect(await acknowledge(w, token)).toBeNull();
     expect((await hook(w, 'UserPromptSubmit', { turn: 'turn-3' })).out).toBe('');
     expect((await hook(w, 'PreToolUse', { turn: 'turn-3' })).out).toBe('');
+  });
+
+  it('does not repeat in the same turn a batch the agent already got from its own Khala call', async () => {
+    const w = world('steer');
+    await enqueue(w, 'release-1');
+    const first = await hook(w, 'PreToolUse', { turn: 'turn-1' });
+    const token = tokenOf(hookText(first.json));
+    await enqueue(w, 'release-2', `second ${MARKER}`);
+
+    // The agent acknowledges with `khala read --ack` (or MCP) and receives the next batch itself.
+    const own = await callScopedConsumer(await open(w), { explicitRead: true })
+      .readBatch({ maxBytes: 1, acknowledgeToken: token });
+    expect(own?.items.map(item => item.record.releaseId)).toEqual(['release-2']);
+
+    expect((await hook(w, 'PostToolUse', { turn: 'turn-1' })).out).toBe('');
+    expect((await hook(w, 'PreToolUse', { turn: 'turn-1' })).out).toBe('');
+    expect((await hook(w, 'Stop', { turn: 'turn-1' })).out).toBe('');
+    // Still unacknowledged, so the next turn start offers it again.
+    const next = await hook(w, 'UserPromptSubmit', { turn: 'turn-2' });
+    expect(tokenOf(hookText(next.json))).toBe(own?.token);
+    expect((await hook(w, 'PreToolUse', { turn: 'turn-2' })).out).toBe('');
+  });
+
+  it('leaves a batch too large for one hook response to khala_read', async () => {
+    const w = world('sync');
+    await enqueue(w, 'release-big', `${MARKER}${'x'.repeat(300 * 1024)}`);
+    const result = await hook(w, 'Stop');
+    expect(result.out).toBe('');
+    expect(result.err).not.toContain(MARKER);
+    const pending = await callScopedConsumer(await open(w)).readBatch({ maxBytes: 1 });
+    expect(pending?.items.map(item => item.record.releaseId)).toEqual(['release-big']);
   });
 
   it('re-offers an unacknowledged batch after a restart and delivers nothing after acknowledgement', async () => {
