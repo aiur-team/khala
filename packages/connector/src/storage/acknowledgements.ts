@@ -9,8 +9,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import {
-  type BindingId, type DeliveryReceiptTransport, type DeliveryReceiptV2, type ReceiptId, type ReleaseId,
-  decodeDeliveryReceiptTransport, decodeReleasedJob,
+  type BindingId, type DeliveryReceiptTransport, type DeliveryReceiptV2, type EventId, type ReceiptId, type ReleaseId,
+  type RoomId, decodeDeliveryReceiptTransport, decodeReleasedJob,
 } from '@khala/contracts/delivery/index';
 import { StorageError } from './errors';
 import {
@@ -43,10 +43,15 @@ export type AcknowledgementResult =
   | Readonly<{ kind: 'recorded' | 'duplicate'; evidenceRef: string; receipts: readonly DeliveryReceiptV2[] }>
   | Readonly<{ kind: 'refused'; code: 'binding_not_held' | 'invalid_input' }>;
 
+/** Which channel event a receipt's release carried: identity only, never content or digest. */
+export type ReceiptEventIdentity = Readonly<{ roomId: RoomId; eventId: EventId }>;
+
 export type OutboxEntry = Readonly<{
   receipt: DeliveryReceiptTransport;
   evidenceRef: string;
   ledgerRevision: number;
+  /** The release's events in release order, joined from the immutable released job. */
+  events: readonly ReceiptEventIdentity[];
 }>;
 
 export interface AcknowledgementRecorder {
@@ -139,10 +144,11 @@ function holdsBinding(db: DatabaseSync, principal: AgentPrincipal): boolean {
     && !isRevoked(db, binding.bindingId, binding.deviceId);
 }
 
-/** The release was made available to exactly this binding generation. */
-function releasedTo(db: DatabaseSync, limits: ReturnType<typeof context>['limits'], principal: AgentPrincipal, releaseId: ReleaseId) {
+type Limits = ReturnType<typeof context>['limits'];
+
+function readJob(db: DatabaseSync, limits: Limits, releaseId: string) {
   const row = db.prepare('SELECT job FROM releases WHERE release_id = ?').get(releaseId) as { job: string } | undefined;
-  if (row === undefined) return false;
+  if (row === undefined) return null;
   let value: unknown;
   try {
     value = JSON.parse(row.job);
@@ -151,7 +157,13 @@ function releasedTo(db: DatabaseSync, limits: ReturnType<typeof context>['limits
   }
   const job = decodeReleasedJob(value, limits);
   if (!job.ok) throw new StorageError('corrupt');
-  return job.value.binding.bindingId === principal.bindingId && job.value.binding.generation === principal.generation;
+  return job.value;
+}
+
+/** The release was made available to exactly this binding generation. */
+function releasedTo(db: DatabaseSync, limits: Limits, principal: AgentPrincipal, releaseId: ReleaseId) {
+  const job = readJob(db, limits, releaseId);
+  return job !== null && job.binding.bindingId === principal.bindingId && job.binding.generation === principal.generation;
 }
 
 export function createAcknowledgementRecorder(
@@ -232,11 +244,18 @@ export function createAcknowledgementRecorder(
         JOIN receipts r ON r.receipt_id = o.receipt_id WHERE o.ledger_revision > ?
         ORDER BY o.ledger_revision, o.rowid LIMIT ?`).all(afterRevision, limit) as
         { receipt: string; evidence_ref: string; ledger_revision: number }[];
-      return rows.map(row => ({
-        receipt: parseReceipt(row.receipt),
-        evidenceRef: row.evidence_ref,
-        ledgerRevision: row.ledger_revision,
-      }));
+      return rows.map(row => {
+        const receipt = parseReceipt(row.receipt);
+        // A receipt row references its release, so a missing job is ledger corruption.
+        const job = readJob(ctx.db, ctx.limits, receipt.releaseId);
+        if (job === null) throw new StorageError('corrupt');
+        return {
+          receipt,
+          evidenceRef: row.evidence_ref,
+          ledgerRevision: row.ledger_revision,
+          events: job.events.map(event => ({ roomId: event.roomId, eventId: event.eventId })),
+        };
+      });
     },
   };
 }

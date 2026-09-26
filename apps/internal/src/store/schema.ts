@@ -3,7 +3,7 @@ import { StoreError } from './errors';
 
 /** `PRAGMA application_id`: ASCII "KHCH" (Khala channel), distinct from connector storage. */
 export const APPLICATION_ID = 0x4b484348;
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const CORE_SCHEMA_V1_SQL = `
 CREATE TABLE meta (
@@ -115,7 +115,45 @@ export const MODE_SCHEMA_V2_SQL = `${MODE_CONTROLS_SQL}\n${MODE_OPERATIONS_SQL}`
 /** v3 records who made the last change; NULL is a pre-actor row and reads as `unknown`. */
 export const MODE_SCHEMA_V3_SQL = 'ALTER TABLE mode_controls ADD COLUMN last_changed_by TEXT;';
 
-export type MigrationStage = 'after_mode_controls' | 'after_mode_operations' | 'before_user_version' | 'after_user_version';
+/**
+ * Owner-local projection of connector receipt facts. The connector ledger stays
+ * authoritative; these rows are immutable copies keyed by the stable receipt ID and
+ * joined to channel events by reference only. Nothing here holds message content or a
+ * batch token.
+ */
+export const RECEIPT_SCHEMA_V4_SQL = `
+CREATE TABLE receipt_facts (
+  receipt_id TEXT PRIMARY KEY,
+  release_id TEXT NOT NULL,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation >= 0),
+  kind TEXT NOT NULL,
+  source TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  evidence_ref TEXT,
+  ledger_revision INTEGER NOT NULL CHECK (ledger_revision >= 1),
+  receipt TEXT NOT NULL
+) STRICT;
+CREATE INDEX receipt_facts_evidence ON receipt_facts (evidence_ref);
+
+CREATE TABLE receipt_fact_events (
+  receipt_id TEXT NOT NULL REFERENCES receipt_facts (receipt_id) ON DELETE RESTRICT,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  channel_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  PRIMARY KEY (receipt_id, position)
+) STRICT;
+CREATE INDEX receipt_fact_events_event ON receipt_fact_events (channel_id, event_id);
+
+CREATE TABLE receipt_projection_checkpoints (
+  source TEXT PRIMARY KEY,
+  ledger_revision INTEGER NOT NULL CHECK (ledger_revision >= 0)
+) STRICT;
+`;
+
+export type MigrationStage =
+  | 'after_mode_controls' | 'after_mode_operations' | 'before_user_version' | 'after_user_version'
+  | 'after_receipt_tables' | 'before_receipt_user_version';
 export type MigrationFault = (stage: MigrationStage) => void;
 
 function pragmaNumber(db: DatabaseSync, name: 'application_id' | 'user_version'): number {
@@ -161,6 +199,7 @@ function expectedManifest(version: number): readonly SchemaRow[] {
     expected.exec(CORE_SCHEMA_V1_SQL);
     if (version >= 2) expected.exec(MODE_SCHEMA_V2_SQL);
     if (version >= 3) expected.exec(MODE_SCHEMA_V3_SQL);
+    if (version >= 4) expected.exec(RECEIPT_SCHEMA_V4_SQL);
     const rows = schemaRows(expected).map(row => ({ ...row, sql: normalizeSql(row.sql) }));
     expectedManifests.set(version, rows);
     return rows;
@@ -201,6 +240,7 @@ export function prepareSchema(
     db.exec(MODE_CONTROLS_SQL);
     db.exec(MODE_OPERATIONS_SQL);
     db.exec(MODE_SCHEMA_V3_SQL);
+    db.exec(RECEIPT_SCHEMA_V4_SQL);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     assertManifest(db, SCHEMA_VERSION);
     assertIntegrity(db);
@@ -223,9 +263,8 @@ export function prepareSchema(
     assertManifest(db, 3);
     assertIntegrity(db);
     migrationFault?.('before_user_version');
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec('PRAGMA user_version = 3');
     migrationFault?.('after_user_version');
-    return;
   }
 
   if (version === 2) {
@@ -233,7 +272,16 @@ export function prepareSchema(
     assertManifest(db, 3);
     assertIntegrity(db);
     migrationFault?.('before_user_version');
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec('PRAGMA user_version = 3');
     migrationFault?.('after_user_version');
+  }
+
+  if (version <= 3) {
+    db.exec(RECEIPT_SCHEMA_V4_SQL);
+    migrationFault?.('after_receipt_tables');
+    assertManifest(db, 4);
+    assertIntegrity(db);
+    migrationFault?.('before_receipt_user_version');
+    db.exec('PRAGMA user_version = 4');
   }
 }

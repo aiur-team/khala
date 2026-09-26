@@ -149,10 +149,12 @@ describe('renderRouteManifest', () => {
       { path: '/api/agent/channel-access/request', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-access/create', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-access/status', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/channel-access/exchange', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channels', methods: ['GET'], domain: 'agent' },
     ]);
     expect(JSON.stringify(manifest)).not.toContain('pairing/redeem');
-    expect(JSON.stringify(manifest)).not.toMatch(/channel-access\/(exchange|grant)|:\w|\*/);
+    // The connector exchange is the only grant-bearing route; grant redemption stays unrouted.
+    expect(JSON.stringify(manifest)).not.toMatch(/channel-access\/grant|:\w|\*/);
   });
 });
