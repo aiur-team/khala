@@ -1,7 +1,9 @@
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
+import { ListeningModeOperation } from '../composition/listening-mode.js';
 import { plainObject } from '../cli/validation.js';
+import type { ListeningModeOperationPort } from './listening-mode-tool.js';
 import type { ChannelToolsPort } from './channels/tools.js';
 import type { ReadOperationPort } from './read-tool.js';
 import { toolRegistry, type ToolRegistry } from './registry.js';
@@ -21,6 +23,8 @@ export type McpServerOptions = Readonly<{
   output: Writable;
   send: SendService;
   read: ReadOperationPort;
+  /** Absent means no mode control is composed; the tool then refuses with `unavailable`. */
+  listeningMode?: ListeningModeOperationPort | undefined;
   channels: ChannelToolsPort;
   postprocessResult: McpServerResultPostprocessor;
   postprocessReadResult: McpServerReadResultPostprocessor;
@@ -31,6 +35,7 @@ export type McpServerOptions = Readonly<{
 type ServerContext = Readonly<{
   send: SendService;
   read: ReadOperationPort;
+  listeningMode: ListeningModeOperationPort;
   channels: ChannelToolsPort;
   postprocessResult: McpServerResultPostprocessor | undefined;
   postprocessReadResult: McpServerReadResultPostprocessor | undefined;
@@ -44,7 +49,13 @@ type ServerContext = Readonly<{
 export async function runMcpServer(options: McpServerOptions): Promise<void> {
   const { input, output, send, read, channels, postprocessResult, postprocessReadResult, signal } = options;
   const context: ServerContext = {
-    send, read, channels, postprocessResult, postprocessReadResult, tools: options.tools ?? toolRegistry,
+    send,
+    read,
+    channels,
+    listeningMode: options.listeningMode ?? new ListeningModeOperation({ application: null }),
+    postprocessResult,
+    postprocessReadResult,
+    tools: options.tools ?? toolRegistry,
   };
   const decoder = new StringDecoder('utf8');
   let buffered = '';
@@ -165,6 +176,7 @@ async function callTool(
     notification,
     send: context.send,
     read: context.read,
+    listeningMode: context.listeningMode,
     channels: context.channels,
     postprocessResult: context.postprocessResult,
     postprocessReadResult: context.postprocessReadResult,
