@@ -63,7 +63,7 @@ describe('channel creation adapter', () => {
       'Repair required on the agent’s connector. The channel stays yours.',
       'Not connected',
       'Not connected. The request expired.',
-      'Not connected. The request was closed and no channel is shared with the agent.',
+      'Not connected. The request was closed, and the agent has no access through it.',
     ]);
     expect(decidedMessage({ ...request, ownerDecision: 'approved' })).toBe(CREATE_DECIDED_MESSAGE);
     expect(CREATE_DECIDED_MESSAGE).not.toMatch(/connected\b/i);

@@ -49,7 +49,7 @@ export function createConnectionLabel(outcome: ChannelAccessOwnerOutcome): strin
     case 'repair_required':
       return 'Repair required on the agent’s connector. The channel stays yours.';
     case 'revoked':
-      return 'Not connected. The request was closed and no channel is shared with the agent.';
+      return 'Not connected. The request was closed, and the agent has no access through it.';
     default:
       return null;
   }

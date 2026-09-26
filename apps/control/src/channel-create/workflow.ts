@@ -7,7 +7,7 @@
 // is invoked, so a lost response or a restart reconciles the same channel
 // instead of creating a second one.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   type AuthorizedChannelRef,
   type CallOptions,
@@ -68,7 +68,9 @@ export function createChannelCreateWorkflow(deps: Readonly<{
     const context = located.context;
     // Nothing happens before the owner decides; this is the guard the agent cannot pass.
     if (context.outcome === 'pending_owner') return unavailable();
-    if (deps.clock() >= Date.parse(context.deadline)) return closed('expired');
+    if (deps.clock() >= Date.parse(context.deadline) || context.outcome === 'expired') return closed('expired');
+    // Denied, revoked, or already finished: a replayed claim must not create.
+    if (context.outcome !== 'approved' && context.outcome !== 'connecting') return closed('closed');
     const key = recordKey(requestHandle);
     const claimed = await safe(() => deps.fulfillment.claimCreate({
       v: 1,
@@ -126,7 +128,7 @@ export function createChannelCreateWorkflow(deps: Readonly<{
       if (record.phase === 'created') {
         return { kind: 'created', channelRef: record.channelRef as AuthorizedChannelRef, authorization };
       }
-      if (record.phase === 'closed') return closed('closed');
+      if (record.phase === 'closed') return await closeJournal(key, authorization, options);
       const reconciled = await checked(idempotencyKey, () => deps.adapter.reconcile({ workflow, idempotencyKey }, options));
       if (reconciled === null) return unavailable();
       if (reconciled.outcome !== 'pending') return await settle(key, authorization, reconciled, options);
@@ -176,7 +178,7 @@ export function createChannelCreateWorkflow(deps: Readonly<{
       if (record.phase === 'created') {
         return { kind: 'created', channelRef: record.channelRef as AuthorizedChannelRef, authorization };
       }
-      if (record.phase === 'closed') return closed('closed');
+      if (record.phase === 'closed') return await closeJournal(key, authorization, options);
       const next: CreateRecord = created
         ? { ...record, phase: 'created', channelRef: outcome.channelRef, leaseUntil: null }
         : { ...record, phase: 'closed', leaseUntil: null };
@@ -184,17 +186,30 @@ export function createChannelCreateWorkflow(deps: Readonly<{
       if (saved === 'unavailable') return unavailable();
       if (saved === 'conflict') continue;
       if (created) return { kind: 'created', channelRef: outcome.channelRef!, authorization };
-      // The provider refused: the journal row closes and nothing is admitted.
-      await safe(() => deps.fulfillment.updateCreate({
-        v: 1,
-        requestHandle: authorization.requestHandle,
-        expectedRevision: authorization.requestRevision,
-        operationId: `${key}#closed`,
-        outcome: 'revoked',
-      }, options));
-      return closed('closed');
+      return await closeJournal(key, authorization, options);
     }
     return unavailable();
+  }
+
+  /**
+   * The provider refused: the journal row closes and nothing is admitted. Repeated
+   * with the same operation on every later call until the journal confirms it.
+   */
+  async function closeJournal(
+    key: string,
+    authorization: ChannelCreateAuthorization,
+    options?: CallOptions,
+  ): Promise<ChannelCreateFulfillment> {
+    const updated = await safe(() => deps.fulfillment.updateCreate({
+      v: 1,
+      requestHandle: authorization.requestHandle,
+      expectedRevision: authorization.requestRevision,
+      operationId: `${key}#closed`,
+      outcome: 'revoked',
+    }, options));
+    return updated === null || updated.kind === 'unavailable' || updated.kind === 'outcome_unknown'
+      ? unavailable()
+      : closed('closed');
   }
 
   async function load(key: string, options?: CallOptions): Promise<Stored | 'absent' | 'unavailable'> {
@@ -211,7 +226,8 @@ export function createChannelCreateWorkflow(deps: Readonly<{
     next: CreateRecord,
     options?: CallOptions,
   ): Promise<'applied' | 'conflict' | 'unavailable'> {
-    const operationId = `${key}#${next.phase}#${next.leaseUntil ?? next.channelRef ?? 'closed'}`;
+    // Unique per attempt: two callers with identical bytes must conflict, not both see their own write applied.
+    const operationId = `${key}#${next.phase}#${randomUUID()}`;
     const result = await safe(() => deps.store.compareAndSet({
       key,
       expectedRevision,

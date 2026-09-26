@@ -199,6 +199,40 @@ describe('human-confirmed channel creation', () => {
     expect(h.fake.createCalls).toHaveLength(1);
   });
 
+  it('creates one channel when approval and a connector reconcile race in the same millisecond', async () => {
+    const h = createHarness();
+    await h.submit();
+    h.fake.fail('unavailable');
+    await h.approve();
+    h.setNow(h.clock() + 120_000);
+    const requestHandle = await h.pending();
+
+    const results = await Promise.all([h.create.workflow.fulfill(requestHandle), h.create.workflow.fulfill(requestHandle)]);
+
+    // Both callers may report the one channel; neither may create a second.
+    expect(results.some(result => result.kind === 'created')).toBe(true);
+    expect(new Set(results.flatMap(result => result.kind === 'created' ? [result.channelRef] : [])).size).toBe(1);
+    expect(h.fake.createCalls).toHaveLength(2);
+    expect(h.fake.rooms.size).toBe(1);
+  });
+
+  it('keeps retrying the journal close after a provider refusal', async () => {
+    const h = createHarness();
+    await h.submit();
+    h.fake.fail('rejected');
+    h.backing.interceptWrites(input => {
+      const value = input.next.value as { phase?: string };
+      if (input.key.startsWith('channel-create/') && value.phase === 'closed') h.backing.inject('compareAndSet', 'unavailable');
+    });
+    await h.approve();
+    h.backing.interceptWrites(null);
+    expect(await h.status()).toMatchObject({ outcome: 'connecting' });
+
+    expect(await h.create.workflow.fulfill(await h.pending())).toEqual({ kind: 'closed', reason: 'closed' });
+    expect(await h.status()).toEqual({ v: 1, operationId: 'op_create_1', outcome: 'revoked' });
+    expect(h.fake.rooms.size).toBe(0);
+  });
+
   it('reconciles an approval whose creation did not finish on the next inbox read', async () => {
     const h = createHarness();
     await h.submit();
