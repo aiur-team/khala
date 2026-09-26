@@ -382,6 +382,40 @@ adapter declares are backed up and reversed; adapters own proof of that
 footprint. `inspectSetupRecovery` gives `status` a read-only view of the
 journal.
 
+## Claude setup adapter
+
+`src/setup/adapters/claude.ts` plans the single user-scope Khala plugin, which
+carries the skill, the hooks, and the MCP entry (decision 27). The plugin files
+from `packages/claude-plugin` (`.claude-plugin/`, `.mcp.json`, `hooks/`,
+`skills/`) and a one-plugin marketplace catalog are installed below
+`$XDG_DATA_HOME/khala/versions/<version>/claude/marketplace/`. A single guarded
+edit of `~/.claude/settings.json` then registers them by setting
+`extraKnownMarketplaces.khala` (a `directory` source) and
+`enabledPlugins["khala@khala"]`. The adapter never runs `claude plugin`. On
+2.1.283 that command also rewrites `~/.claude.json` (with fresh machine and user
+IDs) and writes a timestamped `~/.claude/backups/.claude.json.backup.<ms>`, so
+its footprint cannot be declared up front.
+
+| Claude Code | Status | Footprint | Evidence |
+| --- | --- | --- | --- |
+| 2.1.283 | supported | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies clean, populated, hardened, and upgraded homes through the executor and asserts that the changed files equal the planned paths. |
+| any other | unsupported | nothing | Fails closed. Manifest-driven removal still works. |
+
+Removal is manifest-driven: `settings.json` returns to its byte-exact pre-Khala
+bytes or absence, and drift refuses the whole removal. Absent Claude plans
+nothing and creates no `~/.claude`. An unowned `khala` marketplace or plugin
+entry is a conflict, even when identical. So is any competitor for `/khala`: a
+user `commands/khala.md`, a `commands/khala/` namespace, a user
+`skills/khala/`, another enabled `khala@*` plugin, or an enabled plugin that
+ships any of these. Such a conflict fails the plan before any write. The
+settings entries and the plugin's `khala mcp-serve` entry hold no port or token.
+
+The optional hardening check (the Claude sandbox enabled in user settings) and
+folder trust for a given directory are reported as `info` diagnostics only.
+Setup never writes either one, and neither affects readiness (decision 25).
+Configuration reports the route as `unknown`. New plugin configuration takes
+effect when Claude next starts (`restart_required`).
+
 A plan can mark a foreign file entry-owned (`entryOwnedPaths`) when the harness
 itself rewrites the rest of that file. Khala then owns only the named
 `config_entry_set` entry. Whole-file drift no longer refuses, but every operation
