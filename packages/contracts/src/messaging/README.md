@@ -150,6 +150,34 @@ verified archive as a frozen read-only view for humans (`projectImportedHistory`
 bounded context pages that an agent reads on request (`importedContextPage`). Neither
 produces a `TimelineItem`.
 
+### Transfer
+
+`@khala/messaging/channels/history-import` carries archive parts on an
+`ImportedHistoryTransport`, a provider seam apart from `ChannelSubstrate.timeline` and
+`subscribe`. An adapter encrypts each part with the destination channel's end-to-end keys
+and deduplicates on the part's deterministic transaction ID (`<archiveId>.chunk.<n>`,
+`<archiveId>.manifest`). `deliverImportedPart` looks a part up before it sends it, so a
+lost acknowledgement is reconciled, not duplicated. `openImportedArchive` projects an
+archive only when its manifest digests to the transfer's final `manifestDigest`. Provider
+support is **unproven** until an adapter passes integration.
+
+`apps/internal/src/externalization/history-export.ts` implements `HistoryTransferPort`, and
+`apps/internal/src/composition/history-transfer.ts` routes its part writes through
+`deliverImportedPart`. `copy` (round 0) seals a snapshot of the SQLite log. `catch_up` rounds 1–3 each seal only
+what was appended after the last sealed sequence. A round reports `converged` once the
+backlog fits one maximum-sized chunk. If the backlog still exceeds that after round 3, it
+reports `drain_required`. `final_drain` pauses source writes, seals the rest and sends the
+manifest. It runs only in `history_catching_up` after convergence, or in `drain_required`
+after the human confirms. The drain is bounded by `maxDrainChunks` and by a deadline that
+holds across retries. When it exceeds either one, it resumes the source and returns
+`ceiling_exceeded`, which stays terminal. `lastAckChunk` and `afterChunk` count
+acknowledged chunks. Each step is authorized against the signed-in owner, the journaled
+`operationId` and the bound destination (`forbidden` or `operation_mismatch`).
+Acknowledgements persist in a 0600 `history-transfer.sqlite` inside an owner-private
+directory. It holds identifiers, sequence bounds and digests, never bodies or author
+labels. A resumed chunk is re-read from the source and must reproduce its digest
+(`source_changed` otherwise).
+
 ## Outcomes
 
 `OperationResult` is `ok`, `rejected` (a finite code), `unavailable` (nothing happened, so
