@@ -134,7 +134,8 @@ describe('Cursor setup adapter', () => {
     expect(after.observation.diagnostics.map(item => item.code)).toEqual(['cursor_delivery_unproven']);
     expect(after.adapter.plan({ desired: 'present', observation: after.observation })).toEqual([]);
 
-    const removal = plan('remove', cursorRemovalOperations(await manifest()));
+    const removal = plan('remove', after.adapter.plan({ desired: 'absent', observation: after.observation }));
+    expect(removal.operations).toEqual(cursorRemovalOperations(await manifest()));
     expect(removal.operations).toMatchObject([{ type: 'file_restore', harness: 'cursor', path: configPath() }]);
     expect((await execute(removal)).kind).toBe('committed');
     expect(await readConfig()).toEqual(ORIGINAL);
@@ -151,9 +152,52 @@ describe('Cursor setup adapter', () => {
     expect(await exists(path.join(roots.home, '.cursor'))).toBe(false);
   });
 
-  it('refuses to touch a foreign khala entry or a config it cannot parse', async () => {
+  it('reports the installed entry when Cursor is no longer on PATH, and drift after a user edit', async () => {
+    expect((await execute(await setupPlan())).kind).toBe('committed');
+    const gone = await observe(environment({ installed: false }));
+    expect(gone.observation.components).toEqual([{ component: 'mcp_entry', state: 'ready' }]);
+    expect(gone.adapter.plan({ desired: 'absent', observation: gone.observation })).toMatchObject([{ type: 'file_delete' }]);
+
+    await fsp.writeFile(configPath(), bytes('{"mcpServers":{}}\n'));
+    const edited = await observe();
+    expect(edited.observation.components).toEqual([{ component: 'mcp_entry', state: 'drifted' }]);
+    expect(edited.adapter.plan({ desired: 'present', observation: edited.observation })).toEqual([]);
+  });
+
+  it('replaces its own outdated entry and keeps the original baseline for removal', async () => {
+    await seed(ORIGINAL);
+    expect((await execute(await setupPlan())).kind).toBe('committed');
+    // A moved data root changes the launcher path, so Khala's own entry is out of date.
+    const moved = { ...roots, xdgDataHome: path.join(roots.home, 'data2') };
+    await fsp.mkdir(moved.xdgDataHome, { recursive: true, mode: 0o700 });
+    const env = { ...environment(), ...moved };
+    const stale = await observe(env);
+    expect(stale.observation.components).toEqual([{ component: 'mcp_entry', state: 'absent' }]);
+    expect(stale.observation.diagnostics.map(item => item.code)).toEqual(['cursor_delivery_unproven', 'cursor_mcp_entry_outdated']);
+    const upgrade = plan('setup', stale.adapter.plan({ desired: 'present', observation: stale.observation }), [...stale.adapter.contents().values()]);
+    expect((await executeSetupPlan({ roots: moved, searchPath: '/usr/bin:/bin', confirmedDigest: upgrade.planDigest, replan: async () => upgrade })).kind).toBe('committed');
+    expect(JSON.parse(new TextDecoder().decode(await readConfig())).mcpServers.khala.command).toBe(khalaLauncherPath(moved));
+    expect((await observe(env)).observation.components).toEqual([{ component: 'mcp_entry', state: 'ready' }]);
+    expect((await execute(plan('remove', cursorRemovalOperations(await manifest())))).kind).toBe('committed');
+    expect(await readConfig()).toEqual(ORIGINAL);
+  });
+
+  it('fails closed when the setup manifest cannot be read', async () => {
+    await seed(ORIGINAL);
+    const manifestPath = setupStatePaths(roots).manifest;
+    await fsp.mkdir(path.dirname(manifestPath), { recursive: true });
+    await fsp.writeFile(manifestPath, 'not json');
+    const { observation, adapter } = await observe();
+    expect(observation.components).toEqual([{ component: 'mcp_entry', state: 'conflict' }]);
+    expect(observation.diagnostics.map(item => item.code)).toEqual(['setup_manifest_unreadable']);
+    expect(adapter.plan({ desired: 'present', observation })).toEqual([]);
+  });
+
+  it('refuses to touch an unowned khala entry, even an identical one, or a config it cannot parse', async () => {
     for (const content of [
+      bytes(JSON.stringify({ mcpServers: { khala: { command: khalaLauncherPath(roots), args: ['mcp-serve'] } } })),
       bytes('{"mcpServers":{"khala":{"command":"somebody-else"}}}'),
+      bytes('﻿{"mcpServers":{}}'),
       bytes('{"mcpServers": [] }'),
       bytes('// comments are not JSON\n{}'),
       bytes('[]'),

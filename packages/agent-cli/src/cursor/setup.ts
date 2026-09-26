@@ -8,7 +8,8 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { plainObject } from '../cli/validation.js';
 import { sha256 } from '../setup/filesystem.js';
-import type { SetupManifest } from '../setup/manifest.js';
+import { parseManifest, type ManifestEntry, type SetupManifest } from '../setup/manifest.js';
+import { setupStatePaths } from '../setup/transaction.js';
 import type {
   ComponentState, HarnessDetection, HarnessObservation, SetupAdapter, SetupDiagnostic, SetupEnvironment, SetupOperation,
   Sha256Digest,
@@ -44,7 +45,12 @@ export function cursorMcpServerEntry(environment: Pick<SetupEnvironment, 'xdgDat
   return { command: khalaLauncherPath(environment), args: ['mcp-serve'] };
 }
 
-type ObservedConfig = Readonly<{ path: string; bytes: Uint8Array | null; entry: ReturnType<typeof cursorMcpServerEntry> }>;
+type ObservedConfig = Readonly<{
+  path: string;
+  bytes: Uint8Array | null;
+  entry: ReturnType<typeof cursorMcpServerEntry>;
+  manifest: SetupManifest | null;
+}>;
 
 export interface CursorSetupAdapter extends SetupAdapter {
   readonly harness: 'cursor';
@@ -52,10 +58,13 @@ export interface CursorSetupAdapter extends SetupAdapter {
   contents(): ReadonlyMap<Sha256Digest, Uint8Array>;
 }
 
-const decoder = new TextDecoder('utf-8', { fatal: true });
+const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 
-/** Parsed config, or `null` when it is not a JSON object whose `mcpServers` (if any) is an object. */
+/**
+ * Parsed config, or `null` when it is not a JSON object whose `mcpServers` (if any) is an
+ * object. A leading byte-order mark is refused: a rewrite could not keep it.
+ */
 function parseConfig(bytes: Uint8Array): Record<string, unknown> | null {
   let value: unknown;
   try {
@@ -70,7 +79,8 @@ function parseConfig(bytes: Uint8Array): Record<string, unknown> | null {
 
 export function createCursorSetupAdapter(): CursorSetupAdapter {
   // Plans are pure over an observation; the bytes behind each observation stay here so
-  // a plan can only ever be computed from this adapter's own read.
+  // a plan can only ever be computed from this adapter's own read. A planner must pass
+  // back the exact observation object `inspect` returned.
   const observed = new WeakMap<HarnessObservation, ObservedConfig>();
   const contents = new Map<Sha256Digest, Uint8Array>();
 
@@ -94,52 +104,73 @@ export function createCursorSetupAdapter(): CursorSetupAdapter {
       const diagnostics: SetupDiagnostic[] = [];
       const configPath = cursorMcpConfigPath(environment);
       const entry = cursorMcpServerEntry(environment);
+      let manifest: SetupManifest | null = null;
       const observation = (state: ComponentState, bytes: Uint8Array | null): HarnessObservation => {
-        const result: HarnessObservation = {
-          detection,
-          components: [{ component: 'mcp_entry', state }],
-          route: 'unknown',
-          diagnostics,
-        };
-        observed.set(result, { path: configPath, bytes, entry });
+        const result: HarnessObservation = { detection, components: [{ component: 'mcp_entry', state }], route: 'unknown', diagnostics };
+        observed.set(result, { path: configPath, bytes, entry, manifest });
         return result;
       };
-      // An absent Cursor is reported without reading or creating its config root.
-      if (detection.executable === null) return observation('absent', null);
-      diagnostics.push({ code: 'cursor_delivery_unproven', severity: 'warning', harness: 'cursor', message: CURSOR_DELIVERY_UNPROVEN });
-      if (!detection.supported) {
+      const report = (code: string, severity: SetupDiagnostic['severity'], message: string) =>
+        diagnostics.push({ code, severity, harness: 'cursor', component: 'mcp_entry', message });
+
+      // Ownership comes only from the committed manifest, never from the entry's bytes.
+      const manifestBytes = await environment.probe.readFile(setupStatePaths(environment).manifest);
+      if (manifestBytes !== null) {
+        try {
+          manifest = parseManifest(manifestBytes);
+        } catch {
+          report('setup_manifest_unreadable', 'error', 'The Khala setup manifest cannot be read, so Cursor ownership is unknown.');
+          return observation('conflict', null);
+        }
+      }
+      const owned: ManifestEntry | undefined = manifest?.entries.find(item => item.harness === 'cursor' && item.path === configPath);
+
+      // An absent Cursor with nothing installed is reported without reading its config root.
+      if (detection.executable === null && owned === undefined) return observation('absent', null);
+      if (detection.executable !== null) {
+        diagnostics.push({ code: 'cursor_delivery_unproven', severity: 'warning', harness: 'cursor', message: CURSOR_DELIVERY_UNPROVEN });
+      }
+      if (detection.executable !== null && !detection.supported) {
         diagnostics.push({
           code: 'unsupported_version', severity: 'error', harness: 'cursor',
           message: 'The Cursor version could not be read from `cursor --version`.',
         });
-        return observation('unsupported', null);
+        if (owned === undefined) return observation('unsupported', null);
       }
+
       const bytes = await environment.probe.readFile(configPath);
+      if (owned !== undefined) {
+        // Khala's own write: report what is really there, even when Cursor is gone.
+        if (bytes === null || sha256(bytes) !== owned.postimage) {
+          report('drifted', 'error', `${configPath} changed since Khala last wrote it; it was left untouched.`);
+          return observation('drifted', bytes);
+        }
+        const servers = parseConfig(bytes)?.mcpServers as Record<string, unknown> | undefined;
+        if (isDeepStrictEqual(servers?.[CURSOR_MCP_SERVER], entry)) return observation('ready', bytes);
+        report('cursor_mcp_entry_outdated', 'info', `Khala's "${CURSOR_MCP_SERVER}" MCP server in ${configPath} is out of date; setup replaces it.`);
+        return observation('absent', bytes);
+      }
+
       if (bytes === null) return observation('absent', null);
       const config = parseConfig(bytes);
       if (config === null) {
-        diagnostics.push({
-          code: 'cursor_mcp_config_invalid', severity: 'error', harness: 'cursor', component: 'mcp_entry',
-          message: `${configPath} is not a JSON object with an object-valued mcpServers; it was left untouched.`,
-        });
+        report('cursor_mcp_config_invalid', 'error',
+          `${configPath} is not a plain JSON object with an object-valued mcpServers; it was left untouched.`);
         return observation('conflict', bytes);
       }
       const servers = (config.mcpServers ?? {}) as Record<string, unknown>;
       if (!Object.hasOwn(servers, CURSOR_MCP_SERVER)) return observation('absent', bytes);
-      if (isDeepStrictEqual(servers[CURSOR_MCP_SERVER], entry)) return observation('ready', bytes);
-      diagnostics.push({
-        code: 'cursor_mcp_entry_conflict', severity: 'error', harness: 'cursor', component: 'mcp_entry',
-        message: `${configPath} already has a different "${CURSOR_MCP_SERVER}" MCP server; it was left untouched.`,
-      });
+      // An unowned entry is never adopted, even when it is identical.
+      report('cursor_mcp_entry_conflict', 'error',
+        `${configPath} already has a "${CURSOR_MCP_SERVER}" MCP server that Khala did not install; it was left untouched.`);
       return observation('conflict', bytes);
     },
 
     plan({ desired, observation }): readonly SetupOperation[] {
       const seen = observed.get(observation);
       if (seen === undefined) throw new Error('cursor setup: plan needs an observation from this adapter');
-      // Removal returns every managed path to its pre-Khala bytes from the manifest
-      // (`cursorRemovalOperations`), never by editing the config back.
-      if (desired === 'absent') return [];
+      // Removal returns every managed path to its pre-Khala bytes, never by editing it back.
+      if (desired === 'absent') return cursorRemovalOperations(seen.manifest);
       const state = observation.components[0]?.state;
       if (!observation.detection.supported || state !== 'absent') return [];
       const config = seen.bytes === null ? {} : parseConfig(seen.bytes)!;

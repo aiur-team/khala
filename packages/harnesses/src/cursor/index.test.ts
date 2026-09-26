@@ -68,17 +68,20 @@ describe('Cursor app capability record', () => {
   });
 
   it('keeps the proof table and the Blocked reasons in step with the committed proof record', () => {
-    const matrix = repoFile(CURSOR_PROOF_MATRIX_REF) as Record<string, Record<string, { status: string; route: string }>>;
+    type Cell = { status: string; route: string; evidenceRef: string | null; evidenceRevision: string | null };
+    const matrix = repoFile(CURSOR_PROOF_MATRIX_REF) as Record<string, Record<string, Cell>>;
     const blocked = repoFile('experiments/interactive-cli/cursor-app/evidence/blocked.json');
     expect(blocked).toEqual(CURSOR_BLOCKED_REASONS);
     const provenCells: string[] = [];
+    // A proof must name the same cell, evidence and revision as the verifier's matrix.
     for (const [shape, modes] of Object.entries(matrix)) {
       for (const [mode, cell] of Object.entries(modes)) {
         expect(cell.route).toBe(CURSOR_MODE_ROUTES[mode as keyof typeof CURSOR_MODE_ROUTES]);
-        if (cell.status === 'proven') provenCells.push(`${shape}/${mode}`);
+        if (cell.status === 'proven') provenCells.push(`${shape}/${mode} ${cell.evidenceRef} ${cell.evidenceRevision}`);
       }
     }
-    expect(CURSOR_ROUTE_PROOFS.map(entry => `${entry.identity.shape}/${entry.mode}`).sort()).toEqual(provenCells.sort());
+    const table = CURSOR_ROUTE_PROOFS.map(entry => `${entry.identity.shape}/${entry.mode} ${entry.evidenceRef} ${entry.evidenceRevision}`);
+    expect(table.sort()).toEqual(provenCells.sort());
   });
 
   it('credits a proof only for its exact shape, version, account tier and policy', () => {

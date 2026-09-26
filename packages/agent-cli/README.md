@@ -422,11 +422,17 @@ own Agent Chat the shared channel tools. The entry carries no port, token,
 channel or message bytes; the launcher reads the runtime descriptor on each call.
 
 The version comes from the first line of `cursor --version`. An absent `cursor`
-creates nothing. An unreadable version is `unsupported`. A foreign `khala` entry,
-or a config that is not a JSON object, is a `conflict` and is left untouched.
-Every inspection of an installed Cursor carries the `cursor_delivery_unproven`
-warning. `cursorRemovalOperations(manifest)` returns each managed Cursor path to
-its recorded pre-Khala bytes, or deletes it if it was absent before.
+with nothing installed creates and reads nothing. An unreadable version is
+`unsupported`. Ownership comes only from the setup manifest. A `khala` entry
+the manifest does not record is a `conflict`, even when it is identical. So is a
+config that is not a plain JSON object or that starts with a byte-order mark.
+Both are left untouched. Khala's own entry reports `ready`, or `drifted` after
+a user edit, even when `cursor` is no longer on PATH. An outdated own entry is
+replaced. Every inspection of an installed Cursor carries the
+`cursor_delivery_unproven` warning. `plan({ desired: 'absent' })` returns
+`cursorRemovalOperations(manifest)`, which restores each managed Cursor path to
+its recorded pre-Khala bytes, or deletes it if it was absent before. The planner
+must pass back the exact observation object `inspect` returned.
 
 ## Claude session adapter
 
