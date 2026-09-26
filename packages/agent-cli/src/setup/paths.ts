@@ -81,3 +81,6 @@ export function resolveSetupPaths(input: SetupPathInputs): SetupPaths {
     pathEntries: pathEntries(input.PATH),
   };
 }
+
+/** Quotes one word for `sh`, which runs every harness hook command and the launcher. */
+export const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
