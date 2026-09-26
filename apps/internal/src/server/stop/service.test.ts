@@ -53,6 +53,7 @@ function ports(input: Readonly<{
   revoke?: (key: BindingKey) => 'revoked' | 'failed';
   clearGrant?: BindingStopPorts['clearGrant'];
   cancelApproved?: BindingStopPorts['cancelApproved'];
+  closeStopped?: BindingStopPorts['closeStopped'];
 }>, calls: Calls = []): BindingStopPorts {
   const barrier = createRevocationBarrier();
   return {
@@ -66,6 +67,7 @@ function ports(input: Readonly<{
     dropCapability: key => { calls.push(`drop:${key.bindingId}`); },
     ...(input.clearGrant ? { clearGrant: input.clearGrant } : {}),
     ...(input.cancelApproved ? { cancelApproved: input.cancelApproved } : {}),
+    ...(input.closeStopped ? { closeStopped: input.closeStopped } : {}),
   };
 }
 
@@ -116,6 +118,32 @@ describe('binding Stop service', () => {
       expect(await service.stop('channel-one', null)).toEqual({ kind: 'unavailable' });
       expect(calls).toContain('revoke:binding-bob');
     }
+  });
+
+  // Wrong-implementation test (#441): closing requests before the revocations, or only for
+  // bindings revoked in this attempt, leaves a stopped request reading as connected.
+  it('closes the requests of every revoked binding after revoking them, retried whole until it can', async () => {
+    const calls: Calls = [];
+    let answer: 'closed' | 'unavailable' = 'unavailable';
+    const closeStopped = async (ids: ReadonlySet<string>) => { calls.push(`close:${[...ids].sort().join(',')}`); return answer; };
+    const service = createBindingStopService(ports({
+      candidates: [active(bobBinding), { binding: carolBinding, status: 'revoked', latest: true }],
+      revoke: key => (key.bindingId === 'binding-bob' ? 'revoked' : 'failed'),
+      closeStopped,
+    }, calls));
+    expect(await service.stop('channel-one', null)).toEqual({ kind: 'unavailable' });
+    // Carol's binding was revoked by an earlier partial Stop; its request is closed too.
+    expect(calls.indexOf('close:binding-bob,binding-carol')).toBeGreaterThan(calls.indexOf('revoke:binding-bob'));
+
+    answer = 'closed';
+    expect((await service.stop('channel-one', null)).kind).toBe('stopped');
+    const failing = createBindingStopService(ports({
+      candidates: [active(bobBinding)], revoke: () => 'failed', closeStopped,
+    }, calls));
+    calls.length = 0;
+    // A binding whose revocation failed keeps its request.
+    expect((await failing.stop('channel-one', null)).kind).toBe('partial');
+    expect(calls).toContain('close:');
   });
 
   it('refuses a target that is not the newest generation', async () => {
