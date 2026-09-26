@@ -140,7 +140,7 @@ describe('Claude plugin MCP entry', () => {
 
   it('returns the same framing to /khala read over MCP and to `khala claude read`', async () => {
     const reply = { kind: 'batch' as const, text: '<khala-channel-batch-v1>\nframed\n</khala-channel-batch-v1>' };
-    const client = { ...inProcessClient(server().adapter, CREDENTIAL_A), read: vi.fn(async (_sessionId: string) => reply) };
+    const client = { ...inProcessClient(server().adapter, CREDENTIAL_A), read: vi.fn<ClaudeSessionClient['read']>(async () => reply) };
     const mcp = await serve(client, [request(1, 'khala_read')]);
 
     const stdout = new PassThrough();
