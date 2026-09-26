@@ -70,3 +70,80 @@
   margin: 0.5rem 0 0;
   font-size: 0.85rem;
 }
+
+.agent-controls__listening {
+  border-top: 1px solid var(--khala-line);
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.agent-controls__listening h3,
+.agent-controls__listening h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+
+.agent-controls__session-label {
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.agent-controls__listening-meta,
+.agent-controls__mode-description {
+  color: var(--khala-ink-muted);
+  font-size: 0.8rem;
+  margin: 0.15rem 0;
+}
+
+.agent-controls__mode-selector {
+  border: 1px solid var(--khala-line);
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  min-width: 0;
+}
+
+.agent-controls__mode-option {
+  margin-bottom: 0.5rem;
+}
+
+.agent-controls__mode-option button,
+.agent-controls__hard-cancel button {
+  font-size: 0.8rem;
+  margin: 0.15rem 0.5rem 0.15rem 0;
+}
+
+.agent-controls__evidence {
+  font-size: 0.8rem;
+  margin: 0.15rem 0;
+}
+
+.agent-controls__evidence-list {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+}
+
+.agent-controls__listening-status {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.agent-controls__listening-issue {
+  color: var(--khala-critical, #b3261e);
+  font-size: 0.85rem;
+  margin: 0.25rem 0;
+}
+
+.agent-controls__hard-cancel {
+  margin-top: 0.5rem;
+}
+
+.agent-controls__confirmation {
+  border: 1px solid var(--khala-line);
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+}
+
+.agent-controls__warning {
+  color: var(--khala-critical, #b3261e);
+}
