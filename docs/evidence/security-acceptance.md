@@ -65,7 +65,7 @@ The frozen Claude plugin contract (`FROZEN_MCP_TOOLS`) omits the registered `kha
 
 - Internal mode is a single-machine mode with no relay, no end-to-end encryption and no review step. It keeps message plaintext in the host's channel store (`relay.test.ts` asserts this, so the note stays true). Any process running as the same OS user can read it.
 - The same applies to the owner connector's ledger: an unrestricted agent on the same host as the same user is outside the connector-gate guarantee.
-- In internal mode, pause holds delivery only. A bound agent can still read its own channel's timeline route.
+- In internal mode, pause holds delivery only. A bound agent can still read its own channel's timeline route, from its admission onward (`discovery.integration.test.ts`).
 - An inference provider receives approved content once it is released; transport encryption does not hide it from the model service.
 - Revocation cleanup is local. It does not recall content already released to a model.
 - Restoring a ledger backup older than a delivery can deliver that approved release again. Codex reconciliation finds it only while it is still queued.

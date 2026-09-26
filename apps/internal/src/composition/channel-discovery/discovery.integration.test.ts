@@ -521,6 +521,63 @@ describe('internal channel discovery', () => {
     expect((await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant: null })).status).toBe(410);
   });
 
+  // Wrong-implementation test (#450): a timeline that ignores the binding's admission start hands
+  // the agent everything said before it was admitted, including while no agent was bound.
+  it('shows a bound agent only the timeline since its admission, across Stop and rejoin; the human sees it all', async () => {
+    const w = await world();
+    const agent = await issue(w, 'session-rejoin');
+    let posted = 0;
+    const post = async (body: string) => {
+      posted += 1;
+      const sent = await call(w.server.port, {
+        method: 'POST', path: `/api/v1/channels/${channelId}/messages`, headers: w.human,
+        body: { clientTxnId: `txn-rejoin-${posted}`, content: { v: 1, kind: 'text', body } },
+      });
+      expect(sent.status).toBe(201);
+    };
+    const join = async (operationId: string) => {
+      await approvedAccess(w, agent, operationId);
+      const recovery = await recoveryKey();
+      const body = await exchangeRequest(w, agent, operationId, `device_${operationId}`, recovery);
+      const exchangeUrl = `${w.server.origin}/api/connector/channel-access-requests/${operationId}/exchange`;
+      const grant = openGrant((await exchangeCall(w, agent, operationId, body, proof(w, agent, exchangeUrl))).json, recovery);
+      const activated = await activateCall(w, agent, operationId, { deviceId: body.deviceId, grant });
+      expect(activated.status).toBe(200);
+      return activated.json as { capability: string; binding: { bindingId: string; generation: number } };
+    };
+    // Every page, oldest first, so pagination cannot hide an earlier message either.
+    const bodies = async (headers: Record<string, string>) => {
+      const pages: string[][] = [];
+      let cursor: string | null = null;
+      do {
+        const query: string = cursor === null ? '?limit=1' : `?limit=1&cursor=${encodeURIComponent(cursor)}`;
+        const read = await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline${query}`, headers });
+        expect(read.status).toBe(200);
+        pages.push(read.json.events.map((event: { content: { body: string } }) => event.content.body));
+        cursor = read.json.nextCursor;
+      } while (cursor !== null);
+      return pages.reverse().flat();
+    };
+
+    await post('said before any admission');
+    const first = await join('op-first');
+    await post('said to the first binding');
+    expect(await bodies(bearer(first.capability))).toEqual(['said to the first binding']);
+
+    // Stop: the binding is revoked and the channel's approvals close.
+    expect(createChannelStore(w.handle).revokeBinding(first.binding).kind).toBe('done');
+    expect(await w.discovery.cancelApproved(channelId)).toBe('cancelled');
+    await post('said while no agent was bound');
+
+    const rejoined = await join('op-rejoin');
+    await post('said after the rejoin');
+    expect(await bodies(bearer(rejoined.capability))).toEqual(['said after the rejoin']);
+    // The human's view is unchanged: the whole history.
+    expect(await bodies(w.human)).toEqual([
+      'said before any admission', 'said to the first binding', 'said while no agent was bound', 'said after the rejoin',
+    ]);
+  });
+
   it('finishes an activation whose grant was consumed before the binding was recorded', async () => {
     const w = await world();
     const agent = await issue(w, 'session-crash');
