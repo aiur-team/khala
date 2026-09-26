@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   SUPPORTED, approveCodexHooksNatively, confirmed, createMachine, filesBelow, holdProbe, harnessCalls,
-  installHarness, installTarball, khala, khalaAsync, machineEnvironment, packedTarball, removeHarness,
+  installHarness, installTarball, khala, khalaAsync, machineEnvironment, packedTarball, removeHarness, removeScratch,
   repackAtVersion, repositoryRoot, sha256, snapshot, writeDescriptor,
 } from './harness.mjs';
 
@@ -63,7 +63,10 @@ before(() => {
   v2 = installTarball(repackAtVersion(packed.tarball, '0.2.0-acceptance.1'));
 });
 
-after(() => packed?.cleanup());
+after(() => {
+  packed?.cleanup();
+  if (!process.env.KHALA_SETUP_KEEP) removeScratch();
+});
 
 describe('packaged install', () => {
   test('the tarball installs and runs outside the repository on the pinned Node', t => {

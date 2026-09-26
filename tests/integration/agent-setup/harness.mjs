@@ -28,7 +28,18 @@ function outsideRepository() {
   return candidate === repository || candidate.startsWith(repository + path.sep) ? '/tmp' : candidate;
 }
 
-export const scratch = prefix => fs.realpathSync(fs.mkdtempSync(path.join(outsideRepository(), prefix)));
+const scratchRoots = [];
+
+export function scratch(prefix) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(outsideRepository(), prefix)));
+  scratchRoots.push(root);
+  return root;
+}
+
+/** Removes every prefix, repack, and synthetic machine this process created. */
+export function removeScratch() {
+  for (const root of scratchRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', ...options });
