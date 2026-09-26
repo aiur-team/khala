@@ -14,7 +14,7 @@ const binding = (harness: string) => ({ harness } as SessionBinding);
 
 function environment(input: Readonly<{ version?: string | null; config?: string | null; runs?: string[] }>): SetupEnvironment {
   const files: Record<string, string | null> = {
-    [HOOKS_PATH]: JSON.stringify(codexHooksFragment()),
+    [HOOKS_PATH]: JSON.stringify(codexHooksFragment('/home/user/.local/share/khala/bin/khala')),
     [`${CODEX_HOME}/config.toml`]: input.config ?? null,
   };
   return {
