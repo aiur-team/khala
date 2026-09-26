@@ -136,14 +136,19 @@ export type PrecheckResult =
   | Readonly<{ kind: 'skip' }>;
 
 /**
- * Whether an arrival on this binding may wake the dispatcher: only an unpaused, usable policy whose
- * effective mode is `steer` or `sync`. An `async` arrival only persists.
+ * The mode an arrival on this binding may wake the dispatcher, or null: only an
+ * unpaused, usable policy whose effective mode equals the requested one and is `steer` or `sync`.
+ * An `async` arrival only persists. Read from the ledger, never from a caller.
  */
-export function wakeable(tx: DispatchTx, job: UnverifiedReleasedJob): boolean {
+export function wakeMode(tx: DispatchTx, job: UnverifiedReleasedJob): 'steer' | 'sync' | null {
   const policy = tx.policy(job.binding.bindingId);
-  if (!usablePolicy(policy) || policy.paused) return false;
+  if (!usablePolicy(policy) || policy.paused) return null;
   const mode = dispatchMode(policy.listening);
-  return mode === 'steer' || mode === 'sync';
+  return mode === 'steer' || mode === 'sync' ? mode : null;
+}
+
+export function wakeable(tx: DispatchTx, job: UnverifiedReleasedJob): boolean {
+  return wakeMode(tx, job) !== null;
 }
 
 /**
