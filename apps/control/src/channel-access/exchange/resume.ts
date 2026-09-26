@@ -8,7 +8,6 @@
 
 import type {
   CallOptions,
-  ControlStore,
   DeviceId,
   GrantExchangeRejection,
   OperationResult,
@@ -16,10 +15,33 @@ import type {
   StableAgentPrincipal,
   TrustedClock,
 } from '@khala/contracts/messaging/index';
-import { exchangeJournal } from '@khala/messaging/channel-access/exchange/journal';
 import type { AdapterAction, AdapterCapabilities } from '../../agent-bootstrap/handler';
 import type { GrantExchangeAuthority } from './authority';
 import type { ExchangeGrantIssuer } from './grants';
+
+/** The part of the exchange record resume reads; the composition root supplies the journal. */
+export type ResumableExchange = Readonly<{
+  operationId: string;
+  requester: StableAgentPrincipal;
+  origin: string;
+  sessionGeneration: number;
+  sessionFingerprint: string;
+  deviceId: DeviceId;
+  proofKeyThumbprint: string;
+  expiresAt: string;
+  phase: 'bound' | 'admitting' | 'admitted' | 'sealed' | 'acknowledged' | 'closed';
+  closed: 'expired' | 'closed' | null;
+}>;
+
+export type ChannelAccessResumeJournal = Readonly<{
+  load(
+    identity: Readonly<{ requester: string; origin: string; operationId: string }>,
+    options?: CallOptions,
+  ): Promise<
+    | Readonly<{ kind: 'absent' | 'unavailable' }>
+    | Readonly<{ kind: 'found'; stored: Readonly<{ key: string; record: ResumableExchange }> }>
+  >;
+}>;
 
 export type ChannelAccessResumeRequest = Readonly<{
   v: 1;
@@ -48,13 +70,13 @@ export type ChannelAccessResumeService = Readonly<{
 }>;
 
 export function createChannelAccessResumeService(deps: Readonly<{
-  store: ControlStore;
+  journal: ChannelAccessResumeJournal;
   authority: GrantExchangeAuthority;
   issuer: Pick<ExchangeGrantIssuer, 'wasRedeemed'>;
   bindings: Pick<AdapterCapabilities, 'resumeAdapterCapability'>;
   clock: TrustedClock;
 }>): ChannelAccessResumeService {
-  const journal = exchangeJournal(deps.store);
+  const { journal } = deps;
 
   async function resume(
     input: ChannelAccessResumeRequest,
@@ -63,7 +85,7 @@ export function createChannelAccessResumeService(deps: Readonly<{
   ): Promise<ChannelAccessResumeResult> {
     const loaded = await journal.load(input, options);
     if (loaded.kind === 'unavailable') return unavailable();
-    if (loaded.kind === 'absent') return rejected('operation_mismatch');
+    if (loaded.kind !== 'found') return rejected('operation_mismatch');
     const { key, record } = loaded.stored;
     if (record.sessionGeneration !== input.sessionGeneration) return rejected('wrong_generation');
     if (record.deviceId !== input.deviceId) return rejected('wrong_device');

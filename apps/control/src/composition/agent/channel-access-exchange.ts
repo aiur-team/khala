@@ -7,6 +7,7 @@ import type {
   ControlStore,
   TrustedClock,
 } from '@khala/contracts/messaging/index';
+import { exchangeJournal } from '@khala/messaging/channel-access/exchange/journal';
 import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-access/exchange/ports';
 import { createGrantExchangeService } from '@khala/messaging/channel-access/exchange/service';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
@@ -42,7 +43,7 @@ export function composeChannelAccessExchange(deps: Readonly<{
     clock: deps.clock,
   });
   const resume = createChannelAccessResumeService({
-    store: deps.store,
+    journal: exchangeJournal(deps.store),
     authority,
     issuer,
     bindings: deps.bindings,
