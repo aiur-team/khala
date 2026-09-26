@@ -128,7 +128,10 @@ optional display text; the owner sees them marked as untrusted.
   channel-create intent. It cannot send, read, decide a request, create a
   channel, change visibility or the allowlist, or exchange a grant. Only a
   request that also carries a fresh DPoP proof signed by the connector key can
-  exchange an approved request for its sealed grant.
+  exchange an approved request for its sealed grant
+  (`POST /api/connector/channel-access-requests/<operation>/exchange`) or
+  acknowledge readiness after local activation (`.../<operation>/ready`), which
+  marks the request `connected`.
 - The server stores only a digest of the capability, so it survives a restart
   of the same channel. Requests are bound to the loopback origin, so a resume on
   a different port closes them.

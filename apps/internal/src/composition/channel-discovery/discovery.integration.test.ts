@@ -374,6 +374,23 @@ describe('internal channel discovery', () => {
     expect(w.handle.read(db => db.prepare('SELECT count(*) AS n FROM bindings WHERE participant_id = ?').get(`participant_${agent.principal}`))).toEqual({ n: 0 });
     expect((await accessStatus(w, agent, 'op-1')).json.outcome).toBe('connecting');
     expect((await accessStatus(w, agent, 'op-1')).text).not.toContain(first.json.ciphertext);
+
+    // Readiness after local activation is also connector-only, then ends envelope recovery.
+    const readyUrl = `${w.server.origin}/api/connector/channel-access-requests/op-1/ready`;
+    const readiness = {
+      v: 1, operationId: 'op-1', requester: agent.principal, origin: w.server.origin, sessionGeneration: agent.generation,
+      deviceId: body.deviceId, proofKeyThumbprint: body.proofKey.thumbprint, recipientKeyThumbprint: body.encryptionKey.thumbprint,
+    };
+    const ready = (headers: Record<string, string>) => call(w.server.port, {
+      method: 'POST', path: '/api/connector/channel-access-requests/op-1/ready', headers: { ...bearer(agent), ...headers }, body: readiness,
+    });
+    expect((await ready({})).status).toBe(401);
+    const acknowledged = await ready({ dpop: proof(w, agent, readyUrl) });
+    expect([acknowledged.status, acknowledged.json]).toEqual([200, { v: 1, operationId: 'op-1', outcome: 'connected' }]);
+    expect((await accessStatus(w, agent, 'op-1')).json.outcome).toBe('connected');
+    expect((await ready({ dpop: proof(w, agent, readyUrl) })).status).toBe(200);
+    // The envelope is gone once readiness is acknowledged.
+    expect((await exchangeCall(w, agent, 'op-1', body, proof(w, agent, url))).status).toBe(410);
   });
 
   it('keeps visibility, allowlists, pending decisions and exchange recovery across restart', async () => {

@@ -337,6 +337,18 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       return exchange.forConnector({ sessionFingerprint: stored.sessionDigest }).exchange(validated.request);
     },
 
+    async acknowledge(agent, operationId, readiness) {
+      const stored = currentAgent(agent.principal, agent.generation);
+      if (typeof stored !== 'object') return { kind: 'rejected', code: 'closed' };
+      // Every asserted field must match the authenticated connector; the proof key signed this request.
+      if (readiness.operationId !== operationId) return { kind: 'rejected', code: 'operation_mismatch' };
+      if (readiness.requester !== agent.principal) return { kind: 'rejected', code: 'wrong_requester' };
+      if (readiness.origin !== agent.origin) return { kind: 'rejected', code: 'wrong_origin' };
+      if (readiness.sessionGeneration !== agent.generation) return { kind: 'rejected', code: 'wrong_generation' };
+      if (readiness.proofKeyThumbprint !== stored.proofThumbprint) return { kind: 'rejected', code: 'proof_mismatch' };
+      return exchange.forConnector({ sessionFingerprint: stored.sessionDigest }).acknowledge(readiness);
+    },
+
     async inbox(principal) {
       if (!isOwner(principal)) return [];
       const result = await access.decisions.inbox(owner);

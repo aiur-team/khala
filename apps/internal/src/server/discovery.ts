@@ -1,10 +1,10 @@
 import { type KeyObject, createHash, createPublicKey, timingSafeEqual, verify } from 'node:crypto';
 import {
-  type AccessRequestStatus, type ChannelAccessDecisionCommand, type ChannelAccessDecisionRejection,
+  type AccessRequestStatus, type ChannelAccessDecisionCommand, type ChannelAccessReadiness, type ChannelAccessDecisionRejection,
   type ChannelAccessMuteCommand, type ChannelAccessMuteResult, type ChannelAccessOwnerProjection, type ChannelAccessRequest,
   type ChannelAccessStatusQuery, type ChannelCreateIntent, type ChannelListingPage, type GrantExchangeRejection,
   type GrantExchangeRequest, type OperationResult, type SealedGrantEnvelope, decodeChannelAccessDecisionCommand,
-  decodeChannelAccessMuteCommand, decodeChannelAccessRequest, decodeChannelCreateIntent, decodeGrantExchangeRequest,
+  decodeChannelAccessMuteCommand, decodeChannelAccessReadiness, decodeChannelAccessRequest, decodeChannelCreateIntent, decodeGrantExchangeRequest,
 } from '@khala/contracts/messaging/index';
 import type { DiscoveryIdentity, HumanAuthority, Principal } from './credentials';
 import { type ErrorCode, readJsonObject, sendError, sendJson } from './http';
@@ -92,6 +92,12 @@ export interface InternalDiscoveryPort {
     operationId: string,
     request: GrantExchangeRequest,
   ): Promise<OperationResult<SealedGrantEnvelope, GrantExchangeRejection>>;
+  /** Connector readiness after local activation: marks the request `connected` and ends envelope recovery. */
+  acknowledge(
+    agent: DiscoveryAgentContext,
+    operationId: string,
+    readiness: ChannelAccessReadiness,
+  ): Promise<OperationResult<null, GrantExchangeRejection>>;
   inbox(human: HumanAuthority): Promise<readonly ChannelAccessOwnerProjection[] | 'unavailable'>;
   decide(human: HumanAuthority, command: ChannelAccessDecisionCommand, kind: 'access' | 'create'):
     Promise<OperationResult<ChannelAccessOwnerProjection, ChannelAccessDecisionRejection>>;
@@ -124,6 +130,10 @@ export const DISCOVERY_ROUTES = {
     method: 'POST', path: '/api/connector/channel-access-requests/:operationId/exchange',
     template: '/api/connector/channel-access-requests/:operation/exchange', admission: 'authenticated',
   },
+  ready: {
+    method: 'POST', path: '/api/connector/channel-access-requests/:operationId/ready',
+    template: '/api/connector/channel-access-requests/:operation/ready', admission: 'authenticated',
+  },
   inbox: { method: 'GET', path: '/api/human/channel-requests', admission: 'authenticated' },
   accessDecision: { method: 'POST', path: '/api/human/channel-access-requests/:requestHandle/decision', admission: 'authenticated' },
   createDecision: { method: 'POST', path: '/api/human/channel-create-requests/:requestHandle/decision', admission: 'authenticated' },
@@ -142,6 +152,7 @@ const ROLES = new Map<RouteSpec, DiscoveryRole>([
   [DISCOVERY_ROUTES.requestCreate, 'discovery'],
   [DISCOVERY_ROUTES.createStatus, 'discovery'],
   [DISCOVERY_ROUTES.exchange, 'discovery'],
+  [DISCOVERY_ROUTES.ready, 'discovery'],
   [DISCOVERY_ROUTES.inbox, 'human'],
   [DISCOVERY_ROUTES.accessDecision, 'human'],
   [DISCOVERY_ROUTES.createDecision, 'human'],
@@ -361,9 +372,8 @@ export function createDiscoveryRoutes(deps: Readonly<{
     sendStatus(context, await port.status(agentOf(context), { v: 1, operationId, operationKind }));
   }
 
-  async function exchange(context: RouteContext<Principal>): Promise<void> {
-    const agent = agentOf(context);
-    const operationId = context.params.operationId!;
+  /** A discovery capability alone never reaches a connector route: the connector key must sign. */
+  function connectorProven(context: RouteContext<Principal>, agent: DiscoveryAgentContext): boolean {
     const authorization = context.request.headers.authorization ?? '';
     const accessToken = authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : '';
     const proofs = context.request.headersDistinct[DPOP_HEADER];
@@ -371,11 +381,23 @@ export function createDiscoveryRoutes(deps: Readonly<{
     const jti = proofs?.length === 1 ? checkProof(proofs[0], {
       method: 'POST', url: `${agent.origin}${context.request.url}`, jkt: agent.proofThumbprint, accessToken, nowMs: now,
     }) : null;
-    // A discovery capability alone never reaches the exchange: the connector key must sign.
     if (jti === null || !rememberProof(jti, now)) {
       rejected(context, 401, 'proof_required');
-      return;
+      return false;
     }
+    return true;
+  }
+
+  function sendGrantRejection(context: RouteContext<Principal>, code: GrantExchangeRejection): void {
+    if (code === 'expired' || code === 'closed') rejected(context, 410, code);
+    else if (GRANT_CONFLICTS.has(code)) rejected(context, 409, code);
+    else sendUnavailable(context, true);
+  }
+
+  async function exchange(context: RouteContext<Principal>): Promise<void> {
+    const agent = agentOf(context);
+    const operationId = context.params.operationId!;
+    if (!connectorProven(context, agent)) return;
     const decoded = decodeGrantExchangeRequest(await readJsonObject(context, deps.maxBodyBytes));
     if (!decoded.ok) {
       fail(context, 400, 'invalid_request');
@@ -383,11 +405,23 @@ export function createDiscoveryRoutes(deps: Readonly<{
     }
     const result = await port.exchange(agent, operationId, decoded.value);
     if (result.kind === 'ok') sendJson(context.response, 200, result.value);
-    else if (result.kind === 'rejected') {
-      if (result.code === 'expired' || result.code === 'closed') rejected(context, 410, result.code);
-      else if (GRANT_CONFLICTS.has(result.code)) rejected(context, 409, result.code);
-      else sendUnavailable(context, true);
-    } else sendUnavailable(context, true);
+    else if (result.kind === 'rejected') sendGrantRejection(context, result.code);
+    else sendUnavailable(context, true);
+  }
+
+  async function ready(context: RouteContext<Principal>): Promise<void> {
+    const agent = agentOf(context);
+    const operationId = context.params.operationId!;
+    if (!connectorProven(context, agent)) return;
+    const decoded = decodeChannelAccessReadiness(await readJsonObject(context, deps.maxBodyBytes));
+    if (!decoded.ok) {
+      fail(context, 400, 'invalid_request');
+      return;
+    }
+    const result = await port.acknowledge(agent, operationId, decoded.value);
+    if (result.kind === 'ok') sendJson(context.response, 200, { v: 1, operationId, outcome: 'connected' });
+    else if (result.kind === 'rejected') sendGrantRejection(context, result.code);
+    else sendUnavailable(context, true);
   }
 
   async function inbox(context: RouteContext<Principal>): Promise<void> {
@@ -461,6 +495,7 @@ export function createDiscoveryRoutes(deps: Readonly<{
         case DISCOVERY_ROUTES.requestCreate: return requestCreate(context);
         case DISCOVERY_ROUTES.createStatus: return status(context, 'create');
         case DISCOVERY_ROUTES.exchange: return exchange(context);
+        case DISCOVERY_ROUTES.ready: return ready(context);
         case DISCOVERY_ROUTES.inbox: return inbox(context);
         case DISCOVERY_ROUTES.accessDecision: return decide(context, 'access');
         case DISCOVERY_ROUTES.createDecision: return decide(context, 'create');
