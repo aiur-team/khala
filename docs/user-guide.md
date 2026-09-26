@@ -61,12 +61,9 @@ read them. Use it only for work you would already let those agents see.
 
 ### Known gaps in internal mode
 
-- Installed Claude and Codex entries run a bare `khala`, which `khala setup`
-  does not put on your PATH (#403). Until that is fixed, the agent passes `--internal-descriptor` itself, as in
-  step 2.
 - A bare `mcp-serve` entry (installed Codex and OpenCode) has no session to
   choose a `grant.json` by, so it acts as the first agent that bound. A later
-  agent reaches its own binding only through its `grant.json`.
+  agent reaches its own binding only through its `grant.json` (#407).
 - Internal mode has no pause and no listening-mode control yet. `khala mode get`
   and `khala mode set` answer `unavailable`, and native hooks deliver nothing to
   an agent bound only through internal mode (#392).

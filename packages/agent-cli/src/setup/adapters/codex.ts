@@ -9,7 +9,7 @@
 // upgrade, and removal never write or delete a trust byte. `hooks.json` stays whole-file
 // managed; Codex never rewrites it, and removal restores its byte-exact preimage.
 import path from 'node:path';
-import { CODEX_HOOK_COMMAND, codexHookReviewState, codexHooksFragment } from '../../codex/hooks-config.js';
+import { codexHookCommand, codexHookReviewState, codexHooksFragment } from '../../codex/hooks-config.js';
 import { CODEX_HOOK_EVENTS } from '../../codex/hook.js';
 import { plainObject } from '../../cli/validation.js';
 import { codexAppSetupEntries } from '../../composition/codex-app.js';
@@ -35,7 +35,7 @@ export type CodexPaths = Readonly<{
   skill: string;
   hooks: string;
   config: string;
-  /** The stable installer-owned launcher the MCP entry runs; it never moves across upgrades. */
+  /** The stable installer-owned launcher the MCP entry and hooks run; it never moves across upgrades. */
   launcher: string;
 }>;
 
@@ -140,15 +140,15 @@ function parseHooks(text: string): HooksDocument | null {
   return value as HooksDocument;
 }
 
-function hasKhalaHandler(document: HooksDocument): boolean {
+function hasKhalaHandler(document: HooksDocument, command: string): boolean {
   return Object.values(document.hooks ?? {}).some(groups => Array.isArray(groups) && groups.some(group =>
     plainObject(group) && Array.isArray(group.hooks) && group.hooks.some(handler =>
-      plainObject(handler) && handler.command === CODEX_HOOK_COMMAND)));
+      plainObject(handler) && handler.command === command)));
 }
 
 /** Appends Khala's groups after the person's own, so their trust positions never move. */
-export function withKhalaHooks(document: HooksDocument | null): string {
-  const fragment = codexHooksFragment().hooks;
+export function withKhalaHooks(document: HooksDocument | null, launcher: string): string {
+  const fragment = codexHooksFragment(launcher).hooks;
   const hooks: Record<string, unknown> = { ...(document?.hooks ?? {}) };
   for (const event of CODEX_HOOK_EVENTS) {
     hooks[event] = [...((hooks[event] as unknown[] | undefined) ?? []), ...fragment[event]];
@@ -211,8 +211,9 @@ function skillState(target: Target, directory: readonly string[] | null, desired
   return 'absent';
 }
 
-function hooksState(target: Target, config: Target, diagnostics: SetupDiagnostic[]): ComponentState {
+function hooksState(target: Target, config: Target, launcher: string, diagnostics: SetupDiagnostic[]): ComponentState {
   const content = text(target.bytes);
+  const command = codexHookCommand(launcher);
   if (target.managed === undefined) {
     if (target.bytes === null) return 'absent';
     const document = content === null ? null : parseHooks(content);
@@ -220,15 +221,15 @@ function hooksState(target: Target, config: Target, diagnostics: SetupDiagnostic
       diagnostics.push(diagnostic('codex_hooks_unparseable', `${target.path} is not hook configuration Khala can extend.`, 'hooks'));
       return 'conflict';
     }
-    if (hasKhalaHandler(document)) {
-      diagnostics.push(diagnostic('codex_hooks_unowned', `${target.path} already runs \`${CODEX_HOOK_COMMAND}\` outside Khala setup.`, 'hooks'));
+    if (hasKhalaHandler(document, command)) {
+      diagnostics.push(diagnostic('codex_hooks_unowned', `${target.path} already runs \`${command}\` outside Khala setup.`, 'hooks'));
       return 'conflict';
     }
     return 'absent';
   }
   if (target.hash !== target.managed.postimage || content === null) return 'drifted';
   const review = codexHookReviewState({
-    hooksPath: target.path, hooksJson: JSON.parse(content) as unknown, configToml: text(config.bytes),
+    hooksPath: target.path, hooksJson: JSON.parse(content) as unknown, configToml: text(config.bytes), launcher,
   });
   if (review.state === 'trusted') return 'ready';
   diagnostics.push({ ...diagnostic('codex_hook_review', review.reason, 'hooks'), severity: 'info' });
@@ -304,7 +305,7 @@ function planSetup(inspection: CodexInspection, assets: CodexSetupAssets): Codex
     const document = hooks.bytes === null ? null : parseHooks(text(hooks.bytes)!);
     operations.push({
       id: 'codex:hooks:set', harness: 'codex', component: 'hooks', path: hooks.path, type: 'config_entry_set',
-      entry: CODEX_HOOKS_ENTRY, preimage: hooks.hash, postimage: put(encoder.encode(withKhalaHooks(document))),
+      entry: CODEX_HOOKS_ENTRY, preimage: hooks.hash, postimage: put(encoder.encode(withKhalaHooks(document, paths.launcher))),
     });
   }
   if (state('mcp_entry') === 'absent') {
@@ -397,7 +398,7 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
       const skillDirectory = await environment.probe.listDirectory(path.dirname(paths.skill));
       const components: Component[] = [
         { component: 'skill', state: skillState(skill, skillDirectory, desiredSkill) },
-        { component: 'hooks', state: hooksState(hooks, config, diagnostics) },
+        { component: 'hooks', state: hooksState(hooks, config, paths.launcher, diagnostics) },
         { component: 'mcp_entry', state: mcpState(config, codexMcpBlock(paths.launcher), diagnostics) },
       ];
       if (detection.executable !== null && !detection.supported) {

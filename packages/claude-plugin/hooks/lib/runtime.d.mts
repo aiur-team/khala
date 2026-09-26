@@ -33,6 +33,7 @@ export function describeDelivery(input: Readonly<{
   watcher?: string | null;
 }>): Readonly<Record<'steer' | 'sync' | 'async' | 'idle' | 'acknowledgement', string>>;
 export function readWatcher(deps: HookDependencies, sessionId: string): Promise<string | null>;
-export function defaultDependencies(env?: Readonly<Record<string, string | undefined>>): HookDependencies;
+export function defaultDependencies(env?: Readonly<Record<string, string | undefined>>, command?: string): HookDependencies;
+export function launcherArgument(value: unknown): string;
 export function runHook(role: HookRole, raw: string, deps: HookDependencies): Promise<HookResult>;
 export function main(role: HookRole): Promise<void>;

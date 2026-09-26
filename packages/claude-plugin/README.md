@@ -28,6 +28,14 @@ next Khala call (`khala_send`, `khala_read`, `khala_status` or a mode call). The
 runtime never sees a token, reads or acknowledges the inbox, deduplicates, or
 takes a lock of its own.
 
+The files here are the packaged form, which names a bare `node` and `khala`.
+`khala setup` installs `.mcp.json` and `hooks/hooks.json` with absolute paths
+instead, because it puts neither on PATH. The MCP entry runs the staged launcher
+`$XDG_DATA_HOME/khala/bin/khala`. Each hook runs the Node that ran setup and passes
+the launcher as its one argument, which the runtime then uses in place of
+`khala`. Loaded unrendered, as with `--plugin-dir`, the hooks and MCP entry look
+both up on PATH.
+
 | Hook | `steer` | `sync` (default) | `async` |
 |---|---|---|---|
 | `PostToolUse` | pulls; the batch is `additionalContext` | nothing | nothing |
@@ -111,7 +119,7 @@ is the source; `validatePlugin` enforces it.
 | Hook events | synchronous `UserPromptSubmit` (claim hook), `PostToolUse`, `Stop`, `SessionEnd`; the idle watcher is a second `Stop` entry and the only hook allowed `asyncRewake` (#178 amendment) |
 | Hook commands | `hooks/post-tool-use.mjs`, `hooks/stop.mjs`, `hooks/stop-watcher.mjs`, `hooks/session-end.mjs` |
 | Skill and commands | skill `khala`; exact forms `/khala send`, `/khala read`, `/khala create`, `/khala join <channel-url>`, `/khala who` |
-| MCP entry | server `khala`, launched as `khala mcp-serve`; tools `khala_send`, `khala_read`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_channel_access_status`, `khala_list_agents` |
+| MCP entry | server `khala`, launched as `khala mcp-serve` (the staged launcher by absolute path once installed); tools `khala_send`, `khala_read`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_channel_access_status`, `khala_list_agents` |
 
 The command and tool lists are the full planned set from decisions 24 and 30 and
 the claude-plugin, room-discovery and listening-modes contracts. Later tickets

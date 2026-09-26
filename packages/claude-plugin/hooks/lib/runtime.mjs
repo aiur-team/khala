@@ -106,13 +106,17 @@ export function describeDelivery(input) {
   };
 }
 
-/** Production dependencies: the installed `khala` binary on PATH and the XDG state directory. */
-export function defaultDependencies(env = process.env) {
+/**
+ * Production dependencies: the `khala` command and the XDG state directory. Setup installs
+ * each hook with the staged launcher's absolute path as its argument, so an installed hook
+ * never looks `khala` up on PATH. Only the unrendered source plugin falls back to PATH.
+ */
+export function defaultDependencies(env = process.env, command = 'khala') {
   const stateHome = env.XDG_STATE_HOME && path.isAbsolute(env.XDG_STATE_HOME)
     ? env.XDG_STATE_HOME : path.join(os.homedir(), '.local/state');
   const parent = process.ppid;
   return {
-    khala: (op, sessionId) => runKhala(op, sessionId),
+    khala: (op, sessionId) => runKhala(command, op, sessionId),
     stateRoot: path.join(stateHome, 'khala', 'claude-hooks'),
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     now: () => Date.now(),
@@ -136,9 +140,9 @@ function processAlive(pid) {
  * body ever travels in argv or the environment, and stdin is closed. Error text is
  * never forwarded, only whether the call answered.
  */
-function runKhala(op, sessionId) {
+function runKhala(command, op, sessionId) {
   return new Promise(resolve => {
-    execFile('khala', ['claude', op, '--session', sessionId], {
+    execFile(command, ['claude', op, '--session', sessionId], {
       encoding: 'utf8', timeout: KHALA_CALL_TIMEOUT_MS, maxBuffer: MAX_FRAME_BYTES * 2, windowsHide: true,
     }, (error, stdout) => {
       resolve({ code: error ? (typeof error.code === 'number' ? error.code : -1) : 0, stdout: typeof stdout === 'string' ? stdout : '' });
@@ -394,6 +398,11 @@ async function watch(input, state, deps) {
   return { stdout: '', stderr: '', exitCode: 0 };
 }
 
+/** The launcher an installed hook command passes; anything but an absolute path means PATH. */
+export function launcherArgument(value) {
+  return typeof value === 'string' && path.isAbsolute(value) ? value : 'khala';
+}
+
 /** The shared entry point each hook script calls. */
 export async function main(role) {
   const chunks = [];
@@ -403,7 +412,7 @@ export async function main(role) {
     if (size > MAX_INPUT_BYTES) break;
     chunks.push(chunk);
   }
-  const result = await runHook(role, Buffer.concat(chunks).toString('utf8'), defaultDependencies());
+  const result = await runHook(role, Buffer.concat(chunks).toString('utf8'), defaultDependencies(process.env, launcherArgument(process.argv[2])));
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
   process.exitCode = result.exitCode;

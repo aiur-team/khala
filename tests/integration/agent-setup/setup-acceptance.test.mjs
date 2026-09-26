@@ -4,11 +4,12 @@
 // end across mixed harness states. See README.md in this directory.
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { parse as parseToml } from 'smol-toml';
 import {
   SUPPORTED, approveCodexHooksNatively, confirmed, createMachine, filesBelow, holdProbe, harnessCalls,
   installHarness, installTarball, khala, khalaAsync, machineEnvironment, packedTarball, removeHarness, removeScratch,
@@ -411,6 +412,21 @@ describe('concurrency and interruption', () => {
   });
 });
 
+// Two loopback servers stand in for two launches of the internal server. Each records the
+// requests it receives; a request carrying the current credential proves the entry re-read
+// the moved descriptor rather than any value captured at setup.
+async function launches() {
+  const requests = [];
+  const servers = await Promise.all([0, 1].map(index => new Promise(resolve => {
+    const server = http.createServer((request, response) => {
+      requests.push({ index, headers: JSON.stringify(request.headers) });
+      response.writeHead(503).end();
+    });
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  })));
+  return { requests, servers, close: () => { for (const server of servers) server.close(); } };
+}
+
 describe('runtime descriptor and secrets', () => {
   function sentinelDescriptor(install) {
     // A port whose spelling appears nowhere in the installed package, so a hit is a leak.
@@ -477,21 +493,6 @@ describe('runtime descriptor and secrets', () => {
     assert.equal(fs.existsSync(manifest), false);
   });
 
-  // Two loopback servers stand in for two launches of the internal server. Each records the
-  // requests it receives; a request carrying the current credential proves the entry re-read
-  // the moved descriptor rather than any value captured at setup.
-  async function launches() {
-    const requests = [];
-    const servers = await Promise.all([0, 1].map(index => new Promise(resolve => {
-      const server = http.createServer((request, response) => {
-        requests.push({ index, headers: JSON.stringify(request.headers) });
-        response.writeHead(503).end();
-      });
-      server.listen(0, '127.0.0.1', () => resolve(server));
-    })));
-    return { requests, servers, close: () => { for (const server of servers) server.close(); } };
-  }
-
   // Runs a staged entry until it exits or a second passes, then stops it.
   async function runEntry(machine, args, env = {}) {
     const launcher = path.join(machine.home, '.local', 'share', 'khala', 'bin', 'khala');
@@ -542,4 +543,154 @@ describe('runtime descriptor and secrets', () => {
   // Codex `mcp_servers.khala` and OpenCode `mcp.khala` both run the launcher's bare `mcp-serve`.
   test('the Codex and OpenCode MCP entry resolves a moved runtime descriptor', () =>
     assertFollowsMovedDescriptor(['mcp-serve'], { granted: true }));
+});
+
+// Every installed entry runs exactly as its harness config writes it. The machine's PATH holds
+// neither `khala` nor `node`, so an entry that looks either up on PATH fails here (#403).
+describe('installed entries', () => {
+  const dataHome = machine => path.join(machine.home, '.local', 'share', 'khala');
+
+  function claudePluginRoot(machine) {
+    const versions = path.join(dataHome(machine), 'versions');
+    const [version, ...others] = fs.readdirSync(versions);
+    assert.deepEqual(others, [], 'one staged version');
+    return path.join(versions, version, 'claude', 'marketplace', 'plugins', 'khala');
+  }
+
+  const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
+  const handlers = hooks => Object.entries(hooks).flatMap(([event, groups]) =>
+    groups.flatMap(group => group.hooks.map(handler => ({ event, command: handler.command }))));
+
+  /** The MCP entries and hook commands the configured harnesses hold, read back as installed. */
+  function installedEntries(machine) {
+    const pluginRoot = claudePluginRoot(machine);
+    const claudeMcp = readJson(path.join(pluginRoot, '.mcp.json')).mcpServers.khala;
+    const entries = {
+      pluginRoot,
+      mcp: { claude: { command: claudeMcp.command, args: claudeMcp.args, env: claudeMcp.env } },
+      claudeHooks: handlers(readJson(path.join(pluginRoot, 'hooks', 'hooks.json')).hooks),
+      codexHooks: [],
+    };
+    const codexConfig = path.join(machine.home, '.codex', 'config.toml');
+    if (fs.existsSync(codexConfig)) {
+      const codexMcp = parseToml(fs.readFileSync(codexConfig, 'utf8')).mcp_servers.khala;
+      entries.mcp.codex = { command: codexMcp.command, args: codexMcp.args, env: codexMcp.env ?? {} };
+      entries.codexHooks = handlers(readJson(path.join(machine.home, '.codex', 'hooks.json')).hooks)
+        .filter(handler => handler.command.endsWith(' codex-hook'));
+    }
+    const openCodeConfig = path.join(machine.home, '.config', 'opencode', 'opencode.json');
+    if (fs.existsSync(openCodeConfig)) {
+      const [command, ...args] = readJson(openCodeConfig).mcp.khala.command;
+      entries.mcp.opencode = { command, args, env: {} };
+    }
+    return entries;
+  }
+
+  /**
+   * Runs one process until it exits, `until(stdout)` holds, or `ms` passes, then stops it. A hook
+   * gets its whole `input` and EOF, as its harness sends it; an MCP session keeps stdin open.
+   */
+  async function runProcess(command, args, env, { input, ms, until = null }) {
+    // Its own process group, so stopping it also stops what a hook shell started.
+    const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    child.stdin.on('error', () => {});
+    let stdout = '';
+    let stderr = '';
+    let settle;
+    const settled = new Promise(resolve => { settle = resolve; });
+    // A command that does not exist emits `error` and never `exit`.
+    const exited = new Promise(resolve => {
+      child.once('exit', (code, signal) => { resolve({ code, signal }); settle(); });
+      child.once('error', error => { resolve({ code: null, signal: null, error: error.code }); settle(); });
+    });
+    child.stdout.on('data', chunk => { stdout += chunk; if (until?.(stdout)) settle(); });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    if (until === null) child.stdin.end(input); else child.stdin.write(input);
+    await Promise.race([settled, new Promise(resolve => setTimeout(resolve, ms))]);
+    child.stdin.end();
+    if (child.pid !== undefined) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } }
+    return { ...(await exited), stdout, stderr };
+  }
+
+  const INITIALIZE = `${JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'acceptance', version: '0' } },
+  })}\n`;
+  const initialized = stdout => stdout.split('\n').some(line => { try { return JSON.parse(line).id === 1; } catch { return false; } });
+
+  async function assertEntriesResolve(harnesses) {
+    const machine = createMachine(harnesses);
+    assert.equal(confirmed(v1, machine, 'setup').applied.status, 0);
+    const entries = installedEntries(machine);
+    assert.deepEqual(Object.keys(entries.mcp), Object.keys(harnesses));
+    const launcher = path.join(dataHome(machine), 'bin', 'khala');
+    for (const entry of Object.values(entries.mcp)) assert.equal(entry.command, launcher);
+    assert.equal(entries.claudeHooks.length, 5);
+    assert.deepEqual(entries.codexHooks.map(handler => handler.event),
+      harnesses.codex === undefined ? [] : ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop']);
+    const env = machineEnvironment(machine);
+    for (const name of ['khala', 'node']) {
+      for (const directory of env.PATH.split(':')) assert.ok(!fs.existsSync(path.join(directory, name)), `${name} is on the machine PATH`);
+    }
+
+    const { requests, servers, close } = await launches();
+    const transportCapability = randomBytes(32).toString('base64url');
+    const bindingCapability = randomBytes(32).toString('base64url');
+    writeDescriptor(machine, {
+      v: 1, channelId: `ch_${'b'.repeat(16)}`, origin: `http://127.0.0.1:${servers[0].address().port}`, transportCapability,
+      grantRef: 'grant-0', bindingId: 'binding-0', bindingCapability,
+    });
+    const since = count => requests.slice(count).map(request => request.headers);
+    try {
+      // MCP entries are spawned directly, command and args as written, with the entry's env.
+      for (const [harness, entry] of Object.entries(entries.mcp)) {
+        const before = requests.length;
+        const result = await runProcess(entry.command, entry.args, { ...env, ...entry.env }, { input: INITIALIZE, ms: 3_000, until: initialized });
+        assert.equal(result.error, undefined, `${harness} MCP entry ${entry.command} did not start`);
+        const reached = since(before);
+        if (harness === 'claude') {
+          // The Claude entry holds no binding, so it serves its session tools and answers.
+          assert.ok(initialized(result.stdout), `the Claude MCP entry never answered initialize: ${result.stderr}`);
+          // #402: it never composes the default-descriptor internal client or delivery, so the
+          // granted launch's binding credential is never presented.
+          assert.ok(reached.every(headers => !headers.includes(bindingCapability)), 'the Claude MCP entry presented the binding credential');
+        } else {
+          // Against the stand-in launch it exits `not_connected`, after presenting the credential.
+          assert.ok(reached.some(headers => headers.includes(bindingCapability)), `${harness} MCP entry never reached the granted launch: ${result.stderr}`);
+        }
+      }
+
+      // Hook commands run through `sh -c`, as Claude and Codex run them.
+      // A watcher's wake marker, so UserPromptSubmit asks Khala too (the runtime's `sessionState`).
+      const session = createHash('sha256').update('acceptance').digest('hex').slice(0, 32);
+      const hookState = path.join(machine.home, '.local', 'state', 'khala', 'claude-hooks', session);
+      for (const hook of entries.claudeHooks) {
+        const before = requests.length;
+        if (hook.event === 'UserPromptSubmit') {
+          fs.mkdirSync(hookState, { recursive: true, mode: 0o700 });
+          fs.writeFileSync(path.join(hookState, 'wake'), '');
+        }
+        const input = JSON.stringify({ hook_event_name: hook.event, session_id: 'acceptance', stop_hook_active: false });
+        const result = await runProcess('/bin/sh', ['-c', hook.command], { ...env, CLAUDE_PLUGIN_ROOT: entries.pluginRoot }, { input, ms: 2_000 });
+        assert.ok(result.code !== 127 && result.code !== 126, `${hook.command} did not run: ${result.stderr}`);
+        // SessionEnd only clears the session's hook state; every other hook asks Khala first.
+        if (hook.event !== 'SessionEnd') {
+          assert.ok(since(before).some(headers => headers.includes(transportCapability)), `${hook.command} never reached Khala: ${result.stderr}`);
+        }
+      }
+      for (const hook of entries.codexHooks) {
+        const input = JSON.stringify({ hook_event_name: hook.event, session_id: 'acceptance', turn_id: 'turn-1' });
+        const result = await runProcess('/bin/sh', ['-c', hook.command], env, { input, ms: 5_000 });
+        assert.equal(result.code, 0, `${hook.command} failed: ${result.stderr}`);
+        assert.doesNotMatch(result.stderr, /not found|No such file/);
+      }
+    } finally { close(); }
+  }
+
+  test('every installed MCP entry and hook resolves the Khala runtime with neither khala nor node on PATH', () =>
+    assertEntriesResolve(ALL));
+
+  // Setup used to stage the launcher only for Codex, OpenCode, and Cursor.
+  test('a Claude-only setup stages the launcher its MCP entry and hooks run', () =>
+    assertEntriesResolve({ claude: SUPPORTED.claude }));
 });
