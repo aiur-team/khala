@@ -1,5 +1,6 @@
 import type {
-  BindingId, DeliveryReceipt, HarnessCapabilities, PolicyAck, PolicySetCommand, SessionBinding,
+  BindingId, DeliveryReceipt, HarnessCapabilities, ListeningModeCommand, ListeningModeResult, ListeningModeView,
+  ModeSupport, OwnerRouteGrantCommand, PolicyAck, PolicySetCommand, SessionBinding,
 } from '@khala/contracts/delivery/index';
 import type { Disposer } from '@khala/contracts/messaging/index';
 
@@ -23,6 +24,48 @@ export type PolicySnapshot = Readonly<{
 export const BINDING_STATUSES = ['active', 'revoked'] as const;
 export type BindingStatus = (typeof BINDING_STATUSES)[number];
 
+/** Who wrote the current listening-mode version (decision 42: last change wins). */
+export type ListeningModeLastChange = Readonly<{
+  actor: 'owner' | 'agent';
+  version: number;
+  changedAt: string;
+}>;
+
+/**
+ * Listening-mode state for the exact binding generation in the enclosing
+ * snapshot. `view` is the store's current-capability projection
+ * (`packages/policy/src/listening-mode/store.ts`); its `support` map holds
+ * primary interactive-session evidence only. Secondary hosted evidence stays on
+ * `HarnessCapabilities.evidenceRef` and is never read as mode support.
+ */
+export type ListeningModeSnapshot = Readonly<{
+  view: ListeningModeView;
+  /** `null` when no actor was recorded for the current version. */
+  lastChange: ListeningModeLastChange | null;
+  /**
+   * Every other active binding the viewer can see. The session label's short
+   * identifier widens until it is unique among these.
+   */
+  siblingBindingIds: readonly BindingId[];
+  /**
+   * Hard-cancel support for this binding's `steer` route. `null` means not
+   * inventoried and is gated exactly like `unknown`.
+   */
+  hardCancel: ModeSupport | null;
+  /**
+   * Whether an idle interactive session is proven to receive a release before
+   * its next turn (decisions 34 and 37). Until it is, the panel says so.
+   */
+  idleDelivery: 'proven' | 'unproven';
+}>;
+
+/** Outcome of an owner-only grant or revoke. The panel re-reads the snapshot for state. */
+export type RouteGrantAck = Readonly<{
+  commandId: OwnerRouteGrantCommand['commandId'];
+  outcome: 'applied' | 'conflict' | 'refused';
+  reason: string | null;
+}>;
+
 export type AgentControlsSnapshot = Readonly<{
   binding: SessionBinding;
   /**
@@ -35,6 +78,8 @@ export type AgentControlsSnapshot = Readonly<{
   policy: PolicySnapshot;
   connection: 'connected' | 'offline' | 'unknown';
   latestReceipt: DeliveryReceipt | null;
+  /** `null` until the listening-mode store has answered for this binding generation. */
+  listening: ListeningModeSnapshot | null;
 }>;
 
 /**
@@ -47,6 +92,16 @@ export interface AgentControlsUiPort {
   readSnapshot(bindingId: BindingId): Promise<AgentControlsSnapshot>;
   subscribe(bindingId: BindingId, listener: (snapshot: AgentControlsSnapshot) => void): Disposer;
   submitPolicy(command: PolicySetCommand): Promise<PolicyAck>;
+  /**
+   * The same versioned mode command the bound agent uses. Composition attaches
+   * `OwnerAuthority`; the owner-only policy port is never the agent's boundary.
+   */
+  submitListeningMode(command: ListeningModeCommand): Promise<ListeningModeResult>;
+  /**
+   * Owner-only experimental-route and hard-cancel grant and revoke commands.
+   * Composition attaches `OwnerAuthority` behind the browser CSRF boundary.
+   */
+  submitRouteGrant(command: OwnerRouteGrantCommand): Promise<RouteGrantAck>;
 }
 
 export interface AgentControlsPorts {
