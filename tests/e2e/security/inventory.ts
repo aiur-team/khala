@@ -27,7 +27,7 @@ import { FROZEN_HOOK_EVENTS, FROZEN_MCP_TOOLS } from '../../../packages/claude-p
 export const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 /** Probes implemented in `airlock.test.ts`. */
-export const PROBES = ['internal-http', 'agent-cli', 'mcp-serve', 'opencode', 'dispatcher-gate'] as const;
+export const PROBES = ['internal-http', 'agent-cli', 'mcp-serve', 'dispatcher-gate'] as const;
 export type ProbeId = (typeof PROBES)[number];
 
 export type Coverage =
@@ -47,6 +47,8 @@ const humanOnly = (reason: string): Coverage => ({ kind: 'human-only', reason })
 // scan of these routes is vacuous rather than evidence.
 const CONTROL_NO_CONTENT = 'hosted control state only; no wired flow carries a message body through control, and no disposable Netlify deployment was available';
 const CLAUDE_UNCOMPOSED = 'the shipped CLI composes no Claude session client (cli/main.ts), so these tools answer only through a Claude session this suite cannot start';
+const OPENCODE_UNCOMPOSED = 'the shipped plugin entry composes no transport (unavailableOpenCodeDependencies), so it can reach no content to test';
+const ADAPTER_UNDRIVEN = 'not driven: the review gate was exercised through the Codex adapter only. The dispatcher hands every adapter the same approved job, but this adapter\'s own behaviour (including any file access) was not observed';
 const HOOK_RENDERS_CLI = 'hook renders what `khala claude`/`khala codex-hook` returns; no live harness session was started, so hook output itself was not captured';
 const DISCOVERY_UNMOUNTED = 'internal discovery routes are mounted only with a discovery port; they return channel listings and access state, and were not mounted here';
 
@@ -69,8 +71,8 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'claude-mcp-tool:khala_read': notObserved(CLAUDE_UNCOMPOSED),
   'claude-mcp-tool:khala_status': notObserved(CLAUDE_UNCOMPOSED),
   // OpenCode plugin tools, as shipped.
-  'opencode-tool:khala_read': probe('opencode'),
-  'opencode-tool:khala_send': probe('opencode'),
+  'opencode-tool:khala_read': notObserved(OPENCODE_UNCOMPOSED),
+  'opencode-tool:khala_send': notObserved(OPENCODE_UNCOMPOSED),
   // Agent CLI commands.
   'cli:connect': probe('agent-cli'),
   'cli:listen': probe('agent-cli'),
@@ -141,14 +143,13 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'POST /api/agent/channel-access/exchange', 'POST /api/agent/channel-access/ready', 'POST /api/agent/channel-access/resume',
     'POST /api/agent/channel-discovery/bootstrap/token', 'GET /api/agent/channels',
   ].map(route => [`http-control:${route}`, notObserved(CONTROL_NO_CONTENT)])),
-  // Harness adapters. `@khala/harnesses` depends only on contracts, so an adapter sees
-  // only what the dispatcher passes to `inspect`, `notify`, `submit` and `reconcile`.
-  'harness-adapter:claude': probe('dispatcher-gate'),
-  'harness-adapter:claude-app': probe('dispatcher-gate'),
+  // Harness adapters. Only the Codex adapter is driven, over its fake app-server.
+  'harness-adapter:claude': notObserved(ADAPTER_UNDRIVEN),
+  'harness-adapter:claude-app': notObserved(ADAPTER_UNDRIVEN),
   'harness-adapter:codex': probe('dispatcher-gate'),
-  'harness-adapter:codex-app': probe('dispatcher-gate'),
-  'harness-adapter:cursor': probe('dispatcher-gate'),
-  'harness-adapter:opencode': probe('dispatcher-gate'),
+  'harness-adapter:codex-app': notObserved(ADAPTER_UNDRIVEN),
+  'harness-adapter:cursor': notObserved(ADAPTER_UNDRIVEN),
+  'harness-adapter:opencode': notObserved(ADAPTER_UNDRIVEN),
 };
 
 /**
@@ -181,6 +182,36 @@ export function internalServerRoutes(): string[] {
     routes.push(`${match[1]} ${routePath}`);
   }
   return routes;
+}
+
+/**
+ * Where the encrypted relay (Matrix/Synapse) is reached from: relay or E2EE SDK
+ * dependencies in runtime manifests, and source paths named for a relay, homeserver or
+ * Matrix. Today that is the human browser flow and its control session issuer
+ * (KHA-132). This is a heuristic, not a proof of absence: a relay client under another
+ * name, for example one built directly on `libsodium-wrappers`, would not appear.
+ */
+export function relayAdapterEvidence(): string[] {
+  const manifests = ['packages/messaging', 'packages/connector', 'apps/connector', 'apps/control', 'apps/web'];
+  const dependencies = manifests.flatMap(dir => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, dir, 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+    };
+    return Object.keys(manifest.dependencies ?? {}).filter(name => /matrix|megolm|olm\b|mls|relay/i.test(name)).map(name => `${dir}: ${name}`);
+  });
+  const paths = manifests.flatMap(dir => listSourcePaths(path.join(REPO_ROOT, dir, 'src')))
+    .map(file => path.relative(REPO_ROOT, file))
+    .filter(file => /(^|\/)[^/]*(relay|homeserver|matrix)[^/]*(\/|\.ts$)/i.test(file) && !file.endsWith('.test.ts'));
+  return [...dependencies, ...paths];
+}
+
+function listSourcePaths(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root, { withFileTypes: true }).flatMap(entry => {
+    const full = path.join(root, entry.name);
+    if (entry.name === 'node_modules') return [];
+    return entry.isDirectory() ? [full + path.sep, ...listSourcePaths(full)] : [full];
+  });
 }
 
 /** Harness adapter directories named by the package's export map. */

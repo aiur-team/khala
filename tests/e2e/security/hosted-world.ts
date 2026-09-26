@@ -265,6 +265,28 @@ export function sessionCapture(session: CodexSession, capture: SurfaceCapture = 
   return capture;
 }
 
+export type CanaryPair = Readonly<{
+  pending: Canary;
+  approved: Canary;
+  pendingRef: EventRef;
+  approvedRef: EventRef;
+  state: HostedState;
+  /** Parent of the state directory, used as the session working directory. */
+  workdir: string;
+}>;
+
+/** A fresh ledger holding two pending events: one to stay withheld, one to approve. */
+export async function seedCanaryPair(): Promise<CanaryPair> {
+  const pending = mintCanary('pending');
+  const approved = mintCanary('approved');
+  const pendingBody = `withheld ${pending.text}`;
+  const approvedBody = `chosen ${approved.text}`;
+  const pendingRef = eventRef('event_pending', pendingBody);
+  const approvedRef = eventRef('event_approved', approvedBody);
+  const state = await seedLedger([{ ref: pendingRef, body: pendingBody }, { ref: approvedRef, body: approvedBody }]);
+  return { pending, approved, pendingRef, approvedRef, state, workdir: path.dirname(state.state) };
+}
+
 export type GatedRelease = Readonly<{
   pending: Canary;
   approved: Canary;
@@ -278,15 +300,8 @@ export type GatedRelease = Readonly<{
 
 /** The review gate's positive control: two pending events, one approved, delivered once. */
 export async function runGatedRelease(): Promise<GatedRelease> {
-  const pending = mintCanary('pending');
-  const approved = mintCanary('approved');
-  const pendingRef = eventRef('event_pending', `withheld ${pending.text}`);
-  const approvedRef = eventRef('event_approved', `chosen ${approved.text}`);
-  const state = await seedLedger([
-    { ref: pendingRef, body: `withheld ${pending.text}` },
-    { ref: approvedRef, body: `chosen ${approved.text}` },
-  ]);
-  const session = codexSession(path.dirname(state.state));
+  const { pending, approved, pendingRef, approvedRef, state, workdir } = await seedCanaryPair();
+  const session = codexSession(workdir);
   const process = await startConnector(state.storage, session);
   const result = await process.approve(approval([approvedRef]));
   if (!result.ok) throw new Error(`approval refused: ${result.code}`);

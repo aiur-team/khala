@@ -5,6 +5,7 @@
 // clock and identifiers are fixed, and every process runs in this test worker.
 
 import fs from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { EventId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
@@ -48,6 +49,8 @@ export type InternalWorld = Readonly<{
   khala(args: readonly string[], options?: Readonly<{ descriptor?: boolean; stdin?: string; abortAfterMs?: number; client?: 'internal' | 'unavailable' }>): Promise<CliRun>;
   /** One HTTP request to the loopback server. */
   http(method: string, route: string, options?: Readonly<{ bearer?: string | null; body?: unknown; origin?: boolean }>): Promise<Readonly<{ status: number; body: string }>>;
+  /** One GET with the agent binding, path sent byte for byte (no client-side normalization). */
+  raw(route: string): Promise<Readonly<{ status: number; body: string }>>;
   /** Opens a streaming GET, runs `during` while it is open, and returns what streamed within `ms`. */
   stream(route: string, during: () => void, ms: number): Promise<Readonly<{ status: number; body: string }>>;
   close(): Promise<void>;
@@ -133,6 +136,20 @@ export async function startInternalWorld(): Promise<InternalWorld> {
     return { status: response.status, body: await response.text() };
   };
 
+  const raw: InternalWorld['raw'] = route => new Promise((resolve, reject) => {
+    const { hostname, port } = new URL(server.origin);
+    const request = httpRequest({
+      host: hostname, port, method: 'GET', path: route, headers: { authorization: `Bearer ${fixture.bob.credential}` },
+    }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body }));
+    });
+    request.on('error', reject);
+    request.end();
+  });
+
   const stream: InternalWorld['stream'] = async (route, during, ms) => {
     const abort = new AbortController();
     const response = await fetch(`${server.origin}${route}`, {
@@ -161,7 +178,7 @@ export async function startInternalWorld(): Promise<InternalWorld> {
 
   return {
     fixture, root, serverState: path.join(root, 'state'), agentState, descriptorPath, logs, server, pause,
-    bearer: fixture.bob.credential, say, khala, http, stream,
+    bearer: fixture.bob.credential, say, khala, http, raw, stream,
     async close() {
       await server.close();
       fixture.dispose();

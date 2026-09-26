@@ -42,7 +42,7 @@ describe('surface inventory', () => {
     expect(unserved.sort()).toEqual(Object.keys(DECLARED_UNREGISTERED_TOOLS).sort());
   });
 
-  it('keeps harness adapters on contracts only, so they see nothing but what the dispatcher passes', () => {
+  it('keeps harness adapters off connector storage: their only workspace dependency is contracts', () => {
     expect(harnessDependencies()).toEqual(['@khala/contracts']);
   });
 });

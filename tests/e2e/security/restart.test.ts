@@ -8,25 +8,16 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ReleaseId, SessionBinding } from '@khala/contracts/delivery/index';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
-import { describeLeaks, mintCanary } from './fixtures';
+import { describeLeaks } from './fixtures';
 import {
-  type CodexSession, approval, binding, closeHostedWorlds, codexSession, eventRef, openStore, seedLedger,
+  type CodexSession, approval, binding, closeHostedWorlds, codexSession, openStore,
   sessionCapture, startConnector,
+  seedCanaryPair,
 } from './hosted-world';
 
 afterEach(closeHostedWorlds);
 
-async function seeded() {
-  const pending = mintCanary('pending');
-  const approved = mintCanary('approved');
-  const pendingRef = eventRef('event_pending', `withheld ${pending.text}`);
-  const approvedRef = eventRef('event_approved', `chosen ${approved.text}`);
-  const state = await seedLedger([
-    { ref: pendingRef, body: `withheld ${pending.text}` },
-    { ref: approvedRef, body: `chosen ${approved.text}` },
-  ]);
-  return { pending, approved, pendingRef, approvedRef, state };
-}
+const seeded = seedCanaryPair;
 
 /** A new adapter instance over the same surviving session, as after a connector restart. */
 function reattach(session: CodexSession, workdir: string): CodexSession {
@@ -116,30 +107,34 @@ describe('restart and lifecycle faults fail closed', () => {
     expect(sessionCapture(session).leaks([s.pending])).toEqual([]);
   });
 
-  it('a rebind after approval and before dispatch never delivers the old generation\'s release to the new session', async () => {
-    const s = await seeded();
-    const workdir = path.dirname(s.state.state);
-    const session = codexSession(workdir);
-    const crashed = await startConnector(s.state.storage, session, { dropHandoff: true });
-    expect(await crashed.approve(approval([s.approvedRef]))).toMatchObject({ ok: true });
-    await crashed.stop();
-    // The owner rebinds the agent to a replacement session before the release dispatched.
-    const replacement: SessionBinding = { ...binding, generation: 1, sessionId: 'replacement-session-b' };
-    await s.state.storage.ledger.transaction(tx => tx.putBinding(replacement));
-    await s.state.storage.close();
+  // After the rebind, either session may still be running: the replacement bound to the new
+  // generation, or the original, whose host still reports the old generation's binding.
+  it.each(['replacement', 'original'] as const)(
+    'a rebind after approval and before dispatch delivers the old generation\'s release to neither session (%s attached)',
+    async attached => {
+      const s = await seeded();
+      const workdir = path.dirname(s.state.state);
+      const session = codexSession(workdir);
+      const crashed = await startConnector(s.state.storage, session, { dropHandoff: true });
+      expect(await crashed.approve(approval([s.approvedRef]))).toMatchObject({ ok: true });
+      await crashed.stop();
+      // The owner rebinds the agent to a replacement session before the release dispatched.
+      const replacement: SessionBinding = { ...binding, generation: 1, sessionId: 'replacement-session-b' };
+      await s.state.storage.ledger.transaction(tx => tx.putBinding(replacement));
+      await s.state.storage.close();
 
-    const replacementSession = codexSession(workdir, { bindingOverride: replacement });
-    const restarted = await startConnector(await openStore(s.state.state, 'existing'), replacementSession);
-    await restarted.dispatcher.idle();
+      const target = attached === 'replacement' ? codexSession(workdir, { bindingOverride: replacement }) : reattach(session, workdir);
+      const restarted = await startConnector(await openStore(s.state.state, 'existing'), target);
+      await restarted.dispatcher.idle();
 
-    expect(replacementSession.server.adds()).toBe(0);
-    expect(session.server.adds()).toBe(0);
-    const capture = sessionCapture(replacementSession);
-    expect(capture.leaks([s.pending, s.approved])).toEqual([]);
-    // An approval against the stale generation is refused as well. The replacement generation has
-    // no effective policy yet (the listening projection owns seeding it), so the answer is `unavailable`.
-    expect(await restarted.approve(approval([s.pendingRef], { commandId: 'approve-9' as never }))).toEqual({ ok: false, code: 'unavailable' });
-  });
+      expect(target.server.adds()).toBe(0);
+      const leaks = sessionCapture(target).leaks([s.pending, s.approved]);
+      expect(leaks, describeLeaks(leaks)).toEqual([]);
+      // An approval against the stale generation is refused as well. The replacement generation has
+      // no effective policy yet (the listening projection owns seeding it), so the answer is `unavailable`.
+      expect(await restarted.approve(approval([s.pendingRef], { commandId: 'approve-9' as never }))).toEqual({ ok: false, code: 'unavailable' });
+    },
+  );
 
   it('a pause committed after approval holds delivery across a restart; resume delivers once without a new approval', async () => {
     const s = await seeded();

@@ -21,7 +21,6 @@ import {
 import { surfacesFor } from './inventory';
 import { type InternalWorld, bobBinding, channelId, otherChannelId, startInternalWorld } from './internal-world';
 import { runGatedRelease } from './hosted-world';
-import { createKhalaOpenCodeServer, unavailableOpenCodeDependencies } from '../../../packages/agent-cli/src/opencode/plugin';
 
 const worlds: InternalWorld[] = [];
 afterEach(async () => {
@@ -95,9 +94,16 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     add(s, 'GET timeline own', own);
     add(s, 'GET timeline other', other);
     expect(other.status).toBe(403);
-    // Path traversal and encoded forms of the other channel resolve to the same refusal.
-    for (const route of [`/api/v1/channels/${channelId}/../${otherChannelId}/timeline`, `/api/v1/channels/${encodeURIComponent(`${otherChannelId}`)}%2F/timeline`]) {
-      add(s, `GET timeline variant`, await s.world.http('GET', route));
+    // Traversal and encoded forms of the other channel, sent unnormalized, never reach its timeline.
+    for (const route of [
+      `/api/v1/channels/${channelId}/../${otherChannelId}/timeline`,
+      `/api/v1/channels/${channelId}/%2e%2e/${otherChannelId}/timeline`,
+      `/api/v1/channels/${channelId}%2F..%2F${otherChannelId}/timeline`,
+      `/api/v1/channels/${otherChannelId}%2F/timeline`,
+    ]) {
+      const variant = await s.world.raw(route);
+      expect([400, 403, 404], route).toContain(variant.status);
+      add(s, 'GET timeline variant', variant);
     }
   },
   'http-internal:POST /api/v1/channels/:channelId/messages': async s => {
@@ -111,7 +117,10 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
       s.world.say(otherChannelId, `live ${s.pending.text}`);
       s.world.say(channelId, `live ${s.approved.text}`);
     };
-    add(s, 'GET hints own', await s.world.stream(channelRoute(channelId, '/hints'), during, 300));
+    const own = await s.world.stream(channelRoute(channelId, '/hints'), during, 500);
+    expect(own.status).toBe(200);
+    expect(own.body).toContain('event: ready');
+    add(s, 'GET hints own', own);
     const other = await s.world.http('GET', channelRoute(otherChannelId, '/hints'));
     expect(other.status).toBe(403);
     add(s, 'GET hints other', other);
@@ -133,7 +142,7 @@ const hookInput = (event: string) => JSON.stringify({ hook_event_name: event, se
 
 const CLI_PROBES: Readonly<Record<string, Probe>> = {
   'cli:connect': async s => add(s, 'cli:connect', await s.world.khala(['connect'])),
-  'cli:listen': async s => add(s, 'cli:listen', await s.world.khala(['listen'], { descriptor: true, abortAfterMs: 400 })),
+  'cli:listen': async s => add(s, 'cli:listen', await s.world.khala(['listen'], { descriptor: true, abortAfterMs: 1_000 })),
   'cli:mode': async s => add(s, 'cli:mode', await s.world.khala(['mode'])),
   'cli:read': async s => add(s, 'cli:read', await s.world.khala(['read'], { descriptor: true })),
   'cli:send': async s => add(s, 'cli:send', await s.world.khala(['send'], { descriptor: true, stdin: 'a reply' })),
@@ -186,23 +195,19 @@ async function mcpSession(s: Seeded): Promise<void> {
 
 const MCP_PROBES: Readonly<Record<string, Probe>> = {
   'cli:mcp-serve': mcpSession,
-  // The session above answers every tool; these only confirm its capture exists.
+  // The session above answers every tool. Every inbox-surface tool result appends the
+  // unacknowledged batch, so its own response must carry the released canary: proof the
+  // probe reached a content-bearing path on that tool, not just an error. `khala_pair` is
+  // not an inbox surface (mcp/pair.ts) and carries no batch; its response is still scanned.
   ...Object.fromEntries(Object.keys(MCP_ARGS).map(name => [
     `mcp-tool:${name}`,
-    (async s => expect(s.capture.surfaces()).toContain(`mcp-tool:${name}`)) as Probe,
+    (async s => {
+      const carrying = s.capture.carrying(s.approved);
+      if (name === 'khala_pair') expect(carrying).not.toContain(`mcp-tool:${name}`);
+      else expect(carrying).toContain(`mcp-tool:${name}`);
+    }) as Probe,
   ])),
 };
-
-const OPENCODE_PROBES: Readonly<Record<string, Probe>> = Object.fromEntries((['khala_read', 'khala_send'] as const).map(name => [
-  `opencode-tool:${name}`,
-  (async s => {
-    const hooks = await createKhalaOpenCodeServer(unavailableOpenCodeDependencies())({ client: {} as never, directory: s.world.root });
-    const tool = hooks.tool[name];
-    const output = await tool.execute(name === 'khala_send' ? { message: 'a reply' } : {}, { sessionID: bobBinding.sessionId })
-      .catch((error: unknown) => `threw ${String(error)}`);
-    s.capture.add(`opencode-tool:${name}`, output);
-  }) as Probe,
-]));
 
 describe('agent-facing surfaces never carry content the agent was not released', () => {
   it('internal-http: every loopback route, with the agent binding and without credentials', async () => {
@@ -227,12 +232,6 @@ describe('agent-facing surfaces never carry content the agent was not released',
     expect(seed.capture.carrying(seed.approved)).toContain('mcp-tool:khala_read');
   });
 
-  it('opencode: the shipped plugin tools', async () => {
-    const seed = await seeded();
-    await runFamily('opencode', OPENCODE_PROBES, seed);
-    expectSealed(seed);
-  });
-
   it('positive leak control: a canary placed where the agent may read it is reported on the same probes', async () => {
     const seed = await seeded();
     // The "pending" canary deliberately posted into the agent's own channel.
@@ -249,7 +248,7 @@ describe('agent-facing surfaces never carry content the agent was not released',
     const leaks = result.capture.leaks([result.pending]);
     expect(leaks, describeLeaks(leaks)).toEqual([]);
     expect(result.capture.carrying(result.approved)).toEqual(['model:codex-app-server']);
-    // Every adapter's view is the dispatcher's view: the same calls reach any `HarnessPort`.
-    for (const id of surfacesFor('dispatcher-gate')) expect(id).toMatch(/^harness-adapter:/);
+    // Only the Codex adapter is driven; the other adapters are inventoried as not observed.
+    expect(surfacesFor('dispatcher-gate')).toEqual(['harness-adapter:codex']);
   });
 });

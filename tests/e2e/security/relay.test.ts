@@ -1,16 +1,16 @@
-// U2: what each server-side store and log holds. The hosted relay (encrypted
-// messaging transport) is not wired in this repository, so relay ciphertext and
-// relay logs cannot be inspected here; a tripwire fails as soon as a relay adapter
-// appears, so this suite gains a real relay case before anyone reads the gap as a
-// pass. What is wired is inspected: the internal-mode loopback server's store and
-// logs, and the hosted connector's owner-local ledger.
+// U2: what each server-side store and log holds. The encrypted relay (Synapse) is
+// reached only from the human browser flow, and only a disposable live deployment
+// can show its records and logs; this suite had none, so relay confidentiality is
+// not observed here. A tripwire fails when a new relay path appears. What runs
+// in-process is inspected: the internal-mode loopback server's store and logs, and
+// the hosted connector's owner-local ledger.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { describeLeaks, mintCanary, scanTree } from './fixtures';
 import { closeHostedWorlds, runGatedRelease } from './hosted-world';
-import { REPO_ROOT } from './inventory';
+import { REPO_ROOT, relayAdapterEvidence } from './inventory';
 import { type InternalWorld, channelId, otherChannelId, startInternalWorld } from './internal-world';
 
 const worlds: InternalWorld[] = [];
@@ -71,13 +71,19 @@ describe('server-side stores and logs', () => {
     expect(outside, describeLeaks(outside)).toEqual([]);
   });
 
-  it('tripwire: no encrypted relay adapter is wired, so relay confidentiality stays not-observed', () => {
-    const manifests = ['packages/messaging/package.json', 'packages/connector/package.json', 'apps/connector/package.json', 'apps/control/package.json']
-      .map(file => JSON.parse(fs.readFileSync(path.join(REPO_ROOT, file), 'utf8')) as { dependencies?: Record<string, string> });
-    const relayDependencies = manifests.flatMap(manifest => Object.keys(manifest.dependencies ?? {}))
-      .filter(name => /matrix|megolm|olm|mls/i.test(name));
-    // A relay SDK arriving means relay ciphertext and logs can be inspected: add that
-    // case to this suite and update docs/evidence/security-acceptance.md.
-    expect(relayDependencies).toEqual([]);
+  it('the relay is reached only from the human browser flow, which creates encrypted rooms', () => {
+    // KHA-132 wires the browser to Synapse; no connector or agent path reaches the relay. A new
+    // relay path (for example a connector Matrix adapter) fails here, so its ciphertext, logs and
+    // keys get a case in this suite before anyone reads the gap as a pass.
+    expect(relayAdapterEvidence()).toEqual([
+      'apps/web: matrix-js-sdk',
+      'apps/control/src/composition/human/matrix.ts',
+      'apps/web/src/composition/human/matrix-browser.ts',
+    ]);
+    // Configuration only, not proof of confidentiality: rooms are created with Megolm enabled
+    // and the client initialises Rust crypto. Relay records and logs were not inspected here.
+    const browser = fs.readFileSync(path.join(REPO_ROOT, 'apps/web/src/composition/human/matrix-browser.ts'), 'utf8');
+    expect(browser).toMatch(/type: EventType\.RoomEncryption, state_key: '', content: \{ algorithm: 'm\.megolm\.v1\.aes-sha2' \}/);
+    expect(browser).toContain('initRustCrypto(');
   });
 });

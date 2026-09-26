@@ -2,14 +2,14 @@
 // revocation on any agent surface, and a revoked hosted binding can neither be
 // approved for nor dispatched to, even for a release approved before revocation.
 
-import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { bindRecoveryLifecycle, storageRecoveryDeps } from '../../../apps/connector/src/composition/recovery/lifecycle';
 import { createSurfaceCapture, describeLeaks, mintCanary, scanTree } from './fixtures';
 import {
-  approval, binding, bindingId, closeHostedWorlds, codexSession, eventRef, openStore, seedLedger, sessionCapture,
+  approval, binding, bindingId, closeHostedWorlds, codexSession, openStore, sessionCapture,
   startConnector,
+  seedCanaryPair,
 } from './hosted-world';
 import { type InternalWorld, bobBinding, channelId, startInternalWorld } from './internal-world';
 
@@ -72,12 +72,7 @@ describe('revoked and superseded bindings', () => {
   });
 
   it('hosted: a revoked binding cannot be approved for, previewed or dispatched to, even for an earlier approval', async () => {
-    const approved = mintCanary('approved');
-    const pending = mintCanary('pending');
-    const approvedRef = eventRef('event_approved', approved.text);
-    const pendingRef = eventRef('event_pending', pending.text);
-    const state = await seedLedger([{ ref: approvedRef, body: approved.text }, { ref: pendingRef, body: pending.text }]);
-    const workdir = path.dirname(state.state);
+    const { approved, pending, approvedRef, pendingRef, state, workdir } = await seedCanaryPair();
     const session = codexSession(workdir);
     // Approved and committed, but the process died before the dispatcher took it.
     const crashed = await startConnector(state.storage, session, { dropHandoff: true });

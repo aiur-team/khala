@@ -4,15 +4,15 @@
 // existing session receives nothing. Each case runs the composed review gate
 // (hosted-world.ts) and inspects what the real Codex adapter wrote to the session.
 
-import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandId } from '@khala/contracts/delivery/index';
-import { MCP_TOOLS } from '../../../packages/agent-cli/src/mcp/registry';
-import { type Canary, describeLeaks, mintCanary } from './fixtures';
+import { type Canary, describeLeaks } from './fixtures';
 import {
   type ConnectorProcess, type CodexSession, approval, bindingId, closeHostedWorlds, codexSession, eventRef, otherRoomId,
-  ownerAuthority, peerAuthority, roomId, seedLedger, sessionCapture, startConnector,
+  ownerAuthority, peerAuthority, sessionCapture, startConnector,
+  seedCanaryPair,
 } from './hosted-world';
+import { discoverSurfaces } from './inventory';
 
 afterEach(closeHostedWorlds);
 
@@ -26,15 +26,8 @@ type Gate = Readonly<{
 }>;
 
 async function gate(): Promise<Gate> {
-  const pending = mintCanary('pending');
-  const approved = mintCanary('approved');
-  const pendingRef = eventRef('event_pending', `withheld ${pending.text}`);
-  const approvedRef = eventRef('event_approved', `chosen ${approved.text}`);
-  const state = await seedLedger([
-    { ref: pendingRef, body: `withheld ${pending.text}` },
-    { ref: approvedRef, body: `chosen ${approved.text}` },
-  ]);
-  const session = codexSession(path.dirname(state.state));
+  const { pending, approved, pendingRef, approvedRef, state, workdir } = await seedCanaryPair();
+  const session = codexSession(workdir);
   const process = await startConnector(state.storage, session);
   return { process, session, pending, approved, pendingRef, approvedRef };
 }
@@ -124,9 +117,10 @@ describe('forged or stale approvals never release content', () => {
     expect(g.session.server.adds()).toBe(1);
   });
 
-  it('the model has no tool that approves, releases, trusts or reviews', () => {
-    const names = MCP_TOOLS.map(tool => tool.name);
-    expect(names.filter(name => /approv|releas|review|trust|policy|pause|resume|preview/.test(name))).toEqual([]);
-    expect(roomId).not.toBe(otherRoomId);
+  it('no model-facing tool, command or op approves, releases, trusts or reviews', async () => {
+    const { ids } = await discoverSurfaces();
+    const modelFacing = ids.filter(id => /^(mcp-tool|claude-mcp-tool|opencode-tool|cli|claude-op):/.test(id));
+    expect(modelFacing.length).toBeGreaterThan(20);
+    expect(modelFacing.filter(id => /approv|releas|review|trust|policy|pause|resume|preview/.test(id))).toEqual([]);
   });
 });

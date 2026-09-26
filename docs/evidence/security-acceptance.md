@@ -2,24 +2,24 @@
 
 Scoped, reproducible evidence for the encryption and approval boundaries of the merged KHA-134/135/136/137 system. This is not a blanket security certification. Each row below says what was observed, on what composition, and what is still missing. A row is **pass** only for the paths and encodings the named tests exercise.
 
-Recorded 2026-09-25 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, Vitest 5.0.1, from branch commit `c6bc1a5` over base `6bc22b5`. CI runs the same suite on Node 22.23.2. Codex adapter `khala-hosted-queue-1` against the package's fake app-server at Codex 0.154.0.
+Recorded 2026-09-25 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, Vitest 5.0.1, from this branch over base `6bc22b5`. CI runs the same suite on Node 22.23.2. Codex adapter `khala-hosted-queue-1` against the package's fake app-server at Codex 0.154.0.
 
 ## Commands
 
 | Command | Result |
 | --- | --- |
-| `pnpm test:e2e -- tests/e2e/security/` | 41 passed, 1 expected fail (known defect #380), 3 live cases skipped |
-| `pnpm test:e2e -- tests/e2e/security/security.test.ts` | 3 live cases skipped: live mode off |
-| `KHALA_E2E_LIVE=1 KHALA_E2E_DISPOSABLE_ENV=<id> pnpm test:e2e -- tests/e2e/security/security.test.ts` | **fails**: every live case is blocked, and an all-skipped live run is not acceptance |
+| `pnpm test:e2e -- tests/e2e/security/` | 42 passed, 1 expected fail (known defect #380), 3 live cases skipped |
+| `pnpm test:e2e -- tests/e2e/security/security.test.ts` | 3 live entries, one per row, skipped: live mode off |
+| `KHALA_E2E_LIVE=1 KHALA_E2E_DISPOSABLE_ENV=<id> pnpm test:e2e -- tests/e2e/security/security.test.ts` | **fails**: every live entry is blocked, and an all-skipped live entry is not acceptance |
 
 ## What "local composition" means here
 
-No production entry point composes the hosted connector yet: nothing outside tests calls `createConnectorRuntime` (see the KHA-136 README). No encrypted relay adapter is wired either, since `packages/messaging` has no relay SDK. So the suite drives two real compositions in-process:
+No production entry point composes the hosted connector yet: nothing outside tests calls `createConnectorRuntime` (see the KHA-136 README). The encrypted relay (Synapse, via `matrix-js-sdk`) is reached only from the human browser flow (KHA-132: `apps/web/src/composition/human/matrix-browser.ts` and its control session issuer). No connector or agent path reaches it. So the suite drives two real compositions in-process:
 
 - **Internal mode.** This is the real SQLite channel store, loopback channel server and release feed (`apps/internal`). The agent CLI, MCP server, inbox and delivery (`@aiur/khala`) are composed as `cli/main.ts` composes them. Only the clock and IDs are fixed.
 - **Hosted review gate.** This is the KHA-115 ledger, KHA-119 release policy, KHA-134 review handler and registration, KHA-121 dispatcher and KHA-118 Codex adapter. The model session is the Codex package's fake app-server, and every call the adapter makes to it is recorded. The protected human transport is a stand-in that hands the handler an authenticated `OwnerAuthority`. The session port overlays a proven `sync` listening mode on the adapter's capabilities, because the fake cannot prove a user-owned Codex mode.
 
-Neither composition is live evidence. The existing crypto experiments in `headless-crypto.md` and `headless-verification.md`, run against real Synapse, are feasibility evidence for a future relay. They are not proof about this merged system.
+Neither composition is live evidence. The KHA-132 live Playwright suite (`tests/integration/human`) checks that raw room events fetched through the client API are `m.room.encrypted` and hold no message canary; no recorded run of it was found in `docs/`, and it inspects no server database or log. The crypto experiments in `headless-crypto.md` and `headless-verification.md` ran against real Synapse, but they are feasibility evidence, not proof about this merged system.
 
 ## Canaries
 
@@ -29,12 +29,12 @@ Each case seeds fresh random canaries: `pending` (unreleased) and `approved` (re
 
 | Boundary | Positive control | Negative / race evidence | Result |
 | --- | --- | --- | --- |
-| Relay confidentiality | none: no relay is wired | Internal mode: server logs and error responses never carry a body (`relay.test.ts`). Hosted: pending plaintext exists only in the owner-local ledger, which is a trusted endpoint (KTD3). | **not observed** for relay ciphertext, relay logs and key material; tripwire in `relay.test.ts` fails when a relay SDK appears |
+| Relay confidentiality | none in this suite | Configuration only: browser rooms are created with Megolm and Rust crypto. Internal mode: server logs and error responses never carry a body (`relay.test.ts`). Hosted connector: pending plaintext exists only in the owner-local ledger, which is a trusted endpoint (KTD3). | **not observed** for relay records, relay logs and key material: this needs a disposable Synapse with database and log access. `relay.test.ts` fails if a new relay path appears. |
 | Review gate | The owner approves one event; it reaches the existing Codex session once (`forgery.test.ts` control, `airlock.test.ts` dispatcher-gate) | The pending neighbour is absent from every app-server call and notify hint. Unreleased channel content is absent from every inventoried agent surface (below). | **pass** (local composition); live existing-session receipt **not observed** |
-| Human authority | Owner approval accepted | Peer owner approval `forbidden`; peer preview `forbidden`; authority fields in the body (`ownerId`, `authority`, `approved`) refused; cross-room reference and cross-room command `forbidden`; tampered digest `stale_content`; unknown event `expired_content`; replayed command with a wider selection `idempotency_conflict`; no model tool approves, releases, reviews or changes trust or pause (`forgery.test.ts`) | **pass** (local composition) |
-| Recipient binding | Current generation releases | Rebind after approval and before dispatch: nothing reaches the old or the replacement session, and a later approval answers `unavailable` (`restart.test.ts`). Internal mode: revoked and superseded generations get 401 on every agent route and read nothing new (`revocation.test.ts`). | **pass** (local composition) |
+| Human authority | Owner approval accepted | Peer owner approval `forbidden`; peer preview `forbidden`; authority fields in the body (`ownerId`, `authority`, `approved`) refused; cross-room reference and cross-room command `forbidden`; tampered digest `stale_content`; unknown event `expired_content`; replayed command with a wider selection `idempotency_conflict`; no discovered MCP tool, OpenCode tool, CLI command or `claude` op is named to approve, release, review or change trust or pause (`forgery.test.ts`) | **pass** (local composition) |
+| Recipient binding | Current generation releases | Rebind after approval and before dispatch: nothing reaches the replacement session, nor the original session still running with the old binding, and a later approval answers `unavailable` (`restart.test.ts`). Internal mode: revoked and superseded generations get 401 on the timeline, releases, channel and binding routes, and `read` and MCP `khala_read` return nothing new (`revocation.test.ts`). | **pass** (local composition) |
 | Policy | Approved release delivered once after resume, with no new approval | A pause committed after approval holds the release (`queued`, never claimed) across a restart (`restart.test.ts`). Hosted `auto` refusal is covered by KHA-135's own tests, not repeated here. | **pass** for pause and resume across restart (local composition); unacknowledged re-arm reconnect **not observed** |
-| Recovery / revocation | Restored ledger keeps the release held with no resubmission | Damaged release bytes block dispatch (`payload_damaged`) and nothing else is sent. A revoked hosted binding cannot be approved (`forbidden`), previewed (`revoked`) or dispatched to, even for an earlier approval, and recovery reports `binding_revoked` (`recovery.test.ts`, `revocation.test.ts`). | **pass** (local composition); messaging key loss and approved key restore **not observed** (no relay) |
+| Recovery / revocation | A ledger copied after a lost reply and restored keeps the release `outcome_unknown` with no resubmission | Damaged release bytes block dispatch (`payload_damaged`) and nothing else is sent. A revoked hosted binding cannot be approved (`forbidden`), previewed (`revoked`) or dispatched to, even for an earlier approval, and recovery reports `binding_revoked` (`recovery.test.ts`, `revocation.test.ts`). A backup taken before dispatch and restored after delivery holds no evidence of the send, so the approved release is offered to the session a second time (`recovery.test.ts`, recorded as observed). | **pass** for confidentiality (local composition); messaging key loss and approved key restore **not observed** (browser relay only) |
 | Delivery ambiguity | A lost reply after the write is reconciled from the session's native queue to `accepted`, observed once (`restart.test.ts`) | Once the session has consumed the entry, the release stays `outcome_unknown` and is never resubmitted (`restart.test.ts`). **But** the KHA-136 recovery view reports that release as undispatched with no unknown outcome (#380). | **fail**: owner-facing recovery status is wrong (#380); no resubmission observed |
 
 A failed row blocks acceptance. Rows marked not observed are gaps, not passes.
@@ -45,11 +45,11 @@ A failed row blocks acceptance. Rows marked not observed are gaps, not passes.
 
 | Surfaces | Coverage |
 | --- | --- |
-| 8 default MCP tools and `khala mcp-serve` | Probed in one session. Every tool result carried the approved batch (positive control) and none carried the pending canary. |
+| 8 default MCP tools and `khala mcp-serve` | Probed in one session. Every inbox-surface tool result carried the approved batch (positive control, asserted per tool); `khala_pair` is not an inbox surface and carries none. None carried the pending canary. |
 | 14 agent CLI commands, 7 `khala claude` ops, 4 Codex hook events | Probed as installed. Only `listen` and `read` return content. `claude` ops refuse (`invalid_arguments`) because the shipped CLI composes no Claude session. Codex hooks returned no output in this composition, so their silence is weak evidence. |
-| 12 internal server routes | Probed with the agent's binding and without credentials. The pending channel returns 403; path-traversal and encoded variants return 403/404; the hint stream is content-free. Session exchange with a binding bearer returns 401; channel creation returns 403. |
-| 2 OpenCode tools | Probed as shipped. The transport is unavailable, so they deliver nothing. |
-| 6 harness adapters | Covered by the dispatcher gate. `@khala/harnesses` depends only on `@khala/contracts` (checked), so an adapter sees only what the dispatcher passes it. |
+| 12 internal server routes | Probed with the agent's binding and without credentials. The pending channel returns 403; traversal and encoded variants, sent unnormalized, return 400/403/404; the hint stream opens (`event: ready`) and stays content-free while new messages arrive. Session exchange with a binding bearer returns 401; channel creation returns 403. |
+| Codex harness adapter | Driven through the review gate over its fake app-server. |
+| 5 other harness adapters, 2 OpenCode tools | **Not observed**. The dispatcher hands every adapter the same approved job, and `@khala/harnesses` depends only on `@khala/contracts` (checked), but these adapters' own behaviour was not driven. The shipped OpenCode entry composes no transport. |
 | 3 Claude MCP tools, 4 Claude plugin hooks, 2 Codex-app hooks | **Not observed**: no Claude or Codex app session could be started here. |
 | 17 internal discovery routes, 31 hosted control routes | Human routes are human-only. Agent routes **not observed**: discovery was not mounted, and control carries no message bodies in any wired flow. |
 
@@ -62,6 +62,7 @@ The frozen Claude plugin contract (`FROZEN_MCP_TOOLS`) names `khala_create_chann
 - In internal mode, pause holds delivery only. A bound agent can still read its own channel's timeline route.
 - An inference provider receives approved content once it is released; transport encryption does not hide it from the model service.
 - Revocation cleanup is local. It does not recall content already released to a model.
+- Restoring a ledger backup older than a delivery can deliver that approved release again. Codex reconciliation finds it only while it is still queued.
 
 ## Findings returned to owners
 
