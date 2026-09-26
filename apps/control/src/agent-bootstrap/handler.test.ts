@@ -860,6 +860,29 @@ describe('adapter capability', () => {
     expect(await h.handlers.capabilities.revokeAdapterCapability({ ...revoke, bindingId: 'bnd_unknown' as BindingId })).toEqual({ kind: 'applied' });
   });
 
+  it('resumes an admitted binding with a fresh capability, never a new binding or admission', async () => {
+    const h = setup();
+    const first = (await h.bootstrap()).body;
+    const admitted = h.admits.length;
+    const { binding } = first;
+    const input = { bindingId: binding.bindingId, ownerId: binding.ownerId, deviceId: binding.deviceId, generation: binding.generation, jkt: h.key.jkt };
+
+    const resumed = await h.handlers.capabilities.resumeAdapterCapability(input);
+    expect(resumed).toMatchObject({ kind: 'resumed', binding });
+    if (resumed.kind !== 'resumed') return;
+    expect(resumed.capability.token).not.toBe(first.adapter_capability.token);
+    expect(await h.adapter(resumed.capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+    expect(await h.adapter(first.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'refused', code: 'binding_superseded' });
+    expect(h.admits).toHaveLength(admitted);
+
+    // Another owner, device, generation or an unknown binding gets nothing.
+    for (const other of [{ ownerId: 'owner_other' }, { deviceId: 'DEVICEOTHER' }, { generation: binding.generation + 1 }, { bindingId: 'bnd_unknown' }]) {
+      expect(await h.handlers.capabilities.resumeAdapterCapability({ ...input, ...other } as typeof input)).toEqual({ kind: 'refused', code: 'binding_conflict' });
+    }
+    await h.handlers.capabilities.revokeAdapterCapability({ operationId: 'revoke-1', bindingId: binding.bindingId as BindingId, revokedGeneration: 4 });
+    expect(await h.handlers.capabilities.resumeAdapterCapability(input)).toEqual({ kind: 'refused', code: 'binding_revoked' });
+  });
+
   it('never revives a revoked binding: re-bootstrap needs a later generation and gets a new binding and authority', async () => {
     const h = setup();
     const first = (await h.bootstrap()).body;

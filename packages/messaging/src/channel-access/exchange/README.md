@@ -32,6 +32,12 @@ A `ControlStore` record keyed by (requester, origin, operation) moves through
    to `connected`. The record then becomes `acknowledged`, and its envelope is deleted. A duplicate
    acknowledgement returns the same success. After it, the exchange is `closed`. Nothing except a `sealed`
    record can be acknowledged. The hosted route is `/api/agent/channel-access/ready`.
+7. `/api/agent/channel-access/resume` (control's `channel-access/exchange/resume.ts`) finishes an operation whose
+   grant was already redeemed, without a grant. It needs the connector's proof for the key the exchange was
+   bound to, a `sealed` record inside its seven-day recovery window, a consumed grant (proof of admission),
+   and a fresh `GrantExchangeAuthorityPort.authorize`. It returns the binding created at redemption with a
+   new adapter capability for that key. It never mints, seals or admits, and it is `closed` on revocation,
+   ownership loss, expiry or a revoked binding.
 
 ## Guarantees and limits
 

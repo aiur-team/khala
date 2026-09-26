@@ -96,7 +96,23 @@ export interface AdapterCapabilities {
     input: Readonly<{ operationId: string; bindingId: BindingId; revokedGeneration: number }>,
     options?: CallOptions,
   ): Promise<Readonly<{ kind: 'applied' | 'outcome_unknown' | 'unavailable' }>>;
+  /**
+   * Re-issues the adapter capability for a binding that was already admitted, bound to the
+   * key that admitted it. It never creates, replaces or admits a binding: the binding must
+   * exist and match the owner, device and generation exactly, and must not be revoked.
+   */
+  resumeAdapterCapability(input: Readonly<{
+    bindingId: string; ownerId: OwnerId; deviceId: string; generation: number; jkt: string;
+  }>): Promise<AdapterResume>;
 }
+
+export type AdapterResume =
+  | Readonly<{
+    kind: 'resumed'; binding: SessionBinding;
+    capability: Readonly<{ token: string; scope: readonly AdapterAction[]; expiresAt: number }>;
+  }>
+  | Readonly<{ kind: 'refused'; code: 'binding_revoked' | 'binding_conflict' }>
+  | Readonly<{ kind: 'unavailable' }>;
 
 export type AgentBootstrapDeps = Readonly<{
   /** Exact public origin, e.g. `https://khala.aiur.team`. */
@@ -494,6 +510,21 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       if (record.revokedGeneration !== null) return refuse(401, 'binding_revoked');
       if (record.capability === null || !safeEqual(record.capability, digest(presented))) return refuse(401, 'binding_superseded');
       return { kind: 'authorized', action: action as AdapterAction, ownerId: held.ownerId as OwnerId, roomId: held.roomId as RoomId, binding: record.binding };
+    },
+
+    async resumeAdapterCapability(input) {
+      const located = await bindings.locateBinding(input.bindingId);
+      if (located.kind === 'unavailable') return { kind: 'unavailable' };
+      if (located.kind !== 'found') return { kind: 'refused', code: 'binding_conflict' };
+      const { binding } = located.record;
+      if (binding.ownerId !== input.ownerId || binding.deviceId !== input.deviceId || binding.generation !== input.generation) {
+        return { kind: 'refused', code: 'binding_conflict' };
+      }
+      if (located.record.revokedGeneration !== null) return { kind: 'refused', code: 'binding_revoked' };
+      const issued = await issueCapability(input.ownerId, located.address.roomId, binding, input.jkt);
+      if (issued.kind === 'revoked') return { kind: 'refused', code: 'binding_revoked' };
+      if (issued.kind !== 'issued') return { kind: 'unavailable' };
+      return { kind: 'resumed', binding, capability: { token: issued.token, scope: ADAPTER_CAPABILITIES, expiresAt: issued.expiresAt } };
     },
 
     async revokeAdapterCapability(input) {

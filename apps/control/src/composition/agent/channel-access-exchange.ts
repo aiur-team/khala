@@ -9,13 +9,16 @@ import type {
 } from '@khala/contracts/messaging/index';
 import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-access/exchange/ports';
 import { createGrantExchangeService } from '@khala/messaging/channel-access/exchange/service';
+import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { createGrantExchangeAuthority } from '../../channel-access/exchange/authority';
 import { createExchangeGrantIssuer } from '../../channel-access/exchange/grants';
 import {
   type GrantExchangeHandlerDependencies,
+  createChannelAccessResumeHandler,
   createGrantExchangeHandler,
   createGrantReadinessHandler,
 } from '../../channel-access/exchange/handler';
+import { createChannelAccessResumeService } from '../../channel-access/exchange/resume';
 import type { ChannelAccessStore } from '../../channel-access/store';
 import type { RouteRegistration } from '../../runtime/handler';
 
@@ -24,14 +27,25 @@ export function composeChannelAccessExchange(deps: Readonly<{
   journal: Pick<ChannelAccessStore, 'inspectRequester'>;
   fulfillment: Pick<ChannelAccessFulfillmentPort, 'claimAccess' | 'updateAccess'>;
   provider: ChannelAdmissionProviderPort;
+  /** The admitted bindings, from the agent-bootstrap capabilities; resume never creates one. */
+  bindings: Pick<AdapterCapabilities, 'resumeAdapterCapability'>;
   authenticateConnector: GrantExchangeHandlerDependencies['authenticateConnector'];
   clock: TrustedClock;
 }>): readonly RouteRegistration[] {
+  const authority = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: deps.clock });
+  const issuer = createExchangeGrantIssuer({ store: deps.store, clock: deps.clock });
   const service = createGrantExchangeService({
     store: deps.store,
-    authority: createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: deps.clock }),
+    authority,
     provider: deps.provider,
-    issuer: createExchangeGrantIssuer({ store: deps.store, clock: deps.clock }),
+    issuer,
+    clock: deps.clock,
+  });
+  const resume = createChannelAccessResumeService({
+    store: deps.store,
+    authority,
+    issuer,
+    bindings: deps.bindings,
     clock: deps.clock,
   });
   const handlerDeps: GrantExchangeHandlerDependencies = {
@@ -39,5 +53,12 @@ export function composeChannelAccessExchange(deps: Readonly<{
     exchangeFor: connector => service.forConnector(connector),
     clock: deps.clock,
   };
-  return Object.freeze([createGrantExchangeHandler(handlerDeps), createGrantReadinessHandler(handlerDeps)]);
+  return Object.freeze([
+    createGrantExchangeHandler(handlerDeps),
+    createGrantReadinessHandler(handlerDeps),
+    createChannelAccessResumeHandler({
+      authenticateConnector: deps.authenticateConnector,
+      resumeFor: connector => resume.forConnector(connector),
+    }),
+  ]);
 }

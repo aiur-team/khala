@@ -49,6 +49,11 @@ export type ExchangeGrantIssuer = Readonly<{
     options?: CallOptions,
   ): Promise<Readonly<{ kind: 'minted'; grant: string }> | Readonly<{ kind: 'unavailable' }>>;
   redeem(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantRedeemResult>;
+  /** Whether a grant for this operation was ever redeemed, i.e. the operation was admitted. */
+  wasRedeemed(
+    input: Pick<ExchangeGrantBinding, 'operationId' | 'requester' | 'origin'>,
+    options?: CallOptions,
+  ): Promise<'redeemed' | 'never' | 'unavailable'>;
 }>;
 
 const GRANT_PREFIX = 'cagrant_';
@@ -121,14 +126,23 @@ export function createExchangeGrantIssuer(deps: Readonly<{
     return { kind: 'redeemed', binding };
   }
 
-  return Object.freeze({ mint, redeem });
+  async function wasRedeemed(
+    input: Pick<ExchangeGrantBinding, 'operationId' | 'requester' | 'origin'>,
+    options?: CallOptions,
+  ): Promise<'redeemed' | 'never' | 'unavailable'> {
+    const read = await safe(() => deps.store.read(consumedKey(input), options));
+    if (read === null || read.kind === 'unavailable') return 'unavailable';
+    return read.kind === 'record' ? 'redeemed' : 'never';
+  }
+
+  return Object.freeze({ mint, redeem, wasRedeemed });
 }
 
 function grantKey(grant: string): string {
   return `channel-access-grant/${createHash('sha256').update('khala.channel-access.grant.v1\0').update(grant).digest('hex')}`;
 }
 
-function consumedKey(binding: ExchangeGrantBinding): string {
+function consumedKey(binding: Pick<ExchangeGrantBinding, 'operationId' | 'requester' | 'origin'>): string {
   const digest = createHash('sha256')
     .update('khala.channel-access.grant-consumed.v1\0')
     .update(JSON.stringify([binding.requester, binding.origin, binding.operationId]))
