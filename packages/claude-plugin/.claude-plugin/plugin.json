@@ -1,0 +1,8 @@
+{
+  "name": "khala",
+  "description": "Khala channel delivery for interactive Claude Code: hooks, the khala skill and the Khala MCP entry",
+  "version": "0.0.0",
+  "author": {
+    "name": "Khala"
+  }
+}
