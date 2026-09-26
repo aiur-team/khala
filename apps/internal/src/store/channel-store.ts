@@ -9,6 +9,7 @@ import {
 import {
   decodeSubscriptionCursor, decodeTimelineCursor, encodeSubscriptionCursor, encodeTimelineCursor,
 } from './cursors';
+import { isChannelLinked, isChannelWritable } from './conversion-lock';
 import type { InternalStoreHandle } from './open';
 
 export type RegisteredParticipant = Omit<ParticipantView, 'deviceIds'>;
@@ -45,7 +46,8 @@ type ParticipantRegistrationResult = MutationResult<'identity_mismatch' | 'inval
 type DeviceRegistrationResult = MutationResult<'identity_mismatch' | 'not_found' | 'invalid_input'>;
 type BindingRegistrationResult = MutationResult<'identity_mismatch' | 'not_found' | 'invalid_input'>;
 type BindingRevocationResult = MutationResult<'not_found' | 'invalid_input'>;
-type MembershipResult = MutationResult<'not_found' | 'invalid_input'>;
+/** `read_only`: nobody joins a channel whose conversion linked it to its external channel. */
+type MembershipResult = MutationResult<'not_found' | 'read_only' | 'invalid_input'>;
 
 export type BindingReadResult =
   | Readonly<{ kind: 'done'; binding: StoredBinding }>
@@ -84,7 +86,7 @@ export type ProvenanceResult =
 
 export type SendResult =
   | Readonly<{ kind: 'stored' | 'replayed'; event: StoredEvent }>
-  | Readonly<{ kind: 'rejected'; code: 'identity_mismatch' | 'not_found' | 'not_joined' | 'operation_mismatch' | 'invalid_input' }>
+  | Readonly<{ kind: 'rejected'; code: 'identity_mismatch' | 'not_found' | 'not_joined' | 'operation_mismatch' | 'read_only' | 'invalid_input' }>
   | Readonly<{ kind: 'unavailable' }>;
 
 export type TimelineResult =
@@ -511,6 +513,9 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           const row = db.prepare('SELECT membership FROM memberships WHERE channel_id = ? AND participant_id = ?')
             .get(input.channelId, input.participantId) as { membership: string } | undefined;
           if (row?.membership === input.membership) return { kind: 'done', changed: false } as const;
+          if ((input.membership === 'joining' || input.membership === 'joined') && isChannelLinked(db, input.channelId)) {
+            return { kind: 'rejected', code: 'read_only' } as const;
+          }
           db.prepare(`
             INSERT INTO memberships (channel_id, participant_id, membership) VALUES (?, ?, ?)
             ON CONFLICT (channel_id, participant_id) DO UPDATE SET membership = excluded.membership
@@ -683,6 +688,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           if (device?.participant_id !== input.authorParticipantId) {
             return { kind: 'rejected', code: 'identity_mismatch' } as const;
           }
+          if (!isChannelWritable(db, input.channelId)) return { kind: 'rejected', code: 'read_only' } as const;
           const inserted = db.prepare(`
             INSERT INTO events (
               event_id, channel_id, author_participant_id, author_device_id, client_txn_id,

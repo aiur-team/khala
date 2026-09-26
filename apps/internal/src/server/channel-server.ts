@@ -119,7 +119,8 @@ function fail(response: ServerResponse, outcome: Failure): void {
 
 function rejection(code: string): Failure {
   switch (code) {
-    case 'identity_mismatch': return failure(403, 'forbidden');
+    case 'identity_mismatch':
+    case 'read_only': return failure(403, 'forbidden');
     case 'not_found': return failure(404, 'not_found');
     case 'not_joined': return failure(403, 'not_joined');
     case 'operation_mismatch': return failure(409, 'operation_mismatch');
