@@ -250,9 +250,13 @@ grant reaches the entry without rewriting it.
   beside that discovery descriptor, and only then acknowledges readiness.
   `read`, `listen` and `mcp-serve` pointed at `grant.json` pick it up without a
   restart. Each agent session keeps its own `grant.json`, so two sessions of
-  one OS user can both join one channel as separate bindings. `active.json`
-  stays transport-only. A `grant.json` left from an earlier launch is replaced
-  on the next `join`. Stop removes the grant from every `grant.json` whose
+  one OS user can both join one channel as separate bindings. The first
+  session to bind also copies its grant into `active.json` while no other
+  live grant holds it, so the bare Codex and OpenCode `mcp-serve` entry, which
+  has no session to choose a `grant.json` by, acts as that session. A later
+  session reaches its binding only through its own `grant.json`. A
+  `grant.json` left from an earlier launch is replaced on the next `join`.
+  Stop removes the grant from `active.json` and every `grant.json` whose
   binding it revokes. Progress is
   journaled beside the discovery descriptor, so a `join` after a crash
   resumes the same binding and never mints a second one. No grant or

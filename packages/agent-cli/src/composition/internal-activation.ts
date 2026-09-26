@@ -37,7 +37,8 @@ import { readInternalDescriptor } from './internal.js';
 // capability for the same binding.
 //
 // Each agent's grant lives in its own file beside its discovery descriptor, so two
-// sessions of one OS user never compete for the launch's single `active.json`.
+// sessions of one OS user never compete for the launch's single `active.json`. The first
+// agent to bind also mirrors its grant there for the session-less Codex and OpenCode entries.
 //
 // A capability lives only in memory and in the granted descriptor (0600). Nothing here
 // writes a grant, capability or recovery key to any output.
@@ -335,9 +336,10 @@ function createPorts(
       },
       async activate(input) {
         if (channelId === null) return { kind: 'failed', reason: 'initialization_failed' };
-        return writeBinding(paths.grantPath, {
-          channelId, grantRef: operationId, bindingId: input.binding.bindingId, bindingCapability: input.capability.token,
-        });
+        const grant = { channelId, grantRef: operationId, bindingId: input.binding.bindingId, bindingCapability: input.capability.token };
+        const written = writeBinding(paths.grantPath, grant);
+        if (written.kind === 'ready' && options.grantPath === undefined) mirrorLaunchGrant(paths.launchPath, paths.grantPath, grant);
+        return written;
       },
       async status() {
         const loaded = await journal.load(operationId);
@@ -394,6 +396,21 @@ function writeBinding(grantPath: string, grant: Readonly<{
   });
   if (text === null) return { kind: 'failed', reason: 'initialization_failed' };
   return writeDescriptor(grantPath, text) ? { kind: 'ready' } : { kind: 'failed', reason: 'storage_unavailable' };
+}
+
+/**
+ * Mirrors the agent's grant into the launch's `active.json`, which the installed Codex and
+ * OpenCode `mcp-serve` entries read with no session to pick a `grant.json` by. Only a
+ * launch file from the same launch that holds no other live grant takes it, so the first
+ * agent to bind owns it and later agents keep their grant in `grant.json` alone. Best
+ * effort: the agent's own `grant.json` is the binding of record.
+ */
+function mirrorLaunchGrant(launchPath: string, grantPath: string, grant: Parameters<typeof writeBinding>[1]): void {
+  const launch = readInternalDescriptor(launchPath);
+  const held = readInternalDescriptor(grantPath);
+  if (!launch.ok || !held.ok || launch.value.origin !== held.value.origin
+    || launch.value.transportCapability !== held.value.transportCapability) return;
+  writeBinding(launchPath, grant);
 }
 
 function encodeOrNull(descriptor: InternalDescriptor): string | null {

@@ -804,7 +804,7 @@ describe('internal channel discovery', () => {
       };
       const client = createInternalClient({ descriptorPath: agent.descriptorPath, fetch: transport, clock: () => NOW });
       const channelUrl = `${w.server.origin}/channels/${channelId}`;
-      // The agent's own granted descriptor beside its discovery descriptor, never the shared `active.json`.
+      // The agent's own granted descriptor beside its discovery descriptor is the binding of record.
       const grantPath = path.join(path.dirname(agent.descriptorPath), 'grant.json');
       const readGrant = () => JSON.parse(fs.readFileSync(grantPath, 'utf8')) as Record<string, string>;
       const bindingRows = () => w.handle.read(db => (db.prepare('SELECT count(*) AS n FROM bindings WHERE participant_id = ?')
@@ -964,8 +964,11 @@ describe('internal channel discovery', () => {
       const grants = [a.grantPath, secondGrantPath].map(file => JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>);
       expect(grants[0]!.bindingId).not.toBe(grants[1]!.bindingId);
       expect(fs.statSync(secondGrantPath).mode & 0o777).toBe(0o600);
-      // The launch's descriptor takes neither grant.
-      expect(fs.readFileSync(launchPath, 'utf8')).toBe(launch);
+      // The launch's descriptor, which the session-less Codex and OpenCode entries read, keeps
+      // the first agent's grant; the second binds through its own file alone.
+      const mirrored = JSON.parse(fs.readFileSync(launchPath, 'utf8')) as Record<string, string>;
+      expect(mirrored).toEqual({ ...JSON.parse(launch), ...grants[0] });
+      expect(fs.statSync(launchPath).mode & 0o777).toBe(0o600);
       // Each session, pointed at its own file, is connected as its own binding.
       for (const [index, file] of [a.grantPath, secondGrantPath].entries()) {
         const status = await createInternalClient({ descriptorPath: file }).status();
