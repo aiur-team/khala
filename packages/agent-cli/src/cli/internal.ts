@@ -1,6 +1,7 @@
 import type { Writable } from 'node:stream';
 import {
-  type InternalCommand, type InternalRuntime, isInternalChannelArgument,
+  type InternalCommand, type InternalRuntime, isInternalChannelArgument, isInternalHarnessArgument, isInternalLabelArgument,
+  isInternalSessionArgument,
 } from '@khala/contracts/internal/command';
 import { CliError } from './errors.js';
 import type { InternalRuntimeLoader } from './types.js';
@@ -12,12 +13,14 @@ import type { InternalRuntimeLoader } from './types.js';
 //   khala internal --resume <channel-id>
 //   khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
 //   khala internal delete <channel-id> [--yes]
+//   khala internal discovery --harness <name> --session <id> [--label <text>] [--workspace <text>]
 
 export const INTERNAL_RUNTIME_FILE = 'khala-internal.js';
 
 export function parseInternalArguments(args: readonly string[]): InternalCommand {
   const invalid = () => new CliError('invalid_arguments');
   if (args.length === 0) return { kind: 'create' };
+  if (args[0] === 'discovery') return parseDiscovery(args.slice(1));
   const [first, channelId, ...rest] = args;
   if (!isInternalChannelArgument(channelId)) throw invalid();
   switch (first) {
@@ -48,6 +51,28 @@ export function parseInternalArguments(args: readonly string[]): InternalCommand
     default:
       throw invalid();
   }
+}
+
+function parseDiscovery(args: readonly string[]): InternalCommand {
+  const values = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index]!;
+    const value = args[index + 1];
+    if (!['--harness', '--session', '--label', '--workspace'].includes(flag) || values.has(flag) || value === undefined) {
+      throw new CliError('invalid_arguments');
+    }
+    values.set(flag, value);
+  }
+  const harness = values.get('--harness');
+  const sessionId = values.get('--session');
+  const displayLabel = values.get('--label') ?? null;
+  const workspaceLabel = values.get('--workspace') ?? null;
+  if (!isInternalHarnessArgument(harness) || !isInternalSessionArgument(sessionId)
+    || (displayLabel !== null && !isInternalLabelArgument(displayLabel))
+    || (workspaceLabel !== null && !isInternalLabelArgument(workspaceLabel))) {
+    throw new CliError('invalid_arguments');
+  }
+  return { kind: 'discovery', harness, sessionId, displayLabel, workspaceLabel };
 }
 
 /** Loads the separately bundled runtime that ships beside the CLI entry. */

@@ -95,6 +95,8 @@ describe('internal runtime composition', () => {
       { kind: 'export', channelId: 'ch_1', format: 'pdf', output: 'x', replace: false },
       { kind: 'delete', channelId: 'ch_1', confirmed: 'yes' },
       { kind: 'launch-agent' },
+      { kind: 'discovery', harness: 'Codex', sessionId: 's1', displayLabel: null, workspaceLabel: null },
+      { kind: 'discovery', harness: 'codex', sessionId: 's1', displayLabel: null },
       null,
     ]) {
       const run = io(state);
@@ -130,5 +132,35 @@ describe('internal runtime composition', () => {
     abort.abort();
     expect(await exit).toBe(0);
     expect(fs.existsSync(report.descriptorPath)).toBe(false);
+  });
+
+  it('issues a discovery descriptor only while a launcher is running, and rotates it on reissue', async () => {
+    const state = stateHome();
+    const runtime = createInternalRuntime({ bundleDirectory: fixtureBundle, startPort: 0, openBrowser: async () => ({ opened: false, reason: 'test' }) });
+    const command = { kind: 'discovery', harness: 'codex', sessionId: 'session-1', displayLabel: 'Build agent', workspaceLabel: null } as const;
+    fs.mkdirSync(path.join(state, 'khala', 'internal'), { recursive: true, mode: 0o700 });
+    const offline = io(state);
+    expect(await runtime.runInternalCommand(command, offline.io)).toBe(3);
+    expect(offline.json(offline.err)).toEqual({ ok: false, error: 'not_running' });
+
+    const abort = new AbortController();
+    const launch = io(state, { signal: abort.signal });
+    const exit = runtime.runInternalCommand({ kind: 'create' }, launch.io);
+    while (launch.out.length === 0) await new Promise(resolve => setTimeout(resolve, 10));
+    try {
+      const first = io(state);
+      expect(await runtime.runInternalCommand(command, first.io)).toBe(0);
+      const issued = first.json(first.out);
+      expect(issued).toMatchObject({ ok: true, kind: 'issued', principal: expect.stringMatching(/^agent_/), generation: 1 });
+      expect(fs.statSync(issued.descriptorPath).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(issued.connectorKeyPath).mode & 0o777).toBe(0o600);
+      expect(path.dirname(issued.descriptorPath)).toBe(path.join(state, 'khala', 'internal', 'discovery', issued.principal));
+      const again = io(state);
+      expect(await runtime.runInternalCommand(command, again.io)).toBe(0);
+      expect(again.json(again.out)).toMatchObject({ principal: issued.principal, generation: 2, descriptorPath: issued.descriptorPath });
+    } finally {
+      abort.abort();
+      expect(await exit).toBe(0);
+    }
   });
 });

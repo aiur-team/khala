@@ -158,6 +158,18 @@ describe('Claude session adapter over the loopback server', () => {
     expect(launched.logs).toEqual([`POST ${CLAUDE_SESSION_PATH}`, 'status 200']);
   });
 
+  it('round-trips hook boundary state over the loopback route', async () => {
+    const root = workspace();
+    const services = fakeServices();
+    services.mode.value = 'steer';
+    const launched = await launch(path.join(root, 'state'), services, 'J'.repeat(43));
+    const descriptor = path.join(root, 'active.json');
+    writeDescriptor(descriptor, launched);
+    const client = createClaudeSessionClient({ descriptorPath: descriptor });
+    await expect(client.hook('s-1')).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: 3000 });
+    await expect(client.hook('s-3')).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+  });
+
   it('resolves a rotated descriptor on the next call of a long-lived client', async () => {
     const root = workspace();
     const services = fakeServices();
@@ -206,6 +218,33 @@ describe('Claude session adapter over the loopback server', () => {
     answers.push({ ...mode, bindingId: 'binding-1', support: { ...mode.support, extra: 'x' } }, { ...mode, requested: 'loud' });
     await expect(client.mode('s-1')).resolves.toEqual(mode);
     await expect(client.mode('s-1')).resolves.toEqual({ kind: 'refused', code: 'unavailable' });
+  });
+
+  it('refuses a hook response with extra fields or out-of-range values', async () => {
+    const root = workspace();
+    const descriptor = path.join(root, 'active.json');
+    const answers: unknown[] = [];
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answers.shift()));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    writeDescriptor(descriptor, { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, credential: 'V'.repeat(43) });
+    const client = createClaudeSessionClient({ descriptorPath: descriptor });
+    const hook = { kind: 'hook', effective: 'steer', watchSeconds: 60 };
+    answers.push(
+      hook,
+      { ...hook, bindingId: 'binding-1' },
+      { ...hook, effective: 'loud' },
+      { ...hook, watchSeconds: 0 },
+      { ...hook, watchSeconds: -1 },
+      { ...hook, watchSeconds: 1.5 },
+      { kind: 'hook', effective: 'steer' },
+    );
+    await expect(client.hook('s-1')).resolves.toEqual(hook);
+    for (let index = 0; index < 6; index += 1) {
+      await expect(client.hook('s-1')).resolves.toEqual({ kind: 'refused', code: 'unavailable' });
+    }
   });
 
   it('decodes mode_set requests strictly before reaching the adapter', async () => {
