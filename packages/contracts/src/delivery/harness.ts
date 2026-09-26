@@ -29,10 +29,13 @@ export const BUSY_BEHAVIORS = ['queue', 'steer', 'reject', 'unknown'] as const;
  * boundary; the capability's support and evidence fields still determine whether a
  * particular adapter may claim it. `opencode_plugin` is the `@aiur/khala` plugin running
  * in-process in the person's OpenCode TUI; its modes count only for the exact evidence
- * keys recorded in `./opencode`.
+ * keys recorded in `./opencode`. `native_hooks` pulls into a session Khala did not start
+ * through the harness's own user-trusted lifecycle hooks (E09 interactive Codex evidence);
+ * the per-mode support says which boundaries it owns.
  */
 export const EXISTING_SESSION_SUPPORT = [
   'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener', 'opencode_plugin',
+  'native_hooks',
 ] as const;
 
 /**
