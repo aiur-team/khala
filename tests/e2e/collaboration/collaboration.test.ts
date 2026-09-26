@@ -4,6 +4,7 @@ import { createEvidenceLog, type EvidenceManifest } from '../harness/evidence';
 import { describeLive } from '../harness/live';
 import { ConflatedOwners } from '../harness/owners';
 import { type DriverHandle, type ScenarioDriver, createScenarioHarness } from '../harness/scenario';
+import { TASK_CHECKS } from './assertions';
 import { type AcceptanceResult, appendRun, blockedResult, evaluate, newRunId, renderRun } from './evidence';
 import {
   type CaseSetup, type CollaborationCase, type CollaborationDecisions, CollaborationBlocked, GATE_IDS, type GateId,
@@ -140,6 +141,8 @@ function insertBefore(steps: readonly Step[], anchor: Step, step: Step): Step[] 
   if (at < 0) throw new Error(`no anchor ${anchor.join()}`);
   return [...steps.slice(0, at), step, ...steps.slice(at)];
 }
+const move = (steps: readonly Step[], step: Step, anchor: Step) =>
+  insertBefore(steps.filter(candidate => candidate.join() !== step.join()), anchor, step);
 
 describe('collaboration case binding', () => {
   it('binds the P05 plan-agreement task under the decisions recorded today', () => {
@@ -203,7 +206,7 @@ describe('collaboration acceptance evaluation', () => {
     expect(result.assertions.find(row => row.id === 'offline_not_consumed')?.detail).toMatch(/never consumed/);
   });
 
-  it('does not let the third owner inherit B\'s trust from room membership', async () => {
+  it('does not let the third owner inherit B\'s trust from channel membership', async () => {
     const steps = [...passing, ['trust.auto_released', 'c', 'release-e8'] as const, ['model.input', 'c', 'release-e8'] as const];
     expect(outcomes(evaluate(await liveRun(steps), ready())).third_owner_independent).toBe('fail');
   });
@@ -293,6 +296,64 @@ describe('collaboration acceptance evaluation', () => {
   it('fails the task when a message shows twice in a timeline', async () => {
     const steps = [...passing, ['timeline.shown', 'b', 'release-p3'] as const];
     expect(taskRow(await liveRun(steps)).detail).toMatch(/exchange_once_per_timeline: task.plan_revised shows 2 times in owner-b/);
+  });
+
+  it('fails the task when an admission has no prior human approval', async () => {
+    const unapproved = without(passing, 'admission.human_approved', 'op-admit-a');
+    expect(taskRow(await liveRun(unapproved)).detail).toMatch(/no_agent_admission: admission.granted\/op-admit-a was granted without a prior human approval/);
+    const late = [...unapproved, ['admission.human_approved', 'a', 'op-admit-a'] as const];
+    expect(taskRow(await liveRun(late)).detail).toMatch(/no_agent_admission: admission.granted\/op-admit-a was granted without/);
+    const ungranted = without(passing, 'admission.granted', 'op-admit-b');
+    expect(taskRow(await liveRun(ungranted)).detail).toMatch(/no_agent_admission: owner-b's agent has no recorded admission/);
+  });
+
+  it('fails the task when the exchange runs out of order', async () => {
+    const early = move(passing, ['task.plan_revised', 'a', 'release-p3'], ['model.input', 'a', 'release-p2']);
+    expect(taskRow(await liveRun(early)).detail)
+      .toMatch(/plan_exchange_reviewed: owner-a sent task.plan_revised before its model consumed the message it answers/);
+    const confirmedFirst = move(passing, ['task.plan_confirmed', 'b', 'release-p4'], ['task.plan_proposed', 'a', 'release-e1']);
+    expect(taskRow(await liveRun(confirmedFirst)).detail).toMatch(/plan_exchange_reviewed: owner-b sent task.plan_confirmed before/);
+  });
+
+  it('fails the task when A sends the critique', async () => {
+    const steps = passing.map(step => step[0] === 'task.critique_sent' ? ['task.critique_sent', 'a', step[2]] as const : step);
+    expect(taskRow(await liveRun(steps)).detail).toMatch(/plan_exchange_reviewed: task.critique_sent\/release-p2 was sent by owner-a, not owner-b/);
+  });
+
+  it('fails the task when the revised plan is sent twice', async () => {
+    const steps = [...passing, ['task.plan_revised', 'a', 'release-p3b'] as const];
+    expect(taskRow(await liveRun(steps)).detail).toMatch(/plan_exchange_reviewed: expected one task.plan_revised, found 2/);
+  });
+
+  it('fails every exchange-based check on its own when the exchange is malformed', async () => {
+    const { records } = await liveRun([...passing, ['task.plan_revised', 'a', 'release-p3b'] as const]);
+    for (const id of ['plan_exchange_reviewed', 'revised_plan_hash_agreed', 'exchange_once_per_timeline']) {
+      expect(TASK_CHECKS[id]!(records, ready())).toEqual({ passed: false, reason: 'expected one task.plan_revised, found 2' });
+    }
+  });
+
+  it('fails the task when a released message never reaches the recipient model', async () => {
+    const steps = without(passing, 'model.input', 'release-p3');
+    expect(taskRow(await liveRun(steps)).detail).toMatch(/plan_exchange_reviewed: task.plan_revised never reached owner-b's model/);
+    const inputFirst = move(passing, ['model.input', 'b', 'release-p3'], ['review.released', 'b', 'release-p3']);
+    expect(taskRow(await liveRun(inputFirst)).detail).toMatch(/plan_exchange_reviewed: task.plan_revised never reached owner-b's model/);
+  });
+
+  it('fails the task when a plan quote precedes the owner\'s final message', async () => {
+    const steps = move(passing, ['task.final_plan_quote', 'b', 'op-planhash-3f2a9c'], ['task.plan_confirmed', 'b', 'release-p4']);
+    expect(taskRow(await liveRun(steps)).detail)
+      .toMatch(/revised_plan_hash_agreed: task.final_plan_quote\/op-planhash-3f2a9c precedes owner-b's final message/);
+    const twice = [...passing, ['task.final_plan_quote', 'a', 'op-planhash-3f2a9c'] as const];
+    expect(taskRow(await liveRun(twice)).detail).toMatch(/revised_plan_hash_agreed: expected one task.final_plan_quote from owner-a, found 2/);
+  });
+
+  it('fails the task unless A records one revised plan hash after its revised plan', async () => {
+    const twice = [...passing, ['task.revised_plan_hash', 'a', 'op-planhash-3f2a9c'] as const];
+    expect(taskRow(await liveRun(twice)).detail).toMatch(/revised_plan_hash_agreed: expected one task.revised_plan_hash, found 2/);
+    const byB = passing.map(step => step[0] === 'task.revised_plan_hash' ? ['task.revised_plan_hash', 'b', step[2]] as const : step);
+    expect(taskRow(await liveRun(byB)).detail).toMatch(/revised_plan_hash_agreed: task.revised_plan_hash\/op-planhash-3f2a9c was recorded by owner-b, not owner-a/);
+    const untied = move(passing, ['task.revised_plan_hash', 'a', 'op-planhash-3f2a9c'], ['task.plan_revised', 'a', 'release-p3']);
+    expect(taskRow(await liveRun(untied)).detail).toMatch(/revised_plan_hash_agreed: .* is not tied to owner-a's task.plan_revised\/release-p3/);
   });
 
   it('refuses evidence from a harness version the case was not bound to', async () => {

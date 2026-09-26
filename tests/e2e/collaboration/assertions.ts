@@ -109,14 +109,19 @@ export const TASK_CHECKS: Readonly<Record<string, TaskCheck>> = Object.freeze({
     }
     return pass(messages.map(({ message }) => ref(message)).join(','));
   },
-  /** A's revised plan hash is the one both agents quote in their final messages. */
+  /** A records the hash after its revised plan, and both agents quote it in their final messages. */
   revised_plan_hash_agreed(records, acceptance) {
     const messages = exchange(records, acceptance);
     if (typeof messages === 'string') return fail(messages);
     const revised = records.filter(record => record.kind === 'task.revised_plan_hash');
     if (revised.length !== 1) return fail(`expected one task.revised_plan_hash, found ${revised.length}`);
-    const hash = revised[0]!.operationId;
-    const refs = [ref(revised[0]!)];
+    const recorded = revised[0]!;
+    const a = acceptance.owners[0].ownerId;
+    if (recorded.ownerId !== a) return fail(`${ref(recorded)} was recorded by ${recorded.ownerId}, not ${a}`);
+    const planRevised = messages.find(({ step }) => step === 'plan_revised')!.message;
+    if (!before(records, planRevised, recorded)) return fail(`${ref(recorded)} is not tied to ${a}'s ${ref(planRevised)}`);
+    const hash = recorded.operationId;
+    const refs = [ref(recorded)];
     for (const ownerId of [acceptance.owners[0].ownerId, acceptance.owners[1].ownerId]) {
       const quotes = owned(records, ownerId, 'task.final_plan_quote');
       if (quotes.length !== 1) return fail(`expected one task.final_plan_quote from ${ownerId}, found ${quotes.length}`);

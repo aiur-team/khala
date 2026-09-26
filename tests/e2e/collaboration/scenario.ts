@@ -162,7 +162,7 @@ export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup): B
     createOwnerFixture('b', setup.owners.b),
     createOwnerFixture('c', setup.owners.c),
   ] as const;
-  // C must not share any verified identity with A or B; room membership grants nothing.
+  // C must not share any verified identity with A or B; channel membership grants nothing.
   assertIndependentOwners(owners);
   return Object.freeze({
     kind: 'ready',
