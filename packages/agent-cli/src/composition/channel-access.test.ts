@@ -80,6 +80,38 @@ describe('HTTP channel access', () => {
     expect(body).toEqual({ v: 1, kind: 'listing_ref', operationId: 'op-1', credentialRef: 'credential-ref-1', listingRef: 'ref-alpha' });
   });
 
+  it('posts a create intent bound to the credential and reads create status by kind', async () => {
+    const seen: { url: string | undefined; method: string | undefined; body: unknown }[] = [];
+    const origin = await loopback(async (request, response) => {
+      seen.push({ url: request.url, method: request.method, body: request.method === 'POST' ? await readBody(request) : null });
+      json(response, 200, { v: 1, operationId: 'op-1', outcome: 'pending_owner' });
+    });
+    const port = access(origin);
+    await expect(port.requestChannelCreate({ title: 'Planning', operationId: 'op-1', origin: null }))
+      .resolves.toEqual({ kind: 'status', status: { v: 1, operationId: 'op-1', outcome: 'pending_owner' } });
+    await port.channelCreateStatus({ operationId: 'op-1', origin: null });
+    expect(seen).toEqual([
+      {
+        url: '/api/agent/channel-access/create', method: 'POST',
+        body: { v: 1, operationId: 'op-1', credentialRef: 'credential-ref-1', origin, proposedTitle: 'Planning' },
+      },
+      { url: `${CHANNEL_ACCESS_STATUS_PATH}?v=1&operationId=op-1&operationKind=create`, method: 'GET', body: null },
+    ]);
+    await expect(port.requestChannelCreate({ title: 'T', operationId: 'op-1', origin: 'https://evil.example' }))
+      .resolves.toEqual({ kind: 'refused', code: 'untrusted_origin' });
+  });
+
+  it('rejects a cross-origin redirect on create without following it', async () => {
+    const other = vi.fn();
+    const target = await loopback((_request, response) => { other(); json(response, 200, {}); });
+    const origin = await loopback((_request, response) => {
+      response.writeHead(307, { location: `${target}/api/agent/channel-access/create` }).end();
+    });
+    const result = await access(origin).requestChannelCreate({ title: 'T', operationId: 'op-1', origin: null });
+    expect(result).toEqual({ kind: 'refused', code: 'untrusted_origin' });
+    expect(other).not.toHaveBeenCalled();
+  });
+
   it('sends a channel URL to the service it names, and refuses a conflicting --origin', async () => {
     const seen: unknown[] = [];
     const origin = await loopback(async (request, response) => {
