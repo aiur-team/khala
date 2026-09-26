@@ -218,6 +218,12 @@ selects the local client for `status`, `send`, `read`, `listen`, `mcp-serve`,
 and `join`, and is refused for every other command. Other commands never load
 the local client.
 
+The Codex and OpenCode MCP entries that `khala setup` installs run a bare
+`mcp-serve` with no option. Outside Claude mode (`KHALA_MCP_HARNESS=claude`),
+a bare `mcp-serve` uses `$XDG_STATE_HOME/khala/internal/active.json` exactly as
+if that path had been passed, so a relaunch that moves the origin or rotates the
+grant reaches the entry without rewriting it.
+
 - Every operation reopens that exact file without following a symlink and
   requires a regular file owned by you with mode 0600, version 1, and an exact
   `http://127.0.0.1:<port>` origin. Anything else reports `status` as

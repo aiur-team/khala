@@ -495,7 +495,9 @@ describe('runtime descriptor and secrets', () => {
     return output;
   }
 
-  async function assertFollowsMovedDescriptor(args, env) {
+  // `granted` publishes a launch that holds a human grant, so the entry presents that
+  // launch's binding capability; a transport-only launch is an unjoined agent.
+  async function assertFollowsMovedDescriptor(args, { env, granted = false } = {}) {
     const machine = createMachine(ALL);
     assert.equal(confirmed(v1, machine, 'setup').applied.status, 0);
     // The internal server owns the descriptor directory; it exists before any launch moves it.
@@ -504,8 +506,13 @@ describe('runtime descriptor and secrets', () => {
     const { requests, servers, close } = await launches();
     try {
       for (const [index, server] of servers.entries()) {
-        const token = randomBytes(32).toString('base64url');
-        writeDescriptor(machine, { v: 1, channelId: `ch_${'a'.repeat(16)}`, origin: `http://127.0.0.1:${server.address().port}`, transportCapability: token });
+        const transportCapability = randomBytes(32).toString('base64url');
+        const bindingCapability = randomBytes(32).toString('base64url');
+        const token = granted ? bindingCapability : transportCapability;
+        writeDescriptor(machine, {
+          v: 1, channelId: `ch_${'a'.repeat(16)}`, origin: `http://127.0.0.1:${server.address().port}`, transportCapability,
+          ...(granted ? { grantRef: `grant-${index}`, bindingId: `binding-${index}`, bindingCapability } : {}),
+        });
         const output = await runEntry(machine, args, env);
         const reached = requests.filter(request => request.index === index);
         assert.ok(reached.length > 0, `${args.join(' ')} never reached launch ${index}: ${output}`);
@@ -519,6 +526,7 @@ describe('runtime descriptor and secrets', () => {
   test('the Claude hook entry re-reads a moved runtime descriptor on every call', () =>
     assertFollowsMovedDescriptor(['claude', 'status', '--session', 'acceptance']));
 
-  test('the Codex and OpenCode MCP entry resolves a moved runtime descriptor', { todo: 'https://github.com/aiur-team/khala/issues/386' }, () =>
-    assertFollowsMovedDescriptor(['mcp-serve']));
+  // Codex `mcp_servers.khala` and OpenCode `mcp.khala` both run the launcher's bare `mcp-serve`.
+  test('the Codex and OpenCode MCP entry resolves a moved runtime descriptor', () =>
+    assertFollowsMovedDescriptor(['mcp-serve'], { granted: true }));
 });
