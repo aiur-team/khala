@@ -4,11 +4,11 @@ KHA-139 proves the chosen collaboration task end to end. Two humans and their ex
 agent sessions complete it, and then an independent third owner joins. This report
 records each acceptance run under its own run ID. Blocked and failed runs stay here.
 
-**Status: blocked.** No live collaboration has run. The task is decided (P05 ruling,
-below), but G-HARNESSES is still open, so no harness route is pinned. The suite in
-`tests/e2e/collaboration/` refuses to act until it clears. The live run itself belongs
-to the acceptance tickets (#134, and #241 for OpenCode+DeepSeek ↔ Claude), which reuse
-this harness-neutral script.
+**Status: blocked.** No live collaboration has run. Every gate this case reads is
+decided (see the rulings below), and the case binds once it pins an approved harness route. The live
+run belongs to the acceptance tickets (#134, and #241 for OpenCode+DeepSeek ↔ Claude).
+They pin a route version, register a live driver and reuse this harness-neutral
+script. Until they do, the live entry fails with no route pinned.
 
 ## Task (G-TASK / P05)
 
@@ -41,9 +41,9 @@ transcript of the live run.
 | Gate | State | Effect on this case |
 | --- | --- | --- |
 | G-TASK / P05: first collaboration task and success evidence | Resolved by the Executor ruling: cross-owner plan agreement | Supplies the task and the four task checks above |
-| G-HARNESSES: which harness routes the task runs on | Open: P15 reframed it, and only per-route tested evidence counts | Blocks the whole case before any action |
-| G-AUTOMATION: busy, unattended, trust backlog and reply budgets | Open. Hosted `auto` is refused (`CLOSED_AUTOMATION`) | Blocks `trusted_delivery`, `rearm_waits` and `busy_notified_then_consumed` |
-| P02: agent conversations with browsers closed | Open: asked, unanswered | Blocks `browser_closed`. The mode stays `unresolved` rather than being waived |
+| G-HARNESSES: which harness routes the task runs on | Resolved by the Executor ruling: only the routes proven on main, which are the Claude Code CLI hooks (#326/#310) and the OpenCode plugin (#323/#312). Codex is excluded while #230/#266 are parked | `APPROVED_HARNESS_ROUTES`. A case that pins no route, or pins any other route, is blocked before any action |
+| G-AUTOMATION: busy, unattended, trust backlog and reply budgets | Resolved by the Executor ruling: hosted automation stays closed (`CLOSED_AUTOMATION`), and only the local fence `{3,3,1,wait}` applies. A human approves every message | An automatic release never counts as a release. `trusted_delivery` requires the effective state to be reported apart from the request, and no automatic release |
+| P02: agent conversations with browsers closed | Resolved by the Executor ruling: approved messages keep flowing with no browser open, because the connector delivers them. New messages wait for approval until an owner opens the app | Mode `required`. `browser_closed` checks both halves. No new mode is built |
 | G-RETENTION: recovery, closure and history on admission | Settled for this case by P12, P13 and P14 | Third owner sees no earlier history by default. Recovery has no backfill |
 
 The KHA-139 plan names "KHA-109's approved collaboration scenario" as the source of
@@ -60,16 +60,16 @@ reports `blocked`, and the run is then not a pass.
 | --- | --- | --- | --- | --- |
 | `ordinary_onboarding` | R1 | U2 | | A, B and C sign in with OAuth, join by link and bind an existing session. Any human connector configuration fails the row |
 | `exact_review_release` | R2, AE1 | U2 | | B previews each message before releasing it, and no message reaches B's model before B releases it |
-| `no_unreleased_consumption` | R2, AE1 | U2 | | For every owner, each `model.input` or `context.consumed` follows that owner's own review release, or an auto-release under that owner's effective, not re-armed trust |
+| `no_unreleased_consumption` | R2, AE1 | U2 | | For every owner, each `model.input` or `context.consumed` follows that owner's own review release. An automatic release does not count |
 | `session_identity_retained` | AE1 | U2 | | Every model input for A and B matches the original session identity. No identity change is recorded |
 | `useful_task_result` | R1, AE1 | U2 | G-TASK | Every P05 task check passes: A and B reach a reviewed plan agreement, not merely an echo |
-| `trusted_delivery` | R2 | U3 | G-AUTOMATION | B's trusted mode is requested, then effective, then used |
+| `trusted_delivery` | R2 | U3 | G-AUTOMATION | B requests trusted mode, and the effective state (`trust.effective` or `trust.refused`) is reported separately. Nothing is released automatically |
 | `rearm_waits` | R2 | U3 | G-AUTOMATION | After B re-arms review, a later message waits for review again |
 | `third_owner_independent` | R2 | U3 | | C onboards with its own identity. Nothing reaches C's model without C's own release or C's own trust decision |
 | `third_owner_history` | R2 | U3 | G-RETENTION | C's admission point is recorded, and C reads nothing from before it |
 | `busy_notified_then_consumed` | R3, AE2 | U4 | G-AUTOMATION | A busy recipient's message is queued and later consumed. The two are observed and timed separately |
 | `offline_not_consumed` | R3, AE2 | U4 | | A relay acceptance while offline is not consumption. Catch-up after reconnect is. An unknown outcome is not later credited |
-| `browser_closed` | R3 | U4 | P02 | When P02 requires it, a session consumes a message with the browser closed |
+| `browser_closed` | R3 | U4 | P02 | While the owner's browser is closed, a message approved earlier is consumed and nothing is approved. A new message waits and is approved only after the owner opens the app |
 | `recovery_without_backfill` | R3 | U4 | | Recovery completes with no history backfill (P14). Other KHA-136 limits, such as duration, are not measured here |
 
 ## Standing limitations
@@ -77,6 +77,12 @@ reports `blocked`, and the run is then not a pass.
 - Timing is reported only as durations on one owner's monotonic clock. No cross-host
   latency or latency SLO is claimed.
 - A relay or transport receipt is never counted as model consumption.
+- Nothing is released automatically. A human approves every message, and hosted
+  automation stays closed (G-AUTOMATION).
+- With every browser closed, only messages approved earlier are delivered. New messages
+  wait until an owner opens the app (P02).
+- Only the Claude Code CLI hooks and the OpenCode plugin are approved routes. Codex
+  is not supported (G-HARNESSES).
 - Isolation from an unrestricted agent on the same host is not claimed. KHA-138 owns
   hostile security proof.
 - No live collaboration driver exists yet. The KHA-134 and KHA-135 compositions
@@ -155,4 +161,38 @@ Limitations:
 - Latency is reported only as durations on one owner's monotonic clock; no cross-host latency is claimed.
 - A relay or transport receipt is not model consumption; only context.consumed or model.input counts.
 - Isolation from an unrestricted agent on the same host is not claimed.
+- No live collaboration was executed.
+
+### Run `collab-2026-09-26t084556829z-648ac982`
+
+- Case: `two-owners-then-third`
+- Outcome: **blocked**
+- Source: `c1db965` plus the G-HARNESSES, G-AUTOMATION and P02 bindings, evidence mode `none, blocked before action`, 2026-09-26
+
+Blocked before any action:
+
+- no harness version is pinned for the case
+
+| Assertion | Covers | Outcome | Evidence or reason |
+| --- | --- | --- | --- |
+| `ordinary_onboarding` | R1 | blocked | not run: case blocked before action |
+| `exact_review_release` | R2, AE1 | blocked | not run: case blocked before action |
+| `no_unreleased_consumption` | R2, AE1 | blocked | not run: case blocked before action |
+| `session_identity_retained` | AE1 | blocked | not run: case blocked before action |
+| `useful_task_result` | R1, AE1 | blocked | not run: case blocked before action |
+| `trusted_delivery` | R2 | blocked | not run: case blocked before action |
+| `rearm_waits` | R2 | blocked | not run: case blocked before action |
+| `third_owner_independent` | R2 | blocked | not run: case blocked before action |
+| `third_owner_history` | R2 | blocked | not run: case blocked before action |
+| `busy_notified_then_consumed` | R3, AE2 | blocked | not run: case blocked before action |
+| `offline_not_consumed` | R3, AE2 | blocked | not run: case blocked before action |
+| `browser_closed` | R3 | blocked | not run: case blocked before action |
+| `recovery_without_backfill` | R3 | blocked | not run: case blocked before action |
+
+Limitations:
+
+- Latency is reported only as durations on one owner's monotonic clock; no cross-host latency is claimed.
+- A relay or transport receipt is not model consumption; only context.consumed or model.input counts.
+- Isolation from an unrestricted agent on the same host is not claimed.
+- Nothing is released automatically: a human approves every message (G-AUTOMATION). Hosted automation stays closed.
 - No live collaboration was executed.

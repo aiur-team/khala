@@ -7,14 +7,14 @@ import { type DriverHandle, type ScenarioDriver, createScenarioHarness } from '.
 import { type AcceptanceResult, appendRun, blockedResult, evaluate, newRunId, renderRun } from './evidence';
 import {
   type CaseSetup, type CollaborationCase, type CollaborationDecisions, CollaborationBlocked, GATE_IDS, type GateId,
-  PLAN_AGREEMENT_TASK, RECORDED_DECISIONS, bindCase,
+  APPROVED_HARNESS_ROUTES, PLAN_AGREEMENT_TASK, RECORDED_DECISIONS, bindCase,
 } from './scenario';
 
 const setup: CaseSetup = {
   caseId: 'two-owners-then-third',
   owners: { a: controlsFor('a'), b: controlsFor('b'), c: controlsFor('c') },
-  // The scripted driver stands in for the harness here, so its version is the one pinned.
-  harnessVersions: { 'collaboration-script': '0' },
+  // The scripted driver reports itself as an approved route, so that is the version pinned.
+  harnessVersions: { 'claude-code-cli-hooks': '0' },
 };
 
 // Test-only gate states around the recorded P05 task. They exercise the evaluator and are not product decisions.
@@ -73,9 +73,12 @@ const passing: readonly Step[] = [
   ['session.identity_matched', 'a', 'release-p4'],
   ...(['a', 'b'] as const).flatMap(seed => (['release-e1', 'release-p2', 'release-p3', 'release-p4'] as const)
     .map(op => ['timeline.shown', seed, op] as const)),
+  // B's trust is effective under the local fence, but nothing is released automatically.
   ['trust.requested', 'b', 'cmd-trust-1'],
   ['trust.effective', 'b', 'cmd-trust-1'],
-  ['trust.auto_released', 'b', 'release-e2'],
+  ['review.pending', 'b', 'release-e2'],
+  ['review.previewed', 'b', 'release-e2'],
+  ['review.released', 'b', 'release-e2'],
   ['model.input', 'b', 'release-e2'],
   ['session.identity_matched', 'b', 'release-e2'],
   ['trust.rearmed', 'b', 'cmd-rearm-1'],
@@ -99,11 +102,15 @@ const passing: readonly Step[] = [
   ['review.previewed', 'b', 'release-e6'],
   ['review.released', 'b', 'release-e6'],
   ['context.consumed', 'b', 'release-e6'],
-  ['trust.requested', 'a', 'cmd-trust-a'],
-  ['trust.effective', 'a', 'cmd-trust-a'],
+  // P02: e7, approved before A's browser closed, still flows. e8 waits until A reopens the app.
+  ['review.released', 'a', 'release-e7'],
   ['browser.closed', 'a', 'event-a-closed'],
-  ['trust.auto_released', 'a', 'release-e7'],
   ['context.consumed', 'a', 'release-e7'],
+  ['review.pending', 'a', 'release-e8'],
+  ['browser.opened', 'a', 'event-a-opened'],
+  ['review.released', 'a', 'release-e8'],
+  ['model.input', 'a', 'release-e8'],
+  ['session.identity_matched', 'a', 'release-e8'],
   ['recovery.completed', 'a', 'op-recover-a'],
 ];
 
@@ -111,7 +118,7 @@ const passing: readonly Step[] = [
 async function liveRun(steps: readonly Step[]): Promise<EvidenceManifest> {
   let handle: DriverHandle | undefined;
   const driver: ScenarioDriver = {
-    name: 'collaboration-script', mode: 'live-harness', source: { component: 'collaboration-script', version: '0' }, faults: [],
+    name: 'collaboration-script', mode: 'live-harness', source: { component: 'claude-code-cli-hooks', version: '0' }, faults: [],
     attach: issued => { handle = issued; }, close: async () => undefined,
   };
   const scenario = await createScenarioHarness({
@@ -135,14 +142,25 @@ function insertBefore(steps: readonly Step[], anchor: Step, step: Step): Step[] 
 }
 
 describe('collaboration case binding', () => {
-  it('is blocked before any action under the decisions recorded today', () => {
+  it('binds the P05 plan-agreement task under the decisions recorded today', () => {
     const bound = bindCase(RECORDED_DECISIONS, setup);
-    expect(bound.kind).toBe('blocked');
-    if (bound.kind !== 'blocked') return;
-    expect(bound.openGates).toEqual(['G-HARNESSES', 'G-AUTOMATION', 'P02']);
-    expect(bound.reasons.join('\n')).toMatch(/G-HARNESSES is open/);
-    expect(bound.reasons.join('\n')).not.toMatch(/G-TASK|no approved collaboration task/);
-    expect(() => { throw new CollaborationBlocked(bound); }).toThrow(/blocked before any action/);
+    expect(bound).toMatchObject({
+      kind: 'ready',
+      case: { expectedTaskAssertions: PLAN_AGREEMENT_TASK.assertions, browserClosedMode: 'required', openGates: [] },
+    });
+    for (const route of APPROVED_HARNESS_ROUTES) {
+      expect(bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: { [route]: '1' } }).kind).toBe('ready');
+    }
+  });
+
+  it('is blocked before any action with no pinned route or an unapproved one', () => {
+    const unpinned = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: {} });
+    expect(unpinned).toMatchObject({ kind: 'blocked', reasons: ['no harness version is pinned for the case'] });
+    const codex = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: { ...setup.harnessVersions, codex: '1' } });
+    expect(codex.kind).toBe('blocked');
+    if (codex.kind !== 'blocked') return;
+    expect(codex.reasons.join('\n')).toMatch(/harness route codex is not approved by G-HARNESSES/);
+    expect(() => { throw new CollaborationBlocked(codex); }).toThrow(/blocked before any action/);
   });
 
   it('refuses a browser-closed mode that P02 has not decided', () => {
@@ -151,10 +169,7 @@ describe('collaboration case binding', () => {
     expect(bindCase({ ...decisions(), browserClosedMode: 'unresolved' }, setup)).toMatchObject({ kind: 'blocked' });
   });
 
-  it('binds the P05 plan-agreement task once the harness gate clears', () => {
-    const harnesses = { status: 'resolved', decisionRef: 'test', source: 'test' } as const;
-    const bound = bindCase({ ...RECORDED_DECISIONS, gates: { ...RECORDED_DECISIONS.gates, 'G-HARNESSES': harnesses } }, setup);
-    expect(bound).toMatchObject({ kind: 'ready', case: { expectedTaskAssertions: PLAN_AGREEMENT_TASK.assertions } });
+  it('refuses a task assertion with no check', () => {
     const unknown = { ...decisions(), task: { decisionRef: 'test', assertions: ['summary_agreed'] } };
     expect(() => bindCase(unknown, setup)).toThrow(/no check in TASK_CHECKS/);
   });
@@ -208,11 +223,32 @@ describe('collaboration acceptance evaluation', () => {
     expect(result.limitations.join('\n')).toMatch(/P02 open/);
   });
 
-  it('does not credit an auto-release made before the owner\'s trust is effective', async () => {
-    const early: Step[] = [['trust.auto_released', 'b', 'release-e0'], ['model.input', 'b', 'release-e0'], ['session.identity_matched', 'b', 'release-e0']];
-    const result = evaluate(await liveRun([...early, ...passing]), ready());
-    expect(outcomes(result)).toMatchObject({ exact_review_release: 'fail', no_unreleased_consumption: 'fail' });
-    expect(result.outcome).toBe('fail');
+  it('does not credit an automatic release, even under effective trust', async () => {
+    const auto: Step[] = [['trust.auto_released', 'b', 'release-e0'], ['model.input', 'b', 'release-e0'], ['session.identity_matched', 'b', 'release-e0']];
+    const afterTrust = insertBefore(passing, ['trust.rearmed', 'b', 'cmd-rearm-1'], auto[0]!);
+    const result = evaluate(await liveRun(afterTrust), ready());
+    expect(outcomes(result).trusted_delivery).toBe('fail');
+    const consumed = evaluate(await liveRun([...auto, ...passing]), ready());
+    expect(outcomes(consumed)).toMatchObject({ exact_review_release: 'fail', no_unreleased_consumption: 'fail', trusted_delivery: 'fail' });
+    expect(consumed.outcome).toBe('fail');
+  });
+
+  it('accepts a refused trust request and fails an unanswered one', async () => {
+    const refused = without(passing, 'trust.effective', 'cmd-trust-1');
+    const answered = insertBefore(refused, ['review.pending', 'b', 'release-e2'], ['trust.refused', 'b', 'cmd-trust-1']);
+    expect(outcomes(evaluate(await liveRun(answered), ready())).trusted_delivery).toBe('pass');
+    expect(outcomes(evaluate(await liveRun(refused), ready())).trusted_delivery).toBe('fail');
+  });
+
+  it('requires approved messages to flow and new ones to wait while the browser is closed', async () => {
+    const row = async (steps: readonly Step[]) =>
+      evaluate(await liveRun(steps), ready()).assertions.find(candidate => candidate.id === 'browser_closed')!;
+    expect(await row(without(passing, 'context.consumed', 'release-e7'))).toMatchObject({ outcome: 'fail', detail: expect.stringMatching(/approved earlier/) });
+    const approvedWhileClosed = insertBefore(without(passing, 'review.released', 'release-e8'),
+      ['browser.opened', 'a', 'event-a-opened'], ['review.released', 'a', 'release-e8']);
+    expect(await row(approvedWhileClosed)).toMatchObject({ outcome: 'fail', detail: expect.stringMatching(/approved while owner-a's browser was closed/) });
+    expect((await row(without(passing, 'review.pending', 'release-e8'))).detail).toMatch(/no new message arrived/);
+    expect((await row(without(passing, 'browser.opened', 'event-a-opened'))).detail).toMatch(/never opened the app/);
   });
 
   it('does not credit an auto-release after the owner re-armed review', async () => {
@@ -260,11 +296,11 @@ describe('collaboration acceptance evaluation', () => {
   });
 
   it('refuses evidence from a harness version the case was not bound to', async () => {
-    const bound = bindCase(decisions(), { ...setup, harnessVersions: { 'collaboration-script': '1' } });
+    const bound = bindCase(decisions(), { ...setup, harnessVersions: { 'claude-code-cli-hooks': '1' } });
     if (bound.kind !== 'ready') throw new Error('expected ready');
     const result = evaluate(await liveRun(passing), bound.case);
     expect(result.outcome).toBe('fail');
-    expect(result.assertions.every(row => /collaboration-script 1 was not observed/.test(row.detail))).toBe(true);
+    expect(result.assertions.every(row => /claude-code-cli-hooks 1 was not observed/.test(row.detail))).toBe(true);
     expect(bindCase(decisions(), { ...setup, harnessVersions: {} })).toMatchObject({ kind: 'blocked' });
   });
 
@@ -278,7 +314,7 @@ describe('collaboration acceptance evaluation', () => {
 
 describe('collaboration evidence report', () => {
   it('appends blocked runs under distinct run ids and never overwrites one', () => {
-    const bound = bindCase(RECORDED_DECISIONS, setup);
+    const bound = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: {} });
     if (bound.kind !== 'blocked') throw new Error('expected blocked');
     const first = blockedResult(newRunId(new Date('2026-09-25T00:00:00Z')), bound);
     const second = blockedResult(newRunId(new Date('2026-09-25T00:00:00Z')), bound);
@@ -293,7 +329,8 @@ describe('collaboration evidence report', () => {
 
 describeLive('collaboration acceptance (KHA-139)', liveCase => {
   liveCase('two owners collaborate, then an independent third owner joins', async () => {
-    // G-HARNESSES is open, so no harness route is pinned. The P05 task is harness-neutral.
+    // Every gate is decided, but no live route version is pinned until a live driver exists.
+    // The acceptance tickets (#134, #241) pin an approved route and reuse this harness-neutral task.
     const bound = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: {} });
     // Blocked is a failed live run, never a skip: the report keeps the blocked row.
     if (bound.kind === 'blocked') throw new CollaborationBlocked(bound);

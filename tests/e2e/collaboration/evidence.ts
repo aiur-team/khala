@@ -55,6 +55,7 @@ const STANDING_LIMITATIONS = [
   'Latency is reported only as durations on one owner\'s monotonic clock; no cross-host latency is claimed.',
   'A relay or transport receipt is not model consumption; only context.consumed or model.input counts.',
   'Isolation from an unrestricted agent on the same host is not claimed.',
+  'Nothing is released automatically: a human approves every message (G-AUTOMATION). Hosted automation stays closed.',
 ];
 
 /** Result for a case that was blocked before any action: every row is blocked. */
@@ -127,6 +128,9 @@ function unpinnedHarness(manifest: EvidenceManifest, acceptance: CollaborationCa
 /** Evaluates every assertion over the manifest of a live run of a bound case. */
 export function evaluate(manifest: EvidenceManifest, acceptance: CollaborationCase): AcceptanceResult {
   const limitations = [...STANDING_LIMITATIONS];
+  if (acceptance.browserClosedMode === 'required') {
+    limitations.push('With the browser closed, only messages approved earlier are delivered. New messages wait until the owner opens the app (P02).');
+  }
   if (acceptance.browserClosedMode === 'unsupported') limitations.push('Operation with every browser closed is unsupported.');
   if (acceptance.browserClosedMode === 'unresolved') limitations.push('Browser-closed operation is unresolved (P02 open).');
   let assertions: AssertionRow[];

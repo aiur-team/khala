@@ -41,29 +41,17 @@ const first = (records: readonly EvidenceRecord[], candidates: readonly Evidence
 const CONSUMPTION: readonly string[] = ['model.input', 'context.consumed'];
 
 /**
- * An auto-release counts only under the same owner's own trust: requested, then
- * effective, and not re-armed between that and the auto-release.
- */
-function trusted(records: readonly EvidenceRecord[], auto: EvidenceRecord): boolean {
-  const own = (kind: string) => owned(records, auto.ownerId, kind);
-  return own('trust.effective').some(effective => before(records, effective, auto)
-    && own('trust.requested').some(request => before(records, request, effective))
-    && !own('trust.rearmed').some(rearm => before(records, effective, rearm) && before(records, rearm, auto)));
-}
-
-/**
- * Everything the owner's model consumed follows that owner's own release of the same
- * operation, by review or under that owner's effective trust. Another owner's release
- * never counts.
+ * Everything the owner's model consumed follows that owner's own review release of the
+ * same operation. Under the G-AUTOMATION ruling a human approves every message, so an
+ * automatic release never counts. Another owner's release never counts either.
  */
 function gatedConsumption(records: readonly EvidenceRecord[], ownerId: string, requireAny: boolean): Verdict {
   const consumed = records.filter(record => record.ownerId === ownerId && CONSUMPTION.includes(record.kind));
   if (requireAny && owned(records, ownerId, 'model.input').length === 0) return fail(`no model.input recorded for ${ownerId}`);
   for (const entry of consumed) {
-    const released = (candidate: EvidenceRecord) => candidate.operationId === entry.operationId && before(records, candidate, entry);
-    const reviewed = owned(records, ownerId, 'review.released').some(released);
-    const auto = owned(records, ownerId, 'trust.auto_released').some(candidate => released(candidate) && trusted(records, candidate));
-    if (!reviewed && !auto) return fail(`${ref(entry)} reached ${ownerId}'s model context without ${ownerId}'s own release`);
+    const reviewed = owned(records, ownerId, 'review.released')
+      .some(candidate => candidate.operationId === entry.operationId && before(records, candidate, entry));
+    if (!reviewed) return fail(`${ref(entry)} reached ${ownerId}'s model context without ${ownerId}'s own review release`);
   }
   return pass(consumed.length > 0 ? consumed.map(ref).join(',') : `none/${ownerId}`);
 }
@@ -242,14 +230,19 @@ export const ASSERTIONS: readonly AssertionSpec[] = Object.freeze([
   {
     id: 'trusted_delivery', covers: ['R2'], unit: 'U3', gates: ['G-AUTOMATION'],
     check(records, acceptance) {
+      // G-AUTOMATION ruling: hosted `auto` is refused and the local fence may accept it.
+      // Either way the effective state is reported apart from the request, and no
+      // message is released without a human.
       const b = acceptance.owners[1].ownerId;
       const requested = owned(records, b, 'trust.requested')[0];
       if (!requested) return fail(`${b} never requested trusted delivery`);
-      const effective = first(records, owned(records, b, 'trust.effective'), requested);
-      if (!effective) return fail(`${b}'s trusted mode was requested but never became effective`);
-      const auto = first(records, owned(records, b, 'trust.auto_released'), effective);
-      if (!auto) return fail(`no message was released under ${b}'s effective trust`);
-      return pass(`${ref(effective)},${ref(auto)}`);
+      const answer = first(records, records.filter(record => record.ownerId === b
+        && (record.kind === 'trust.effective' || record.kind === 'trust.refused')
+        && record.operationId === requested.operationId), requested);
+      if (!answer) return fail(`${b}'s trusted-mode request has no reported effective state`);
+      const auto = records.find(record => record.kind === 'trust.auto_released');
+      if (auto) return fail(`${ref(auto)} was released automatically; a human approves every message`);
+      return pass(`${ref(requested)},${ref(answer)}`);
     },
   },
   {
@@ -337,15 +330,25 @@ export const ASSERTIONS: readonly AssertionSpec[] = Object.freeze([
   {
     id: 'browser_closed', covers: ['R3'], unit: 'U4', gates: ['P02'],
     check(records, acceptance) {
+      // P02 ruling: a message approved before the browser closed still reaches the
+      // session. A new message waits for approval until the owner opens the app again.
       if (acceptance.browserClosedMode !== 'required') return pass(`decision/${acceptance.browserClosedMode}`);
       const closed = records.find(record => record.kind === 'browser.closed');
       if (!closed) return fail('browser-closed operation is required but no browser was closed');
-      const consumed = first(records, owned(records, closed.ownerId, 'context.consumed'), closed);
-      const reopened = first(records, owned(records, closed.ownerId, 'browser.opened'), closed);
-      if (!consumed || (reopened && before(records, reopened, consumed))) {
-        return fail(`${closed.ownerId}'s session consumed nothing while the browser was closed`);
-      }
-      return pass(`${ref(closed)},${ref(consumed)}`);
+      const own = (kind: string) => owned(records, closed.ownerId, kind);
+      const reopened = first(records, own('browser.opened'), closed);
+      if (!reopened) return fail(`${closed.ownerId} never opened the app again to approve waiting messages`);
+      const whileClosed = (record: EvidenceRecord) => before(records, closed, record) && before(records, record, reopened);
+      const flowed = own('context.consumed').find(consumed => whileClosed(consumed)
+        && own('review.released').some(release => release.operationId === consumed.operationId && before(records, release, closed)));
+      if (!flowed) return fail(`no message ${closed.ownerId} approved earlier was consumed while the browser was closed`);
+      const early = own('review.released').find(whileClosed);
+      if (early) return fail(`${ref(early)} was approved while ${closed.ownerId}'s browser was closed`);
+      const waiting = own('review.pending').find(whileClosed);
+      if (!waiting) return fail(`no new message arrived for ${closed.ownerId} while the browser was closed`);
+      const approved = own('review.released').find(release => release.operationId === waiting.operationId && before(records, reopened, release));
+      if (!approved) return fail(`${ref(waiting)} was never approved after ${closed.ownerId} opened the app`);
+      return pass(`${ref(flowed)},${ref(waiting)},${ref(approved)}`);
     },
   },
   {

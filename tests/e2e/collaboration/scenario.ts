@@ -20,7 +20,11 @@ export type GateState =
   | Readonly<{ status: 'open'; question: string; source: string }>
   | Readonly<{ status: 'resolved'; decisionRef: string; source: string }>;
 
-/** `unresolved` while P02 is open: the case is neither required nor waived. */
+/**
+ * `unresolved` while P02 is open: the case is neither required nor waived. Under the
+ * P02 ruling, `required` means a message approved before the browser closed is still
+ * delivered, and a new message waits for approval until the owner opens the app.
+ */
 export type BrowserClosedMode = 'not_required' | 'required' | 'unsupported' | 'unresolved';
 
 export type TaskDecision = Readonly<{
@@ -46,6 +50,15 @@ export const PLAN_AGREEMENT_TASK: TaskDecision = Object.freeze({
   assertions: Object.freeze(['plan_exchange_reviewed', 'revised_plan_hash_agreed', 'no_agent_admission', 'exchange_once_per_timeline']),
 });
 
+const RULINGS = 'https://github.com/aiur-team/khala/issues/48#issuecomment-5844179178';
+
+/**
+ * The harness routes G-HARNESSES approves, which are the ones proven on main.
+ * `harnessVersions` pins a version per route, so a case that names any other route,
+ * Codex included, is blocked.
+ */
+export const APPROVED_HARNESS_ROUTES: readonly string[] = Object.freeze(['claude-code-cli-hooks', 'opencode-plugin']);
+
 /**
  * The decisions as recorded in the repository at the time of writing. A change here
  * must cite the decision that changed it; nothing in this suite may invent one.
@@ -58,14 +71,14 @@ export const RECORDED_DECISIONS: CollaborationDecisions = {
       source: 'https://github.com/aiur-team/khala/issues/48#issuecomment-5844004544',
     },
     'G-HARNESSES': {
-      status: 'open',
-      question: 'which harness routes the chosen task runs on; P15 reframed the gate and only per-route tested evidence counts',
-      source: 'docs/product/decisions.md#P15; ticket-graph external_gates G-HARNESSES',
+      status: 'resolved',
+      decisionRef: 'Executor ruling: only the Claude Code CLI hooks (#326/#310) and the OpenCode plugin (#323/#312); Codex excluded while #230/#266 are parked',
+      source: RULINGS,
     },
     'G-AUTOMATION': {
-      status: 'open',
-      question: 'busy, unattended and browser-closed behaviour, trust backlog and reply budgets',
-      source: 'ticket-graph external_gates G-AUTOMATION; tests/integration/controls/README.md',
+      status: 'resolved',
+      decisionRef: 'Executor ruling: hosted automation stays closed; only the local fence {3,3,1,wait} applies; a human approves every message',
+      source: RULINGS,
     },
     'G-RETENTION': {
       status: 'resolved',
@@ -73,13 +86,13 @@ export const RECORDED_DECISIONS: CollaborationDecisions = {
       source: 'docs/product/decisions.md#P12-P14',
     },
     P02: {
-      status: 'open',
-      question: 'agent conversations with browsers closed: background, opt-in unattended, or browser required',
-      source: 'docs/product/decisions.md#P02',
+      status: 'resolved',
+      decisionRef: 'Executor ruling: approved messages keep flowing with no browser open; new messages wait until an owner opens the app',
+      source: RULINGS,
     },
   },
   task: PLAN_AGREEMENT_TASK,
-  browserClosedMode: 'unresolved',
+  browserClosedMode: 'required',
 };
 
 /** Scenario contract from the KHA-139 plan, with `unresolved` added for an open P02. */
@@ -98,6 +111,7 @@ export type CaseSetup = Readonly<{
   caseId: string;
   /** Owners A and B collaborate first; C joins later with its own identity, device and session. */
   owners: Readonly<{ a: OwnerControls; b: OwnerControls; c: OwnerControls }>;
+  /** The pinned version for each harness route, keyed by a route in `APPROVED_HARNESS_ROUTES`. */
   harnessVersions: Readonly<Record<string, string>>;
 }>;
 
@@ -125,6 +139,11 @@ export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup): B
   if (decisions.task === null) reasons.push('no approved collaboration task is recorded');
   else if (decisions.task.assertions.length === 0) reasons.push(`task ${decisions.task.decisionRef} names no success assertions`);
   if (Object.keys(setup.harnessVersions).length === 0) reasons.push('no harness version is pinned for the case');
+  for (const route of Object.keys(setup.harnessVersions)) {
+    if (!APPROVED_HARNESS_ROUTES.includes(route)) {
+      reasons.push(`harness route ${route} is not approved by G-HARNESSES (${APPROVED_HARNESS_ROUTES.join(', ')})`);
+    }
+  }
   if (decisions.gates.P02.status === 'resolved' && decisions.browserClosedMode === 'unresolved') {
     reasons.push('P02 is resolved but no browser-closed mode is recorded');
   }
