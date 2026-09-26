@@ -49,9 +49,9 @@ whose exact-version experiment shows the boundary is absent.
 | --- | --- | --- | --- |
 | Cursor local Agent Chat | [Hooks](https://cursor.com/docs/hooks) (`postToolUse`, `stop`), [plugins](https://cursor.com/docs/plugins), local stdio or remote HTTP MCP, and [MCP install links](https://cursor.com/docs/mcp/install-links) | `postToolUse` can return model-visible additional context; `stop` can return a follow-up message; MCP can expose `khala_read` | **Blocked (2026-09-25):** Cursor is not installed and no Cursor account is signed in, so no exact version/tier/policy tuple exists to key a trial. The [cursor-app kit](../../../experiments/interactive-cli/cursor-app/README.md) is ready for a person's own Agent Chat |
 | Cursor cloud/background agent | Project/team hooks and remote MCP; [background-agent API](https://cursor.com/docs/background-agent) supports follow-up prompts | A hook deployed with the cloud environment may expose boundaries | **Blocked (2026-09-25):** no Cursor account and no existing cloud agent; creating or prompting a new one would violate the same-session rule. Cloud agents run no `sessionStart` or user-level hooks, so a trial needs project hooks committed to that agent's repository |
-| Claude Desktop, local extension | Local stdio MCP packaged as a [desktop extension](https://support.anthropic.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) | Explicit MCP tool calls can implement `khala_read` | **Blocked:** the official desktop app is documented for macOS/Windows and was unavailable on this Linux host; no documented prompt-injection hook was found |
-| Claude Desktop, remote connector | [Remote custom connector](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) | Explicit remote MCP tool calls can implement `khala_read` | **Blocked:** no installed/authenticated app and no live tool-result/context proof |
-| claude.ai | Remote custom connector/MCP | Explicit remote MCP tool calls can implement `khala_read` | **Blocked:** no authenticated browser session; no documented active-tool or end-turn injection boundary was found |
+| Claude Desktop, local extension | Local stdio MCP packaged as a [desktop extension](https://support.anthropic.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) | Explicit MCP tool calls can implement `khala_read` | **Blocked (2026-09-25):** Claude Desktop has no official Linux build and is not installed on the proof host; no documented prompt-injection hook was found. [Proof kit ready](../../../experiments/interactive-cli/claude-app/README.md) |
+| Claude Desktop, remote connector | [Remote custom connector](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) | Explicit remote MCP tool calls can implement `khala_read` | **Blocked (2026-09-25):** no installed app, no Claude account for the proof, and no operator-exposed public HTTPS endpoint. [Proof kit ready](../../../experiments/interactive-cli/claude-app/README.md) |
+| claude.ai | Remote custom connector/MCP | Explicit remote MCP tool calls can implement `khala_read` | **Blocked (2026-09-25):** no claude.ai test account, and the agent must not drive a personal browser session; no documented active-tool or end-turn injection boundary was found. [Proof kit ready](../../../experiments/interactive-cli/claude-app/README.md) |
 | Codex desktop surface | [Hooks](https://learn.chatgpt.com/docs/hooks), [plugins](https://learn.chatgpt.com/docs/plugins), and [MCP](https://learn.chatgpt.com/docs/extend/mcp) | `PostToolUse` may return model-visible output; `Stop` may block stopping with a continuation reason; MCP can expose `khala_read` | **Blocked** ([2026-09-25 record](../../../experiments/interactive-cli/codex-app/README.md)): no native Codex desktop app is installed on the Linux host, and `ChatGPT.desktop` is a browser launcher. There is no exact version, user-started session, or hook timing to observe |
 | Codex cloud task | Environment-provided hooks/plugins and remote MCP; [cloud tasks](https://learn.chatgpt.com/docs/cloud) | A task environment may run a Khala hook or invoke `khala_read` | **Blocked** ([2026-09-25 record](../../../experiments/interactive-cli/codex-app/README.md)): the logged-in account has no existing task (`codex cloud list`: `No tasks found.`). The CLI cannot install hooks into a task environment, and `codex cloud exec` would submit a new task, which is not the user's session |
 
@@ -81,9 +81,9 @@ candidate text is the recommended first route to test, not a support claim.
 | --- | --- | --- | --- |
 | Cursor local Agent Chat | **Blocked.** Candidate: `postToolUse` `additional_context` with one `mcp-inbox-batch`. Cursor is not installed on the proof host and has no version/tier/policy tuple | **Blocked.** Candidate: `stop.followup_message`, one per human turn and never after an aborted turn. Same install blocker; no idle wake is claimed | **Blocked.** Candidate: MCP `khala_read`, bound through the `beforeMCPExecution` caller record. Same install blocker |
 | Cursor cloud/background agent | **Blocked.** Candidate: project `postToolUse` hook in the existing cloud agent. No account and no existing cloud agent | **Blocked.** Candidate: cloud `stop` hook. No account and no existing cloud agent | **Blocked.** Candidate: remote MCP `khala_read`. No account and no existing cloud agent |
-| Claude Desktop, local extension | **Blocked.** No documented injection boundary and no installed app | **Blocked.** No documented end-turn continuation hook and no installed app | **Blocked.** Candidate: local MCP extension `khala_read`; no app proof |
-| Claude Desktop, remote connector | **Blocked.** No documented injection boundary and no authenticated app | **Blocked.** No documented end-turn continuation hook and no authenticated app | **Blocked.** Candidate: remote MCP `khala_read`; no app proof |
-| claude.ai | **Blocked.** No documented injection boundary and no authenticated session | **Blocked.** No documented end-turn continuation hook and no authenticated session | **Blocked.** Candidate: remote MCP `khala_read`; no browser-session proof |
+| Claude Desktop, local extension | **Blocked** (`unknown`). No documented injection boundary; no Linux build, so no boundary could be inspected | **Blocked** (`unknown`). No documented end-turn continuation hook; no Linux build | **Blocked** (`unknown`). Candidate: MCPB extension `khala_read`; kit tested, no app run |
+| Claude Desktop, remote connector | **Blocked** (`unknown`). No documented injection boundary; no installed app | **Blocked** (`unknown`). No documented end-turn continuation hook; no installed app | **Blocked** (`unknown`). Candidate: Streamable HTTP `khala_read`; kit tested, no app run |
+| claude.ai | **Blocked** (`unknown`). No documented injection boundary; no test account | **Blocked** (`unknown`). No documented end-turn continuation hook; no test account | **Blocked** (`unknown`). Candidate: Streamable HTTP `khala_read`; kit tested, no browser-session run |
 | Codex desktop surface | **Blocked.** Candidate: `PostToolUse` returns one batch; no native app on the proof host | **Blocked.** Candidate: `Stop` continuation; no native app on the proof host, so no loop proof | **Blocked.** Candidate: MCP `khala_read`; no native app on the proof host |
 | Codex cloud task | **Blocked.** Candidate: task-environment `PostToolUse`; the account has no existing task | **Blocked.** Candidate: task-environment `Stop`; the account has no existing task | **Blocked.** Candidate: remote MCP `khala_read`; the account has no existing task |
 
@@ -151,6 +151,23 @@ hosted sessions the desktop app did not start, Agents API runs, and new cloud ta
 delivery. It rejects trust-bypass flags and their equivalents, including `--yolo`,
 `danger-full-access`, and `never` approvals (decision 33), and it requires an idle-session trial for `steer` and `sync`
 (decisions 34 and 37). It derives every trial fact from the raw trial file.
+
+The Claude rows have a tested proof kit and checker in
+[`experiments/interactive-cli/claude-app/`](../../../experiments/interactive-cli/claude-app/README.md):
+an MCPB desktop extension and a Streamable HTTP connector, each exposing only `khala_read`.
+Its `verify.mjs` grades a run for one exact app/shape/version/account/policy tuple. `async`
+becomes proven only through an explicit `khala_read` round trip that shows all of:
+
+- the batch token acknowledged on the next call;
+- the marker echoed in a target conversation declared before the run, after delivery and before
+  acknowledgement;
+- the batch replayed across a restart before acknowledgement;
+- no duplicate after acknowledgement.
+
+The run also declares the app's MCP client name(s) up front. Server notifications, tool-list
+changes, and calls from any client not on that list, including an unnamed one, never count. `steer`
+and `sync` stay `unknown` unless a live session of that version records a proven absence. All
+three Claude rows stay Blocked until a person runs the kit's runbook in their own session.
 
 For Cursor, [`experiments/interactive-cli/cursor-app/`](../../../experiments/interactive-cli/cursor-app/README.md)
 contains the trial kit. Its `verify.mjs` grades trial directories into `matrix.json`.

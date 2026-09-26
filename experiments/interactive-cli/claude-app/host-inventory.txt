@@ -1,0 +1,45 @@
+Captured: 2026-09-25T01:29:27-07:00
+Host: <executor-host>
+
+$ uname -srmo
+Linux 7.1.4-arch1-1 x86_64 GNU/Linux
+
+$ command -v claude-desktop || printf 'claude-desktop NOT_INSTALLED\n'
+claude-desktop NOT_INSTALLED
+
+$ command -v Claude || printf 'Claude NOT_INSTALLED\n'
+Claude NOT_INSTALLED
+
+$ command -v claude-desktop-bin || printf 'claude-desktop-bin NOT_INSTALLED\n'
+claude-desktop-bin NOT_INSTALLED
+
+$ ls /opt ~/.local/share/applications /usr/share/applications | grep -i claude
+claude-code-url-handler.desktop
+
+$ pacman -Qs claude
+(no packages)
+
+$ flatpak list --app
+(no output)
+
+$ ls ~/.config | grep -i -E '^claude'
+(none)
+
+$ claude --version   # Claude Code CLI, not an app shape
+2.1.282 (Claude Code)
+
+$ chromium --version; firefox --version
+Chromium 150.0.7871.128 Arch Linux
+Mozilla Firefox 152.0.6
+
+Notes:
+- Anthropic documents Claude Desktop for macOS and Windows only; no official Linux
+  build exists, and none is installed here. Unofficial repackagings are not the
+  vendor app and would not identify a supported app version.
+- claude-code-url-handler.desktop belongs to the Claude Code CLI, which is proven
+  separately in ../claude/. It is not a Claude Desktop or claude.ai shape.
+- No claude.ai test account was provided for this proof. The agent did not open,
+  read, or drive the operator's browser profiles; doing so would be UI automation
+  of a personal account, which the contract excludes.
+- A claude.ai or Claude Desktop remote connector is reached from Anthropic's cloud,
+  so a trial needs a publicly reachable HTTPS endpoint. The agent did not expose one.
