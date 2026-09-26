@@ -55,6 +55,8 @@ function client(w: World): AgentClientPort {
     async status() {
       return { v: 1, connected: w.binding !== null, binding: w.binding, route: 'native_hooks', sourceCursor: null };
     },
+    async listChannels() { return { kind: 'unavailable' }; },
+    async listAgents() { return { kind: 'unavailable' }; },
     async listeningMode(): Promise<AgentListeningModeStatus> {
       return { v: 1, bindingId: BINDING.bindingId, generation: BINDING.generation, effective: w.mode };
     },

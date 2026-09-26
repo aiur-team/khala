@@ -15,6 +15,8 @@ const testPattern = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const LOCAL_AUTOMATION_MARKER = 'khala:local-automation-authority';
 const localAutomation = /^(?:apps\/internal\/src\/composition\/local-automation\/|packages\/policy\/src\/listening-mode\/limits\.[cm]?[jt]sx?$)/;
 const hostedRoot = /^apps\/(?:web|control|connector)\//;
+// Shared web primitives other features may import. They may not import features themselves.
+const sharedFeatures = new Set(['approval-decision']);
 
 function filesBelow(directory) {
   if (!fs.existsSync(directory)) return [];
@@ -124,7 +126,7 @@ export function checkBoundaries(root) {
       if (!composition && owner !== destination && destination.startsWith('packages/') && destination !== 'packages/contracts') errors.add(`${origin}: cross-component implementation requires a composition root (${edge.specifier})`);
       const fromFeature = origin.match(/^apps\/web\/src\/features\/([^/]+)/)?.[1];
       const toFeature = edge.target.match(/^apps\/web\/src\/features\/([^/]+)/)?.[1];
-      if (fromFeature && toFeature && fromFeature !== toFeature) errors.add(`${origin}: sibling feature import (${edge.specifier})`);
+      if (fromFeature && toFeature && fromFeature !== toFeature && !sharedFeatures.has(toFeature)) errors.add(`${origin}: sibling feature import (${edge.specifier})`);
     }
     const browser = origin.startsWith('apps/web/');
     const hosted = hostedRoot.test(origin);
