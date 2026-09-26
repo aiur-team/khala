@@ -7,7 +7,9 @@ call returns it. Only then may `interactiveClaudeCapabilities` advertise
 `batch_token_next_call`, and only for the exact version/route pair in `evidence.json`
 `provenPairs` (mirrored in `CLAUDE_INTERACTIVE_PROVEN`).
 
-**Status: unproven.** No authorized disposable live run is retained, so nothing is advertised.
+**Status: unproven.** The 2026-09-26 Executor live run (Claude Code 2.1.283, `evidence.json`) failed:
+the shipped internal server composes the Claude session route as unproven, so every hook pull and
+`khala_read` is refused before a batch or token exists. Nothing is advertised.
 
 ```sh
 node --test experiments/internal-mode/read-receipts/claude/scan.test.mjs
