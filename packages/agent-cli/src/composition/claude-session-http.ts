@@ -8,7 +8,7 @@ import { MAX_SEND_BYTES } from '../cli/send.js';
 import { plainObject, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { readRuntimeDescriptor, type RuntimeDescriptorFailure } from './claude-descriptor.js';
 import {
-  CLAUDE_ACCESS_NOTICES, CLAUDE_SESSION_REFUSALS, type ClaudeAccessNotice, type ClaudeAccessOutcome, type ClaudeHookOutcome, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome,
+  CLAUDE_ACCESS_NOTICES, CLAUDE_SESSION_REFUSALS, type ClaudeAccessNotice, type ClaudeAccessOutcome, type ClaudeHookInput, type ClaudeHookOutcome, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome,
   type ClaudeReadOutcome, type ClaudeSendOutcome, type ClaudeSessionAdapter, type ClaudeSessionRefusal,
   type ClaudeRosterOutcome, type ClaudeStatusOutcome, type ModeSetInput,
 } from './claude-session.js';
@@ -27,7 +27,8 @@ export type ClaudeSessionRequest =
     v: 1; op: 'mode_set'; sessionId: string;
     commandId: string; expectedVersion: number; requested: ListeningMode; issuedAt: string;
   }>
-  | Readonly<{ v: 1; op: 'pending' | 'hook' | 'watch'; sessionId: string }>
+  | Readonly<{ v: 1; op: 'pending' | 'watch'; sessionId: string }>
+  | Readonly<{ v: 1; op: 'hook'; sessionId: string; stop?: true }>
   | (Readonly<{ v: 1; op: 'channels'; sessionId: string }> & ChannelListInput)
   | (Readonly<{ v: 1; op: 'access_request'; sessionId: string }> & AccessRequestInput)
   | (Readonly<{ v: 1; op: 'access_status'; sessionId: string }> & AccessStatusInput)
@@ -60,7 +61,7 @@ export async function handleClaudeSessionRequest(
       commandId: request.commandId, expectedVersion: request.expectedVersion, requested: request.requested, issuedAt: request.issuedAt,
     }); break;
     case 'pending': outcome = await adapter.pending(call); break;
-    case 'hook': outcome = await adapter.hook(call); break;
+    case 'hook': outcome = await adapter.hook(call, { stop: request.stop === true }); break;
     case 'watch': outcome = await adapter.watch(call); break;
     case 'roster': outcome = await adapter.roster(call); break;
     case 'channels': outcome = await adapter.listChannels(call, { origin: request.origin, cursor: request.cursor }); break;
@@ -81,8 +82,11 @@ function decodeRequest(value: unknown): ClaudeSessionRequest | null {
   const only = (...extra: string[]) => keys.every(key => ['v', 'op', 'sessionId', ...extra].includes(key));
   const sessionId = value.sessionId;
   switch (value.op) {
-    case 'pull': case 'read': case 'status': case 'roster': case 'mode': case 'pending': case 'hook': case 'watch':
+    case 'pull': case 'read': case 'status': case 'roster': case 'mode': case 'pending': case 'watch':
       return only() ? { v: 1, op: value.op, sessionId } : null;
+    case 'hook':
+      if (!only('stop') || (value.stop !== undefined && value.stop !== true)) return null;
+      return value.stop === true ? { v: 1, op: 'hook', sessionId, stop: true } : { v: 1, op: 'hook', sessionId };
     case 'send':
       return only('body') && typeof value.body === 'string' ? { v: 1, op: 'send', sessionId, body: value.body } : null;
     case 'mode_set':
@@ -142,9 +146,9 @@ export interface ClaudeSessionClient {
   pending(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudePendingOutcome>>;
   /**
    * Hook boundary state: effective mode, watcher window, and an access outcome settled at
-   * this boundary. Never acknowledges.
+   * this boundary. Never acknowledges. `stop` marks the turn-ending boundary, which settles unthrottled.
    */
-  hook(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeHookOutcome>>;
+  hook(sessionId: string, input?: ClaudeHookInput, signal?: AbortSignal): Promise<Result<ClaudeHookOutcome>>;
   /** The idle watcher's boundary state: as `hook`, but it never settles access. */
   watch(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeHookOutcome>>;
   /** The session's own channel roster, undecoded. The session selects the binding; no argument names one. */
@@ -279,12 +283,13 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
         v: 1, op: 'create_request', sessionId, title: input.title, operationId: input.operationId, origin: input.origin,
       }, signal));
     },
-    hook: (sessionId, signal) => hookCall('hook', sessionId, signal),
-    watch: (sessionId, signal) => hookCall('watch', sessionId, signal),
+    hook: (sessionId, input, signal) => hookCall(
+      input?.stop === true ? { v: 1, op: 'hook', sessionId, stop: true } : { v: 1, op: 'hook', sessionId }, signal),
+    watch: (sessionId, signal) => hookCall({ v: 1, op: 'watch', sessionId }, signal),
   };
 
-  async function hookCall(op: 'hook' | 'watch', sessionId: string, signal: AbortSignal | undefined): Promise<Result<ClaudeHookOutcome>> {
-    const value = await call({ v: 1, op, sessionId }, signal);
+  async function hookCall(request: ClaudeSessionRequest, signal: AbortSignal | undefined): Promise<Result<ClaudeHookOutcome>> {
+    const value = await call(request, signal);
     const mode = (candidate: unknown) => (LISTENING_MODES as readonly unknown[]).includes(candidate);
     if (plainObject(value) && value.kind === 'hook' && Object.keys(value).length === 4
       && (value.effective === null || mode(value.effective))
@@ -316,6 +321,7 @@ function publicMode(value: unknown): Exclude<ClaudeModeOutcome, ClaudeSessionRef
   const mode = (candidate: unknown): candidate is ListeningMode => (LISTENING_MODES as readonly unknown[]).includes(candidate);
   const support = value.support;
   if (!(value.requested === null || mode(value.requested)) || !(value.effective === null || mode(value.effective))
+    || !(value.effectiveReason === null || reasonCode(value.effectiveReason))
     || !Number.isSafeInteger(value.version) || (value.version as number) < 0
     || !(ACKNOWLEDGEMENT as readonly unknown[]).includes(value.acknowledgement)
     || !LISTENING_MODES.every(name => validIdentifier(support[name]))) return null;
@@ -323,6 +329,7 @@ function publicMode(value: unknown): Exclude<ClaudeModeOutcome, ClaudeSessionRef
     kind: 'mode',
     requested: value.requested,
     effective: value.effective,
+    effectiveReason: value.effectiveReason as string | null,
     version: value.version as number,
     support: { steer: support.steer as string, sync: support.sync as string, async: support.async as string },
     acknowledgement: value.acknowledgement as (typeof ACKNOWLEDGEMENT)[number],
@@ -336,6 +343,7 @@ function publicModeSet(value: unknown): Exclude<ClaudeModeSetOutcome, ClaudeSess
   if (!(LISTENING_MODE_RESULT_OUTCOMES as readonly unknown[]).includes(value.outcome)
     || !(value.requested === null || mode(value.requested))
     || !(value.effective === null || mode(value.effective))
+    || !(value.reason === null || reasonCode(value.reason))
     || !Number.isSafeInteger(value.version) || (value.version as number) < 0
     || !(value.batch === undefined || typeof value.batch === 'string')) return null;
   return {
@@ -343,9 +351,15 @@ function publicModeSet(value: unknown): Exclude<ClaudeModeSetOutcome, ClaudeSess
     outcome: value.outcome as (typeof LISTENING_MODE_RESULT_OUTCOMES)[number],
     requested: value.requested,
     effective: value.effective,
+    reason: value.reason as string | null,
     version: value.version as number,
     ...(typeof value.batch === 'string' ? { batch: value.batch } : {}),
   };
+}
+
+/** A mode reason is a short code such as `support_unknown`, never free text. */
+function reasonCode(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value);
 }
 
 function refusal(value: unknown): ClaudeClientRefusal {

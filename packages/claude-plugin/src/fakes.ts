@@ -27,7 +27,9 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
   const sessions = new Map<string, Session>();
   /** Access outcomes the server settled and a synchronous `hook` call has not reported yet. */
   const notices = new Map<string, Notice>();
-  const calls: Array<Readonly<{ op: KhalaOp; sessionId: string }>> = [];
+  /** Sessions with an access request outstanding, as the route's outstanding record holds them. */
+  const requested = new Set<string>();
+  const calls: Array<Readonly<{ op: KhalaOp; sessionId: string; flags?: readonly string[] }>> = [];
   const tails = new Map<string, Promise<unknown>>();
   let available = true;
   let malformed: string | null = null;
@@ -42,7 +44,10 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
     if (!available) return { code: 2, stdout: '' };
     // As the adapter does: only a synchronous `hook` settles, and reports the outcome once.
     const access = op === 'hook' ? notices.get(sessionId) ?? null : null;
-    notices.delete(op === 'hook' ? sessionId : '');
+    if (access !== null) {
+      notices.delete(sessionId);
+      requested.delete(sessionId);
+    }
     const bound = sessions.get(sessionId);
     if (bound === undefined && access !== null) {
       return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: null, watchSeconds: null, access })}\n` };
@@ -67,8 +72,8 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
     return { code: 0, stdout: `${frame(bound.outstanding)}\n` };
   }
 
-  const khala = (op: KhalaOp, sessionId: string): Promise<KhalaResult> => {
-    calls.push({ op, sessionId });
+  const khala = (op: KhalaOp, sessionId: string, flags: readonly string[] = []): Promise<KhalaResult> => {
+    calls.push(flags.length > 0 ? { op, sessionId, flags } : { op, sessionId });
     const run = async () => {
       await new Promise(resolve => setImmediate(resolve));
       return answer(op, sessionId);
@@ -86,16 +91,24 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
       Object.assign(session(sessionId), { mode, watchSeconds });
     },
     release(sessionId: string, body: string) { session(sessionId).queue.push(body); },
+    /** The agent requested access: the request stays outstanding until a `hook` call settles it. */
+    request(sessionId: string) { requested.add(sessionId); },
     /**
      * The owner decided this session's access request. A grant binds the session with no
      * listening mode; every outcome waits for the next `hook` call to settle and report it.
      */
     decide(sessionId: string, outcome: Notice) {
+      requested.add(sessionId);
       if (outcome === 'connected') session(sessionId);
       notices.set(sessionId, outcome);
     },
     /** The user's Stop (decision 36): the binding is gone, and every op is refused as the adapter refuses it. */
     revoke(sessionId: string) { session(sessionId).revoked = true; },
+    /**
+     * The hooks' local check: whether the session was ever bound, as its grant file records
+     * (a revoked binding keeps its file), or has an access request outstanding.
+     */
+    engaged: (sessionId: string) => sessions.has(sessionId) || requested.has(sessionId),
     /** The agent's next Khala call: acknowledges the outstanding batch on Khala's side. */
     agentCall(sessionId: string) { session(sessionId).outstanding = null; },
     set available(value: boolean) { available = value; },
@@ -122,11 +135,16 @@ export function frame(bodies: readonly string[]): string {
   return lines.join('\n');
 }
 
-/** Hook dependencies over a fake adapter, with a clock the watcher's sleeps advance. */
-export function hookDeps(khala: HookDependencies['khala'], stateRoot = scratch()) {
+/**
+ * Hook dependencies over a fake adapter, with a clock the watcher's sleeps advance.
+ * `bound` stands in for the session's grant file; `bound` calls are recorded.
+ */
+export function hookDeps(khala: HookDependencies['khala'], bound: (sessionId: string) => boolean, stateRoot = scratch()) {
   const clock = { now: 1_000_000, alive: true };
   let nonces = 0;
+  const checks: string[] = [];
   const deps: HookDependencies = {
+    bound: async sessionId => { checks.push(sessionId); return bound(sessionId); },
     khala,
     stateRoot,
     now: () => clock.now,
@@ -137,7 +155,7 @@ export function hookDeps(khala: HookDependencies['khala'], stateRoot = scratch()
       await new Promise(resolve => setTimeout(resolve, 2));
     },
   };
-  return { deps, clock, stateRoot };
+  return { deps, clock, stateRoot, checks };
 }
 
 export function scratch(): string {

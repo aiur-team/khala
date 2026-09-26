@@ -7,7 +7,7 @@ import { validOperationArgument } from '@aiur/khala/cli/channels/access';
 import type { AccessRequestInput, AccessStatusInput, ChannelAccessResult, ChannelListInput } from '@aiur/khala/cli/channels/types';
 import type { CreateRequestInput } from '@aiur/khala/cli/channels/create/types';
 import {
-  type ClaudeAccessNotice, type ClaudeBindingServices, type ClaudeSessionAccess, type ClaudeSessionAdapter, createClaudeSessionAdapter,
+  type ClaudeAccessNotice, type ClaudeBindingServices, type ClaudeHookInput, type ClaudeSessionAccess, type ClaudeSessionAdapter, createClaudeSessionAdapter,
 } from '@aiur/khala/composition/claude-session';
 import { CLAUDE_SESSION_PATH, handleClaudeSessionRequest } from '@aiur/khala/composition/claude-session-http';
 import { openClaudeSessionState } from '@aiur/khala/composition/claude-session-state';
@@ -42,8 +42,9 @@ import { issueDiscoveryDescriptor } from '../discovery-descriptor';
 // session digest; before a grant it resolves to nothing.
 //
 // The session's outstanding access operations are kept beside its identity. Each hook
-// boundary settles them, throttled per session, so an approval activates the session's
-// binding at its next boundary without the agent retrying the request.
+// boundary settles them, throttled per session except at the turn-ending `Stop`, so an
+// approval activates the session's binding at its next boundary without the agent retrying
+// the request.
 
 export const CLAUDE_HARNESS = 'claude';
 /** The per-session granted descriptor beside the session's discovery descriptor. */
@@ -239,17 +240,19 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
 
   /**
    * Reads each outstanding operation once per interval and answers it as a status call
-   * would, so an approved one is activated into this session's binding. Concurrent
+   * would, so an approved one is activated into this session's binding. The turn-ending
+   * `Stop` settles whatever the interval, since the session may idle after it. Concurrent
    * boundaries of one session share nothing: only the first settles, and only it reports.
    */
-  async function settle(sessionId: string): Promise<ClaudeAccessNotice | null> {
+  async function settle(sessionId: string, input: ClaudeHookInput): Promise<ClaudeAccessNotice | null> {
     const operations = outstanding(sessionId);
     if (operations.length === 0) {
       settledAt.delete(sessionId);
       return null;
     }
     const last = settledAt.get(sessionId);
-    if (settling.has(sessionId) || (last !== undefined && clock() - last < CLAUDE_SETTLE_INTERVAL_MS)) return null;
+    if (settling.has(sessionId)) return null;
+    if (!input.stop && last !== undefined && clock() - last < CLAUDE_SETTLE_INTERVAL_MS) return null;
     settling.add(sessionId);
     settledAt.set(sessionId, clock());
     try {
@@ -284,7 +287,7 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       if (!localOrigin(input.origin)) return { kind: 'refused', code: 'untrusted_origin' };
       return answered(sessionId, input.operationId, await withIdentity(sessionId, () => discovery(sessionId).status('access', input.operationId)));
     },
-    settle: (_principal, sessionId) => settle(sessionId),
+    settle: (_principal, sessionId, input) => settle(sessionId, input),
     // A create intent only asks: like `khala channels create`, nothing is activated here.
     async create(_principal, sessionId, input: CreateRequestInput) {
       if (!localOrigin(input.origin)) return { kind: 'refused', code: 'untrusted_origin' };

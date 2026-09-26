@@ -242,8 +242,8 @@ describe('Claude session adapter', () => {
     let bound = false;
     const notices: Array<'connected' | 'denied' | null> = [];
     const settled: string[] = [];
-    const settle = vi.fn(async (principal: { principalId: string }, sessionId: string) => {
-      settled.push(`${principal.principalId}:${sessionId}`);
+    const settle = vi.fn(async (principal: { principalId: string }, sessionId: string, input: { stop: boolean }) => {
+      settled.push(`${principal.principalId}:${sessionId}${input.stop ? ':stop' : ''}`);
       const notice = notices.shift() ?? null;
       if (notice === 'connected') bound = true;
       return notice;
@@ -263,10 +263,10 @@ describe('Claude session adapter', () => {
     await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
     // Reported once: the next boundary is an ordinary bound hook.
     await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
-    // A denial leaves the session unbound, and the boundary still reports it.
+    // A denial leaves the session unbound, and the boundary still reports it. `Stop` asks unthrottled.
     notices.push('denied');
-    await expect(claude.hook(A2)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'denied' });
-    expect(settled).toEqual(['principal-a:s-1', 'principal-a:s-1', 'principal-a:s-1', 'principal-a:s-2']);
+    await expect(claude.hook(A2, { stop: true })).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'denied' });
+    expect(settled).toEqual(['principal-a:s-1', 'principal-a:s-1', 'principal-a:s-1', 'principal-a:s-2:stop']);
 
     // An unauthenticated caller settles nothing, and a failing settle never fails the hook.
     await expect(claude.hook({ credential: 'C'.repeat(43), sessionId: 's-1' })).resolves.toEqual({ kind: 'refused', code: 'unauthorized' });

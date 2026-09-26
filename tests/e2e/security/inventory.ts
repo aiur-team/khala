@@ -83,6 +83,8 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'claude-mcp-tool:khala_send': probe('claude-session'),
   'claude-mcp-tool:khala_read': probe('claude-session'),
   'claude-mcp-tool:khala_status': probe('claude-session'),
+  'claude-mcp-tool:khala_mode_get': probe('claude-session'),
+  'claude-mcp-tool:khala_mode_set': probe('claude-session'),
   'claude-mcp-tool:khala_list_channels': probe('claude-session'),
   'claude-mcp-tool:khala_list_agents': probe('claude-session'),
   'claude-mcp-tool:khala_request_channel_access': probe('claude-session'),

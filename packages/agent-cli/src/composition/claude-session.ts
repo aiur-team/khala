@@ -118,8 +118,14 @@ export interface ClaudeSessionAccess {
    * approved one is activated into the session's own binding. Returns the finite outcome
    * it settled, once, or `null` when nothing was settled.
    */
-  settle?(principal: ClaudePrincipal, sessionId: string): Promise<ClaudeAccessNotice | null>;
+  settle?(principal: ClaudePrincipal, sessionId: string, input: ClaudeHookInput): Promise<ClaudeAccessNotice | null>;
 }
+
+/**
+ * Which synchronous boundary asks. Settling is throttled per session, except at the
+ * turn-ending `Stop`, which always settles: it is the last boundary before the session idles.
+ */
+export type ClaudeHookInput = Readonly<{ stop: boolean }>;
 
 /** A finite access outcome a hook boundary reports once, content-free. */
 export const CLAUDE_ACCESS_NOTICES = ['connected', 'denied', 'expired'] as const;
@@ -153,6 +159,8 @@ export type ClaudeModeOutcome = Readonly<{
   kind: 'mode';
   requested: ListeningMode | null;
   effective: ListeningMode | null;
+  /** Why nothing is effective (for example `support_unknown` on an unproven route), else `null`. */
+  effectiveReason: string | null;
   version: number;
   support: Readonly<Record<ListeningMode, string>>;
   acknowledgement: HarnessCapabilities['acknowledgement'];
@@ -162,6 +170,8 @@ export type ClaudeModeSetOutcome = (Readonly<{
   outcome: ListeningModeResult['outcome'];
   requested: ListeningMode | null;
   effective: ListeningMode | null;
+  /** The refusal reason when `outcome` is `refused`; otherwise why nothing is effective, or `null`. */
+  reason: string | null;
   version: number;
 }> & Piggyback) | ClaudeSessionRefusal;
 /** The channel roster for the session's own binding, undecoded; the client applies the closed roster decoder. */
@@ -196,7 +206,7 @@ export interface ClaudeSessionAdapter {
   setMode(call: ClaudeSessionCall, input: Omit<ModeSetInput, 'acknowledgeToken'>): Promise<ClaudeModeSetOutcome>;
   pending(call: ClaudeSessionCall): Promise<ClaudePendingOutcome>;
   /** A synchronous hook's boundary state; it settles the session's access requests first. */
-  hook(call: ClaudeSessionCall): Promise<ClaudeHookOutcome>;
+  hook(call: ClaudeSessionCall, input?: ClaudeHookInput): Promise<ClaudeHookOutcome>;
   /** The idle watcher's boundary state: the same answer, but it never settles, so `access` is `null`. */
   watch(call: ClaudeSessionCall): Promise<ClaudeHookOutcome>;
   roster(call: ClaudeSessionCall): Promise<ClaudeRosterOutcome>;
@@ -258,13 +268,13 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
   }
 
   /** The session's settled access outcome, if any. Settling never fails the hook that asked. */
-  async function settle(call: ClaudeSessionCall): Promise<ClaudeAccessNotice | null> {
+  async function settle(call: ClaudeSessionCall, input: ClaudeHookInput): Promise<ClaudeAccessNotice | null> {
     const port = options.access;
     if (port?.settle === undefined || typeof call.credential !== 'string' || !validIdentifier(call.sessionId)) return null;
     try {
       const principal = await options.authenticator.authenticate(call.credential);
       if (principal === null) return null;
-      const notice = await port.settle(principal, call.sessionId);
+      const notice = await port.settle(principal, call.sessionId, { stop: input.stop === true });
       return (CLAUDE_ACCESS_NOTICES as readonly unknown[]).includes(notice) ? notice : null;
     } catch {
       return null;
@@ -397,6 +407,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
           kind: 'mode',
           requested: view.view.requested,
           effective: view.view.effective,
+          effectiveReason: view.view.effectiveReason,
           version: view.view.version,
           support,
           acknowledgement: capabilities.acknowledgement,
@@ -416,7 +427,8 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
           ...(current === undefined ? {} : { acknowledgeToken: current }),
         }), () => true);
         return {
-          kind: 'mode_set', outcome: result.outcome, requested: result.requested, effective: result.effective, version: result.version,
+          kind: 'mode_set', outcome: result.outcome, requested: result.requested, effective: result.effective, reason: result.reason,
+          version: result.version,
           ...(batch === null ? {} : { batch }),
         };
       });
@@ -456,8 +468,8 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       });
     },
 
-    hook: call => hookState(call, true),
-    watch: call => hookState(call, false),
+    hook: (call, input) => hookState(call, { stop: input?.stop === true }),
+    watch: call => hookState(call, null),
   };
 
   /**
@@ -466,9 +478,9 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
    * The watcher never settles: it cannot show the outcome, and would take it from the
    * synchronous `Stop` hook that runs beside it.
    */
-  function hookState(call: ClaudeSessionCall, settles: boolean): Promise<ClaudeHookOutcome> {
+  function hookState(call: ClaudeSessionCall, settles: ClaudeHookInput | null): Promise<ClaudeHookOutcome> {
     return guarded(async () => {
-      const access = settles ? await settle(call) : null;
+      const access = settles === null ? null : await settle(call, settles);
       const resolved = await resolve(call);
       if ('kind' in resolved) {
         // A denial or expiry leaves the session unbound; the boundary still reports it once.

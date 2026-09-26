@@ -53,6 +53,8 @@ describe('khala claude command registration', () => {
     for (const argv of [
       ['claude'], ['claude', 'read'], ['claude', 'read', '--session'], ['claude', 'ack', '--session', 's-1'],
       ['claude', 'read', '--session', 's-1', '--ack', 'token'], ['claude', 'read', '--cwd', '/work'],
+      ['claude', 'watch', '--session', 's-1', '--stop'], ['claude', 'hook', '--session', 's-1', '--stop', '--stop'],
+      ['claude', 'hook', '--session', 's-1', '--final'],
     ]) {
       await expect(run(argv, composed)).resolves.toMatchObject({ code: 2, err: '{"ok":false,"error":"invalid_arguments"}\n' });
     }
@@ -85,6 +87,10 @@ describe('khala claude command registration', () => {
     await expect(run(['claude', 'hook', '--session', 's-1'], composed)).resolves.toEqual({
       code: 0, out: '{"ok":true,"kind":"hook","effective":"sync","watchSeconds":3000,"access":null}\n', err: '',
     });
+    // Only the `Stop` hook adds `--stop`, which settles access regardless of the throttle.
+    await expect(run(['claude', 'hook', '--session', 's-1', '--stop'], composed)).resolves.toMatchObject({ code: 0 });
+    expect(composed.hook).toHaveBeenNthCalledWith(1, 's-1', { stop: false }, undefined);
+    expect(composed.hook).toHaveBeenNthCalledWith(2, 's-1', { stop: true }, undefined);
   });
 
   it('exits 4 on an unknown send outcome so callers never retry it', async () => {

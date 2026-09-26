@@ -233,8 +233,9 @@ commands never load the local client.
   mode; this side projects it through the released claim of the harness
   actually installed here, read as setup reads it. For Codex, that means an
   exactly proven version whose Khala hooks you trusted. `async` stays unproven
-  until a receipt proof ships. Claude's internal routes are unproven, so its
-  effective mode stays `null`.
+  until a receipt proof ships. Claude's internal routes are unproven: the owner
+  or the session itself (`khala_mode_set`) may request a mode, but its
+  effective mode stays `null` with `effectiveReason` `support_unknown`.
 - `codex-hook` is installed as the byte-stable `khala codex-hook`, so without
   the option it uses the runtime `active.json` under the Khala state
   directory. It recognises its session by the digest the launcher stores for
@@ -915,12 +916,17 @@ pull could only replay that batch, so a hook watcher must not wake the session
 for it again.
 
 `hook` tells a plugin hook which boundary it owns, as
-`{"ok":true,"kind":"hook","effective":<mode|null>,"watchSeconds":<n|null>}`.
+`{"ok":true,"kind":"hook","effective":<mode|null>,"watchSeconds":<n|null>,"access":<outcome|null>}`.
 Unlike `mode`, it is not an agent call. It runs outside the state-port envelope
 and acknowledges nothing. `effective` is `null` without batch-token handoff,
 because every hook pull would be refused. `watchSeconds` is the local automation
 fence's idle-watcher window. It is present only for `steer` and `sync`, and
-`null` when the fence grants none.
+`null` when the fence grants none. `hook` also settles the session's outstanding
+access requests, at most once every 5 seconds per session, and reports a settled
+`connected`, `denied` or `expired` once in `access`, before any binding exists.
+`hook --stop`, which only the plugin's `Stop` hook passes, settles whatever the
+interval. `watch` is the idle watcher's `hook`: the same answer, but it never
+settles, so its `access` is always `null`.
 
 For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
 (`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the
@@ -930,13 +936,25 @@ session. It has no pull. A missing ID fails closed as `session_missing`.
 The Claude plugin's MCP entry launches the staged launcher's `mcp-serve` with
 `KHALA_MCP_HARNESS=claude`. The session ID alone does not select this mode,
 because every process a Claude Bash tool starts inherits it. In this mode
-`mcp-serve` holds no binding, inbox, or listener lock. It serves three tools
-over `createClaudeAgentEntry`:
+`mcp-serve` holds no binding, inbox, or listener lock. It serves these tools
+over `createClaudeAgentEntry`, alongside the session-bound discovery, access and
+roster tools:
 
 - `khala_send { message }`: the plugin's `/khala send`.
 - `khala_read {}`: both a person-entered `/khala read` and the agent's own read.
 - `khala_status {}`: the requested and effective mode, plus per-mode support
   from `HarnessCapabilities`, where unevidenced modes read `unproven`.
+- `khala_mode_get {}`: the same mode read, for the get-then-set flow. It returns
+  `requested`, `effective`, `effectiveReason`, `version` and `support`. While the
+  requested route is unproven, `effective` is `null` and `effectiveReason` says
+  why (decisions 34 and 37), for example `support_unknown`.
+- `khala_mode_set { requested, expectedVersion }`: the session's own mode change
+  (decision 42: the owner and the agent may both change it; last change wins).
+  It applies `khala mode set`'s rules: the result is `applied` with the new
+  state, `conflict` (`reason: "stale_version"`) with the `current` state when the
+  version moved, or `refused` with a code. On a conflict, read again and decide
+  afresh; never retry automatically. A set whose outcome cannot be known, such as
+  a transport failure after the request left, reports `outcome_unknown`.
 
 None of these tools accepts `bindingId` or `ackBatchToken`. The session selects
 the binding, and tokens stay inside Khala. A read or piggyback batch arrives as

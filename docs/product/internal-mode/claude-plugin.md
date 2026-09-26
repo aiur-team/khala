@@ -162,6 +162,17 @@ owns any separate cross-harness control surface.
 
 ### Hook lifecycle
 
+Setup enables the plugin user-wide, so its hooks run in every Claude session on
+the machine. Each hook first checks that its session holds a grant from the
+running launch: the session's own `claude-grant.json` names a binding and
+matches `active.json`'s transport capability. A session with an access request
+outstanding (a non-empty `claude-access-outstanding.json`) is engaged too, so
+the owner's decision can reach it; once the request settles, it is inert again
+unless granted. Otherwise the hook exits 0 with no output. It calls no `khala`,
+makes no network call and writes no file. The actions below apply only to
+engaged sessions. `SessionEnd` still removes the
+session's own hook state, which an unbound session never has.
+
 | Event | Action | Guard/failure behavior |
 |---|---|---|
 | `UserPromptSubmit` | Mark the session active; replace any older watcher with exactly one bounded `asyncRewake` watcher for non-`async` mode. The watcher consumes `local-automation-fence`'s notification-only pending signal, which returns no payload or token, and may exit 2 only after the session is idle. | Cancellation of the older watcher must leave exactly one active watcher. Exit 0 on timeout or cancellation. Report watcher state; never promise an indefinite listener. The content-free two-step path is a production requirement that still needs an installed-version proof. |
@@ -490,7 +501,8 @@ Acceptance criteria:
   reports a pending decision and creates no admitted binding.
 - `join` is non-blocking. The local server keeps the session's outstanding
   access operations and settles them at each synchronous hook boundary
-  (`khala claude hook`, throttled per session), in every listening mode and
+  (`khala claude hook`, at most once every 5 seconds per session, except the
+  turn-ending `Stop`, which passes `--stop` and always settles), in every listening mode and
   before any binding exists. A grant is activated into the session's own
   binding there, and the boundary reports `connected`, `denied` or `expired`
   once as a fixed notice, so the agent never retries to learn the outcome

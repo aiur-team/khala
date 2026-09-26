@@ -16,7 +16,8 @@ export type ClaudeCommandDependencies = Readonly<{
 /**
  * `khala claude <op> --session <claude-session-id>`, the entry point Claude hooks and
  * the `/khala` skill call. Hooks use `pull` (never acknowledges), `pending`, `hook`
- * (effective mode, the fence's watcher window, and an access outcome it settled) and
+ * (effective mode, the fence's watcher window, and an access outcome it settled; the
+ * `Stop` hook adds `--stop`, which settles regardless of the per-session throttle) and
  * `watch` (the watcher's `hook`, which never settles), all content-free; the
  * agent's own calls, `read`, `send`, `status` and `mode`, acknowledge what hooks
  * delivered. The session ID is a selector only; the loopback server authenticates
@@ -24,7 +25,8 @@ export type ClaudeCommandDependencies = Readonly<{
  */
 export async function runClaudeCommand(args: readonly string[], deps: ClaudeCommandDependencies): Promise<number> {
   const [op, flag, sessionId, ...rest] = args;
-  if (flag !== '--session' || !validIdentifier(sessionId) || rest.length !== 0) throw new CliError('invalid_arguments');
+  const stop = op === 'hook' && rest.length === 1 && rest[0] === '--stop';
+  if (flag !== '--session' || !validIdentifier(sessionId) || (rest.length !== 0 && !stop)) throw new CliError('invalid_arguments');
   if (!(CLAUDE_COMMAND_OPS as readonly unknown[]).includes(op)) throw new CliError('invalid_arguments');
   if (deps.claude === undefined) throw new CliError('transport_unavailable');
   const client = deps.claude;
@@ -39,8 +41,10 @@ export async function runClaudeCommand(args: readonly string[], deps: ClaudeComm
     outcome = await client.status(sessionId, deps.signal);
   } else if (op === 'mode') {
     outcome = await client.mode(sessionId, deps.signal);
-  } else if (op === 'hook' || op === 'watch') {
-    outcome = await client[op](sessionId, deps.signal);
+  } else if (op === 'hook') {
+    outcome = await client.hook(sessionId, { stop }, deps.signal);
+  } else if (op === 'watch') {
+    outcome = await client.watch(sessionId, deps.signal);
   } else {
     outcome = await client.pending(sessionId, deps.signal);
   }

@@ -6,6 +6,7 @@
 // whether the session is idle, which watcher owns the session, and a wake marker.
 // A synchronous hook's `hook` call also settles the session's access requests, so an
 // owner's grant, denial or expiry reaches the model at the next boundary as a fixed notice.
+// `Stop` passes `--stop`, so the turn-ending boundary settles regardless of the throttle.
 
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -128,8 +129,10 @@ export function defaultDependencies(env = process.env, command = 'khala') {
   const stateHome = env.XDG_STATE_HOME && path.isAbsolute(env.XDG_STATE_HOME)
     ? env.XDG_STATE_HOME : path.join(os.homedir(), '.local/state');
   const parent = process.ppid;
+  const internalRoot = path.join(stateHome, 'khala', 'internal');
   return {
-    khala: (op, sessionId) => runKhala(command, op, sessionId),
+    bound: sessionId => sessionEngaged(internalRoot, sessionId),
+    khala: (op, sessionId, flags) => runKhala(command, op, sessionId, flags),
     stateRoot: path.join(stateHome, 'khala', 'claude-hooks'),
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     now: () => Date.now(),
@@ -137,6 +140,62 @@ export function defaultDependencies(env = process.env, command = 'khala') {
     // Claude ends the watcher with the session; if it does not, the watcher notices its parent is gone.
     parentAlive: () => process.ppid === parent && processAlive(parent),
   };
+}
+
+/**
+ * Where the internal launcher's Claude session route keeps one session's granted
+ * descriptor: `<internal root>/discovery/<principal>/claude-grant.json`, the
+ * principal being the launcher's `discoveryPrincipal('claude', sessionId)`.
+ */
+export function claudeGrantPath(internalRoot, sessionId) {
+  const principal = createHash('sha256').update(['khala.internal.principal.v1', 'claude', sessionId].join('\0')).digest('base64url');
+  return path.join(internalRoot, 'discovery', `agent_${principal}`, 'claude-grant.json');
+}
+
+/** The session's outstanding access operations, which the launcher's route keeps beside its grant. */
+export function claudeOutstandingPath(internalRoot, sessionId) {
+  return path.join(path.dirname(claudeGrantPath(internalRoot, sessionId)), 'claude-access-outstanding.json');
+}
+
+async function readDescriptor(file) {
+  try {
+    const value = JSON.parse(await fs.readFile(file, 'utf8'));
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The cheap local check every hook makes first, because setup enables the plugin for
+ * every Claude session on the machine: whether this session holds a grant from the
+ * running launch. Its own grant file must name a binding and carry the transport
+ * capability of the current `active.json`, as the launcher's route requires. It only
+ * reads, at most two small files, and an unbound session stops at the first missing
+ * one. The adapter still decides everything after it.
+ */
+export async function sessionGranted(internalRoot, sessionId) {
+  if (!validSessionId(sessionId)) return false;
+  const grant = await readDescriptor(claudeGrantPath(internalRoot, sessionId));
+  if (typeof grant?.bindingId !== 'string' || typeof grant.transportCapability !== 'string') return false;
+  const launch = await readDescriptor(path.join(internalRoot, 'active.json'));
+  return typeof launch?.transportCapability === 'string' && launch.transportCapability === grant.transportCapability;
+}
+
+/**
+ * Whether this session's hooks run at all: it holds a grant, or it has an access request
+ * outstanding, so the boundary that follows the owner's decision can settle and report it.
+ * Once the request settles the record is gone, and an ungranted session is inert again.
+ */
+export async function sessionEngaged(internalRoot, sessionId) {
+  if (await sessionGranted(internalRoot, sessionId)) return true;
+  if (!validSessionId(sessionId)) return false;
+  try {
+    const operations = JSON.parse(await fs.readFile(claudeOutstandingPath(internalRoot, sessionId), 'utf8'));
+    return Array.isArray(operations) && operations.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function processAlive(pid) {
@@ -153,9 +212,9 @@ function processAlive(pid) {
  * body ever travels in argv or the environment, and stdin is closed. Error text is
  * never forwarded, only whether the call answered.
  */
-function runKhala(command, op, sessionId) {
+function runKhala(command, op, sessionId, flags = []) {
   return new Promise(resolve => {
-    execFile(command, ['claude', op, '--session', sessionId], {
+    execFile(command, ['claude', op, '--session', sessionId, ...flags], {
       encoding: 'utf8', timeout: KHALA_CALL_TIMEOUT_MS, maxBuffer: MAX_FRAME_BYTES * 2, windowsHide: true,
     }, (error, stdout) => {
       resolve({ code: error ? (typeof error.code === 'number' ? error.code : -1) : 0, stdout: typeof stdout === 'string' ? stdout : '' });
@@ -176,8 +235,8 @@ function parseLine(stdout) {
  * The adapter's content-free `hook` state, or `null` when the runtime is unavailable or
  * refuses. `hook` settles access and may carry a notice; the watcher's `watch` never does.
  */
-async function hookState(deps, sessionId, op) {
-  const result = await deps.khala(op, sessionId);
+async function hookState(deps, sessionId, op, stop = false) {
+  const result = await (stop ? deps.khala(op, sessionId, ['--stop']) : deps.khala(op, sessionId));
   const value = result.code === 0 ? parseLine(result.stdout) : null;
   if (value?.ok !== true || value.kind !== 'hook') return null;
   const effective = ['steer', 'sync', 'async'].includes(value.effective) ? value.effective : null;
@@ -289,6 +348,12 @@ export async function runHook(role, raw, deps) {
   const input = decodeHookInput(role, raw);
   if (input === null) return { stdout: '', stderr: '', exitCode: 0 };
   const state = sessionState(deps, input.sessionId);
+  // An unbound session is a plain Claude session: no output, no state, no `khala` call.
+  // One with an access request outstanding is engaged, so its grant can reach it.
+  // SessionEnd still removes the session's own state, which an unbound one never has.
+  if (role !== 'session-end' && !await deps.bound(input.sessionId).catch(() => false)) {
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
   try {
     switch (role) {
       case 'user-prompt-submit': return await userPromptSubmit(input, state, deps);
@@ -362,7 +427,8 @@ async function stop(input, state, deps) {
   }
   // This turn's own Stop pulls whatever a wake announced.
   await state.consumeWake();
-  const hook = await hookState(deps, input.sessionId, 'hook');
+  // The session may idle after this boundary, so it settles access whatever the throttle.
+  const hook = await hookState(deps, input.sessionId, 'hook', true);
   // An access notice alone also keeps the session for one continuation, so the model can tell the user.
   const { delivered, result } = await deliver('stop', input.event, input.sessionId, deps,
     (_event, text) => JSON.stringify({ decision: 'block', reason: text }), hook, delivering(hook));
