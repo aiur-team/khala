@@ -183,6 +183,9 @@ function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
     request: input => access.request(input.operationId === defaultOperationId(input.target)
       ? { ...input, operationId: sessionOperationId(entry.session, input.operationId) } : input),
     status: input => access.status(input),
+    // Claude-mode `khala_create_channel` is wired by #377; until then create reports unavailable.
+    createChannel: async () => { throw new CliError('transport_unavailable'); },
+    createChannelStatus: async () => { throw new CliError('transport_unavailable'); },
   };
 }
 
