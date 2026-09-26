@@ -30,6 +30,51 @@ export function provenCodexEntry(overrides: Readonly<{
   };
 }
 
+export const EXPERIMENTAL_CLAUDE = {
+  route: 'claude-interactive-hooks',
+  testedVersion: '2.1.283',
+  evidenceRef: 'experiments/internal-mode/read-receipts/claude/evidence.json',
+  evidenceRevision: 'interactive-claude-2026-09-25',
+} as const;
+
+/**
+ * An inspected Claude Code not in the proven list: every mode is experimental, and steer is in
+ * effect only while the owner's grant pins the current route, tested version and evidence revision.
+ */
+export function experimentalClaudeEntry(overrides: Readonly<{
+  version?: number; granted?: boolean; evidenceRevision?: string; grantRevision?: string;
+}> = {}) {
+  const evidenceRevision = overrides.evidenceRevision ?? EXPERIMENTAL_CLAUDE.evidenceRevision;
+  const support = {
+    status: 'experimental', route: EXPERIMENTAL_CLAUDE.route, testedVersion: EXPERIMENTAL_CLAUDE.testedVersion,
+    evidenceRef: EXPERIMENTAL_CLAUDE.evidenceRef, evidenceRevision,
+    reason: 'Claude Code 2.1.283 has not been proven on this route.',
+  };
+  const grant = {
+    v: 1, kind: 'experimental_route', bindingId: 'binding-cy', generation: 1, mode: 'steer', route: EXPERIMENTAL_CLAUDE.route,
+    harnessVersion: EXPERIMENTAL_CLAUDE.testedVersion, evidenceRevision: overrides.grantRevision ?? EXPERIMENTAL_CLAUDE.evidenceRevision,
+    grantRevision: 3,
+  };
+  const effective = overrides.granted === true && grant.evidenceRevision === evidenceRevision;
+  return {
+    binding: { v: 1, bindingId: 'binding-cy', ownerId: 'owner-1', agentParticipantId: 'participant-cy', deviceId: 'device-cy', harness: 'claude', sessionId: 'digest-cy', generation: 1 },
+    displayName: 'Cy',
+    harnessVersion: EXPERIMENTAL_CLAUDE.testedVersion,
+    ownedByViewer: true,
+    paused: false,
+    idleDelivery: 'unproven',
+    view: {
+      bindingId: 'binding-cy', generation: 1, requested: 'steer', version: overrides.version ?? 2,
+      lastChangedBy: { kind: 'owner', participantId: 'owner-1' },
+      effective: effective ? 'steer' : null,
+      effectiveReason: effective ? null : 'experimental_grant_required',
+      experimentalGrants: overrides.granted === true ? [grant] : [],
+      hardCancelGrants: [],
+      support: { steer: support, sync: support, async: support },
+    },
+  };
+}
+
 /** A Claude agent: no internal route is proven, so nothing is requested or in effect. */
 export function unprovenClaudeEntry(overrides: Readonly<{ paused?: boolean }> = {}) {
   // As Claude's released claim reads: it says nothing about idle delivery, so the panel must.

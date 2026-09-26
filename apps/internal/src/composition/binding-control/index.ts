@@ -125,9 +125,15 @@ export type BindingControl = BindingStopOptions & Readonly<{
   close(): void;
 }>;
 
-export function composeBindingControl(input: Readonly<{ handle: InternalStoreHandle; root: string }>): BindingControl {
+export function composeBindingControl(input: Readonly<{
+  handle: InternalStoreHandle;
+  root: string;
+  /** Channel access's share of Stop: its approved requests that have not become bindings yet. */
+  cancelApproved?: BindingStopOptions['cancelApproved'];
+}>): BindingControl {
   let open = true;
   return {
+    ...(input.cancelApproved ? { cancelApproved: input.cancelApproved } : {}),
     activatedBindings: channelId => readActivatedBindings(input.handle, channelId),
     clearGrant: bindingIds => (open ? clearDescriptorGrant(input.root, bindingIds) : 'absent'),
     close() {

@@ -334,7 +334,7 @@ export function grantStateFor(
   return { kind: 'none' };
 }
 
-const MISSING_PROOF = 'Khala has not proved the composed delivery route on this version.';
+export const MISSING_PROOF = 'Khala has not proved the composed delivery route on this version.';
 const BLOCKED_WITHOUT_WRAPPER = 'Native delivery unavailable; wrapper-based support is awaiting product-operator approval.';
 
 function supportDescription(support: ModeSupport, grant: GrantState, harnessName: string): string {
@@ -512,7 +512,7 @@ export function projectListening(
   };
 }
 
-const MODE_WARNINGS: Readonly<Record<RouteGrantKind, string>> = {
+export const MODE_WARNINGS: Readonly<Record<RouteGrantKind, string>> = {
   experimental_route: 'Enabling this experimental route lets you select it for this binding only. '
     + 'It does not enable hard cancel.',
   hard_cancel: 'Hard cancel interrupts the agent mid-turn. A tool call already in progress may have partly '

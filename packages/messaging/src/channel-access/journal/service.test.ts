@@ -172,6 +172,34 @@ describe('channel-access service', () => {
     expect(await h.outcome(requestHandle)).toBe('connecting');
   });
 
+  it('revokes an approved or claimed request for the owner\'s Stop, and leaves pending and finished ones alone', async () => {
+    const pending = harness();
+    const waiting = await pending.requestAccess();
+    expect(await pending.service.revokeApproved(waiting, 'stop_1')).toBe('unchanged');
+    expect(await pending.outcome(waiting)).toBe('pending_owner');
+
+    const h = harness();
+    const approved = await h.requestAccess();
+    await h.service.decisions.decide(approve(approved), owner);
+    expect(await h.service.revokeApproved(approved, 'stop_1')).toBe('revoked');
+    expect(await h.outcome(approved)).toBe('revoked');
+    expect(await h.service.journal.inspect({ v: 1, operationId: 'request_1', operationKind: 'access' }, requester, context))
+      .toEqual({ v: 1, operationId: 'request_1', outcome: 'revoked' });
+    // Revoked is terminal: the connector can no longer claim it, and a second Stop changes nothing.
+    expect(await h.service.fulfillment.claimAccess({
+      v: 1, requestHandle: approved as never, expectedRevision: 'carev_3', operationId: 'claim_late',
+    })).toMatchObject({ kind: 'rejected' });
+    expect(await h.service.revokeApproved(approved, 'stop_2')).toBe('unchanged');
+
+    const c = harness();
+    const claimed = await c.requestAccess();
+    await c.service.decisions.decide(approve(claimed), owner);
+    await c.service.fulfillment.claimAccess({ v: 1, requestHandle: claimed as never, expectedRevision: 'carev_2', operationId: 'claim_1' });
+    expect(await c.outcome(claimed)).toBe('connecting');
+    expect(await c.service.revokeApproved(claimed, 'stop_1')).toBe('revoked');
+    expect(await c.outcome(claimed)).toBe('revoked');
+  });
+
   it('revokes active work on status reads once the requester generation is revoked', async () => {
     const h = harness();
     const requestHandle = await h.requestAccess();

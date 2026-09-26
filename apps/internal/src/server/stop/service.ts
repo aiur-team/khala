@@ -8,7 +8,9 @@
 // (no new request authenticates), wait for effects that were already committing,
 // then revoke it durably. Only after that is the runtime descriptor's grant
 // cleared and success reported. Any step that fails leaves the binding named in
-// `remaining`; the barrier stays raised, so it still cannot commit.
+// `remaining`; the barrier stays raised, so it still cannot commit. A
+// whole-channel Stop first closes the channel's approved requests that have not
+// become bindings yet, so none of them binds after it.
 
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { BindingKey, RevocationBarrier } from './barrier';
@@ -55,6 +57,8 @@ export type BindingStopPorts = Readonly<{
   dropCapability(key: BindingKey): void;
   /** Removes granted binding fields from the runtime descriptor when they name one of `bindingIds`. */
   clearGrant?(bindingIds: ReadonlySet<string>): GrantClearing;
+  /** Closes the channel's approved requests that are not yet active bindings; `unavailable` when unsure. */
+  cancelApproved?(channelId: string): Promise<'cancelled' | 'unavailable'>;
 }>;
 
 export type BindingStopService = Readonly<{
@@ -76,6 +80,18 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
   const queues = new Map<string, Promise<unknown>>();
 
   async function stopNow(channelId: string, targets: readonly StopTarget[] | null): Promise<StopResult> {
+    // A whole-channel Stop also closes approvals that have not reached a binding yet. It does so
+    // before the channel's bindings are read: an activation racing this Stop is read below, or its
+    // own recheck of the closed request revokes it.
+    let cancelled: 'cancelled' | 'unavailable' = 'cancelled';
+    if (targets === null && ports.cancelApproved) {
+      try {
+        cancelled = await ports.cancelApproved(channelId);
+      } catch {
+        cancelled = 'unavailable';
+      }
+    }
+
     let candidates: readonly StopCandidate[] | 'unavailable';
     try {
       candidates = ports.candidates(channelId);
@@ -145,7 +161,9 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
       }
     }
 
-    return remaining.length === 0 ? { kind: 'stopped', stopped } : { kind: 'partial', stopped, remaining };
+    if (remaining.length > 0) return { kind: 'partial', stopped, remaining };
+    // An approval that may still activate is not stopped; the Stop is retried whole.
+    return cancelled === 'cancelled' ? { kind: 'stopped', stopped } : { kind: 'unavailable' };
   }
 
   return {

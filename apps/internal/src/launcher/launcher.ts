@@ -278,6 +278,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       const discovery = await composeInternalChannelDiscovery({
         control: createSqliteControlStore(channel.handle, clock),
         store: createDiscoveryStore(channel.handle),
+        bindings: channel.store,
         human: channel.human,
         clock,
         newChannelId: () => `ch_${token()}`,
@@ -288,7 +289,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       const claude = await composeClaudeSession({
         root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
       });
-      bindingControl = composeBindingControl({ handle: channel.handle, root });
+      bindingControl = composeBindingControl({ handle: channel.handle, root, cancelApproved: discovery.cancelApproved });
       const modes = composeBindingModes({ handle: channel.handle, store: channel.store, claude: claudeRoute });
       server = await startChannelServer({
         store: channel.store,
