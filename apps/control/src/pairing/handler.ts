@@ -7,6 +7,7 @@ import {
   type RoomId,
   type TrustedClock,
 } from '@khala/contracts/messaging/index';
+import { REDEEM_PATH } from '../agent-bootstrap/handler';
 import { PROOF_MAX_AGE_S, PROOF_MAX_SKEW_S, checkProof } from '../agent-bootstrap/proof';
 import type { AuthService } from '../auth';
 import type { RouteRegistration } from '../runtime/handler';
@@ -17,6 +18,8 @@ export const HUMAN_PAIRING_REQUEST_PATH = '/api/human/pairing/request';
 export const HUMAN_PAIRING_DECISION_PATH = '/api/human/pairing/decision';
 export const AGENT_PAIRING_CLAIM_PATH = '/api/agent/pairing/claim';
 export const AGENT_PAIRING_RESULT_PATH = '/api/agent/pairing/result';
+/** The descriptor shares the link descriptor's path, selected by `?method=pairing-code-v1`. */
+export const PAIRING_METHOD = 'pairing-code-v1';
 
 const REQUEST_HANDLE = /^pair_[A-Za-z0-9_-]{43}$/;
 const REPLAY_TTL_MS = (PROOF_MAX_AGE_S + PROOF_MAX_SKEW_S) * 1_000;
@@ -45,7 +48,13 @@ export type PairingHandlerDependencies = Readonly<{
 export type PairingHandlers = Readonly<{
   human: readonly RouteRegistration[];
   agent: readonly RouteRegistration[];
-  /** Internal-only grant redemption boundary; it is deliberately not registered as HTTP. */
+  /**
+   * Answers a descriptor request for the code-only method, or `null` when the request
+   * is not one (so the link descriptor handles it). It shares the link descriptor's
+   * path, which is why it is a function and not a registration.
+   */
+  descriptor(request: Request): Response | null;
+  /** Grant redemption boundary; the shared bootstrap redeem route calls it, it is not its own route. */
   grantPort: PairingGrantPort;
 }>;
 
@@ -56,6 +65,19 @@ export function createPairingHandlers(deps: PairingHandlerDependencies): Pairing
   }
   const claimUrl = `${deps.origin}${AGENT_PAIRING_CLAIM_PATH}`;
   const resultUrl = `${deps.origin}${AGENT_PAIRING_RESULT_PATH}`;
+  const redeemUrl = `${deps.origin}${REDEEM_PATH}`;
+
+  /** Fixed, public and identical for everyone: no code, owner or channel can shape it. */
+  function describe(request: Request): Response | null {
+    const params = new URL(request.url).searchParams;
+    const methods = params.getAll('method');
+    if (methods.length === 0) return null;
+    const keys = [...params.keys()];
+    if (methods.length !== 1 || methods[0] !== PAIRING_METHOD || keys.some(key => key !== 'method')) {
+      return rejected(404, 'unknown_method');
+    }
+    return json(200, { v: 1, methods: [PAIRING_METHOD], claim: claimUrl, result: resultUrl, redeem: redeemUrl });
+  }
 
   async function create(request: Request): Promise<Response> {
     const authorization = await mutationAuthorization(deps, request);
@@ -207,7 +229,7 @@ export function createPairingHandlers(deps: PairingHandlerDependencies): Pairing
     Object.freeze<RouteRegistration>({ path: AGENT_PAIRING_CLAIM_PATH, methods: Object.freeze(['POST']), handle: claim }),
     Object.freeze<RouteRegistration>({ path: AGENT_PAIRING_RESULT_PATH, methods: Object.freeze(['POST']), handle: result }),
   ]);
-  return Object.freeze({ human, agent, grantPort: deps.store.grantPort });
+  return Object.freeze({ human, agent, descriptor: describe, grantPort: deps.store.grantPort });
 }
 
 async function claimReplay(deps: PairingHandlerDependencies, jkt: string, jti: string): Promise<true | Response> {
