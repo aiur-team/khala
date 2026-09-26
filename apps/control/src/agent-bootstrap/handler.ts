@@ -84,11 +84,6 @@ export type AdapterRefusal =
   | 'proof_required' | 'invalid_proof' | 'proof_key_mismatch' | 'proof_target_mismatch' | 'proof_token_mismatch' | 'proof_replayed';
 
 /**
- * The adapter capability's side of KHA-128. `revokeAdapterCapability` has the shape of
- * `RevocationControlPort.revokeAdapterCapability` in `@khala/messaging/revocation`, so a
- * composition root can pass it straight through.
- */
-/**
  * A binding as the revocation service (KHA-128) and trust policy see it. `generation` is the
  * control plane's authoritative generation: the bound generation while active, and the revoked
  * generation once revoked, which never advances. The messaging device key is not held here; the
@@ -98,6 +93,11 @@ export type BindingLookupResult =
   | Readonly<{ kind: 'found'; ownerId: OwnerId; generation: number; deviceId: SessionBinding['deviceId']; status: 'active' | 'revoked' }>
   | Readonly<{ kind: 'absent' | 'unavailable' }>;
 
+/**
+ * The adapter capability's side of KHA-128. `revokeAdapterCapability` has the shape of
+ * `RevocationControlPort.revokeAdapterCapability` in `@khala/messaging/revocation`, so a
+ * composition root can pass it straight through.
+ */
 export interface AdapterCapabilities {
   /** Checks an adapter request: `Authorization: DPoP <capability>` plus a proof for this exact request. */
   authorize(request: Request, action: string): Promise<AdapterAuthorization>;
