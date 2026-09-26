@@ -397,6 +397,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       session: presented.session, deviceId: presented.deviceId,
     }));
     if (redeemed === null || redeemed.kind === 'unavailable') return json(503, { code: 'unavailable' });
+    if (redeemed.kind === 'replayed') return json(401, { code: 'grant_replayed' });
     if (redeemed.kind !== 'redeemed') return json(401, { code: 'invalid_grant' });
     const { authorization } = redeemed;
     if (authorization.origin !== deps.origin || authorization.jkt !== jkt) return json(401, { code: 'invalid_grant' });
@@ -414,8 +415,14 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     // operation ids, so a retry resumes here without a second spend.
     const tracker: { redemption: Redemption | null } = { redemption: { operationId: presented.operationId, admitted: null, issued: false } };
     const saveRedemption = async (next: Redemption) => {
+      if (next.issued) {
+        // The store spends the issuance too, so a later retry cannot mint a second capability.
+        const marked = await safeCall(() => grants.markIssued({ grant: presented.grant, operationId: presented.operationId }));
+        if (marked === 'replayed') return 'conflict';
+        if (marked !== 'applied') return 'unavailable';
+      }
       tracker.redemption = next;
-      return 'applied' as const;
+      return 'applied';
     };
     return finishRedeem(held, tracker, saveRedemption);
   }

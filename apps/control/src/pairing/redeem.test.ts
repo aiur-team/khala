@@ -207,14 +207,26 @@ describe('pairing grant redeem', () => {
     expect((await h.redeem(grant)).status).toBe(200);
   });
 
-  it('refuses a replay by another operation and reconciles a retry of the same one', async () => {
+  it('refuses a replay by another operation and by a retry after issuance', async () => {
     const h = setup();
     const grant = await h.approvedGrant();
     expect((await h.redeem(grant)).status).toBe(200);
-    expect((await h.redeem(grant)).status).toBe(200);
+    const retry = await h.redeem(grant);
+    expect(retry.status).toBe(401);
+    expect(await retry.json()).toEqual({ code: 'grant_replayed' });
     const replay = await h.redeem(grant, { operationId: 'redeem_operation_2' });
     expect(replay.status).toBe(401);
     expect(await replay.json()).toEqual({ code: 'invalid_grant' });
+  });
+
+  it('mints no capability for a same-operation retry seven days later', async () => {
+    const h = setup();
+    const grant = await h.approvedGrant();
+    expect((await h.redeem(grant)).status).toBe(200);
+    h.advance(7 * 24 * 60 * 60 * 1000);
+    const late = await h.redeem(grant);
+    expect(late.status).toBe(401);
+    expect(await late.json()).toEqual({ code: 'grant_replayed' });
   });
 
   it('refuses an expired grant', async () => {
