@@ -233,7 +233,8 @@ commands never load the local client.
   mode; this side projects it through the released claim of the harness
   actually installed here, read as setup reads it. For Codex, that means an
   exactly proven version whose Khala hooks you trusted. `async` stays unproven
-  until a receipt proof ships. For Claude, an inspected version outside the
+  until a receipt proof ships. For Claude, the owner or the session itself
+  (`khala_mode_set`) may request a mode. An inspected version outside the
   proven list is `experimental`, so a mode takes effect only under the owner's
   experimental-route grant; an uninspectable version stays unproven.
 - `codex-hook` is installed as the byte-stable `khala codex-hook`, so without
@@ -930,12 +931,17 @@ pull could only replay that batch, so a hook watcher must not wake the session
 for it again.
 
 `hook` tells a plugin hook which boundary it owns, as
-`{"ok":true,"kind":"hook","effective":<mode|null>,"watchSeconds":<n|null>}`.
+`{"ok":true,"kind":"hook","effective":<mode|null>,"watchSeconds":<n|null>,"access":<outcome|null>}`.
 Unlike `mode`, it is not an agent call. It runs outside the state-port envelope
 and acknowledges nothing. `effective` is `null` without batch-token handoff,
 because every hook pull would be refused. `watchSeconds` is the local automation
 fence's idle-watcher window. It is present only for `steer` and `sync`, and
-`null` when the fence grants none.
+`null` when the fence grants none. `hook` also settles the session's outstanding
+access requests, at most once every 5 seconds per session, and reports a settled
+`connected`, `denied` or `expired` once in `access`, before any binding exists.
+`hook --stop`, which only the plugin's `Stop` hook passes, settles whatever the
+interval. `watch` is the idle watcher's `hook`: the same answer, but it never
+settles, so its `access` is always `null`.
 
 For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
 (`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the

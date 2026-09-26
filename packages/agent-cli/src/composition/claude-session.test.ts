@@ -218,24 +218,61 @@ describe('Claude session adapter', () => {
     const { adapter: claude, services, state } = adapter();
     const envelope = vi.spyOn(state, 'envelope');
     services.services(BINDINGS['s-1']);
-    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null });
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
     services.mode.value = 'sync';
-    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000 });
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: null });
     services.mode.value = 'steer';
     services.watch.value = null;
-    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: null });
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: null, access: null });
     services.watch.value = { seconds: 0 };
-    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: null });
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: null, access: null });
     services.watch.value = { seconds: 60 };
     services.mode.value = 'async';
-    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'async', watchSeconds: null });
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'async', watchSeconds: null, access: null });
     // Without batch-token handoff every hook pull is refused, so hooks deliver nothing.
     services.mode.value = 'steer';
     services.capabilities.value = capabilities('unknown');
-    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null });
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
     expect(envelope).not.toHaveBeenCalled();
     expect(services.reads.get('binding-1')!.calls).toEqual([]);
     await expect(claude.hook({ credential: CREDENTIAL_B, sessionId: 's-1' })).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+  });
+
+  it('settles an access request at the hook boundary, before resolving the binding', async () => {
+    let bound = false;
+    const notices: Array<'connected' | 'denied' | null> = [];
+    const settled: string[] = [];
+    const settle = vi.fn(async (principal: { principalId: string }, sessionId: string, input: { stop: boolean }) => {
+      settled.push(`${principal.principalId}:${sessionId}${input.stop ? ':stop' : ''}`);
+      const notice = notices.shift() ?? null;
+      if (notice === 'connected') bound = true;
+      return notice;
+    });
+    const unused = async () => { throw new Error('not called'); };
+    const claude = createClaudeSessionAdapter({
+      authenticator: authenticator(), state: memoryState(), services: fakeServices().services,
+      sessions: { resolve: async (_principal, claim) => bound && claim.sessionId === 's-1' ? BINDINGS['s-1'] : null },
+      access: { listChannels: unused, request: unused, status: unused, create: unused, settle },
+    });
+
+    // Still pending: the unbound session's hook is refused exactly as before.
+    notices.push(null);
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+    // The owner approved: this boundary binds the session and says so, with no retry by the agent.
+    notices.push('connected');
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
+    // Reported once: the next boundary is an ordinary bound hook.
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
+    // A denial leaves the session unbound, and the boundary still reports it. `Stop` asks unthrottled.
+    notices.push('denied');
+    await expect(claude.hook(A2, { stop: true })).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'denied' });
+    expect(settled).toEqual(['principal-a:s-1', 'principal-a:s-1', 'principal-a:s-1', 'principal-a:s-2:stop']);
+
+    // An unauthenticated caller settles nothing, and a failing settle never fails the hook.
+    await expect(claude.hook({ credential: 'C'.repeat(43), sessionId: 's-1' })).resolves.toEqual({ kind: 'refused', code: 'unauthorized' });
+    expect(settled).toHaveLength(4);
+    settle.mockRejectedValueOnce(new Error('control plane down'));
+    await expect(claude.hook(A1)).resolves.toMatchObject({ kind: 'hook', access: null });
   });
 
   it('keeps an agent read’s own batch token for the next agent call and keeps no local acknowledgement', async () => {

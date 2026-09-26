@@ -113,7 +113,23 @@ export interface ClaudeSessionAccess {
   status(principal: ClaudePrincipal, sessionId: string, input: AccessStatusInput): Promise<unknown>;
   /** A create intent filed for this session; it only asks, and admits nothing. */
   create(principal: ClaudePrincipal, sessionId: string, input: CreateRequestInput): Promise<unknown>;
+  /**
+   * Settles this session's outstanding access requests without the agent retrying: an
+   * approved one is activated into the session's own binding. Returns the finite outcome
+   * it settled, once, or `null` when nothing was settled.
+   */
+  settle?(principal: ClaudePrincipal, sessionId: string, input: ClaudeHookInput): Promise<ClaudeAccessNotice | null>;
 }
+
+/**
+ * Which synchronous boundary asks. Settling is throttled per session, except at the
+ * turn-ending `Stop`, which always settles: it is the last boundary before the session idles.
+ */
+export type ClaudeHookInput = Readonly<{ stop: boolean }>;
+
+/** A finite access outcome a hook boundary reports once, content-free. */
+export const CLAUDE_ACCESS_NOTICES = ['connected', 'denied', 'expired'] as const;
+export type ClaudeAccessNotice = (typeof CLAUDE_ACCESS_NOTICES)[number];
 
 export type ClaudeSessionAdapterOptions = Readonly<{
   authenticator: ClaudeInstallationAuthenticator;
@@ -164,12 +180,13 @@ export type ClaudeRosterOutcome = Readonly<{ kind: 'roster'; roster: unknown }> 
 export type ClaudeAccessOutcome = Readonly<{ kind: 'access'; result: unknown }> | ClaudeSessionRefusal;
 export type ClaudePendingOutcome = Readonly<{ kind: 'pending' | 'idle' }> | ClaudeSessionRefusal;
 /**
- * What a hook needs to pick its boundary, and nothing else: the effective mode, and
- * the fence's watcher window in seconds. `effective` is `null` when hook delivery is
- * off, and `watchSeconds` is `null` when no idle watcher may run.
+ * What a hook needs to pick its boundary, and nothing else: the effective mode, the
+ * fence's watcher window in seconds, and an access outcome settled at this boundary.
+ * `effective` is `null` when hook delivery is off, `watchSeconds` is `null` when no idle
+ * watcher may run, and `access` is `null` unless this call settled a request.
  */
 export type ClaudeHookOutcome = Readonly<{
-  kind: 'hook'; effective: ListeningMode | null; watchSeconds: number | null;
+  kind: 'hook'; effective: ListeningMode | null; watchSeconds: number | null; access: ClaudeAccessNotice | null;
 }> | ClaudeSessionRefusal;
 /** Content-free: how many retained batch tokens this call committed, and nothing else. */
 export type ClaudeStatusOutcome = Readonly<{ kind: 'status'; acknowledged: number }> | ClaudeSessionRefusal;
@@ -188,7 +205,10 @@ export interface ClaudeSessionAdapter {
   mode(call: ClaudeSessionCall): Promise<ClaudeModeOutcome>;
   setMode(call: ClaudeSessionCall, input: Omit<ModeSetInput, 'acknowledgeToken'>): Promise<ClaudeModeSetOutcome>;
   pending(call: ClaudeSessionCall): Promise<ClaudePendingOutcome>;
-  hook(call: ClaudeSessionCall): Promise<ClaudeHookOutcome>;
+  /** A synchronous hook's boundary state; it settles the session's access requests first. */
+  hook(call: ClaudeSessionCall, input?: ClaudeHookInput): Promise<ClaudeHookOutcome>;
+  /** The idle watcher's boundary state: the same answer, but it never settles, so `access` is `null`. */
+  watch(call: ClaudeSessionCall): Promise<ClaudeHookOutcome>;
   roster(call: ClaudeSessionCall): Promise<ClaudeRosterOutcome>;
   /** Discovery and access carry the requesting session but need no binding: a join precedes one. */
   listChannels(call: ClaudeSessionCall, input: ChannelListInput): Promise<ClaudeAccessOutcome>;
@@ -245,6 +265,20 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       if (options.access === undefined) return refused('unavailable');
       return { kind: 'access' as const, result: await run(options.access, principal) };
     });
+  }
+
+  /** The session's settled access outcome, if any. Settling never fails the hook that asked. */
+  async function settle(call: ClaudeSessionCall, input: ClaudeHookInput): Promise<ClaudeAccessNotice | null> {
+    const port = options.access;
+    if (port?.settle === undefined || typeof call.credential !== 'string' || !validIdentifier(call.sessionId)) return null;
+    try {
+      const principal = await options.authenticator.authenticate(call.credential);
+      if (principal === null) return null;
+      const notice = await port.settle(principal, call.sessionId, { stop: input.stop === true });
+      return (CLAUDE_ACCESS_NOTICES as readonly unknown[]).includes(notice) ? notice : null;
+    } catch {
+      return null;
+    }
   }
 
   async function handoff(resolved: Resolved): Promise<boolean> {
@@ -434,23 +468,37 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       });
     },
 
-    async hook(call) {
-      return guarded(async () => {
-        const resolved = await resolve(call);
-        if ('kind' in resolved) return resolved;
-        // Unlike `mode`, this is not an agent call: no envelope, so nothing is acknowledged.
-        const view = await resolved.services.readMode();
-        if (!view.ok) return refused(view.code === 'unavailable' ? 'unavailable' : 'binding_not_held');
-        // Without batch-token handoff every hook pull is refused, so hook delivery is off.
-        const effective = await handoff(resolved) ? view.view.effective : null;
-        if (effective !== 'steer' && effective !== 'sync') return { kind: 'hook', effective, watchSeconds: null };
-        const window = await resolved.services.watchWindow();
-        const seconds = window?.seconds;
-        const watchSeconds = Number.isSafeInteger(seconds) && (seconds as number) > 0 ? seconds as number : null;
-        return { kind: 'hook', effective, watchSeconds };
-      });
-    },
+    hook: (call, input) => hookState(call, { stop: input?.stop === true }),
+    watch: call => hookState(call, null),
   };
+
+  /**
+   * A synchronous hook settles access before resolving the binding, so the boundary that
+   * follows the owner's decision already sees the session connected and reports it once.
+   * The watcher never settles: it cannot show the outcome, and would take it from the
+   * synchronous `Stop` hook that runs beside it.
+   */
+  function hookState(call: ClaudeSessionCall, settles: ClaudeHookInput | null): Promise<ClaudeHookOutcome> {
+    return guarded(async () => {
+      const access = settles === null ? null : await settle(call, settles);
+      const resolved = await resolve(call);
+      if ('kind' in resolved) {
+        // A denial or expiry leaves the session unbound; the boundary still reports it once.
+        return resolved.code === 'session_not_bound' && access !== null
+          ? { kind: 'hook', effective: null, watchSeconds: null, access } : resolved;
+      }
+      // Unlike `mode`, this is not an agent call: no envelope, so nothing is acknowledged.
+      const view = await resolved.services.readMode();
+      if (!view.ok) return refused(view.code === 'unavailable' ? 'unavailable' : 'binding_not_held');
+      // Without batch-token handoff every hook pull is refused, so hook delivery is off.
+      const effective = await handoff(resolved) ? view.view.effective : null;
+      if (effective !== 'steer' && effective !== 'sync') return { kind: 'hook', effective, watchSeconds: null, access };
+      const window = await resolved.services.watchWindow();
+      const seconds = window?.seconds;
+      const watchSeconds = Number.isSafeInteger(seconds) && (seconds as number) > 0 ? seconds as number : null;
+      return { kind: 'hook', effective, watchSeconds, access };
+    });
+  }
 
   function acknowledgeCurrent(resolved: Resolved) {
     return async (current: string | undefined): Promise<AgentStep<null>> => {
