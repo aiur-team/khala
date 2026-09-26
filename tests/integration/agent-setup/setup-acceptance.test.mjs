@@ -367,26 +367,37 @@ describe('concurrency and interruption', () => {
     assertRestored(machine, baseline);
   });
 
-  // SIGKILLs a confirmed setup as soon as its write-ahead journal exists.
+  // SIGKILLs a confirmed setup once its write-ahead journal shows an applied operation but
+  // before the commit point, so the next command has a real rollback to do. A kill that lands
+  // too early or too late is retried on a fresh machine.
+  const ATTEMPTS = 20;
   async function killMidTransaction() {
-    for (let attempt = 0; attempt < 10; attempt++) {
+    const started = journal => journal?.state === 'prepared' && journal.operations.some(entry => entry.status === 'applied');
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       const machine = createMachine(ALL);
       seed(machine);
-      const journal = path.join(machine.home, '.local', 'state', 'khala', 'setup', 'transaction.v1.json');
+      const baseline = snapshot(machine.home);
+      const journalPath = path.join(machine.home, '.local', 'state', 'khala', 'setup', 'transaction.v1.json');
+      const readJournal = () => { try { return JSON.parse(fs.readFileSync(journalPath, 'utf8')); } catch { return null; } };
       const plan = khala(v1, machine, ['setup']);
       const run = khalaAsync(v1, machine, ['setup', '--confirm', plan.json.planDigest]);
-      let killed = false;
       while (run.child.exitCode === null && run.child.signalCode === null) {
-        if (fs.existsSync(journal)) { run.child.kill('SIGKILL'); killed = true; break; }
+        if (started(readJournal())) { run.child.kill('SIGKILL'); break; }
         await new Promise(resolve => setImmediate(resolve));
       }
       await run.done;
-      if (killed && fs.existsSync(journal)) return { machine, plan };
+      if (started(readJournal())) return { machine, plan, baseline };
     }
-    throw new Error('never interrupted a setup mid-transaction in 10 attempts');
+    throw new Error(`never interrupted a setup between its first write and its commit in ${ATTEMPTS} attempts`);
   }
 
-  test('a crash mid-transaction safely refuses: no torn file, no further writes, CI sees exit 4', async () => {
+  // Planned paths whose bytes are already the setup's postimage: proof that something was written.
+  function writtenPaths(plan) {
+    return plan.json.operations.filter(operation => operation.postimage && fs.existsSync(operation.path)
+      && `sha256:${sha256(fs.readFileSync(operation.path))}` === operation.postimage).map(operation => operation.path);
+  }
+
+  test('a crash mid-transaction leaves no torn file, CI sees exit 4, and nothing recovers unconfirmed', async () => {
     const { machine, plan } = await killMidTransaction();
     for (const operation of plan.json.operations) {
       if (!fs.existsSync(operation.path)) continue;
@@ -395,20 +406,37 @@ describe('concurrency and interruption', () => {
       assert.ok(hash === operation.postimage || hash === preimage, `${operation.path} is neither its preimage nor its postimage`);
     }
     const frozen = snapshot(machine.home, { mtimes: true });
-    for (const args of [['status', '--check'], ['setup'], ['remove'], ['setup', '--confirm', plan.json.planDigest]]) {
+    const check = khala(v1, machine, ['status', '--check']);
+    assert.equal(check.status, 4, check.stdout);
+    assert.equal(state(check), 'recovery_required');
+    // Every mutating command offers the same kind of relayable recovery plan and recovers
+    // nothing, including one confirmed with the interrupted setup's own digest.
+    for (const args of [['setup'], ['remove'], ['remove', '--dry-run'], ['setup', '--confirm', plan.json.planDigest]]) {
       const result = khala(v1, machine, args);
-      assert.equal(result.status, 4, `${args.join(' ')}: ${result.stdout}`);
-      assert.equal(state(result), 'recovery_required');
+      assert.equal(result.status, 5, `${args.join(' ')}: ${result.stdout}`);
+      assert.equal(state(result), 'confirmation_required');
+      assert.notEqual(result.json.planDigest, plan.json.planDigest);
+      assert.ok(result.json.diagnostics.some(item => item.code === 'recovery_available'), result.stdout);
     }
     assert.equal(khala(v1, machine, ['status']).status, 0, 'bare status stays informational');
     assert.deepEqual(snapshot(machine.home, { mtimes: true }), frozen);
   });
 
-  test('a crash mid-transaction is recovered by the next confirmed command', { todo: 'https://github.com/aiur-team/khala/issues/385' }, async () => {
-    const { machine } = await killMidTransaction();
+  test('a crash mid-transaction is recovered by the next confirmed command', async () => {
+    const { machine, plan, baseline } = await killMidTransaction();
+    assert.notDeepEqual(writtenPaths(plan), [], 'the interrupted setup must have written a postimage for recovery to roll back');
     const recovery = khala(v1, machine, ['remove']);
     assert.notEqual(recovery.json.planDigest, null, 'a recovery plan the agent can relay');
-    assert.equal(khala(v1, machine, ['remove', '--confirm', recovery.json.planDigest]).status, 0);
+    assert.match(recovery.json.confirmation.request, new RegExp(`khala remove --confirm ${recovery.json.planDigest}`));
+    const next = khala(v1, machine, ['remove', '--confirm', recovery.json.planDigest]);
+    assert.ok(next.json.diagnostics.some(item => item.code === 'recovered'), next.stdout);
+    // The kill landed before the commit point, so recovery alone rolls every write back.
+    assert.equal(next.status, 0, next.stdout);
+    assert.deepEqual(writtenPaths(plan), []);
+    const status = khala(v1, machine, ['status', '--check']);
+    assert.notEqual(status.status, 4, status.stdout);
+    assert.ok(!fs.existsSync(path.join(machine.home, '.local', 'state', 'khala', 'setup', 'transaction.v1.json')));
+    assertRestored(machine, baseline);
   });
 });
 

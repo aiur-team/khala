@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { internalSessionDigest } from '@aiur/khala/composition/internal-session';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { discoveryPrincipalPreimage } from '@khala/contracts/internal/discovery-descriptor';
 import {
@@ -78,7 +79,8 @@ export function discoveryPrincipal(harness: string, sessionId: string): string {
 
 /** What a binding stores as its session: a digest, never the harness's own session ID. */
 export function sessionDigest(harness: string, sessionId: string): string {
-  return digest('session', harness, sessionId);
+  // Shared with the agent client, whose native hooks must recognise the same session.
+  return internalSessionDigest(harness, sessionId);
 }
 
 function agentParticipant(principal: string): string {

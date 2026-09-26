@@ -179,6 +179,11 @@ export class AgentSession {
     return this.run(['--internal-descriptor', this.activePath, 'send'], body);
   }
 
+  /** `khala mode get` / `khala mode set <mode> --expected-version <n>` on this session's own binding. */
+  mode(args: readonly string[]): Promise<CliRun> {
+    return this.run(['--internal-descriptor', this.activePath, 'mode', ...args]);
+  }
+
   read(ack?: string): Promise<CliRun> {
     return this.run(['--internal-descriptor', this.activePath, 'read', ...(ack === undefined ? [] : ['--ack', ack])]);
   }

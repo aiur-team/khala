@@ -74,6 +74,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return await runCli(argv, {
       client: createUnavailableClient(),
       // No trusted connector composition is installed yet, so mode calls refuse as unavailable.
+      // Under `--internal-descriptor` the descriptor client supplies its own binding's mode control.
       listeningMode: null,
       inbox: (bindingId, generation) => openInbox({
         stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
@@ -83,12 +84,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),
       // The Claude plugin's hooks and `mcp-serve` reach the running internal server through it.
       claude: createClaudeSessionClient({ descriptorPath: activeDescriptor }),
-      // The Codex and OpenCode `mcp-serve` entries carry no `--internal-descriptor`: each call
-      // acts as its own session's `grant.json`. The Claude entry's `mcp-serve` runs its session
-      // server over `claude` instead.
+      // The Codex and OpenCode `mcp-serve` entries and `khala codex-hook` carry no
+      // `--internal-descriptor`: each call acts as its own session's `grant.json`. The Claude
+      // entry's `mcp-serve` runs its session server over `claude` instead.
       ...(isClaudeMcpEntry(process.env) ? {} : { sessionGrants: sessionGrants(internalRoot) }),
-      internalClient: async descriptorPath =>
-        (await import('../composition/internal.js')).createInternalClient({ descriptorPath }),
+      // The mode status hooks act on is projected through the harness running here, read as setup reads it.
+      internalClient: async descriptorPath => {
+        const [{ createInternalClient }, { localHarness }] = await Promise.all([
+          import('../composition/internal.js'), import('../composition/local-harness-capabilities.js'),
+        ]);
+        const harness = localHarness(() => setupEnvironment(process.env));
+        return createInternalClient({ descriptorPath, capabilities: harness.capabilities, observation: harness.observation });
+      },
       internalDelivery: async descriptorPath =>
         (await import('../composition/internal-delivery.js')).createInternalDelivery({ descriptorPath, stateDirectory }),
     });

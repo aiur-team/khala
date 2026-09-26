@@ -13,6 +13,7 @@ import type { HumanApplicationHandle, HumanRouteContext } from '../../compositio
 import { HumanScreen } from '../../composition/human/screen';
 import { MakeExternalPage } from '../make-external/MakeExternalPage';
 import type { MakeExternalPort } from '../make-external/port';
+import type { ListeningPort } from '../controls/listening-port';
 import { LocalRoom, type LocalStopCapability, SessionEnded } from './room';
 import type { LocalRoute, LocalRouteCodec } from './routes';
 
@@ -31,6 +32,8 @@ export type LocalApplicationScreenProps = Readonly<{
   mode?: ShellMode;
   /** The binding Stop control; absent means the channel page shows no Stop. */
   stop?: LocalStopCapability;
+  /** Owner listening-mode and pause control; absent means the channel page shows none. */
+  listening?: ListeningPort;
   /** The Make-external journey; without it the channel page offers no such action. */
   makeExternal?: MakeExternalPort | null;
 }>;
@@ -82,7 +85,7 @@ function RouteLinks({ routes, navigateRoute, children }: {
  * terminal relaunch instruction rather than a sign-in prompt.
  */
 export function LocalApplicationScreen({
-  application, routes, transport, navigateRoute, owner, mode = 'standalone', evidencePort, stop, makeExternal = null,
+  application, routes, transport, navigateRoute, owner, mode = 'standalone', evidencePort, stop, listening, makeExternal = null,
 }: LocalApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: LocalRoute): ReactNode => {
     switch (route.kind) {
@@ -102,6 +105,7 @@ export function LocalApplicationScreen({
               transport={transport}
               {...(evidencePort ? { evidencePort } : {})}
               {...(stop ? { stop } : {})}
+              {...(listening ? { listening } : {})}
               makeExternal={makeExternal}
               onMakeExternal={() => navigateRoute(routes.makeExternalPath(route.roomId))}
             />

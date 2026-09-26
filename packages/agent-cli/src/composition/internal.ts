@@ -13,6 +13,11 @@ import type {
 import { plainObject, validIdentifier } from '../cli/validation.js';
 import { activateInternalAccess } from './internal-activation.js';
 import { createInternalChannelCreate } from './internal-channel-create.js';
+import {
+  type LocalHarnessCapabilities, type LocalHarnessObservation, createInternalListeningMode,
+} from './internal-listening-mode.js';
+import { internalSessionDigest } from './internal-session.js';
+import { CliError } from '../cli/errors.js';
 import { type InternalDiscoverySelection, createInternalDiscoveryClient, selectInternalDiscovery } from './internal-discovery.js';
 
 // The descriptor-backed local client for `--internal-descriptor <path>`. The
@@ -92,6 +97,13 @@ export type InternalClientOptions = Readonly<{
   timeoutMs?: number;
   /** Epoch-ms clock for the activation proofs and grant checks; tests pin it to the server's. */
   clock?: (() => number) | undefined;
+  /**
+   * The released capability claim of the harness running this binding. Absent means
+   * none can be inspected here, so every mode projects as unusable and hooks stay silent.
+   */
+  capabilities?: LocalHarnessCapabilities;
+  /** What that harness shows about itself, reported so the owner sees the same claim. */
+  observation?: LocalHarnessObservation;
 }>;
 
 type Reply = Readonly<{ status: number; body: unknown }>;
@@ -154,8 +166,29 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     return binding.bindingId === descriptor.bindingId ? binding : 'revoked' as const;
   }
 
+  const modes = createInternalListeningMode({
+    descriptor: () => {
+      const descriptor = current();
+      return descriptor !== null && isGrantedDescriptor(descriptor) ? descriptor : null;
+    },
+    call: (descriptor, target, init, signal) => request(descriptor, descriptor.bindingCapability, target, init, signal),
+    capabilities: options.capabilities ?? (async () => null),
+    ...(options.observation ? { observation: options.observation } : {}),
+  });
+
   return {
     async connect() { return { kind: 'unavailable' }; },
+
+    async listeningMode(signal) {
+      const status = await modes.status(signal);
+      if (status === null) throw new CliError('transport_unavailable');
+      return status;
+    },
+
+    listeningModeControl: { read: modes.read, set: modes.set },
+
+    // The internal server binds a session by its digest, never the harness's own ID.
+    storedSessionId: internalSessionDigest,
 
     async status(signal) {
       const descriptor = current();

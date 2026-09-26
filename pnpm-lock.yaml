@@ -143,6 +143,9 @@ importers:
       '@khala/harnesses':
         specifier: workspace:*
         version: link:../harnesses
+      '@khala/policy':
+        specifier: workspace:*
+        version: link:../policy
       esbuild:
         specifier: 0.28.2
         version: 0.28.2

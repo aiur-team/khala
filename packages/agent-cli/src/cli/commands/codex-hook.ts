@@ -39,11 +39,13 @@ async function sessionPorts(
 }
 
 function hookPorts(deps: CliDependencies, client: AgentClientPort, inbox: CliDependencies['inbox']): CodexHookPorts {
+  const stored = client.storedSessionId;
   return {
     currentBinding: async () => {
       const latest = publicStatus(await client.status(deps.signal));
       return latest.connected ? latest.binding : null;
     },
+    ...(stored ? { storedSessionId: (sessionId: string) => stored(CODEX_HARNESS, sessionId) } : {}),
     listeningMode: async () => client.listeningMode ? client.listeningMode(deps.signal) : null,
     inbox,
   };

@@ -9,7 +9,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { type KhalaProfile, type ProcessAudit, khalaOnce, privateDirectory } from '../harness/internal';
+import type {
+  LocalHarnessCapabilities, LocalHarnessObservation,
+} from '../../../packages/agent-cli/src/composition/internal-listening-mode';
+import { type KhalaProfile, type KhalaResult, type ProcessAudit, khalaOnce, privateDirectory } from '../harness/internal';
 
 /** Catchable signals the sentinel records; SIGKILL/SIGSTOP are caught by the liveness check. */
 const RECORDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT', 'SIGUSR1', 'SIGUSR2', 'SIGPIPE', 'SIGALRM'];
@@ -58,6 +61,13 @@ export type ExternalCli = Readonly<{
   send(body: string): Promise<SendView>;
   /** `khala read`, acknowledging `ack` first when given. */
   read(ack?: string): Promise<ReadView>;
+  /** `khala mode <args>` for this session's own binding, under the CLI's released `claim`; the parsed output. */
+  mode(args: readonly string[], claim?: LocalHarnessCapabilities): Promise<Record<string, unknown>>;
+  /**
+   * The CLI's native hook fires the installed `khala codex-hook`, with no descriptor option, with `input` on stdin. `claim` is the
+   * released capability claim of this CLI's installed version and hook trust.
+   */
+  codexHook(input: unknown, claim?: LocalHarnessCapabilities, observation?: LocalHarnessObservation): Promise<KhalaResult>;
   /**
    * The model ends its turn with prose and calls no Khala tool. A correct
    * integration posts nothing: replies are deliberate sends only.
@@ -121,8 +131,9 @@ export function createExternalCli(options: Options): ExternalCli {
   const delivered = new Map<string, number>();
   const record = (kind: string, operationId: string) => options.record(kind, { ownerId: options.ownerId, operationId });
 
-  const cli = async (argv: readonly string[], stdin?: string) =>
-    khalaOnce(profile(), ['--internal-descriptor', argv[0] === 'join' ? discoveryPath! : grantPath!, ...argv], stdin);
+  const cli = async (argv: readonly string[], stdin?: string, claim?: LocalHarnessCapabilities) =>
+    khalaOnce(profile(), ['--internal-descriptor', argv[0] === 'join' ? discoveryPath! : grantPath!, ...argv], stdin,
+      claim ? { capabilities: claim } : {});
 
   return {
     name: options.name,
@@ -186,6 +197,19 @@ export function createExternalCli(options: Options): ExternalCli {
       }
       return view;
     },
+
+    async mode(args, claim) {
+      const result = await cli(['mode', ...args], undefined, claim);
+      return JSON.parse(result.stdout || result.stderr) as Record<string, unknown>;
+    },
+
+    // The exact installed command: `khala codex-hook`, with no descriptor option. It acts as
+    // the session its input's `session_id` names, through that session's own `grant.json` (#407).
+    codexHook: (input, claim, observation) => khalaOnce(profile(), ['codex-hook'], JSON.stringify(input), {
+      ...(claim ? { capabilities: claim } : {}), ...(observation ? { observation } : {}),
+      // This CLI keeps its own state home; the launcher's root holds the session's grant.
+      internalRoot: path.resolve(path.dirname(discoveryPath!), '..', '..'),
+    }),
 
     async endTurnWithProse() {
       // The session calls no Khala tool, so nothing reaches the channel. A host

@@ -107,7 +107,8 @@ async function boundCollaborators(
   return {
     send: new SendService(client),
     read: new ReadOperation({ heldBinding, consumer, currentBinding }),
-    listeningMode: new ListeningModeOperation({ application: deps.listeningMode ?? null }),
+    // A routed session's mode control is its own descriptor's binding, as under `--internal-descriptor`.
+    listeningMode: new ListeningModeOperation({ application: client.listeningModeControl ?? deps.listeningMode ?? null }),
     channels: composeChannelTools(client),
     pair: new PairingService(client),
     postprocessResult: input => postprocessMcpResult({

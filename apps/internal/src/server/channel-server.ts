@@ -16,6 +16,9 @@ import {
   type BindingCredential, type BootstrapCredential, type CredentialAuthority, CredentialConfigError, type Principal,
   createCredentialAuthority, mintCredential,
 } from './credentials';
+import {
+  BINDING_MODE_ROUTES, type BindingModeOptions, type OwnerBindings, type OwnerTarget, bindingModeRole, handleBindingMode,
+} from './binding-mode';
 import { type InternalDiscoveryPort, createDiscoveryRoutes, discoveryRole } from './discovery';
 import {
   BodyError, type ErrorCode, applySecurityHeaders, headerValues, readJsonObject, sendBytes, sendError, sendJson,
@@ -112,6 +115,8 @@ export type ChannelServerOptions = Readonly<{
   agentSession?: AgentSessionRoute;
   /** Serves the human-only binding Stop endpoint; the route is absent without it. */
   stop?: BindingStopOptions;
+  /** Listening-mode control and pause of bound agents. Absent means those routes do not exist. */
+  bindingModes?: BindingModeOptions;
   /** The human's Make-external journey. Absent means its routes do not exist and the browser offers no action. */
   makeExternal?: MakeExternalJourneyPort;
   assets?: AssetManifest;
@@ -221,7 +226,7 @@ function actor(principal: Principal): Readonly<{ participantId: ParticipantId; d
  */
 function admits(route: RouteSpec, principal: Principal, agentSession: RouteSpec | null): boolean {
   if (route === agentSession) return principal.kind === 'transport';
-  const role = discoveryRole(route);
+  const role = discoveryRole(route) ?? bindingModeRole(route);
   if (role !== null) return role === principal.kind;
   // Receipt evidence is owner-only: a bound agent never reads delivery metadata.
   if (route === ROUTES.create || route === ROUTES.receipts || route === STOP_ROUTE || isMakeExternalRoute(route)) {
@@ -270,6 +275,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   if (options.releases) routes.push(ROUTES.releases);
   if (options.receipts) routes.push(ROUTES.receipts);
   if (options.stop) routes.push(STOP_ROUTE);
+  if (options.bindingModes) routes.push(...BINDING_MODE_ROUTES);
   // Every binding effect commits through this barrier; Stop raises it before revoking durably.
   const barrier = createRevocationBarrier();
   let origin = '';
@@ -339,25 +345,28 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     return null;
   }
 
+  /** Every recorded binding generation of the channel: activated through channel access or scoped at launch. */
+  function channelBindings(channelId: string): StopCandidate[] | 'unavailable' {
+    const activated = options.stop?.activatedBindings?.(channelId as RoomId) ?? [];
+    if (activated === 'unavailable') return 'unavailable';
+    const unique = new Map<string, SessionBinding>();
+    for (const binding of [...activated, ...authority.scopedBindings(channelId as RoomId)]) {
+      unique.set(JSON.stringify([binding.bindingId, binding.generation]), binding);
+    }
+    const candidates: StopCandidate[] = [];
+    for (const binding of unique.values()) {
+      const row = store.binding(binding);
+      const latest = store.latestBindingGeneration(binding.bindingId);
+      if (row.kind === 'unavailable' || latest.kind === 'unavailable') return 'unavailable';
+      if (row.kind !== 'done') continue;
+      candidates.push({ binding, status: row.binding.status, latest: latest.generation === binding.generation });
+    }
+    return candidates;
+  }
+
   const stopService = createBindingStopService({
     barrier,
-    candidates(channelId) {
-      const activated = options.stop?.activatedBindings?.(channelId as RoomId) ?? [];
-      if (activated === 'unavailable') return 'unavailable';
-      const unique = new Map<string, SessionBinding>();
-      for (const binding of [...activated, ...authority.scopedBindings(channelId as RoomId)]) {
-        unique.set(JSON.stringify([binding.bindingId, binding.generation]), binding);
-      }
-      const candidates: StopCandidate[] = [];
-      for (const binding of unique.values()) {
-        const row = store.binding(binding);
-        const latest = store.latestBindingGeneration(binding.bindingId);
-        if (row.kind === 'unavailable' || latest.kind === 'unavailable') return 'unavailable';
-        if (row.kind !== 'done') continue;
-        candidates.push({ binding, status: row.binding.status, latest: latest.generation === binding.generation });
-      }
-      return candidates;
-    },
+    candidates: channelBindings,
     revoke: (key: BindingKey) => (store.revokeBinding(key).kind === 'done' ? 'revoked' : 'failed'),
     dropCapability: key => authority.revokeBinding(key),
     ...(options.stop?.clearGrant ? { clearGrant: options.stop.clearGrant } : {}),
@@ -368,6 +377,34 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     if (read.kind === 'done') return 'allowed';
     if (read.kind === 'unavailable') return 'unavailable';
     return read.code === 'not_joined' ? 'forbidden' : 'not_found';
+  }
+
+  /** The live generation of one of the channel's bindings, for a human who holds the channel. */
+  function ownerTarget(channelId: string, bindingId: string, principal: Principal): OwnerTarget {
+    const allowed = humanMayStop(channelId, principal);
+    if (allowed !== 'allowed') return { kind: allowed === 'forbidden' ? 'not_joined' : allowed };
+    const bindings = channelBindings(channelId);
+    if (bindings === 'unavailable') return { kind: 'unavailable' };
+    // A stopped binding has no mode to change and nothing to pause.
+    const newest = bindings.find(candidate => candidate.latest && candidate.status === 'active'
+      && candidate.binding.bindingId === bindingId && !barrier.barred(candidate.binding));
+    return newest ? { kind: 'binding', binding: newest.binding, status: 'active' } : { kind: 'not_found' };
+  }
+
+  /** Every live binding of the channel with its agent's display name, for a human who holds the channel. */
+  function ownerBindings(channelId: string, principal: Principal): OwnerBindings {
+    const allowed = humanMayStop(channelId, principal);
+    if (allowed !== 'allowed') return { kind: allowed === 'forbidden' ? 'not_joined' : allowed };
+    const bindings = channelBindings(channelId);
+    const roster = store.roster(channelId as RoomId);
+    if (bindings === 'unavailable' || roster.kind !== 'done') return { kind: 'unavailable' };
+    const names = new Map(roster.participants.map(participant => [participant.participantId as string, participant.displayName]));
+    return {
+      kind: 'bindings',
+      bindings: bindings
+        .filter(candidate => candidate.latest && candidate.status === 'active' && !barrier.barred(candidate.binding))
+        .map(({ binding }) => ({ binding, displayName: names.get(binding.agentParticipantId) ?? binding.harness })),
+    };
   }
 
   async function authenticate(
@@ -776,6 +813,12 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
             if (makeExternal && isMakeExternalRoute(context.route)) return await makeExternal.handle(context);
+            if (options.bindingModes && bindingModeRole(context.route) !== null) {
+              return await handleBindingMode(context, {
+                options: options.bindingModes, maxBodyBytes: limits.maxBodyBytes, clock: options.clock,
+                ownerTarget, ownerBindings, commitAgent: commitAuthorized,
+              });
+            }
             return staticAsset(context);
         }
       } catch (error) {
