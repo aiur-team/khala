@@ -24,6 +24,8 @@ const client: AgentClientPort = {
   async status() {
     return { v: 1, connected: true, binding, route: 'agent_installed_listener', sourceCursor: 'source-1' };
   },
+  async listChannels() { throw new Error('listen should not list channels'); },
+  async listAgents() { throw new Error('listen should not list agents'); },
 };
 const abort = new AbortController();
 process.once('SIGTERM', () => abort.abort());

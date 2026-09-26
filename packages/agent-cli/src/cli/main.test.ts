@@ -52,4 +52,26 @@ describe('bundled CLI entrypoint', () => {
       inbox: null,
     });
   });
+
+  it('keeps the internal runtime out of the main bundle and loads it only for internal', () => {
+    const main = JSON.parse(fs.readFileSync(path.join(packageDirectory, 'dist/khala.js.meta.json'), 'utf8'));
+    expect(Object.keys(main.inputs).filter(input => input.includes('apps/internal'))).toEqual([]);
+    const imports = Object.values(main.outputs as Record<string, { imports: { path: string }[] }>).flatMap(output => output.imports.map(entry => entry.path));
+    expect(imports).not.toContain('node:sqlite');
+
+    // node:sqlite prints an ExperimentalWarning of its own; the result is the one JSON line.
+    const result = (stderr: string) => JSON.parse(stderr.split('\n').find(line => line.startsWith('{'))!);
+    const state = fs.mkdtempSync(path.join(temporaryDirectory, 'state-'));
+    const env = { ...process.env, XDG_STATE_HOME: state };
+    const deleted = spawnSync(process.execPath, [linkedEntrypoint, 'internal', 'delete', 'ch_missing', '--yes'], { encoding: 'utf8', env });
+    expect(deleted.status).toBe(3);
+    expect(deleted.stdout).toBe('');
+    expect(result(deleted.stderr)).toEqual({ ok: false, error: 'missing_state', channelId: 'ch_missing' });
+
+    // Without a built internal web bundle beside it, launch refuses before taking any runtime state.
+    const created = spawnSync(process.execPath, [linkedEntrypoint, 'internal'], { encoding: 'utf8', env });
+    expect(created.status).toBe(3);
+    expect(result(created.stderr)).toEqual({ ok: false, error: 'web_bundle_unavailable' });
+    expect(fs.existsSync(path.join(state, 'khala', 'internal', 'runtime.lock'))).toBe(false);
+  });
 });
