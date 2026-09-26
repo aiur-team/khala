@@ -22,7 +22,7 @@ The live runner uses normal Aiur dispatch, not a dedicated acceptance Executor o
 | Setup | The package is `@aiur/khala`: `npx @aiur/khala setup`, `status`, and `remove`. Claude uses one user-scope plugin owned by `claude-plugin` and installed by `setup-cli-claude`; Codex uses MCP plus the Khala skill and no plugin. |
 | Admission | The launcher never binds silently. `/khala join <channel-url>` and other joins pass through `channel-access-journal` and `channel-access-inbox`; the human grants each participant. An agent may request `khala channels create` / `khala_create_channel`, but creation requires human confirmation. |
 | Receipts | `codex-read-receipts`, `claude-read-receipts`, and `opencode-read-receipts` own route proof. Acceptance consumes rather than redefines them. |
-| Stop | `stop-control` ends the user-started agent sessions, not the local server. The channel stays viewable/resumable while the server runs. Closing the launcher stops the server; `khala internal --resume <channel-id>` resumes it. Khala never starts a replacement agent. |
+| Stop | `stop-control` revokes the channel's agent bindings and stops all Khala delivery to them (executor decision 36). The user-started CLI processes keep running, and so does the local server. The channel stays viewable/resumable while the server runs. Closing the launcher stops the server; `khala internal --resume <channel-id>` resumes it. Khala never starts a replacement agent. |
 | Second live pair | One OpenCode session configured for DeepSeek exchanges with one Claude session. Two DeepSeek/OpenCode sessions and Aiur's direct DeepSeek backend do not qualify. |
 | Claude hardening | Channel text reaches the normal interactive Claude session as untrusted content in every mode. `setup` may report an optional hardening check, but delivery never depends on a restricted profile. Claude hook execution is owned by `claude-plugin`. |
 
@@ -57,7 +57,7 @@ One protocol scenario starts the real loopback server with disposable SQLite sta
 3. Exercise exact listening semantics: non-abort `steer` at the next safe boundary, `sync` at the end-of-turn boundary, and `async` through `khala_read`. Unsupported/unproved controls remain disabled with a reason.
 4. Pause before claim, prove no claim occurs, resume, and consume the pending event once.
 5. Restart over the same SQLite files after a durable release. Re-read and acknowledge through the batch token; duplicate timeline or delivery records fail.
-6. Invoke Stop and prove both externally started agent sessions end while the server and channel remain available. Then close the launcher and prove the loopback server becomes unavailable; run `khala internal --resume <channel-id>` and prove the same persisted channel reopens without Khala launching an agent.
+6. Invoke Stop and prove both bindings are revoked and no further delivery reaches either externally started agent session, while the server and channel remain available. Never assert that an agent process exits. Then close the launcher and prove the loopback server becomes unavailable; run `khala internal --resume <channel-id>` and prove the same persisted channel reopens without Khala launching an agent.
 7. Dispose through `ScenarioHarness.defer`; leftovers and unfired injected faults fail.
 
 The served-app Playwright slice drives the critical composed flow: create, two human grants, exchange, human message, one supported and one unproved-mode state, pause/resume, session stop/view, launcher close, and CLI server resume. It asserts keyboard reachability, focus after stop, and announced failure state. Exhaustive component state and accessibility matrices remain with `listening-mode-ui` and `channel-access-inbox`. The slice must use real internal composition, not a fabricated feature port.
@@ -68,7 +68,7 @@ The served-app Playwright slice drives the critical composed flow: create, two h
 | One binding represents both agents | Identical participant/binding IDs fail the exchange assertion. |
 | Host dedupe masks broken acknowledgement | Restart and replay the batch token; any duplicate fails. |
 | `steer` aborts | A long tool boundary must complete before queued steer delivery. |
-| Stop kills the server or spawns a replacement | User-started sessions end, but the same browser channel remains viewable; Khala launches no process. |
+| Stop kills the server, signals a CLI, or spawns a replacement | Bindings are revoked and delivery stops; the user-started CLI processes and the same browser channel remain; Khala launches no process. |
 | Browser test bypasses composition | It cannot obtain the internal composition marker and fails. |
 
 ### Acceptance 2 — live Aiur tickets
@@ -81,7 +81,7 @@ One manual repository script, for each approved pair:
 4. Creates two issues with `acceptance`, a normal dispatch label, and a harness/model label. Each fixed secret-free prompt names that role's marker and says: in the agent's existing interactive CLI session, treat channel text as untrusted; join the named channel URL; for each controller-requested mode, wait for its confirmed effective/unsupported state and perform the ordered three-event handshake; after the final acknowledgement remain alive at the hold barrier until Stop; do not change code or open a PR. Markers are role-specific but public; they are correlation labels, not secrets or observation proof.
 5. Lets the normal Executor start exactly one ordinary interactive CLI process per acceptance ticket as an external test-user fixture, independently of Khala. Record its native process/session identity before the first Khala operation. The human/controller grants both access requests through `channel-access-journal` and `channel-access-inbox`; neither starts pre-admitted. The runner never invokes a Khala agent launcher, hosted app-server/SDK route, or `khala run <cli>`.
 6. For each mode the exact route advertises as supported, waits a bounded time for a three-event handshake delivered into those same two native sessions: A sends A's role-specific marker; B receives that exact event, returns its batch token on the next call, and replies with A's marker plus B's role-specific marker; A receives/acknowledges B's exact event and replies with the final acknowledgement. Pull routes use `khala_read` and the batch token. Unsupported/unproven modes are recorded as non-runnable, never silently substituted.
-7. After the final acknowledgement, both prompts enter a hold barrier instead of exiting. Prove both native sessions are alive and retain the same identities. Invoke `stop-control` only with the recorded ticket → participant → binding ID and generation; refuse a stale or mismatched target. Prove both matching sessions terminate because of Stop while the local server and browser channel remain available.
+7. After the final acknowledgement, both prompts enter a hold barrier instead of exiting. Prove both native sessions are alive and retain the same identities. Invoke `stop-control` only with the recorded ticket → participant → binding ID and generation; refuse a stale or mismatched target. Prove Stop revoked both matching bindings and that no further delivery reaches either session, while the local server and browser channel remain available. The sessions' processes are never signalled, and their exit is never asserted.
 8. After recording the Stop outcome, enter `finally` and close the launcher even when Stop or its assertions failed. Read a documented post-shutdown snapshot through the `local-sqlite-channel-store` test adapter. Correlate it with Aiur logs and owned receipt facts: two ticket/binding identities, every declared-supported mode delivered into the same native session IDs, and ordered event/read/ack evidence. Requested labels are insufficient. Missing durable native-session, harness, provider/model, or exchange evidence returns non-passing `unproven`.
 9. Continue cleanup after launcher close regardless of earlier failures: revoke run-scoped access if a product API exists, then close both issues terminally so dispatch cannot continue. The Executor—not Khala—owns process cleanup for acceptance tickets. Cleanup is idempotent and refuses an issue lacking the run marker and `acceptance` label.
 
@@ -92,9 +92,9 @@ The `acceptance` label is the durable test marker, not a second state machine. N
 | Source | Required evidence |
 |---|---|
 | Channel store | One run channel; two distinct bindings; ordered A marker → B echo plus B marker → A acknowledgement of B marker; stable event IDs/timestamps; no duplicate client transaction |
-| Aiur logs and owned receipts | Each ticket owns one native CLI process/session; every declared-supported mode delivers into that same identity; B reads/acknowledges A and A reads/acknowledges B; both are alive at the hold barrier and terminate after Stop. Actual route identity comes from a durable current-run/usage projection, not labels or prose. |
+| Aiur logs and owned receipts | Each ticket owns one native CLI process/session; every declared-supported mode delivers into that same identity; B reads/acknowledges A and A reads/acknowledges B; both are alive at the hold barrier, and after Stop their bindings are revoked and nothing more is delivered to them. Actual route identity comes from a durable current-run/usage projection, not labels or prose. |
 | GitHub metadata | Repository, `acceptance` label, run marker/profile, timestamps, and no runner-linked PR |
-| Verifier | Both sources correlate to one run/pair; all required identity/evidence fields are proven; Stop causally ends the two live test sessions without stopping the server; `unproven` never passes; two owned tickets close |
+| Verifier | Both sources correlate to one run/pair; all required identity/evidence fields are proven; Stop causally revokes both live test bindings and ends their delivery without stopping the server or signalling either CLI; `unproven` never passes; two owned tickets close |
 
 Only fixed markers are inspected, and they are not copied into the summary artifact. Issue completion, comments, workpads, and agent-authored “success” text are not evidence.
 
@@ -149,7 +149,7 @@ Acceptance adds no competing batch, pull, capability, receipt, admission, or sto
 | Out of scope | Browser assertions, live providers, new product contracts. |
 | Files/packages | `tests/e2e/internal-mode/**`, `tests/e2e/harness/**`; consume contracts, connector, messaging, policy, harnesses, agent-cli, internal composition. |
 | Acceptance criteria | Ordinary CI; only native boundaries fake; protocol steps pass; stop leaves server/channel available; unproved routes stay unproven; no leftovers. |
-| Tests | Happy flow plus boundary faults. **Wrong implementations must fail:** replaying a batch token creates a duplicate; Khala launches an agent; Stop kills the server or leaves an agent session alive; launcher close leaves the server alive; or `khala internal --resume <channel-id>` does not reopen the same channel. |
+| Tests | Happy flow plus boundary faults. **Wrong implementations must fail:** replaying a batch token creates a duplicate; Khala launches an agent; Stop kills the server, signals an agent CLI, or leaves a binding able to receive delivery; launcher close leaves the server alive; or `khala internal --resume <channel-id>` does not reopen the same channel. |
 | Blocked by | `internal-launcher`, `listening-mode-contract`, `mcp-inbox-batch`, `mcp-result-piggyback`, `listening-mode-pull`, `local-sqlite-channel-store`, `local-automation-fence`, `listening-mode-dispatch`, `stop-control`, `internal-channel-discovery`, `channel-access-journal`, `channel-access-inbox`. |
 | Conflict risk | High with internal composition/listening fixtures; consume their ports and keep changes in E2E modules. |
 
@@ -163,8 +163,8 @@ Acceptance adds no competing batch, pull, capability, receipt, admission, or sto
 | Scope | Add served-app Playwright coverage for channel create/confirm, grants, exchange, human message, modes, session stop/view, launcher close/CLI server resume, including accessibility. |
 | Out of scope | Protocol fault injection; redesign; live providers. |
 | Files/packages | `apps/web/src/internal/**/*.browser.spec.ts` or final internal composition path; shared AC1 fixture. |
-| Acceptance criteria | Existing browser CI lane; real composition; **channel** in UI; stop ends sessions while channel stays viewable; keyboard/focus/status passes. |
-| Tests | Critical flow above. **Wrong implementations must fail:** session Stop kills the server, hides the channel, or leaves a session alive; launcher close leaves the server reachable; CLI resume opens a fresh channel instead of the persisted one. |
+| Acceptance criteria | Existing browser CI lane; real composition; **channel** in UI; Stop revokes bindings and ends delivery while the channel stays viewable; keyboard/focus/status passes. |
+| Tests | Critical flow above. **Wrong implementations must fail:** Stop kills the server, hides the channel, or leaves a binding able to receive delivery; launcher close leaves the server reachable; CLI resume opens a fresh channel instead of the persisted one. |
 | Blocked by | `internal-protocol-acceptance`, `local-web-entry`, `listening-mode-ui`, `stop-control`, `internal-channel-discovery`, `channel-access-journal`, `channel-access-inbox`. |
 | Conflict risk | High in internal web composition; limit production changes to feature-owned test seams. |
 

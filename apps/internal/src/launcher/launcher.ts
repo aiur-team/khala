@@ -7,6 +7,7 @@ import {
   activeDescriptorPath, ensurePrivateDirectory, removeActiveDescriptor, removeLaunchRecord,
   writeActiveDescriptor, writeLaunchRecord,
 } from '../descriptor/write';
+import { type BindingControl, composeBindingControl } from '../composition/binding-control/index';
 import { createInternalReleaseFeed } from '../composition/internal-delivery/release-feed';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
 import { composeClaudeSession } from '../composition/claude-session/compose';
@@ -224,12 +225,14 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
 
   let opened: OpenedChannel | null = null;
   let server: LoopbackServer | null = null;
+  let bindingControl: BindingControl | null = null;
   let stopping: Promise<void> | null = null;
   const timers: NodeJS.Timeout[] = [];
   const handoffCleanups: Array<() => Promise<void>> = [];
   const release = async (): Promise<void> => {
     for (const timer of timers.splice(0)) clearTimeout(timer);
     // Discovery first, so no client can find a server that is going away.
+    bindingControl?.close();
     try { removeActiveDescriptor(root); } catch {}
     if (opened) try { removeLaunchRecord(opened.directory); } catch {}
     await Promise.all(handoffCleanups.splice(0).map(cleanup => cleanup().catch(() => {})));
@@ -282,6 +285,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       const claude = await composeClaudeSession({
         root, store: channel.store, transportCapability, clock,
       });
+      bindingControl = composeBindingControl({ handle: channel.handle, root });
       server = await startChannelServer({
         store: channel.store,
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
@@ -298,6 +302,8 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         transportCapability,
         discovery: discovery.port,
         agentSession: claude.route,
+        // Stop revokes bindings and delivery only; the server keeps running until launcher shutdown.
+        stop: bindingControl,
         assets: options.assets,
         newId: randomUUID,
         clock,
