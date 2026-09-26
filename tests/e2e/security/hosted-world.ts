@@ -136,10 +136,20 @@ export async function seedLedger(events: readonly Readonly<{ ref: EventRef; body
 /** The existing Codex session: the fake app-server behind the real adapter. */
 export type CodexSession = Readonly<{ server: FakeAppServer; hosts: FakeHosts; port: HarnessPort; notified: string[] }>;
 
-export function codexSession(workdir: string, overrides: Readonly<{ bindingOverride?: SessionBinding }> = {}): CodexSession {
-  const server = new FakeAppServer();
-  server.threadId = binding.sessionId;
-  server.cwd = workdir;
+/**
+ * A Codex adapter instance over a session. Passing the `server` and `notified` of an
+ * earlier instance reattaches a new adapter, as a restarted connector would, to the
+ * same surviving user session.
+ */
+export function codexSession(
+  workdir: string,
+  overrides: Readonly<{ bindingOverride?: SessionBinding; server?: FakeAppServer; notified?: string[] }> = {},
+): CodexSession {
+  const server = overrides.server ?? new FakeAppServer();
+  if (!overrides.server) {
+    server.threadId = (overrides.bindingOverride ?? binding).sessionId;
+    server.cwd = workdir;
+  }
   const hosts = new FakeHosts({
     binding: overrides.bindingOverride ?? binding, workdir, cliVersion: '0.154.0',
     endpoint: { kind: 'unix', path: `/run/khala/codex/${bindingId}/exec.sock` },
@@ -148,7 +158,7 @@ export function codexSession(workdir: string, overrides: Readonly<{ bindingOverr
     client: server, hosts, codec: new FakeCodec(), clock: { now: () => new Date('2026-09-25T10:01:30Z') },
     evidence: { record: async () => undefined }, limits, deadlines: { callMs: 1_000, closeMs: 2_000 },
   });
-  const notified: string[] = [];
+  const notified = overrides.notified ?? [];
   const port: HarnessPort = {
     inspect: async target => provenSync(await harness.inspect(target)),
     notify: async (target, hint) => {
@@ -230,6 +240,9 @@ export async function startConnector(
   });
   await capability.start();
   capabilitiesStarted.push(capability);
+  // The runtime starts a dispatch pass once the process is ready, so queued work held
+  // by an earlier process (for example behind a pause since lifted) is considered again.
+  dispatcher.wake();
   const handler = () => {
     if (served === null) throw new Error('review transport is not serving');
     return served;
