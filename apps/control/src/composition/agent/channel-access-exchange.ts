@@ -1,5 +1,5 @@
 // Composition root for the connector-only channel-access grant exchange: binds the
-// transport-neutral exchange state machine to the hosted journal authority and
+// transport-neutral exchange state machine to the journal-backed authority and
 // grant issuer. Provider admission and connector authentication stay injected.
 
 import type {
@@ -8,15 +8,15 @@ import type {
   TrustedClock,
 } from '@khala/contracts/messaging/index';
 import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-access/exchange/ports';
+import { createGrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
+import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import { createGrantExchangeService } from '@khala/messaging/channel-access/exchange/service';
-import { createGrantExchangeAuthority } from '../../channel-access/exchange/authority';
-import { createExchangeGrantIssuer } from '../../channel-access/exchange/grants';
+import type { ChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
 import {
   type GrantExchangeHandlerDependencies,
   createGrantExchangeHandler,
   createGrantReadinessHandler,
 } from '../../channel-access/exchange/handler';
-import type { ChannelAccessStore } from '../../channel-access/store';
 import type { RouteRegistration } from '../../runtime/handler';
 
 export function composeChannelAccessExchange(deps: Readonly<{

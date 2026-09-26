@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { EventRef, SessionBinding } from '@khala/contracts/delivery/index';
 import {
   type ContentLimits, type DeviceId, type EventId, MAX_CHANNEL_TITLE_BYTES, type ParticipantId, type RoomId,
   decodeContentLimits, decodeMessageContent,
@@ -11,8 +12,9 @@ import {
 } from './bootstrap';
 import {
   type BindingCredential, type BootstrapCredential, type CredentialAuthority, CredentialConfigError, type Principal,
-  createCredentialAuthority,
+  createCredentialAuthority, mintCredential,
 } from './credentials';
+import { type InternalDiscoveryPort, createDiscoveryRoutes, discoveryRole } from './discovery';
 import {
   BodyError, type ErrorCode, applySecurityHeaders, headerValues, readJsonObject, sendBytes, sendError, sendJson,
 } from './http';
@@ -47,10 +49,38 @@ export const DEFAULT_CHANNEL_SERVER_LIMITS: ChannelServerLimits = {
   maxBootstrapBodyBytes: 512,
 };
 
+/** One release for a binding's inbox: canonical release bytes and the exact events they carry. */
+export type AgentRelease = Readonly<{
+  releaseId: string;
+  events: readonly EventRef[];
+  payload: Uint8Array;
+  payloadDigest: string;
+  releasedAt: string;
+  /** False when the listening mode or the author forbids hinting the harness. */
+  wake: boolean;
+}>;
+
+export type AgentReleaseRead =
+  | Readonly<{ kind: 'page'; releases: readonly AgentRelease[]; nextCursor: string; caughtUp: boolean }>
+  | Readonly<{ kind: 'held'; reason: 'paused' | 'mode_unavailable' }>
+  | Readonly<{ kind: 'rejected'; code: string }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+/** Composition-supplied pull source of one binding's releases in one channel. */
+export type AgentReleaseFeed = Readonly<{
+  read(input: Readonly<{ binding: SessionBinding; channelId: RoomId; cursor: string | null; limit: number }>): AgentReleaseRead;
+}>;
+
 export type ChannelServerOptions = Readonly<{
   store: ChannelStore;
   bootstrap: readonly BootstrapCredential[];
   bindings: readonly BindingCredential[];
+  /** Serves `GET .../releases` to binding principals; the route is absent without it. */
+  releases?: AgentReleaseFeed;
+  /** The launch's transport capability; with `discovery`, it may only ask for a discovery descriptor. */
+  transportCapability?: string;
+  /** Channel discovery, access requests and the connector exchange. Absent means those routes do not exist. */
+  discovery?: InternalDiscoveryPort;
   assets?: AssetManifest;
   newId: () => string;
   clock: () => number;
@@ -69,6 +99,7 @@ const ROUTES = {
   send: { method: 'POST', path: '/api/v1/channels/:channelId/messages', admission: 'authenticated' },
   hints: { method: 'GET', path: '/api/v1/channels/:channelId/hints', admission: 'authenticated' },
   binding: { method: 'GET', path: '/api/v1/agent/binding', admission: 'authenticated' },
+  releases: { method: 'GET', path: '/api/v1/channels/:channelId/releases', admission: 'authenticated', allowQuery: true },
   channelDocument: { method: 'GET', path: '/channels/:channelId', admission: 'public' },
 } as const satisfies Record<string, RouteSpec>;
 
@@ -93,6 +124,16 @@ function rejection(code: string): Failure {
     case 'operation_mismatch': return failure(409, 'operation_mismatch');
     case 'invalid_cursor': return failure(400, 'invalid_cursor');
     default: return failure(400, 'invalid_request');
+  }
+}
+
+/** A binding that is no longer the live generation is unauthenticated, never merely rejected. */
+function releaseRejection(code: string): Failure {
+  switch (code) {
+    case 'stale_binding':
+    case 'binding_mismatch':
+    case 'binding_revoked': return failure(401, 'unauthenticated');
+    default: return rejection(code);
   }
 }
 
@@ -122,9 +163,18 @@ function boundedToken(value: unknown, maxBytes: number): value is string {
 }
 
 function actor(principal: Principal): Readonly<{ participantId: ParticipantId; deviceId: DeviceId }> {
-  return principal.kind === 'human'
-    ? { participantId: principal.human.participantId, deviceId: principal.human.deviceId }
-    : { participantId: principal.binding.agentParticipantId, deviceId: principal.binding.deviceId };
+  if (principal.kind === 'human') return { participantId: principal.human.participantId, deviceId: principal.human.deviceId };
+  if (principal.kind === 'binding') return { participantId: principal.binding.agentParticipantId, deviceId: principal.binding.deviceId };
+  // Channel routes admit only human and binding principals; see `admits`.
+  throw new Error('channel route reached without a channel principal');
+}
+
+/** Channel content routes: the creating human, or the human and bound agents. */
+function admits(route: RouteSpec, principal: Principal): boolean {
+  const role = discoveryRole(route);
+  if (role !== null) return role === principal.kind;
+  if (route === ROUTES.create) return principal.kind === 'human';
+  return principal.kind === 'human' || principal.kind === 'binding';
 }
 
 function parseSessionCookie(request: IncomingMessage): string | null | 'ambiguous' {
@@ -146,6 +196,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   const authority: CredentialAuthority = createCredentialAuthority({
     bootstrap: options.bootstrap,
     bindings: options.bindings,
+    ...(options.transportCapability === undefined ? {} : { transportCapability: options.transportCapability }),
     clock: options.clock,
     maxSessions: limits.maxSessions,
   });
@@ -163,6 +214,23 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     ROUTES.bootstrapDocument, ROUTES.bootstrapScript, ROUTES.exchange,
     ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
   ];
+  if (options.releases) routes.push(ROUTES.releases);
+  let origin = '';
+  const discovery = options.discovery
+    ? createDiscoveryRoutes({
+      port: options.discovery,
+      origin: () => origin,
+      clock: options.clock,
+      maxBodyBytes: limits.maxBodyBytes,
+      // A binding activated through channel access takes effect in this running server.
+      installBinding({ binding, channelId }) {
+        if (!isRouteSegment(channelId)) return null;
+        const credential = mintCredential();
+        return authority.installBinding({ credential, binding, channels: [channelId] }) ? credential : null;
+      },
+    })
+    : null;
+  if (discovery) routes.push(...discovery.routes);
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
@@ -188,7 +256,11 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     return false;
   }
 
-  function authenticate(request: IncomingMessage, params: Readonly<Record<string, string>>): AuthOutcome<Principal> {
+  async function authenticate(
+    request: IncomingMessage,
+    route: RouteSpec,
+    params: Readonly<Record<string, string>>,
+  ): Promise<AuthOutcome<Principal>> {
     const authorization = headerValues(request, 'authorization');
     const cookie = parseSessionCookie(request);
     const secrets = headerValues(request, REQUEST_SECRET_HEADER);
@@ -199,11 +271,22 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     let principal: Principal | null = null;
     if (authorization.length === 1) {
       const token = BEARER.exec(authorization[0]!)?.[1];
-      principal = token ? authority.authenticateBearer(token) : null;
+      principal = token ? authority.authenticateBearer(token) ?? authority.authenticateTransport(token) : null;
+      if (token && !principal && options.discovery) {
+        let agent: Awaited<ReturnType<InternalDiscoveryPort['authenticate']>>;
+        try {
+          agent = await options.discovery.authenticate(token);
+        } catch {
+          agent = 'unavailable';
+        }
+        if (agent === 'unavailable') return { ok: false, status: 503, code: 'unavailable' };
+        if (agent) principal = { kind: 'discovery', sessionKey: `discovery:${agent.principal}:${agent.generation}`, agent };
+      }
     } else if (cookie !== null && secrets.length === 1) {
       principal = authority.authenticateSession(cookie, secrets[0]!);
     }
     if (!principal) return { ok: false, status: 401, code: 'unauthenticated' };
+    if (!admits(route, principal)) return { ok: false, status: 403, code: 'forbidden' };
     try {
       const live = bindingLive(principal);
       if (live === 'unavailable') return { ok: false, status: 503, code: 'unavailable' };
@@ -305,31 +388,83 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     sendJson(response, 200, { channel: channelView(read.channel), participants: roster.participants });
   }
 
-  function timeline({ principal, params, query, response }: RouteContext<Principal>): void {
+  /** `?cursor=&limit=` and nothing else; null when malformed or over the page limit. */
+  function pageQuery(query: URLSearchParams): Readonly<{ cursor: string | null; limit: number }> | null {
     const keys = [...query.keys()];
     const cursors = query.getAll('cursor');
     const limitValues = query.getAll('limit');
     if (keys.some(key => key !== 'cursor' && key !== 'limit') || cursors.length > 1 || limitValues.length > 1
       || (cursors[0] !== undefined && !boundedToken(cursors[0], limits.maxCursorBytes))
       || (limitValues[0] !== undefined && !/^[1-9]\d{0,3}$/.test(limitValues[0]))) {
-      fail(response, failure(400, 'invalid_request'));
-      return;
+      return null;
     }
     const limit = limitValues[0] === undefined ? 50 : Number(limitValues[0]);
-    if (limit > limits.maxPageLimit) {
+    return limit > limits.maxPageLimit ? null : { cursor: cursors[0] ?? null, limit };
+  }
+
+  function timeline({ principal, params, query, response }: RouteContext<Principal>): void {
+    const page = pageQuery(query);
+    if (page === null) {
       fail(response, failure(400, 'invalid_request'));
       return;
     }
     const result = store.timeline({
       channelId: params.channelId as RoomId,
       participantId: actor(principal!).participantId,
-      cursor: cursors[0] ?? null,
-      limit,
+      cursor: page.cursor,
+      limit: page.limit,
     });
     if (result.kind === 'done') {
       sendJson(response, 200, { events: result.events.map(eventView), nextCursor: result.nextCursor, revision: result.revision });
     } else {
       fail(response, result.kind === 'rejected' ? rejection(result.code) : failure(503, 'unavailable'));
+    }
+  }
+
+  /**
+   * Pulls the held binding's next releases. The reply names the exact binding
+   * generation it was read for, so the client can fence its inbox on it.
+   */
+  function releases({ principal, params, query, response }: RouteContext<Principal>): void {
+    if (principal?.kind !== 'binding' || !options.releases) {
+      fail(response, failure(403, 'forbidden'));
+      return;
+    }
+    const page = pageQuery(query);
+    if (page === null) {
+      fail(response, failure(400, 'invalid_request'));
+      return;
+    }
+    const held = principal.binding;
+    const result = options.releases.read({ binding: held, channelId: params.channelId as RoomId, ...page });
+    const identity = { bindingId: held.bindingId, generation: held.generation };
+    switch (result.kind) {
+      case 'page':
+        sendJson(response, 200, {
+          v: 1,
+          binding: identity,
+          releases: result.releases.map(release => ({
+            releaseId: release.releaseId,
+            events: release.events,
+            payloadDigest: release.payloadDigest,
+            payloadBase64: Buffer.from(release.payload).toString('base64'),
+            releasedAt: release.releasedAt,
+            wake: release.wake,
+          })),
+          nextCursor: result.nextCursor,
+          caughtUp: result.caughtUp,
+          held: null,
+        });
+        return;
+      case 'held':
+        // The cursor is echoed unchanged: held work stays behind it.
+        sendJson(response, 200, { v: 1, binding: identity, releases: [], nextCursor: page.cursor, caughtUp: false, held: result.reason });
+        return;
+      case 'rejected':
+        fail(response, releaseRejection(result.code));
+        return;
+      default:
+        fail(response, failure(503, 'unavailable'));
     }
   }
 
@@ -443,7 +578,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     limits,
     routes,
     ...(options.log ? { log: options.log } : {}),
-    authenticate: ({ request, params }) => authenticate(request, params),
+    authenticate: ({ request, route, params }) => authenticate(request, route, params),
     async handle(context) {
       try {
         switch (context.route) {
@@ -460,7 +595,10 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.send: return await send(context);
           case ROUTES.hints: return hints(context);
           case ROUTES.binding: return binding(context);
-          default: return staticAsset(context);
+          case ROUTES.releases: return releases(context);
+          default:
+            if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
+            return staticAsset(context);
         }
       } catch (error) {
         if (error instanceof BodyError) throw error;
@@ -471,6 +609,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     },
   });
 
+  origin = server.origin;
   return {
     port: server.port,
     origin: server.origin,

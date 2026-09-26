@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createGrantExchangeAuthority } from './authority';
-import { CHANNEL_REF, DIGEST, T0, context, journalHarness, owner, requester } from './support.test';
+import { CHANNEL_REF, DIGEST, T0, context, journalHarness, owner, requester } from './journal-harness.test';
 
 const input = {
   operationId: 'op_access_1',

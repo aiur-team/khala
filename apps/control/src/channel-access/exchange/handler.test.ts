@@ -16,7 +16,7 @@ import {
   createGrantExchangeHandler,
   createGrantReadinessHandler,
 } from './handler';
-import { DEVICE, DIGEST, T0, connectorRequest, requester } from './support.test';
+import { DEVICE, DIGEST, T0, connectorRequest, requester } from '@khala/messaging/channel-access/exchange/journal-harness.test';
 
 const ENVELOPE: SealedGrantEnvelope = {
   v: 1,
