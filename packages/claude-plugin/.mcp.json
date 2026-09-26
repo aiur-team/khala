@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "khala": {
+      "command": "khala",
+      "args": ["mcp-serve"]
+    }
+  }
+}
