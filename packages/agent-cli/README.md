@@ -863,7 +863,8 @@ OpenCode version from its executable path to the server, so the owner sees the
 same claim the plugin projects its mode through. Version `1.17.10` is `tested`
 and its recorded routes are proven. Any other version is `experimental`: its
 modes take effect only under an owner's experimental-route grant, the plugin
-still runs no automatic route for it, and `khala_read` and `khala_send` work as
+still runs no automatic route for it (so it claims no idle delivery and the owner
+sees the next-turn notice), and `khala_read` and `khala_send` work as
 usual. A pause holds the server's releases, so nothing new reaches the inbox.
 `createKhalaOpenCodeServer` takes the controls, send, inbox and state ports.
 

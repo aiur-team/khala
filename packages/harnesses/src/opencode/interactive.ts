@@ -18,7 +18,7 @@ const IDLE = 'Idle agents receive messages only at their next turn.';
  * The claim for one inspected OpenCode version. A version with retained route evidence
  * is `tested`, with every recorded route proven. Any other inspected version runs the
  * same plugin but is `experimental` (decisions 34 and 37): it delivers with batch-token
- * acknowledgement, its modes are labelled experimental and take effect only under the
+ * acknowledgement at the next call only, claims no idle notification, and its modes are labelled experimental and take effect only under the
  * owner's experimental-route grant. A version that could not be inspected, or that the
  * contract cannot carry, claims nothing.
  */
@@ -41,9 +41,11 @@ export function installedOpenCodeCapabilities(version: string | null, limits: De
     ...openCodePluginCapabilities({ version, limits, claims: [] }),
     support: 'experimental',
     existingSession: 'opencode_plugin',
-    immediateNotification: 'opencode_plugin',
-    busy: 'queue',
-    receiptEvidence: ['harness_queued', 'outcome_unknown', 'failed'],
+    // The plugin never prompts an idle session at an experimental version, so idle
+    // notification, busy queueing and receipts stay unclaimed, as for interactive Claude.
+    immediateNotification: 'unknown',
+    busy: 'unknown',
+    receiptEvidence: [],
     reconcileByReleaseId: 'unsupported',
     modes: { steer: experimental('steer'), sync: experimental('sync'), async: experimental('async') },
     acknowledgement: 'batch_token_next_call',

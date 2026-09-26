@@ -17,6 +17,7 @@ describe('installed OpenCode capabilities', () => {
     const claim = installedOpenCodeCapabilities('1.18.2', limits);
     expect(decodeHarnessCapabilities(claim).ok).toBe(true);
     expect(claim).toMatchObject({ support: 'experimental', version: '1.18.2', acknowledgement: 'batch_token_next_call' });
+    expect(claim).toMatchObject({ immediateNotification: 'unknown', busy: 'unknown', receiptEvidence: [] });
     for (const row of Object.values(claim.modes)) {
       expect(row).toMatchObject({ status: 'experimental', testedVersion: '1.18.2' });
       expect(row.reason).toContain('experimental');
