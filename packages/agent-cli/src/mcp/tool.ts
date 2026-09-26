@@ -1,5 +1,6 @@
 import type { SendService } from '../cli/send.js';
 import type { InboxBatch } from '../cli/inbox.js';
+import type { ChannelToolsPort } from './channels/tools.js';
 import type { ReadOperationPort } from './read-tool.js';
 import type { McpJsonRpcId, McpToolResult, PreselectedMcpPostprocessOutcome } from './result-postprocessor.js';
 
@@ -47,6 +48,7 @@ export type McpToolContext = Readonly<{
   notification: boolean;
   send: SendService;
   read: ReadOperationPort;
+  channels: ChannelToolsPort;
   postprocessResult: McpServerResultPostprocessor | undefined;
   postprocessReadResult: McpServerReadResultPostprocessor | undefined;
 }>;
