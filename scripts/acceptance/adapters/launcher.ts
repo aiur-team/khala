@@ -146,10 +146,10 @@ export async function reachable(origin: string): Promise<boolean> {
   }
 }
 
-/** `npx --yes <pinned package> internal [--resume <channel-id>]`, running until closed. */
-export function npxLauncher(khalaPackage: string, env: NodeJS.ProcessEnv = process.env): LauncherPort {
+/** `npx --yes <staged package spec> internal [--resume <channel-id>]`, running until closed. */
+export function npxLauncher(env: NodeJS.ProcessEnv = process.env): LauncherPort {
   return {
-    async start(resume) {
+    async start(khalaPackage, resume) {
       const argv = ['npx', '--yes', khalaPackage, 'internal', ...(resume === null ? [] : ['--resume', resume])];
       assertCommand(argv, khalaPackage);
       const child = spawn(argv[0]!, argv.slice(1), { env, stdio: ['ignore', 'pipe', 'inherit'] });

@@ -11,7 +11,7 @@ Run it on the Executor host, with `gh` authenticated for `aiur-team/khala`. It p
 ## What it does
 
 1. It takes the host lock for the repository: an exclusive SQLite (fcntl) lock under `$XDG_STATE_HOME/khala-acceptance/`. The kernel releases it when the process dies, and there is no TTL. A second run refuses, whatever its profile.
-2. It runs `npx <khalaPackage> status` and records the output. The optional hardening result never gates the run. It then preflights the repository, its labels and write access.
+2. It stages the build under test (see [Build under test](#build-under-test)), then runs `npx <khalaPackage> status` and records the output. The optional hardening result never gates the run. It then preflights the repository, its labels and write access.
 3. It starts the local server with `npx <khalaPackage> internal`, or `internal --resume <channel-id>`, and asks you to confirm the channel. It starts no agent.
 4. It creates the ticket pair from the fixed prompt in `prompt.ts`.
 5. It grants each access request only after you confirm it at the terminal. A request is tied to its ticket when the requester's session fingerprint matches the native session the Executor recorded.
@@ -27,9 +27,25 @@ A profile is strict JSON, decoded by `decodeProfile` in `profile.ts`:
 - `name`
 - `repository`: must be `aiur-team/khala`
 - `dispatchLabel`
-- `khalaPackage`: an exact `@aiur/khala@x.y.z`
+- `khalaPackage`: an exact `@aiur/khala@x.y.z`, or `{ "tarball", "sha256", "commit" }` for a local tarball
 - `timeoutMs`
 - `roles`: two entries, `a` and `b`. Each has `harness`, `provider`, `model`, `labels` and the route's `HarnessCapabilities`.
+
+### Build under test
+
+Until `@aiur/khala` is published, pack it locally from a clean tree:
+
+```sh
+pnpm acceptance:pack --out <directory>
+```
+
+It refuses tracked or untracked changes, packs through the release package gate (`scripts/agent-cli-package-gate.mjs`), and refuses if packing moved `HEAD` or changed the tree. It writes `<tarball>.provenance.json` next to the tarball and prints the `khalaPackage` value to paste into the profile:
+
+```json
+{ "tarball": "/abs/path/aiur-khala-0.1.0.tgz", "sha256": "<64 hex>", "commit": "<full commit id>" }
+```
+
+Before starting any process, the runner copies the tarball into a private directory under `$XDG_STATE_HOME/khala-acceptance/packages/` and hashes the copy. It refuses the run when that digest, or the provenance record's commit and digest, differ from the profile. `npx` then runs only that copy. A directory, a relative path or a workspace tree is never run. The report's `khalaPackage` field records the build that ran: the npm pin, or the tarball's source path, measured sha256 and commit.
 
 A mode runs only when `listeningModeView` makes it effective for both routes. Every other mode is reported as skipped and is never replaced by another.
 

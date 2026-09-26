@@ -8,11 +8,14 @@ import { type DeliveryLimits, decodeDeliveryLimits } from '@khala/contracts/deli
 import type { ListeningMode } from '@khala/contracts/delivery/listening-mode';
 import { interactiveCodexCapabilities } from '@khala/harnesses/codex/interactive';
 import { sessionDigest } from '../../../apps/internal/src/composition/channel-discovery/service';
+import os from 'node:os';
+import path from 'node:path';
+import { packageStager } from '../../../scripts/acceptance/adapters/package';
 import { decodeProfile } from '../../../scripts/acceptance/profile';
 import { controllerLine, markersFor } from '../../../scripts/acceptance/prompt';
 import type {
   AccessRequest, ChannelSnapshot, ControllerPort, GitHubPort, IssueRecord, LaunchedServer, Markers, ModeRequest,
-  NativeSession, OwnerSession, Profile, RoleName, RunnerDeps, SnapshotReceipt, StopReply, StopTarget, TimelineEvent,
+  NativeSession, OwnerSession, PackagePort, Profile, RoleName, RunnerDeps, SnapshotReceipt, StopReply, StopTarget, TimelineEvent,
 } from '../../../scripts/acceptance/types';
 
 export const RUN_ID = '0123456789ab';
@@ -89,6 +92,8 @@ export type World = Readonly<{
   stopCalls: (readonly StopTarget[])[];
   signalled: number[];
   launcherStarts: number;
+  /** Every `khala` command started, with the exact package spec it ran. */
+  ran: string[];
   serverClosed(): boolean;
   lockAcquired(): boolean;
   lockReleased(): boolean;
@@ -96,8 +101,13 @@ export type World = Readonly<{
   editIssue(number: number, change: Partial<IssueRecord>): void;
 }>;
 
-export function createWorld(partial: Partial<WorldKnobs> = {}, profile: Profile = offlineProfile()): World {
+export function createWorld(
+  partial: Partial<WorldKnobs> = {},
+  profile: Profile = offlineProfile(),
+  stager: PackagePort = packageStager(path.join(os.tmpdir(), 'khala-acceptance-fakes')),
+): World {
   const knobs: WorldKnobs = { ...DEFAULT_KNOBS, ...partial };
+  const ran: string[] = [];
   const markers = markersFor(RUN_ID);
   let now = Date.parse('2026-09-26T10:00:00.000Z');
   const iso = () => new Date(now).toISOString();
@@ -291,7 +301,8 @@ export function createWorld(partial: Partial<WorldKnobs> = {}, profile: Profile 
         return { release: async () => { lockReleased = true; } };
       },
     },
-    status: { async status() { return { ok: true, output: { v: 1, connected: false } }; } },
+    package: stager,
+    status: { async status(spec) { ran.push(`status ${spec}`); return { ok: true, output: { v: 1, connected: false } }; } },
     github,
     aiur: {
       async session(ticket) {
@@ -300,7 +311,7 @@ export function createWorld(partial: Partial<WorldKnobs> = {}, profile: Profile 
       },
       async alive(session) { return !signalled.includes(session.pid); },
     },
-    launcher: { async start() { launcherStarts += 1; return server; } },
+    launcher: { async start(spec) { ran.push(`internal ${spec}`); launcherStarts += 1; return server; } },
     snapshot: {
       async read(): Promise<ChannelSnapshot> {
         if (!serverClosed) throw new Error('a launcher still holds the internal root; the live store is never read');
@@ -321,7 +332,7 @@ export function createWorld(partial: Partial<WorldKnobs> = {}, profile: Profile 
   };
 
   return {
-    deps, profile, markers, knobs, issues, closed, stopCalls, signalled,
+    deps, profile, markers, knobs, issues, closed, stopCalls, signalled, ran,
     get launcherStarts() { return launcherStarts; },
     serverClosed: () => serverClosed,
     lockAcquired: () => lockAcquired,

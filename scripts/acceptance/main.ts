@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import { aiurLogs } from './adapters/aiur';
 import { ghGitHub } from './adapters/github';
 import { npxLauncher } from './adapters/launcher';
+import { packageStager } from './adapters/package';
 import { storeSnapshot } from './adapters/snapshot';
 import { assertCommand } from './guard';
 import { hostLock } from './lock';
@@ -84,10 +85,11 @@ async function main(): Promise<number> {
   const state = stateHome();
   const report = await runAcceptance({
     lock: hostLock(state),
+    package: packageStager(path.join(state, 'khala-acceptance', 'packages')),
     status: npxStatus(),
-    github: ghGitHub(profile.khalaPackage),
+    github: ghGitHub(),
     aiur: aiurLogs(process.env.AIUR_LOGS_ROOT || path.join(os.homedir(), '.aiur', 'logs'), profile.repository),
-    launcher: npxLauncher(profile.khalaPackage),
+    launcher: npxLauncher(),
     snapshot: storeSnapshot(path.join(state, 'khala', 'internal')),
     controller: terminalController(),
     clock: { now: () => Date.now(), sleep: ms => new Promise(resolve => setTimeout(resolve, ms)) },

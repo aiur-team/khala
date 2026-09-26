@@ -11,6 +11,10 @@ import type { ListeningMode } from '../../packages/contracts/src/delivery/listen
 
 export const ACCEPTANCE_REPOSITORY = 'aiur-team/khala';
 export const ACCEPTANCE_LABEL = 'acceptance';
+/** An exact published `@aiur/khala` version. */
+export const NPM_PIN = /^@aiur\/khala@\d+\.\d+\.\d+(?:-[0-9a-z.]+)?$/i;
+/** An absolute path to a packed `.tgz`: never a directory or a workspace tree. */
+export const TARBALL_PATH = /^\/[^\0]*\.tgz$/;
 
 export type RoleName = 'a' | 'b';
 
@@ -27,13 +31,26 @@ export type ProfileRole = Readonly<{
   capabilities: HarnessCapabilities;
 }>;
 
+/**
+ * The `@aiur/khala` build under test: an npm pin, or a local `npm pack` tarball
+ * pinned by its sha256 and the clean commit it was packed from.
+ */
+export type KhalaPackage =
+  | Readonly<{ kind: 'npm'; spec: string }>
+  | Readonly<{ kind: 'tarball'; path: string; sha256: string; commit: string }>;
+
+/** What the report records about the build that ran. */
+export type PackageRecord =
+  | Readonly<{ kind: 'npm'; spec: string }>
+  | Readonly<{ kind: 'tarball'; source: string; sha256: string; commit: string }>;
+
 export type Profile = Readonly<{
   name: string;
   repository: typeof ACCEPTANCE_REPOSITORY;
   /** Normal dispatch label, e.g. `agent:todo`. */
   dispatchLabel: string;
-  /** Pinned `@aiur/khala` spec, e.g. `@aiur/khala@0.4.0`, used for `status` and the launcher. */
-  khalaPackage: string;
+  /** The pinned `@aiur/khala` build `status` and the launcher run. */
+  khalaPackage: KhalaPackage;
   /** Upper bound on the whole run, from ticket creation to Stop. */
   timeoutMs: number;
   roles: readonly [ProfileRole, ProfileRole];
@@ -157,8 +174,24 @@ export type LaunchedServer = Readonly<{
 }>;
 
 export type LauncherPort = Readonly<{
-  /** `khala internal`, or `khala internal --resume <channel-id>`. Starts the server only. */
-  start(resume: string | null): Promise<LaunchedServer>;
+  /** `khala internal`, or `khala internal --resume <channel-id>`, from the staged spec. Starts the server only. */
+  start(packageSpec: string, resume: string | null): Promise<LaunchedServer>;
+}>;
+
+// ---------------------------------------------------------------------------
+// The build under test.
+
+export type StagedPackage = Readonly<{
+  /** The exact `npx` spec: the npm pin, or the private digest-checked tarball copy. */
+  spec: string;
+  record: PackageRecord;
+  /** Removes the private copy. Idempotent. */
+  release(): Promise<void>;
+}>;
+
+export type PackagePort = Readonly<{
+  /** Throws, and stages nothing, when a tarball's digest or provenance does not match the profile. */
+  stage(khalaPackage: KhalaPackage): Promise<StagedPackage>;
 }>;
 
 // ---------------------------------------------------------------------------
@@ -234,6 +267,7 @@ export type Clock = Readonly<{
 
 export type RunnerDeps = Readonly<{
   lock: LockPort;
+  package: PackagePort;
   status: StatusPort;
   github: GitHubPort;
   aiur: AiurPort;
@@ -275,6 +309,8 @@ export type StopRecord = Readonly<{
 export type RunReport = Readonly<{
   profile: string;
   repository: string;
+  /** The build that ran, with the measured tarball digest; null when none was staged. */
+  khalaPackage: PackageRecord | null;
   verdict: Verdict;
   checks: readonly Check[];
   modes: ModePlan;
