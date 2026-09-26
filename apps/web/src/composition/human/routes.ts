@@ -1,10 +1,11 @@
-import { decodeRoomId, type RoomId } from '@khala/contracts/messaging/index';
+import { decodeRoomId, type ChannelAccessRequestHandle, type RoomId } from '@khala/contracts/messaging/index';
 import { parseJoinLocation, type JoinLocationError, type RouteCodec } from '../../features/join/location';
 
 export type HumanRoute =
   | Readonly<{ kind: 'create'; path: string }>
   | Readonly<{ kind: 'join'; path: string; inviteRef: string }>
   | Readonly<{ kind: 'channel'; path: string; roomId: RoomId }>
+  | Readonly<{ kind: 'channel_requests'; path: string; selectedHandle: ChannelAccessRequestHandle | null }>
   | Readonly<{ kind: 'not_found'; path: string }>;
 
 export interface HumanRouteCodec extends RouteCodec {
@@ -12,6 +13,7 @@ export interface HumanRouteCodec extends RouteCodec {
   createPath(): string;
   joinPath(inviteRef: string): string;
   roomPath(roomId: string): string;
+  channelRequestsPath(requestHandle?: ChannelAccessRequestHandle | null): string;
 }
 
 export type HumanRouteCodecOptions = Readonly<{
@@ -51,7 +53,9 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
   const createPath = () => `${base}/new`;
   const joinRoot = `${base}/join`;
   const roomsRoot = `${base}/channels/`;
+  const channelRequestsRoot = `${base}/channel-requests`;
   const notFound = (path: string): HumanRoute => ({ kind: 'not_found', path });
+  const requestHandlePattern = /^careq_[A-Za-z0-9_-]{43}$/;
 
   function joinPath(inviteRef: string): string {
     const candidate = `${joinRoot}?invite=${encodeURIComponent(inviteRef)}`;
@@ -64,6 +68,12 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     const decoded = decodeRoomId(roomId);
     if (!decoded.ok) throw new Error('invalid channel identifier');
     return `${roomsRoot}${encodeURIComponent(decoded.value)}`;
+  }
+
+  function channelRequestsPath(requestHandle?: ChannelAccessRequestHandle | null): string {
+    if (requestHandle == null) return channelRequestsRoot;
+    if (!requestHandlePattern.test(requestHandle)) throw new Error('invalid channel request handle');
+    return `${channelRequestsRoot}/${encodeURIComponent(requestHandle)}`;
   }
 
   function parse(location: string): HumanRoute {
@@ -110,6 +120,20 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
       if (!decoded.ok) return notFound(requestedPath);
       return { kind: 'channel', path: roomPath(decoded.value), roomId: decoded.value };
     }
+    if (parsed.pathname === channelRequestsRoot && !parsed.search) {
+      return { kind: 'channel_requests', path: channelRequestsRoot, selectedHandle: null };
+    }
+    if (parsed.pathname.startsWith(`${channelRequestsRoot}/`) && !parsed.search) {
+      const encoded = parsed.pathname.slice(channelRequestsRoot.length + 1);
+      if (!encoded || encoded.includes('/')) return notFound(requestedPath);
+      try {
+        const selectedHandle = decodeURIComponent(encoded) as ChannelAccessRequestHandle;
+        if (!requestHandlePattern.test(selectedHandle)) return notFound(requestedPath);
+        return { kind: 'channel_requests', path: channelRequestsPath(selectedHandle), selectedHandle };
+      } catch {
+        return notFound(requestedPath);
+      }
+    }
     return notFound(requestedPath);
   }
 
@@ -118,6 +142,7 @@ export function createHumanRouteCodec(options: HumanRouteCodecOptions): HumanRou
     createPath,
     joinPath,
     roomPath,
+    channelRequestsPath,
     parseJoinLocation(location: string): ReturnType<RouteCodec['parseJoinLocation']> {
       const route = parse(location);
       return route.kind === 'join' ? { inviteRef: route.inviteRef } : ({ error: 'invalid_location' } satisfies JoinLocationError);
