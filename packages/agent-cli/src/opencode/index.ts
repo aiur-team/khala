@@ -31,7 +31,8 @@ export {
 } from './envelope';
 export {
   type KhalaOpenCodeDependencies, type KhalaOpenCodeHooks, type KhalaOpenCodeServer, type OpenCodePluginClient,
-  createKhalaOpenCodeServer, createOpenCodeSessionPort, openCodeVersionFromExecPath, unavailableOpenCodeDependencies,
+  createKhalaOpenCodeServer, createOpenCodeSessionPort, openCodeVersionFromExecPath, parseOpenCodeVersion,
+  unavailableOpenCodeDependencies,
 } from './plugin';
 export {
   type OpenCodeBoundSession, type OpenCodeBridgeState, type OpenCodeBridgeStore, type OpenCodeDegradedReason,

@@ -860,8 +860,12 @@ back to `active.json` or to another session's grant, so an unbound session gets
 most recent session it saw that holds a grant. While it holds a binding
 generation, the plugin pulls the internal server's releases into that
 generation's inbox every second and holds the inbox listener. It reports the
-OpenCode version from its executable path to the server, so the owner sees the
-same claim the plugin projects its mode through. Version `1.17.10` is `tested`
+OpenCode version to the server, so the owner sees the same claim the plugin
+projects its mode through. The version comes from the npm package that owns the
+running executable (`opencode-ai` or its platform build), which is what
+`opencode --version` and `khala setup` report, else from an `opencode/<x.y.z>/`
+install directory; any other install reports an unknown version, which runs no
+automatic route. Version `1.17.10` is `tested`
 and its recorded routes are proven. Any other version is `experimental`: its
 modes take effect only under an owner's experimental-route grant, the plugin
 still runs no automatic route for it (so it claims no idle delivery and the owner
