@@ -47,10 +47,14 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`) and KHA-106
   `stale_content` rejection moves the selection into the same `stale` state a
   locally-detected staleness uses, so Release is disabled the same way rather
   than left active beside a raw error code.
-- **`receipt-labels.ts`** maps a `DeliveryReceipt.kind` to a label without
-  ever inventing an ordinal progress bar over the closed `ReceiptKind`
-  vocabulary, and never labels `transport_written` as "read" or "consumed" —
-  only `context_consumed`/`completed` count as correlated evidence (U3).
+- **`receipt-labels.ts`** maps a v1 or v2 receipt kind to the shared
+  `receipt-evidence` label without ever inventing an ordinal progress bar. No
+  kind is labelled "read": `context_consumed` is "Added to agent context",
+  `completed` is "Agent turn completed", and only `agent_acknowledged` is
+  "Batch token returned". After a release, the confirmation lists every fact
+  per release rather than one latest receipt, and releases covered by one batch
+  token share one token-return status. It never claims a token return is absent;
+  the channel timeline is the durable evidence surface.
 - **`ReviewItem.tsx`** renders one pending row: full content through an
   *injected* `renderContent` function, plus review-owned checkbox and Hide
   controls as structural DOM outside that render call, so message body
@@ -146,9 +150,9 @@ and readable in `pending`, including an unavailable/withheld placeholder (using
 that placeholder's own digest-less ref, so the rejection is pinned to the
 `isReadableItem` guard rather than an incidental digest mismatch against a
 separately constructed `EventRef`).
-`receipt-labels.test.ts` proves `transport_written` is never labeled "read"
-or "consumed," and that correlated `context_consumed`/`completed` evidence is
-required before claiming agent consumption. `controller.test.ts` proves one
+`receipt-labels.test.ts` proves no receipt kind is labeled "read" or
+"consumed" and that context insertion, completion and token return each keep
+their own label. `controller.test.ts` proves one
 command per submission, that a lost response retains `unknown` and disables a
 blind resubmit, that reconciling adopts release IDs from the *same* command
 identity, that revocation clears selection/submission/command authority even

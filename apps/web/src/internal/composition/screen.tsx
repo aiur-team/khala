@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { LocalTransport } from '@khala/messaging/local/http/index';
 import { CreateChannelScreen } from '../../features/create-channel/CreateChannelScreen';
+import type { ReceiptEvidencePort } from '../../features/receipt-evidence/controller';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ShellMode } from '../../shell/types';
 import type { HumanApplicationHandle, HumanRouteContext } from '../../composition/human/application';
@@ -13,6 +14,8 @@ export type LocalApplicationScreenProps = Readonly<{
   application: HumanApplicationHandle;
   routes: LocalRouteCodec;
   transport: LocalTransport;
+  /** The owner's receipt evidence; without it the timeline shows none. */
+  evidencePort?: ReceiptEvidencePort;
   navigateRoute: (path: string) => void;
   mode?: ShellMode;
 }>;
@@ -38,7 +41,9 @@ function channelIdIn(path: string, routes: LocalRouteCodec): string | null {
  * has no sign-in, share, join or recovery route, and a refused session is a
  * terminal relaunch instruction rather than a sign-in prompt.
  */
-export function LocalApplicationScreen({ application, routes, transport, navigateRoute, mode = 'standalone' }: LocalApplicationScreenProps) {
+export function LocalApplicationScreen({
+  application, routes, transport, navigateRoute, mode = 'standalone', evidencePort,
+}: LocalApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: LocalRoute): ReactNode => {
     switch (route.kind) {
       case 'create':
@@ -48,7 +53,7 @@ export function LocalApplicationScreen({ application, routes, transport, navigat
           </KhalaPageFrame>
         );
       case 'channel':
-        return <LocalRoom context={context} roomId={route.roomId} transport={transport} />;
+        return <LocalRoom context={context} roomId={route.roomId} transport={transport} {...(evidencePort ? { evidencePort } : {})} />;
       case 'not_found':
         return <NotFound />;
     }

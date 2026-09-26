@@ -37,6 +37,17 @@ export type SessionRead =
   | Readonly<{ kind: 'auth_failed' }>
   | Readonly<{ kind: 'unavailable' }>;
 
+/**
+ * The owner-gated receipt evidence read. The body stays undecoded: its strict
+ * decoder belongs to the browser feature that renders it. A refusal is never
+ * reported as an empty read.
+ */
+export type ReceiptEvidenceReply =
+  | Readonly<{ kind: 'ok'; body: unknown }>
+  | Readonly<{ kind: 'rejected'; status: number }>
+  | Readonly<{ kind: 'auth_failed' }>
+  | Readonly<{ kind: 'unavailable' }>;
+
 type Timers = Readonly<{ set(callback: () => void, ms: number): unknown; clear(handle: unknown): void }>;
 
 export type HttpRoomSubstrateOptions = Readonly<{
@@ -62,6 +73,8 @@ export interface HttpRoomSubstrate extends ChannelSubstrate {
   readonly transport: LocalTransport;
   /** The human authority this browser session holds. */
   session(options?: CallOptions): Promise<SessionRead>;
+  /** The owner's durable receipt evidence for one channel. */
+  receiptEvidence(roomId: RoomId, options?: CallOptions): Promise<ReceiptEvidenceReply>;
   /** Ends every hint stream; later updates are never published. */
   close(): void;
 }
@@ -376,6 +389,13 @@ export function createHttpRoomSubstrate(options: HttpRoomSubstrateOptions): Http
       if (reply === 'network' || reply.status !== 200) return { kind: 'unavailable' };
       const decoded = decodeSession(reply.body);
       return decoded.ok ? { kind: 'ok', human: decoded.value } : { kind: 'unavailable' };
+    },
+
+    async receiptEvidence(roomId, callOptions) {
+      const reply = await call(API.receipts(roomId), { method: 'GET' }, callOptions?.signal);
+      if (reply === 'auth_failed') return { kind: 'auth_failed' };
+      if (reply === 'network' || reply.status >= 500) return { kind: 'unavailable' };
+      return reply.status === 200 ? { kind: 'ok', body: reply.body } : { kind: 'rejected', status: reply.status };
     },
 
     createRoom(input, callOptions) {

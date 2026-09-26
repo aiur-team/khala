@@ -5,6 +5,7 @@ import {
   decodeContentLimits, decodeMessageContent,
 } from '@khala/contracts/messaging/index';
 import type { ChannelStore, StoredChannel, StoredEvent } from '../store/channel-store';
+import type { InternalReceiptReadModel } from '../store/receipts';
 import { type AssetLimits, type AssetManifest, type AssetTable, DEFAULT_ASSET_LIMITS, loadAssets } from './assets';
 import {
   BOOTSTRAP_DOCUMENT, BOOTSTRAP_DOCUMENT_ROUTE, BOOTSTRAP_SCRIPT, BOOTSTRAP_SCRIPT_ROUTE, REQUEST_SECRET_HEADER,
@@ -77,6 +78,8 @@ export type ChannelServerOptions = Readonly<{
   bindings: readonly BindingCredential[];
   /** Serves `GET .../releases` to binding principals; the route is absent without it. */
   releases?: AgentReleaseFeed;
+  /** Serves the owner-only `GET .../receipts` evidence read; the route is absent without it. */
+  receipts?: Pick<InternalReceiptReadModel, 'channelReceipts'>;
   /** The launch's transport capability; with `discovery`, it may only ask for a discovery descriptor. */
   transportCapability?: string;
   /** Channel discovery, access requests and the connector exchange. Absent means those routes do not exist. */
@@ -101,6 +104,7 @@ const ROUTES = {
   hints: { method: 'GET', path: '/api/v1/channels/:channelId/hints', admission: 'authenticated' },
   binding: { method: 'GET', path: '/api/v1/agent/binding', admission: 'authenticated' },
   releases: { method: 'GET', path: '/api/v1/channels/:channelId/releases', admission: 'authenticated', allowQuery: true },
+  receipts: { method: 'GET', path: '/api/v1/channels/:channelId/receipts', admission: 'authenticated' },
   channelDocument: { method: 'GET', path: '/channels/:channelId', admission: 'public' },
 } as const satisfies Record<string, RouteSpec>;
 
@@ -175,7 +179,8 @@ function actor(principal: Principal): Readonly<{ participantId: ParticipantId; d
 function admits(route: RouteSpec, principal: Principal): boolean {
   const role = discoveryRole(route);
   if (role !== null) return role === principal.kind;
-  if (route === ROUTES.create) return principal.kind === 'human';
+  // Receipt evidence is owner-only: a bound agent never reads delivery metadata.
+  if (route === ROUTES.create || route === ROUTES.receipts) return principal.kind === 'human';
   return principal.kind === 'human' || principal.kind === 'binding';
 }
 
@@ -217,6 +222,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     ROUTES.session, ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
   ];
   if (options.releases) routes.push(ROUTES.releases);
+  if (options.receipts) routes.push(ROUTES.receipts);
   let origin = '';
   const discovery = options.discovery
     ? createDiscoveryRoutes({
@@ -480,6 +486,35 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     }
   }
 
+  /**
+   * The owner's durable receipt evidence for one channel: content-free facts, the
+   * channel events each release carried, and the shared batch groups. Membership
+   * is checked by the read model, so a refused read never reveals whether facts exist.
+   */
+  function receipts({ principal, params, response }: RouteContext<Principal>): void {
+    if (principal?.kind !== 'human' || !options.receipts) {
+      fail(response, failure(403, 'forbidden'));
+      return;
+    }
+    const result = options.receipts.channelReceipts({
+      channelId: params.channelId as RoomId,
+      participantId: principal.human.participantId,
+    });
+    if (result.kind === 'done') {
+      sendJson(response, 200, {
+        v: 1,
+        facts: result.facts.map(fact => ({
+          receipt: fact.receipt,
+          evidenceRef: fact.evidenceRef,
+          events: fact.events.map(event => ({ eventId: event.eventId, sequence: event.sequence })),
+        })),
+        groups: result.groups.map(group => ({ evidenceRef: group.evidenceRef, receiptIds: group.receiptIds })),
+      });
+    } else {
+      fail(response, result.kind === 'rejected' ? rejection(result.code) : failure(503, 'unavailable'));
+    }
+  }
+
   async function send(context: RouteContext<Principal>): Promise<void> {
     const { principal, params, response } = context;
     const body = await readJsonObject(context, limits.maxBodyBytes);
@@ -609,6 +644,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.hints: return hints(context);
           case ROUTES.binding: return binding(context);
           case ROUTES.releases: return releases(context);
+          case ROUTES.receipts: return receipts(context);
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
             return staticAsset(context);

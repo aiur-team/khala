@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { decodeAuthPrincipal, decodeContentLimits, type RoomId } from '@khala/contracts/messaging/index';
 import { createMemoryChannelJournal } from '@khala/messaging/channels/index';
-import { closedAdmission, createLocalPorts, readRequestSecret } from './ports';
+import { closedAdmission, createLocalEvidencePort, createLocalPorts, readRequestSecret } from './ports';
 
 const ORIGIN = 'http://127.0.0.1:4871';
 const SECRET = 's'.repeat(43);
@@ -108,5 +108,21 @@ describe('local ports', () => {
       path: '/api/v1/channels/ch_1/messages', secret: SECRET, body: { clientTxnId: 'txn_1', content: { v: 1, kind: 'text', body: 'hello' } },
     });
     ports.dispose();
+  });
+});
+
+describe('local receipt evidence port', () => {
+  it('decodes an owner read strictly and maps every refusal or failure to unavailable, never to an empty read', async () => {
+    const signal = new AbortController().signal;
+    const replies = [
+      { kind: 'ok' as const, body: { v: 1, facts: [], groups: [] } },
+      { kind: 'ok' as const, body: { v: 1, facts: {}, groups: [] } },
+      { kind: 'rejected' as const, status: 403 },
+      { kind: 'auth_failed' as const },
+      { kind: 'unavailable' as const },
+    ];
+    const port = createLocalEvidencePort({ receiptEvidence: async () => replies.shift()! });
+    expect(await port.read(CHANNEL, signal)).toEqual({ kind: 'ready', facts: [] });
+    for (let index = 0; index < 4; index += 1) expect(await port.read(CHANNEL, signal)).toEqual({ kind: 'unavailable' });
   });
 });
