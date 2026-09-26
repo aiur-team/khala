@@ -50,6 +50,58 @@ exist only after verified ownership and admission.
 Secrets (the grant and the adapter capability) are never written to the ledger, returned or logged. A port
 that throws is treated as `unavailable`, and its message is dropped.
 
+A link always uses a link method. A descriptor that also lists `pairing-code-v1` still
+uses `loopback-browser-v1`, and the link fingerprint bytes are unchanged.
+
+## Code-only pairing (`pairing-code-v1`)
+
+An agent on a machine that cannot open the owner's browser pairs with a human-entered code
+instead of a link:
+
+```ts
+const result = await bootstrapAgent(
+  { pairingCode: '7K3QX-9MZ2P', session: { harness, sessionId, workdir }, operationId },
+  { discovery, sessions, ownership, pairing, admission, devices, operations },
+  { signal },
+);
+```
+
+The code must already be canonical (five Crockford symbols, a hyphen, five more). It follows
+the link flow with these differences:
+
+1. **Discovery.** `discovery.resolvePairing()` takes no origin and no code. It requests
+   `<hostedOrigin>/api/agent/bootstrap/descriptor?method=pairing-code-v1` from the one
+   `hostedOrigin` in trusted configuration, with the same redirect, media-type and size rules.
+   The strict descriptor is `{ v, methods, claim, result, redeem }`; every endpoint must be the
+   fixed path on that origin. Its canonical digest is the descriptor identity.
+2. **Session.** Inspection runs before any claim. The claim carries only the inspected harness,
+   session ID and generation, plus `sessionEvidenceDigest`: a versioned digest of that session
+   and the adapter that verified it. The caller's session claim only locates the session.
+3. **Operation.** The fingerprint is computed after discovery and inspection. It binds the
+   configured origin, descriptor identity, a digest of the code, the submitted session claim,
+   the inspected generation and the connector key thumbprint. Any substitution under the same
+   `operationId` is `operation_conflict`.
+4. **Device reservation.** As for a link, before the claim; the claim names that device.
+5. **Claim and approval.** `createPairingOwnership({ signer })` posts the claim to
+   `/api/agent/pairing/claim` with a fresh DPoP proof, then polls `/api/agent/pairing/result` with
+   the opaque handle and receipt until the owner decides. Waiting is bounded by `timeoutMs`
+   (five minutes, the request lifetime) and the caller's `signal`. An approved 60-second grant
+   becomes an `OwnershipGrant` for `pairing-code-v1`.
+6. **Admission and device.** Unchanged: the grant is checked and redeemed exactly as for a link.
+
+The code, the claim receipt and the grant exist only inside one call and never reach the
+ledger. A lost approval response is safe: the same operation repeats the same claim, which the
+service reconciles to the original request, and reuses the reserved device.
+
+| Pairing result | Meaning | Agent's next action |
+|---|---|---|
+| `pending` (`approval_timeout` or `cancelled`, retryable) | The owner has not decided yet | Pair again with the same code and `operationId` to keep waiting |
+| `blocked: pairing_refused` | The code is invalid, expired, used or foreign; deliberately indistinguishable | Ask the human for a fresh code |
+| `blocked: pairing_denied` | The owner denied this claim | Report it |
+| `blocked: pairing_expired` | The request or its grant expired before redeem | Ask the human for a fresh code |
+| `blocked: rate_limited` | Too many attempts | Wait before asking for a fresh code |
+| `blocked: ownership_required` | No pairing configuration, or the service refused the key proof | Report it |
+
 ## Results
 
 | Result | Meaning | Agent's next action |
@@ -63,7 +115,7 @@ that throws is treated as `unavailable`, and its message is dropped.
 | `blocked: unsupported_descriptor` | The service speaks a protocol version this connector does not | Report that an update is needed |
 | `blocked: harness_session_missing` | The harness cannot identify the current session | Report it; never start a fresh session instead |
 | `blocked: unsupported_harness` | No evidence-backed existing-session support for this harness | Report it honestly; do not ask the human to configure anything |
-| `blocked: ownership_required` | The owner did not finish sign-in, or no browser on this machine | Ask the human to finish in the opened tab, or report that remote agents need the (unbuilt) fallback |
+| `blocked: ownership_required` | The owner did not finish sign-in, or no browser on this machine | Ask the human to finish in the opened tab; an agent on another machine pairs with a code instead |
 | `blocked: admission_denied` | The owner declined, the invite or policy refused, or the service offered a capability other than the adapter's | Report it |
 | `blocked: binding_conflict` | This channel is bound to another session or generation of this owner | Report it; rebinding is an explicit owner flow |
 | `blocked: binding_revoked` | The owner revoked this session's binding | Report it. Only a later session generation can bind again; never retry the revoked one |
@@ -74,7 +126,8 @@ that throws is treated as `unavailable`, and its message is dropped.
 
 | Port | Supplied by |
 |---|---|
-| `discovery` | `createDiscovery({ trustedOrigins })`: production is `https://khala.aiur.team`; each preview origin is explicit |
+| `discovery` | `createDiscovery({ trustedOrigins, hostedOrigin? })`: production is `https://khala.aiur.team`; each preview origin is explicit. `hostedOrigin` enables code-only pairing |
+| `pairing` (optional) | `createPairingOwnership({ signer })`, with the same signer as `admission` |
 | `sessions: SessionInspectionPort` | Harness adapters (KHA-117/118) over KHA-103/104 evidence |
 | `ownership` | `createLoopbackOwnership({ signer, openBrowser })`. `openBrowser` comes from the harness adapter |
 | `admission` | `createHttpAdmission({ signer })` |
@@ -162,5 +215,7 @@ Tests use injected doubles plus a real loopback listener and real Ed25519 signat
 they prove module behaviour only. Real owner connection without setup belongs to
 KHA-133/139. G-ADMISSION (silent bind versus a visible confirmation), G-SUBSTRATE and
 G-HARNESSES remain open. An agent on a different machine from the owner's browser
-is unsupported by `loopback-browser-v1`. The connector does not claim isolation from an
+is unsupported by `loopback-browser-v1`; `pairing-code-v1` covers it, but is proven only
+against a fake control transport. The control service does not yet serve the code-only
+descriptor or accept pairing grants at the bootstrap redeem route. The connector does not claim isolation from an
 unrestricted agent on the same host.

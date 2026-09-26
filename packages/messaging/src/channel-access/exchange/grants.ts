@@ -1,11 +1,11 @@
-// Hosted one-time grant issuer for the channel-access exchange. A grant is 256
+// One-time grant issuer for the channel-access exchange. A grant is 256
 // random bits returned exactly once for sealing; storage keeps only a
 // purpose-separated SHA-256 hash, its bound tuple and a short expiry. Redemption
 // (used by `channel-access-activation`) is bound to the same tuple and consumes
 // the operation by compare-and-set, so at most one grant per operation is ever
 // redeemed, even if a crashed exchange minted an unsealed one first.
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type {
   AuthorizedChannelRef,
   CallOptions,
@@ -15,7 +15,6 @@ import type {
   StableAgentPrincipal,
   TrustedClock,
 } from '@khala/contracts/messaging/index';
-import { safeEqual } from '../../auth/csrf';
 
 export type ExchangeGrantBinding = Readonly<{
   operationId: string;
@@ -49,7 +48,17 @@ export type ExchangeGrantIssuer = Readonly<{
     options?: CallOptions,
   ): Promise<Readonly<{ kind: 'minted'; grant: string }> | Readonly<{ kind: 'unavailable' }>>;
   redeem(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantRedeemResult>;
+  /**
+   * Read-only: the bound tuple of a grant this exact tuple already redeemed. It lets a
+   * consumer that crashed after `redeem` finish the same activation; it never consumes.
+   */
+  consumed(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantConsumedResult>;
 }>;
+
+export type ExchangeGrantConsumedResult =
+  | Readonly<{ kind: 'consumed'; binding: ExchangeGrantBinding }>
+  | Readonly<{ kind: 'rejected'; code: 'invalid_grant' | 'not_consumed' }>
+  | Readonly<{ kind: 'unavailable' }>;
 
 const GRANT_PREFIX = 'cagrant_';
 const GRANT = /^cagrant_[A-Za-z0-9_-]{43}$/;
@@ -87,20 +96,34 @@ export function createExchangeGrantIssuer(deps: Readonly<{
     return { kind: 'unavailable' };
   }
 
-  async function redeem(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantRedeemResult> {
-    if (!GRANT.test(input.grant)) return { kind: 'rejected', code: 'invalid_grant' };
+  /** The stored grant for this exact bound tuple, or why it is not one. */
+  async function presented(input: ExchangeGrantRedemption, options?: CallOptions): Promise<
+    | Readonly<{ kind: 'found'; key: string; stored: Readonly<{ binding: ExchangeGrantBinding; expiresAt: string }> }>
+    | Readonly<{ kind: 'invalid_grant' }>
+    | Readonly<{ kind: 'unavailable' }>
+  > {
+    if (!GRANT.test(input.grant)) return { kind: 'invalid_grant' };
     const key = grantKey(input.grant);
     const read = await safe(() => deps.store.read(key, options));
     if (read === null || read.kind === 'unavailable') return { kind: 'unavailable' };
-    if (read.kind === 'absent') return { kind: 'rejected', code: 'invalid_grant' };
+    if (read.kind === 'absent') return { kind: 'invalid_grant' };
     const stored = readStoredGrant(read.record.value);
     if (stored === null) return { kind: 'unavailable' };
     const binding = stored.binding;
     if (binding.operationId !== input.operationId || binding.requester !== input.requester
       || binding.origin !== input.origin || binding.sessionGeneration !== input.sessionGeneration
       || binding.deviceId !== input.deviceId || !safeEqual(binding.proofKeyThumbprint, input.proofKeyThumbprint)) {
-      return { kind: 'rejected', code: 'invalid_grant' };
+      return { kind: 'invalid_grant' };
     }
+    return { kind: 'found', key, stored };
+  }
+
+  async function redeem(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantRedeemResult> {
+    const found = await presented(input, options);
+    if (found.kind === 'unavailable') return found;
+    if (found.kind === 'invalid_grant') return { kind: 'rejected', code: 'invalid_grant' };
+    const { key, stored } = found;
+    const binding = stored.binding;
     if (deps.clock() >= Date.parse(stored.expiresAt)) return { kind: 'rejected', code: 'expired' };
     const consumed = consumedKey(binding);
     // Unique per attempt: an identical second presentation must conflict, not replay the first write.
@@ -121,7 +144,19 @@ export function createExchangeGrantIssuer(deps: Readonly<{
     return { kind: 'redeemed', binding };
   }
 
-  return Object.freeze({ mint, redeem });
+  async function consumedBy(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantConsumedResult> {
+    const found = await presented(input, options);
+    if (found.kind === 'unavailable') return found;
+    if (found.kind === 'invalid_grant') return { kind: 'rejected', code: 'invalid_grant' };
+    const read = await safe(() => deps.store.read(consumedKey(found.stored.binding), options));
+    if (read === null || read.kind === 'unavailable') return { kind: 'unavailable' };
+    // Consumed by this grant, not merely by another grant for the same operation.
+    const record = read.kind === 'record' ? read.record.value as { grantKey?: unknown } | null : null;
+    if (record?.grantKey !== found.key) return { kind: 'rejected', code: 'not_consumed' };
+    return { kind: 'consumed', binding: found.stored.binding };
+  }
+
+  return Object.freeze({ mint, redeem, consumed: consumedBy });
 }
 
 function grantKey(grant: string): string {
@@ -155,4 +190,10 @@ async function safe<T>(operation: () => Promise<T>): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+function safeEqual(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
