@@ -46,6 +46,11 @@ export type ExternalCli = Readonly<{
   signalsReceived(): readonly string[];
   /** Runs `khala internal discovery` for this session against the launcher's state root. */
   discover(launcher: KhalaProfile): Promise<void>;
+  /**
+   * Takes the resumed launcher's transport-only `active.json`, as the launcher rewrites the
+   * shared one: the grant from the previous launch ends with it.
+   */
+  relaunched(launcher: KhalaProfile): void;
   /** `khala join <channel-url>`: files an access request, or finishes an approved one. */
   join(channelUrl: string): Promise<string>;
   status(): Promise<Readonly<{ connected: boolean; binding: Readonly<{ bindingId: string; generation: number }> | null }>>;
@@ -145,6 +150,12 @@ export function createExternalCli(options: Options): ExternalCli {
       fs.copyFileSync(path.join(path.dirname(path.dirname(principalDirectory)), 'active.json'), activePath);
       fs.chmodSync(activePath, 0o600);
       discoveryPath = path.join(privateCopy, path.basename(descriptorPath));
+    },
+
+    relaunched(launcher) {
+      launcherPort = launcher.port;
+      fs.copyFileSync(path.join(launcher.stateDirectory, 'internal', 'active.json'), activePath);
+      fs.chmodSync(activePath, 0o600);
     },
 
     async join(channelUrl) {

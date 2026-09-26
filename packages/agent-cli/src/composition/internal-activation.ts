@@ -15,7 +15,7 @@ import {
 } from '@khala/contracts/internal/discovery-descriptor';
 import {
   type AccessRequestOutcome, type GrantExchangeRejection, type StableAgentPrincipal, decodeAccessRequestStatus,
-  decodeSessionBinding,
+  decodeSessionBinding, sameSessionBinding,
 } from '@khala/contracts/messaging/index';
 import { acquireProcessLock } from '../cli/inbox.js';
 import { plainObject } from '../cli/validation.js';
@@ -29,6 +29,9 @@ import { readInternalDescriptor } from './internal.js';
 // any point resumes by operation ID with the same device and the same binding.
 // The server's binding ID is derived from the operation, so a resume never mints a
 // second binding, and `grant: null` resumes an activation that already happened.
+// That is also how a connected binding survives a launcher restart: capabilities are
+// launch-scoped, a resumed launcher writes a transport-only descriptor, and the next
+// activation of the connected operation takes a fresh capability for the same binding.
 //
 // A capability lives only in memory and in `active.json` (0600). Nothing here
 // writes a grant, capability or recovery key to any output.
@@ -104,6 +107,8 @@ export async function activateInternalAccess(options: InternalActivationOptions)
       sessionGeneration: options.descriptor.generation,
     }, ports);
     if (journaled !== 'journaled') return 'unavailable';
+    const restored = await restoreConnected(options.operationId, ports, paths.activePath);
+    if (restored !== null) return restored;
     const result = await activateChannelAccess(options.operationId, ports, {
       repair: options.repair === true, signal: options.signal,
     });
@@ -113,6 +118,31 @@ export async function activateInternalAccess(options: InternalActivationOptions)
   } finally {
     await lock.release().catch(() => undefined);
   }
+}
+
+/**
+ * A connected operation whose descriptor holds no grant lost its launch-scoped capability
+ * to a restart. Resume the same binding by operation ID, without a grant, and write the
+ * fresh capability. The journal stays `connected`: readiness was acknowledged once. Null
+ * leaves every other case to the activation state machine.
+ */
+async function restoreConnected(
+  operationId: string, ports: ChannelAccessActivationPorts, activePath: string,
+): Promise<InternalActivationOutcome | null> {
+  const loaded = await ports.journal.load(operationId);
+  if (loaded.kind !== 'record' || loaded.record.phase !== 'connected') return null;
+  const { binding, deviceId, origin } = loaded.record;
+  if (binding === null || deviceId === null) return null;
+  const held = readInternalDescriptor(activePath);
+  if (!held.ok) return 'unavailable';
+  if (isGrantedDescriptor(held.value)) return null;
+  const redeemed = await ports.redeem.resume({ operationId, deviceId, origin, bindingId: binding.bindingId });
+  // A binding Stop revoked is never resumed.
+  if (redeemed.kind === 'refused') return redeemed.code === 'binding_revoked' ? 'revoked' : 'unavailable';
+  if (redeemed.kind !== 'admitted' || !sameSessionBinding(redeemed.binding, binding)
+    || redeemed.capability.bindingId !== binding.bindingId) return 'unavailable';
+  const written = await ports.devices.activate({ deviceId, binding, capability: redeemed.capability, operationId });
+  return written.kind === 'ready' ? 'connected' : 'unavailable';
 }
 
 function outcomeOf(result: ActivationResult): InternalActivationOutcome {

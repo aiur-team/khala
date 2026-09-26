@@ -51,11 +51,14 @@ function call(origin: string, input: Readonly<{ method?: string; path: string; h
 
 type ToolResponse = { id: number; result?: { structuredContent: Record<string, unknown>; isError?: boolean }; error?: unknown };
 
-async function launched() {
-  const parent = fs.mkdtempSync('/tmp/khala-claude-');
-  cleanups.push(() => fs.rmSync(parent, { recursive: true, force: true }));
+/** A fresh launch, or with `resume` the same root and channel relaunched on the same port. */
+async function launched(resume?: Readonly<{ parent: string; channelId: string; port: number }>) {
+  const parent = resume?.parent ?? fs.mkdtempSync('/tmp/khala-claude-');
+  if (resume === undefined) cleanups.push(() => fs.rmSync(parent, { recursive: true, force: true }));
   const outcome = await launchInternal({
-    root: path.join(parent, 'internal'), request: { kind: 'create' }, assets: webBundleManifest(fixtureBundle), startPort: 0,
+    root: path.join(parent, 'internal'), assets: webBundleManifest(fixtureBundle),
+    request: resume === undefined ? { kind: 'create' } : { kind: 'resume', channelId: resume.channelId },
+    startPort: resume?.port ?? 0,
   });
   if (outcome.kind !== 'running') throw new Error(`launch failed: ${outcome.code}`);
   cleanups.push(() => outcome.shutdown());
@@ -71,7 +74,7 @@ async function launched() {
     'x-khala-request-secret': session.json.requestSecret as string,
     origin: report.origin,
   };
-  return { report, owner, channelUrl: `${report.origin}/channels/${report.channelId}` };
+  return { report, owner, channelUrl: `${report.origin}/channels/${report.channelId}`, parent, shutdown: outcome.shutdown };
 }
 
 /** `khala mcp-serve` exactly as the Claude plugin's MCP entry launches it for one session. */
@@ -245,5 +248,45 @@ describe('Claude mcp-serve against the internal launcher', () => {
     expect(bodies).toContain('hello from Claude');
     expect(bodies).not.toContain('not mine');
     expect(bodies).toContain(agents[0]!.participantId);
+  });
+
+  it('re-activates a granted session after the launcher resumes, with the same binding', async () => {
+    const first = await launched();
+    const sessionId = 'session-restart';
+    const [requested] = await serve(first.report.descriptorPath, sessionId, [['khala_request_channel_access', { target: first.channelUrl }]]);
+    const operationId = requested!.operationId as string;
+    await approvePending(first.report.origin, first.owner);
+    const [connected, sent] = await serve(first.report.descriptorPath, sessionId, [
+      ['khala_channel_access_status', { operationId }],
+      ['khala_send', { message: 'before the restart' }],
+    ]);
+    expect(connected).toMatchObject({ outcome: 'connected' });
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    const [roster] = await serve(first.report.descriptorPath, sessionId, [['khala_list_agents']]);
+    await first.shutdown();
+
+    const second = await launched({ parent: first.parent, channelId: first.report.channelId, port: first.report.port });
+    expect(second.report.origin).toBe(first.report.origin);
+    // The grant from the previous launch ended with it: the session is unbound until it resumes.
+    const [unbound] = await serve(second.report.descriptorPath, sessionId, [['khala_send', { message: 'stale grant' }]]);
+    expect(unbound).toEqual({ kind: 'refused', code: 'session_not_bound' });
+
+    // Its status resumes the connected operation into a fresh capability for the same binding.
+    const [resumed, again, who] = await serve(second.report.descriptorPath, sessionId, [
+      ['khala_channel_access_status', { operationId }],
+      ['khala_send', { message: 'after the restart' }],
+      ['khala_list_agents'],
+    ]);
+    expect(resumed).toMatchObject({ ok: true, operationId, outcome: 'connected' });
+    expect(again).toMatchObject({ kind: 'accepted' });
+    expect(who).toEqual(roster);
+    const inbox = await call(second.report.origin, { path: '/api/human/channel-requests', headers: second.owner });
+    expect((inbox.json.requests as Array<{ outcome: string }>).filter(entry => entry.outcome === 'pending_owner')).toEqual([]);
+    const timeline = await call(second.report.origin, {
+      path: `/api/v1/channels/${encodeURIComponent(second.report.channelId)}/timeline`, headers: second.owner,
+    });
+    const bodies = JSON.stringify(timeline.json);
+    expect(bodies).toContain('after the restart');
+    expect(bodies).not.toContain('stale grant');
   });
 });
