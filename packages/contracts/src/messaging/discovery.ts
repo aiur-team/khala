@@ -57,6 +57,10 @@ export const CHANNEL_CREATE_OUTCOMES = [
 
 /** Libsodium sealed boxes: X25519 plus XSalsa20-Poly1305. */
 export const CHANNEL_SEALED_BOX_ALGORITHM = 'crypto_box_seal_x25519_xsalsa20poly1305' as const;
+/** Lifetime of the one-time grant inside a sealed envelope, from sealing. */
+export const CHANNEL_ACCESS_GRANT_LIFETIME_MS = 15 * 60_000;
+/** Hard recovery expiry of a stored envelope and of an admitted operation, from sealing. */
+export const CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS = 7 * 24 * 60 * 60_000;
 
 export type ChannelVisibility = 'public' | 'private' | 'secret';
 export type ChannelServiceKind = 'internal' | 'external';
@@ -211,6 +215,22 @@ export type SealedGrantPayload = Readonly<{
   recipientKeyThumbprint: string;
   expiresAt: string;
   grant: string;
+}>;
+
+/**
+ * Connector readiness acknowledgement for one exchanged operation. It is sent only
+ * after local activation; the service then reports `connected` and deletes the
+ * stored envelope. It carries identifiers and thumbprints, never a grant.
+ */
+export type ChannelAccessReadiness = Readonly<{
+  v: 1;
+  operationId: string;
+  requester: StableAgentPrincipal;
+  origin: string;
+  sessionGeneration: number;
+  deviceId: DeviceId;
+  proofKeyThumbprint: string;
+  recipientKeyThumbprint: string;
 }>;
 
 export type DiscoveryCredentialValidity =
@@ -725,4 +745,26 @@ export function validateSealedGrantPayload(
   if (payload.proofKeyThumbprint !== expected.proofKeyThumbprint) return 'proof_mismatch';
   if (payload.recipientKeyThumbprint !== expected.recipientKeyThumbprint) return 'encryption_key_mismatch';
   return 'valid';
+}
+
+export function decodeChannelAccessReadiness(input: unknown): Decoded<ChannelAccessReadiness> {
+  return decodeWith(() => {
+    const r = object(input, '', [
+      'v', 'operationId', 'requester', 'origin', 'sessionGeneration', 'deviceId', 'proofKeyThumbprint',
+      'recipientKeyThumbprint',
+    ]);
+    const proofKeyThumbprint = readThumbprint(r.field('proofKeyThumbprint'), r.at('proofKeyThumbprint'));
+    const recipientKeyThumbprint = readThumbprint(r.field('recipientKeyThumbprint'), r.at('recipientKeyThumbprint'));
+    if (proofKeyThumbprint === recipientKeyThumbprint) fail(r.at('recipientKeyThumbprint'), 'mismatch');
+    return {
+      v: version(r.field('v'), r.at('v')),
+      operationId: identifier(r.field('operationId'), r.at('operationId')),
+      requester: identifier(r.field('requester'), r.at('requester')) as StableAgentPrincipal,
+      origin: readCanonicalOrigin(r.field('origin'), r.at('origin')),
+      sessionGeneration: safeInteger(r.field('sessionGeneration'), r.at('sessionGeneration')),
+      deviceId: readId<'DeviceId'>(r.field('deviceId'), r.at('deviceId')),
+      proofKeyThumbprint,
+      recipientKeyThumbprint,
+    };
+  });
 }
