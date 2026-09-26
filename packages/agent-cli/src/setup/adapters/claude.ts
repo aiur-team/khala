@@ -315,8 +315,7 @@ export class ClaudeSetupAdapter implements SetupAdapter {
       settings = isObject(value) ? { kind: 'present', hash: sha256(settingsBytes), value } : { kind: 'invalid' };
     }
     const next = settings.kind === 'invalid' ? null : withKhala(settings.kind === 'present' ? settings.value : {}, paths);
-    const settingsPostimage = next === null ? null
-      : settings.kind === 'present' && sameJson(khalaKeys(settings.value), khalaKeys(next)) ? settingsBytes! : encodeJson(next);
+    const settingsPostimage = next === null ? null : encodeJson(next);
 
     const desired: { path: string; component: SetupComponent; bytes: Uint8Array }[] = [
       { path: paths.catalog, component: 'marketplace', bytes: claudeCatalog() },
