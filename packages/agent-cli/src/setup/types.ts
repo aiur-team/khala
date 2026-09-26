@@ -9,7 +9,9 @@ export const SETUP_SCHEMA_VERSION = 1 as const;
 export const SETUP_COMMANDS = Object.freeze(['setup', 'remove', 'status'] as const);
 export type SetupCommand = (typeof SETUP_COMMANDS)[number];
 
-export const HARNESS_IDS = Object.freeze(['claude', 'codex', 'opencode'] as const);
+// `claude-app` (Claude Desktop) is reported apart from `claude` (Claude Code):
+// they have separate config, evidence, and routes.
+export const HARNESS_IDS = Object.freeze(['claude', 'codex', 'opencode', 'claude-app'] as const);
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 export const SETUP_COMPONENTS = Object.freeze([

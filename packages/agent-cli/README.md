@@ -340,6 +340,17 @@ adapter declares are backed up and reversed; adapters own proof of that
 footprint. `inspectSetupRecovery` gives `status` a read-only view of the
 journal.
 
+## Claude Desktop setup
+
+`src/setup/adapters/claude-app.ts` is the `claude-app` setup adapter. The
+`claude-app` id reports Claude Desktop separately from Claude Code (`claude`).
+It detects the macOS bundle or the Windows per-user install and reads the
+version when it can. It always reports `supported: false`, the `mcp_entry`
+component as `unsupported` (or `absent`), and the route as `unavailable`.
+Each Claude app shape gets its own `claude_app_delivery_unproven`
+diagnostic. It plans no writes, because no Claude app route has exact-version
+evidence. See `packages/harnesses/src/claude-app/README.md`.
+
 ## Codex hooks
 
 `khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
