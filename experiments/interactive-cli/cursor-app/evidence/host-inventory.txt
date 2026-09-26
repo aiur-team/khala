@@ -1,0 +1,42 @@
+Captured: 2026-09-25T01:18:02-07:00
+Host: <executor-host>
+
+$ uname -srmo
+Linux 7.1.4-arch1-1 x86_64 GNU/Linux
+
+$ command -v cursor || echo "cursor NOT_INSTALLED"
+cursor NOT_INSTALLED
+
+$ command -v cursor-agent || echo "cursor-agent NOT_INSTALLED"
+cursor-agent NOT_INSTALLED
+
+$ ls -d ~/.cursor ~/.config/Cursor /etc/cursor 2>&1
+ls: cannot access '~/.cursor': No such file or directory
+ls: cannot access '~/.config/Cursor': No such file or directory
+ls: cannot access '/etc/cursor': No such file or directory
+
+$ ls ~/Applications ~/.local/bin 2>/dev/null | grep -i cursor || echo "no Cursor AppImage or launcher"
+no Cursor AppImage or launcher
+
+$ pacman -Qq 2>/dev/null | grep -i cursor || echo "no cursor package"
+adwaita-cursors
+default-cursors
+hyprcursor
+libxcursor
+xcb-util-cursor
+
+$ grep -il "^Name=Cursor" ~/.local/share/applications/*.desktop /usr/share/applications/*.desktop 2>/dev/null || echo "no Cursor desktop entry"
+no Cursor desktop entry
+
+$ pgrep -il cursor || echo "no Cursor process"
+no Cursor process
+
+Notes:
+- The pacman matches are X11/Hyprland pointer-cursor themes, not the Cursor editor.
+- No Cursor app, `cursor-agent` CLI, user config (`~/.cursor`), enterprise hook
+  policy (`/etc/cursor`), or running Cursor process exists on this host.
+- No Cursor account credential exists here, so there is no user-started local
+  Agent Chat and no existing cloud agent to attach to.
+- The agent did not install Cursor, sign in, open a Chat, or create a cloud agent:
+  Khala never launches or hosts an agent (decision 24), and a new cloud agent is
+  not the user's existing session.
