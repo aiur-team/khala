@@ -87,4 +87,15 @@ describe('interactive Codex capabilities', () => {
     expect(Object.values(capabilities.modes).map(mode => mode.status)).toEqual(['unknown', 'unknown', 'unknown']);
     expect(capabilities.modes.steer.reason).toContain('0.155.0 has no interactive hook proof');
   });
+
+  it('claims the native queue notification only while the idle wake works', () => {
+    const woken = interactiveCodexCapabilities('0.154.0', limits, { state: 'trusted' }, undefined, 'available');
+    expect(decodeHarnessCapabilities(woken)).toEqual({ ok: true, value: woken });
+    expect(woken.immediateNotification).toBe('native_cli_queue');
+    expect(woken.modes.sync.reason).toContain('content-free queue notice');
+    expect(woken.modes.sync.reason).not.toContain('only at their next turn');
+    const failed = interactiveCodexCapabilities('0.154.0', limits, { state: 'trusted' }, undefined, 'unavailable');
+    expect(failed.immediateNotification).toBe('unknown');
+    expect(failed.modes.steer.reason).toContain('Idle agents receive messages only at their next turn.');
+  });
 });
