@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EnvironmentError, readServerEnv } from './env';
+import { EnvironmentError, readHumanServerEnv, readServerEnv } from './env';
 
 const complete = {
   PUBLIC_APP_ORIGIN: 'https://khala.aiur.team',
@@ -15,8 +15,17 @@ const complete = {
 };
 
 describe('readServerEnv', () => {
-  it('returns the parsed contract when every required key is present', () => {
-    expect(readServerEnv(complete)).toEqual({
+  it('returns only the gateway keys and needs no Matrix or OIDC-client settings', () => {
+    const gatewayOnly = { PUBLIC_APP_ORIGIN: 'https://khala.aiur.team', OIDC_CLIENT_SECRET: 'shh-secret', CONTROL_STATE_NAMESPACE: 'khala-prod' };
+    expect(readServerEnv(gatewayOnly)).toEqual({
+      publicAppOrigin: 'https://khala.aiur.team',
+      oidcClientSecret: 'shh-secret',
+      controlStateNamespace: 'khala-prod',
+    });
+  });
+
+  it('returns the full human contract when every human key is present', () => {
+    expect(readHumanServerEnv(complete)).toEqual({
       publicAppOrigin: 'https://khala.aiur.team',
       publicHomeserverOrigin: 'https://matrix.example.test',
       oidcIssuer: 'https://issuer.example',
@@ -66,5 +75,10 @@ describe('readServerEnv', () => {
     expect(message).toContain('PUBLIC_APP_ORIGIN');
     expect(message).toContain('OIDC_CLIENT_SECRET');
     expect(message).toContain('CONTROL_STATE_NAMESPACE');
+  });
+
+  it('refuses the human contract when a Matrix key is missing, naming only the key', () => {
+    expect(() => readHumanServerEnv({ ...complete, MATRIX_SERVER_NAME: undefined })).toThrow(/MATRIX_SERVER_NAME/);
+    expect(() => readHumanServerEnv({ ...complete, MATRIX_SERVER_NAME: undefined })).not.toThrow(/registration-secret/);
   });
 });

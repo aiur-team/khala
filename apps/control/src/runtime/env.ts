@@ -3,7 +3,17 @@
 // gateway starts serving requests. Never logs or echoes a value — only key
 // names ever appear in an error.
 
+/** Keys the gateway needs to serve any route. Checked at module import. */
 export type ServerEnv = Readonly<{
+  publicAppOrigin: string;
+  oidcClientSecret: string;
+  controlStateNamespace: string;
+}>;
+
+/** Keys the human flow additionally needs. Checked lazily by the human service
+ * loader, so a missing Matrix/OIDC setting yields 503 on human routes only and
+ * never takes down health, agent, pairing, channel-access or discovery routes. */
+export type HumanServerEnv = Readonly<{
   publicAppOrigin: string;
   publicHomeserverOrigin: string;
   oidcIssuer: string;
@@ -23,22 +33,35 @@ export class EnvironmentError extends Error {
   }
 }
 
-const REQUIRED_KEYS = [
-  'PUBLIC_APP_ORIGIN',
+const REQUIRED_KEYS = ['PUBLIC_APP_ORIGIN', 'OIDC_CLIENT_SECRET', 'CONTROL_STATE_NAMESPACE'] as const;
+
+const HUMAN_REQUIRED_KEYS = [
+  ...REQUIRED_KEYS,
   'PUBLIC_HOMESERVER_ORIGIN',
   'OIDC_ISSUER',
   'OIDC_CLIENT_ID',
-  'OIDC_CLIENT_SECRET',
-  'CONTROL_STATE_NAMESPACE',
   'MATRIX_SERVER_NAME',
   'MATRIX_REGISTRATION_SHARED_SECRET',
   'MATRIX_PASSWORD_DERIVATION_SECRET',
   'INVITATION_HMAC_SECRET',
 ] as const;
 
-/** Reads and validates the server-only environment contract. Throws (key names only, never values) if anything required is missing. */
+/** Reads and validates the gateway environment contract. Throws (key names only, never values) if anything required is missing. */
 export function readServerEnv(env: Readonly<Record<string, string | undefined>> = process.env): ServerEnv {
   const missing = REQUIRED_KEYS.filter(key => !env[key]);
+  if (missing.length > 0) {
+    throw new EnvironmentError(`missing required environment variable(s): ${missing.join(', ')}`);
+  }
+  return {
+    publicAppOrigin: env.PUBLIC_APP_ORIGIN as string,
+    oidcClientSecret: env.OIDC_CLIENT_SECRET as string,
+    controlStateNamespace: env.CONTROL_STATE_NAMESPACE as string,
+  };
+}
+
+/** Reads and validates the human-flow environment. Call lazily, never at module import. */
+export function readHumanServerEnv(env: Readonly<Record<string, string | undefined>> = process.env): HumanServerEnv {
+  const missing = HUMAN_REQUIRED_KEYS.filter(key => !env[key]);
   if (missing.length > 0) {
     throw new EnvironmentError(`missing required environment variable(s): ${missing.join(', ')}`);
   }

@@ -88,6 +88,13 @@ function ready(snapshot: HumanApplicationSnapshot): HumanRouteContext {
   return snapshot.context;
 }
 
+
+/** Lets a stale continuation run all the way (not one microtask) so a missing
+ * generation fence actually shows up as a wrong snapshot. */
+function settleStaleContinuations(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 20));
+}
+
 describe('createHumanApplication', () => {
   it('fences a stale identity response after navigation activates another account', async () => {
     const firstIdentity = deferred<IdentityState>();
@@ -106,7 +113,7 @@ describe('createHumanApplication', () => {
     expect(ready(app.getSnapshot()).principal.ownerId).toBe(bob.ownerId);
 
     firstIdentity.resolve({ kind: 'signed_in', principal: alice });
-    await Promise.resolve();
+    await settleStaleContinuations();
 
     expect(ready(app.getSnapshot()).principal.ownerId).toBe(bob.ownerId);
     expect(ensureReady).toHaveBeenCalledTimes(1);
@@ -186,7 +193,7 @@ describe('createHumanApplication', () => {
     app.navigate('/signed-out');
     await eventually(() => expect(app.getSnapshot().phase).toBe('signed_out'));
     deviceResult.resolve(ok(readyDevice(alice)));
-    await Promise.resolve();
+    await settleStaleContinuations();
 
     expect(app.getSnapshot()).toMatchObject({ phase: 'signed_out', context: null });
     expect(stop).toHaveBeenCalledOnce();

@@ -4,7 +4,7 @@ import { createAuthService } from '../../auth/index';
 import { createOidcClient } from '../../auth/oidc';
 import { createAdmissionService } from '../../invitations/index';
 import { createControlStore, type BlobsStoreLike } from '../../runtime/control-store';
-import { readServerEnv } from '../../runtime/env';
+import { readHumanServerEnv } from '../../runtime/env';
 import type { HumanHandlerServices, LoadHumanServices } from './handlers';
 import { createMatrixHumanServices } from './matrix';
 
@@ -24,7 +24,7 @@ type Runtime = Readonly<{
   auth: ReturnType<typeof createAuthService>;
   store: ReturnType<typeof createControlStore>;
   matrix: ReturnType<typeof createMatrixHumanServices>;
-  env: ReturnType<typeof readServerEnv>;
+  env: ReturnType<typeof readHumanServerEnv>;
   clock: () => number;
 }>;
 
@@ -37,7 +37,7 @@ export function createProductionHumanServiceLoader(dependencies: ProductionHuman
 
   function initialize(): Runtime {
     if (runtime !== null) return runtime;
-    const env = readServerEnv(dependencies.env);
+    const env = readHumanServerEnv(dependencies.env);
     const clock = dependencies.clock ?? (() => Date.now());
     const random = dependencies.random ?? (bytes => randomBytes(bytes));
     const storeFor = dependencies.stores ?? (name => getStore(name) as unknown as BlobsStoreLike);
