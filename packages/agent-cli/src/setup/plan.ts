@@ -8,7 +8,7 @@ import { ClaudeSetupRefusal } from './adapters/claude.js';
 import { sha256 } from './filesystem.js';
 import { parseManifest, type ManifestEntry } from './manifest.js';
 import { resolveSetupPaths } from './paths.js';
-import type { ExecutablePlan, ExecutionOutcome } from './transaction.js';
+import { summarizeSetupJournal, type ExecutablePlan, type ExecutionOutcome, type SetupJournalSummary } from './transaction.js';
 import {
   HARNESS_IDS, SETUP_COMPONENTS, SETUP_SCHEMA_VERSION, setupExitCode,
   type ComponentState, type ConfirmationAction, type HarnessDetection, type HarnessId, type HarnessObservation,
@@ -93,6 +93,8 @@ type Prepared = Readonly<{
   operations: readonly SetupOperation[];
   diagnostics: readonly SetupDiagnostic[];
   executable: ExecutablePlan;
+  /** The interrupted transaction to recover first, or `null` when no journal exists. */
+  recovery: SetupJournalSummary | null;
 }>;
 
 type Refusal = Readonly<{ state: 'conflict' | 'drifted' | 'unsupported'; diagnostics: readonly SetupDiagnostic[] }>;
@@ -115,6 +117,8 @@ type Snapshot = Readonly<{
   observed: readonly Observed[];
   diagnostics: readonly SetupDiagnostic[];
   recovery: boolean;
+  /** The interrupted transaction's journal bytes; only a recovery digest and summary use them. */
+  journal: Uint8Array | null;
   fallbackRoute: string | null;
   /** Installer files this setup stages, each attributed to the first harness that runs it. */
   installer: readonly InstallerTarget[];
@@ -132,7 +136,14 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
   // starts from fresh state. An approval is never checked against a plan computed earlier.
   async function prepare(command: LifecycleCommand): Promise<Prepared> {
     const snapshot = await observe(options.environment(), adapters, payload);
-    let stop: SetupState | null = snapshot.recovery ? 'recovery_required' : refusalState(command, snapshot);
+    if (snapshot.journal !== null) {
+      // An interrupted transaction is recovered before anything is planned. Its plan changes
+      // no file of its own, and its digest binds the exact journal the person approves.
+      return { snapshot, stop: 'recovery_required', operations: [], diagnostics: snapshot.diagnostics,
+        recovery: summarizeSetupJournal(snapshot.journal),
+        executable: { command, planDigest: recoveryDigest(command, snapshot.journal), operations: [], contents: new Map() } };
+    }
+    let stop: SetupState | null = refusalState(command, snapshot);
     let diagnostics = snapshot.diagnostics;
     let planned: Planned = { operations: [], contents: new Map(), entryOwnedPaths: [] };
     if (stop === null) {
@@ -149,12 +160,13 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
       .filter(entry => !entry.report.version.supported && !REPORT_ONLY_WHEN_UNSUPPORTED.has(entry.report.harness))
       .map(entry => entry.report.harness);
     const digest = planDigest(command, snapshot, operations, modes, unsupportedHarnesses);
-    return { snapshot, stop, operations, diagnostics,
+    return { snapshot, stop, operations, diagnostics, recovery: null,
       executable: { command, planDigest: digest, operations, contents, modes, unsupportedHarnesses, entryOwnedPaths } };
   }
 
   async function lifecycle(command: LifecycleCommand, lifecycleOptions: LifecycleOptions): Promise<SetupResult> {
-    const { snapshot, stop, operations, diagnostics, executable } = await prepare(command);
+    const { snapshot, stop, operations, diagnostics, executable, recovery } = await prepare(command);
+    if (recovery !== null) return await recover(command, lifecycleOptions, snapshot, executable.planDigest, recovery);
     if (stop !== null) return result(command, stop, snapshot, [], null, NOT_REQUIRED, diagnostics);
     if (operations.length === 0) {
       return result(command, command === 'setup' ? statusState(snapshot) : settledRemoveState(snapshot), snapshot,
@@ -166,6 +178,28 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
       return result(command, 'confirmation_required', snapshot, operations, digest,
         confirmationRequest(command, snapshot, operations, digest));
     }
+    return await confirmed(command, digest, snapshot);
+  }
+
+  async function recover(
+    command: LifecycleCommand, lifecycleOptions: LifecycleOptions, snapshot: Snapshot, digest: Sha256Digest,
+    journal: SetupJournalSummary,
+  ): Promise<SetupResult> {
+    // An unreadable or newer journal has no recovery this build can prove, so nothing is offered.
+    if (journal.kind !== 'recoverable') {
+      return result(command, 'recovery_required', snapshot, [], null, NOT_REQUIRED,
+        [...snapshot.diagnostics, recoveryDiagnostic(snapshot, journal)]);
+    }
+    if (lifecycleOptions.dryRun || lifecycleOptions.confirm !== digest) {
+      return result(command, 'confirmation_required', snapshot, [], digest,
+        recoveryRequest(command, snapshot, journal, digest), [...snapshot.diagnostics, { code: 'recovery_available',
+          severity: 'warning', message: `An interrupted \`khala ${journal.command}\` must be recovered before anything `
+            + `else changes. Relay this recovery plan; once approved, run \`khala ${command} --confirm ${digest}\`.` }]);
+    }
+    return await confirmed(command, digest, snapshot);
+  }
+
+  async function confirmed(command: LifecycleCommand, digest: Sha256Digest, snapshot: Snapshot): Promise<SetupResult> {
     // Any throw once execution may have started, including re-inspection afterwards, leaves the
     // final state unproven.
     try {
@@ -188,6 +222,15 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
         const fresh = await lifecycle(command, { dryRun: false, confirm: null });
         return { ...fresh, diagnostics: [...fresh.diagnostics, { code: 'plan_changed', severity: 'warning',
           message: 'The plan changed since it was approved; nothing was applied. Relay this plan and confirm it again.' }] };
+      }
+      case 'recovered': {
+        // Recovery applied nothing new; the fresh plan (or settled state) is what comes next.
+        const fresh = await lifecycle(command, { dryRun: false, confirm: null });
+        const done = outcome.resolution === 'finalized' ? 'finished committing' : 'was rolled back';
+        const next = fresh.state === 'confirmation_required'
+          ? `Relay this plan to continue \`khala ${command}\`.` : 'Nothing else is needed.';
+        return { ...fresh, changed: true, diagnostics: [...fresh.diagnostics, { code: 'recovered', severity: 'info',
+          message: `The interrupted setup transaction ${done}. ${next}` }] };
       }
       case 'committed': {
         const after = await observe(options.environment(), adapters, payload);
@@ -220,8 +263,9 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
     async configuration() {
       const snapshot = await observe(options.environment(), adapters, payload);
       const state = statusState(snapshot);
+      const recovery = snapshot.journal === null ? [] : [recoveryDiagnostic(snapshot, summarizeSetupJournal(snapshot.journal))];
       return result('status', state, snapshot, [], null, NOT_REQUIRED,
-        [...snapshot.diagnostics, ...fallbackDiagnostics(state, snapshot.fallbackRoute)]);
+        [...snapshot.diagnostics, ...recovery, ...fallbackDiagnostics(state, snapshot.fallbackRoute)]);
     },
     lifecycle,
   });
@@ -249,8 +293,9 @@ async function observe(
     HOME: environment.home, XDG_CONFIG_HOME: environment.xdgConfigHome,
     XDG_DATA_HOME: environment.xdgDataHome, XDG_STATE_HOME: environment.xdgStateHome,
   });
-  // Status only needs to know a journal exists; its contents are never read into a result.
-  const recovery = (await environment.probe.readFile(paths.transactionPath)) !== null;
+  // Only a decoded summary of the journal (its command, operations, and paths) reaches a result.
+  const journal = await environment.probe.readFile(paths.transactionPath);
+  const recovery = journal !== null;
   const observed: Observed[] = [];
   let diagnostics: SetupDiagnostic[] = [];
   for (const adapter of adapters) {
@@ -303,7 +348,7 @@ async function observe(
   diagnostics = withDiagnostics(diagnostics, installer.diagnostics);
   const khala = await environment.probe.resolveExecutable('khala');
   return {
-    environment, observed: installer.observed, diagnostics, recovery, fallbackRoute: khala === null ? null : 'khala read',
+    environment, observed: installer.observed, diagnostics, recovery, journal, fallbackRoute: khala === null ? null : 'khala read',
     installer: installer.targets, installerEntries: installer.entries, installerCurrent: installer.current,
   };
 }
@@ -583,6 +628,24 @@ function harnessState(entry: Observed): SetupState | null {
   return 'ready';
 }
 
+/** The next step an agent relays for an interrupted transaction's journal. */
+function recoveryDiagnostic(snapshot: Snapshot, journal: SetupJournalSummary): SetupDiagnostic {
+  const { transactionPath } = resolveSetupPaths({
+    HOME: snapshot.environment.home, XDG_STATE_HOME: snapshot.environment.xdgStateHome,
+  });
+  switch (journal.kind) {
+    case 'recoverable':
+      return { code: 'recovery_pending', severity: 'error', message: `An interrupted \`khala ${journal.command}\` `
+        + 'left a transaction to recover. Run `khala setup` or `khala remove` and relay the recovery plan it returns.' };
+    case 'unsupported':
+      return { code: 'journal_unsupported', severity: 'error', message: `${transactionPath} was written by a newer `
+        + 'Khala; recover it with that version. This build changes nothing while it exists.' };
+    case 'unreadable':
+      return { code: 'journal_corrupt', severity: 'error', message: `${transactionPath} is unreadable, so what the `
+        + 'interrupted transaction changed cannot be proven. Nothing was changed; the journal and its backups need manual review.' };
+  }
+}
+
 function statusState(snapshot: Snapshot): SetupState {
   if (snapshot.recovery) return 'recovery_required';
   const states = new Set(snapshot.observed.map(harnessState).filter(state => state !== null));
@@ -657,12 +720,23 @@ function planDigest(
   command: LifecycleCommand, snapshot: Snapshot, operations: readonly SetupOperation[],
   modes: ReadonlyMap<string, number>, unsupportedHarnesses: readonly HarnessId[],
 ): Sha256Digest {
-  const input = canonical({
+  return digestOf({
     planner: SETUP_PLANNER_ID, schema: SETUP_SCHEMA_VERSION, command,
     harnesses: snapshot.observed.map(entry => entry.report), operations,
     modes: [...modes].sort(([a], [b]) => compareText(a, b)), unsupportedHarnesses,
   });
-  return `sha256:${createHash('sha256').update(input).digest('hex')}`;
+}
+
+/**
+ * A recovery plan's digest binds the command and the exact journal bytes, so an approval
+ * recovers only the transaction the person was shown and never matches an ordinary plan.
+ */
+function recoveryDigest(command: LifecycleCommand, journal: Uint8Array): Sha256Digest {
+  return digestOf({ planner: SETUP_PLANNER_ID, schema: SETUP_SCHEMA_VERSION, command, recovery: sha256(journal) });
+}
+
+function digestOf(value: unknown): Sha256Digest {
+  return `sha256:${createHash('sha256').update(canonical(value)).digest('hex')}`;
 }
 
 const ACTIONS: Readonly<Record<SetupOperation['type'], ConfirmationAction['action']>> = {
@@ -670,30 +744,39 @@ const ACTIONS: Readonly<Record<SetupOperation['type'], ConfirmationAction['actio
   config_entry_set: 'configure', config_entry_remove: 'configure', vendor_command: 'configure',
 };
 
-function confirmationRequest(
-  command: LifecycleCommand, snapshot: Snapshot, operations: readonly SetupOperation[], digest: Sha256Digest,
-): SetupResult['confirmation'] {
+/** The harnesses, deduplicated component actions, and paths a set of operations touches. */
+function footprint(
+  operations: readonly SetupOperation[], actionOf: (operation: SetupOperation) => ConfirmationAction['action'],
+): Readonly<{ harnesses: HarnessId[]; actions: ConfirmationAction[]; paths: string[] }> {
   const actions = new Map<string, ConfirmationAction>();
   const paths = new Set<string>();
   for (const operation of operations) {
-    const action = { harness: operation.harness, component: operation.component, action: ACTIONS[operation.type] };
+    const action = { harness: operation.harness, component: operation.component, action: actionOf(operation) };
     actions.set(`${action.harness}\0${action.component}\0${action.action}`, action);
     paths.add(operation.path);
     if (operation.type === 'vendor_command') for (const writable of operation.writablePaths) paths.add(writable);
   }
   const harnesses = HARNESS_IDS.filter(harness => operations.some(operation => operation.harness === harness));
-  const backupsRoot = resolveSetupPaths({
-    HOME: snapshot.environment.home, XDG_STATE_HOME: snapshot.environment.xdgStateHome,
-  }).backupsRoot;
+  return { harnesses, actions: [...actions.values()], paths: [...paths].sort(compareText) };
+}
+
+function backupsRootOf(snapshot: Snapshot): string {
+  return resolveSetupPaths({ HOME: snapshot.environment.home, XDG_STATE_HOME: snapshot.environment.xdgStateHome }).backupsRoot;
+}
+
+function confirmationRequest(
+  command: LifecycleCommand, snapshot: Snapshot, operations: readonly SetupOperation[], digest: Sha256Digest,
+): SetupResult['confirmation'] {
+  const { harnesses, actions, paths } = footprint(operations, operation => ACTIONS[operation.type]);
   const verb = command === 'setup' ? 'install and configure Khala' : 'remove Khala';
   return {
     required: true,
     confirmed: false,
     command,
     harnesses,
-    actions: [...actions.values()],
-    paths: [...paths].sort(compareText),
-    backup: `Before any existing file is changed or deleted, a byte-exact copy is saved under ${backupsRoot}; `
+    actions,
+    paths,
+    backup: `Before any existing file is changed or deleted, a byte-exact copy is saved under ${backupsRootOf(snapshot)}; `
       + 'removal restores it. A file you changed since setup is never overwritten.',
     // No adapter yet proves whether a running session picks the change up, so the honest claim is unknown.
     sessionEffect: 'unknown',
@@ -701,6 +784,40 @@ function confirmationRequest(
     planDigest: digest,
     request: `Approve ${operations.length} change(s) to ${verb} for ${harnesses.join(', ')}? `
       + `If approved, run \`khala ${command} --confirm ${digest}\`.`,
+  };
+}
+
+/**
+ * The recovery plan for an interrupted transaction. A committed journal is finished, which
+ * keeps its applied changes. Any other is rolled back, which restores every path it started.
+ */
+function recoveryRequest(
+  command: LifecycleCommand, snapshot: Snapshot, journal: Extract<SetupJournalSummary, { kind: 'recoverable' }>,
+  digest: Sha256Digest,
+): SetupResult['confirmation'] {
+  const finishing = journal.state === 'committed';
+  const { harnesses, actions, paths } = footprint(journal.started, operation => (finishing ? ACTIONS[operation.type] : 'restore'));
+  const count = journal.started.length;
+  const interrupted = `the interrupted \`khala ${journal.command}\``;
+  const change = finishing ? `finish ${interrupted}, keeping its ${count} applied change(s)`
+    : count === 0 ? `discard ${interrupted}, which changed no file yet`
+      : `roll back the ${count} change(s) ${interrupted} started`;
+  return {
+    required: true,
+    confirmed: false,
+    command,
+    harnesses,
+    actions,
+    paths,
+    backup: finishing
+      ? `The byte-exact copies under ${backupsRootOf(snapshot)} are kept for a later removal.`
+      : `Each changed file is restored from its byte-exact copy under ${backupsRootOf(snapshot)}. `
+        + 'A file that no longer holds what the interrupted run wrote is preserved, never overwritten.',
+    sessionEffect: 'unknown',
+    fallbackRoute: snapshot.fallbackRoute,
+    planDigest: digest,
+    request: `Approve recovery: ${change}${harnesses.length === 0 ? '' : ` for ${harnesses.join(', ')}`}? `
+      + `If approved, run \`khala ${command} --confirm ${digest}\`, then relay the plan it returns.`,
   };
 }
 

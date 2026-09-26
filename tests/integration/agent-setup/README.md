@@ -37,17 +37,16 @@ Unit coverage and per-mutation fault injection stay beside the setup modules
 | Upgrade | Setup with the package, upgrade to a repacked `0.2.0-acceptance.1`, then remove. The result is the pre-Khala bytes, not the v1 postimage. |
 | Concurrency | A fake `codex --version` holds the first setup inside its lock (the executor replans there). A second confirmed setup gets `conflict`/`setup_busy` (exit 3) and writes nothing. |
 | Kill while locked | A setup SIGKILLed while holding the lock leaves no half-done harness. The next confirmed setup reclaims the dead holder's lock and applies. |
-| Kill mid-transaction | A setup SIGKILLed once its journal exists leaves no torn file: every planned path is its preimage or its postimage. `status --check`, `setup`, `remove`, and a confirmed setup all refuse with `recovery_required` (exit 4) and write nothing. |
+| Kill mid-transaction | A setup SIGKILLed once its journal exists leaves no torn file: every planned path is its preimage or its postimage. `status --check` exits 4 with `recovery_required`. `setup`, `remove`, a dry run, and a setup confirmed with the interrupted digest each return a recovery plan (exit 5, `recovery_available`) and write nothing. Confirming that plan recovers the journal. The machine then settles, possibly after one more confirmed removal, back to every pre-Khala byte and absence with no journal left. |
 | Descriptor discovery | The Claude hook entry (`khala claude <op>`, run through the staged launcher) reaches whichever loopback server the current `$XDG_STATE_HOME/khala/internal/active.json` names, with that launch's credential, after the descriptor moves. No entry is rewritten. |
 | Secret redaction | Sentinel descriptor ports and tokens are rotated mid-run. They never appear in harness config, fake-harness argv, plans, the manifest, backups, or any output. Seeded user secrets never appear in output. Rotating the descriptor plans nothing and rewrites no entry. |
 
-Three cases are `todo`. They run and report, but they do not fail the suite until
+Two cases are `todo`. They run and report, but they do not fail the suite until
 their fixes land:
 
 | Case | Gap |
 | --- | --- |
 | Absent harnesses are reported | [#388](https://github.com/aiur-team/khala/issues/388): results omit harnesses with no executable. |
-| A crash mid-transaction is recovered | [#385](https://github.com/aiur-team/khala/issues/385): with a journal present, no command offers a plan, so the executor's recovery never runs. |
 | The Codex and OpenCode MCP entry resolves a moved descriptor | [#386](https://github.com/aiur-team/khala/issues/386): outside Claude mode, the packaged `mcp-serve` never reads `active.json` and exits `not_connected`. |
 
 When a fix lands, remove the `todo` option so the case gates the release.
@@ -63,7 +62,7 @@ source). The named test then failed:
 | `transaction.ts` `nextManifest`: take the baseline from the current preimage instead of the previous entry | `setup v1 -> upgrade v2 -> remove restores the pre-Khala bytes …` |
 | `transaction.ts` `acquireLock`: treat a live holder as stale | `a second mutation while one holds the lock gets a stable busy result …` |
 | `plan.ts` `refusalState` and `transaction.ts` drift check: allow removal over drift | `drift refuses the whole removal …` |
-| `plan.ts` `prepare`: ignore an existing journal | `a crash mid-transaction safely refuses …` |
+| `plan.ts` `prepare`: ignore an existing journal | `a crash mid-transaction leaves no torn file …` |
 | `cli/main.ts`: read the Claude descriptor from `$XDG_DATA_HOME` instead of `$XDG_STATE_HOME` | `the Claude hook entry re-reads a moved runtime descriptor …` |
 
 Reproduce any row by making the edit and running

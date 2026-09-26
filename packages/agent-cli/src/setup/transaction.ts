@@ -1,6 +1,7 @@
-// The setup executor. A confirmed setup/remove takes an exclusive process lock, recovers
-// any earlier interrupted transaction, replans under the lock, and proceeds only when the
-// fresh plan digest equals the confirmed one. It then checks every precondition before the
+// The setup executor. A confirmed setup/remove takes an exclusive process lock, replans
+// under it, and proceeds only when the fresh plan digest equals the confirmed one. While an
+// interrupted transaction's journal exists, that plan is the recovery plan, whose digest
+// covers the journal, and the executor recovers the journal and applies nothing else. It then checks every precondition before the
 // first write, persists byte-exact backups and a `prepared` write-ahead journal, applies
 // the stable-ordered operations one at a time (advancing the journal around each), verifies
 // every postimage, and atomically publishes the next manifest. Any failure reverses the
@@ -26,6 +27,8 @@ export const JOURNAL_FILE = 'transaction.v1.json';
 const LOCK_FILE = 'lock';
 const BACKUPS = 'backups';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** The temporary `ConfinedFilesystem.replace` writes beside a target before renaming it. */
+const TEMPORARY = /^\.khala-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/;
 
 export type SetupRoots = Readonly<{
   home: string; xdgConfigHome: string; xdgDataHome: string; xdgStateHome: string;
@@ -101,6 +104,8 @@ export type ExecutionOutcome =
   | Readonly<{ kind: 'committed'; changed: boolean; plan: ExecutablePlan; operations: readonly SetupOperationReport[] }>
   | Readonly<{ kind: 'busy'; diagnostics: readonly SetupDiagnostic[] }>
   | Readonly<{ kind: 'replanned'; plan: ExecutablePlan }>
+  /** An approved recovery finished an interrupted transaction's commit, or rolled it back exactly. */
+  | Readonly<{ kind: 'recovered'; resolution: 'finalized' | 'rolled_back'; operations: readonly SetupOperationReport[] }>
   | Readonly<{ kind: 'refused'; state: 'drifted' | 'conflict' | 'unsupported'; diagnostics: readonly SetupDiagnostic[] }>
   | Readonly<{ kind: 'rolled_back'; operations: readonly SetupOperationReport[]; diagnostics: readonly SetupDiagnostic[] }>
   | Readonly<{ kind: 'recovery_required'; operations: readonly SetupOperationReport[]; diagnostics: readonly SetupDiagnostic[] }>;
@@ -234,6 +239,31 @@ function decodeJournal(bytes: Uint8Array): Journal {
   });
   return { v: JOURNAL_SCHEMA_VERSION, id: o.id as string, command: o.command as Journal['command'], planDigest,
     state: o.state as JournalState, operations, manifest };
+}
+
+/** What a journal says about its interrupted transaction, for the planner's recovery plan. */
+export type SetupJournalSummary =
+  | Readonly<{ kind: 'unreadable' | 'unsupported' }>
+  | Readonly<{
+    kind: 'recoverable';
+    /** The interrupted command. */
+    command: 'setup' | 'remove';
+    /** A `committed` journal is finalized; any other is rolled back. */
+    state: JournalState;
+    /** Operations the transaction started, in plan order; rollback touches only their paths. */
+    started: readonly SetupOperation[];
+  }>;
+
+export function summarizeSetupJournal(bytes: Uint8Array): SetupJournalSummary {
+  let journal: Journal;
+  try {
+    journal = decodeJournal(bytes);
+  } catch (error) {
+    if (error instanceof JournalError) return { kind: error.unsupportedVersion ? 'unsupported' : 'unreadable' };
+    throw error;
+  }
+  return { kind: 'recoverable', command: journal.command, state: journal.state,
+    started: journal.operations.filter(entry => entry.status !== 'planned').map(entry => entry.operation) };
 }
 
 const encodeJson = (value: unknown) => new TextEncoder().encode(JSON.stringify(value) + '\n');
@@ -385,10 +415,8 @@ class Executor {
 
   // --- recovery ---------------------------------------------------------------
 
-  /** Finalizes a committed journal or rolls back an interrupted one. `null` means clean. */
-  async recover(): Promise<ExecutionOutcome | null> {
-    const file = await this.fs.observe(this.paths.journal);
-    if (file === null) return null;
+  /** Finalizes a committed journal or rolls back an interrupted one. */
+  async recover(file: FileObservation): Promise<ExecutionOutcome> {
     let journal: Journal;
     try {
       journal = decodeJournal(file.bytes);
@@ -400,10 +428,32 @@ class Executor {
     }
     if (journal.state === 'committed') {
       await this.finalize(journal);
-      return null;
+      await this.sweepTemporaries(journal);
+      const applied = journal.operations.map(({ operation }) => operation);
+      return { kind: 'recovered', resolution: 'finalized', operations: report(journal, applied, () => 'applied') };
     }
     const outcome = await this.rollback(journal, [], false);
-    return outcome.kind === 'rolled_back' ? null : outcome;
+    if (outcome.kind !== 'rolled_back') return outcome;
+    await this.sweepTemporaries(journal);
+    return { kind: 'recovered', resolution: 'rolled_back', operations: outcome.operations };
+  }
+
+  /**
+   * A write killed between creating its temporary and renaming it leaves `.khala-<uuid>.tmp`
+   * beside its target. Only the crashed transaction wrote beside the state files and its
+   * journaled targets, so once it is recovered those temporaries are its garbage.
+   */
+  async sweepTemporaries(journal: Journal): Promise<void> {
+    const directories = new Set([this.paths.stateDirectory,
+      ...journal.operations.flatMap(({ targets }) => targets.map(target => path.dirname(target.path)))]);
+    for (const directory of directories) {
+      for (const name of (await this.fs.list(directory).catch(() => null)) ?? []) {
+        if (!TEMPORARY.test(name)) continue;
+        const target = path.join(directory, name);
+        const file = await this.fs.observe(target).catch(() => null);
+        if (file !== null) await this.fs.remove(target, file.hash).catch(() => undefined);
+      }
+    }
   }
 
   async finalize(journal: Journal): Promise<void> {
@@ -672,8 +722,14 @@ class Executor {
       return { kind: 'busy', diagnostics: [diagnostic('setup_busy', 'Another Khala setup or remove is running; retry after it finishes.')] };
     }
     try {
-      const recovered = await this.recover();
-      if (recovered !== null) return recovered;
+      const journal = await this.fs.observe(this.paths.journal);
+      if (journal !== null) {
+        // Recovery restores files too, so it runs only when the person approved the recovery
+        // plan for this exact journal. Any other digest gets that plan back to relay.
+        const plan = await this.options.replan(await this.readManifest().catch(() => null));
+        if (plan.planDigest !== this.options.confirmedDigest) return { kind: 'replanned', plan };
+        return await this.recover(journal);
+      }
       let manifest: SetupManifest | null;
       try {
         manifest = await this.readManifest();

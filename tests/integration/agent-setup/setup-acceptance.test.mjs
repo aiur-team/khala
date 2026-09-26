@@ -358,6 +358,7 @@ describe('concurrency and interruption', () => {
     for (let attempt = 0; attempt < 10; attempt++) {
       const machine = createMachine(ALL);
       seed(machine);
+      const baseline = snapshot(machine.home);
       const journal = path.join(machine.home, '.local', 'state', 'khala', 'setup', 'transaction.v1.json');
       const plan = khala(v1, machine, ['setup']);
       const run = khalaAsync(v1, machine, ['setup', '--confirm', plan.json.planDigest]);
@@ -367,12 +368,12 @@ describe('concurrency and interruption', () => {
         await new Promise(resolve => setImmediate(resolve));
       }
       await run.done;
-      if (killed && fs.existsSync(journal)) return { machine, plan };
+      if (killed && fs.existsSync(journal)) return { machine, plan, baseline };
     }
     throw new Error('never interrupted a setup mid-transaction in 10 attempts');
   }
 
-  test('a crash mid-transaction safely refuses: no torn file, no further writes, CI sees exit 4', async () => {
+  test('a crash mid-transaction leaves no torn file, CI sees exit 4, and nothing recovers unconfirmed', async () => {
     const { machine, plan } = await killMidTransaction();
     for (const operation of plan.json.operations) {
       if (!fs.existsSync(operation.path)) continue;
@@ -381,20 +382,36 @@ describe('concurrency and interruption', () => {
       assert.ok(hash === operation.postimage || hash === preimage, `${operation.path} is neither its preimage nor its postimage`);
     }
     const frozen = snapshot(machine.home, { mtimes: true });
-    for (const args of [['status', '--check'], ['setup'], ['remove'], ['setup', '--confirm', plan.json.planDigest]]) {
+    const check = khala(v1, machine, ['status', '--check']);
+    assert.equal(check.status, 4, check.stdout);
+    assert.equal(state(check), 'recovery_required');
+    // Every mutating command offers the same kind of relayable recovery plan and recovers
+    // nothing, including one confirmed with the interrupted setup's own digest.
+    for (const args of [['setup'], ['remove'], ['remove', '--dry-run'], ['setup', '--confirm', plan.json.planDigest]]) {
       const result = khala(v1, machine, args);
-      assert.equal(result.status, 4, `${args.join(' ')}: ${result.stdout}`);
-      assert.equal(state(result), 'recovery_required');
+      assert.equal(result.status, 5, `${args.join(' ')}: ${result.stdout}`);
+      assert.equal(state(result), 'confirmation_required');
+      assert.notEqual(result.json.planDigest, plan.json.planDigest);
+      assert.ok(result.json.diagnostics.some(item => item.code === 'recovery_available'), result.stdout);
     }
     assert.equal(khala(v1, machine, ['status']).status, 0, 'bare status stays informational');
     assert.deepEqual(snapshot(machine.home, { mtimes: true }), frozen);
   });
 
-  test('a crash mid-transaction is recovered by the next confirmed command', { todo: 'https://github.com/aiur-team/khala/issues/385' }, async () => {
-    const { machine } = await killMidTransaction();
+  test('a crash mid-transaction is recovered by the next confirmed command', async () => {
+    const { machine, baseline } = await killMidTransaction();
     const recovery = khala(v1, machine, ['remove']);
     assert.notEqual(recovery.json.planDigest, null, 'a recovery plan the agent can relay');
-    assert.equal(khala(v1, machine, ['remove', '--confirm', recovery.json.planDigest]).status, 0);
+    assert.match(recovery.json.confirmation.request, new RegExp(`khala remove --confirm ${recovery.json.planDigest}`));
+    let next = khala(v1, machine, ['remove', '--confirm', recovery.json.planDigest]);
+    assert.ok(next.json.diagnostics.some(item => item.code === 'recovered'), next.stdout);
+    // A kill after the commit point finishes that setup, which then needs its own removal.
+    if (next.status === 5) next = khala(v1, machine, ['remove', '--confirm', next.json.planDigest]);
+    assert.equal(next.status, 0, next.stdout);
+    const status = khala(v1, machine, ['status', '--check']);
+    assert.notEqual(status.status, 4, status.stdout);
+    assert.ok(!fs.existsSync(path.join(machine.home, '.local', 'state', 'khala', 'setup', 'transaction.v1.json')));
+    assertRestored(machine, baseline);
   });
 });
 

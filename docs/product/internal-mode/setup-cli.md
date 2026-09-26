@@ -208,9 +208,11 @@ Before the first mutation, the executor durably publishes a `prepared` journal
 with all preconditions and backup references. It durably advances the journal
 after each applied operation, records `rollback_failed` when exact recovery
 cannot be proven, and removes it only after manifest commit or a proven complete
-rollback. Every command first recovers a prepared/partially-applied journal;
-read-only status may instead report `recovery_required`. A committed journal is
-safe to finalize, while an unknown state or newer schema is a safe refusal.
+rollback. While a journal exists, `setup` and `remove` plan only its recovery:
+a confirmable plan whose digest covers the journal bytes. Once that plan is
+confirmed, the executor recovers under the lock and then relays the next plan.
+Read-only status reports `recovery_required`. A committed journal is safe to
+finalize, while an unknown state or newer schema is a safe refusal.
 
 Idempotency is byte-level: a second setup on ready state has `changed: false`,
 an empty operation list, and changes neither contents nor mtimes. Command exit
