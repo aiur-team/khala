@@ -13,7 +13,10 @@ export const PROVEN_ROUTES = [
   'opencode-plugin-session-idle-prompt',
   'opencode-plugin-khala-read',
 ];
-const FORBIDDEN_FLAGS = ['--dangerously-skip-permissions', '--yolo', '--auto-approve', '--pure'];
+// Decisions 33 and 43: default trust settings. An agent-launched run is admissible only when it says so.
+export const RUN_KINDS = ['user-started-tui', 'agent-launched-default-settings'];
+const BYPASS_FLAG = /--dangerously[\w-]*|--yolo\b|--auto-approve\b/;
+const SESSION_ID = /^ses_[A-Za-z0-9]{6,}$/;
 
 /** case name -> the redacted result it must record. */
 export const REQUIRED_CASES = {
@@ -60,16 +63,21 @@ export function assess(report) {
   const fail = message => failures.push(message);
 
   if (report?.schemaVersion !== 1) fail('schemaVersion must be 1');
-  if (report?.startedBy !== 'user-started-tui') fail('the TUI must be user-started (an agent-launched TUI is not this proof)');
+  if (!RUN_KINDS.includes(report?.startedBy)) fail(`startedBy must honestly label the run as one of ${RUN_KINDS.join(', ')}`);
+  if (!SESSION_ID.test(String(report?.sessionId ?? ''))) fail('the OpenCode session ID must be recorded');
   if (report?.openCodeVersion !== PROVEN_VERSION) fail(`OpenCode must be the exact ${PROVEN_VERSION}`);
   if (!String(report?.provider ?? '').startsWith('deepseek/')) fail('the DeepSeek provider/model must be recorded');
   if (!PROVEN_ROUTES.includes(report?.route)) fail('route must be one of the recorded plugin routes');
   if (report?.surface !== 'in_process_plugin') fail('surface must be the in-process plugin');
   if (report?.trustSettings !== 'default') fail('the proof must use default trust settings');
   if (!Array.isArray(report?.trustBypassFlagsUsed) || report.trustBypassFlagsUsed.length !== 0) fail('no trust bypass flag may be used');
-  for (const launch of report?.launches ?? []) {
-    for (const flag of FORBIDDEN_FLAGS) if (String(launch.command).includes(flag)) fail(`launch uses ${flag}`);
-    if (/\bopencode\s+(run|serve|web)\b/.test(String(launch.command))) fail('launch must be the interactive TUI');
+  if (!Array.isArray(report?.launches) || report.launches.length === 0) fail('launches must record the exact launch command');
+  for (const launch of Array.isArray(report?.launches) ? report.launches : []) {
+    const command = String(launch?.command ?? '');
+    if (command.trim() === '') fail('every launch must record its exact command');
+    const bypass = command.match(BYPASS_FLAG);
+    if (bypass) fail(`launch uses ${bypass[0]}`);
+    if (/\bopencode\s+(run|serve|web)\b/.test(command)) fail('launch must be the interactive TUI');
   }
   if (report?.hostedSubstitute === true) fail('hosted proof cannot substitute for the TUI');
   if (report?.hostSideLedger !== false) fail('no host-side duplicate ledger may exist');
@@ -85,7 +93,9 @@ export function assess(report) {
     for (const field of Object.keys(observed)) if (!ALLOWED_CASE_FIELDS.has(field)) fail(`${name}: field ${field} is not a redacted result`);
   }
 
-  for (const hit of scanForSecrets(report)) fail(`secret scan: ${hit}`);
+  // A session ID is a correlation handle, not token material.
+  const { sessionId: _sessionId, ...scanned } = report ?? {};
+  for (const hit of scanForSecrets(scanned)) fail(`secret scan: ${hit}`);
 
   // Unproven pairs stay unknown; only a fully passing report may raise the ceiling.
   const proved = failures.length === 0;

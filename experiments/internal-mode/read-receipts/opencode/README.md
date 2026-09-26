@@ -23,9 +23,14 @@ real inbox and the real connector receipt ledger:
 | duplicate token | no second receipt |
 | wrong token, other binding, no credential, stale generation | refused or ignored, no receipt |
 | plugin restart before the next call | token retained, acknowledged exactly once |
+| `khala_read` and `khala_send` racing the same token | serialized: one receipt |
+| recording failure on the acknowledging call | fails closed: no receipt, same batch and token replayed, the retry acknowledges once |
+| direct competing inbox consumer (second listener) | `listener_busy`, no receipt |
+| lost token, or an older token against a later batch | same token re-returned, never regenerated; the older token acknowledges nothing |
 
 Wrong-implementation check: with the bridge's `acknowledgeToken` forwarding
-removed (`#readForTool` in `bridge.ts`), six of these nine tests fail.
+removed (`#readForTool` in `bridge.ts`), ten of these thirteen tests fail; with the
+inbox's `#recordAcknowledgement` call removed, the same ten fail.
 
 ```sh
 pnpm --filter @aiur/khala exec vitest run --config ../../vitest.config.ts src/opencode/receipts.test.ts
@@ -33,16 +38,18 @@ pnpm --filter @aiur/khala exec vitest run --config ../../vitest.config.ts src/op
 
 ## What is not yet proven
 
-The offline tests do not establish support for a user-started OpenCode TUI. The
-retained #180 evidence was agent-launched with default settings, so the
-`batch_token_next_call` claim for OpenCode `1.17.10` + DeepSeek stays unproven for
-a person-started session until a run is retained here as `evidence/live-run.json`.
-Until then treat the pair as `unknown` for the person-started case.
+No live run is retained by this change, so it advertises no capability change.
+Main already advertises `batch_token_next_call` for OpenCode `1.17.10`, which comes
+from #180's agent-launched, default-settings TUI run. Under decisions 33 and 43 the
+Executor runs the live OpenCode + DeepSeek run later and retains it here as
+`evidence/live-run.json`; the offline tests above do not replace it.
 
-`verify.mjs` defines the retained-report contract: user-started TUI (default trust
-settings, no bypass flag, not `opencode run`/`serve`/`web`), exact OpenCode
-version, DeepSeek provider/model, a recorded plugin route, and the ten
-redacted cases in `REQUIRED_CASES`. Artifacts carry only kebab-case correlation
+`verify.mjs` defines the retained-report contract: a run honestly labelled
+`user-started-tui` or `agent-launched-default-settings`, default trust settings (any
+`--dangerously*`, `--yolo` or `--auto-approve` flag fails; `--pure` is allowed), the
+exact launch command(s) in a non-empty `launches`, the OpenCode session ID, exact
+OpenCode version, DeepSeek provider/model, a recorded plugin route, not
+`opencode run`/`serve`/`web`, and the ten redacted cases in `REQUIRED_CASES`. Artifacts carry only kebab-case correlation
 labels and presence/equality results; the scan rejects token bytes, digests and any
 token-named string field.
 
@@ -51,5 +58,5 @@ node --test test/*.test.mjs        # mutation tests for the verifier
 node verify.mjs evidence/live-run.json
 ```
 
-A live run needs a person to start the TUI, join a channel, and let DeepSeek make
-the next Khala call; it must not be simulated by an agent-launched session.
+A live run needs a real OpenCode TUI, a joined channel, and DeepSeek making the
+next Khala call, with its `startedBy` label stating truthfully who launched it.

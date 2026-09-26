@@ -8,6 +8,7 @@ function passing() {
   return structuredClone({
     schemaVersion: 1,
     startedBy: 'user-started-tui',
+    sessionId: 'ses_1a2b3c4d5e6f7g8h9i0j1k2l3m',
     openCodeVersion: '1.17.10',
     provider: 'deepseek/deepseek-flash',
     route: 'opencode-plugin-idle-watcher-prompt',
@@ -56,8 +57,27 @@ test('a duplicate token that creates a second receipt fails', () => {
   rejects(report => { report.cases.duplicateToken.receiptCount = 2; }, /duplicateToken/);
 });
 
-test('an agent-launched, bypassed, hosted or wrong-version run cannot prove', () => {
-  rejects(report => { report.startedBy = 'agent-launched-default-settings'; }, /user-started/);
+test('an honestly labelled agent-launched default-settings run proves', () => {
+  const report = passing();
+  report.startedBy = 'agent-launched-default-settings';
+  report.launches = [{ command: 'opencode --pure' }];
+  assert.deepEqual(assess(report), { proved: true, failures: [] });
+});
+
+test('the launch command and session ID are required', () => {
+  rejects(report => { delete report.launches; }, /launch command/);
+  rejects(report => { report.launches = []; }, /launch command/);
+  rejects(report => { report.launches = [{ command: '' }]; }, /exact command/);
+  rejects(report => { delete report.sessionId; }, /session ID/);
+  rejects(report => { report.startedBy = 'agent-launched'; }, /honestly label/);
+});
+
+test('any --dangerously* flag is a trust bypass', () => {
+  rejects(report => { report.launches = [{ command: 'opencode --dangerously-skip-permissions' }]; }, /--dangerously-skip-permissions/);
+  rejects(report => { report.launches = [{ command: 'opencode --dangerously-anything' }]; }, /--dangerously-anything/);
+});
+
+test('a bypassed, hosted or wrong-version run cannot prove', () => {
   rejects(report => { report.openCodeVersion = '1.18.0'; }, /exact 1\.17\.10/);
   rejects(report => { report.route = 'opencode-plugin-busy-prompt-async'; }, /route/);
   rejects(report => { report.trustBypassFlagsUsed = ['--yolo']; }, /bypass/);

@@ -101,11 +101,19 @@ async function release(w: World, inbox: BatchInbox, binding: SessionBinding, rel
 type Mode = 'steer' | 'sync' | 'async';
 
 /** A bridge over a real inbox whose acknowledgement hook is bound to `authenticated`, as the transport binds it. */
-async function tui(w: World, binding: SessionBinding, authenticated: SessionBinding | null = binding, mode: Mode = 'sync') {
+async function tui(
+  w: World, binding: SessionBinding, authenticated: SessionBinding | null = binding, mode: Mode = 'sync',
+  failRecordings = 0,
+) {
+  let remainingFailures = failRecordings;
   const inbox = await openInbox({
     stateDirectory: path.join(w.root, 'inbox'), bindingId: binding.bindingId, generation: binding.generation,
     maxPayloadBytes: 4096, maxSelectionEvents: 8,
     recordAcknowledgement: async acknowledgement => {
+      if (remainingFailures > 0) {
+        remainingFailures -= 1;
+        throw new CliError('storage_failed');
+      }
       const result = await acceptBatchAcknowledgement(
         w.recorder,
         authenticated === null ? null : { bindingId: authenticated.bindingId, generation: authenticated.generation },
@@ -276,5 +284,70 @@ describe('OpenCode next-call acknowledgement', () => {
 
     await t.bridge.read({ sessionID: SESSION, ackBatchToken: token });
     expect(await acknowledged(w, ['release_1'])).toHaveLength(1);
+  });
+
+  it('serialized plugin calls racing the same token record one receipt', async () => {
+    const w = await world();
+    const t = await tui(w, BINDING, BINDING, 'async');
+    await release(w, t.inbox, BINDING, 'release_1');
+    const token = tokenOf(await t.bridge.read({ sessionID: SESSION }));
+
+    await Promise.all([
+      t.bridge.read({ sessionID: SESSION, ackBatchToken: token }),
+      t.bridge.sendMessage({ sessionID: SESSION, message: 'race', ackBatchToken: token }),
+      t.bridge.read({ sessionID: SESSION, ackBatchToken: token }),
+    ]);
+    expect(await acknowledged(w, ['release_1'])).toHaveLength(1);
+  });
+
+  it('a recording failure fails closed: no receipt, the batch is replayed, and the retry acknowledges once', async () => {
+    const w = await world();
+    const t = await tui(w, BINDING, BINDING, 'async', 1);
+    await release(w, t.inbox, BINDING, 'release_1');
+    const token = tokenOf(await t.bridge.read({ sessionID: SESSION }));
+
+    await expect(t.bridge.read({ sessionID: SESSION, ackBatchToken: token })).rejects.toMatchObject({ code: 'storage_failed' });
+    expect(await acknowledged(w, ['release_1'])).toEqual([]);
+    expect(tokenOf(await t.bridge.read({ sessionID: SESSION }))).toBe(token);
+
+    await t.bridge.read({ sessionID: SESSION, ackBatchToken: token });
+    expect(await acknowledged(w, ['release_1'])).toHaveLength(1);
+  });
+
+  it('a direct competing inbox consumer neither takes the listener nor produces a receipt', async () => {
+    const w = await world();
+    const t = await tui(w, BINDING, BINDING, 'async');
+    await release(w, t.inbox, BINDING, 'release_1');
+    const token = tokenOf(await t.bridge.read({ sessionID: SESSION }));
+
+    await expect(t.inbox.acquireListener()).rejects.toMatchObject({ code: 'listener_busy' });
+    const rival = await openInbox({
+      stateDirectory: path.join(w.root, 'inbox'), bindingId: BINDING.bindingId, generation: BINDING.generation,
+      maxPayloadBytes: 4096, maxSelectionEvents: 8,
+    });
+    await expect(rival.acquireListener()).rejects.toMatchObject({ code: 'listener_busy' });
+    expect(await acknowledged(w, ['release_1'])).toEqual([]);
+
+    await t.bridge.read({ sessionID: SESSION, ackBatchToken: token });
+    expect(await acknowledged(w, ['release_1'])).toHaveLength(1);
+  });
+
+  it('a lost token is never regenerated, and an older token cannot acknowledge a later batch', async () => {
+    const w = await world();
+    const t = await tui(w, BINDING, BINDING, 'async');
+    await release(w, t.inbox, BINDING, 'release_1');
+    const first = tokenOf(await t.bridge.read({ sessionID: SESSION }));
+    // The agent lost the token: reading again re-returns the same one rather than minting another.
+    expect(tokenOf(await t.bridge.read({ sessionID: SESSION }))).toBe(first);
+    await t.bridge.read({ sessionID: SESSION, ackBatchToken: first });
+
+    await release(w, t.inbox, BINDING, 'release_2');
+    const second = tokenOf(await t.bridge.read({ sessionID: SESSION }));
+    expect(second).not.toBe(first);
+    await t.bridge.read({ sessionID: SESSION, ackBatchToken: first });
+    expect(await acknowledged(w, ['release_2'])).toEqual([]);
+
+    await t.bridge.read({ sessionID: SESSION, ackBatchToken: second });
+    expect(await acknowledged(w, ['release_2'])).toHaveLength(1);
   });
 });
