@@ -1,11 +1,19 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import * as inboxModule from '../../features/channel-access/ChannelRequestsInbox';
 import type { IdentityPort } from '@khala/contracts/messaging/index';
 import { createChannelAccessInboxController } from '../../features/channel-access/controller';
 import { createFakeJournal } from '../../features/channel-access/fakes';
 import { createHumanRouteCodec } from './routes';
 import { HumanApplicationScreen } from './mount';
 import type { HumanApplicationHandle, HumanApplicationSnapshot, HumanRouteContext } from './application';
+
+// No DOM environment is available and static rendering skips effects, so the
+// deep link is asserted at the seam: the props the real inbox receives.
+vi.mock('../../features/channel-access/ChannelRequestsInbox', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../features/channel-access/ChannelRequestsInbox')>();
+  return { ...actual, ChannelRequestsInbox: vi.fn(actual.ChannelRequestsInbox) };
+});
 
 const routes = createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' });
 
@@ -115,6 +123,26 @@ describe('HumanApplicationScreen', () => {
     expect(html).toContain('>50<');
     expect(html).toContain('50 pending');
     expect(html).toContain('Waiting for you (60)');
+  });
+
+  it('deep-links /channel-requests/<handle> to that request', async () => {
+    const channelAccess = await channelAccessController(2);
+    const handle = channelAccess.getView().requests[1]!.requestHandle;
+    const context = readyContext(routes.channelRequestsPath(handle));
+    const inbox = vi.mocked(inboxModule.ChannelRequestsInbox);
+    inbox.mockClear();
+    renderToStaticMarkup(
+      <HumanApplicationScreen
+        application={application({ phase: 'ready', path: context.path, context } as HumanApplicationSnapshot)}
+        identity={identity}
+        routes={routes}
+        renderRoom={renderRoom}
+        createChannelAccess={() => channelAccess}
+        capabilities={[]}
+      />,
+    );
+    expect(inbox).toHaveBeenCalled();
+    expect(inbox.mock.calls[0]![0]).toMatchObject({ controller: channelAccess, selectedHandle: handle });
   });
 
   it('does not mount the owner inbox for agent or discovery credential routes', async () => {
