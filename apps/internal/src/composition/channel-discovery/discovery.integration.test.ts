@@ -293,6 +293,13 @@ describe('internal channel discovery', () => {
     const ref = (await list(w, agent)).json.items[0].listingRef as string;
     expect((await requestAccess(w, agent, 'op-access', { listingRef: ref })).json).toEqual({ v: 1, operationId: 'op-access', outcome: 'pending_owner' });
     expect((await requestCreate(w, agent, 'op-create')).json).toEqual({ v: 1, operationId: 'op-create', outcome: 'pending_owner' });
+    // It cannot file a request in another agent's name.
+    const other = await issue(w, 'session-other');
+    const impersonated = await call(w.server.port, {
+      method: 'POST', path: '/api/agent/channel-access-requests', headers: bearer(agent),
+      body: { v: 1, kind: 'listing_ref', operationId: 'op-impersonate', credentialRef: other.principal, listingRef: ref },
+    });
+    expect(impersonated.status).toBe(403);
 
     const denied = [
       // send, receive
