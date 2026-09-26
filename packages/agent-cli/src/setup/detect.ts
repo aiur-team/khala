@@ -14,6 +14,8 @@ const DESCRIPTORS: Readonly<Record<HarnessId, Descriptor>> = Object.freeze({
   claude: { executable: 'claude', versionArgs: ['--version'], version: /^(\d+\.\d+\.\d+)(?: \(Claude Code\))?$/u },
   codex: { executable: 'codex', versionArgs: ['--version'], version: /^(?:codex-cli )?(\d+\.\d+\.\d+)$/u },
   opencode: { executable: 'opencode', versionArgs: ['--version'], version: /^(?:opencode )?v?(\d+\.\d+\.\d+)$/u },
+  // `cursor --version` prints the version, the commit, then the architecture, one per line.
+  cursor: { executable: 'cursor', versionArgs: ['--version'], version: /^(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\r?(?:\n|$)/u },
 });
 
 /**

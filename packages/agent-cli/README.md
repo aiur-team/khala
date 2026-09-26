@@ -820,7 +820,7 @@ and the plugin's `mcp-serve` fail closed with `transport_unavailable`.
 ## Setup planning and configuration status
 
 `setup` and `remove` each print one versioned JSON result (`src/setup/types.ts`).
-Each run discovers the Claude Code, Codex, and OpenCode executables on `PATH`,
+Each run discovers the Claude Code, Codex, OpenCode, and Cursor executables on `PATH`,
 inspects them read-only, and builds one plan. The plan is sorted by harness,
 component, and path, and its `planDigest` covers the planner identity, the
 command, every detected harness fact, and each operation's pre/post hashes.
@@ -851,8 +851,9 @@ unsupported harnesses the executor enforces. Outcomes map to results as follows:
 | busy, or failed and rolled back exactly | `conflict` with `setup_busy` or `apply_failed` (the frozen states have no closer member) | 3 |
 | recovery required, or any thrown executor, lock, or replan error | `recovery_required` (`execution_failed` when thrown) | 4 |
 
-Harness adapters and their payload bytes land separately. Until an adapter
-lands, a detected harness reports `unsupported` and setup has nothing to apply.
+The CLI does not yet compose the harness adapters (Claude Code, Codex, OpenCode,
+Cursor). Until it does, a detected harness reports `unsupported` and setup has
+nothing to apply.
 Discovery can prove presence and a version string, never support or delivery.
 
 `status` keeps its connection fields and adds a `configuration` result. Bare

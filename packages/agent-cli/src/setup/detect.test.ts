@@ -47,6 +47,7 @@ describe('detectHarness', () => {
     ['claude', '2.1.3 (Claude Code)\n', '2.1.3'],
     ['codex', 'codex-cli 0.154.0\n', '0.154.0'],
     ['opencode', 'v1.4.2\n', '1.4.2'],
+    ['cursor', '1.7.44\n9f3a2c1d\nx64\n', '1.7.44'],
   ] as const)('parses the %s version by absolute path and never marks it supported', async (harness, output, version) => {
     const probe = fakeProbe({ [harness]: `/usr/bin/${harness}` }, async () => output);
     expect(await detectHarness(environment(probe), harness)).toEqual({ executable: `/usr/bin/${harness}`, version, supported: false });
