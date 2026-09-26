@@ -193,11 +193,11 @@ const MCP_PROBES: Readonly<Record<string, Probe>> = {
   ])),
 };
 
-const OPENCODE_PROBES: Readonly<Record<string, Probe>> = Object.fromEntries(['khala_read', 'khala_send'].map(name => [
+const OPENCODE_PROBES: Readonly<Record<string, Probe>> = Object.fromEntries((['khala_read', 'khala_send'] as const).map(name => [
   `opencode-tool:${name}`,
   (async s => {
     const hooks = await createKhalaOpenCodeServer(unavailableOpenCodeDependencies())({ client: {} as never, directory: s.world.root });
-    const tool = hooks.tool[name]!;
+    const tool = hooks.tool[name];
     const output = await tool.execute(name === 'khala_send' ? { message: 'a reply' } : {}, { sessionID: bobBinding.sessionId })
       .catch((error: unknown) => `threw ${String(error)}`);
     s.capture.add(`opencode-tool:${name}`, output);
