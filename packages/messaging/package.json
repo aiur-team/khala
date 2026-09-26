@@ -12,7 +12,8 @@
     "./revocation/*": "./src/revocation/*.ts",
     "./recovery/*": "./src/recovery/*.ts",
     "./channel-access/exchange/*": "./src/channel-access/exchange/*.ts",
-    "./local/http/*": "./src/local/http/*.ts"
+    "./local/http/*": "./src/local/http/*.ts",
+    "./channel-access/journal/*": "./src/channel-access/journal/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",

@@ -28,6 +28,17 @@ export type HumanScreenProps<Route> = Readonly<{
   renderSignedOut: (path: string) => ReactNode;
   /** Attaches optional capabilities to each ready route context. */
   attachCapabilities?: (context: HumanRouteContext) => Disposer;
+  /** Replaces the default shell around a ready route, e.g. with owner-only navigation. */
+  renderReadyShell?: (context: HumanRouteContext, chrome: HumanShellChrome, children: ReactNode) => ReactNode;
+}>;
+
+/** Shell state the screen owns, so it survives a switch between the default and a ready shell. */
+export type HumanShellChrome = Readonly<{
+  path: string;
+  mode: ShellMode;
+  theme: Readonly<{ theme: ThemeChoice; onThemeChange(theme: ThemeChoice): void }>;
+  collapsed: boolean;
+  onCollapsedChange(collapsed: boolean): void;
 }>;
 
 function statusContent(snapshot: HumanApplicationSnapshot): ReactNode {
@@ -62,6 +73,7 @@ export function HumanScreen<Route>({
   renderRoute,
   renderSignedOut,
   attachCapabilities,
+  renderReadyShell,
 }: HumanScreenProps<Route>) {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
   const [theme, setTheme] = useState<ThemeChoice>(() => resolveInitialTheme(
@@ -84,11 +96,21 @@ export function HumanScreen<Route>({
     );
   }
 
+  const chrome: HumanShellChrome = {
+    path: snapshot.path,
+    mode,
+    theme: { theme, onThemeChange: setTheme },
+    collapsed,
+    onCollapsedChange: setCollapsed,
+  };
+  if (snapshot.phase === 'ready' && renderReadyShell !== undefined) {
+    return <>{renderReadyShell(snapshot.context, chrome, content)}</>;
+  }
   return (
     <AiurShell
       mode={mode}
       navigation={mode === 'standalone' ? [{ id: 'khala', label: 'Khala', href: routes.createPath(), current: true }] : []}
-      theme={{ theme, onThemeChange: setTheme }}
+      theme={chrome.theme}
       collapsed={collapsed}
       onCollapsedChange={setCollapsed}
     >

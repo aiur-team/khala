@@ -16,7 +16,7 @@ export const joinCommand: CliCommand = {
     if (args.length !== 1 || typeof args[0] !== 'string' || args[0].length === 0) throw new CliError('invalid_link');
     if (deps.client.requestAccess === undefined) throw new CliError('invalid_arguments');
     const result = await deps.client.requestAccess(args[0], deps.signal);
-    if (result.kind === 'refused') throw new CliError('invalid_link');
+    if (result.kind === 'refused') throw new CliError(result.code);
     if (result.kind !== 'status' || !(ACCESS_REQUEST_OUTCOMES as readonly string[]).includes(result.outcome)) {
       throw new CliError('transport_unavailable');
     }

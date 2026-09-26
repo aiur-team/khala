@@ -27,6 +27,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),
       internalClient: async descriptorPath =>
         (await import('../composition/internal.js')).createInternalClient({ descriptorPath }),
+      internalDelivery: async descriptorPath =>
+        (await import('../composition/internal-delivery.js')).createInternalDelivery({ descriptorPath, stateDirectory }),
     });
   } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
 }
