@@ -10,6 +10,7 @@ import { createChannelAccessInboxController } from '../features/channel-access/c
 import { createLocalChannelAccessPort } from './channel-requests/ports';
 import { createLocalChannelSettingsPort } from './channel-settings/ports';
 import { createHumanClient } from './composition/human-client';
+import { createHttpMakeExternalPort } from './composition/make-external-port';
 import { createLocalEvidencePort, createLocalPorts, readRequestSecret } from './composition/ports';
 import { createHttpStopPort } from './composition/stop-http';
 import { SessionEnded } from './composition/room';
@@ -28,6 +29,7 @@ import '../features/channel-settings/channel-settings.css';
 import '../main.css';
 import './internal.css';
 import './controls/stop-control.css';
+import './make-external/make-external.css';
 
 const target = document.querySelector('#app');
 if (!target) throw new Error('missing Khala application mount');
@@ -80,6 +82,7 @@ if (requestSecret === null) {
     evidencePort: createLocalEvidencePort(ports.substrate),
     owner,
     stop,
+    makeExternal: createHttpMakeExternalPort({ origin: location.origin, requestSecret }),
   });
 
   // A hash-only history step (evidence navigation) stays on the mounted route.

@@ -6,6 +6,7 @@ import {
 } from '@khala/contracts/messaging/index';
 import type { ChannelStore, StoredChannel, StoredEvent } from '../store/channel-store';
 import type { InternalReceiptReadModel } from '../store/receipts';
+import { type MakeExternalJourneyPort, createMakeExternalRoutes, isMakeExternalRoute } from './make-external';
 import { type AssetLimits, type AssetManifest, type AssetTable, DEFAULT_ASSET_LIMITS, loadAssets } from './assets';
 import {
   BOOTSTRAP_DOCUMENT, BOOTSTRAP_DOCUMENT_ROUTE, BOOTSTRAP_SCRIPT, BOOTSTRAP_SCRIPT_ROUTE, REQUEST_SECRET_HEADER,
@@ -111,6 +112,8 @@ export type ChannelServerOptions = Readonly<{
   agentSession?: AgentSessionRoute;
   /** Serves the human-only binding Stop endpoint; the route is absent without it. */
   stop?: BindingStopOptions;
+  /** The human's Make-external journey. Absent means its routes do not exist and the browser offers no action. */
+  makeExternal?: MakeExternalJourneyPort;
   assets?: AssetManifest;
   newId: () => string;
   clock: () => number;
@@ -134,6 +137,8 @@ const ROUTES = {
   receipts: { method: 'GET', path: '/api/v1/channels/:channelId/receipts', admission: 'authenticated' },
   channelDocument: { method: 'GET', path: '/channels/:channelId', admission: 'public' },
   settingsDocument: { method: 'GET', path: '/channels/:channelId/settings', admission: 'public' },
+  /** The same application document, so a reload of the Make-external page resumes it. */
+  makeExternalDocument: { method: 'GET', path: '/channels/:channelId/make-external', admission: 'public' },
   requestsDocument: { method: 'GET', path: '/channel-requests', admission: 'public' },
   requestDocument: { method: 'GET', path: '/channel-requests/:handle', admission: 'public' },
 } as const satisfies Record<string, RouteSpec>;
@@ -219,7 +224,9 @@ function admits(route: RouteSpec, principal: Principal, agentSession: RouteSpec 
   const role = discoveryRole(route);
   if (role !== null) return role === principal.kind;
   // Receipt evidence is owner-only: a bound agent never reads delivery metadata.
-  if (route === ROUTES.create || route === ROUTES.receipts || route === STOP_ROUTE) return principal.kind === 'human';
+  if (route === ROUTES.create || route === ROUTES.receipts || route === STOP_ROUTE || isMakeExternalRoute(route)) {
+    return principal.kind === 'human';
+  }
   return principal.kind === 'human' || principal.kind === 'binding';
 }
 
@@ -281,11 +288,16 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     })
     : null;
   if (discovery) routes.push(...discovery.routes);
+  const makeExternal = options.makeExternal
+    ? createMakeExternalRoutes({ journey: options.makeExternal, maxBodyBytes: limits.maxBodyBytes })
+    : null;
+  if (makeExternal) routes.push(...makeExternal.routes);
   const agentSession: RouteSpec | null = options.agentSession
     ? { method: 'POST', path: options.agentSession.path, admission: 'authenticated' }
     : null;
   if (agentSession) routes.push(agentSession);
   if (assets?.channelDocument) routes.push(...APP_DOCUMENT_ROUTES);
+  if (assets?.channelDocument && makeExternal) routes.push(ROUTES.makeExternalDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
   /**
@@ -724,7 +736,9 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   }
 
   function staticAsset({ route, response }: RouteContext<Principal>): void {
-    const asset = APP_DOCUMENT_ROUTES.includes(route) ? assets?.channelDocument : assets?.get(route.path);
+    const asset = APP_DOCUMENT_ROUTES.includes(route) || route === ROUTES.makeExternalDocument
+      ? assets?.channelDocument
+      : assets?.get(route.path);
     if (!asset) {
       fail(response, failure(404, 'not_found'));
       return;
@@ -761,6 +775,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case STOP_ROUTE: return await handleStop(context, { service: stopService, maxBodyBytes: limits.maxBodyBytes, humanMayStop });
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
+            if (makeExternal && isMakeExternalRoute(context.route)) return await makeExternal.handle(context);
             return staticAsset(context);
         }
       } catch (error) {
