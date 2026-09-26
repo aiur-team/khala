@@ -6,7 +6,7 @@ Status: research proposal, 2026-09-24. This applies D1–D12 from [requirements.
 
 | Acceptance | Shape | Pass condition |
 |---|---|---|
-| 1 — CI | Extend `tests/e2e/harness` around the real internal composition; fake only native harness boundaries | Two agents join one channel, exchange deliberate sends, receive a human message, exercise listening modes, survive restart without duplicates, Stop sessions while preserving the channel view, then close/resume the launcher and server with correct UI state |
+| 1 — CI | Extend `tests/e2e/harness` around the real internal composition; fake only native harness boundaries | Two agents join one channel, exchange deliberate sends, receive a human message, exercise listening modes, survive restart without duplicates, Stop (revoke both bindings and end delivery while the CLIs keep running) while preserving the channel view, then close/resume the launcher and server with correct UI state |
 | 2 — live | A manual script creates test tickets in `aiur-team/khala` labelled `acceptance`, first for Claude + Codex and then for OpenCode + DeepSeek with Claude | The channel store and Aiur agent logs show the requested distinct Executor-owned test sessions joined one channel and exchanged messages in both directions; the script invokes Stop and closes its tickets |
 
 The live runner uses normal Aiur dispatch, not a dedicated acceptance Executor or sandbox repository. It needs no signed evidence envelope, reply-to field, or Aiur-repository implementation ticket. Fixed run markers are allowed; success comes from correlated server state and agent logs, never an agent self-report.
@@ -85,9 +85,11 @@ One manual repository script, for each approved pair:
 8. After recording the Stop outcome, enter `finally` and close the launcher even when Stop or its assertions failed. Read a documented post-shutdown snapshot through the `local-sqlite-channel-store` test adapter. Correlate it with Aiur logs and owned receipt facts: two ticket/binding identities, every declared-supported mode delivered into the same native session IDs, and ordered event/read/ack evidence. Requested labels are insufficient. Missing durable native-session, harness, provider/model, or exchange evidence returns non-passing `unproven`.
 9. Continue cleanup after launcher close regardless of earlier failures: revoke run-scoped access if a product API exists, then close both issues terminally so dispatch cannot continue. The Executor—not Khala—owns process cleanup for acceptance tickets. Cleanup is idempotent and refuses an issue lacking the run marker and `acceptance` label.
 
+The runner is [`scripts/acceptance/`](../../../scripts/acceptance/README.md); its offline tests are in `tests/e2e/acceptance/`.
+
 Claude + Codex runs first. The second run pairs one OpenCode session configured for DeepSeek with one Claude session. Missing route proof reports non-passing `unproven`; it never falls back to two OpenCode sessions, another provider, or Aiur's direct DeepSeek backend.
 
-The `acceptance` label is the durable test marker, not a second state machine. Normal dispatch is intentional. The host-held lock permits at most one local pair; a timeout bounds cost. The script detects and reports an unexpected PR. Closed tickets remain the audit trail. The channel follows normal retention; acceptance does not invent deletion. Stopping sessions does not stop the server.
+The `acceptance` label is the durable test marker, not a second state machine. Normal dispatch is intentional. The host-held lock permits at most one local pair; a timeout bounds cost. The script detects and reports an unexpected PR. Closed tickets remain the audit trail. The channel follows normal retention; acceptance does not invent deletion. Stop revokes bindings and ends delivery; it does not stop the server or any CLI.
 
 | Source | Required evidence |
 |---|---|
