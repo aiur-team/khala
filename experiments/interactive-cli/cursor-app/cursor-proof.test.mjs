@@ -264,7 +264,7 @@ test('the launch must be recorded, with normal trust settings (decision 33)', as
   await rm(join(unrecorded, 'launch.json'));
   assert.ok((await grade(unrecorded, 'async')).includes('launch.json was not recorded'));
   await writeFile(join(unrecorded, 'launch.json'), '{}');
-  assert.ok((await grade(unrecorded, 'async')).includes('launch.json does not record a Cursor app process'));
+  assert.ok((await grade(unrecorded, 'async')).includes('launch.json does not record the Cursor desktop app process'));
 
   const runEverything = await asyncTrial();
   await recordLaunch(runEverything, { trust: { autoRun: 'run-everything', mcpAutoRun: 'on' } });
@@ -282,12 +282,12 @@ test('the launch must be recorded, with normal trust settings (decision 33)', as
   assert.ok(bypassed.some(reason => /events do not carry the recorded launch command/.test(reason)));
   assert.ok(bypassed.includes('the launch was recorded after the first batch arrived'));
 
-  const agent = { pid: 5001, ppid: 5000, argv: ['cursor-agent', '--force', '--resume', 'chat-1'] };
+  const underKhala = { pid: 5001, ppid: 5000, argv: ['/usr/share/cursor/cursor', '--force', '/home/person/scratch'] };
   const spawned = await trialDir();
-  await recordLaunch(spawned, { app: agent, ancestors: [KHALA, INIT] });
+  await recordLaunch(spawned, { app: underKhala, ancestors: [KHALA, INIT] });
   await setMode(spawned, 'async');
   await start(spawned, 's1');
-  await snapshot(spawned, [], [INIT, KHALA, agent]);
+  await snapshot(spawned, [], [INIT, KHALA, underKhala]);
   const reasons = await grade(spawned, 'async');
   assert.ok(reasons.includes('launch command bypasses normal trust settings (--force)'));
   assert.ok(reasons.includes('the Cursor app was started under Khala process 5000'));
@@ -295,6 +295,47 @@ test('the launch must be recorded, with normal trust settings (decision 33)', as
   const elsewhere = await asyncTrial();
   await snapshot(elsewhere, [], [INIT]);
   assert.ok((await grade(elsewhere, 'async')).includes('the recorded launch command is not a running Cursor app process in the census'));
+});
+
+test('combined short flags cannot hide a headless or bypassing agent', async () => {
+  for (const flags of ['-pf', '-fp']) {
+    const dir = await asyncTrial();
+    await snapshot(dir, [{ pid: 6001, ppid: 4242, argv: ['cursor-agent', flags, 'hi'] }]);
+    const reasons = await grade(dir, 'async');
+    assert.ok(reasons.includes(`census shows a headless Cursor agent, a second model session: cursor-agent ${flags} hi`), flags);
+    assert.ok(reasons.includes(`census Cursor process 6001 bypasses normal trust settings (-f): cursor-agent ${flags} hi`), flags);
+  }
+});
+
+test('a Cursor process is found anywhere in argv, and its parent must be in the census', async () => {
+  const wrapped = await asyncTrial();
+  const node = { pid: 6002, ppid: 5000, argv: ['node', '--use-system-ca', '/home/person/.local/share/cursor-agent/versions/1/index.js', '-p', 'hi'] };
+  await snapshot(wrapped, [KHALA, node]);
+  const reasons = await grade(wrapped, 'async');
+  assert.ok(reasons.includes(`census Cursor process 6002 has a Khala ancestor 5000: ${node.argv.join(' ')}`));
+  assert.ok(reasons.includes(`census shows a headless Cursor agent, a second model session: ${node.argv.join(' ')}`));
+
+  const orphan = await asyncTrial();
+  await snapshot(orphan, [{ pid: 6003, ppid: 7777, argv: ['cursor-agent', '--resume', 'chat-1'] }]);
+  assert.ok((await grade(orphan, 'async')).includes('census Cursor process 6003 has parent 7777, which is not in the census: cursor-agent --resume chat-1'));
+});
+
+test('only the Cursor desktop app can prove local_chat, never a CLI session', async () => {
+  const shapes = [
+    ['cursor-agent', '--resume', 'chat-1'],
+    ['node', '/home/person/.local/share/cursor-agent/versions/1/index.js', '--resume', 'chat-1'],
+    ['/usr/bin/cursor', 'agent', '--resume', 'chat-1'],
+    ['/usr/share/cursor/cursor', '--type=renderer'],
+  ];
+  for (const argv of shapes) {
+    const cli = { pid: 4242, ppid: 1, argv };
+    const dir = await trialDir();
+    await recordLaunch(dir, { app: cli });
+    await setMode(dir, 'async');
+    await start(dir, 's1');
+    await snapshot(dir, [], [INIT, cli]);
+    assert.ok((await grade(dir, 'async')).includes('launch.json does not record the Cursor desktop app process'), argv.join(' '));
+  }
 });
 
 test('hook execution without a model-context sighting cannot pass', async () => {

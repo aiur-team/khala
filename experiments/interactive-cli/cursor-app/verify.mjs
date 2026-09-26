@@ -31,17 +31,26 @@ export const IDLE_MODES = new Set(['steer', 'sync']);
 export const NORMAL_AUTO_RUN = new Set(['ask', 'allowlist', 'sandbox']);
 const TRUST_BYPASS = ['--force', '-f', '--yolo', '--approve-mcps', '--trust', '--disable-workspace-trust'];
 
-const cursorProcess = argv => argv.slice(0, 2).some(
-  token => /^cursor(?:-agent)?(?:\.exe|\.js)?$/i.test(basename(token)) || token.includes('/cursor-agent/'),
-);
-const headless = argv => argv.some(token => token === '-p' || token === '--print');
+// Any token naming a Cursor binary or cursor-agent's install tree marks a Cursor
+// process, so `node …/cursor-agent/…/index.js` counts as much as `cursor-agent`.
+const cursorToken = token => /^cursor(?:-agent)?(?:\.exe|\.js)?$/i.test(basename(token)) || /[/\\]cursor-agent[/\\]/i.test(token);
+const cursorProcess = argv => argv.some(cursorToken);
+// Only the desktop app itself may prove `local_chat`: the Cursor binary, not an
+// Electron helper, not `cursor agent`, and not cursor-agent in any form.
+const cursorApp = argv => /^cursor(?:\.exe)?$/i.test(basename(argv[0] ?? ''))
+  && argv[1] !== 'agent'
+  && !argv.some(token => token.startsWith('--type=') || /cursor-agent/i.test(token));
+// `-pf` is `-p -f`: split combined short flags before matching any of them.
+const flagTokens = argv => argv.flatMap(token => (/^-[A-Za-z]{2,}$/.test(token) ? [...token.slice(1)].map(letter => `-${letter}`) : [token]));
+const headless = argv => flagTokens(argv).some(token => token === '-p' || token === '--print');
 const khalaProcess = argv => argv.slice(0, 3).some(token => /^khala(?:[-.]|$)/i.test(basename(token)))
   || argv.some(token => token.includes('@aiur/khala'));
 
 export function bypassFlags(argv) {
-  const flags = argv.filter(token => TRUST_BYPASS.some(flag => token === flag || token.startsWith(`${flag}=`)));
-  const sandbox = argv.findIndex(token => token === '--sandbox' || token.startsWith('--sandbox='));
-  if (sandbox >= 0 && (argv[sandbox] === '--sandbox=disabled' || argv[sandbox + 1] === 'disabled')) flags.push('--sandbox disabled');
+  const tokens = flagTokens(argv);
+  const flags = tokens.filter(token => TRUST_BYPASS.some(flag => token === flag || token.startsWith(`${flag}=`)));
+  const sandbox = tokens.findIndex(token => token === '--sandbox' || token.startsWith('--sandbox='));
+  if (sandbox >= 0 && (tokens[sandbox] === '--sandbox=disabled' || tokens[sandbox + 1] === 'disabled')) flags.push('--sandbox disabled');
   return flags;
 }
 
@@ -105,6 +114,7 @@ function sessionReasons(trial) {
     const byPid = new Map(census.processes.map(proc => [proc.pid, proc]));
     for (const proc of census.processes.filter(item => cursorProcess(item.argv))) {
       const argv = proc.argv.join(' ');
+      if (!byPid.has(proc.ppid)) reasons.push(`census Cursor process ${proc.pid} has parent ${proc.ppid}, which is not in the census: ${argv}`);
       const khala = [proc, ...ancestors(proc, byPid)].find(item => khalaProcess(item.argv));
       if (khala) reasons.push(`census Cursor process ${proc.pid} has a Khala ancestor ${khala.pid}: ${argv}`);
       if (headless(proc.argv)) reasons.push(`census shows a headless Cursor agent, a second model session: ${argv}`);
@@ -134,7 +144,7 @@ function launchReasons(trial, shape) {
   let command;
   if (shape === 'local_chat') {
     const { app } = launch;
-    if (!Array.isArray(app?.argv) || !cursorProcess(app.argv)) return [...reasons, 'launch.json does not record a Cursor app process'];
+    if (!Array.isArray(app?.argv) || !cursorApp(app.argv)) return [...reasons, 'launch.json does not record the Cursor desktop app process'];
     command = app.argv;
     const bypass = bypassFlags(app.argv);
     if (bypass.length > 0) reasons.push(`launch command bypasses normal trust settings (${bypass.join(', ')})`);

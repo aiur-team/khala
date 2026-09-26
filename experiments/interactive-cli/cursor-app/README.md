@@ -62,14 +62,18 @@ below. Anything less leaves the cell `unknown` with the failed checks as its rea
 - **Identity.** The trial's version, account tier, and policy are exact values, and
   every hook reported that same `cursor_version`.
 - **Session census.** Every census fact comes from the raw process list in
-  `census.json`, taken during the trial, never from typed counts. A Cursor or
-  `cursor-agent` process fails the trial if it has a Khala ancestor, runs headless
-  (`-p`/`--print`), or carries a bypass flag (`--force`, `--yolo`,
-  `--approve-mcps`, `--trust`, `--sandbox disabled`). Hooks saw exactly one Cursor
+  `census.json`, taken during the trial, never from typed counts. Any process with
+  a Cursor or `cursor-agent` token anywhere in its argv counts, including
+  `node …/cursor-agent/…/index.js`. Such a process fails the trial if its parent is
+  missing from the census, it has a Khala ancestor, it runs headless
+  (`-p`/`--print`), or it carries a bypass flag (`--force`, `--yolo`,
+  `--approve-mcps`, `--trust`, `--sandbox disabled`). Combined short flags such as
+  `-pf` are split before these checks. Hooks saw exactly one Cursor
   conversation, and no background agent session.
-- **Launch and trust (decision 33).** `launch.json` records the running Cursor app
-  process before the first batch arrives, and that process is in the census with the
-  same argv. It has no Khala ancestor and no bypass flag. Every event carries that
+- **Launch and trust (decision 33).** `launch.json` records the running Cursor
+  desktop app process before the first batch arrives. For `local_chat` that is only
+  the app binary itself: never `cursor-agent`, `cursor agent`, or an Electron helper
+  process. That process is in the census with the same argv. It has no Khala ancestor and no bypass flag. Every event carries that
   launch command. Agent auto-run is `ask`, `allowlist`, or `sandbox`, never
   `run-everything`, and MCP auto-run is `off`. A cloud trial names an existing cloud
   agent created before the trial.

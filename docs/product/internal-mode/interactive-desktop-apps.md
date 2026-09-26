@@ -161,12 +161,13 @@ A cell becomes `proven` only when a single trial shows all of the following:
 - acknowledgement on a later agent call;
 - replay across a restart;
 - no delivery after acknowledgement;
-- a recorded launch of the running Cursor app, with normal trust settings (decision 33);
+- a recorded launch of the running Cursor desktop app, with normal trust settings (decision 33). A `cursor-agent` CLI session never proves the app cell;
 - for `steer` and `sync`, delivery to an idle chat (decisions 34 and 37).
 
 The census comes from a raw process list, never from typed counts. A background
-agent, any Cursor or `cursor-agent` process with a Khala ancestor, a headless agent
-run, a bypass flag or "Run Everything" auto-run, a hook firing without a
+agent, any Cursor or `cursor-agent` process (matched anywhere in argv) with a Khala
+ancestor or a parent missing from the census, a headless agent run, a bypass flag
+(combined short flags such as `-pf` are split first) or "Run Everything" auto-run, a hook firing without a
 model-context sighting, or a duplicate after restart leaves the cell `unknown`. The
 kit has no idle wake, so it cannot prove Cursor `steer` or `sync`.
 
