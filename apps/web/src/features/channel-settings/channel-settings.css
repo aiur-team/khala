@@ -125,3 +125,14 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.channel-settings button,
+.channel-settings input[type="radio"],
+.channel-settings input[type="checkbox"] {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.channel-settings button {
+  padding: 0.5rem 0.9rem;
+}
