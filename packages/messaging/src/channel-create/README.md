@@ -11,7 +11,7 @@ second request store or inbox.
 | `adapter.ts` | Implements `ChannelCreateAdapterPort` over `ChannelSubstrate.createRoom` / `findCreatedRoom`, keyed by a stable idempotency key. |
 | `decisions.ts` | Wraps `ChannelAccessDecisionPort`. Approving a `create` row runs `fulfill`, and inbox reads finish approvals whose creation did not complete. |
 | `authority.ts` | A create-aware `GrantExchangeAuthority`. The requester's own create operation is admitted into the one channel it created. Every other operation goes to the access authority. |
-| `compose.ts` | `composeChannelCreate` returns the decorated decision port for `createChannelAccessHandlers`, plus the `authority` wrapper for `composeChannelAccessExchange`. `hostedChannelCreateAdapter` builds the hosted adapter. |
+| `compose.ts` | `composeChannelCreate` returns the decorated decision port for `createChannelAccessHandlers`, plus the `authority` wrapper for `composeChannelAccessExchange`. The hosted adapter helper, `hostedChannelCreateAdapter`, lives in `apps/control/src/composition/agent/channel-create.ts`. |
 
 ## Guarantees
 
@@ -30,10 +30,11 @@ second request store or inbox.
 - **Denial, expiry, revocation.** A denied or expired request creates nothing. A provider refusal closes the row as
   `revoked`, with no channel shared with the agent.
 
-The internal composition injects its own adapter: `createSubstrateChannelCreateAdapter` over the local-transport
-substrate, or the `internal-channel-discovery` adapter once that exists. No production composition root passes
-channel-access routes yet (see `runtime/discover.ts`).
+The internal composition injects its own adapter, the `createAdapter` from
+`apps/internal/src/composition/channel-discovery/service.ts`. No production composition root wires
+`composeChannelCreate` yet: hosted channel-access routes are not composed (see `apps/control/src/runtime/discover.ts`),
+and the internal discovery service builds its exchange without the create-aware authority.
 
 ```sh
-pnpm --filter @khala/control exec vitest run --config ../../vitest.config.ts src/channel-create
+pnpm --filter @khala/messaging exec vitest run --config ../../vitest.config.ts src/channel-create
 ```

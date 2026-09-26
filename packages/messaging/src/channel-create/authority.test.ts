@@ -5,7 +5,7 @@ import type {
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
 import type { ExchangeAuthorityInput, GrantExchangeAuthority } from '../channel-access/exchange/authority';
-import type { ChannelAccessStore } from '../channel-access/store';
+import type { ChannelAccessStore } from '../channel-access/journal/store';
 import { createChannelCreateExchangeAuthority } from './authority';
 import { DIGEST, T0, owner, requester } from './support.test';
 

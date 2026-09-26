@@ -8,15 +8,15 @@ import type {
   DiscoveryRequester,
   OwnerId,
   RoomId,
+  TrustedClock,
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
-import { createChannelAccessPolicy } from '../channel-access/policy';
-import { createChannelAccessService } from '../channel-access/service';
-import { createChannelAccessStore } from '../channel-access/store';
-import { fakeControlStore } from '../channel-access/support.test';
-import type { ChannelCreateSubstrate } from './adapter';
-import { composeChannelCreate, hostedChannelCreateAdapter } from './compose';
-import { createSubstrateChannelCreateAdapter } from './adapter';
+import { createChannelAccessPolicy } from '../channel-access/journal/policy';
+import { createChannelAccessService } from '../channel-access/journal/service';
+import { createChannelAccessStore } from '../channel-access/journal/store';
+import { fakeControlStore } from '../channel-access/journal/support.test';
+import { type ChannelCreateSubstrate, createSubstrateChannelCreateAdapter } from './adapter';
+import { composeChannelCreate } from './compose';
 
 export const T0 = Date.parse('2026-09-25T12:00:00Z');
 export const DIGEST = 'a'.repeat(43);
@@ -95,8 +95,11 @@ export function fakeSubstrate(proves: 'absent' | 'unknown') {
   };
 }
 
-/** The real hosted journal plus the creation workflow over one fake `ControlStore`. */
-export function createHarness(options: Readonly<{ proves?: 'absent' | 'unknown'; adapter?: 'hosted' | 'internal' }> = {}) {
+/** Builds the adapter under test over the fake substrate; defaults to an internal-style channel reference. */
+export type HarnessAdapter = (substrate: ChannelCreateSubstrate, clock: TrustedClock) => ChannelCreateAdapterPort;
+
+/** The real shared journal plus the creation workflow over one fake `ControlStore`. */
+export function createHarness(options: Readonly<{ proves?: 'absent' | 'unknown'; adapter?: HarnessAdapter }> = {}) {
   let now = T0;
   const clock = () => now;
   const backing = fakeControlStore();
@@ -116,8 +119,8 @@ export function createHarness(options: Readonly<{ proves?: 'absent' | 'unknown';
   };
   const service = createChannelAccessService({ store: journal, resolver, policy });
   const fake = fakeSubstrate(options.proves ?? 'absent');
-  const adapter: ChannelCreateAdapterPort = options.adapter === 'hosted'
-    ? hostedChannelCreateAdapter({ substrate: fake.substrate, clock })
+  const adapter = options.adapter
+    ? options.adapter(fake.substrate, clock)
     : createSubstrateChannelCreateAdapter({
       substrate: fake.substrate,
       channelRef: roomId => `internal_${roomId.slice(1)}` as never,

@@ -17,7 +17,7 @@ import type {
   ExchangeAuthorityResult,
   GrantExchangeAuthority,
 } from '../channel-access/exchange/authority';
-import type { ChannelAccessStore } from '../channel-access/store';
+import type { ChannelAccessStore } from '../channel-access/journal/store';
 import type { ChannelCreateWorkflow } from './workflow';
 
 export function createChannelCreateExchangeAuthority(deps: Readonly<{

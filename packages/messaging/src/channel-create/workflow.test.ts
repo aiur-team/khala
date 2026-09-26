@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { channelKey } from '../channel-discovery/catalog';
 import { OWNER_REVISION, createHarness, otherOwner, owner } from './support.test';
 import { channelCreateRecordKey } from './workflow';
 
@@ -40,17 +39,6 @@ describe('human-confirmed channel creation', () => {
     expect(h.sideEffectKeys().some(key => key.startsWith('channel-discovery'))).toBe(false);
     // The agent's status stays grant- and channel-free.
     expect(await h.status()).toEqual({ v: 1, operationId: 'op_create_1', outcome: 'connecting' });
-  });
-
-  it('references the hosted channel the way hosted discovery does', async () => {
-    const h = createHarness({ adapter: 'hosted' });
-    await h.submit();
-    await h.approve();
-    const fulfilled = await h.create.workflow.fulfill(await h.pending());
-
-    expect(fulfilled.kind).toBe('created');
-    if (fulfilled.kind !== 'created') return;
-    expect(fulfilled.channelRef).toBe(channelKey([...h.fake.rooms.values()][0]!.roomId));
   });
 
   it('reconciles a duplicate approval and a repeated fulfilment to the same channel', async () => {
@@ -154,8 +142,8 @@ describe('human-confirmed channel creation', () => {
     expect(h.fake.rooms.size).toBe(1);
   });
 
-  it('keeps a hosted outcome_unknown unresolved rather than creating again', async () => {
-    const h = createHarness({ proves: 'unknown', adapter: 'hosted' });
+  it('keeps outcome_unknown unresolved while the substrate cannot prove absence', async () => {
+    const h = createHarness({ proves: 'unknown' });
     await h.submit();
     h.fake.fail('lose_response');
     await h.approve();

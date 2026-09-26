@@ -8,7 +8,7 @@ import type {
 } from '@khala/contracts/messaging/index';
 import type { Authentication, MutationAuthorization } from '../auth';
 import { ORIGIN as AUTH_ORIGIN, harness as authHarness, signIn } from '../auth/support.test';
-import type { ChannelAccessService } from './service';
+import type { ChannelAccessService } from '@khala/messaging/channel-access/journal/service';
 import {
   AGENT_CHANNEL_ACCESS_CREATE_PATH,
   AGENT_CHANNEL_ACCESS_REQUEST_PATH,

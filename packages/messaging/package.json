@@ -11,7 +11,9 @@
     "./rooms/fixtures/fakes": null,
     "./revocation/*": "./src/revocation/*.ts",
     "./recovery/*": "./src/recovery/*.ts",
-    "./channel-access/exchange/*": "./src/channel-access/exchange/*.ts"
+    "./channel-access/exchange/*": "./src/channel-access/exchange/*.ts",
+    "./channel-access/journal/*": "./src/channel-access/journal/*.ts",
+    "./channel-create/*": "./src/channel-create/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",

@@ -1,4 +1,4 @@
-// Hosted approval authority for the grant exchange. It locates the requester's own
+// Journal-backed approval authority for the grant exchange. It locates the requester's own
 // journal row and claims it through the journal's typed access fulfillment port,
 // which revalidates owner, visibility/existence, and requester revocation on every
 // call. The claim operation is stable per exchange, so each recheck is idempotent.
@@ -10,7 +10,7 @@ import type {
   StableAgentPrincipal,
   TrustedClock,
 } from '@khala/contracts/messaging/index';
-import type { ChannelAccessStore } from '../store';
+import type { ChannelAccessStore } from '../journal/store';
 
 export type ExchangeAuthorityInput = Readonly<{
   operationId: string;

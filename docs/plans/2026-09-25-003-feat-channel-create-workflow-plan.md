@@ -29,7 +29,13 @@ contract: docs/product/internal-mode/room-discovery.md#rd9a--add-the-human-confi
 
 ## Units
 
-1. **Create record + workflow** — `apps/control/src/channel-create/workflow.ts`. One `ControlStore` record per
+> **Revised after #339.** `main` moved the channel-access journal and grant exchange into `@khala/messaging` so the
+> hosted and internal backends share them, and the boundary check forbids app-to-app imports and bars app code
+> outside a composition root from importing package internals. The backend-neutral creation modules moved next to the
+> journal, so `apps/internal` can compose them with its own `createAdapter`. Only the hosted adapter helper stays in
+> `apps/control`.
+
+1. **Create record + workflow** — `packages/messaging/src/channel-create/workflow.ts`. One `ControlStore` record per
    request handle, `creating → created | closed`, written before the adapter is invoked. `fulfill(requestHandle)`
    claims the approved row through `claimCreate` with a stable claim operation (idempotent, and it revalidates owner
    and requester on every call), then:
@@ -38,19 +44,20 @@ contract: docs/product/internal-mode/room-discovery.md#rd9a--add-the-human-confi
      same key; `outcome_unknown` / `unavailable` stay `unavailable`.
    - `denied`: the journal row becomes `revoked` and nothing is admitted.
    The deadline is rechecked before any effect.
-2. **Substrate adapter** — `apps/control/src/channel-create/adapter.ts`. `ChannelCreateAdapterPort` over
+2. **Substrate adapter** — `packages/messaging/src/channel-create/adapter.ts`. `ChannelCreateAdapterPort` over
    `Pick<ChannelSubstrate, 'createRoom' | 'findCreatedRoom'>`; maps `found` to `already_created`, `absent` to
    `pending`, `unknown` to `outcome_unknown`. It never writes a discovery catalog entry, so the channel is `secret`.
    Hosted composition maps the room with `channelKey`; internal composition supplies its own substrate and ref.
-3. **Decision decorator** — `apps/control/src/channel-create/decisions.ts`. Wraps `ChannelAccessDecisionPort`:
+3. **Decision decorator** — `packages/messaging/src/channel-create/decisions.ts`. Wraps `ChannelAccessDecisionPort`:
    approving a `create` row runs `fulfill` (failure leaves the durable approval to reconcile); `inbox` reconciles
    approved-but-unfulfilled create rows after a restart. Access rows pass through untouched.
-4. **Create-aware exchange authority** — `apps/control/src/channel-create/authority.ts`. Locates the requester's own
+4. **Create-aware exchange authority** — `packages/messaging/src/channel-create/authority.ts`. Locates the requester's own
    `create` row first; otherwise delegates to the access authority. For create, it fulfils (idempotently), then
    returns an access-shaped authorization for the one created channel, bound to the original requester, origin,
    session generation, and fingerprint. `close` / `markConnected` route to `updateCreate`.
-5. **Composition** — `apps/control/src/channel-create/compose.ts`: hosted and internal helpers returning the
-   decorated decision port and the authority for `composeChannelAccessExchange` (which gains an optional `authority`).
+5. **Composition** — `packages/messaging/src/channel-create/compose.ts` (`composeChannelCreate`) returns the
+   decorated decision port and the authority for `composeChannelAccessExchange` (which gains an optional `authority`);
+   the hosted adapter helper lives in `apps/control/src/composition/agent/channel-create.ts`.
 6. **Web** — `apps/web/src/features/channel-create/`: the creation operation adapter (decision prompt facts,
    post-approval progress copy, decided message) moves here; `channel-access` delegates create rows to it.
    Copy now states that approval creates the channel and the agent connects later.

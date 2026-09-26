@@ -11,19 +11,17 @@ import type {
   TrustedClock,
 } from '@khala/contracts/messaging/index';
 import type { GrantExchangeAuthority } from '../channel-access/exchange/authority';
-import type { ChannelAccessService } from '../channel-access/service';
-import type { ChannelAccessStore } from '../channel-access/store';
-import { channelKey } from '../channel-discovery/catalog';
-import { type ChannelCreateSubstrate, createSubstrateChannelCreateAdapter } from './adapter';
+import type { ChannelAccessService } from '../channel-access/journal/service';
+import type { ChannelAccessStore } from '../channel-access/journal/store';
 import { createChannelCreateExchangeAuthority } from './authority';
 import { withChannelCreateFulfillment } from './decisions';
 import { type ChannelCreateWorkflow, createChannelCreateWorkflow } from './workflow';
 
 export type ChannelCreateComposition = Readonly<{
   workflow: ChannelCreateWorkflow;
-  /** Pass as `service.decisions` to `createChannelAccessHandlers`. */
+  /** Pass as `service.decisions` to the human decision route. */
   decisions: ChannelAccessDecisionPort;
-  /** Pass as `authority` to `composeChannelAccessExchange`. */
+  /** Wraps the access authority passed to `createGrantExchangeService`. */
   exchangeAuthority(access: GrantExchangeAuthority): GrantExchangeAuthority;
 }>;
 
@@ -52,16 +50,4 @@ export function composeChannelCreate(deps: Readonly<{
       clock: deps.clock,
     }),
   });
-}
-
-/**
- * Hosted adapter: the owner's substrate creates the room, and the channel is
- * referenced the way hosted discovery references it. No catalog record is
- * written, so the channel is `secret` until its owner changes that.
- */
-export function hostedChannelCreateAdapter(deps: Readonly<{
-  substrate: ChannelCreateSubstrate;
-  clock: TrustedClock;
-}>): ChannelCreateAdapterPort {
-  return createSubstrateChannelCreateAdapter({ substrate: deps.substrate, channelRef: channelKey, clock: deps.clock });
 }

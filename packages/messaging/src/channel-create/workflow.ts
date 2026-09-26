@@ -20,7 +20,7 @@ import {
   type TrustedClock,
   decodeChannelCreateReconciliation,
 } from '@khala/contracts/messaging/index';
-import type { ChannelAccessStore } from '../channel-access/store';
+import type { ChannelAccessStore } from '../channel-access/journal/store';
 
 export type ChannelCreateFulfillment =
   | Readonly<{ kind: 'created'; channelRef: AuthorizedChannelRef; authorization: ChannelCreateAuthorization }>

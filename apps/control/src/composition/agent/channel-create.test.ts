@@ -1,14 +1,24 @@
 import type { StableAgentPrincipal } from '@khala/contracts/messaging/index';
+import { connectorRequest } from '@khala/messaging/channel-access/exchange/journal-harness.test';
 import type { ChannelAdmissionProviderPort, ChannelAdmissionRequest } from '@khala/messaging/channel-access/exchange/ports';
+import {
+  DIGEST,
+  type HarnessAdapter,
+  context,
+  createHarness,
+  owner,
+  requester,
+} from '@khala/messaging/channel-create/support.test';
 import { describe, expect, it } from 'vitest';
-import type { MutationAuthorization } from '../auth';
-import { connectorRequest } from '../channel-access/exchange/support.test';
-import { createChannelAccessHandlers } from '../channel-access/handler';
-import type { VerifiedExchangeConnector } from '../channel-access/exchange/handler';
-import { composeChannelAccessExchange } from '../composition/agent/channel-access-exchange';
-import { DIGEST, context, createHarness, owner, requester } from './support.test';
+import type { MutationAuthorization } from '../../auth';
+import type { VerifiedExchangeConnector } from '../../channel-access/exchange/handler';
+import { createChannelAccessHandlers } from '../../channel-access/handler';
+import { channelKey } from '../../channel-discovery/catalog';
+import { composeChannelAccessExchange } from './channel-access-exchange';
+import { hostedChannelCreateAdapter } from './channel-create';
 
 const DEVICE = 'device_agent_1' as VerifiedExchangeConnector['deviceId'];
+const hosted: HarnessAdapter = (substrate, clock) => hostedChannelCreateAdapter({ substrate, clock });
 
 async function setup(options: Parameters<typeof createHarness>[0] = {}) {
   const h = createHarness(options);
@@ -128,7 +138,7 @@ describe('composed human-confirmed channel creation', () => {
   });
 
   it('admits only the requesting session into the one created channel', async () => {
-    const t = await setup({ adapter: 'hosted' });
+    const t = await setup({ adapter: hosted });
     await t.submit();
     const decided = await t.decide();
     expect(decided.status).toBe(200);
@@ -209,5 +219,18 @@ describe('composed human-confirmed channel creation', () => {
     expect((await t.exchange()).status).toBe(410);
     expect(t.h.fake.createCalls).toEqual([]);
     expect(t.admits).toEqual([]);
+  });
+});
+
+describe('hosted channel-create adapter', () => {
+  it('references the hosted channel the way hosted discovery does', async () => {
+    const h = createHarness({ adapter: hosted });
+    await h.submit();
+    await h.approve();
+    const fulfilled = await h.create.workflow.fulfill(await h.pending());
+
+    expect(fulfilled.kind).toBe('created');
+    if (fulfilled.kind !== 'created') return;
+    expect(fulfilled.channelRef).toBe(channelKey([...h.fake.rooms.values()][0]!.roomId));
   });
 });
