@@ -294,6 +294,36 @@ describe('agents, cancel and recovery', () => {
     expect(finished.view.conversion!.state).toBe('externalized');
   });
 
+  it('a restarted server still reports a cancelled conversion’s orphan until the human dismisses it', async () => {
+    const s = setup();
+    await s.signIn();
+    await s.act({ kind: 'start', historyMode: 'start_fresh', visibility: 'secret', agents: allAgents });
+    await s.act({ kind: 'cancel' });
+    s.restart();
+    expect((await s.view()).conversion).toMatchObject({ state: 'cancelled', orphanDestinationChannelId: 'external-1' });
+    await s.act({ kind: 'dismiss' });
+    s.restart();
+    const after = await s.view();
+    expect(after.conversion).toBeNull();
+    expect(after.roster).toHaveLength(3);
+  });
+
+  it('a restarted server finishes activation after a new sign-in and never reopens the channel', async () => {
+    const s = setup();
+    await s.signIn();
+    s.provider.releaseFails.add('agent-reviewer');
+    await s.act({ kind: 'start', historyMode: 'start_fresh', visibility: 'secret', agents: allAgents });
+    await grantAll(s);
+    expect((await s.act({ kind: 'commit' })).view.conversion!.state).toBe('activating');
+    s.restart();
+    s.provider.releaseFails.clear();
+    expect((await s.act({ kind: 'resume' })).rejection).toBe('sign_in_required');
+    expect((await s.act({ kind: 'cancel' })).rejection).toBe('wrong_state');
+    expect(s.channel.send('reopened?')).toBe(false);
+    await s.signIn();
+    expect((await s.act({ kind: 'resume' })).view.conversion!.state).toBe('externalized');
+  });
+
   it('a restarted server resumes the same conversion after a new sign-in', async () => {
     const s = setup({ messages: ['one', 'two'] });
     await s.signIn();

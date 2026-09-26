@@ -232,7 +232,9 @@ visibility as `secret`. The loopback server serves it at
 the launch is composed with a journey (`apps/internal/src/composition/make-external.ts`).
 Before confirmation the only state is an in-memory hosted sign-in draft. After it, the
 conversion journal is authoritative, so a reload or a restarted server resumes the same
-conversion after a new sign-in. Every hosted step requires that sign-in, but cancel does not.
+conversion after a new sign-in. A durable per-channel pointer keeps a cancelled or failed
+conversion, and its orphaned destination, visible until the human dismisses it. Every hosted
+step requires that sign-in, including forward activation after a restart. Cancel does not.
 The history transfer takes its destination and owner from the journal entry, never from the
 request. No hosted adapter exists yet for sign-in, channel creation, channel access or the
 imported-history transport, so the launcher does not offer the journey. It is proven only

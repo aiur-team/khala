@@ -46,6 +46,16 @@ describe('make-external screen', () => {
     expect(html).toContain('never reopens this channel');
   });
 
+  it('after a restart, asks for sign-in to finish activation and still never offers a cancel', () => {
+    const html = render(conversionView({ state: 'activating' }, {
+      sourceWrite: 'linked', signIn: { status: 'signed_out', verificationUrl: null, failure: null },
+    }));
+    expect(html).toContain('Sign in to continue');
+    expect(html).toContain('>Sign in</button>');
+    expect(html).toContain('it never reopens this channel');
+    expect(html).not.toContain('Cancel');
+  });
+
   it('reports an orphaned external channel after a cancel', () => {
     const html = render(conversionView({ state: 'cancelled', orphanDestinationChannelId: 'external-1' }));
     expect(html).toContain('<code>external-1</code>');
@@ -56,6 +66,12 @@ describe('make-external screen', () => {
     const html = render(conversionView({ state: 'externalized' }, { sourceWrite: 'linked' }));
     expect(html).toContain('Open the external channel');
     expect(html).toContain('khala internal delete internal-planning');
+  });
+
+  it('explains an absent journey, an ended session and a failed load', () => {
+    expect(render(signedIn(), { phase: 'absent' })).toContain('Make external is not available for this channel in this launch.');
+    expect(render(signedIn(), { phase: 'session_ended' })).toContain('Relaunch Khala from your terminal to continue.');
+    expect(render(signedIn(), { phase: 'load_failed', error: 'down' })).toMatch(/<p>down<\/p>[\s\S]*<button type="button">Try again<\/button>/);
   });
 
   it('has one polite status region and one alert region', () => {

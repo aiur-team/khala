@@ -15,7 +15,8 @@ import { displayNames, readRoster } from './roster';
 // the only state is this server's sign-in draft: entering, signing in and cancelling
 // change nothing durable. Confirming starts a journaled conversion, and from then on
 // the conversion journal is the only source of truth: a reload, a lost response or a
-// restarted server reads it back by the channel's conversion lock, so the browser can
+// restarted server reads it back by the channel's conversion lock or, once the
+// conversion ended, by the channel's durable latest-conversion pointer, so the browser can
 // always resume the same conversion.
 //
 // Every step that reaches the hosted service needs a completed hosted sign-in. A
@@ -43,8 +44,6 @@ type Draft = {
   human: JourneyHuman;
   signIn: MakeExternalSignIn;
   attempt: string | null;
-  /** The conversion this journey started; kept after it ends so its result stays visible. */
-  conversionId: string | null;
 };
 
 const ENDED: readonly ConversionState[] = ['cancelled', 'failed'];
@@ -63,7 +62,7 @@ export function createMakeExternalJourney(deps: MakeExternalJourneyDeps): MakeEx
   function draftFor(human: JourneyHuman, channelId: string): Draft {
     let draft = drafts.get(channelId);
     if (!draft || draft.human.ownerId !== human.ownerId || draft.human.participantId !== human.participantId) {
-      draft = { human, signIn: SIGNED_OUT, attempt: null, conversionId: null };
+      draft = { human, signIn: SIGNED_OUT, attempt: null };
       drafts.set(channelId, draft);
     }
     return draft;
@@ -119,18 +118,19 @@ export function createMakeExternalJourney(deps: MakeExternalJourneyDeps): MakeEx
     const draft = draftFor(human, channelId);
     await refreshSignIn(draft);
     const lock = await deps.journal.sourceLock(channelId);
-    if (lock.kind !== 'ok') return unavailable();
-    const conversionId = lock.value?.conversionId ?? draft.conversionId;
+    const latest = await deps.journal.latest(channelId);
+    if (lock.kind !== 'ok' || latest.kind !== 'ok') return unavailable();
+    // The lock names a conversion under way or linked; after a cancel or failure only the
+    // durable latest pointer still names it, so its orphan survives a restart.
+    const conversionId = lock.value?.conversionId ?? latest.value;
     let conversion: MakeExternalConversion | null = null;
     if (conversionId !== null) {
       const viewed = await deps.service.view(human, conversionId);
       if (viewed.kind === 'rejected' && viewed.code === 'forbidden') return rejected('forbidden');
       if (viewed.kind !== 'ok' && viewed.kind !== 'rejected') return unavailable();
       const entry = await deps.journal.entry(conversionId);
-      if (viewed.kind === 'ok' && entry.kind === 'ok') {
-        conversion = conversionOf(viewed.value, entry.value);
-        draft.conversionId = conversionId;
-      } else if (entry.kind === 'unavailable') return unavailable();
+      if (viewed.kind === 'ok' && entry.kind === 'ok') conversion = conversionOf(viewed.value, entry.value);
+      else if (entry.kind === 'unavailable') return unavailable();
     }
     const open = conversion === null || ENDED.includes(conversion.state);
     return ok({
@@ -172,10 +172,11 @@ export function createMakeExternalJourney(deps: MakeExternalJourneyDeps): MakeEx
           return null;
         }
         return settle(await deps.service.cancel(human, active.conversionId));
-      case 'dismiss':
+      case 'dismiss': {
         if (current === null || active !== null) return 'wrong_state';
-        draft.conversionId = null;
-        return null;
+        const dismissed = await deps.journal.dismiss(channelId, current.conversionId);
+        return dismissed.kind === 'ok' ? null : dismissed.kind === 'rejected' ? dismissed.code : 'unavailable';
+      }
       case 'start': {
         if (active !== null) return 'wrong_state';
         const conversionId = conversionIdFor(channelId, action.operationId);
@@ -183,7 +184,6 @@ export function createMakeExternalJourney(deps: MakeExternalJourneyDeps): MakeEx
           v: 1, conversionId, operationId: action.operationId, sourceChannelId: channelId, historyMode: action.historyMode,
           visibility: action.visibility, agents: action.agents,
         });
-        if (started.kind === 'ok') draft.conversionId = conversionId;
         return settle(started);
       }
       default:

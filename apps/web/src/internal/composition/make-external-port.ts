@@ -9,6 +9,13 @@ export type HttpMakeExternalPortOptions = Readonly<{
   origin: string;
   requestSecret: string;
   fetch?: typeof globalThis.fetch;
+  /** Bound on a view read; the page offers a retry after it. */
+  viewTimeoutMs?: number;
+  /**
+   * Bound on one action. An action can copy a whole history chunk before it answers,
+   * so it waits longer; a timed-out action is an unknown outcome resent as the same operation.
+   */
+  actTimeoutMs?: number;
 }>;
 
 export function createHttpMakeExternalPort(options: HttpMakeExternalPortOptions): MakeExternalPort {
@@ -16,9 +23,14 @@ export function createHttpMakeExternalPort(options: HttpMakeExternalPortOptions)
   const url = (channelId: string) => `${options.origin}/api/v1/channels/${encodeURIComponent(channelId)}/make-external`;
   const headers = { [REQUEST_SECRET_HEADER]: options.requestSecret };
 
-  async function request(channelId: string, init: RequestInit): Promise<Response | null> {
+  const viewTimeoutMs = options.viewTimeoutMs ?? 10_000;
+  const actTimeoutMs = options.actTimeoutMs ?? 60_000;
+
+  async function request(channelId: string, init: RequestInit, timeoutMs: number): Promise<Response | null> {
     try {
-      return await send(url(channelId), { ...init, credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+      return await send(url(channelId), {
+        ...init, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
+      });
     } catch {
       return null;
     }
@@ -34,7 +46,7 @@ export function createHttpMakeExternalPort(options: HttpMakeExternalPortOptions)
 
   return {
     async view(channelId) {
-      const response = await request(channelId, { method: 'GET', headers });
+      const response = await request(channelId, { method: 'GET', headers }, viewTimeoutMs);
       if (response === null) return { kind: 'unavailable' };
       if (response.status === 401) return { kind: 'session_ended' };
       if (response.status === 403 || response.status === 404) return { kind: 'absent' };
@@ -46,7 +58,7 @@ export function createHttpMakeExternalPort(options: HttpMakeExternalPortOptions)
     async act(channelId, action) {
       const response = await request(channelId, {
         method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(action),
-      });
+      }, actTimeoutMs);
       if (response === null) return { kind: 'outcome_unknown' };
       if (response.status === 401) return { kind: 'session_ended' };
       if (response.status === 403 || response.status === 404) return { kind: 'absent' };

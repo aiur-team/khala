@@ -5,7 +5,7 @@ import type {
 import type { MakeExternalController, MakeExternalState } from './controller';
 import {
   FAILURE_MESSAGE, HISTORY_CHOICES, STEP_HEADING, VISIBILITY_CHOICES, agentStatusLabel, deleteCommand, grantableHandles,
-  historyProgressText, stepOf, type JourneyStep,
+  historyProgressText, isPastCancel, stepOf, type JourneyStep,
 } from './model';
 
 /** Subscribes a component to the journey controller. */
@@ -232,6 +232,12 @@ function Body({ step, view, state, controller, onBack }: {
       return (
         <>
           {step === 'sign_in_again' ? <p>This conversion is saved. Khala needs a new hosted sign-in to continue it.</p> : null}
+          {step === 'sign_in_again' && isPastCancel(view) ? (
+            <p>
+              The external channel is already authoritative and this channel is read-only. Signing in lets Khala finish activating
+              your agents; it never reopens this channel.
+            </p>
+          ) : null}
           {view.signIn.verificationUrl ? (
             <p>
               Finish signing in on the hosted page, then return here. This page continues on its own.{' '}
@@ -242,7 +248,9 @@ function Body({ step, view, state, controller, onBack }: {
             <button type="button" onClick={() => void controller.act({ kind: 'sign_in' })}>
               {view.signIn.status === 'pending' ? 'Start a new sign-in' : 'Sign in'}
             </button>
-            {step === 'sign_in_again' ? cancel : <button type="button" onClick={() => void controller.act({ kind: 'cancel' }).then(onBack)}>Cancel</button>}
+            {step !== 'sign_in_again'
+              ? <button type="button" onClick={() => void controller.act({ kind: 'cancel' }).then(onBack)}>Cancel</button>
+              : isPastCancel(view) ? null : cancel}
           </Actions>
         </>
       );

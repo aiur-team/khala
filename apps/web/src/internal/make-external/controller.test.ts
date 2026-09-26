@@ -8,10 +8,11 @@ class FakePort implements MakeExternalPort {
   readonly actions: MakeExternalAction[] = [];
   current: MakeExternalJourneyView = baseView;
   next: Array<MakeExternalWrite | ((action: MakeExternalAction) => MakeExternalWrite)> = [];
+  reads: MakeExternalRead[] = [];
   views = 0;
   async view(): Promise<MakeExternalRead> {
     this.views += 1;
-    return { kind: 'ok', view: this.current };
+    return this.reads.shift() ?? { kind: 'ok', view: this.current };
   }
   async act(_channelId: string, action: MakeExternalAction): Promise<MakeExternalWrite> {
     this.actions.push(action);
@@ -87,6 +88,46 @@ describe('make-external controller', () => {
     expect(port.actions).toEqual([]);
     expect(port.views).toBe(2);
     expect(controller.getState().announcement).toBe('Signed in. Choose history, visibility and agents.');
+  });
+
+  it('reports an absent journey, an ended session and an unreachable server as their own phases', async () => {
+    for (const [read, phase] of [
+      [{ kind: 'absent' }, 'absent'], [{ kind: 'session_ended' }, 'session_ended'], [{ kind: 'unavailable' }, 'load_failed'],
+    ] as const) {
+      const { port, controller, settle } = setup();
+      port.reads.push(read);
+      controller.start();
+      await settle();
+      expect(controller.getState().phase, read.kind).toBe(phase);
+    }
+  });
+
+  it('a retry after a failed load lands on the phase the server reports, never stuck loading', async () => {
+    for (const [read, phase] of [[{ kind: 'absent' }, 'absent'], [{ kind: 'session_ended' }, 'session_ended']] as const) {
+      const { port, controller, settle } = setup();
+      port.reads.push({ kind: 'unavailable' }, read);
+      controller.start();
+      await settle();
+      await controller.retry();
+      expect(controller.getState().phase, read.kind).toBe(phase);
+    }
+    const { port, controller, settle } = setup();
+    port.reads.push({ kind: 'unavailable' });
+    controller.start();
+    await settle();
+    await controller.retry();
+    expect(controller.getState().phase).toBe('ready');
+  });
+
+  it('an action refused as absent or after the session ended leaves the journey', async () => {
+    for (const [write, phase] of [[{ kind: 'absent' }, 'absent'], [{ kind: 'session_ended' }, 'session_ended']] as const) {
+      const { port, controller, settle } = setup();
+      controller.start();
+      await settle();
+      port.next.push(write);
+      await controller.act({ kind: 'sign_in' });
+      expect(controller.getState()).toMatchObject({ phase, busy: null });
+    }
   });
 
   it('ignores a second action while one is in flight', async () => {

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ImportedHistoryRecord } from '@khala/contracts/messaging/imported-history';
 import { describe, expect, it } from 'vitest';
-import { ImportedTranscript } from './ImportedTranscript';
+import { ImportedHistoryRead, ImportedTranscript } from './ImportedTranscript';
 import { segmentsOf } from './model';
 
 const record = (body: string, index = 1): ImportedHistoryRecord => ({
@@ -40,6 +40,16 @@ describe('imported transcript', () => {
     expect(html).toContain('Imported history');
     expect(html).toContain('these messages were not sent in this channel');
     expect(html).toContain('<time dateTime="2026-09-25T11:00:00Z">');
+  });
+
+  it('shows nothing without an archive and nothing from an archive that failed to verify', () => {
+    const read = (value: Parameters<typeof ImportedHistoryRead>[0]['read']) =>
+      renderToStaticMarkup(<ImportedHistoryRead read={value} importerLabel="Ada" />);
+    expect(read({ kind: 'none' })).toBe('');
+    expect(read({ kind: 'invalid' })).toBe('<p role="status" class="imported-history__notice">Imported history did not verify, so none of it is shown.</p>');
+    expect(read({ kind: 'unavailable' })).toContain('Imported history is unavailable right now.');
+    expect(read({ kind: 'ok', transcript: { archiveId: 'history.c', importedAt: '2026-09-26T09:00:00Z', records: [record('hi')] } }))
+      .toContain('<ol class="imported-history__records" aria-label="1 imported messages">');
   });
 
   it('splits bodies into text and code without interpreting anything else', () => {

@@ -20,10 +20,12 @@ describe('journey step', () => {
     expect(stepOf(conversionView({ state: 'failed' }))).toBe('failed');
   });
 
-  it('asks for a new sign-in to continue a conversion, but never to finish activation', () => {
+  it('asks for a new sign-in to continue any unfinished conversion, including after the link', () => {
     const signedOut = { signIn: { status: 'signed_out' as const, verificationUrl: null, failure: null } };
-    expect(stepOf(conversionView({ state: 'agents_pending' }, signedOut))).toBe('sign_in_again');
-    expect(stepOf(conversionView({ state: 'activating' }, signedOut))).toBe('activating');
+    for (const state of ['agents_pending', 'committing', 'activating'] as const) {
+      expect(stepOf(conversionView({ state }, signedOut)), state).toBe('sign_in_again');
+    }
+    expect(stepOf(conversionView({ state: 'externalized' }, signedOut))).toBe('done');
   });
 });
 

@@ -31,6 +31,12 @@ import type { InternalStoreHandle } from '../store/open';
 
 const conversionKey = (conversionId: string): string => `conversion.v1.${conversionId}`;
 const operationKey = (operationId: string): string => `conversion:${operationId}`;
+/**
+ * The channel's latest conversion. Unlike the conversion lock it survives `cancelled` and
+ * `failed`, so an orphaned destination stays reportable after a restart until the human
+ * dismisses the result.
+ */
+const latestKey = (channelId: string): string => `channel-conversion-latest.v1.${channelId}`;
 
 export type ConversionEntry = Readonly<{
   v: 1;
@@ -65,6 +71,10 @@ export interface ConversionJournal extends ConversionJournalPort {
   entry(conversionId: string): Promise<OperationResult<ConversionEntry, 'not_found'>>;
   change(input: ConversionChange): Promise<OperationResult<ConversionEntry, ConversionChangeRejection>>;
   sourceLock(channelId: string): Promise<OperationResult<ChannelConversionLock | null, never>>;
+  /** The channel's latest conversion, ended or not, until the human dismisses an ended one. */
+  latest(channelId: string): Promise<OperationResult<string | null, never>>;
+  /** Forgets the channel's latest conversion when it is `conversionId` and has ended. */
+  dismiss(channelId: string, conversionId: string): Promise<OperationResult<null, 'wrong_state'>>;
 }
 
 const identity = (r: Reader): ConversionAgentIdentity => ({
@@ -220,6 +230,14 @@ function snapshotSource(db: Db, owner: ConversionOwner, input: ConversionStart):
 
 const TERMINAL: readonly ConversionState[] = ['externalized', 'cancelled', 'failed'];
 
+function readLatest(db: Db, channelId: string): string | null {
+  const row = db.prepare('SELECT value FROM control_records WHERE record_key = ?').get(latestKey(channelId)) as { value: string } | undefined;
+  if (!row) return null;
+  const value = JSON.parse(row.value) as { conversionId?: unknown };
+  if (typeof value.conversionId !== 'string') throw new JournalCorrupt();
+  return value.conversionId;
+}
+
 /** Applies the source write state a transition carries. Returns false when the lock is not this conversion's. */
 function moveSource(db: Db, entry: ConversionEntry, to: ConversionState, operationId: string): boolean {
   const channelId = entry.snapshot.sourceChannelId;
@@ -318,6 +336,7 @@ export function createConversionJournal(handle: InternalStoreHandle): Conversion
         writeRecord(db, channelConversionKey(input.sourceChannelId), input.operationId, {
           conversionId: input.conversionId, write: 'open', destinationChannelId: null,
         } satisfies ChannelConversionLock);
+        writeRecord(db, latestKey(input.sourceChannelId), input.operationId, { conversionId: input.conversionId });
         claim(db, input.operationId, fingerprint, entry);
         return ok(entry);
       }));
@@ -336,6 +355,20 @@ export function createConversionJournal(handle: InternalStoreHandle): Conversion
 
     sourceLock(channelId) {
       return run(() => ok(handle.read(db => readChannelConversionLock(db, channelId))));
+    },
+
+    latest(channelId) {
+      return run(() => ok(handle.read(db => readLatest(db, channelId))));
+    },
+
+    dismiss(channelId, conversionId) {
+      return run(() => handle.transaction(db => {
+        if (readLatest(db, channelId) !== conversionId) return ok(null);
+        const entry = readEntry(db, conversionId);
+        if (entry && entry.record.state !== 'cancelled' && entry.record.state !== 'failed') return rejected('wrong_state');
+        db.prepare('DELETE FROM control_records WHERE record_key = ?').run(latestKey(channelId));
+        return ok(null);
+      }));
     },
 
     /** A conversion begins only from a snapshot, through `start`; `create` replays that start. */

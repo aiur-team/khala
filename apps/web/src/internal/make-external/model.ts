@@ -2,9 +2,9 @@
 // what each agent's state means, and the words every announcement uses. The step is
 // derived only from the server's view, so a reload lands on exactly the same step.
 
-import type {
-  ConversionAgentBlock, ConversionFailure, ConversionVisibility, HistoryMode, MakeExternalAgent, MakeExternalJourneyView,
-  MakeExternalRejection,
+import {
+  type ConversionAgentBlock, type ConversionFailure, type ConversionVisibility, type HistoryMode, MAX_HISTORY_CATCH_UP_ROUNDS,
+  type MakeExternalAgent, type MakeExternalJourneyView, type MakeExternalRejection,
 } from '@khala/contracts/messaging/make-external';
 
 export type JourneyStep =
@@ -34,8 +34,9 @@ export function stepOf(view: MakeExternalJourneyView): JourneyStep {
       case 'failed': return 'failed';
       default: break;
     }
-    // Forward-only states need no human choice, so they show their progress even while signed out.
-    if (conversion.state !== 'committing' && conversion.state !== 'activating' && view.signIn.status !== 'signed_in') return 'sign_in_again';
+    // Every remaining step reaches the hosted service (activation releases bindings there),
+    // so a restarted server needs a new sign-in before anything can continue.
+    if (view.signIn.status !== 'signed_in') return 'sign_in_again';
     switch (conversion.state) {
       case 'drain_required': return 'drain';
       case 'agents_pending': return 'agents';
@@ -55,6 +56,12 @@ export function stepOf(view: MakeExternalJourneyView): JourneyStep {
 /** Steps the server finishes without the human; the page keeps asking it to continue. */
 export function stepAdvancesAlone(step: JourneyStep): boolean {
   return step === 'signing_in' || step === 'preparing' || step === 'committing' || step === 'activating' || step === 'agents';
+}
+
+/** The source is paused or linked: cancelling is no longer possible. */
+export function isPastCancel(view: MakeExternalJourneyView): boolean {
+  const state = view.conversion?.state;
+  return state === 'committing' || state === 'activating' || state === 'externalized';
 }
 
 export function isEnded(view: MakeExternalJourneyView): boolean {
@@ -154,8 +161,6 @@ export const REJECTION_MESSAGE: Readonly<Record<MakeExternalRejection, string>> 
   invalid_selection: 'One of the selected agents is no longer in this channel. Review the roster again.',
 };
 
-export const HISTORY_ROUNDS = 3;
-
 /** One line of history progress, counts only. */
 export function historyProgressText(view: MakeExternalJourneyView): string | null {
   const history = view.conversion?.history;
@@ -164,7 +169,7 @@ export function historyProgressText(view: MakeExternalJourneyView): string | nul
   switch (history.phase) {
     case null: return 'Copying history…';
     case 'copy': return `History copied (${parts}).`;
-    case 'catch_up': return `Catch-up round ${history.round} of ${HISTORY_ROUNDS} (${parts}).`;
+    case 'catch_up': return `Catch-up round ${history.round} of ${MAX_HISTORY_CATCH_UP_ROUNDS} (${parts}).`;
     case 'final_drain': return `History complete (${parts}).`;
   }
 }

@@ -172,8 +172,10 @@ export function createMakeExternalController(
       // Nothing to resend: reload the view.
       set({ ...state, phase: state.view === null ? 'loading' : state.phase, error: null });
       const read = await port.view(channelId);
+      if (disposed) return;
       if (read.kind === 'ok') show(read.view);
-      else if (read.kind !== 'absent' && read.kind !== 'session_ended') set({ ...state, phase: state.view ? 'ready' : 'load_failed', error: UNAVAILABLE });
+      else if (read.kind === 'absent' || read.kind === 'session_ended') set({ ...state, phase: read.kind });
+      else set({ ...state, phase: state.view ? 'ready' : 'load_failed', error: UNAVAILABLE });
     },
     dispose() {
       disposed = true;

@@ -19,7 +19,10 @@ export const MAX_MAKE_EXTERNAL_AGENTS = 64;
 const MAX_LABEL_BYTES = 1_024;
 const MAX_URL_BYTES = 2_048;
 
-export const HISTORY_BLOCKS = ['ceiling_exceeded', 'source_changed'] as const;
+/** Catch-up rounds a carry-history transfer attempts before it asks for a paused drain. */
+export const MAX_HISTORY_CATCH_UP_ROUNDS = 3;
+
+export const HISTORY_BLOCKS =['ceiling_exceeded', 'source_changed'] as const;
 
 /**
  * Why a history transfer stopped for good. `ceiling_exceeded`: the paused drain could

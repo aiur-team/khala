@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ImportedHistoryRecord } from '@khala/contracts/messaging/imported-history';
-import { type ImportedHistoryRead, type ImportedTranscript as Transcript, formatImportedTime, segmentsOf } from './model';
+import { type ImportedHistoryRead as Read, type ImportedTranscript as Transcript, formatImportedTime, segmentsOf } from './model';
 import type { ImportedHistoryPort } from './ports';
 
 // Imported bodies are inert. They render only as React text inside <p> and <pre><code>:
@@ -56,7 +56,7 @@ export function ImportedHistorySection({ port, channelId, importerLabel }: {
   channelId: string;
   importerLabel: string;
 }) {
-  const [read, setRead] = useState<ImportedHistoryRead | null>(null);
+  const [read, setRead] = useState<Read | null>(null);
   useEffect(() => {
     let live = true;
     setRead(null);
@@ -69,7 +69,12 @@ export function ImportedHistorySection({ port, channelId, importerLabel }: {
       live = false;
     };
   }, [port, channelId]);
-  if (read === null || read.kind === 'none') return null;
+  return read === null ? null : <ImportedHistoryRead read={read} importerLabel={importerLabel} />;
+}
+
+/** One archive read as shown: nothing without an archive, and nothing from an archive that failed to verify. */
+export function ImportedHistoryRead({ read, importerLabel }: { read: Read; importerLabel: string }) {
+  if (read.kind === 'none') return null;
   if (read.kind === 'invalid') {
     return <p role="status" className="imported-history__notice">Imported history did not verify, so none of it is shown.</p>;
   }
