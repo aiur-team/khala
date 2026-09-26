@@ -6,8 +6,6 @@ import { localHarnessCapabilities } from './local-harness-capabilities.js';
 
 const CODEX_HOME = '/home/user/.codex';
 const HOOKS_PATH = `${CODEX_HOME}/hooks.json`;
-/** The staged launcher `codexPaths` derives from this environment's XDG data home. */
-const LAUNCHER = '/home/user/.local/share/khala/bin/khala';
 const TRUST = ['pre_tool_use', 'post_tool_use', 'user_prompt_submit', 'stop']
   .map(event => `[hooks.state.${JSON.stringify(`${HOOKS_PATH}:${event}:0:0`)}]\ntrusted_hash = "sha256:${'a'.repeat(64)}"\n`)
   .join('\n');
@@ -16,7 +14,7 @@ const binding = (harness: string) => ({ harness } as SessionBinding);
 
 function environment(input: Readonly<{ version?: string | null; config?: string | null; runs?: string[] }>): SetupEnvironment {
   const files: Record<string, string | null> = {
-    [HOOKS_PATH]: JSON.stringify(codexHooksFragment(LAUNCHER)),
+    [HOOKS_PATH]: JSON.stringify(codexHooksFragment('/home/user/.local/share/khala/bin/khala')),
     [`${CODEX_HOME}/config.toml`]: input.config ?? null,
   };
   return {
