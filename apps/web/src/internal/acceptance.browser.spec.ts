@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import { build } from 'vite';
-import { AgentSession, internalRootOf, khala, startLauncher, type RunningLauncher } from './fixtures/acceptance';
+import { AgentSession, freePort, internalRootOf, khala, startLauncher, type RunningLauncher } from './fixtures/acceptance';
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -73,8 +73,10 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
   try {
     await build({ configFile: path.join(webRoot, 'vite.internal.config.mjs'), logLevel: 'silent', build: { outDir: bundleDirectory, emptyOutDir: true } });
 
-    // Create: `khala internal` makes one private channel and serves it.
-    launcher = await startLauncher([], { stateHome: ownerHome, bundleDirectory });
+    // Create: `khala internal` makes one private channel and serves it. Both launches
+    // share one port so resume keeps the origin, as the default port does for a user.
+    const port = await freePort();
+    launcher = await startLauncher([], { stateHome: ownerHome, bundleDirectory, startPort: port });
     const { channelId, origin, url } = launcher.report;
     assert.match(launcher.report.resumeCommand, new RegExp(`^khala internal --resume ${channelId}$`));
 
@@ -198,14 +200,18 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     assert.equal(fs.existsSync(path.join(internalRootOf(ownerHome), 'active.json')), false, 'no runtime descriptor outlives the launcher');
 
     // Resume: the same persisted channel reopens, with its history, and Stop still holds.
-    launcher = await startLauncher(['--resume', channelId], { stateHome: ownerHome, bundleDirectory });
+    launcher = await startLauncher(['--resume', channelId], { stateHome: ownerHome, bundleDirectory, startPort: port });
     assert.equal(launcher.report.channelId, channelId, 'resume reopens the persisted channel');
+    assert.equal(launcher.report.origin, origin, 'resume keeps the origin');
     await page.goto(launcher.report.url);
-    await page.waitForURL(`${launcher.report.origin}/channels/${channelId}`);
+    await page.waitForURL(`${origin}/channels/${channelId}`);
     await rowWith(page, 'Owner: noted after Stop').waitFor();
     await rowWith(page, 'Bea: hello Ada').waitFor();
     assert.equal(await page.getByText('No messages yet.').count(), 0);
+    // The agent picks up the resumed launcher's descriptor and rejoins: its stopped
+    // binding is revoked in the store, not merely absent from the descriptor.
     fs.copyFileSync(path.join(internalRootOf(ownerHome), 'active.json'), ada.activePath);
+    assert.equal(await ada.join(channelUrl), 'revoked', 'a stopped binding is not re-activated on resume');
     assert.notEqual((await ada.send('Ada: after resume')).code, 0, 'a stopped binding stays revoked after resume');
 
     // Narrow viewport: the channel and its Stop outcome fit without horizontal scrolling.

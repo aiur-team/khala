@@ -6,6 +6,7 @@
 // `read`. Khala launches no agent here; the test process plays each agent's CLI.
 
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { runCli } from '../../../../../packages/agent-cli/src/cli/app';
@@ -22,6 +23,8 @@ type CliOptions = Readonly<{
   /** `XDG_STATE_HOME` of the terminal the command runs in. */
   stateHome: string;
   bundleDirectory: string;
+  /** The launcher's port; resume keeps the origin only when both launches share one. Defaults to any free port. */
+  startPort?: number;
   stdin?: string;
   signal?: AbortSignal;
   /** Called with each stdout chunk as it is written. */
@@ -54,13 +57,25 @@ export async function khala(argv: readonly string[], options: CliOptions): Promi
     // The browser is opened by the test itself; the runtime only prints the manual URL.
     internal: async () => createInternalRuntime({
       bundleDirectory: options.bundleDirectory,
-      startPort: 0,
+      startPort: options.startPort ?? 0,
       openBrowser: async () => ({ opened: false, reason: 'test' }),
     }),
     internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
     internalDelivery: async descriptorPath => createInternalDelivery({ descriptorPath, stateDirectory: inboxState }),
   });
   return { code, ...chunks };
+}
+
+/** A loopback port that is free right now. */
+export async function freePort(): Promise<number> {
+  const server = net.createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const { port } = server.address() as net.AddressInfo;
+  await new Promise<void>(resolve => server.close(() => resolve()));
+  return port;
 }
 
 /** `$XDG_STATE_HOME/khala/internal`, as `khala internal` resolves it. */
