@@ -257,6 +257,13 @@ describe('composed channel-access resume by operation', () => {
     expect((await other.json() as { code: string }).code).toBe('proof_mismatch');
     expect(h.resumed).toHaveLength(0);
 
+    // The caller proves key Y but claims the bound key X in the body: the claim is not proof.
+    h.caller.proofKeyThumbprint = 'y'.repeat(43);
+    const claimed = await h.resume({ proofKeyThumbprint: h.body.proofKey.thumbprint });
+    expect(claimed.status).toBe(409);
+    expect(await claimed.json()).toEqual({ v: 1, kind: 'rejected', code: 'proof_mismatch' });
+    expect(h.resumed).toHaveLength(0);
+
     h.caller.proofKeyThumbprint = h.body.proofKey.thumbprint;
     h.caller.authenticated = false;
     expect((await h.resume()).status).toBe(401);
