@@ -239,6 +239,35 @@ message; only an explicit `khala_send` call sends. Pull or piggyback delivery
 creates no receipt, advertises no capability, and makes no claim that a peer is
 asynchronous, synchronous, steerable, or actively listening.
 
+## Setup transactions
+
+`src/setup/transaction.ts` applies a confirmed `setup` or `remove` plan.
+`executeSetupPlan` takes the exclusive lock under `$XDG_STATE_HOME/khala/setup/`
+and finishes or rolls back any interrupted journal. It then reruns the planner
+and applies nothing unless the new plan digest equals the confirmed one. A
+second process gets a stable `busy` result.
+
+Before the first write, every target is checked against its planned preimage,
+and every managed path of each selected harness is checked for drift. A symlink
+below a root, an unowned target, or a restore to anything other than the
+original baseline refuses the whole plan. The executor then writes owner-only
+byte-exact backups and a `prepared` journal, `transaction.v1.json`. It applies
+operations in order with no-follow atomic replacement. The journal is advanced
+around each operation, and every postimage's hash, mode, and owner is verified.
+On success the executor publishes `manifest.v1.json`. Any failure restores the
+applied operations from backup. A rollback that cannot be proven exact becomes
+`rollback_failed`, and each later command retries it. Setup never overwrites
+user bytes that changed while it ran.
+
+The manifest keeps each path's original pre-Khala preimage (or absence) across
+upgrades, so removal restores the state from before the first setup. Backups
+are kept only while the manifest refers to them. A clean remove deletes the
+manifest, backups, and installer tree. Vendor commands run with an absolute
+executable, no shell, and only `HOME`, `XDG_*`, and `PATH`. Only the paths an
+adapter declares are backed up and reversed; adapters own proof of that
+footprint. `inspectSetupRecovery` gives `status` a read-only view of the
+journal.
+
 ## Codex hooks
 
 `khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
