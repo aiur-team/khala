@@ -1,8 +1,16 @@
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DiscoverError, discoverRoutes, renderGeneratedFunction, renderRouteManifest, repoRootFrom } from './discover';
+import {
+  DiscoverError,
+  discoverRoutes,
+  importSpecifier,
+  renderGeneratedFunction,
+  renderRouteManifest,
+  repoRootFrom,
+} from './discover';
 
 let repoRoot: string;
 
@@ -105,21 +113,46 @@ describe('discoverRoutes', () => {
 describe('renderGeneratedFunction', () => {
   it('imports only present domains and bakes in the absent prefixes', () => {
     const rendered = renderGeneratedFunction({
-      presentDomains: [{ key: 'human', prefix: '/api/human/', modulePath: '/x', exportName: 'registerHumanHandlers' }],
+      presentDomains: [{
+        key: 'human',
+        prefix: '/api/human/',
+        modulePath: '/repo/apps/control/src/composition/human/handlers.ts',
+        exportName: 'registerHumanHandlers',
+      }],
       absentPrefixes: ['/api/agent/'],
       routeManifest: [],
-    });
-    expect(rendered).toContain("import { registerHumanHandlers } from '../../apps/control/src/composition/human/handlers';");
+    }, '/repo');
+    expect(rendered).toContain("import { registerHumanHandlers } from '../../../apps/control/src/composition/human/handlers';");
     expect(rendered).not.toContain('registerAgentHandlers');
     expect(rendered).toContain('"/api/agent/"');
     expect(rendered).toContain('export default gateway;');
   });
 
   it('validates the server environment before building the gateway and seeds appOrigin from it', () => {
-    const rendered = renderGeneratedFunction({ presentDomains: [], absentPrefixes: [], routeManifest: [] });
-    expect(rendered).toContain("import { readServerEnv } from '../../apps/control/src/runtime/env';");
+    const rendered = renderGeneratedFunction({ presentDomains: [], absentPrefixes: [], routeManifest: [] }, '/repo');
+    expect(rendered).toContain("import { readServerEnv } from '../../../apps/control/src/runtime/env';");
     expect(rendered).toContain('const serverEnv = readServerEnv();');
     expect(rendered).toContain('appOrigin: serverEnv.publicAppOrigin');
+  });
+
+  it('emits relative imports that resolve from the real functions output directory', async () => {
+    const actualRoot = repoRootFrom(import.meta.dirname);
+    // Literal, matching netlify.toml's [functions].directory, so this test does not trust discover's own path.
+    const outputDirectory = join(actualRoot, 'infra/netlify/functions-generated');
+    const rendered = renderGeneratedFunction(await discoverRoutes(actualRoot), actualRoot);
+    const specifiers = [...rendered.matchAll(/^import .+ from '([^']+)';$/gmu)].map(match => match[1]!);
+    expect(specifiers).toHaveLength(4);
+    for (const specifier of specifiers) {
+      expect(existsSync(`${resolve(outputDirectory, specifier)}.ts`), `${specifier} must resolve from ${outputDirectory}`).toBe(true);
+    }
+  });
+});
+
+describe('importSpecifier', () => {
+  it('always yields an explicit relative POSIX specifier without the .ts extension', () => {
+    expect(importSpecifier('/repo/out', '/repo/out/nested/handler.ts')).toBe('./nested/handler');
+    expect(importSpecifier('/repo/infra/netlify/functions-generated', '/repo/apps/control/src/runtime/env.ts'))
+      .toBe('../../../apps/control/src/runtime/env');
   });
 });
 
