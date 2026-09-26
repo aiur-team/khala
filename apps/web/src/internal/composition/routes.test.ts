@@ -19,6 +19,18 @@ describe('local route codec', () => {
     expect(routes.createPath()).toBe('/');
   });
 
+  it('maps a channel’s Make-external page', () => {
+    expect(routes.parse('/channels/ch_abc/make-external')).toEqual({
+      kind: 'make_external', path: '/channels/ch_abc/make-external', roomId: 'ch_abc',
+    });
+    expect(routes.makeExternalPath('ch_abc')).toBe('/channels/ch_abc/make-external');
+    for (const path of [
+      '/channels//make-external', '/channels/a/b/make-external', '/channels/ch_abc/make-external?x=1', '/channels/ch_abc/settings/make-external',
+    ]) {
+      expect(routes.parse(path).kind, path).toBe('not_found');
+    }
+  });
+
   it('routes channel settings and the channel-requests inbox', () => {
     const handle = `careq_${'A'.repeat(43)}`;
     expect(routes.parse('/channels/ch_abc/settings')).toEqual({ kind: 'channel_settings', path: '/channels/ch_abc/settings', roomId: 'ch_abc' });
