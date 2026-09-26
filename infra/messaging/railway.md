@@ -14,6 +14,13 @@ identity. Approve it before the first durable production start; changing a
 Railway domain later does not change that identity safely. The Khala web origin
 `https://khala.aiur.team` is not a default Matrix server name.
 
+`KHALA_MATRIX_REGISTRATION_SHARED_SECRET` enables only the server-to-server
+shared-secret registration flow selected by P17. The rendered value stays in
+Synapse and the Netlify control runtime; it must never enter the browser bundle,
+an API response or a log. Khala derives a per-owner Matrix password from a
+separate Netlify-only secret and exchanges it for a device token, so no reusable
+Matrix password is stored or returned to the browser.
+
 Use a distinct `KHALA_STATE_NAMESPACE`, domain, database, Synapse volume and
 secrets for `preview` and `production`. The checker requires the namespace to end
 in the selected environment and refuses placeholder domains or secrets. Rendered
@@ -33,6 +40,7 @@ export KHALA_ENVIRONMENT=preview
 export KHALA_STATE_NAMESPACE=khala-preview
 export KHALA_MATRIX_SERVER_NAME=matrix.preview.test
 export KHALA_MATRIX_PUBLIC_ORIGIN=https://matrix.preview.test
+export KHALA_MATRIX_REGISTRATION_SHARED_SECRET='<secret-manager-value-at-least-32-characters>'
 export KHALA_DB_HOST=postgres
 export KHALA_DB_PORT=5432
 export KHALA_DB_NAME=synapse
@@ -106,9 +114,12 @@ Railway private networking replaces the Compose network: point
 `KHALA_DB_HOST` at the Postgres private service hostname and do not generate a
 public Postgres domain. Expose Synapse port 8008 through Railway HTTPS, preserve
 the incoming `Host`, `X-Forwarded-For` and `X-Forwarded-Proto` headers, and route
-only the intended Matrix client paths. The client listener also implements
-authenticated Synapse admin routes, so ingress must deny public
-`/_synapse/admin` paths in addition to Synapse requiring an admin access token.
+only the intended Matrix client paths. Deny every `/_synapse/admin/*` path at
+ingress except the exact `/_synapse/admin/v1/register` endpoint used by the
+Netlify control runtime. Restrict that exception to the control runtime's
+server-to-server traffic; do not expose an admin wildcard or long-lived admin
+access token. Synapse's nonce/HMAC exchange remains mandatory on the allowed
+endpoint.
 The template's client-only listener omits inbound federation endpoints, and its
 empty federation domain whitelist denies outbound federation requests.
 
