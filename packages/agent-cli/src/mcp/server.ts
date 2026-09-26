@@ -5,6 +5,8 @@ import { ListeningModeOperation } from '../composition/listening-mode.js';
 import { plainObject } from '../cli/validation.js';
 import type { ListeningModeOperationPort } from './listening-mode-tool.js';
 import type { ChannelToolsPort } from './channels/tools.js';
+import { PairingService } from '../cli/pair.js';
+import type { PairToolPort } from './pair.js';
 import type { ReadOperationPort } from './read-tool.js';
 import { toolRegistry, type ToolRegistry } from './registry.js';
 import {
@@ -26,6 +28,8 @@ export type McpServerOptions = Readonly<{
   /** Absent means no mode control is composed; the tool then refuses with `unavailable`. */
   listeningMode?: ListeningModeOperationPort | undefined;
   channels: ChannelToolsPort;
+  /** Absent means this connector has no pairing configuration; the tool then reports `pairing_unavailable`. */
+  pair?: PairToolPort | undefined;
   postprocessResult: McpServerResultPostprocessor;
   postprocessReadResult: McpServerReadResultPostprocessor;
   signal?: AbortSignal | undefined;
@@ -37,6 +41,7 @@ type ServerContext = Readonly<{
   read: ReadOperationPort;
   listeningMode: ListeningModeOperationPort;
   channels: ChannelToolsPort;
+  pair: PairToolPort;
   postprocessResult: McpServerResultPostprocessor | undefined;
   postprocessReadResult: McpServerReadResultPostprocessor | undefined;
   tools: ToolRegistry;
@@ -52,6 +57,7 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
     send,
     read,
     channels,
+    pair: options.pair ?? new PairingService({}),
     listeningMode: options.listeningMode ?? new ListeningModeOperation({ application: null }),
     postprocessResult,
     postprocessReadResult,
@@ -178,6 +184,7 @@ async function callTool(
     read: context.read,
     listeningMode: context.listeningMode,
     channels: context.channels,
+    pair: context.pair,
     postprocessResult: context.postprocessResult,
     postprocessReadResult: context.postprocessReadResult,
   };

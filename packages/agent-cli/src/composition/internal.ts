@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  type GrantedDescriptor, type InternalDescriptor, MAX_INTERNAL_DESCRIPTOR_BYTES, isGrantedDescriptor,
-  parseInternalDescriptor,
+  type GrantedDescriptor, INTERNAL_ACTIVE_DESCRIPTOR_FILE, type InternalDescriptor, MAX_INTERNAL_DESCRIPTOR_BYTES,
+  isGrantedDescriptor, parseInternalDescriptor,
 } from '@khala/contracts/internal/descriptor';
 import { ACCESS_REQUEST_OUTCOMES } from '@khala/contracts/messaging/discovery';
 import { publicBinding } from '../cli/runtime.js';
@@ -11,6 +11,7 @@ import type {
   AccessRequestResult, AgentClientPort, AgentStatus, SendRefusalCode, SendResult,
 } from '../cli/types.js';
 import { plainObject, validIdentifier } from '../cli/validation.js';
+import { type InternalDiscoverySelection, selectInternalDiscovery } from './internal-discovery.js';
 
 // The descriptor-backed local client for `--internal-descriptor <path>`. The
 // only stable input is the path: every operation reopens that exact file, so a
@@ -26,6 +27,10 @@ export type DescriptorRead =
 
 /** Mirrors the channel-access journal's agent route without importing the control app. */
 export const AGENT_CHANNEL_ACCESS_REQUEST_PATH = '/api/agent/channel-access/request';
+export const AGENT_CHANNEL_ACCESS_STATUS_PATH = '/api/agent/channel-access-requests';
+/** Terminal answers a later `join` of the same channel moves past with the next operation. */
+const CLOSED_OUTCOMES: ReadonlySet<string> = new Set(['denied', 'expired', 'revoked']);
+export const MAX_JOIN_ATTEMPTS = 16;
 export const AGENT_BINDING_PATH = '/api/v1/agent/binding';
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -101,9 +106,13 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     const read = readDescriptor(options.descriptorPath);
     return read.ok ? read.value : null;
   };
+  const discoverySelection = () => selectInternalDiscovery({
+    descriptorPath: options.descriptorPath,
+    activePath: path.resolve(path.dirname(options.descriptorPath), '..', '..', INTERNAL_ACTIVE_DESCRIPTOR_FILE),
+  });
 
   async function request(
-    descriptor: InternalDescriptor, capability: string, target: string,
+    descriptor: Readonly<{ origin: string }>, capability: string, target: string,
     init: Readonly<{ method: 'GET' | 'POST'; body?: unknown }>, signal: AbortSignal | undefined,
   ): Promise<Reply> {
     const timeout = AbortSignal.timeout(timeoutMs);
@@ -139,7 +148,8 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
 
     async status(signal) {
       const descriptor = current();
-      if (descriptor === null) return DISCONNECTED('unavailable');
+      // A discovery descriptor is an unjoined agent: it holds no binding by construction.
+      if (descriptor === null) return DISCONNECTED(discoverySelection().kind === 'selected' ? 'unknown' : 'unavailable');
       // Transport discovery alone never admits: report the pending, unjoined state.
       if (!isGrantedDescriptor(descriptor)) return DISCONNECTED('unknown');
       let held;
@@ -152,7 +162,7 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     async send(input, signal): Promise<SendResult> {
       const refused = (code: SendRefusalCode): SendResult => ({ kind: 'refused', code, clientTxnId: input.clientTxnId });
       const descriptor = current();
-      if (descriptor === null) return refused('transport_unavailable');
+      if (descriptor === null) return refused(discoverySelection().kind === 'selected' ? 'not_connected' : 'transport_unavailable');
       if (!isGrantedDescriptor(descriptor)) return refused('not_connected');
       if (input.bindingId !== null && input.bindingId !== descriptor.bindingId) return refused('binding_not_held');
       let reply: Reply;
@@ -176,40 +186,92 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     },
 
     async requestAccess(channelUrl, signal): Promise<AccessRequestResult> {
+      // A discovery descriptor from `khala internal discovery` names the requesting agent session.
+      const discovery = discoverySelection();
+      if (discovery.kind === 'selected') {
+        const { selection } = discovery;
+        return joinWithDiscovery(selection, channelUrl, signal,
+          (capability, target, init) => request(selection, capability, target, init, signal));
+      }
       const descriptor = current();
       if (descriptor === null) return { kind: 'unavailable' };
       if (localChannelId(channelUrl, descriptor.origin) !== descriptor.channelId) return { kind: 'refused', code: 'invalid_link' };
-      // A live grant already names this channel: there is nothing to request. A
-      // stale grant falls through to the journal like a transport-only file.
+      // A live grant already names this channel: there is nothing to request.
       if (isGrantedDescriptor(descriptor)) {
         let held;
         try { held = await heldBinding(descriptor, signal); } catch { return { kind: 'unavailable' }; }
         if (held === 'unavailable') return { kind: 'unavailable' };
         if (held !== 'revoked') return { kind: 'status', outcome: 'connected' };
       }
-      const operationId = createHash('sha256')
-        .update(JSON.stringify(['khala.agent-cli.internal-join.v1', channelUrl]))
-        .digest('base64url').slice(0, 32);
-      let reply: Reply;
-      try {
-        reply = await request(descriptor, descriptor.transportCapability, AGENT_CHANNEL_ACCESS_REQUEST_PATH, {
-          method: 'POST',
-          body: { v: 1, kind: 'channel_url', operationId, credentialRef: 'internal-transport', channelUrl },
-        }, signal);
-      } catch {
-        return { kind: 'unavailable' };
-      }
-      const body = reply.body;
-      if (reply.status === 200 && plainObject(body) && body.v === 1 && body.operationId === operationId
-        && typeof body.outcome === 'string' && (ACCESS_REQUEST_OUTCOMES as readonly string[]).includes(body.outcome)) {
-        return { kind: 'status', outcome: body.outcome as (typeof ACCESS_REQUEST_OUTCOMES)[number] };
-      }
-      return { kind: 'unavailable' };
+      // The launch's transport capability carries no agent identity, so it cannot file a request.
+      return { kind: 'refused', code: 'discovery_required' };
     },
 
     async listChannels() { return { kind: 'unavailable' }; },
     async listAgents() { return { kind: 'unavailable' }; },
   };
+}
+
+type AccessOutcome = (typeof ACCESS_REQUEST_OUTCOMES)[number];
+
+/** A 401 means the discovery capability was rotated or is unknown here: reissue it. */
+const DISCOVERY_REJECTED = 'discovery_rejected' as const;
+
+function accessOutcome(reply: Reply, operationId: string): AccessOutcome | typeof DISCOVERY_REJECTED | null {
+  if (reply.status === 401) return DISCOVERY_REJECTED;
+  const body = reply.body;
+  return reply.status === 200 && plainObject(body) && body.v === 1 && body.operationId === operationId
+    && typeof body.outcome === 'string' && (ACCESS_REQUEST_OUTCOMES as readonly string[]).includes(body.outcome)
+    ? body.outcome as AccessOutcome
+    : null;
+}
+
+/**
+ * Operations are derived from the channel URL, the discovery principal, its
+ * generation and an attempt counter. A retry of the same attempt is idempotent,
+ * and `unavailable` never advances it. A denied, expired or revoked answer (Stop
+ * revokes) moves the next `join` to the following attempt, so a fresh request is
+ * never collapsed into the old answer.
+ */
+async function joinWithDiscovery(
+  selection: InternalDiscoverySelection,
+  channelUrl: string,
+  signal: AbortSignal | undefined,
+  call: (capability: string, target: string, init: Readonly<{ method: 'GET' | 'POST'; body?: unknown }>) => Promise<Reply>,
+): Promise<AccessRequestResult> {
+  if (localChannelId(channelUrl, selection.origin) === null) return { kind: 'refused', code: 'invalid_link' };
+  const { principal, generation, discoveryCapability } = selection.descriptor;
+  let closed: AccessOutcome | null = null;
+  for (let attempt = 0; attempt < MAX_JOIN_ATTEMPTS; attempt += 1) {
+    signal?.throwIfAborted();
+    const operationId = createHash('sha256')
+      .update(JSON.stringify(['khala.agent-cli.internal-join.v2', channelUrl, principal, generation, attempt]))
+      .digest('base64url').slice(0, 32);
+    let outcome: AccessOutcome | typeof DISCOVERY_REJECTED | null;
+    try {
+      outcome = accessOutcome(await call(discoveryCapability, `${AGENT_CHANNEL_ACCESS_STATUS_PATH}/${operationId}`, { method: 'GET' }), operationId);
+    } catch {
+      return { kind: 'unavailable' };
+    }
+    if (outcome === null) return { kind: 'unavailable' };
+    if (outcome === DISCOVERY_REJECTED) return { kind: 'refused', code: 'discovery_required' };
+    if (CLOSED_OUTCOMES.has(outcome)) {
+      closed = outcome;
+      continue;
+    }
+    if (outcome !== 'unavailable') return { kind: 'status', outcome };
+    // Nothing is journaled under this operation yet: submit exactly this operation.
+    try {
+      outcome = accessOutcome(await call(discoveryCapability, AGENT_CHANNEL_ACCESS_REQUEST_PATH, {
+        method: 'POST', body: { v: 1, kind: 'channel_url', operationId, credentialRef: principal, channelUrl },
+      }), operationId);
+    } catch {
+      return { kind: 'unavailable' };
+    }
+    if (outcome === DISCOVERY_REJECTED) return { kind: 'refused', code: 'discovery_required' };
+    return outcome === null ? { kind: 'unavailable' } : { kind: 'status', outcome };
+  }
+  return closed === null ? { kind: 'unavailable' } : { kind: 'status', outcome: closed };
 }
 
 function errorCode(body: unknown): unknown {

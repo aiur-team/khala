@@ -82,7 +82,11 @@ export type HistoryTransferStep = Readonly<{
   phase: HistoryTransferPhase;
   /** Catch-up round, 0 for the initial copy; at most three catch-up rounds are attempted. */
   round: number;
-  /** Last chunk already acknowledged, so a resumed step starts at the first unreconciled one. */
+  /**
+   * How many chunks the caller has seen acknowledged (chunks `0..afterChunk-1`), so a
+   * resumed step starts at the first unreconciled one. The transfer's persisted
+   * acknowledgements stay authoritative; a caller claiming more than they record is refused.
+   */
   afterChunk: number;
 }>;
 
@@ -91,12 +95,25 @@ export type HistoryTransferProgress = Readonly<{
   conversionId: string;
   operationId: string;
   outcome: 'more' | 'converged' | 'drain_required';
+  /** Count of acknowledged chunks, `0..lastAckChunk-1`; equals `chunkCount` once every sealed chunk is acknowledged. */
   lastAckChunk: number;
   chunkCount: number;
+  /**
+   * Digest of the manifest over every chunk sealed so far. After a `final_drain` step
+   * converges it names the manifest the destination holds, and the importer verifies
+   * the archive against it.
+   */
   manifestDigest: string;
 }>;
 
-export type HistoryTransferRejection = 'not_found' | 'wrong_state' | 'operation_mismatch' | 'ceiling_exceeded';
+/**
+ * `forbidden`: the signed-in owner, the journaled operation or the destination channel
+ * is not the one the transfer is bound to. `source_changed`: an already sealed range of
+ * the source log no longer reproduces its digests. `ceiling_exceeded` is the finite
+ * blocked result of a paused drain; the source channel has been resumed.
+ */
+export type HistoryTransferRejection =
+  | 'not_found' | 'wrong_state' | 'operation_mismatch' | 'ceiling_exceeded' | 'forbidden' | 'invalid_request' | 'source_changed';
 
 /** One resumable step of history transfer; the journal, not this port, owns state changes. */
 export interface HistoryTransferPort {

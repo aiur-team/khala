@@ -5,7 +5,7 @@
 
 import type { SessionBinding } from '@khala/contracts/messaging/index';
 import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
-import type { BootstrapDescriptor, OwnershipMethod } from './descriptor';
+import type { BootstrapDescriptor, OwnershipMethod, PairingDescriptor } from './descriptor';
 import type { DiscoveryPort } from './discovery';
 
 export type { DiscoveryPort } from './discovery';
@@ -63,6 +63,36 @@ export interface OwnershipPort {
     deviceId: string;
     operationId: string;
   }>): Promise<OwnershipOutcome>;
+}
+
+/** Finite pairing refusals. None of them says whether a code or channel exists. */
+export type PairingRefusal = 'pairing_refused' | 'pairing_denied' | 'pairing_expired' | 'rate_limited' | 'ownership_required';
+
+export type PairingOutcome =
+  | Readonly<{ kind: 'granted'; grant: OwnershipGrant }>
+  | Readonly<{ kind: 'refused'; code: PairingRefusal }>
+  /** The owner has not decided yet. Retrying the same operation resumes this same claim. */
+  | Readonly<{ kind: 'pending'; reason: 'approval_timeout' | 'cancelled' }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+/**
+ * `pairing-code-v1`: claims a human-entered code with the connector key, the
+ * reserved device and the inspected session, then waits for the owner's decision.
+ * The code and the claim receipt stay inside one call; neither is ever persisted.
+ */
+export interface PairingOwnershipPort {
+  /** RFC 7638 thumbprint of the connector proof key every claim is bound to. */
+  readonly jkt: string;
+  claim(input: Readonly<{
+    code: string;
+    descriptor: PairingDescriptor;
+    session: VerifiedSession;
+    /** Canonical digest of the inspected session evidence. */
+    evidenceDigest: string;
+    deviceId: string;
+    operationId: string;
+    signal?: AbortSignal;
+  }>): Promise<PairingOutcome>;
 }
 
 /** Everything the model-facing adapter may do. It cannot approve, release or set policy. */
@@ -154,6 +184,8 @@ export interface BootstrapOperationStore {
 export type BootstrapPorts = Readonly<{
   discovery: DiscoveryPort;
   ownership: OwnershipPort;
+  /** Present only when the connector is configured for code-only pairing. */
+  pairing?: PairingOwnershipPort;
   admission: BootstrapAdmissionPort;
   devices: ConnectorDevicePort;
   sessions: SessionInspectionPort;

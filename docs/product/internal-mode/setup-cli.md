@@ -255,6 +255,7 @@ XDG, and PATH inputs.
 | Claude Code | One user-scope plugin containing the skill, hooks, and MCP entry | `claude-plugin-hooks`, `claude-plugin-dispatch`, `mcp-result-piggyback` | Delivery targets the normal user-started Claude session. Optional hardening is reported separately and never gates readiness. |
 | Codex | Khala skill, native hooks (PreToolUse/PostToolUse, Stop/UserPromptSubmit), and MCP entry; no plugin | `mcp-result-piggyback`, `listening-mode-pull`, `interactive-codex` | Preserve existing config; never write or remove `hooks.state` or `trusted_hash`; keep the installed hook command and path stable across upgrades; route support remains a separate capability label. |
 | OpenCode | OpenCode plugin, global skill, and MCP entry | `opencode-session-bridge`, `opencode-delivery-contract`, `mcp-result-piggyback` | Use a guarded direct config edit for removal unless a tested exact vendor removal surface appears. |
+| Cursor (app) | The `khala` MCP entry in `~/.cursor/mcp.json` only; no hooks | `cursor-channel-adapter` | Every Cursor mode is unproven, so no hook is installed and status reports `cursor_delivery_unproven`. Removal restores the recorded pre-Khala bytes. |
 
 The Claude producer-owned plugin ships in a versioned local Khala marketplace
 catalog inside the immutable payload. Its adapter models marketplace

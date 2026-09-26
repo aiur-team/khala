@@ -5,8 +5,10 @@
   "type": "module",
   "exports": {
     "./claude/*": "./src/claude/*.ts",
+    "./codex-app/*": "./src/codex-app/*.ts",
     "./codex/fakes": null,
     "./codex/*": "./src/codex/*.ts",
+    "./cursor/*": "./src/cursor/*.ts",
     "./opencode/*": "./src/opencode/*.ts"
   },
   "scripts": {

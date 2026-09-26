@@ -212,7 +212,7 @@ class FileInbox implements BatchInbox {
   }
 
   async acquireListener(): Promise<WakeableInboxConsumer> {
-    const lock = await acquireListenerLock(this.#listenerLockPath);
+    const lock = await acquireProcessLock(this.#listenerLockPath);
     // Starting is itself a catch-up wake: a release may have become durable while no
     // listener ran, or its hint may have been lost between append and notification.
     let pending = true;
@@ -795,7 +795,11 @@ function decodeUtf8(bytes: Uint8Array): string {
 
 type ListenerLockRecord = Readonly<{ v: 1; pid: number; token: string }>;
 
-async function acquireListenerLock(filename: string): Promise<Readonly<{ release(): Promise<void> }>> {
+/**
+ * An exclusive lock file held by one live process. A lock left by a dead process is
+ * quarantined and replaced; a live holder fails with `listener_busy`.
+ */
+export async function acquireProcessLock(filename: string): Promise<Readonly<{ release(): Promise<void> }>> {
   const record: ListenerLockRecord = { v: 1, pid: process.pid, token: randomUUID() };
   while (true) {
     if (createListenerLock(filename, record)) {

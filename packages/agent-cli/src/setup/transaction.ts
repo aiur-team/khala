@@ -63,6 +63,13 @@ export type ExecutablePlan = Readonly<{
   modes?: ReadonlyMap<string, number>;
   /** Detected harnesses with an unsupported version: setup refuses before mutation, remove proceeds. */
   unsupportedHarnesses?: readonly HarnessId[];
+  /**
+   * Foreign files whose `config_entry_set` makes Khala the owner of that one entry, not of
+   * the whole file, because the harness itself rewrites the rest of it. The manifest records
+   * the entry; later plans must name the same entry, whole-file drift no longer refuses, and
+   * `config_entry_remove` releases the path. Every operation still checks its preimage.
+   */
+  entryOwnedPaths?: readonly string[];
 }>;
 
 /** Runs a resolved absolute executable with an argument array, no shell, and exactly `env`. */
@@ -502,7 +509,8 @@ class Executor {
     // Every managed path of every selected harness must still hold its recorded postimage.
     const harnesses = new Set(plan.operations.map(operation => operation.harness));
     for (const entry of entries.values()) {
-      if (!harnesses.has(entry.harness)) continue;
+      // An entry-owned file is the harness's to rewrite; its adapter judges the entry itself.
+      if (!harnesses.has(entry.harness) || entry.entry !== undefined) continue;
       let current: Sha256Digest | null;
       try {
         current = observed.has(entry.path) ? observed.get(entry.path)?.hash ?? null : await this.fs.hashOf(entry.path);
@@ -522,7 +530,13 @@ class Executor {
       const entry = entries.get(operation.path);
       const current = observed.get(operation.path)?.hash ?? null;
       const expected = precondition(operation);
-      if (entry !== undefined && expected !== entry.postimage) {
+      const entryEdit = operation.type === 'config_entry_set' || operation.type === 'config_entry_remove';
+      // A file Khala created for its entry may be deleted once only harness-free bytes remain
+      // (the baseline check below still requires that it was absent before Khala).
+      if (entry?.entry !== undefined && operation.type !== 'file_delete' && !(entryEdit && operation.entry === entry.entry)) {
+        refuse('conflict', 'invalid_plan', `${operation.path} is managed only for ${entry.entry}; edit that entry.`, operation);
+      }
+      if (entry !== undefined && entry.entry === undefined && expected !== entry.postimage) {
         refuse('drifted', 'drifted', `${operation.path} is managed and does not match the operation's precondition.`, operation);
       }
       if (current !== expected) {
@@ -617,7 +631,11 @@ class Executor {
         const previous = entries.get(target.path);
         const post = target.postimage;
         const baseline = previous?.baseline ?? { hash: target.preimage, backup: target.backup, mode: target.mode };
+        const entry = previous !== undefined ? previous.entry
+          : operation.type === 'config_entry_set' && plan.entryOwnedPaths?.includes(target.path) === true ? operation.entry
+            : undefined;
         const released = operation.type === 'file_delete' || operation.type === 'file_restore'
+          || (operation.type === 'config_entry_remove' && entry !== undefined)
           || post === null || post === baseline.hash;
         if (released) {
           entries.delete(target.path);
@@ -635,6 +653,7 @@ class Executor {
           mode: observed!.mode,
           baseline,
           createdDirectories: previous?.createdDirectories ?? target.createdDirectories,
+          ...(entry === undefined ? {} : { entry }),
         });
       }
     }
@@ -722,6 +741,14 @@ class Executor {
       }
     }
     try {
+      // A parent shared by several managed files (such as `~/.codex`) empties only once the
+      // last of them is gone, whichever operation created it.
+      const created = new Map((manifest?.entries ?? []).map(entry => [entry.path, entry.createdDirectories]));
+      for (const { operation } of journal.operations) {
+        if (operation.type === 'file_delete' || operation.type === 'file_restore') {
+          await this.fs.removeEmptyDirectories(created.get(operation.path) ?? []);
+        }
+      }
       journal.manifest = await this.nextManifest(plan, manifest, journal);
       journal.state = 'committed';
       await this.writeJournal(journal);
