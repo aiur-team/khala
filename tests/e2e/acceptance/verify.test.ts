@@ -118,5 +118,9 @@ describe('acceptance verdict', () => {
     if (reply.kind === 'refused') throw new Error('expected a stopped reply');
     const partial = { ...input, stop: { ...input.stop!, reply: { kind: 'partial' as const, stopped: reply.stopped.slice(0, 1), remaining: reply.stopped.slice(1) } } };
     expect(statusOf(partial, 'stop')).toBe('fail');
+    // Both recorded bindings stopped, but the server still reports one it could not revoke.
+    const leftover = { bindingId: 'binding_other', generation: 1, agentParticipantId: 'participant_other' };
+    const unfinished = { ...input, stop: { ...input.stop!, reply: { kind: 'partial' as const, stopped: reply.stopped, remaining: [leftover] } } };
+    expect(statusOf(unfinished, 'stop')).toBe('fail');
   });
 });

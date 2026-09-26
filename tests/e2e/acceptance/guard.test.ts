@@ -33,8 +33,18 @@ describe('runner command guard', () => {
     [['sqlite3', '/home/me/.local/state/khala/internal/channels/x/room.sqlite']],
     [['sh', '-c', 'khala run claude']],
     [['gh', 'pr', 'create']],
+    // The runner acts as the human controller, never as an agent session.
+    [['npx', '--yes', PACKAGE, 'send', 'hello']],
+    [['khala', 'join', 'http://127.0.0.1:4870/channels/x']],
+    [['npx', '--yes', PACKAGE, 'internal', '--resume', 'x;rm -rf /']],
   ])('refuses %j', argv => {
     expect(checkCommand(argv, PACKAGE).ok).toBe(false);
+  });
+
+  it('names agent launching as the reason `khala run` is refused', () => {
+    for (const argv of [['khala', 'run', 'claude'], ['npx', '--yes', PACKAGE, 'run', 'codex']]) {
+      expect(checkCommand(argv, PACKAGE)).toEqual({ ok: false, reason: 'khala run wraps an agent CLI; the runner never launches an agent' });
+    }
   });
 
   it.each([
