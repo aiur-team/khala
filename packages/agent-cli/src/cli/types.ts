@@ -3,6 +3,7 @@ import type {
   BindingId, EventRef, HarnessCapabilities, ListeningMode, SessionBinding,
 } from '@khala/contracts/delivery/index';
 import type { InternalRuntime } from '@khala/contracts/internal/command';
+import type { AccessRequestOutcome } from '@khala/contracts/messaging/discovery';
 import type { AgentListeningModeApplication } from '../composition/listening-mode.js';
 import type { ChannelListingPort } from './channels/types.js';
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
@@ -53,12 +54,18 @@ export type SendResult =
 export type AgentStatus = Readonly<{
   v: 1; connected: boolean; binding: SessionBinding | null; route: AgentRoute; sourceCursor: string | null;
 }>;
+export type AccessRequestResult =
+  | Readonly<{ kind: 'status'; outcome: AccessRequestOutcome }>
+  | Readonly<{ kind: 'refused'; code: 'invalid_link' }>
+  | Readonly<{ kind: 'unavailable' }>;
 /** The held binding's effective listening mode; `effective` is null when no mode is currently usable. */
 export type AgentListeningModeStatus = Readonly<{
   v: 1; bindingId: BindingId; generation: number; effective: ListeningMode | null;
 }>;
 export interface AgentClientPort {
   connect(link: string, signal?: AbortSignal): Promise<ConnectResult>;
+  /** Present only on a descriptor-backed local client; asks the channel-access journal for a human grant. */
+  requestAccess?(channelUrl: string, signal?: AbortSignal): Promise<AccessRequestResult>;
   send(input: Readonly<{ bindingId: BindingId | null; clientTxnId: string; body: string }>, signal?: AbortSignal): Promise<SendResult>;
   status(signal?: AbortSignal): Promise<AgentStatus>;
   /** Absent until live composition supplies the listening-mode store; native hooks then deliver nothing. */
@@ -85,6 +92,8 @@ export type CliDependencies = Readonly<{
   listeningMode?: AgentListeningModeApplication | null;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
   internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
+  /** Lazily composes the descriptor-backed local client; called only when `--internal-descriptor` is given. */
+  internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
   claude?: ClaudeSessionClient;
 }>;
 /** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
