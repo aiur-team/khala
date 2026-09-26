@@ -6,7 +6,7 @@
 
 import type { ListeningMode, SessionBinding } from '@khala/contracts/delivery/index';
 import { sameSessionBinding } from '@khala/contracts/delivery/index';
-import { CODEX_INTERACTIVE_VERSIONS } from './interactive';
+import { CODEX_INTERACTIVE_VERSIONS, type CodexIdleWakeState } from './interactive';
 
 /** The only message text a wake ever queues. */
 export const CODEX_IDLE_WAKE_NOTICE = 'Khala: channel messages are waiting. Continue.';
@@ -41,6 +41,12 @@ export type CodexIdleWakeDeps = Readonly<{
 }>;
 
 export type CodexIdleWake = Readonly<{
+  /**
+   * Whether the wake claim may be made for this binding: `unavailable` after its last wake failed,
+   * so capabilities fall back to the next-turn-only claim (decision 34). Feed it to
+   * `interactiveCodexCapabilities(..., idleWake)`.
+   */
+  state: (binding: SessionBinding) => CodexIdleWakeState;
   /** Wake one idle session for a pending batch; concurrent wakes for a binding coalesce. */
   wake: (binding: SessionBinding, mode: ListeningMode, version: string) => Promise<CodexIdleWakeResult>;
 }>;
@@ -53,6 +59,8 @@ export function createCodexIdleWake(deps: CodexIdleWakeDeps): CodexIdleWake {
   const pollMs = deps.revocationPollMs ?? 250;
   const inFlight = new Map<string, Readonly<{ binding: SessionBinding; result: Promise<CodexIdleWakeResult> }>>();
 
+  const failed = new Set<string>();
+  const key = (binding: SessionBinding) => `${binding.bindingId}:${binding.generation}`;
   const current = (binding: SessionBinding) => deps.isCurrent(binding).catch(() => false);
 
   async function run(binding: SessionBinding): Promise<CodexIdleWakeResult> {
@@ -76,17 +84,39 @@ export function createCodexIdleWake(deps: CodexIdleWakeDeps): CodexIdleWake {
   }
 
   return {
+    state: binding => (failed.has(key(binding)) ? 'unavailable' : 'available'),
     wake(binding, mode, version) {
       // `async` is never woken; an unproven version keeps the next-turn-only claim.
       if (mode === 'async') return Promise.resolve('not_idle_mode');
       if (!CODEX_INTERACTIVE_VERSIONS.includes(version)) return Promise.resolve('unsupported_version');
       const existing = inFlight.get(binding.bindingId);
       if (existing && sameSessionBinding(existing.binding, binding)) return existing.result;
-      const result = run(binding).finally(() => {
+      const result = run(binding).then(outcome => {
+        if (outcome === 'queued') failed.delete(key(binding));
+        else if (outcome === 'queue_failed') failed.add(key(binding));
+        return outcome;
+      }).finally(() => {
         if (inFlight.get(binding.bindingId)?.result === result) inFlight.delete(binding.bindingId);
       });
       inFlight.set(binding.bindingId, { binding, result });
       return result;
+    },
+  };
+}
+
+/**
+ * Adapts the wake to the dispatcher's `IdleWake` port. The dispatcher supplies the mode from its
+ * ledger's controls; the version comes from setup's inspection, and an unknown one wakes nothing.
+ */
+export function codexDispatchIdleWake(
+  wake: CodexIdleWake,
+  versionOf: (binding: SessionBinding) => Promise<string | null>,
+): Readonly<{ wake: (binding: SessionBinding, mode: 'steer' | 'sync') => Promise<void> }> {
+  return {
+    async wake(binding, mode) {
+      if (binding.harness !== 'codex') return;
+      const version = await versionOf(binding);
+      if (version !== null) await wake.wake(binding, mode, version);
     },
   };
 }

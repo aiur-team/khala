@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CODEX_IDLE_WAKE_NOTICE, type CodexIdleWakeOutcome, createCodexIdleWake } from './idle-wake';
+import {
+  CODEX_IDLE_WAKE_NOTICE, type CodexIdleWakeOutcome, codexDispatchIdleWake, createCodexIdleWake,
+} from './idle-wake';
+import { interactiveCodexCapabilities } from './interactive';
 
-import { binding as fixtureBinding } from './fakes';
+import { binding as fixtureBinding, limits } from './fakes';
 
 const binding = fixtureBinding();
 const MARKER = 'marker-body-7f3a';
@@ -79,5 +82,28 @@ describe('codex idle wake', () => {
     // The port promise never settles here, so the wake must resolve from the abort alone.
     expect(await pending).toBe('revoked');
     expect(runs[0]!.signal.aborted).toBe(true);
+  });
+});
+
+describe('idle wake state and dispatch adapter', () => {
+  it('drops the wake claim after a failed queue command and restores it after a success', async () => {
+    let outcome: CodexIdleWakeOutcome = { status: 'exited', code: 1 };
+    const { wake } = harness(async () => outcome);
+    expect(wake.state(binding)).toBe('available');
+    await wake.wake(binding, 'sync', '0.154.0');
+    expect(wake.state(binding)).toBe('unavailable');
+    expect(interactiveCodexCapabilities('0.154.0', limits, { state: 'trusted' }, wake.state(binding)).immediateNotification)
+      .toBe('unknown');
+    outcome = { status: 'queued' };
+    await wake.wake(binding, 'sync', '0.154.0');
+    expect(wake.state(binding)).toBe('available');
+  });
+
+  it('passes the dispatcher mode through and wakes nothing for an unknown version', async () => {
+    const { wake, runs } = harness();
+    await codexDispatchIdleWake(wake, async () => null).wake(binding, 'sync');
+    expect(runs).toHaveLength(0);
+    await codexDispatchIdleWake(wake, async () => '0.154.0').wake(binding, 'steer');
+    expect(runs).toHaveLength(1);
   });
 });

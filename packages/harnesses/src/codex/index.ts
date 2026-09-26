@@ -36,7 +36,7 @@ export {
 } from './receipts';
 export type { ReleaseCodecPort } from './transport';
 export {
-  CODEX_IDLE_WAKE_NOTICE, codexIdleWakeArgv, createCodexIdleWake,
+  CODEX_IDLE_WAKE_NOTICE, codexDispatchIdleWake, codexIdleWakeArgv, createCodexIdleWake,
   type CodexIdleWake, type CodexIdleWakeDeps, type CodexIdleWakeOutcome, type CodexIdleWakePort,
   type CodexIdleWakeResult,
 } from './idle-wake';
@@ -163,3 +163,6 @@ export function createCodexHarness(deps: CodexHarnessDeps): HarnessPort {
     },
   };
 }
+export {
+  CODEX_QUEUE_ENV_ALLOWLIST, createCodexQueueProcessPort, scrubbedQueueEnv, type CodexQueueProcessDeps,
+} from './idle-wake-process';
