@@ -141,11 +141,13 @@ test('the tarball file list is an exact allowlist', () => {
     'tarball contains non-allowlisted file dist/khala.js.meta.json',
     'tarball contains non-allowlisted file src/cli/main.ts',
   ]);
+  assert.deepEqual(packedFileErrors([...PACKED_FILES, 'dist/internal-web/assets/app-1a2b.js']), []);
   assert.deepEqual(packedFileErrors(['package.json', 'README.md']), [
     'tarball is missing dist/khala-internal.js',
     'tarball is missing dist/khala.js',
     'tarball is missing dist/opencode.js',
     ...PAYLOAD_FILES.map(file => `tarball is missing ${file}`),
+    'tarball is missing dist/internal-web/index.html',
   ]);
 });
 

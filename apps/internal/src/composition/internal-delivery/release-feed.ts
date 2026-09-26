@@ -103,7 +103,7 @@ export function createInternalReleaseFeed(input: InternalReleaseFeedInput): Agen
         if (paused) return { kind: 'held', reason: 'paused' };
         const control = input.listeningModes.read({ bindingId: binding.bindingId, generation: binding.generation });
         if (control.kind === 'unavailable') return { kind: 'held', reason: 'mode_unavailable' };
-        // `sync` is the default until the binding's mode is first set.
+        // Wakes on every message unless the binding requested `async`; an absent or null request wakes too.
         const modeWakes = control.kind === 'absent' || control.control.requested !== 'async';
         const page = input.store.readSubscription({ channelId, binding, cursor, limit });
         if (page.kind === 'rejected') return { kind: 'rejected', code: page.code };

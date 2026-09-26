@@ -79,8 +79,14 @@ describe('bundled CLI entrypoint', () => {
     expect(deleted.stdout).toBe('');
     expect(result(deleted.stderr)).toEqual({ ok: false, error: 'missing_state', channelId: 'ch_missing' });
 
-    // Without a built internal web bundle beside it, launch refuses before taking any runtime state.
-    const created = spawnSync(process.execPath, [linkedEntrypoint, 'internal'], { encoding: 'utf8', env });
+    // The packaged build carries the browser bundle beside the internal runtime.
+    expect(fs.existsSync(path.join(packageDirectory, 'dist/internal-web/index.html'))).toBe(true);
+
+    // Without that bundle beside it, launch refuses before taking any runtime state. The copy
+    // omits `internal-web/`: launching the real build would start a server that never exits.
+    const bare = fs.mkdtempSync(path.join(temporaryDirectory, 'bare-'));
+    for (const file of ['khala.js', 'khala-internal.js']) fs.copyFileSync(path.join(packageDirectory, 'dist', file), path.join(bare, file));
+    const created = spawnSync(process.execPath, [path.join(bare, 'khala.js'), 'internal'], { encoding: 'utf8', env, timeout: 30_000 });
     expect(created.status).toBe(3);
     expect(result(created.stderr)).toEqual({ ok: false, error: 'web_bundle_unavailable' });
     expect(fs.existsSync(path.join(state, 'khala', 'internal', 'runtime.lock'))).toBe(false);

@@ -202,7 +202,8 @@ export type ListeningDisplay = Readonly<{
   sessionActive: boolean;
   /** Why no mode or grant action is possible right now, or `null`. */
   inactiveReason: string | null;
-  requested: ListeningMode;
+  /** `null` when the harness has no proven or experimental mode to request. */
+  requested: ListeningMode | null;
   effective: ListeningEffectiveLabel;
   effectiveReason: string | null;
   initialReason: string | null;
@@ -353,6 +354,7 @@ function supportDescription(support: ModeSupport, grant: GrantState, harnessName
 
 const EFFECTIVE_REASONS: Readonly<Record<string, string>> = {
   capabilities_unavailable: 'Current harness capabilities are unavailable.',
+  no_requested_mode: 'No listening mode is requested: this harness has no proven or experimental mode.',
   support_experimental: 'The requested route is experimental and has no current grant.',
   support_unsupported: 'The requested route is unsupported on this version/session.',
   support_unknown: 'Support for the requested route is unknown on this version/session.',
@@ -546,7 +548,7 @@ const SUBMISSION_TEXT = {
 
 /** Text for the permanently mounted listening status region. */
 export function listeningStatusText(display: ListeningDisplay): string {
-  const parts = [`Requested: ${display.requested} · Effective: ${display.effective}`];
+  const parts = [`Requested: ${display.requested ?? 'none'} · Effective: ${display.effective}`];
   if (display.effective !== display.requested && display.effectiveReason) parts.push(display.effectiveReason);
   const submission = display.submission;
   if (submission.kind === 'refused') parts.push(`Your choice (${submission.attempted}) was refused: ${submission.reason}.`);

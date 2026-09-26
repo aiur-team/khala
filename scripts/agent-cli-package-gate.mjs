@@ -18,6 +18,9 @@ export const PACKAGE_NAME = '@aiur/khala';
 export const OLD_PACKAGE_NAME = ['@khala', 'agent-cli'].join('/');
 // `khala-internal.js` is the separately loaded `khala internal` runtime; `opencode.js` is
 // the OpenCode plugin behind the `@aiur/khala/opencode` export.
+// `dist/internal-web/` is the browser bundle `khala internal` serves; its hashed asset
+// names vary per build, so only the directory prefix and its entry document are fixed.
+export const INTERNAL_WEB_DIRECTORY = 'dist/internal-web/';
 // `dist/payload/` holds the reviewed assets `khala setup` installs: the Claude plugin's shipped
 // files and the Codex skill.
 export const PAYLOAD_FILES = [
@@ -34,7 +37,7 @@ export const PAYLOAD_FILES = [
   'dist/payload/claude-plugin/skills/khala/SKILL.md',
   'dist/payload/codex/SKILL.md',
 ];
-export const PACKED_FILES = ['README.md', 'dist/khala-internal.js', 'dist/khala.js', 'dist/opencode.js', ...PAYLOAD_FILES, 'package.json'];
+export const PACKED_FILES = ['README.md', 'dist/khala-internal.js', 'dist/khala.js', 'dist/opencode.js', ...PAYLOAD_FILES, 'dist/internal-web/index.html', 'package.json'];
 export const OPENCODE_EXPORT = `${PACKAGE_NAME}/opencode`;
 export const BUNDLES =['dist/khala.js', 'dist/khala-internal.js', 'dist/opencode.js'];
 export const REPOSITORY_URL = 'git+https://github.com/aiur-team/khala.git';
@@ -52,7 +55,7 @@ export function lifecycleHookErrors(manifest, label) {
 /** Checks the exact file list of the packed tarball against the allowlist. */
 export function packedFileErrors(files) {
   const actual = [...files].sort();
-  const extra = actual.filter(file => !PACKED_FILES.includes(file));
+  const extra = actual.filter(file => !PACKED_FILES.includes(file) && !file.startsWith(INTERNAL_WEB_DIRECTORY));
   const missing = PACKED_FILES.filter(file => !actual.includes(file));
   return [
     ...extra.map(file => `tarball contains non-allowlisted file ${file}`),
