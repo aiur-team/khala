@@ -2,7 +2,7 @@
 
 Scoped, reproducible evidence for the encryption and approval boundaries of the merged KHA-134/135/136/137 system. This is not a blanket security certification. Each row below says what was observed, on what composition, and what is still missing. A row is **pass** only for the paths and encodings the named tests exercise.
 
-Recorded 2026-09-26 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, Vitest 5.0.1, from this branch merged with base `b6f46d3`. CI runs the same suite on Node 22.23.2. Codex adapter `khala-hosted-queue-1` against the package's fake app-server at Codex 0.154.0.
+Recorded 2026-09-26 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, Vitest 5.0.1, from this branch merged with base `ba843ba`. CI runs the same suite on Node 22.23.2. Codex adapter `khala-hosted-queue-1` against the package's fake app-server at Codex 0.154.0.
 
 ## Commands
 
