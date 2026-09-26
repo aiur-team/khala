@@ -9,10 +9,19 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRouteContext } from '../../composition/human/application';
+import { StopControl } from '../controls/StopControl';
+import { createStopController } from '../controls/stop-controller';
+import type { BindingStopPort } from '../controls/stop-port';
 import { createPendingSendStore } from './pending-store';
 
-// Agent presence, listening mode and Stop belong to their own tickets; they
-// arrive here as injected capabilities, never as UI built by this entry.
+/** The binding Stop control's port and the channel URL a replacement agent joins with. */
+export type LocalStopCapability = Readonly<{
+  port: BindingStopPort;
+  channelUrl(roomId: string): string;
+}>;
+
+// Agent presence and listening mode belong to their own tickets; they arrive
+// here as injected capabilities, never as UI built by this entry.
 const unavailablePresence: ChannelUiPort = {
   async agents() { throw new Error('agent presence unavailable'); },
   subscribeAgents: () => () => undefined,
@@ -113,12 +122,13 @@ export function SessionEnded({ roomId, headingRef }: {
 /** Receipt projections do not raise channel hints, so evidence is also reread on this interval. */
 export const EVIDENCE_POLL_MS = 5_000;
 
-export function LocalRoom({ context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS }: {
+export function LocalRoom({ context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop }: {
   context: HumanRouteContext;
   roomId: RoomId;
   transport: LocalTransport;
   evidencePort?: ReceiptEvidencePort;
   evidencePollMs?: number;
+  stop?: LocalStopCapability;
 }) {
   const evidence = useMemo(
     () => (evidencePort ? createReceiptEvidenceController(evidencePort, roomId) : undefined),
@@ -141,6 +151,8 @@ export function LocalRoom({ context, roomId, transport, evidencePort, evidencePo
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
   );
+  const stopController = useMemo(() => (stop ? createStopController(stop.port, roomId) : null), [stop, roomId]);
+  useEffect(() => () => stopController?.dispose(), [stopController]);
   const pendingStore = useMemo(() => createPendingSendStore(context.principal.ownerId, roomId), [context.principal.ownerId, roomId]);
   useEffect(() => () => {
     timeline.dispose();
@@ -187,7 +199,9 @@ export function LocalRoom({ context, roomId, transport, evidencePort, evidencePo
         </>
       )}
       renderReview={() => null}
-      renderControls={() => null}
+      renderControls={() => (stop && stopController
+        ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} />
+        : null)}
     />
   );
 }
