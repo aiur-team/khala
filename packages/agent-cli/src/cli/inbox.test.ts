@@ -482,6 +482,19 @@ describe('listener notifier', () => {
     await expect(listener.nextWake()).resolves.toBeUndefined();
   });
 
+  it('drops a peer that exceeds the hint size without waiting for its EOF', async () => {
+    const directory = stateDirectory();
+    const listener = await acquireBatch(await open(directory));
+    const peer = net.createConnection({ path: listenerSocket(directory), allowHalfOpen: true });
+    peer.on('error', () => undefined);
+    const dropped = new Promise<void>(resolve => peer.once('end', () => resolve()));
+    peer.write('x'.repeat(2048));
+
+    expect(await settledWithin(dropped, 200)).toBe(true);
+    peer.destroy();
+    await listener.release();
+  });
+
   it('starts with one catch-up wake and coalesces pending hints into one', async () => {
     const inbox = await open(stateDirectory());
     const listener = await acquireBatch(inbox);
