@@ -57,4 +57,27 @@ describe('connector bootstrap composition', () => {
     expect(delegatedListChannels).toHaveBeenCalledOnce();
     expect(delegatedListAgents).toHaveBeenCalledOnce();
   });
+
+  it('offers pairing only with configured pairing ports, with a stable per-code operation ID', async () => {
+    const unconfigured = createConnectorBootstrapClient({ ports: {} as BootstrapPorts, session, send, status, listChannels, listAgents });
+    expect(unconfigured.pair).toBeUndefined();
+
+    const ports = { pairing: {}, discovery: { resolve: vi.fn(), resolvePairing: vi.fn() } } as unknown as BootstrapPorts;
+    const client = createConnectorBootstrapClient({ ports, session, send, status, listChannels, listAgents });
+    mockedBootstrap.mockReset();
+    mockedBootstrap.mockResolvedValueOnce({ kind: 'pending', reason: 'approval_timeout', retryable: true, operationId: 'x' });
+    await expect(client.pair!('7K3QX-9MZ2P')).resolves.toEqual({ kind: 'pending', reason: 'approval_timeout' });
+    mockedBootstrap.mockResolvedValueOnce({ kind: 'blocked', code: 'pairing_denied' });
+    const abort = new AbortController();
+    await expect(client.pair!('7K3QX-9MZ2P', abort.signal)).resolves.toEqual({ kind: 'refused', code: 'pairing_denied' });
+    mockedBootstrap.mockResolvedValueOnce({ kind: 'blocked', code: 'invalid_link' });
+    await expect(client.pair!('7K3QX-9MZ2Q')).resolves.toEqual({ kind: 'unavailable' });
+
+    const [first, second, third] = mockedBootstrap.mock.calls;
+    expect(first![0]).toEqual({ pairingCode: '7K3QX-9MZ2P', session, operationId: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/) });
+    expect(second![0].operationId).toBe(first![0].operationId);
+    expect(second![2]).toEqual({ signal: abort.signal });
+    expect(third![0].operationId).not.toBe(first![0].operationId);
+    expect(first![0].operationId).not.toContain('7K3QX');
+  });
 });

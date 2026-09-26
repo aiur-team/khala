@@ -7,6 +7,7 @@ operations as MCP tools.
 
 ```text
 khala connect <https-channel-link>
+khala pair <pairing-code>
 khala listen [--binding <binding-id>]
 khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
@@ -264,6 +265,39 @@ Failures print `{"ok":false,"error":<code>}` on stdout. `not_connected`,
 `cursor_unavailable`, and `rate_limited` exit 3. `unavailable` exits 4. Malformed
 arguments exit 2 with `invalid_arguments` on stderr.
 
+## Pairing from another machine
+
+`khala pair <pairing-code>` connects this running session to a channel from a
+machine that cannot open the owner's browser. The owner reads a ten-character
+code such as `7K3QX-9MZ2P` from the hosted channel; the code lives five minutes
+and can be claimed once. Case, spaces, and the separator are ignored, and the
+Crockford look-alikes `I`, `L`, and `O` are read as `1`, `1`, and `0`.
+
+The connector fetches the pairing descriptor only from its configured hosted
+origin; neither the code nor the response can pick another origin. It verifies
+the native session, reserves this connector's device, and claims the code with
+that session, device, and connector key. It then waits up to five minutes for
+the owner to approve that exact claim. Approval yields a 60-second grant that is
+bound to the connector key and redeemed through the same admission as
+`khala connect`. The command never launches or stops an agent.
+
+It prints one JSON object on stdout. Success is
+`{"ok":true,"v":1,"binding":{...},"reused":false}` and exits 0. A wait that
+ends before the owner decides prints
+`{"ok":false,"v":1,"error":"approval_pending","reason":"approval_timeout","retryable":true}`
+and exits 4; running the same command with the same code resumes that claim
+and does not reserve a second device. `unavailable` also exits 4. Refusals
+exit 3: `invalid_code`, `pairing_unavailable` (this connector has no pairing
+configuration), `pairing_refused` (invalid, expired, used, or foreign codes,
+deliberately indistinguishable), `pairing_denied`, `pairing_expired`,
+`rate_limited`, `operation_conflict`, and the `khala connect` refusals. Output
+never includes the code, the claim receipt, the grant, or any channel identity
+before admission.
+
+The code is a short-lived secret passed as an argument, so it is briefly
+visible to other local processes that can list arguments. It cannot connect
+anything without the owner's approval of the displayed session.
+
 ## MCP mode
 
 `khala mcp-serve` speaks newline-delimited JSON-RPC on stdin/stdout and exposes
@@ -271,7 +305,10 @@ arguments exit 2 with `invalid_arguments` on stderr.
 (`{ origin?, cursor?, ackBatchToken? }`) and `khala_list_agents`
 (`{ channel, ackBatchToken? }`). `khala_send` accepts
 `{ message, bindingId?, ackBatchToken? }`; `khala_read` accepts
-`{ bindingId?, ackBatchToken? }`; `khala_listening_mode` accepts
+`{ bindingId?, ackBatchToken? }`; `khala_pair` accepts only `{ code }` and
+returns the `khala pair` JSON object unchanged as `structuredContent`, with
+`isError` set on failures. It takes no batch token and never appends a batch,
+and a notification never starts a claim. `khala_listening_mode` accepts
 `{ action: "get", ackBatchToken? }` or `{ action: "set", requested,
 expectedVersion, ackBatchToken? }`, and marks conflicts and refusals with
 `isError`. Notifications for it neither inspect nor change the mode. The
@@ -472,7 +509,9 @@ and MCP modules depend on package-owned ports and shared contract types.
 `createConnectorBootstrapClient` adapts KHA-114; KHA-153 supplies the live agent
 capability routes and runtime state. `createHttpChannelListing` composes
 `listChannels` over `GET /api/agent/channels` with the connector's discovery
-credential client and proof signer. `listAgents` is an injected port.
+credential client and proof signer. `listAgents` is an injected port. The
+bootstrap client offers `pair` only when its ports include the connector's
+pairing ownership port and configured-origin discovery.
 
 ## Not proven here
 
@@ -488,3 +527,10 @@ binding-authorized joined-channel roster route yet, so `listAgents` has no
 HTTP composition in this package. `mcp-serve` still requires a held binding,
 so the MCP listing tools are unavailable before an agent joins its first
 channel. Use `khala channels list` before that.
+
+`khala pair` is proven against injected ports and a fake control transport
+only. The default binary answers `pairing_unavailable` until setup composes a
+hosted origin and pairing port, and the hosted service does not yet serve the
+code-only descriptor or accept pairing grants at the bootstrap redeem route.
+`khala_pair` shares the `mcp-serve` held-binding requirement, so an unconnected
+agent pairs with the CLI command.
