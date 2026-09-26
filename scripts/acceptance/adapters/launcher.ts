@@ -4,6 +4,7 @@
 // starts and the only one it closes; agent CLIs are never touched.
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { assertCommand, npxArgv } from '../guard';
 import type {
   AccessRequest, LaunchedServer, LauncherPort, ModeRequest, OwnerSession, StopReply, StopTarget, TimelineEvent,
@@ -13,6 +14,8 @@ export type LaunchReport = Readonly<{ channelId: string; origin: string; url: st
 
 const REPORT_TIMEOUT_MS = 30_000;
 const PAGE_LIMIT = 100;
+/** Bounded retries when another writer changes the mode between read and confirm. */
+const MODE_ATTEMPTS = 3;
 
 type Reply = Readonly<{ status: number; json: unknown }>;
 
@@ -112,10 +115,45 @@ export async function ownerSessionFor(report: LaunchReport): Promise<OwnerSessio
       });
       if (reply.status !== 200) throw new Error(`grant refused: ${reply.status}`);
     },
-    async requestMode(): Promise<ModeRequest> {
-      // The internal server composes no listening-mode control yet, so no mode can be
-      // confirmed effective. Report it honestly instead of assuming the server default.
-      return { kind: 'unsupported', reason: 'internal mode serves no listening-mode control (#392)' };
+    async requestMode(target, mode): Promise<ModeRequest> {
+      // The owner's listening-mode route: read the binding's control, request `mode`
+      // against the version read, then re-read and report `effective` only when the
+      // server confirms that exact generation both requests and runs `mode`. A mode
+      // the route cannot make effective stays unproven; the server default is never assumed.
+      const path = `/api/v1/channels/${channelId}/bindings/${encodeURIComponent(target.bindingId)}/listening-mode`;
+      async function read(): Promise<Record<string, unknown> | string> {
+        const reply = await call(path);
+        if (reply.status !== 200) return `listening-mode read refused: ${reply.status}`;
+        const view = record(record(reply.json).view);
+        if (view.bindingId !== target.bindingId || view.generation !== target.generation) return 'the binding generation changed';
+        return view;
+      }
+      for (let attempt = 1; attempt <= MODE_ATTEMPTS; attempt += 1) {
+        const view = await read();
+        if (typeof view === 'string') return { kind: 'unsupported', reason: view };
+        if (view.requested !== mode) {
+          const reply = await call(path, {
+            method: 'POST',
+            body: {
+              v: 1, commandId: `acc-mode-${randomUUID()}`, generation: target.generation, expectedVersion: view.version,
+              requested: mode, issuedAt: new Date().toISOString(),
+            },
+          });
+          if (reply.status !== 200) return { kind: 'unsupported', reason: `listening-mode change refused: ${reply.status}` };
+          const result = record(reply.json);
+          // Another writer moved the version between the read and the write; read again.
+          if (result.outcome === 'conflict') continue;
+          if (result.outcome !== 'applied') {
+            return { kind: 'unsupported', reason: `listening-mode change ${text(result.outcome) || 'unrecognized'}: ${text(result.reason) || 'no reason'}` };
+          }
+        }
+        const confirmed = await read();
+        if (typeof confirmed === 'string') return { kind: 'unsupported', reason: confirmed };
+        if (confirmed.requested === mode && confirmed.effective === mode) return { kind: 'effective' };
+        if (confirmed.requested !== mode) continue;
+        return { kind: 'unsupported', reason: `${mode} is not effective: ${text(confirmed.effectiveReason) || 'no reason'}` };
+      }
+      return { kind: 'unsupported', reason: `${mode} was not confirmed after ${MODE_ATTEMPTS} attempts` };
     },
     async stop(targets): Promise<StopReply> {
       const reply = await call(`/api/v1/channels/${channelId}/stop`, { method: 'POST', body: { v: 1, targets } });
