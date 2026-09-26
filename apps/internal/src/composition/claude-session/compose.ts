@@ -44,8 +44,8 @@ export const CLAUDE_HARNESS = 'claude';
 /** The per-session granted descriptor beside the session's discovery descriptor. */
 export const CLAUDE_GRANT_FILE = 'claude-grant.json';
 const STATE_DIRECTORY = 'claude-session';
-/** Owner-approved answers that still owe a local binding. */
-const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'repair_required']);
+/** Answers that may still owe a local binding; a `connected` one after a launcher restart. */
+const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'connected', 'repair_required']);
 /** The installation principal: every Claude session of this launch shares it. */
 const INSTALLATION = { principalId: 'installation' } as const;
 
@@ -104,25 +104,29 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
   /** Finishes an approved request for exactly this session, into its own granted descriptor. */
   async function activate(sessionId: string, operationId: string, outcome: string): Promise<string> {
     const { descriptorPath, grantPath } = paths(sessionId);
+    // A `connected` answer this session's grant cannot back is never reported as connected.
+    const fallback = outcome === 'connected' ? 'unavailable' : outcome;
     const selected = selectInternalDiscovery({ descriptorPath, activePath: activeDescriptorPath(root) });
-    if (selected.kind !== 'selected' || !prepareGrant(sessionId, grantPath)) return outcome;
+    if (selected.kind !== 'selected' || !prepareGrant(sessionId, grantPath)) return fallback;
     const activated = await activateInternalAccess({
       descriptorPath, descriptor: selected.selection.descriptor, origin: selected.selection.origin, operationId,
       // The approved channel need not be the launch channel; the grant records the one it names.
       activePath: grantPath, adoptChannel: true, repair: outcome === 'repair_required', fetch: options.fetch, clock: options.clock,
     });
-    return activated === 'unavailable' ? outcome : activated;
+    return activated === 'unavailable' ? fallback : activated;
   }
 
   /**
    * Seeds the session's granted descriptor from the launch. A live grant is kept, so a
-   * session holds one binding at a time; a grant the store no longer holds is dropped.
+   * session holds one binding at a time; a grant the store no longer holds is dropped, and
+   * so is one from an earlier launch, whose capability ended with it.
    */
   function prepareGrant(sessionId: string, grantPath: string): boolean {
     const launch = readInternalDescriptor(activeDescriptorPath(root));
     if (!launch.ok) return false;
     const held = readInternalDescriptor(grantPath);
-    if (held.ok && held.value.origin === launch.value.origin && (!isGrantedDescriptor(held.value) || bound(sessionId) !== null)) return true;
+    if (held.ok && held.value.origin === launch.value.origin && fromThisLaunch(held.value)
+      && (!isGrantedDescriptor(held.value) || bound(sessionId) !== null)) return true;
     const { v, channelId, origin, transportCapability } = launch.value;
     try {
       writePrivateFile(path.dirname(grantPath), path.basename(grantPath), encodeInternalDescriptor({ v, channelId, origin, transportCapability }));
@@ -132,10 +136,16 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     }
   }
 
-  /** The session's granted descriptor, when it holds a grant. */
+  /** The session's granted descriptor, when it holds a grant issued during this launch. */
   function grant(sessionId: string): GrantedDescriptor | null {
     const held = readInternalDescriptor(paths(sessionId).grantPath);
-    return held.ok && isGrantedDescriptor(held.value) ? held.value : null;
+    return held.ok && isGrantedDescriptor(held.value) && fromThisLaunch(held.value) ? held.value : null;
+  }
+
+  /** This launch seeds every grant file with its transport capability; a resumed launch mints a new one. */
+  function fromThisLaunch(descriptor: Readonly<{ transportCapability: string }>): boolean {
+    const presented = Buffer.from(descriptor.transportCapability);
+    return presented.length === expected.length && timingSafeEqual(presented, expected);
   }
 
   /**

@@ -206,11 +206,14 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
           (capability, target, init) => request(selection, capability, target, init, signal), answered);
         if (joined.kind !== 'status' || answered.operationId === null || !ACTIVATABLE.has(joined.outcome)) return joined;
         // Approved: finish the binding now. Every step is journaled, so a later `join` resumes it.
+        // A `connected` answer is checked too: after a launcher restart the descriptor holds no grant.
         const activated = await activateInternalAccess({
           descriptorPath: options.descriptorPath, descriptor: selection.descriptor, origin: selection.origin,
           operationId: answered.operationId, repair: joined.outcome === 'repair_required', fetch: options.fetch, signal, clock: options.clock,
         });
-        return { kind: 'status', outcome: activated === 'unavailable' ? joined.outcome : activated };
+        if (activated !== 'unavailable') return { kind: 'status', outcome: activated };
+        // Never report `connected` for a binding this descriptor does not hold.
+        return joined.outcome === 'connected' ? { kind: 'unavailable' } : joined;
       }
       const descriptor = current();
       if (descriptor === null) return { kind: 'unavailable' };
@@ -237,8 +240,11 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
 
 type AccessOutcome = (typeof ACCESS_REQUEST_OUTCOMES)[number];
 
-/** Owner-approved answers that still owe a local binding. `connected` is already acknowledged. */
-const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'repair_required']);
+/**
+ * Owner-approved answers that still owe a local binding. `connected` is included: its
+ * capability is launch-scoped, so a resumed launcher's descriptor may no longer hold it.
+ */
+const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'connected', 'repair_required']);
 
 /** A 401 means the discovery capability was rotated or is unknown here: reissue it. */
 const DISCOVERY_REJECTED = 'discovery_rejected' as const;
