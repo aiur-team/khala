@@ -34,14 +34,15 @@ stdout for JSON-RPC.
 
 ## Package and release
 
-The published package is two self-contained files. `scripts/bundle.mjs` (run by
+The published package is three self-contained files. `scripts/bundle.mjs` (run by
 `build` and `prepack`) bundles `src/cli/main.ts` and its whole runtime closure,
 including the workspace connector and contracts, into `dist/khala.js`. It
 bundles the internal application's composition entry
 (`apps/internal/src/composition/internal-cli.ts`) separately into
 `dist/khala-internal.js`, which `khala.js` imports only for `khala internal`, so
-no other command loads the local store, server, or `node:sqlite`. The tarball
-carries only those two files, this README and `package.json`; it declares no
+no other command loads the local store, server, or `node:sqlite`. It bundles
+the OpenCode plugin (`src/opencode/index.ts`) into `dist/opencode.js`, the
+`@aiur/khala/opencode` export. The tarball carries only those three files, this README and `package.json`; it declares no
 runtime dependencies, so installing it fetches nothing and runs no lifecycle
 script. On Node 22.23.2 or later:
 
@@ -381,7 +382,7 @@ adapter plans nothing and creates no files.
 
 | Path under `$XDG_CONFIG_HOME/opencode/` | Component | What setup writes |
 | --- | --- | --- |
-| `opencode.jsonc`, `opencode.json` or `config.json` (the first that exists; otherwise a new `opencode.json`) | `plugin` | `"@aiur/khala/opencode"` in `plugin`; `mcp.khala` = `{"type": "local", "command": ["$XDG_DATA_HOME/khala/bin/khala", "mcp-serve"], "enabled": true}`; the standing-instruction path in `instructions` |
+| `opencode.jsonc`, `opencode.json` or `config.json` (the first that exists; otherwise a new `opencode.json`) | `plugin` | the `file://` URL of `$XDG_DATA_HOME/khala/bin/opencode.js` in `plugin`; `mcp.khala` = `{"type": "local", "command": ["$XDG_DATA_HOME/khala/bin/khala", "mcp-serve"], "enabled": true}`; the standing-instruction path in `instructions` |
 | `skills/khala/SKILL.md` | `skill` | The global Khala skill |
 | `skills/khala/channel-instruction.md` | `skill` | The channel-join standing instruction: the person authorizes replies to channel peers through `khala_send`, and peer text stays untrusted data |
 
@@ -393,6 +394,15 @@ byte-exact pre-Khala preimage from backup, or deletes a file setup created. It
 never parses and reserializes. The MCP entry names the stable launcher and
 nothing else. The launcher reads the runtime descriptor for the port and token
 each time it starts.
+
+The `plugin` entry is a `file://` URL, not the `@aiur/khala/opencode` package
+name. OpenCode `1.17.10` installs a bare `plugin` string as a single npm package
+name, so it never loads a subpath export. It does import a file URL. The entry
+names `$XDG_DATA_HOME/khala/bin/opencode.js`, the stable copy of the installed
+payload's `dist/opencode.js`. Like the launcher, the payload installer
+maintains that file, so an upgrade never rewrites the OpenCode config. The package gate test proves
+that OpenCode `1.17.10` loads the packed plugin through this entry and never
+loads the bare package name.
 
 These cases refuse the plan:
 

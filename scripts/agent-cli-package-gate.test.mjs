@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  CONSUMER_HOOKS, OLD_PACKAGE_NAME, closureErrors, PACKED_FILES, gatePackage, manifestErrors, oldIdentityReferences, packedFileErrors,
+  CONSUMER_HOOKS, OLD_PACKAGE_NAME, OPENCODE_EXPORT, closureErrors, PACKED_FILES, gatePackage, manifestErrors, oldIdentityReferences, packedFileErrors,
 } from './agent-cli-package-gate.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -19,17 +20,23 @@ function gate(t, options) {
   return result;
 }
 
-// A copy of the CLI package whose bundled runtime closure gains a third-party
-// package with a `postinstall` script, as a transitive dependency would bring.
-function packageWithTransitiveHook(t) {
+// A detached copy of the CLI package that bundles from its own `node_modules`.
+function copyPackage(t) {
   const copy = temporary('khala-gate-fixture-');
   t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
   for (const entry of ['package.json', 'README.md', 'scripts', 'src']) {
     fs.cpSync(path.join(packageDirectory, entry), path.join(copy, entry), { recursive: true });
   }
+  fs.mkdirSync(path.join(copy, 'node_modules'));
+  for (const entry of ['@khala', 'esbuild', 'zod']) fs.symlinkSync(fs.realpathSync(path.join(packageDirectory, 'node_modules', entry)), path.join(copy, 'node_modules', entry));
+  return copy;
+}
+
+// A copy of the CLI package whose bundled runtime closure gains a third-party
+// package with a `postinstall` script, as a transitive dependency would bring.
+function packageWithTransitiveHook(t) {
+  const copy = copyPackage(t);
   const modules = path.join(copy, 'node_modules');
-  fs.mkdirSync(modules);
-  for (const entry of ['@khala', 'esbuild']) fs.symlinkSync(fs.realpathSync(path.join(packageDirectory, 'node_modules', entry)), path.join(modules, entry));
   const injected = path.join(modules, 'khala-telemetry');
   fs.mkdirSync(injected);
   fs.writeFileSync(path.join(injected, 'package.json'), JSON.stringify({
@@ -41,10 +48,55 @@ function packageWithTransitiveHook(t) {
   return copy;
 }
 
-test('the packed CLI passes the gate and runs from a fresh prefix', t => {
-  const { errors, tarball } = gate(t, { packageDirectory });
+test('the packed CLI passes the gate, runs, and imports @aiur/khala/opencode from a fresh prefix', t => {
+  const { errors, tarball, prefix } = gate(t, { packageDirectory });
   assert.deepEqual(errors, []);
   assert.match(path.basename(tarball), /^aiur-khala-\d+\.\d+\.\d+\.tgz$/);
+  const resolved = spawnSync(process.execPath, ['--input-type=module', '-e', `console.log(import.meta.resolve(${JSON.stringify(OPENCODE_EXPORT)}))`], { cwd: prefix, encoding: 'utf8' });
+  assert.equal(fs.realpathSync(fileURLToPath(resolved.stdout.trim())), fs.realpathSync(path.join(prefix, 'node_modules/@aiur/khala/dist/opencode.js')));
+});
+
+test('an @aiur/khala/opencode export with only the source condition fails the gate', () => {
+  const exports = { ...sourceManifest.exports, './opencode': { 'khala-source': './src/opencode/index.ts' } };
+  assert.deepEqual(manifestErrors({ ...sourceManifest, exports }), ['export ./opencode must resolve to dist/opencode.js for consumers (null)']);
+});
+
+// The pinned OpenCode the adapter supports; the proof runs only where it is installed.
+const OPENCODE_VERSION = '1.17.10';
+const openCodeVersion = spawnSync('opencode', ['--version'], { encoding: 'utf8' });
+const hasOpenCode = openCodeVersion.status === 0 && openCodeVersion.stdout.trim() === OPENCODE_VERSION;
+
+// Runs the real OpenCode in an isolated home with one `plugin` entry and returns the
+// build agent's configuration, which lists every tool a loaded plugin registered.
+function openCodeWithPlugin(t, entry) {
+  const base = temporary('khala-opencode-load-');
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const dirs = Object.fromEntries(['home', 'config/opencode', 'data', 'state', 'cache', 'project'].map(name => [name, path.join(base, name)]));
+  for (const directory of Object.values(dirs)) fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(dirs['config/opencode'], 'opencode.json'), `${JSON.stringify({ plugin: [entry] })}\n`);
+  const result = spawnSync('opencode', ['debug', 'agent', 'build'], {
+    cwd: dirs.project, encoding: 'utf8', timeout: 90_000,
+    env: { ...process.env, HOME: dirs.home, XDG_CONFIG_HOME: path.join(base, 'config'), XDG_DATA_HOME: dirs.data, XDG_STATE_HOME: dirs.state, XDG_CACHE_HOME: dirs.cache },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout;
+}
+
+test(`OpenCode ${OPENCODE_VERSION} loads the installed plugin through the file URL setup writes`, { skip: !hasOpenCode && `needs opencode ${OPENCODE_VERSION} on PATH` }, t => {
+  const { errors, prefix } = gate(t, { packageDirectory });
+  assert.deepEqual(errors, []);
+  // Setup's entry names the stable plugin file (`$XDG_DATA_HOME/khala/bin/opencode.js`),
+  // a copy of the installed payload's `dist/opencode.js`.
+  const dataHome = temporary('khala-opencode-data-');
+  t.after(() => fs.rmSync(dataHome, { recursive: true, force: true }));
+  const stable = path.join(dataHome, 'khala/bin/opencode.js');
+  fs.mkdirSync(path.dirname(stable), { recursive: true });
+  fs.copyFileSync(path.join(prefix, 'node_modules/@aiur/khala/dist/opencode.js'), stable);
+  const loaded = openCodeWithPlugin(t, pathToFileURL(stable).href);
+  assert.match(loaded, /khala_read/);
+  assert.match(loaded, /khala_send/);
+  // OpenCode installs a bare entry as one npm package name, so the subpath export never loads.
+  assert.doesNotMatch(openCodeWithPlugin(t, OPENCODE_EXPORT), /khala_read|khala_send/);
 });
 
 test('a transitive postinstall bundled into the CLI fails the gate before release', t => {
@@ -90,6 +142,7 @@ test('the tarball file list is an exact allowlist', () => {
   assert.deepEqual(packedFileErrors(['package.json', 'README.md']), [
     'tarball is missing dist/khala-internal.js',
     'tarball is missing dist/khala.js',
+    'tarball is missing dist/opencode.js',
   ]);
 });
 

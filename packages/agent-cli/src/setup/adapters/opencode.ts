@@ -6,6 +6,7 @@
 // restores the byte-exact pre-Khala preimage from the executor's backup — never a
 // parse-and-reserialize, which would lose the user's comments and formatting.
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { openCodeModeSupport, OPENCODE_ROUTE_EVIDENCE } from '@khala/contracts/delivery/opencode';
 import type { ModeSupportMap } from '@khala/contracts/delivery/listening-mode';
 import type { AgentRoute } from '../../cli/types.js';
@@ -77,8 +78,20 @@ export function openCodePaths(environment: Pick<SetupEnvironment, 'xdgConfigHome
     standingInstruction: path.join(skillDirectory, 'channel-instruction.md'),
     /** The stable installer-owned launcher; the MCP entry never embeds a port or token. */
     launcher: path.join(environment.xdgDataHome, 'khala', 'bin', 'khala'),
+    /** The stable installer-owned copy of `@aiur/khala/opencode` (`dist/opencode.js`). */
+    plugin: path.join(environment.xdgDataHome, 'khala', 'bin', 'opencode.js'),
     manifest: path.join(environment.xdgStateHome, 'khala', 'setup', MANIFEST_FILE),
   };
+}
+
+/**
+ * The `plugin` entry value. OpenCode 1.17.10 takes a bare `plugin` string as a whole npm
+ * package name, so it cannot load the `@aiur/khala/opencode` subpath export. It does
+ * import a `file://` URL, so the entry names the stable plugin file, which survives
+ * upgrades the way the launcher does.
+ */
+export function openCodePluginEntry(plugin: string): string {
+  return pathToFileURL(plugin).href;
 }
 
 /** The MCP entry value. The launcher reads the runtime descriptor on every start. */
@@ -248,8 +261,10 @@ function viewConfig(text: string): ConfigView {
 
 const hasString = (array: Extract<Node, { kind: 'array' }> | null, value: string) =>
   array?.elements.some(element => element.kind === 'string' && element.value === value) ?? false;
-const isKhalaPlugin = (element: Node) =>
-  element.kind === 'string' && (element.value === OPENCODE_PLUGIN_SPECIFIER || element.value.startsWith(`${OPENCODE_PLUGIN_SPECIFIER}@`));
+/** The desired entry, or the package export under any npm spelling someone might have added by hand. */
+const isKhalaPlugin = (element: Node, desired: string) =>
+  element.kind === 'string'
+  && (element.value === desired || element.value === OPENCODE_PLUGIN_SPECIFIER || element.value.startsWith(`${OPENCODE_PLUGIN_SPECIFIER}@`));
 
 type Presence = Readonly<{ plugin: boolean; mcp: boolean; instruction: boolean }>;
 
@@ -258,19 +273,19 @@ function khalaEntries(view: ConfigView, desired: DesiredEntries): Readonly<{ any
   const mcpEntry = view.mcp?.properties.find(property => property.key === OPENCODE_MCP_NAME)?.value ?? null;
   return {
     any: {
-      plugin: view.plugin?.elements.some(isKhalaPlugin) ?? false,
+      plugin: view.plugin?.elements.some(element => isKhalaPlugin(element, desired.plugin)) ?? false,
       mcp: mcpEntry !== null,
       instruction: hasString(view.instructions, desired.instruction),
     },
     exact: {
-      plugin: hasString(view.plugin, OPENCODE_PLUGIN_SPECIFIER),
+      plugin: hasString(view.plugin, desired.plugin),
       mcp: mcpEntry !== null && JSON.stringify(plain(mcpEntry)) === JSON.stringify(desired.mcp),
       instruction: hasString(view.instructions, desired.instruction),
     },
   };
 }
 
-type DesiredEntries = Readonly<{ mcp: ReturnType<typeof openCodeMcpEntry>; instruction: string }>;
+type DesiredEntries = Readonly<{ plugin: string; mcp: ReturnType<typeof openCodeMcpEntry>; instruction: string }>;
 type Insertion = Readonly<{ at: number; text: string }>;
 
 function lineIndent(text: string, offset: number): string {
@@ -360,7 +375,7 @@ export function assertInsertOnlyEdit(before: string, after: string, insertions: 
 export function editOpenCodeConfig(before: string | null, desired: DesiredEntries): string {
   if (before === null) {
     return `${JSON.stringify({
-      plugin: [OPENCODE_PLUGIN_SPECIFIER], mcp: { [OPENCODE_MCP_NAME]: desired.mcp }, instructions: [desired.instruction],
+      plugin: [desired.plugin], mcp: { [OPENCODE_MCP_NAME]: desired.mcp }, instructions: [desired.instruction],
     }, null, 2)}\n`;
   }
   const view = viewConfig(before);
@@ -368,8 +383,8 @@ export function editOpenCodeConfig(before: string | null, desired: DesiredEntrie
   const unit = indentUnit(before, view.root);
   const insertions: Insertion[] = [];
   const topLevel: [string, unknown][] = [];
-  if (view.plugin === null) topLevel.push(['plugin', [OPENCODE_PLUGIN_SPECIFIER]]);
-  else insertions.push(appendElement(before, view.plugin, OPENCODE_PLUGIN_SPECIFIER, unit, newline));
+  if (view.plugin === null) topLevel.push(['plugin', [desired.plugin]]);
+  else insertions.push(appendElement(before, view.plugin, desired.plugin, unit, newline));
   if (view.mcp === null) topLevel.push(['mcp', { [OPENCODE_MCP_NAME]: desired.mcp }]);
   else insertions.push(insertProperties(before, view.mcp, [[OPENCODE_MCP_NAME, desired.mcp]], unit, newline));
   if (view.instructions === null) topLevel.push(['instructions', [desired.instruction]]);
@@ -382,7 +397,7 @@ export function editOpenCodeConfig(before: string | null, desired: DesiredEntrie
   const edited = plain(parseConfig(after)) as Record<string, unknown>;
   const want = {
     ...expected,
-    plugin: [...((expected.plugin as unknown[] | undefined) ?? []), OPENCODE_PLUGIN_SPECIFIER],
+    plugin: [...((expected.plugin as unknown[] | undefined) ?? []), desired.plugin],
     mcp: { ...((expected.mcp as Record<string, unknown> | undefined) ?? {}), [OPENCODE_MCP_NAME]: desired.mcp },
     instructions: [...((expected.instructions as unknown[] | undefined) ?? []), desired.instruction],
   };
@@ -509,7 +524,7 @@ export function createOpenCodeAdapter(options: OpenCodeAdapterOptions = {}): Ope
     }
 
     // Config: plugin, MCP entry, and standing instruction share one guarded edit.
-    const desired: DesiredEntries = { mcp: openCodeMcpEntry(paths.launcher), instruction: paths.standingInstruction };
+    const desired: DesiredEntries = { plugin: openCodePluginEntry(paths.plugin), mcp: openCodeMcpEntry(paths.launcher), instruction: paths.standingInstruction };
     const configs: { path: string; bytes: Uint8Array }[] = [];
     for (const candidate of paths.configCandidates) {
       const bytes = await environment.probe.readFile(candidate);

@@ -1,5 +1,6 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { decodeSetupResult, type SetupEnvironment, type SetupProbe } from '../types.js';
 import { sha256 } from '../filesystem.js';
@@ -7,8 +8,10 @@ import { executeSetupPlan, type ExecutablePlan, type SetupRoots } from '../trans
 import { bytes, snapshot, syntheticHome } from '../fixtures/setup-home.js';
 import {
   OPENCODE_CONFIG_ENTRY, OPENCODE_SKILL, OPENCODE_STANDING_INSTRUCTION, createOpenCodeAdapter, editOpenCodeConfig,
-  openCodeMcpEntry, openCodePaths, parseOpenCodeVersion,
+  openCodeMcpEntry, openCodePaths, openCodePluginEntry, parseOpenCodeVersion,
 } from './opencode.js';
+
+const DESIRED = { plugin: 'file:///l/opencode.js', mcp: openCodeMcpEntry('/l/khala'), instruction: '/i.md' } as const;
 
 const SENTINEL_SECRET = 'sk-SENTINEL-opencode-7f3a9c';
 const SENTINEL_PORT = '48713';
@@ -156,7 +159,7 @@ describe('OpenCode setup', () => {
 
     const config = JSON.parse(await text(paths().defaultConfig)) as Record<string, unknown>;
     expect(config).toEqual({
-      plugin: ['@aiur/khala/opencode'],
+      plugin: [pathToFileURL(paths().plugin).href],
       mcp: { khala: { type: 'local', command: [paths().launcher, 'mcp-serve'], enabled: true } },
       instructions: [paths().standingInstruction],
     });
@@ -202,6 +205,14 @@ describe('OpenCode setup', () => {
     expect(openCodeMcpEntry(paths().launcher)).toEqual({ type: 'local', command: [paths().launcher, 'mcp-serve'], enabled: true });
   });
 
+  it('names the stable plugin file by file URL, never the bare package export', () => {
+    // OpenCode 1.17.10 installs a bare `plugin` string as one npm package name, so
+    // `@aiur/khala/opencode` would never load. The package gate test proves the file loads.
+    expect(paths().plugin).toBe(path.join(roots.xdgDataHome, 'khala', 'bin', 'opencode.js'));
+    expect(openCodePluginEntry(paths().plugin)).toBe(pathToFileURL(paths().plugin).href);
+    expect(openCodePluginEntry(paths().plugin)).toMatch(/^file:\/\//);
+  });
+
   it('is decodable as a setup result harness report', async () => {
     await run('present');
     const observation = await observe();
@@ -236,7 +247,7 @@ describe('OpenCode byte-exact config edits', () => {
       '{',
       '\t"$schema": "https://opencode.ai/config.json",',
       '\t/* keep this model */ "model":   "deepseek/deepseek-flash",',
-      '\t"plugin": ["opencode-wakatime", "@aiur/khala/opencode"],',
+      `\t"plugin": ["opencode-wakatime", ${JSON.stringify(pathToFileURL(paths().plugin).href)}],`,
       '\t"mcp": {',
       '\t\t"github": {"type": "remote", "url": "https://example.test/mcp",',
       `\t\t\t"headers": {"Authorization": "Bearer ${SENTINEL_SECRET}"}},`,
@@ -259,18 +270,9 @@ describe('OpenCode byte-exact config edits', () => {
 
     expect((await run('absent')).kind).toBe('committed');
     // Wrong implementation killer: removal must restore the preimage byte-for-byte (and its
-    // mode). A parse-and-reserialize removal cannot pass this line; see the next test.
+    // mode). A parse-and-reserialize removal cannot pass this line.
     expect(await text(target)).toBe(POPULATED);
     expect(await snapshot(root, { exclude: [path.join(roots.xdgStateHome, 'khala')] })).toEqual(before);
-  });
-
-  it('a parse-and-reserialize removal would not restore the preimage', () => {
-    const edited = editOpenCodeConfig(POPULATED, { mcp: openCodeMcpEntry('/l/khala'), instruction: '/i.md' });
-    const reparsed = JSON.parse(stripJsonc(edited)) as Record<string, unknown>;
-    (reparsed.plugin as string[]).pop();
-    delete (reparsed.mcp as Record<string, unknown>).khala;
-    delete reparsed.instructions;
-    expect(JSON.stringify(reparsed, null, '\t')).not.toBe(POPULATED);
   });
 
   it('removes a config Khala created by deleting it, leaving no directories behind', async () => {
@@ -282,15 +284,15 @@ describe('OpenCode byte-exact config edits', () => {
   it.each([
     ['empty one-line object', '{}', '{\n  "plugin": ['],
     ['empty multi-line object', '{\n}\n', '{\n  "plugin": ['],
-    ['trailing-comma style', '{\n    "a": 1,\n}\n', '{\n    "a": 1,\n    "plugin": [\n        "@aiur/khala/opencode"\n    ],'],
-    ['multi-line array', '{\n  "plugin": [\n    "x"\n  ]\n}', '"plugin": [\n    "x",\n    "@aiur/khala/opencode"\n  ]'],
-    ['empty arrays and objects', '{"plugin": [], "mcp": {}, "instructions": []}', '"plugin": ["@aiur/khala/opencode"]'],
+    ['trailing-comma style', '{\n    "a": 1,\n}\n', '{\n    "a": 1,\n    "plugin": [\n        "file:///l/opencode.js"\n    ],'],
+    ['multi-line array', '{\n  "plugin": [\n    "x"\n  ]\n}', '"plugin": [\n    "x",\n    "file:///l/opencode.js"\n  ]'],
+    ['empty arrays and objects', '{"plugin": [], "mcp": {}, "instructions": []}', '"plugin": ["file:///l/opencode.js"]'],
   ])('keeps the %s shape', (_name, before, fragment) => {
-    const after = editOpenCodeConfig(before, { mcp: openCodeMcpEntry('/l/khala'), instruction: '/i.md' });
+    const after = editOpenCodeConfig(before, DESIRED);
     expect(after).toContain(fragment);
     const value = JSON.parse(stripJsonc(after)) as Record<string, unknown>;
     expect(value).toMatchObject({
-      plugin: expect.arrayContaining(['@aiur/khala/opencode']) as unknown,
+      plugin: expect.arrayContaining(['file:///l/opencode.js']) as unknown,
       mcp: { khala: openCodeMcpEntry('/l/khala') },
       instructions: expect.arrayContaining(['/i.md']) as unknown,
     });
@@ -307,6 +309,13 @@ describe('OpenCode refusals', () => {
     const observation = await observe();
     expect(states(observation)).toMatchObject({ plugin: 'conflict', mcp_entry: 'conflict' });
     expect(observation.diagnostics.map(d => d.code)).toContain('opencode_unowned_entry');
+    expect(adapter.plan({ desired: 'present', observation })).toEqual([]);
+  });
+
+  it.each(['@aiur/khala/opencode', '@aiur/khala/opencode@0.1.0'])('treats a hand-added %s plugin entry as a conflict', async entry => {
+    await seed(paths().defaultConfig, JSON.stringify({ plugin: [entry] }));
+    const observation = await observe();
+    expect(states(observation)).toMatchObject({ plugin: 'conflict', mcp_entry: 'conflict' });
     expect(adapter.plan({ desired: 'present', observation })).toEqual([]);
   });
 
