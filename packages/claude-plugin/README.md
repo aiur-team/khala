@@ -104,6 +104,8 @@ turn" whenever no watcher is live.
 36). Once the binding is revoked, the adapter refuses every op, so no hook
 injects context. A live watcher stands down at its next poll and records `off`.
 The runtime signals no process: its only `kill` is the signal-0 liveness probe.
+If the session calls `khala_request_channel_access` again, it files a new
+request that waits for the owner's approval; it never gets the stopped one back.
 
 **Timeouts.** Each `khala claude` call is bounded at 10 s, the CLI's own client
 timeout. A synchronous hook makes at most two calls, inside its `30` second

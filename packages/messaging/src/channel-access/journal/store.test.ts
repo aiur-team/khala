@@ -119,6 +119,31 @@ describe('channel access journal creation', () => {
       detail: { kind: 'create', proposalDigest: 'proposal_b', proposedTitle: 'Private channel', ownerRevision: 'owner_revision_1' },
     }))).toEqual({ kind: 'unavailable' });
   });
+
+  it('lets a requester ask again after the owner ends an admitted request, but still cools down after a denial', async () => {
+    const revoked = harness();
+    const approved = await accepted(revoked);
+    await revoked.journal.decide({ ownerId: 'owner_1', requestHandle: approved.requestHandle, expectedRevision: 1, decision: 'approve', operationId: 'approve' });
+    expect(await revoked.journal.revoke({ binding: request(), expectedRevision: 2, operationId: 'stop' }))
+      .toMatchObject({ kind: 'updated', outcome: 'revoked' });
+    expect(await revoked.journal.create(request({ operationId: 'again' }))).toMatchObject({ kind: 'accepted', outcome: 'pending_owner' });
+    // The new request is live, so it cools down the next one as any other does.
+    expect(await revoked.journal.create(request({ operationId: 'third' }))).toEqual({ kind: 'unavailable' });
+
+    const connected = harness();
+    const granted = await accepted(connected);
+    await connected.journal.decide({ ownerId: 'owner_1', requestHandle: granted.requestHandle, expectedRevision: 1, decision: 'approve', operationId: 'approve' });
+    await connected.journal.claimAccess({ binding: request(), expectedRevision: 2, consumerId: 'grant_exchange', operationId: 'claim' });
+    await connected.journal.updateLifecycle({
+      requestHandle: granted.requestHandle, expectedRevision: 3, consumerId: 'grant_exchange', outcome: 'connected', operationId: 'connected',
+    });
+    expect(await connected.journal.create(request({ operationId: 'again' }))).toMatchObject({ kind: 'accepted', outcome: 'pending_owner' });
+
+    const denied = harness();
+    const refused = await accepted(denied);
+    await denied.journal.decide({ ownerId: 'owner_1', requestHandle: refused.requestHandle, expectedRevision: 1, decision: 'deny', operationId: 'deny' });
+    expect(await denied.journal.create(request({ operationId: 'again' }))).toEqual({ kind: 'unavailable' });
+  });
 });
 
 describe('channel access journal reads and decisions', () => {
