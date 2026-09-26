@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -69,6 +70,12 @@ describe('confined filesystem', () => {
     await confined.verify(target, sha256(bytes('user')), 0o400);
     await confined.remove(target, sha256(bytes('user')));
     await confined.verify(target, null, null);
+  });
+
+  it('refuses a FIFO at a target without blocking', async () => {
+    const fifo = path.join(root, 'pipe');
+    expect(spawnSync('mkfifo', [fifo]).status).toBe(0);
+    expect(await code(confined.observe(fifo))).toBe('not_regular_file');
   });
 
   it('tracks and prunes only the directories it created', async () => {

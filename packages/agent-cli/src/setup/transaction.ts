@@ -205,7 +205,8 @@ function decodeJournal(bytes: Uint8Array): Journal {
         const t = jrec(raw, ['path', 'preimage', 'mode', 'backup', 'postimage', 'postimageKnown', 'createdDirectories']);
         const preimage = jdigest(t.preimage);
         jcheck(typeof t.postimageKnown === 'boolean' && Array.isArray(t.createdDirectories));
-        jcheck(t.backup === null || (typeof t.backup === 'string' && t.backup.startsWith(`${o.id as string}/`)));
+        jcheck(t.backup === null || (typeof t.backup === 'string' && t.backup.startsWith(`${o.id as string}/`)
+          && /^[0-9]+$/.test(t.backup.slice((o.id as string).length + 1))));
         jcheck((preimage === null) === (t.backup === null) && (preimage === null) === (t.mode === null));
         let mode: number | null = null;
         if (t.mode !== null) {
@@ -305,8 +306,29 @@ class Executor {
       const pid = lockPid(holder.bytes);
       if (pid !== null && processIsLive(pid)) return false;
       // A dead holder's lock is stale; its journal (if any) is recovered once we hold the lock.
-      await this.fs.remove(this.paths.lock, holder.hash).catch(() => undefined);
+      if (!(await this.reclaimStaleLock(holder.hash))) return false;
     }
+    return false;
+  }
+
+  /**
+   * Moves the stale lock aside with one atomic rename, so only one competitor can claim it.
+   * If what moved is not the stale lock (another process just took the lock), it goes back.
+   */
+  async reclaimStaleLock(stale: Sha256Digest): Promise<boolean> {
+    const aside = `${this.paths.lock}.stale-${randomUUID()}`;
+    try {
+      await fsp.rename(this.paths.lock, aside);
+    } catch {
+      return true;
+    }
+    const moved = await this.fs.observe(aside).catch(() => null);
+    if (moved?.hash === stale) {
+      await fsp.unlink(aside).catch(() => undefined);
+      return true;
+    }
+    await fsp.link(aside, this.paths.lock).catch(() => undefined);
+    await fsp.unlink(aside).catch(() => undefined);
     return false;
   }
 
@@ -368,7 +390,7 @@ class Executor {
       await this.finalize(journal);
       return null;
     }
-    const outcome = await this.rollback(journal);
+    const outcome = await this.rollback(journal, [], false);
     return outcome.kind === 'rolled_back' ? null : outcome;
   }
 
@@ -391,8 +413,12 @@ class Executor {
     await this.fs.removeEmptyDirectories([directory]);
   }
 
-  /** Reverses every started operation, newest first. Deterministic for a given journal and disk state. */
-  async rollback(journal: Journal, cause: readonly SetupDiagnostic[] = []): Promise<ExecutionOutcome> {
+  /**
+   * Reverses every started operation, newest first. Deterministic for a given journal and disk
+   * state. `immediate` is true only inside the failing transaction itself, which has held the
+   * lock throughout; a later recovery cannot attribute unobserved changes to this transaction.
+   */
+  async rollback(journal: Journal, cause: readonly SetupDiagnostic[], immediate: boolean): Promise<ExecutionOutcome> {
     const diagnostics = [...cause];
     const outcome = new Map<number, OperationStatus>();
     for (let index = journal.operations.length - 1; index >= 0; index -= 1) {
@@ -401,7 +427,7 @@ class Executor {
       let exact = true;
       for (const target of [...entry.targets].reverse()) {
         try {
-          await this.restoreTarget(target, entry.status === 'applying');
+          await this.restoreTarget(target, entry.status === 'applying', immediate);
         } catch {
           exact = false;
           diagnostics.push(diagnostic('rollback_failed', `Could not prove ${target.path} returned to its preimage; it was preserved.`, entry.operation));
@@ -415,19 +441,23 @@ class Executor {
       return { kind: 'recovery_required', operations, diagnostics };
     }
     await this.fs.write(this.paths.journal, null);
-    await this.collectBackups(await this.readManifest().catch(() => null));
+    // Only this transaction's own backups are garbage now; baseline backups belong to the manifest.
+    await this.fs.removeTree(path.join(this.paths.backups, journal.id));
+    await this.fs.removeEmptyDirectories([this.paths.backups]);
     return { kind: 'rolled_back', operations, diagnostics };
   }
 
-  async restoreTarget(target: JournalTarget, inFlight: boolean): Promise<void> {
+  async restoreTarget(target: JournalTarget, inFlight: boolean, immediate: boolean): Promise<void> {
     const current = await this.fs.hashOf(target.path);
     // Writes are atomic, so an in-flight operation left its path at either the preimage or the
     // postimage; any other content was never ours and is preserved untouched.
     const untouched = inFlight && target.postimageKnown && current !== target.postimage;
     if (current !== target.preimage && !untouched) {
-      // Only a path still holding this transaction's postimage is ours to reverse; an unobserved
-      // vendor write is reversible because the path was under our lock the whole time.
-      if (target.postimageKnown && current !== target.postimage) throw new SetupFilesystemError('precondition_failed', target.path);
+      // Only a path still holding this transaction's postimage is ours to reverse. An unobserved
+      // vendor write is reversible only by the transaction that ran it, still under its lock.
+      if (target.postimageKnown ? current !== target.postimage : !immediate) {
+        throw new SetupFilesystemError('precondition_failed', target.path);
+      }
       if (target.preimage === null) {
         await this.fs.remove(target.path, current!);
       } else {
@@ -548,6 +578,8 @@ class Executor {
         target.postimage = await this.fs.hashOf(target.path);
         target.postimageKnown = true;
       }
+      // Record the observed postimage at once, so a later recovery can prove what it reverses.
+      await this.writeJournal(journal);
     } else {
       const [target] = entry.targets;
       const current = await this.fs.observe(operation.path);
@@ -584,7 +616,7 @@ class Executor {
         const previous = entries.get(target.path);
         const post = target.postimage;
         const baseline = previous?.baseline ?? { hash: target.preimage, backup: target.backup, mode: target.mode };
-        const released = operation.type === 'file_delete' || operation.type === 'file_restore' || operation.type === 'config_entry_remove'
+        const released = operation.type === 'file_delete' || operation.type === 'file_restore'
           || post === null || post === baseline.hash;
         if (released) {
           entries.delete(target.path);
@@ -627,6 +659,9 @@ class Executor {
         }
         return { kind: 'recovery_required', operations: [], diagnostics: [diagnostic('manifest_corrupt', 'The setup manifest is unreadable.')] };
       }
+      // With no journal left, backups the manifest does not reference (from a crash before
+      // `prepared`, or after `journal_removed`) are unreferenced and safe to delete.
+      await this.collectBackups(manifest);
       const plan = await this.options.replan(manifest);
       if (plan.planDigest !== this.options.confirmedDigest) return { kind: 'replanned', plan };
       let observed: Map<string, FileObservation | null>;
@@ -682,7 +717,7 @@ class Executor {
       try {
         await this.apply(plan, manifest, journal, index);
       } catch (error) {
-        return await this.rollback(journal, [failure(error, journal.operations[index]!.operation)]);
+        return await this.rollback(journal, [failure(error, journal.operations[index]!.operation)], true);
       }
     }
     try {
@@ -691,7 +726,7 @@ class Executor {
       await this.writeJournal(journal);
       await this.boundary('committed');
     } catch (error) {
-      return await this.rollback({ ...journal, state: 'prepared', manifest: null }, [failure(error)]);
+      return await this.rollback({ ...journal, state: 'prepared', manifest: null }, [failure(error)], true);
     }
     try {
       await this.finalize(journal);

@@ -10,6 +10,7 @@ import {
   type SetupRoots, type SetupStatePaths,
 } from './transaction.js';
 import { bytes, op, plan, removalPlan, snapshot, syntheticHome } from './fixtures/setup-home.js';
+import type { SetupOperation } from './types.js';
 
 let root: string;
 let roots: SetupRoots;
@@ -179,6 +180,41 @@ describe('setup transaction', () => {
     const partial = plan('remove', removal.operations.filter(item => item.path !== t.skill));
     expect(expectKind(await run(partial), 'refused').state).toBe('drifted');
     expect(await snapshot(root)).toEqual(before);
+  });
+
+  it('keeps baseline backups when a rollback happens while the manifest is unreadable', async () => {
+    await seedConfig();
+    expectKind(await run(setupV1()), 'committed');
+    const committed = await fsp.readFile(state.manifest);
+    const baseline = (await manifest())!.entries.find(entry => entry.path === targets().config)!.baseline;
+    const outcome = await run(upgradeV2(), {
+      boundary: async name => {
+        if (name !== 'recorded:1') return;
+        await fsp.writeFile(state.manifest, 'garbage');
+        throw new Error('injected');
+      },
+    });
+    expect(outcome.kind).toBe('rolled_back');
+    expect(await fsp.readFile(path.join(state.backups, ...baseline.backup!.split('/')))).toEqual(Buffer.from(ORIGINAL));
+    await fsp.writeFile(state.manifest, committed);
+    expectKind(await run(removalPlan((await manifest())!)), 'committed');
+    expect(await read(targets().config)).toBe(new TextDecoder().decode(ORIGINAL));
+  });
+
+  it('config_entry_remove that leaves other Khala content keeps the path managed with its original baseline', async () => {
+    await seedConfig();
+    const t = targets();
+    expectKind(await run(setupV1()), 'committed');
+    const trimmed = bytes('{"user":"original","mcp":{}}\n');
+    const removeEntry: SetupOperation = {
+      id: 'remove-entry', harness: 'claude', component: 'mcp_entry', path: t.config, type: 'config_entry_remove',
+      entry: 'mcp.khala', preimage: sha256(V1_CONFIG), postimage: sha256(trimmed),
+    };
+    expectKind(await run(plan('setup', [removeEntry], [trimmed])), 'committed');
+    const entry = (await manifest())!.entries.find(item => item.path === t.config)!;
+    expect(entry).toMatchObject({ postimage: sha256(trimmed), baseline: { hash: sha256(ORIGINAL) } });
+    expectKind(await run(removalPlan((await manifest())!)), 'committed');
+    expect(await read(t.config)).toBe(new TextDecoder().decode(ORIGINAL));
   });
 
   it('refuses unowned targets, including a byte-identical Khala-named installer file', async () => {
@@ -414,5 +450,18 @@ describe('setup transaction crash recovery', () => {
     // Recovery is idempotent: a second pass changes nothing.
     await recoverOnly();
     expect(await userState()).toEqual(recovered);
+  }, 20_000);
+
+  it('a crash inside a vendor command cannot be attributed later, so recovery preserves the path', async () => {
+    const registry = path.join(roots.home, '.claude', 'plugins.json');
+    await fsp.mkdir(path.dirname(registry), { recursive: true });
+    // The vendor command writes its file, then kills the executor before the postimage is journaled.
+    const script = `printf vendor > '${registry}'; kill -9 $PPID`;
+    const vendor = plan('setup', [op.vendor('/bin/sh', [registry], { component: 'plugin' }, ['-c', script])]);
+    expect(crash(vendor, 'never').signal).toBe('SIGKILL');
+    await fsp.writeFile(registry, 'user edited later');
+    const outcome = expectKind(await recoverOnly(), 'recovery_required');
+    expect(outcome.operations[0]!.status).toBe('rollback_failed');
+    expect(await read(registry)).toBe('user edited later');
   }, 20_000);
 });

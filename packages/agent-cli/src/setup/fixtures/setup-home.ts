@@ -39,8 +39,8 @@ export const op = {
     ({ ...base(target, options, 'delete'), type: 'file_delete', preimage: pre }),
   restore: (target: string, current: Sha256Digest, restored: Sha256Digest | null, options: Target = {}): SetupOperation =>
     ({ ...base(target, options, 'restore'), type: 'file_restore', current, restored }),
-  vendor: (executable: string, writablePaths: readonly string[], options: Target = {}): SetupOperation =>
-    ({ ...base(executable, options, 'vendor'), type: 'vendor_command', executable, args: ['plugin', 'install'], writablePaths }),
+  vendor: (executable: string, writablePaths: readonly string[], options: Target = {}, args: readonly string[] = ['plugin', 'install']): SetupOperation =>
+    ({ ...base(executable, options, 'vendor'), type: 'vendor_command', executable, args, writablePaths }),
 };
 
 export function plan(

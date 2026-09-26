@@ -79,7 +79,8 @@ export class ConfinedFilesystem {
     await this.assertSafe(target);
     let handle: fsp.FileHandle;
     try {
-      handle = await fsp.open(target, fs.constants.O_RDONLY | NOFOLLOW);
+      // O_NONBLOCK keeps a FIFO planted at the target from hanging the open; it is refused below.
+      handle = await fsp.open(target, fs.constants.O_RDONLY | NOFOLLOW | (fs.constants.O_NONBLOCK ?? 0));
     } catch (error) {
       if (errno(error) === 'ENOENT') return null;
       if (errno(error) === 'ELOOP') throw new SetupFilesystemError('unsafe_path', target);
@@ -162,6 +163,7 @@ export class ConfinedFilesystem {
    */
   async replace(target: string, expected: Sha256Digest | null, bytes: Uint8Array, mode: number): Promise<void> {
     const before = await this.expect(target, expected);
+    const parent = await directoryIdentity(path.dirname(target));
     const temporary = path.join(path.dirname(target), `.khala-${randomUUID()}.tmp`);
     let handle: fsp.FileHandle | null = null;
     try {
@@ -171,6 +173,11 @@ export class ConfinedFilesystem {
       await handle.sync();
       await handle.close();
       handle = null;
+      // Re-verify the whole path right before publishing: a parent swapped for a link (or
+      // another directory) since the preflight check must not receive the file.
+      await this.assertSafe(target);
+      const now = await directoryIdentity(path.dirname(target));
+      if (now.dev !== parent.dev || now.ino !== parent.ino) throw new SetupFilesystemError('unsafe_path', target);
       if (before === null) {
         await fsp.link(temporary, target).catch(error => {
           throw new SetupFilesystemError(errno(error) === 'EEXIST' ? 'precondition_failed' : 'storage_failed', target);
@@ -244,6 +251,12 @@ export class ConfinedFilesystem {
       throw new SetupFilesystemError('storage_failed', directory);
     });
   }
+}
+
+async function directoryIdentity(directory: string): Promise<{ dev: number; ino: number }> {
+  const stat = await fsp.lstat(directory).catch(() => null);
+  if (stat === null || !stat.isDirectory()) throw new SetupFilesystemError('unsafe_path', directory);
+  return { dev: stat.dev, ino: stat.ino };
 }
 
 async function syncDirectory(directory: string): Promise<void> {
