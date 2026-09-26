@@ -4,8 +4,9 @@ import type {
 import type { AgentListeningModeReadResult } from '@khala/connector/agent/listening-mode';
 import { CliError } from '../cli/errors.js';
 import type { InboxBatch } from '../cli/inbox.js';
+import type { AccessRequestInput, AccessStatusInput, ChannelListInput } from '../cli/channels/types.js';
 import type { SendResult } from '../cli/types.js';
-import { validIdentifier } from '../cli/validation.js';
+import { plainObject, validIdentifier } from '../cli/validation.js';
 import type { ReadOperationPort } from '../mcp/read-tool.js';
 import { renderInboxBatchWithoutToken } from '../mcp/result-postprocessor.js';
 
@@ -92,10 +93,29 @@ export type ClaudeBindingServices = Readonly<{
    * it grants none. Hooks take the watcher window only from here.
    */
   watchWindow(): Promise<Readonly<{ seconds: number }> | null>;
+  /**
+   * The raw `listAgents` port result for this binding's channel. The adapter passes
+   * the roster on; the client decodes it. Never carries a token.
+   */
+  roster(): Promise<unknown>;
 }>;
+
+/**
+ * Server-side discovery and access for a session that may hold no binding yet. Each
+ * call names the authenticated principal and the requesting Claude session, so an
+ * access request is filed for that session and a later grant binds that session
+ * only. Results are the raw, undecoded port results; the client decodes them.
+ */
+export interface ClaudeSessionAccess {
+  listChannels(principal: ClaudePrincipal, sessionId: string, input: ChannelListInput): Promise<unknown>;
+  request(principal: ClaudePrincipal, sessionId: string, input: AccessRequestInput): Promise<unknown>;
+  status(principal: ClaudePrincipal, sessionId: string, input: AccessStatusInput): Promise<unknown>;
+}
 
 export type ClaudeSessionAdapterOptions = Readonly<{
   authenticator: ClaudeInstallationAuthenticator;
+  /** Absent until composition supplies the discovery-credentialed access client; access calls then report `unavailable`. */
+  access?: ClaudeSessionAccess;
   sessions: ClaudeSessionDirectory;
   state: ClaudeSessionStatePort;
   services(binding: SessionBinding): ClaudeBindingServices;
@@ -131,6 +151,10 @@ export type ClaudeModeSetOutcome = (Readonly<{
   effective: ListeningMode | null;
   version: number;
 }> & Piggyback) | ClaudeSessionRefusal;
+/** The channel roster for the session's own binding, undecoded; the client applies the closed roster decoder. */
+export type ClaudeRosterOutcome = Readonly<{ kind: 'roster'; roster: unknown }> | ClaudeSessionRefusal;
+/** The raw port result of a session-bound discovery or access call, undecoded. */
+export type ClaudeAccessOutcome = Readonly<{ kind: 'access'; result: unknown }> | ClaudeSessionRefusal;
 export type ClaudePendingOutcome = Readonly<{ kind: 'pending' | 'idle' }> | ClaudeSessionRefusal;
 /**
  * What a hook needs to pick its boundary, and nothing else: the effective mode, and
@@ -158,6 +182,11 @@ export interface ClaudeSessionAdapter {
   setMode(call: ClaudeSessionCall, input: Omit<ModeSetInput, 'acknowledgeToken'>): Promise<ClaudeModeSetOutcome>;
   pending(call: ClaudeSessionCall): Promise<ClaudePendingOutcome>;
   hook(call: ClaudeSessionCall): Promise<ClaudeHookOutcome>;
+  roster(call: ClaudeSessionCall): Promise<ClaudeRosterOutcome>;
+  /** Discovery and access carry the requesting session but need no binding: a join precedes one. */
+  listChannels(call: ClaudeSessionCall, input: ChannelListInput): Promise<ClaudeAccessOutcome>;
+  requestAccess(call: ClaudeSessionCall, input: AccessRequestInput): Promise<ClaudeAccessOutcome>;
+  accessStatus(call: ClaudeSessionCall, input: AccessStatusInput): Promise<ClaudeAccessOutcome>;
 }
 
 type Resolved = Readonly<{ binding: SessionBinding; scope: SessionScope; services: ClaudeBindingServices }>;
@@ -194,6 +223,20 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       scope: { principalId: principal.principalId, bindingId: binding.bindingId },
       services: options.services(binding),
     };
+  }
+
+  /** Authenticates the installation and hands the session to `run`; no binding is needed or consulted. */
+  async function access(
+    call: ClaudeSessionCall,
+    run: (access: ClaudeSessionAccess, principal: ClaudePrincipal) => Promise<unknown>,
+  ): Promise<ClaudeAccessOutcome> {
+    return guarded(async () => {
+      if (typeof call.credential !== 'string' || !validIdentifier(call.sessionId)) return refused('invalid_request');
+      const principal = await options.authenticator.authenticate(call.credential);
+      if (principal === null) return refused('unauthorized');
+      if (options.access === undefined) return refused('unavailable');
+      return { kind: 'access' as const, result: await run(options.access, principal) };
+    });
   }
 
   async function handoff(resolved: Resolved): Promise<boolean> {
@@ -344,6 +387,22 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
           kind: 'mode_set', outcome: result.outcome, requested: result.requested, effective: result.effective, version: result.version,
           ...(batch === null ? {} : { batch }),
         };
+      });
+    },
+
+    listChannels: (call, input) => access(call, (port, principal) => port.listChannels(principal, call.sessionId, input)),
+    requestAccess: (call, input) => access(call, (port, principal) => port.request(principal, call.sessionId, input)),
+    accessStatus: (call, input) => access(call, (port, principal) => port.status(principal, call.sessionId, input)),
+
+    async roster(call) {
+      return guarded(async () => {
+        const resolved = await resolve(call);
+        if ('kind' in resolved) return resolved;
+        const result = await resolved.services.roster();
+        if (plainObject(result) && result.kind === 'listed') return { kind: 'roster', roster: result.roster };
+        // A server-side not_joined is the same answer as an unbound session.
+        if (plainObject(result) && result.kind === 'refused' && result.code === 'not_joined') return refused('session_not_bound');
+        return refused('unavailable');
       });
     },
 

@@ -1,0 +1,12 @@
+{
+  "status": "unproven",
+  "route": "claude-interactive-hooks",
+  "claudeCodeVersion": "2.1.283",
+  "ordinaryUserStartedCli": false,
+  "provenPairs": [],
+  "scenarios": [],
+  "limitations": [
+    "No authorized disposable live run is retained yet, so no version/route pair is advertised as batch_token_next_call.",
+    "Offline conformance is component evidence, never a support claim."
+  ]
+}

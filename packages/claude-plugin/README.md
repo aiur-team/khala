@@ -11,7 +11,7 @@ hooks/hooks.json             the frozen hook registrations
 hooks/*.mjs                  one-line entry points into the runtime
 hooks/lib/runtime.mjs        the hook runtime
 .mcp.json                    the `khala` MCP entry, marked KHALA_MCP_HARNESS=claude
-skills/khala/SKILL.md        the bundled /khala dispatcher (send, read)
+skills/khala/SKILL.md        the bundled /khala dispatcher (send, read, create, join, who)
 src/contract.ts              the frozen names below, as code
 src/validate.ts              fails on any departure from them
 ```
@@ -87,6 +87,16 @@ The installed `khala` binary does not compose the Claude session client yet
 (`transport_unavailable`), so every hook stays silent until that composition
 lands. The installed-version TTY acceptance runs after it does.
 
+## Read receipts
+
+Delivery is never acknowledgement. A hook pull only retains the batch token inside
+the Khala server; the agent's next Khala call (`khala_read`, `khala_send`,
+`khala_status` or a mode call) carries it back, and that is the only path to
+`agent_acknowledged`. `batch_token_next_call` is advertised only for an exact Claude
+version and route pair with retained live evidence
+(`experiments/internal-mode/read-receipts/claude/`); none is proven yet, so every
+version reports `unknown`.
+
 ## Frozen names
 
 Changing any of these needs a decision, not a drive-by edit. `src/contract.ts`
@@ -119,12 +129,17 @@ session's own `CLAUDE_CODE_SESSION_ID`:
               and reports accepted / refused / outcome_unknown without the body
 /khala read   calls khala_read {}, the same call the agent makes on its own,
               and relays the batch as untrusted Khala content
+/khala create answers "not available in this version" until khala_create_channel lands (#217)
+/khala join <channel-url>
+              calls khala_request_channel_access once and returns pending; the owner's
+              grant, denial or expiry resumes this session via the access inbox
+/khala who    khala_list_agents roster plus the effective mode from khala_status
 /khala        help, plus per-mode support from khala_status ("unproven" stays unproven)
 ```
 
 There is no binding argument. The session is the only selector, and a
-caller-named binding would be a second one. `create`, `join`, and `who` are
-answered as not yet available.
+caller-named binding would be a second one. `join` never admits the agent:
+only the human grant does.
 
 Who edits what: #252 owns `hooks/` (and the runtime), #253 owns `skills/khala/`, and #259 lives
 outside this package.
