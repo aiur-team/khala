@@ -50,7 +50,7 @@ describe('MCP channel listing tools', () => {
   it('advertises strict schemas for khala_list_channels and khala_list_agents', async () => {
     const [response] = await mcp(listingClient(), [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]);
     const tools = response?.result?.tools ?? [];
-    expect(tools.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_pair']);
+    expect(tools.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status', 'khala_pair']);
     expect(tools.find(tool => tool.name === 'khala_list_channels')?.inputSchema).toMatchObject({
       type: 'object', required: [], additionalProperties: false,
       properties: { origin: { type: 'string' }, cursor: { type: 'string' }, ackBatchToken: { type: 'string' } },

@@ -1,3 +1,4 @@
+import { channelAccessStatusTool, requestChannelAccessTool } from './channels/access-tools.js';
 import { listAgentsTool, listChannelsTool } from './channels/tools.js';
 import { listeningModeTool } from './tools/listening-mode.js';
 import { pairTool } from './pair.js';
@@ -37,8 +38,6 @@ export function createToolRegistry(tools: readonly McpTool[]): ToolRegistry {
 }
 
 /** Built-in tools. A new tool is one file under `tools/` plus one line here. */
-export const MCP_TOOLS: readonly McpTool[] = Object.freeze([
-  sendTool, readTool, listeningModeTool, listChannelsTool, listAgentsTool, pairTool,
-]);
+export const MCP_TOOLS: readonly McpTool[] = Object.freeze([sendTool, readTool, listeningModeTool, listChannelsTool, listAgentsTool, requestChannelAccessTool, channelAccessStatusTool, pairTool]);
 
 export const toolRegistry: ToolRegistry = createToolRegistry(MCP_TOOLS);
