@@ -23,3 +23,11 @@
   overflow-x: auto;
   user-select: all;
 }
+
+/* Owner navigation links keep a 44px touch target. */
+.internal-owner-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
+}
