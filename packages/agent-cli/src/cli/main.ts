@@ -8,11 +8,11 @@ import { openInbox } from './inbox.js';
 import { bundledInternalRuntime } from './internal.js';
 import { MAX_SEND_BYTES } from './send.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
-import { createDiscoveryOnlyAdapter, createNodeSetupProbe } from '../setup/detect.js';
+import { PATH_HARNESS_IDS, createDiscoveryOnlyAdapter, createNodeSetupProbe } from '../setup/detect.js';
 import { resolveSetupPaths } from '../setup/paths.js';
 import { createSetupService, type SetupExecute } from '../setup/plan.js';
 import { executeSetupPlan } from '../setup/transaction.js';
-import { HARNESS_IDS, type SetupEnvironment } from '../setup/types.js';
+import type { SetupEnvironment } from '../setup/types.js';
 
 /** Builds the setup environment from explicit HOME/XDG/PATH values only; nothing else is inherited. */
 export function setupEnvironment(env: NodeJS.ProcessEnv): SetupEnvironment {
@@ -57,8 +57,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       }),
       setup: createSetupService({
         environment: () => setupEnvironment(process.env),
-        // Real harness adapters replace these one by one; until then a detected harness is unsupported.
-        adapters: HARNESS_IDS.map(createDiscoveryOnlyAdapter),
+        // Real harness adapters replace these one by one; until then a detected harness is unsupported
+        // and Claude Desktop, which PATH discovery cannot find, is not reported.
+        adapters: PATH_HARNESS_IDS.map(createDiscoveryOnlyAdapter),
         execute: setupExecute(process.env),
       }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,

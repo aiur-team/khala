@@ -839,7 +839,8 @@ and the plugin's `mcp-serve` fail closed with `transport_unavailable`.
 
 `setup` and `remove` each print one versioned JSON result (`src/setup/types.ts`).
 Each run discovers the Claude Code, Codex, OpenCode, and Cursor executables on `PATH`,
-inspects them read-only, and builds one plan. The plan is sorted by harness,
+inspects them read-only, and builds one plan. Claude Desktop is not on `PATH`, so it is
+not reported until the CLI composes its app adapter. The plan is sorted by harness,
 component, and path, and its `planDigest` covers the planner identity, the
 command, every detected harness fact, and each operation's pre/post hashes.
 Identical state produces byte-identical output.

@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDiscoveryOnlyAdapter, createNodeSetupProbe, detectHarness } from './detect.js';
-import type { SetupEnvironment, SetupProbe } from './types.js';
+import { PATH_HARNESS_IDS, createDiscoveryOnlyAdapter, createNodeSetupProbe, detectHarness } from './detect.js';
+import { HARNESS_IDS, type SetupEnvironment, type SetupProbe } from './types.js';
 
 const SECRET = 'sentinel-secret-detect';
 const directories: string[] = [];
@@ -72,6 +72,10 @@ describe('detectHarness', () => {
     expect(adapter.plan({ desired: 'present', observation: {
       detection: { executable: '/usr/bin/claude', version: '1.0.0', supported: false },
       components: [], route: 'unknown', diagnostics: [] } })).toEqual([]);
+  });
+
+  it('discovers every harness on PATH except Claude Desktop, which only its adapter can find', () => {
+    expect(PATH_HARNESS_IDS).toEqual(HARNESS_IDS.filter(harness => harness !== 'claude-app'));
   });
 });
 

@@ -5,10 +5,10 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createUnavailableClient } from '../composition/unavailable.js';
-import { createDiscoveryOnlyAdapter } from '../setup/detect.js';
+import { PATH_HARNESS_IDS, createDiscoveryOnlyAdapter } from '../setup/detect.js';
 import { SetupPathError } from '../setup/paths.js';
 import { createSetupService, type SetupService } from '../setup/plan.js';
-import { HARNESS_IDS, decodeSetupResult, type SetupAdapter, type SetupResult } from '../setup/types.js';
+import { decodeSetupResult, type SetupAdapter, type SetupResult } from '../setup/types.js';
 import { runCli } from './app.js';
 import { setupEnvironment, setupExecute } from './main.js';
 import type { CliDependencies } from './types.js';
@@ -141,7 +141,7 @@ describe('production setup composition', () => {
     const env = { HOME: home, PATH: `${bin}:relative` };
     const service = createSetupService({
       environment: () => setupEnvironment(env),
-      adapters: HARNESS_IDS.map(createDiscoveryOnlyAdapter),
+      adapters: PATH_HARNESS_IDS.map(createDiscoveryOnlyAdapter),
       execute: setupExecute(env),
     });
 
@@ -167,7 +167,7 @@ describe('production setup composition', () => {
     const env = { HOME: home, PATH: '' };
     const service = createSetupService({
       environment: () => setupEnvironment(env),
-      adapters: HARNESS_IDS.map(createDiscoveryOnlyAdapter),
+      adapters: PATH_HARNESS_IDS.map(createDiscoveryOnlyAdapter),
       execute: setupExecute(env),
     });
     for (const command of ['setup', 'remove']) {

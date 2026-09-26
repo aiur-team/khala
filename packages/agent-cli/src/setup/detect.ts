@@ -4,13 +4,17 @@
 import { spawn } from 'node:child_process';
 import { constants, promises as fs } from 'node:fs';
 import path from 'node:path';
-import type {
-  HarnessDetection, HarnessId, HarnessObservation, SetupAdapter, SetupEnvironment, SetupProbe,
+import {
+  HARNESS_IDS, type HarnessDetection, type HarnessId, type HarnessObservation, type SetupAdapter,
+  type SetupEnvironment, type SetupProbe,
 } from './types.js';
 
 type Descriptor = Readonly<{ executable: string; versionArgs: readonly string[]; version: RegExp }>;
 
-const DESCRIPTORS: Readonly<Record<HarnessId, Descriptor>> = Object.freeze({
+/** Harnesses found as an executable on `PATH`. Claude Desktop (`claude-app`) is an app install only its adapter finds. */
+export type PathHarnessId = Exclude<HarnessId, 'claude-app'>;
+
+const DESCRIPTORS: Readonly<Record<PathHarnessId, Descriptor>> = Object.freeze({
   claude: { executable: 'claude', versionArgs: ['--version'], version: /^(\d+\.\d+\.\d+)(?: \(Claude Code\))?$/u },
   codex: { executable: 'codex', versionArgs: ['--version'], version: /^(?:codex-cli )?(\d+\.\d+\.\d+)$/u },
   opencode: { executable: 'opencode', versionArgs: ['--version'], version: /^(?:opencode )?v?(\d+\.\d+\.\d+)$/u },
@@ -18,12 +22,15 @@ const DESCRIPTORS: Readonly<Record<HarnessId, Descriptor>> = Object.freeze({
   cursor: { executable: 'cursor', versionArgs: ['--version'], version: /^(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\r?(?:\n|$)/u },
 });
 
+export const PATH_HARNESS_IDS: readonly PathHarnessId[] = Object.freeze(
+  HARNESS_IDS.filter((harness): harness is PathHarnessId => Object.hasOwn(DESCRIPTORS, harness)));
+
 /**
  * Finds the harness executable and parses its version. Absence (`executable: null`) and a
  * failed or unparseable probe (`version: null`) stay distinct. Generic discovery never marks a
  * version supported: only a harness adapter holding a certified version matrix may.
  */
-export async function detectHarness(environment: SetupEnvironment, harness: HarnessId): Promise<HarnessDetection> {
+export async function detectHarness(environment: SetupEnvironment, harness: PathHarnessId): Promise<HarnessDetection> {
   const descriptor = DESCRIPTORS[harness];
   const executable = await environment.probe.resolveExecutable(descriptor.executable);
   if (executable === null) return { executable: null, version: null, supported: false };
@@ -38,7 +45,7 @@ export async function detectHarness(environment: SetupEnvironment, harness: Harn
  * Stand-in adapter for a harness whose real adapter has not landed. It reports what discovery
  * can prove, inspects nothing, and plans nothing, so a detected harness reads as unsupported.
  */
-export function createDiscoveryOnlyAdapter(harness: HarnessId): SetupAdapter {
+export function createDiscoveryOnlyAdapter(harness: PathHarnessId): SetupAdapter {
   return Object.freeze({
     harness,
     detect: (environment: SetupEnvironment) => detectHarness(environment, harness),

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { AgentRoute } from '../cli/types.js';
-import { createDiscoveryOnlyAdapter } from './detect.js';
+import { PATH_HARNESS_IDS, createDiscoveryOnlyAdapter } from './detect.js';
 import {
   createSetupService, setupResultExitCode, type SetupExecute, type SetupPayloadSource, type SetupService,
 } from './plan.js';
@@ -415,7 +415,7 @@ describe('status truth table', () => {
   it('reports a detected harness without a real adapter as unsupported', async () => {
     const machine = world();
     install(machine, 'claude');
-    const status: SetupResult = await service(machine, HARNESS_IDS.map(createDiscoveryOnlyAdapter)).configuration();
+    const status: SetupResult = await service(machine, PATH_HARNESS_IDS.map(createDiscoveryOnlyAdapter)).configuration();
     expect(status.state).toBe('unsupported');
     expect(status.harnesses).toEqual([{ harness: 'claude', executable: { present: true, path: '/usr/bin/claude' },
       version: { detected: '1.2.3', supported: false }, components: [], route: 'unknown' }]);
