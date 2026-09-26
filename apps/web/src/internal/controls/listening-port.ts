@@ -21,6 +21,8 @@ export type ListeningBinding = Readonly<{
   version: number;
   paused: boolean;
   support: Readonly<Record<ListeningModeName, ModeSupportView>>;
+  /** Whether an idle agent is proven to receive a message before its next turn (decisions 34 and 37). */
+  idleDelivery: 'proven' | 'unproven';
 }>;
 
 export type ListeningFailure = 'unavailable' | 'session_ended' | 'forbidden' | 'conflict' | 'outcome_unknown';
@@ -62,7 +64,8 @@ export function decodeBindingList(value: unknown): ListeningBinding[] | null {
   if (!plain(value) || value.v !== 1 || !Array.isArray(value.bindings)) return null;
   const bindings: ListeningBinding[] = [];
   for (const entry of value.bindings as unknown[]) {
-    if (!plain(entry) || !plain(entry.binding) || !plain(entry.view) || typeof entry.paused !== 'boolean' || !text(entry.displayName)) return null;
+    if (!plain(entry) || !plain(entry.binding) || !plain(entry.view) || typeof entry.paused !== 'boolean' || !text(entry.displayName)
+      || (entry.idleDelivery !== 'proven' && entry.idleDelivery !== 'unproven')) return null;
     const { binding, view } = entry;
     const support = decodeSupport(view.support);
     if (!text(binding.bindingId) || !count(binding.generation) || !text(binding.harness) || support === null
@@ -71,7 +74,7 @@ export function decodeBindingList(value: unknown): ListeningBinding[] | null {
     bindings.push({
       bindingId: binding.bindingId, generation: binding.generation, harness: binding.harness, displayName: entry.displayName,
       requested: view.requested, effective: view.effective, effectiveReason: view.effectiveReason as string | null,
-      version: view.version, paused: entry.paused, support,
+      version: view.version, paused: entry.paused, support, idleDelivery: entry.idleDelivery,
     });
   }
   return bindings;

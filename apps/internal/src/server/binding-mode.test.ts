@@ -180,7 +180,7 @@ describe('owner binding list and the agent\'s harness report', () => {
     // Carol is bound to the other channel only.
     expect(listed.json.bindings.map((entry: { binding: { bindingId: string } }) => entry.binding.bindingId)).toEqual([bobBinding.bindingId]);
     expect(listed.json.bindings[0]).toMatchObject({
-      displayName: 'Bob', paused: false, binding: bobBinding, view: { requested: 'sync', effective: null, effectiveReason: 'capabilities_unavailable' },
+      displayName: 'Bob', paused: false, idleDelivery: 'unproven', binding: bobBinding, view: { requested: 'sync', effective: null, effectiveReason: 'capabilities_unavailable' },
     });
     expect((await call(h, `/api/v1/channels/${channelId}/bindings`, { headers: bearer(h.fixture.bob.credential) })).status).toBe(403);
     await call(h, `/api/v1/channels/${channelId}/stop`, { method: 'POST', headers: owner, body: { v: 1, targets: null } });

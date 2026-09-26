@@ -43,6 +43,9 @@ function AgentRow({ binding, controller, busy }: Readonly<{ binding: ListeningBi
           ? 'Paused. Khala holds new messages for this agent until you resume.'
           : 'Receiving messages.'}
       </p>
+      {binding.idleDelivery === 'unproven'
+        ? <p className="listening-control__idle">Idle agents receive messages only at their next turn.</p>
+        : null}
       <p className="listening-control__effective">
         {binding.requested === null ? 'Requested: none.' : `Requested: ${MODES[binding.requested].label}.`} {effectiveText(binding)}
       </p>

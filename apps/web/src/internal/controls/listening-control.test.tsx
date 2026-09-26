@@ -94,7 +94,8 @@ describe('listening controller and control', () => {
     expect(html).toContain('Async (not proven for this agent)');
     expect(html).toContain('Awaiting a receipt proof');
     expect(html).toContain('Requested: none. Not in effect: no mode is proven');
-    expect(html).toContain('Idle agents receive messages only at their next turn.');
+    // Stated per agent while idle delivery is unproven, even when the harness's own claim omits it.
+    expect(html.match(/<p class="listening-control__idle">Idle agents receive messages only at their next turn\.<\/p>/g)).toHaveLength(2);
     expect(html).toContain('Resume delivery to Bea');
     expect(html).toContain('Pause delivery to Ada');
     expect((html.match(/disabled=""/g) ?? []).length).toBe(4);

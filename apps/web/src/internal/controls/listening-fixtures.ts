@@ -9,6 +9,7 @@ export function provenCodexEntry(overrides: Readonly<{ requested?: string | null
     binding: { v: 1, bindingId: 'binding-ada', ownerId: 'owner-1', agentParticipantId: 'participant-ada', deviceId: 'device-ada', harness: 'codex', sessionId: 'digest-ada', generation: 1 },
     displayName: 'Ada',
     paused: overrides.paused ?? false,
+    idleDelivery: 'unproven',
     view: {
       bindingId: 'binding-ada', generation: 1, requested, version: overrides.version ?? 1,
       effective: overrides.effective === undefined ? requested : overrides.effective,
@@ -24,11 +25,13 @@ export function provenCodexEntry(overrides: Readonly<{ requested?: string | null
 
 /** A Claude agent: no internal route is proven, so nothing is requested or in effect. */
 export function unprovenClaudeEntry(overrides: Readonly<{ paused?: boolean }> = {}) {
-  const unknown = { status: 'unknown', route: 'claude-unproven', reason: `No Claude route is proven here. ${IDLE}` };
+  // As Claude's released claim reads: it says nothing about idle delivery, so the panel must.
+  const unknown = { status: 'unknown', route: 'claude-unproven', reason: 'This exact Claude version and interactive hook route have not been inspected.' };
   return {
     binding: { v: 1, bindingId: 'binding-bea', ownerId: 'owner-1', agentParticipantId: 'participant-bea', deviceId: 'device-bea', harness: 'claude', sessionId: 'digest-bea', generation: 1 },
     displayName: 'Bea',
     paused: overrides.paused ?? false,
+    idleDelivery: 'unproven',
     view: {
       bindingId: 'binding-bea', generation: 1, requested: null, version: 1, effective: null, effectiveReason: 'no_requested_mode',
       support: { steer: unknown, sync: unknown, async: unknown },

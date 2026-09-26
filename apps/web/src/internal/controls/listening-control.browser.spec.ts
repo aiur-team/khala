@@ -57,7 +57,7 @@ test('ListeningControl: a supported mode is chosen by keyboard, unproven modes s
       assert.equal(await radio.isChecked(), false, `${mode} is not claimed for Bea`);
     }
     await page.getByText('Requested: none. Not in effect: no mode is proven for this agent\'s command-line tool, so none is requested.').waitFor();
-    assert.match(await beaModes.innerText(), /Idle agents receive messages only at their next turn\./);
+    assert.match(await page.locator('.listening-control__agent', { has: beaModes }).innerText(), /Idle agents receive messages only at their next turn\./);
 
     // Pause and resume: announced, reflected in the agent's state, and the button flips.
     const pause = page.getByRole('button', { name: 'Pause delivery to Ada' });

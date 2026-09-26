@@ -165,14 +165,18 @@ async function ownerRoute(context: RouteContext<Principal>, deps: BindingModeDep
     }
     const bindings = [];
     for (const { binding, displayName } of listed.bindings) {
-      const read = await deps.options.modes.read(authority, { binding, status: 'active' }, deps.options.capabilities(binding));
+      const capabilities = deps.options.capabilities(binding);
+      const read = await deps.options.modes.read(authority, { binding, status: 'active' }, capabilities);
       const paused = deps.options.pause.read(binding);
       // One unreadable binding fails the whole list: the owner never sees a partial view as complete.
       if (!read.ok || paused === 'unavailable') {
         fail(response, 503, 'unavailable');
         return;
       }
-      bindings.push({ binding: publicBinding(binding), displayName, view: read.view, paused });
+      // Decisions 34 and 37: an idle agent is reached before its next turn only on a proven wake route.
+      const idle = capabilities?.immediateNotification;
+      const idleDelivery = idle === undefined || idle === 'unknown' || idle === 'unsupported' ? 'unproven' : 'proven';
+      bindings.push({ binding: publicBinding(binding), displayName, view: read.view, paused, idleDelivery });
     }
     sendJson(response, 200, { v: 1, bindings });
     return;
