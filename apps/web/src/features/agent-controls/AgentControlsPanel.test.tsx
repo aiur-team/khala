@@ -26,6 +26,8 @@ function fakePorts(): AgentControlsPorts {
       readSnapshot: () => new Promise<AgentControlsSnapshot>(() => {}),
       subscribe: (): Disposer => () => {},
       submitPolicy: () => new Promise(() => {}),
+      submitListeningMode: () => new Promise(() => {}),
+      submitRouteGrant: () => new Promise(() => {}),
     },
   };
 }
@@ -37,6 +39,12 @@ function fakeController(view: AgentControlsView, overrides: Partial<AgentControl
     requestPause: () => {},
     refresh: () => {},
     retry: () => {},
+    selectListeningMode: () => {},
+    applyListeningMode: () => {},
+    requestGrant: () => {},
+    confirmGrant: () => {},
+    cancelGrant: () => {},
+    revokeGrant: () => {},
     dispose: () => {},
     ...overrides,
   };
@@ -67,6 +75,7 @@ function view(overrides: Partial<AgentControlsView> = {}): AgentControlsView {
     retryAvailable: false,
     notice: null,
     receiptDetail: null,
+    listening: null,
     ...overrides,
   };
 }
@@ -248,7 +257,11 @@ describe('AgentControlsPanel injected controller', () => {
     const readSnapshot = vi.fn(() => new Promise<AgentControlsSnapshot>(() => {}));
     const subscribe = vi.fn((): Disposer => () => {});
     const submitPolicy = vi.fn(() => new Promise<never>(() => {}));
-    const ports: AgentControlsPorts = { agentControls: { readSnapshot, subscribe, submitPolicy } };
+    const submitListeningMode = vi.fn(() => new Promise<never>(() => {}));
+    const submitRouteGrant = vi.fn(() => new Promise<never>(() => {}));
+    const ports: AgentControlsPorts = {
+      agentControls: { readSnapshot, subscribe, submitPolicy, submitListeningMode, submitRouteGrant },
+    };
     const controller = fakeController(view());
     renderToStaticMarkup(<AgentControlsPanel ports={ports} config={CONFIG} controller={controller} />);
     expect(readSnapshot).not.toHaveBeenCalled();

@@ -1,0 +1,81 @@
+{
+  "v": 1,
+  "capturedAt": "2026-09-25T01:11:06-07:00",
+  "inventory": "host-inventory.txt",
+  "shapes": {
+    "local_chat": {
+      "surface": "Codex desktop app",
+      "appVersion": null,
+      "accountTier": "unknown",
+      "administratorPolicyScope": "unknown"
+    },
+    "cloud_task": {
+      "surface": "Codex Cloud task",
+      "appVersion": null,
+      "accountTier": "unknown",
+      "administratorPolicyScope": "unknown"
+    }
+  },
+  "cells": [
+    {
+      "shape": "local_chat",
+      "mode": "steer",
+      "boundary": "PostToolUse",
+      "status": "blocked",
+      "support": "unknown",
+      "evidenceRef": null,
+      "reason": "No native Codex desktop app is installed on this Linux host, so no exact version, user-started session, or PostToolUse timing could be observed.",
+      "inventoryFacts": ["codex-desktop NOT_INSTALLED", "codex-app NOT_INSTALLED", "Exec=omarchy-launch-webapp https://chatgpt.com/"]
+    },
+    {
+      "shape": "local_chat",
+      "mode": "sync",
+      "boundary": "Stop",
+      "status": "blocked",
+      "support": "unknown",
+      "evidenceRef": null,
+      "reason": "No native Codex desktop app is installed on this Linux host, so no Stop continuation, idle session, or bounded-loop behavior could be observed.",
+      "inventoryFacts": ["codex-desktop NOT_INSTALLED", "codex-app NOT_INSTALLED", "Exec=omarchy-launch-webapp https://chatgpt.com/"]
+    },
+    {
+      "shape": "local_chat",
+      "mode": "async",
+      "boundary": "khala_read",
+      "status": "blocked",
+      "support": "unknown",
+      "evidenceRef": null,
+      "reason": "No native Codex desktop app is installed on this Linux host, so no MCP khala_read result could be shown in a desktop session's model context.",
+      "inventoryFacts": ["codex-desktop NOT_INSTALLED", "codex-app NOT_INSTALLED", "Exec=omarchy-launch-webapp https://chatgpt.com/"]
+    },
+    {
+      "shape": "cloud_task",
+      "mode": "steer",
+      "boundary": "PostToolUse",
+      "status": "blocked",
+      "support": "unknown",
+      "evidenceRef": null,
+      "reason": "The logged-in account has no existing Codex Cloud task, and the CLI cannot install hooks into a task environment. Submitting a task with `codex cloud exec` would create a new task, which cannot count as the user's session.",
+      "inventoryFacts": ["Logged in using ChatGPT", "No tasks found.", "exec    Submit a new Codex Cloud task without launching the TUI"]
+    },
+    {
+      "shape": "cloud_task",
+      "mode": "sync",
+      "boundary": "Stop",
+      "status": "blocked",
+      "support": "unknown",
+      "evidenceRef": null,
+      "reason": "The logged-in account has no existing Codex Cloud task, and the CLI cannot install a Stop hook into a task environment. Submitting a task with `codex cloud exec` would create a new task, which cannot count as the user's session.",
+      "inventoryFacts": ["Logged in using ChatGPT", "No tasks found.", "exec    Submit a new Codex Cloud task without launching the TUI"]
+    },
+    {
+      "shape": "cloud_task",
+      "mode": "async",
+      "boundary": "khala_read",
+      "status": "blocked",
+      "support": "unknown",
+      "evidenceRef": null,
+      "reason": "The logged-in account has no existing Codex Cloud task that could call a remote MCP khala_read. Submitting a task with `codex cloud exec` would create a new task, which cannot count as the user's session.",
+      "inventoryFacts": ["Logged in using ChatGPT", "No tasks found.", "exec    Submit a new Codex Cloud task without launching the TUI"]
+    }
+  ]
+}
