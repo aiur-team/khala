@@ -11,13 +11,15 @@ khala pair <pairing-code>
 khala listen [--binding <binding-id>]
 khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
-khala status
+khala status [--check]
 khala mode get
 khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
 khala channels request-access <channel-url-or-listing-ref> [--operation <id>] [--origin <trusted-origin>]
 khala channels access-status --operation <id> [--origin <trusted-origin>]
 khala agents list --channel <held-binding-id>
+khala setup [--dry-run | --confirm <sha256:digest>]
+khala remove [--dry-run | --confirm <sha256:digest>]
 khala mcp-serve
 khala internal
 khala internal --resume <channel-id>
@@ -594,7 +596,8 @@ evidence. See `packages/harnesses/src/claude-app/README.md`.
 ## Codex setup adapter
 
 `src/setup/adapters/codex.ts` detects `codex --version` and plans three guarded
-direct edits, with no plugin and no vendor command:
+direct edits, with no plugin and no vendor command. `~/.codex` below means
+`$CODEX_HOME` when that is set; the executor then also accepts that root.
 
 | Component | Path | Setup | Remove |
 | --- | --- | --- | --- |
@@ -867,6 +870,87 @@ token.
 
 The installed binary does not compose this client yet, so `khala claude`
 and the plugin's `mcp-serve` fail closed with `transport_unavailable`.
+
+## Setup planning and configuration status
+
+`setup` and `remove` each print one versioned JSON result (`src/setup/types.ts`).
+Each run discovers the Claude Code, Codex, OpenCode, and Cursor executables on `PATH`
+and a Claude Desktop install, inspects them read-only, and builds one plan. The plan is sorted by harness,
+component, and path, and its `planDigest` covers the planner identity, the
+command, every detected harness fact, and each operation's pre/post hashes.
+Identical state produces byte-identical output.
+
+The agent runs the command and relays the plan to the person; the person never
+installs anything by hand. A non-empty plan without confirmation exits 5 with
+`state: "confirmation_required"`. Its `confirmation` object names the harnesses,
+component actions, affected paths, the backup/restore promise, the session
+effect, the CLI fallback, the digest, and an approval request. After the person
+approves, the agent reruns the command with `--confirm <digest>`. That run
+inspects fresh state and plans again. If the new digest differs, it prints the
+replacement plan and exits 5 without executing anything. `--dry-run` prints the
+same plan and exit code but can never execute. An empty plan succeeds without
+confirmation.
+
+A matching confirmation goes to `executeSetupPlan` (see Setup transactions). It
+receives only the digest and a replan callback, reruns this planner under its
+lock, and applies nothing unless the fresh digest still matches. A dry run never
+reaches it. The digest also covers installer mode overrides and the detected
+unsupported harnesses the executor enforces. Outcomes map to results as follows:
+
+| Executor outcome | Result state | Exit |
+| --- | --- | ---: |
+| committed | the post-apply state (`ready` after a completed setup or remove) | 0 |
+| replanned | `confirmation_required` with the fresh plan and a `plan_changed` diagnostic: relay it and confirm again | 5 |
+| refused (drift, conflict, unsupported) | that state | 3 |
+| busy, or failed and rolled back exactly | `conflict` with `setup_busy` or `apply_failed` (the frozen states have no closer member) | 3 |
+| recovery required, or any thrown executor, lock, or replan error | `recovery_required` (`execution_failed` when thrown) | 4 |
+
+`src/composition/setup.ts` composes the real adapters: Claude Code, Codex (whose
+inspection also reports the Codex app), OpenCode, Cursor, and Claude Desktop. Each
+adapter supplies the bytes behind the exact plan it returned. The planner passes each
+adapter the observation object its own `inspect` returned. A Claude refusal
+(`ClaudeSetupRefusal`) becomes that result state with its diagnostics. A harness with
+setup still to do but nothing planned (Cursor plans nothing on a conflict) is a
+`conflict` with `setup_not_planned`. Claude Desktop and Cursor only report: when either
+is unsupported, it neither refuses setup for other harnesses nor counts toward
+readiness.
+
+The packaged payload (`src/setup/payload.ts`) comes from the package's `dist/`. It
+contains the runtime (`khala.js`), the OpenCode plugin (`opencode.js`), the Claude
+plugin's shipped files, and the Codex skill (`packages/agent-skill/SKILL.md`), all
+under `dist/payload/`. Setup stages three installer files:
+
+| Path | Component | Runs for |
+| --- | --- | --- |
+| `$XDG_DATA_HOME/khala/versions/<version>/khala.js` | `payload` | Codex, OpenCode, Cursor |
+| `$XDG_DATA_HOME/khala/bin/khala` (0500; runs the runtime with the Node that ran setup) | `launcher` | Codex, OpenCode, Cursor |
+| `$XDG_DATA_HOME/khala/bin/opencode.js` | `payload` | OpenCode |
+
+The first harness in harness order that runs a file and is being set up records it.
+Removal deletes these files by manifest, whichever harness recorded them. An existing
+file Khala did not install is a `conflict` (`installer_unowned`). A changed installed
+file is `drifted` (`installer_drifted`). Discovery can prove presence and a version
+string, never support or delivery.
+
+`status` keeps its connection fields and adds a `configuration` result. Bare
+`status` always exits 0. `status --check` exits 0 for `no_harness` or `ready`, 3
+for hook review, restart required, unproven effect, drift, conflict, or
+unsupported, and 4 for recovery required. A detected harness that still needs
+setup reports `drifted` with a `setup_required` diagnostic, because the frozen
+state vocabulary has no separate member for it. Configured components alone
+never mean ready: a native route must be evidenced. Until then, status names the
+installed `khala read`/`khala send` fallback when one is on `PATH`.
+
+HOME, XDG, `CODEX_HOME`, and PATH come only from the environment passed in. Empty XDG and `CODEX_HOME` values
+fall back below HOME (`CODEX_HOME` to `~/.codex`), relative roots are invalid, and empty or relative `PATH`
+entries are ignored, so the working directory is never searched. Status, dry
+runs, unconfirmed runs, and stale confirmations write nothing Khala controls.
+The one external action is each harness's `--version` probe. It is a
+user-selected executable, run by absolute path with no shell, ignored stdin, only
+HOME/XDG/CODEX_HOME/PATH in its environment, a 5 s deadline, and a 16 KiB output cap. Its
+whole process group is killed on overflow or timeout. Only the parsed version
+survives: results never carry raw output, config contents, descriptor values,
+or credentials. Khala never launches, hosts, or stops an agent.
 
 ## Composition boundary
 
