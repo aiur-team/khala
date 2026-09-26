@@ -2,11 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  type InternalCommand, type InternalCommandIo, type InternalRuntime, isInternalChannelArgument,
+  type InternalCommand, type InternalCommandIo, type InternalRuntime, isInternalChannelArgument, isInternalHarnessArgument,
+  isInternalLabelArgument, isInternalSessionArgument,
 } from '@khala/contracts/internal/command';
 import { INTERNAL_WEB_BUNDLE_DIRECTORY } from '@khala/contracts/internal/descriptor';
 import { PLAINTEXT_DELETION_NOTICE, deleteConfirmation, deleteInternalChannel } from '../lifecycle/delete';
 import { exportInternalChannel } from '../lifecycle/export';
+import { issueDiscoveryDescriptor } from './discovery-descriptor';
 import { type OpenBootstrapInput, type OpenOutcome, openBootstrap } from '../launcher/browser-handoff';
 import { WebBundleError, webBundleManifest } from '../launcher/bundle';
 import { type LaunchRequest, launchInternal } from '../launcher/launcher';
@@ -52,6 +54,11 @@ function validCommand(command: unknown): command is InternalCommand {
         && (value.format === 'markdown' || value.format === 'jsonl') && typeof value.output === 'string'
         && value.output.length > 0 && !value.output.includes('\0') && typeof value.replace === 'boolean';
     case 'delete': return keys === 'channelId,confirmed,kind' && isInternalChannelArgument(value.channelId) && typeof value.confirmed === 'boolean';
+    case 'discovery':
+      return keys === 'displayLabel,harness,kind,sessionId,workspaceLabel' && isInternalHarnessArgument(value.harness)
+        && isInternalSessionArgument(value.sessionId)
+        && (value.displayLabel === null || isInternalLabelArgument(value.displayLabel))
+        && (value.workspaceLabel === null || isInternalLabelArgument(value.workspaceLabel));
     default: return false;
   }
 }
@@ -150,6 +157,12 @@ export function createInternalRuntime(options: InternalRuntimeOptions = {}): Int
           }
           await io.stdout.write(`${JSON.stringify({ ok: result.kind === 'deleted', ...result })}\n`);
           return result.kind === 'deleted' ? 0 : 3;
+        }
+        case 'discovery': {
+          const result = await issueDiscoveryDescriptor({ root, command });
+          if (result.kind === 'failed') return fail(io, { ok: false, error: result.code });
+          await io.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
+          return 0;
         }
       }
     },

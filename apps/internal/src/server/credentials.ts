@@ -27,9 +27,20 @@ export type BindingCredential = Readonly<{
   channels: readonly RoomId[];
 }>;
 
+/** A durable discovery-only agent, resolved from its capability digest on every request. */
+export type DiscoveryIdentity = Readonly<{
+  principal: string;
+  generation: number;
+  /** RFC 7638 thumbprint of the separately held connector proof key. */
+  proofThumbprint: string;
+}>;
+
 export type Principal =
   | Readonly<{ kind: 'human'; sessionKey: string; human: HumanAuthority }>
-  | Readonly<{ kind: 'binding'; sessionKey: string; binding: SessionBinding; channels: ReadonlySet<RoomId> }>;
+  | Readonly<{ kind: 'binding'; sessionKey: string; binding: SessionBinding; channels: ReadonlySet<RoomId> }>
+  /** The launch's transport capability: may only ask for a discovery descriptor. */
+  | Readonly<{ kind: 'transport'; sessionKey: string }>
+  | Readonly<{ kind: 'discovery'; sessionKey: string; agent: DiscoveryIdentity }>;
 
 export type IssuedSession = Readonly<{ cookie: string; requestSecret: string; channelId: RoomId }>;
 
@@ -101,6 +112,8 @@ type BrowserSession = Readonly<{ human: HumanAuthority; requestSecret: Buffer }>
 export type CredentialAuthority = Readonly<{
   exchangeBootstrap(input: Readonly<{ credential: unknown; channelId: unknown }>): ExchangeOutcome;
   authenticateBearer(credential: string): Principal | null;
+  /** Constant-time match against the launch's transport capability. */
+  authenticateTransport(credential: string): Principal | null;
   authenticateSession(cookie: string, requestSecret: string): Principal | null;
   clear(): void;
 }>;
@@ -108,12 +121,14 @@ export type CredentialAuthority = Readonly<{
 export function createCredentialAuthority(input: Readonly<{
   bootstrap: readonly BootstrapCredential[];
   bindings: readonly BindingCredential[];
+  transportCapability?: string;
   clock: () => number;
   maxSessions: number;
 }>): CredentialAuthority {
   const bootstrap = new DigestTable<BootstrapCredential>();
   const bindings = new DigestTable<BindingCredential>();
   const sessions = new DigestTable<BrowserSession>();
+  const transport = new DigestTable<true>();
   const bindingScopes = new Set<string>();
 
   for (const record of input.bootstrap) {
@@ -132,6 +147,12 @@ export function createCredentialAuthority(input: Readonly<{
       throw new CredentialConfigError();
     }
     bindingScopes.add(scope);
+  }
+  if (input.transportCapability !== undefined) {
+    if (!isCanonicalCredential(input.transportCapability) || bootstrap.lookup(input.transportCapability)
+      || bindings.lookup(input.transportCapability) || !transport.add(input.transportCapability, true)) {
+      throw new CredentialConfigError();
+    }
   }
 
   return {
@@ -162,6 +183,12 @@ export function createCredentialAuthority(input: Readonly<{
       };
     },
 
+    authenticateTransport(credential) {
+      if (!isCanonicalCredential(credential)) return null;
+      const found = transport.lookup(credential);
+      return found ? { kind: 'transport', sessionKey: found.key } : null;
+    },
+
     authenticateSession(cookie, requestSecret) {
       if (!isCanonicalCredential(cookie) || !isCanonicalCredential(requestSecret)) return null;
       const found = sessions.lookup(cookie);
@@ -173,6 +200,7 @@ export function createCredentialAuthority(input: Readonly<{
       bootstrap.clear();
       bindings.clear();
       sessions.clear();
+      transport.clear();
     },
   };
 }
