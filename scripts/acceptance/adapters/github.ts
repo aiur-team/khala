@@ -11,10 +11,10 @@ function onlyAcceptanceRepository(repository: string): void {
   if (repository !== ACCEPTANCE_REPOSITORY) throw new Error(`the live runner only touches ${ACCEPTANCE_REPOSITORY}`);
 }
 
-export function ghGitHub(khalaPackage: string): GitHubPort {
+export function ghGitHub(): GitHubPort {
   async function gh(args: readonly string[]): Promise<string> {
     const argv = ['gh', ...args];
-    assertCommand(argv, khalaPackage);
+    assertCommand(argv, null);
     const { stdout } = await run(argv[0]!, argv.slice(1), { maxBuffer: 8 * 1024 * 1024 });
     return stdout;
   }
