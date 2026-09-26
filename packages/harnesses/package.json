@@ -6,7 +6,8 @@
   "exports": {
     "./claude/*": "./src/claude/*.ts",
     "./codex/fakes": null,
-    "./codex/*": "./src/codex/*.ts"
+    "./codex/*": "./src/codex/*.ts",
+    "./opencode/*": "./src/opencode/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",

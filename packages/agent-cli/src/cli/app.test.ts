@@ -34,6 +34,8 @@ function client(overrides: Partial<AgentClientPort> = {}): AgentClientPort {
     async connect() { return { kind: 'connected', binding: BINDING, reused: false }; },
     async send(input) { return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: 'event-1' }; },
     async status() { return { v: 1, connected: true, binding: BINDING, route: 'unknown', sourceCursor: 'source-1' }; },
+    async listChannels() { return { kind: 'unavailable' }; },
+    async listAgents() { return { kind: 'unavailable' }; },
     ...overrides,
   };
 }
@@ -151,7 +153,7 @@ describe('runCli', () => {
       client: client(), inbox: async () => fakeBatchInbox(acquireListener), ...io,
     })).toBe(0);
     expect(JSON.parse(io.output())).toEqual({ ok: true, kind: 'empty' });
-    expect(readBatch).toHaveBeenCalledWith({ maxBytes: 65_536, acknowledgeToken: 'prior-token' });
+    expect(readBatch).toHaveBeenCalledWith({ maxBytes: 65_536, acknowledgeToken: 'prior-token', explicitRead: true });
     expect(release).toHaveBeenCalledOnce();
   });
 
@@ -186,7 +188,7 @@ describe('runCli', () => {
     }
   });
 
-  it('fails read closed while disconnected and preserves existing listener contention', async () => {
+  it('fails read closed while disconnected and reports contention that outlasts the bounded wait', async () => {
     const disconnectedIo = streams();
     let opened = false;
     expect(await runCli(['read'], {
@@ -207,7 +209,7 @@ describe('runCli', () => {
     })).toBe(2);
     expect(contentionIo.output()).toBe('');
     expect(contentionIo.error()).toContain('listener_busy');
-  });
+  }, 10_000);
 
   it('releases the CLI consumer and suppresses payload when the binding drifts after selection', async () => {
     const io = streams();
@@ -253,7 +255,8 @@ describe('runCli', () => {
       events: [], payloadDigest: `sha256:${'0'.repeat(64)}`, payloadBase64: 'cmVsZWFzZWQ=', receivedAt: '2026-09-19T12:00:00Z' },
       payload: new TextEncoder().encode('released'), nextOffset: 10 };
     let first = true;
-    const inbox: BatchInbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async readBatch() { return null; }, async release() {} }; },
+    const inbox: BatchInbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async readBatch() { return null; }, async nextWake() {}, async release() {} }; },
+      async notifyListener() { return 'unavailable' as const; },
       async readNext() { if (first) { first = false; return item; } return null; },
       async acknowledge() { acknowledged = true; },
       async status() { return { bindingId: BINDING.bindingId, generation: 0, cursor: { v: 1 as const, offset: 0, releaseId: null } }; } };
@@ -277,7 +280,7 @@ describe('runCli', () => {
     expect(JSON.parse(io.error())).toEqual({ ok: false, error: 'not_connected' });
   });
 
-  it('opens the startup binding generation and acquires one consumer for the full MCP lifetime', async () => {
+  it('opens the startup binding generation and holds the listener only for each selection', async () => {
     const io = streams(mcpCalls(1, 2));
     const release = vi.fn(async () => undefined);
     const readBatch = vi.fn(async () => mcpBatch('batch-token', 'release-1', '["released"]'));
@@ -295,17 +298,17 @@ describe('runCli', () => {
     })).toBe(0);
 
     expect(opened).toEqual([[BINDING.bindingId, BINDING.generation]]);
-    expect(acquireListener).toHaveBeenCalledOnce();
+    expect(acquireListener).toHaveBeenCalledTimes(2);
     expect(readBatch).toHaveBeenCalledTimes(2);
     expect(statusCalls).toBe(5);
-    expect(release).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledTimes(2);
     expect(mcpResponses(io.output()).map(response => response.result.content)).toEqual([
       expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('["released"]') })]),
       expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('["released"]') })]),
     ]);
   });
 
-  it('uses the MCP lifetime consumer once for khala_read and appends its selected batch once', async () => {
+  it('uses one call-scoped consumer for khala_read and appends its selected batch once', async () => {
     const io = streams(`${JSON.stringify({
       jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'khala_read', arguments: {} },
     })}\n`);
@@ -359,17 +362,21 @@ describe('runCli', () => {
     expect(io.output()).not.toContain('secret-body');
   });
 
-  it('reports listener contention and does not start the MCP server', async () => {
-    const io = streams(mcpCalls(1));
-    const acquireListener = vi.fn(async (): Promise<InboxConsumer> => { throw new CliError('listener_busy'); });
+  it('waits for a briefly busy listener, such as a native hook, instead of refusing the MCP call', async () => {
+    const io = streams(`${JSON.stringify(mcpReadCall(1))}\n`);
+    const readBatch = vi.fn(async () => mcpBatch('batch-token', 'release-1', '["released"]'));
+    const release = vi.fn(async () => undefined);
+    const acquireListener = vi.fn<() => Promise<InboxConsumer>>()
+      .mockRejectedValueOnce(new CliError('listener_busy'))
+      .mockResolvedValue({ readBatch, release });
 
     expect(await runCli(['mcp-serve'], {
       client: client(), inbox: async () => fakeBatchInbox(acquireListener), ...io,
-    })).toBe(2);
+    })).toBe(0);
 
-    expect(acquireListener).toHaveBeenCalledOnce();
-    expect(io.output()).toBe('');
-    expect(JSON.parse(io.error())).toEqual({ ok: false, error: 'listener_busy' });
+    expect(acquireListener).toHaveBeenCalledTimes(2);
+    expect(release).toHaveBeenCalledOnce();
+    expect(mcpResponses(io.output())[0]?.result.structuredContent).toEqual({ kind: 'batch' });
   });
 
   it('releases the MCP listener and replays the durable batch when writing a response fails', async () => {
@@ -399,9 +406,11 @@ describe('runCli', () => {
             const consumer = await durable.acquireListener();
             return {
               readBatch: input => consumer.readBatch(input),
+              nextWake: () => consumer.nextWake(),
               release: async () => { released = true; await consumer.release(); },
             };
           },
+          notifyListener: reason => durable.notifyListener(reason),
           readNext: () => durable.readNext(),
           acknowledge: item => durable.acknowledge(item),
           status: () => durable.status(),
@@ -602,10 +611,11 @@ function replacementBinding(overrides: Record<string, unknown> = { bindingId: 'b
   return decoded.value;
 }
 
-function fakeBatchInbox(acquireListener: BatchInbox['acquireListener']): BatchInbox {
+function fakeBatchInbox(acquireListener: () => Promise<InboxConsumer>): BatchInbox {
   return {
     async enqueue() { return 'appended'; },
-    acquireListener,
+    async acquireListener() { return { ...await acquireListener(), async nextWake() {} }; },
+    async notifyListener() { return 'unavailable'; },
     async readNext() { return null; },
     async acknowledge() {},
     async status() {

@@ -13,12 +13,14 @@
   "type": "module",
   "engines": { "node": ">=22.23.2" },
   "bin": { "khala": "./dist/khala.js" },
-  "files": ["dist/khala.js"],
+  "files": ["dist/khala.js", "dist/khala-internal.js"],
   "exports": {
     "./package.json": "./package.json",
     "./cli/*": { "khala-source": "./src/cli/*.ts" },
     "./composition/*": { "khala-source": "./src/composition/*.ts" },
     "./mcp/*": { "khala-source": "./src/mcp/*.ts" },
+    "./setup/*": { "khala-source": "./src/setup/*.ts" },
+    "./opencode": { "khala-source": "./src/opencode/index.ts" },
     "./fixtures/*": null
   },
   "publishConfig": { "access": "public", "provenance": true },

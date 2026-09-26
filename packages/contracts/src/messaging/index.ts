@@ -103,3 +103,19 @@ export {
   decodePairingFailure, decodePairingGrantRedemptionRequest, decodePairingOwnerProjection, decodePairingOwnerResult,
   decodePairingResultRequest, readCanonicalCode, readCanonicalOrigin,
 } from './pairing';
+export {
+  type ConversionAdvance, type ConversionCreate, type ConversionJournalPort, type ConversionJournalRejection,
+  type ConversionRecord, type ConversionState, type HistoryMode, type HistoryTransferPhase, type HistoryTransferPort,
+  type HistoryTransferProgress, type HistoryTransferRejection, type HistoryTransferStep,
+  CONVERSION_STATES, CONVERSION_TRANSITIONS, CONVERSION_VERSION,
+  decodeConversionAdvance, decodeConversionCreate, decodeConversionRecord,
+  decodeHistoryTransferProgress, decodeHistoryTransferStep, isAllowedTransition,
+} from './externalization';
+export {
+  type ImportedHistoryActor, type ImportedHistoryChunk, type ImportedHistoryChunkEntry, type ImportedHistoryLimits,
+  type ImportedHistoryManifest, type ImportedHistoryRecord, type ImportedHistoryRecordInput, type ImportedHistorySource,
+  type ImportedOriginalAuthor, type SealImportedHistoryInput, type SealedImportedHistory, type VerifiedImportedHistory,
+  IMPORTED_CHUNK_ENCODING_V1, IMPORTED_MANIFEST_ENCODING_V1, IMPORTED_RECORD_ENCODING_V1, decodeImportedHistoryChunk,
+  decodeImportedHistoryLimits, digestImportedHistoryManifest, encodeImportedHistoryManifest,
+  decodeImportedHistoryManifest, encodeImportedHistoryChunk, encodeImportedRecord, openImportedHistory, sealImportedHistory,
+} from './imported-history';

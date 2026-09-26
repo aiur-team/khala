@@ -75,9 +75,12 @@ and absent), or a value naming the proven scope:
 | `existingSession` | `khala_hosted_resume` | A dormant session resumed inside a host Khala started keeps its identity. Attaching to a session another process is running is not covered. |
 | `existingSession` | `native_cli_queue` | A harness-native CLI queues into a session Khala did not start. The capability record's evidence scopes the supported harness and version. |
 | `existingSession` | `agent_installed_listener` | The agent starts a listener inside its session trust boundary. The route remains unsupported until a capability record cites live proof. |
+| `existingSession` | `opencode_plugin` | The `@aiur/khala/opencode` plugin runs in-process in the person's OpenCode TUI and targets only the admitted session. Its modes count only for exact keys recorded in `opencode.ts`. |
+| `existingSession` | `native_hooks` | The harness's own user-trusted lifecycle hooks pull released batches into a session Khala did not start. `modes` names the boundary each listening mode uses. |
 | `immediateNotification` | `khala_hosted_idle` | An idle session in a Khala-started host starts a turn for a queued release without a human prompt. Busy handling is `busy`. |
 | `immediateNotification` | `native_cli_queue` | A harness-native CLI accepts a notification without a human prompt. Acceptance does not promise immediate model consumption. |
 | `immediateNotification` | `agent_installed_listener` | An agent-installed listener accepts a notification without a human prompt; busy behavior remains a separate fact. |
+| `immediateNotification` | `opencode_plugin` | A content-free notifier hint wakes the plugin. The plugin then re-reads the inbox batch itself. |
 | `reconcileByReleaseId` | `while_queued` | A submission can be found by release ID only while still queued. Deduplication after consumption belongs to the connector. |
 
 The fixtures distinguish current evidence:
@@ -96,6 +99,18 @@ The fixtures distinguish current evidence:
   including `existingSession`: the experiment resumed an SDK-streaming session, needed a
   permission approval, and did not attach to a running interactive session. The observed
   receipt facts remain evidence even though product support is `unsupported`.
+- OpenCode `1.17.10` is `tested` for `opencode_plugin` with acknowledgement
+  `batch_token_next_call` (`fixtures/delivery/opencode.json`). `opencode.ts` records five
+  route evidence keys from the #180 interactive proof: `steer` busy and idle, `sync` busy and
+  idle, and `async` on `khala_read`. That proof ran in an agent-launched TUI with default
+  settings, and its replay commands are retained. `resolveOpenCodeModes` demotes a claim to
+  `unknown` (unproven) unless a recorded key produces exactly that row. This covers
+  server-session or busy-`promptAsync` evidence, an unretained proof, another version, and
+  acknowledgement other than `batch_token_next_call`. Connector admission refuses any such
+  claim. Without its idle key, `steer` or `sync` names a narrower `-busy` route and says that
+  idle agents receive messages only at their next turn. The file also defines the
+  notifier hint wire format: one JSON line with `v`, `kind`, `bindingId`, `generation` and
+  `reason`, and no message, token or release ID.
 - An unproven harness is `unsupported` with every capability `unknown` and no receipt
   evidence.
 

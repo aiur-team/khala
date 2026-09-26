@@ -41,13 +41,13 @@ export {
 } from './receipts';
 export {
   type AcknowledgementSupport, type ListeningMode, type ListeningModeCommand, type ListeningModeResult,
-  type AgentBindingAuthority, type ListeningModeControl, type ListeningModeView,
+  type AgentBindingAuthority, type ListeningModeActor, type ListeningModeLastChangedBy, type ListeningModeControl, type ListeningModeView,
   type ModeSupport, type ModeSupportMap, type OwnerRouteGrantCommand, type RouteGrant,
   ACKNOWLEDGEMENT_SUPPORT, LISTENING_MODES, LISTENING_MODE_RESULT_OUTCOMES, MODE_SUPPORT_STATUSES,
   OWNER_ROUTE_GRANT_COMMAND_KINDS,
   decodeListeningMode, decodeListeningModeCommand, decodeListeningModeResult, decodeModeSupport,
   decodeModeSupportMap, decodeOwnerRouteGrantCommand, initialListeningMode, routeGrantMatches,
-  unknownModeSupport, unknownModeSupportMap,
+  unknownModeSupport, unknownModeSupportMap, UNKNOWN_LISTENING_MODE_ACTOR, readListeningModeActor,
 } from './listening-mode';
 export {
   type Clock, type EvidenceSink, type HarnessCapabilities, type HarnessPort, BUSY_BEHAVIORS,
@@ -60,3 +60,13 @@ export {
   APP_HARNESSES, APP_HARNESS_SHAPES, APP_HOOK_BOUNDARIES,
   decodeAppHarnessRecord, sameAppHarnessIdentity,
 } from './app-harness';
+export {
+  type OpenCodeInboxHint, type OpenCodeRouteEvidenceKey,
+  OPENCODE_ACKNOWLEDGEMENT_UNPROVEN_REASON, OPENCODE_EVIDENCE_REF, OPENCODE_EVIDENCE_REVISION, OPENCODE_HARNESS,
+  OPENCODE_HINT_KIND, OPENCODE_HINT_MAX_BYTES, OPENCODE_HINT_REASONS, OPENCODE_NEXT_TURN_ONLY_REASON,
+  OPENCODE_PLUGIN_ADAPTER_VERSION, OPENCODE_PLUGIN_ROUTE_LABEL, OPENCODE_PLUGIN_SPECIFIER,
+  OPENCODE_RETAINED_COMMANDS_REF, OPENCODE_ROUTE_EVIDENCE, OPENCODE_ROUTE_SURFACES, OPENCODE_SESSION_ORIGINS,
+  OPENCODE_SESSION_STATES, OPENCODE_TESTED_VERSIONS, OPENCODE_UNPROVEN_REASON,
+  decodeOpenCodeInboxHint, decodeOpenCodeRouteEvidenceKey, encodeOpenCodeInboxHint, isRecordedOpenCodeRoute,
+  openCodeModeSupport, openCodePluginCapabilities, resolveOpenCodeModes,
+} from './opencode';
