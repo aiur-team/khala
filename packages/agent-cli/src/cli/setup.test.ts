@@ -3,13 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createUnavailableClient } from '../composition/unavailable.js';
 import { createDiscoveryOnlyAdapter } from '../setup/detect.js';
 import { SetupPathError } from '../setup/paths.js';
 import { createSetupService, unavailableSetupExecutor, type SetupService } from '../setup/plan.js';
 import { HARNESS_IDS, decodeSetupResult, type SetupResult } from '../setup/types.js';
 import { runCli } from './app.js';
 import { setupEnvironment } from './main.js';
-import type { AgentClientPort, CliDependencies } from './types.js';
+import type { CliDependencies } from './types.js';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 const directories: string[] = [];
@@ -22,11 +23,7 @@ function streams() {
   return { stdin, stdout, stderr, output: () => out, error: () => err };
 }
 
-const disconnected: AgentClientPort = {
-  async connect() { return { kind: 'unavailable' }; },
-  async send(input) { return { kind: 'refused', code: 'transport_unavailable', clientTxnId: input.clientTxnId }; },
-  async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
-};
+const disconnected = createUnavailableClient();
 
 function result(overrides: Partial<SetupResult>): SetupResult {
   return {
