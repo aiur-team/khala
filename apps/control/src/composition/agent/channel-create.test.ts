@@ -60,6 +60,7 @@ async function setup(options: Parameters<typeof createHarness>[0] = {}) {
     fulfillment: h.service.fulfillment,
     provider,
     clock: h.clock,
+    bindings: { resumeAdapterCapability: async () => ({ kind: 'not_found' }) } as never,
     authority: h.create.exchangeAuthority,
     authenticateConnector: async () => ({ kind: 'authenticated', connector }),
   });
