@@ -351,7 +351,14 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        // Notification only: no state-port envelope, no read, and nothing but one bit out.
+        // Notification only: no read, no commit, and nothing but one bit out. While a
+        // delivered batch awaits the agent's acknowledgement, a pull could only replay
+        // it, so nothing new is pending; a hook watcher must not wake the session again.
+        const generation = resolved.binding.generation;
+        const awaiting = await options.state.envelope(resolved.scope, async retained => ({
+          value: retained.some(entry => entry.generation === generation), committed: [], retain: null,
+        }));
+        if (awaiting) return { kind: 'idle' };
         const signal = await resolved.services.pending();
         return { kind: signal.pending === true ? 'pending' : 'idle' };
       });

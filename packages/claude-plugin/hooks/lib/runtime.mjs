@@ -197,10 +197,17 @@ function sessionState(deps, sessionId) {
     dir,
     activity: () => read('activity'),
     setActivity: value => write('activity', value),
+    /** The live watcher's nonce. Written only when a watcher arms; removed on cancel. */
+    owner: () => read('owner'),
+    setOwner: nonce => write('owner', nonce),
+    async clearOwner() {
+      await fs.rm(file('owner'), { force: true });
+    },
     async watcher() {
       const text = await read('watcher');
       try { return text === null ? null : JSON.parse(text); } catch { return null; }
     },
+    /** A watcher's last recorded status. It never decides ownership. */
     setWatcher: value => write('watcher', JSON.stringify(value)),
     markWake: () => write('wake', ''),
     /** Removes the wake marker; true only for the one caller that removed it. */
@@ -214,6 +221,19 @@ function sessionState(deps, sessionId) {
     },
     remove: () => fs.rm(dir, { recursive: true, force: true }),
   };
+}
+
+/**
+ * The session's watcher state for status surfaces: `armed`, `woke`, `expired`,
+ * `cancelled`, `orphaned`, `off`, or `null` when none ever ran. A status left by a
+ * watcher that no longer owns the session is ignored in favour of the owner's.
+ */
+export async function readWatcher(deps, sessionId) {
+  if (!validSessionId(sessionId)) return null;
+  const state = sessionState(deps, sessionId);
+  const [owner, status] = await Promise.all([state.owner(), state.watcher()]);
+  if (owner !== null && status?.nonce !== owner) return 'armed';
+  return typeof status?.state === 'string' ? status.state : null;
 }
 
 const context = (event, text) => JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
@@ -262,8 +282,11 @@ async function deliver(role, event, sessionId, deps, render) {
  */
 async function userPromptSubmit(input, state, deps) {
   await state.setActivity('active');
-  const watcher = await state.watcher();
-  if (watcher?.state === 'armed') await state.setWatcher({ ...watcher, nonce: null, state: 'cancelled', at: deps.now() });
+  const owner = await state.owner();
+  if (owner !== null) {
+    await state.clearOwner();
+    await state.setWatcher({ nonce: owner, state: 'cancelled', at: deps.now() });
+  }
   if (!await state.consumeWake()) return { stdout: '', stderr: '', exitCode: 0 };
   const hook = await hookState(deps, input.sessionId);
   if (hook?.effective !== 'steer' && hook?.effective !== 'sync') return { stdout: '', stderr: '', exitCode: 0 };
@@ -311,9 +334,12 @@ async function stop(input, state, deps) {
 async function watch(input, state, deps) {
   const nonce = deps.nonce();
   const armedAt = deps.now();
-  // The only unconditional write: taking ownership. Every later write checks it still owns.
+  // Ownership lives in its own file, written only here, so no later write of an older
+  // watcher can take it back. A status write racing a newer watcher can only leave a
+  // stale status, which `readWatcher` discards because its nonce is not the owner's.
+  await state.setOwner(nonce);
   await state.setWatcher({ nonce, state: 'armed', at: armedAt });
-  const owns = async () => (await state.watcher())?.nonce === nonce;
+  const owns = async () => (await state.owner()) === nonce;
   const record = async (status) => { if (await owns()) await state.setWatcher({ nonce, state: status, at: deps.now() }); };
 
   const hook = await hookState(deps, input.sessionId);

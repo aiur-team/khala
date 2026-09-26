@@ -416,8 +416,20 @@ describe('Claude session adapter', () => {
       }),
     });
     await expect(leaky.pending(A1)).resolves.toEqual({ kind: 'pending' });
-    expect(envelope).not.toHaveBeenCalled();
+    // It only looks at retained state: nothing is committed or retained.
+    for (const call of envelope.mock.calls) expect(call[0]).toEqual({ principalId: 'principal-a', bindingId: 'binding-1' });
     expect(services.reads.get('binding-1')!.calls).toEqual([]);
     expect(state.tokens.size).toBe(0);
+  });
+
+  it('reports nothing pending while a delivered batch awaits acknowledgement, so a watcher cannot re-wake for it', async () => {
+    const { inbox, claude, base } = inboxAdapter(['{"body":"delivered, not yet acknowledged"}', '{"body":"next"}']);
+    base.pending.value = true;
+    await expect(claude.pull(A1, { maxBytes: 4096 })).resolves.toMatchObject({ kind: 'batch' });
+    await expect(claude.pending(A1)).resolves.toEqual({ kind: 'idle' });
+    expect(inbox.log).toEqual([]);
+    // The agent's next Khala call acknowledges it; the next release is pending again.
+    await claude.status(A1);
+    await expect(claude.pending(A1)).resolves.toEqual({ kind: 'pending' });
   });
 });

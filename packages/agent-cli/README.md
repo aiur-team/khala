@@ -352,7 +352,10 @@ frame without its `batchToken` line. Handoff runs only when
 `HarnessCapabilities.acknowledgement` is `batch_token_next_call`; otherwise
 `pull` and `read` are refused as `unproven`, and mode support without evidence
 reports `unproven`. `pending` returns only `pending` or `idle` from the local
-automation fence's notification signal; it never pulls or acknowledges.
+automation fence's notification signal; it never pulls or acknowledges. While a
+delivered batch still awaits the agent's acknowledgement it reports `idle`: a
+pull could only replay that batch, so a hook watcher must not wake the session
+for it again.
 
 `hook` tells a plugin hook which boundary it owns, as
 `{"ok":true,"kind":"hook","effective":<mode|null>,"watchSeconds":<n|null>}`.

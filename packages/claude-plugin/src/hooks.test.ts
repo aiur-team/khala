@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  WAKE_NOTICE, describeDelivery, runHook, validFrame, type HookResult,
+  WAKE_NOTICE, describeDelivery, readWatcher, runHook, validFrame, type HookResult,
 } from '../hooks/lib/runtime.mjs';
 import { fakeKhala, frame, hookDeps, hookInput, scratch, until } from './fakes';
 
@@ -27,15 +27,10 @@ function setup(options: Parameters<typeof fakeKhala>[0] = {}) {
     postTool: (sessionId: string) => hook('post-tool-use', 'PostToolUse', sessionId, { tool_name: 'Bash' }),
     stop: (sessionId: string, active = false) => hook('stop', 'Stop', sessionId, { stop_hook_active: active }),
     watcher: (sessionId: string, active = false) => hook('stop-watcher', 'Stop', sessionId, { stop_hook_active: active }),
-    watcherState: (sessionId: string) => readWatcher(stateRoot, sessionId),
+    watcherState: (sessionId: string) => readWatcher(deps, sessionId),
   };
 }
 
-function readWatcher(stateRoot: string, sessionId: string): { state: string; nonce: string | null } | null {
-  const dir = createHash('sha256').update(sessionId).digest('hex').slice(0, 32);
-  const file = path.join(stateRoot, dir, 'watcher');
-  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
-}
 
 describe('session keying', () => {
   // Wrong-implementation test: a cwd-keyed runtime fails it.
@@ -128,7 +123,7 @@ describe('mode boundaries', () => {
     await expect(watcher(A)).resolves.toEqual(silent);
     expect(khala.ops(A)).not.toContain('pull');
     expect(khala.ops(A)).not.toContain('pending');
-    expect(watcherState(A)?.state).toBe('off');
+    expect(await watcherState(A)).toBe('off');
   });
 
   it('never pulls or returns context when stop_hook_active is set', async () => {
@@ -163,7 +158,7 @@ describe('idle watcher', () => {
 
     // A second prompt makes the session busy and cancels the old watcher at its next poll.
     await prompt(A);
-    expect(watcherState(A)?.state).toBe('cancelled');
+    expect(await watcherState(A)).toBe('cancelled');
     const cancelledAt = clock.now;
     await until(() => firstDone, 500);
     expect(clock.now - cancelledAt).toBeLessThanOrEqual(2_000);
@@ -177,7 +172,7 @@ describe('idle watcher', () => {
     const busyFrom = clock.now;
     await until(() => clock.now > busyFrom + 10_000);
     expect(secondDone).toBe(false);
-    expect(watcherState(A)?.state).toBe('armed');
+    expect(await watcherState(A)).toBe('armed');
 
     // The turn's Stop delivers it, so no wake is needed.
     expect(reason(await stop(A))).toContain('arrives mid-turn');
@@ -197,6 +192,41 @@ describe('idle watcher', () => {
     expect(context(await prompt(A))).toContain('arrives while idle');
     expect(khala.calls.slice(beforeClaim).map(call => call.op)).toEqual(['hook', 'pull']);
     await expect(prompt(A)).resolves.toEqual(silent);
+  });
+
+  it('never re-wakes the session for a delivered batch the agent has not acknowledged', async () => {
+    const { khala, stop, watcher, watcherState } = setup();
+    khala.bind(A, 'sync', 5);
+    khala.release(A, 'delivered once');
+    const watching = watcher(A);
+    expect(reason(await stop(A))).toContain('delivered once');
+    // The agent answers without any Khala call, so the batch stays unacknowledged.
+    await stop(A, true);
+    await expect(watching).resolves.toEqual(silent);
+    expect(await watcherState(A)).toBe('expired');
+    expect(khala.session(A).delivered).toHaveLength(1);
+
+    // Once the agent's next Khala call acknowledges it, a new release wakes the session.
+    khala.agentCall(A);
+    const next = watcher(A, true);
+    khala.release(A, 'a new release');
+    expect((await next).exitCode).toBe(2);
+  });
+
+  it('keeps a newer watcher when an older one writes a stale status', async () => {
+    const { khala, stop, watcher, watcherState, stateRoot } = setup();
+    khala.bind(A, 'sync');
+    await stop(A);
+    const older = watcher(A);
+    await until(() => khala.ops(A).includes('pending'));
+    const newer = watcher(A, true);
+    await expect(older).resolves.toEqual(silent);
+    // The write an older watcher could land after checking ownership, just before the newer one armed.
+    const dir = path.join(stateRoot, createHash('sha256').update(A).digest('hex').slice(0, 32));
+    fs.writeFileSync(path.join(dir, 'watcher'), JSON.stringify({ nonce: 'nonce-1', state: 'expired', at: 0 }));
+    expect(await watcherState(A)).toBe('armed');
+    khala.release(A, 'still watched');
+    expect((await newer).exitCode).toBe(2);
   });
 
   it('keeps exactly one watcher live when two are armed', async () => {
@@ -239,8 +269,8 @@ describe('idle watcher', () => {
     khala.bind(A, 'steer', 5);
     await stop(A);
     await expect(watcher(A)).resolves.toEqual(silent);
-    expect(watcherState(A)?.state).toBe('expired');
-    expect(describeDelivery({ watcher: watcherState(A)?.state ?? null }).idle).toBe('idle agents receive messages only at their next turn');
+    expect(await watcherState(A)).toBe('expired');
+    expect(describeDelivery({ watcher: await watcherState(A) }).idle).toBe('idle agents receive messages only at their next turn');
 
     await prompt(A);
     await stop(A);
@@ -254,7 +284,7 @@ describe('idle watcher', () => {
     const { khala, watcher, watcherState } = setup();
     khala.bind(A, 'sync', null);
     await expect(watcher(A)).resolves.toEqual(silent);
-    expect(watcherState(A)?.state).toBe('off');
+    expect(await watcherState(A)).toBe('off');
     expect(khala.ops(A)).toEqual(['hook']);
   });
 
@@ -265,7 +295,7 @@ describe('idle watcher', () => {
     const watching = watcher(A);
     clock.alive = false;
     await expect(watching).resolves.toEqual(silent);
-    expect(watcherState(A)?.state).toBe('orphaned');
+    expect(await watcherState(A)).toBe('orphaned');
   });
 
   it('SessionEnd removes only ephemeral state, stands the watcher down and never calls Khala', async () => {

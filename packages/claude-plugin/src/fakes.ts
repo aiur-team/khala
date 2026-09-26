@@ -43,7 +43,8 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
       return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: bound.mode, watchSeconds })}\n` };
     }
     if (op === 'pending') {
-      const waiting = bound.outstanding !== null || bound.queue.length > 0;
+      // As the adapter does: a delivered batch awaiting acknowledgement is not pending again.
+      const waiting = bound.outstanding === null && bound.queue.length > 0;
       return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: waiting ? 'pending' : 'idle' })}\n` };
     }
     if (malformed !== null) return { code: 0, stdout: malformed };
