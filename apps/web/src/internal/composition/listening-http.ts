@@ -83,5 +83,18 @@ export function createHttpListeningPort(options: Readonly<{
           ? { kind: 'done' }
           : { kind: 'failed', reason: 'outcome_unknown' });
     },
+
+    changeExperimentalRoute(channelId, binding, action, route) {
+      return change(bindingPath(channelId, binding.bindingId, `experimental-route/${action}`), {
+        v: 1, commandId: newCommandId(), generation: binding.generation, expectedVersion: binding.version, ...route,
+        issuedAt: now().toISOString(),
+      }, reply => {
+        const outcome = typeof reply === 'object' && reply !== null ? (reply as { outcome?: unknown }).outcome : undefined;
+        if (outcome === 'applied') return { kind: 'done' };
+        if (outcome === 'conflict') return { kind: 'failed', reason: 'conflict' };
+        // A refused grant names evidence that no longer matches: the reread shows the current claim.
+        return { kind: 'failed', reason: outcome === 'refused' ? 'forbidden' : 'outcome_unknown' };
+      });
+    },
   };
 }

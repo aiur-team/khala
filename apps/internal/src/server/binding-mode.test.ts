@@ -1,4 +1,8 @@
 import fs from 'node:fs';
+import { type HarnessCapabilities, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
+import {
+  CLAUDE_INTERACTIVE_EVIDENCE_REVISION, CLAUDE_INTERACTIVE_ROUTE, installedClaudeCapabilities,
+} from '@khala/harnesses/claude/interactive';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeBindingControl } from '../composition/binding-control/index';
 import { composeBindingModes } from '../composition/binding-modes/index';
@@ -20,10 +24,12 @@ afterEach(async () => {
 
 type Harness = Readonly<{ fixture: ChannelFixture; server: LoopbackServer }>;
 
-async function start(): Promise<Harness> {
+/** `claim`, when given, is the harness claim every binding is projected through, as a launcher's inspection supplies it. */
+async function start(claim?: HarnessCapabilities): Promise<Harness> {
   const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-modes-'), now: NOW });
   cleanups.push(() => fixture.dispose());
-  const modes = composeBindingModes({ handle: fixture.handle, store: fixture.store });
+  const composed = composeBindingModes({ handle: fixture.handle, store: fixture.store });
+  const modes = claim === undefined ? composed : { ...composed, control: { ...composed.control, capabilities: () => claim } };
   let id = 0;
   const server = await startChannelServer({
     store: fixture.store,
@@ -168,6 +174,107 @@ describe('binding listening-mode control', () => {
       method: 'POST', headers: bearer(h.fixture.bob.credential),
       body: { v: 1, commandId: 'y', expectedVersion: 1, requested: 'sync', issuedAt: 'now', bindingId: carolBinding.bindingId },
     })).status).toBe(400);
+  });
+});
+
+describe('owner experimental-route grant', () => {
+  const limits = decodeDeliveryLimits({ maxPayloadBytes: 65_536, maxSelectionEvents: 32 });
+  if (!limits.ok) throw new Error('invalid test limits');
+  /** An inspected Claude Code that is not in the proven list: every mode is experimental. */
+  const EXPERIMENTAL_VERSION = '2.1.283';
+  const experimental = installedClaudeCapabilities(EXPERIMENTAL_VERSION, limits.value);
+  const GRANT = `/api/v1/channels/${channelId}/bindings/${bobBinding.bindingId}/experimental-route/grant`;
+  const REVOKE = `/api/v1/channels/${channelId}/bindings/${bobBinding.bindingId}/experimental-route/revoke`;
+  /** The exact route, tested version and evidence revision the owner reviewed for `mode`. */
+  const pinFor = (mode: 'steer' | 'sync') =>
+    ({ mode, route: `${CLAUDE_INTERACTIVE_ROUTE}-${mode}`, harnessVersion: EXPERIMENTAL_VERSION, evidenceRevision: CLAUDE_INTERACTIVE_EVIDENCE_REVISION });
+  const pin = pinFor('steer');
+  const command = (commandId: string, expectedVersion: number, overrides: Record<string, unknown> = {}) =>
+    ({ v: 1, commandId, generation: 1, expectedVersion, ...pin, issuedAt: ISSUED, ...overrides });
+
+  it('makes a requested experimental mode effective only while the owner\'s pinned grant holds', async () => {
+    const h = await start(experimental);
+    const owner = await human(h);
+    await call(h, OWNER_MODE, {
+      method: 'POST', headers: owner, body: { v: 1, commandId: 'steer-1', generation: 1, expectedVersion: 1, requested: 'steer', issuedAt: ISSUED },
+    });
+    const before = await call(h, OWNER_MODE, { headers: owner });
+    expect(before.json.view).toMatchObject({
+      requested: 'steer', version: 2, effective: null, effectiveReason: 'experimental_grant_required',
+      support: { steer: { status: 'experimental', route: pin.route, testedVersion: pin.harnessVersion, evidenceRevision: pin.evidenceRevision } },
+    });
+
+    const granted = await call(h, GRANT, { method: 'POST', headers: owner, body: command('grant-1', 2) });
+    expect(granted.status).toBe(200);
+    expect(granted.json).toMatchObject({
+      v: 1, commandId: 'grant-1', bindingId: bobBinding.bindingId, generation: 1, outcome: 'applied', reason: null,
+      view: { effective: 'steer', version: 3, lastChangedBy: { kind: 'owner', participantId: alice.ownerId } },
+    });
+    expect(granted.json.view.experimentalGrants).toEqual([{ v: 1, kind: 'experimental_route', bindingId: bobBinding.bindingId, generation: 1, ...pin, grantRevision: 3 }]);
+    // The owner's list carries the grant, so the panel can show it and offer its revoke.
+    const listed = await call(h, `/api/v1/channels/${channelId}/bindings`, { headers: owner });
+    expect(listed.json.bindings[0].view).toMatchObject({ effective: 'steer', experimentalGrants: [{ mode: 'steer' }] });
+    // A retried grant replays its first answer; a stale version conflicts and grants nothing new.
+    expect((await call(h, GRANT, { method: 'POST', headers: owner, body: command('grant-1', 2) })).json).toMatchObject({ outcome: 'applied', view: { version: 3 } });
+    expect((await call(h, GRANT, { method: 'POST', headers: owner, body: command('grant-2', 2, pinFor('sync')) })).json)
+      .toMatchObject({ outcome: 'conflict', reason: 'stale_version', view: { version: 3 } });
+
+    const revoked = await call(h, REVOKE, { method: 'POST', headers: owner, body: command('revoke-1', 3) });
+    expect(revoked.json).toMatchObject({ outcome: 'applied', view: { effective: null, effectiveReason: 'experimental_grant_required', experimentalGrants: [], version: 4 } });
+  });
+
+  it('refuses a grant pinned to evidence the binding no longer claims, and an unproven harness', async () => {
+    const h = await start(experimental);
+    const owner = await human(h);
+    for (const stale of [{ evidenceRevision: 'older-revision' }, { harnessVersion: '2.1.200' }, { route: 'claude-other-route' }]) {
+      expect((await call(h, GRANT, { method: 'POST', headers: owner, body: command(`stale-${Object.keys(stale)[0]}`, 1, stale) })).json)
+        .toEqual({ v: 1, commandId: `stale-${Object.keys(stale)[0]}`, bindingId: bobBinding.bindingId, generation: 1, outcome: 'refused', reason: 'capability_mismatch' });
+    }
+    expect((await call(h, OWNER_MODE, { headers: owner })).json.view.experimentalGrants).toEqual([]);
+
+    // Without an inspected harness claim there is no experimental route to grant.
+    const unproven = await start();
+    const unprovenOwner = await human(unproven);
+    expect((await call(unproven, GRANT, { method: 'POST', headers: unprovenOwner, body: command('none-1', 1) })).json)
+      .toMatchObject({ outcome: 'refused', reason: 'capability_mismatch' });
+  });
+
+  it('admits only the human owner, with an exact command naming the generation they saw', async () => {
+    const h = await start(experimental);
+    const owner = await human(h);
+    // A bound agent can never grant itself a route, nor revoke one.
+    expect((await call(h, GRANT, { method: 'POST', headers: bearer(h.fixture.bob.credential), body: command('agent-1', 1) })).status).toBe(403);
+    expect((await call(h, REVOKE, { method: 'POST', headers: bearer(h.fixture.bob.credential), body: command('agent-2', 1) })).status).toBe(403);
+    // The request secret is required beside the session cookie.
+    const cookieOnly = Object.fromEntries(Object.entries(owner).filter(([name]) => name !== 'x-khala-request-secret'));
+    expect((await call(h, GRANT, { method: 'POST', headers: cookieOnly, body: command('cookie-1', 1) })).status).not.toBe(200);
+    for (const body of [
+      command('bad-1', 1, { mode: 'loud' }),
+      command('bad-2', 1, { bindingId: carolBinding.bindingId }),
+      command('bad-3', 1, { issuedAt: 'a\nb' }),
+      command('bad-4', 1, { route: '' }),
+      { ...command('bad-5', 1), harnessVersion: undefined },
+    ]) expect((await call(h, GRANT, { method: 'POST', headers: owner, body })).status).toBe(400);
+    expect((await call(h, GRANT, { method: 'POST', headers: owner, body: command('gen-1', 1, { generation: 2 }) })).json)
+      .toMatchObject({ outcome: 'refused', reason: 'stale_binding' });
+    expect((await call(h, OWNER_MODE, { headers: owner })).json.view).toMatchObject({ version: 1, experimentalGrants: [] });
+  });
+
+  it('Stop revokes the grant with the binding: nothing is left to grant, revoke or deliver', async () => {
+    const h = await start(experimental);
+    const owner = await human(h);
+    await call(h, OWNER_MODE, {
+      method: 'POST', headers: owner, body: { v: 1, commandId: 'steer-1', generation: 1, expectedVersion: 1, requested: 'steer', issuedAt: ISSUED },
+    });
+    expect((await call(h, GRANT, { method: 'POST', headers: owner, body: command('grant-1', 2) })).json.outcome).toBe('applied');
+    const stopped = await call(h, `/api/v1/channels/${channelId}/stop`, { method: 'POST', headers: owner, body: { v: 1, targets: null } });
+    expect(stopped.json.outcome).toBe('stopped');
+    expect((await call(h, GRANT, { method: 'POST', headers: owner, body: command('grant-2', 3) })).status).toBe(404);
+    expect((await call(h, REVOKE, { method: 'POST', headers: owner, body: command('revoke-1', 3) })).status).toBe(404);
+    expect((await call(h, `/api/v1/channels/${channelId}/bindings`, { headers: owner })).json.bindings).toEqual([]);
+    // The stopped binding's own capability no longer reaches its mode or its releases.
+    expect((await call(h, AGENT_MODE, { headers: bearer(h.fixture.bob.credential) })).status).toBe(401);
+    expect((await call(h, RELEASES, { headers: bearer(h.fixture.bob.credential) })).status).toBe(401);
   });
 });
 

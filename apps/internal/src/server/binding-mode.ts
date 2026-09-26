@@ -1,7 +1,8 @@
 import type { ServerResponse } from 'node:http';
 import {
   type AgentBindingAuthority, type AuthorizationId, type CommandId, type HarnessCapabilities, LISTENING_MODES, type ListeningMode,
-  type ListeningModeCommand, type ListeningModeResult, type ListeningModeView, type OwnerAuthority, type SessionBinding,
+  type ListeningModeCommand, type ListeningModeResult, type ListeningModeView, type OwnerAuthority, type OwnerRouteGrantCommand,
+  type SessionBinding, decodeOwnerRouteGrantCommand,
 } from '@khala/contracts/delivery/index';
 import type { BindingPauseStore } from '../store/pause-store';
 import type { Principal } from './credentials';
@@ -10,8 +11,8 @@ import type { RouteContext, RouteSpec } from './server';
 
 // Listening-mode control and pause for bound agents. The owner reads and sets the
 // mode of, and pauses or resumes, one binding of a channel it holds; a bound agent
-// reads and sets only its own binding's mode, never another binding's and never
-// pause. Every change goes through the shared policy service over the SQLite
+// reads and sets only its own binding's mode, never another binding's, and never
+// pause or an experimental-route grant. Every change goes through the shared policy service over the SQLite
 // listening-mode store, so owner and agent writes share one version and one
 // idempotency journal. The view answered here is projected through the harness
 // claims this server knows; an agent client re-projects it through its own harness.
@@ -24,6 +25,8 @@ export const OWNER_MODE_ROUTES = {
   get: { method: 'GET', path: '/api/v1/channels/:channelId/bindings/:bindingId/listening-mode', admission: 'authenticated' },
   set: { method: 'POST', path: '/api/v1/channels/:channelId/bindings/:bindingId/listening-mode', admission: 'authenticated' },
   pause: { method: 'POST', path: '/api/v1/channels/:channelId/bindings/:bindingId/pause', admission: 'authenticated' },
+  grant: { method: 'POST', path: '/api/v1/channels/:channelId/bindings/:bindingId/experimental-route/grant', admission: 'authenticated' },
+  revoke: { method: 'POST', path: '/api/v1/channels/:channelId/bindings/:bindingId/experimental-route/revoke', admission: 'authenticated' },
 } as const satisfies Record<string, RouteSpec>;
 
 export const AGENT_MODE_ROUTES = {
@@ -44,7 +47,11 @@ export function bindingModeRole(route: RouteSpec): 'human' | 'binding' | null {
 
 type ModeContext = Readonly<{ binding: SessionBinding; status: 'active' | 'revoked' }>;
 
-/** The shared listening-mode service's read and set, as composition supplies them. */
+type RouteGrantResult =
+  | Readonly<{ outcome: 'applied' | 'conflict'; view: ListeningModeView; reason: string | null }>
+  | Readonly<{ outcome: 'refused'; reason: string }>;
+
+/** The shared listening-mode service's read, set and owner experimental-route grants, as composition supplies them. */
 export type BindingModeService = Readonly<{
   read(authority: OwnerAuthority | AgentBindingAuthority, context: ModeContext, capabilities: HarnessCapabilities | null): Promise<
     Readonly<{ ok: true; view: ListeningModeView }> | Readonly<{ ok: false; code: string }>
@@ -53,6 +60,12 @@ export type BindingModeService = Readonly<{
     authority: OwnerAuthority | AgentBindingAuthority, context: ModeContext, capabilities: HarnessCapabilities | null,
     command: ListeningModeCommand,
   ): Promise<ListeningModeResult>;
+  grantExperimentalRoute(
+    authority: OwnerAuthority, context: ModeContext, capabilities: HarnessCapabilities | null, command: OwnerRouteGrantCommand,
+  ): Promise<RouteGrantResult>;
+  revokeExperimentalRoute(
+    authority: OwnerAuthority, context: ModeContext, capabilities: HarnessCapabilities | null, command: OwnerRouteGrantCommand,
+  ): Promise<RouteGrantResult>;
 }>;
 
 export const HOOK_REVIEW_STATES = ['trusted', 'awaiting_hook_review', 'unknown'] as const;
@@ -228,6 +241,34 @@ async function ownerRoute(context: RouteContext<Principal>, deps: BindingModeDep
       issuedAt: body!.issuedAt,
     };
     sendJson(response, 200, await deps.options.modes.set(authority, { binding, status }, capabilities, command));
+    return;
+  }
+
+  if (route === OWNER_MODE_ROUTES.grant || route === OWNER_MODE_ROUTES.revoke) {
+    // The owner names the exact route, tested version and evidence revision they reviewed; the service
+    // refuses a grant whose pin no longer matches the binding's current experimental claim.
+    if (!exactKeys(body!, ['v', 'commandId', 'generation', 'expectedVersion', 'mode', 'route', 'harnessVersion', 'evidenceRevision', 'issuedAt'])
+      || body!.v !== 1 || !commandId(body!.commandId) || !count(body!.generation) || !count(body!.expectedVersion)
+      || !mode(body!.mode) || !issuedAt(body!.issuedAt)) {
+      fail(response, 400, 'invalid_request');
+      return;
+    }
+    const grant = route === OWNER_MODE_ROUTES.grant;
+    const decoded = decodeOwnerRouteGrantCommand({
+      v: 1, kind: grant ? 'grant_experimental_route' : 'revoke_experimental_route', commandId: body!.commandId,
+      bindingId: binding.bindingId, expectedBindingGeneration: body!.generation, expectedVersion: body!.expectedVersion,
+      mode: body!.mode, route: body!.route, harnessVersion: body!.harnessVersion, evidenceRevision: body!.evidenceRevision,
+      issuedAt: body!.issuedAt,
+    });
+    if (!decoded.ok) {
+      fail(response, 400, 'invalid_request');
+      return;
+    }
+    const modes = deps.options.modes;
+    const result = grant
+      ? await modes.grantExperimentalRoute(authority, { binding, status }, capabilities, decoded.value)
+      : await modes.revokeExperimentalRoute(authority, { binding, status }, capabilities, decoded.value);
+    sendJson(response, 200, { v: 1, commandId: decoded.value.commandId, ...identity, ...result });
     return;
   }
 

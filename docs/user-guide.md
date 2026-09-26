@@ -53,10 +53,18 @@ read them. Use it only for work you would already let those agents see.
    you and the agent send appears in one timeline. The agent
    reads with `khala read` or `khala listen`, or through the `khala_read` MCP
    tool, and sends with `khala send` or `khala_send`.
-5. **Stop an agent.** **Stop** in the channel revokes that agent's delivery. It
-   does not kill the agent process. The agent can request access again, and you
-   decide again.
-6. **Finish.** Ctrl+C stops the launcher, and the URL stops working.
+5. **Choose how each agent listens.** The channel's **Listening modes** panel
+   sets each agent's mode and can pause delivery to it. A mode that Khala has
+   not proved for the agent's exact version is labelled experimental. It takes
+   effect only after you choose **Enable experimental route** and confirm the
+   route, tested version and evidence revision shown to you. The grant covers
+   that binding only. It lapses when any of those three change, and **Revoke
+   experimental route** removes it. For a Claude Code version that is not yet
+   proven, hooks deliver under `steer` or `sync` only while this grant holds.
+6. **Stop an agent.** **Stop** in the channel revokes that agent's delivery,
+   together with any experimental-route grant. It does not kill the agent
+   process. The agent can request access again, and you decide again.
+7. **Finish.** Ctrl+C stops the launcher, and the URL stops working.
    `khala internal export <channel-id> --format markdown|jsonl --output <path>`
    saves a stopped channel. `khala internal delete <channel-id> --yes` removes it,
    but it does not securely erase the plaintext.
@@ -68,9 +76,9 @@ read them. Use it only for work you would already let those agents see.
   `--internal-descriptor <its grant.json>` instead. The installed Codex entry and
   hook act as their own session when the agent ran discovery with
   `--session "$CODEX_THREAD_ID"`.
-- Internal mode has no pause and no listening-mode control yet. `khala mode get`
-  and `khala mode set` answer `unavailable`, and native hooks deliver nothing to
-  an agent bound only through internal mode (#392).
+- Native hooks deliver only on a route Khala has claimed for the agent's
+  harness. An experimental route delivers only after the owner grants it
+  (#392, #425).
 
 ## How delivery behaves
 

@@ -1,13 +1,16 @@
 import type { BindingId } from '@khala/contracts/delivery/index';
 import { useId, useSyncExternalStore } from 'react';
-import { agentLabelFor, lastChangeLabelFor } from '../../features/agent-controls/model';
+import { EvidenceLines } from '../../features/agent-controls/AgentControlsPanel';
+import { MISSING_PROOF, MODE_WARNINGS, agentLabelFor, lastChangeLabelFor } from '../../features/agent-controls/model';
 import { Panel } from '../../shell/Panel';
-import { FAILURE_TEXT, type ListeningController } from './listening-controller';
-import { LISTENING_MODE_NAMES, type ListeningBinding, type ListeningModeName, modeOffered } from './listening-port';
+import { FAILURE_TEXT, type GrantConfirmation, type ListeningController } from './listening-controller';
+import { LISTENING_MODE_NAMES, type ListeningBinding, type ListeningModeName, grantableRoute, modeOffered } from './listening-port';
 
 // How and when each agent in this channel receives messages, and whether Khala
 // holds them. Only a mode the agent's command-line tool has proven can be chosen;
-// every other mode stays visible, disabled, with the reason. Pause holds new
+// every other mode stays visible, disabled, with the reason. An experimental mode
+// takes effect only after the owner confirms its exact route, tested version and
+// evidence revision, with the hosted panel's wording. Pause holds new
 // messages before any agent receives them; it never stops an agent that is working.
 
 export type ListeningControlProps = Readonly<{ controller: ListeningController }>;
@@ -39,9 +42,28 @@ type AgentRowProps = Readonly<{
   siblings: readonly BindingId[];
   controller: ListeningController;
   busy: boolean;
+  confirmation: GrantConfirmation | null;
 }>;
 
-function AgentRow({ binding, siblings, controller, busy }: AgentRowProps) {
+function GrantConfirmationBlock({ confirmation, controller }: Readonly<{ confirmation: GrantConfirmation; controller: ListeningController }>) {
+  const id = useId();
+  const { route } = confirmation;
+  return (
+    <div className="listening-control__confirmation" role="group" aria-labelledby={`${id}-heading`}>
+      <h4 id={`${id}-heading`}>Enable experimental {route.mode} route on {confirmation.displayName}?</h4>
+      <EvidenceLines evidence={{
+        route: route.route, testedVersion: route.harnessVersion, evidenceRef: confirmation.evidenceRef, evidenceHref: null,
+        evidenceRevision: route.evidenceRevision,
+      }} />
+      <p>Missing proof: {confirmation.missingProof ?? MISSING_PROOF}</p>
+      <p className="listening-control__warning">{MODE_WARNINGS.experimental_route}</p>
+      <button type="button" onClick={() => void controller.confirmGrant()}>Confirm for this binding</button>
+      <button type="button" onClick={() => controller.cancelGrant()}>Cancel</button>
+    </div>
+  );
+}
+
+function AgentRow({ binding, siblings, controller, busy, confirmation }: AgentRowProps) {
   const id = useId();
   const name = binding.displayName;
   // The hosted panel's label and last-change wording, so both surfaces name agents and actors alike.
@@ -86,10 +108,23 @@ function AgentRow({ binding, siblings, controller, busy }: AgentRowProps) {
               <p id={describedBy} className="listening-control__reason">
                 {MODES[mode].description} {binding.support[mode].reason ?? ''}
               </p>
+              {grantableRoute(binding, mode) !== null ? (
+                <button type="button" onClick={() => controller.requestGrant(binding.bindingId, mode)}>
+                  {binding.experimentalGrants.some(grant => grant.mode === mode) ? 'Review updated evidence' : 'Enable experimental route'}
+                </button>
+              ) : null}
+              {binding.experimentalGrants.some(grant => grant.mode === mode) ? (
+                <button type="button" onClick={() => void controller.revokeGrant(binding.bindingId, mode)}>
+                  Revoke experimental route
+                </button>
+              ) : null}
             </div>
           );
         })}
       </fieldset>
+      {confirmation !== null && confirmation.bindingId === binding.bindingId && confirmation.generation === binding.generation
+        ? <GrantConfirmationBlock confirmation={confirmation} controller={controller} />
+        : null}
       <button type="button" disabled={busy} onClick={() => void controller.setPaused(binding.bindingId, !binding.paused)}>
         {binding.paused ? `Resume delivery to ${name}` : `Pause delivery to ${name}`}
       </button>
@@ -111,7 +146,7 @@ export function ListeningControl({ controller }: ListeningControlProps) {
         {view.phase === 'failed' && view.failure ? <p role="alert">{FAILURE_TEXT[view.failure]}</p> : null}
         {view.phase === 'ready' && view.bindings.length === 0 ? <p>No agent is connected to this channel.</p> : null}
         {view.bindings.map(binding => (
-          <AgentRow key={`${binding.bindingId}:${binding.generation}`} binding={binding} siblings={siblings} controller={controller} busy={view.busy === binding.bindingId} />
+          <AgentRow key={`${binding.bindingId}:${binding.generation}`} binding={binding} siblings={siblings} controller={controller} busy={view.busy === binding.bindingId} confirmation={view.confirmation} />
         ))}
         <p className="listening-control__status" role="status">{view.notice}</p>
       </div>
