@@ -179,8 +179,14 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
       const descriptor = current();
       if (descriptor === null) return { kind: 'unavailable' };
       if (localChannelId(channelUrl, descriptor.origin) !== descriptor.channelId) return { kind: 'refused', code: 'invalid_link' };
-      // A durable grant already names this channel: there is nothing to request.
-      if (isGrantedDescriptor(descriptor)) return { kind: 'status', outcome: 'connected' };
+      // A live grant already names this channel: there is nothing to request. A
+      // stale grant falls through to the journal like a transport-only file.
+      if (isGrantedDescriptor(descriptor)) {
+        let held;
+        try { held = await heldBinding(descriptor, signal); } catch { return { kind: 'unavailable' }; }
+        if (held === 'unavailable') return { kind: 'unavailable' };
+        if (held !== 'revoked') return { kind: 'status', outcome: 'connected' };
+      }
       const operationId = createHash('sha256')
         .update(JSON.stringify(['khala.agent-cli.internal-join.v1', channelUrl]))
         .digest('base64url').slice(0, 32);

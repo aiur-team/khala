@@ -354,7 +354,12 @@ describe('createInternalClient', () => {
       .toBe((server.log[0]?.body as { operationId: string }).operationId);
     grant(1);
     expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'connected' });
-    expect(server.log).toHaveLength(2);
+    expect(server.log.map(entry => entry.path)).toEqual([
+      AGENT_CHANNEL_ACCESS_REQUEST_PATH, AGENT_CHANNEL_ACCESS_REQUEST_PATH, '/api/v1/agent/binding',
+    ]);
+    // A granted file the server no longer honors is not reported as joined.
+    server.grants.clear();
+    expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'pending_owner' });
   });
 
   it('reports join as unavailable when the server exposes no access journal', async () => {
