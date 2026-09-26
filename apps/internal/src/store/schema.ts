@@ -3,7 +3,7 @@ import { StoreError } from './errors';
 
 /** `PRAGMA application_id`: ASCII "KHCH" (Khala channel), distinct from connector storage. */
 export const APPLICATION_ID = 0x4b484348;
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const CORE_SCHEMA_V1_SQL = `
 CREATE TABLE meta (
@@ -251,11 +251,31 @@ FROM mode_controls_v5;
 DROP TABLE mode_controls_v5;
 `;
 
+/**
+ * v7 records the channel sequence each activation's release feed starts after. An
+ * admission shares no history (`history: none`), so activation stores the channel head
+ * and the binding is never released an event at or before it.
+ */
+export const ACTIVATION_SCHEMA_V7_SQL = `
+ALTER TABLE discovery_activations ADD COLUMN start_sequence INTEGER NOT NULL DEFAULT 0 CHECK (start_sequence >= 0);
+`;
+
+/**
+ * An activation recorded before v7 shared no history either, so it starts at its
+ * channel's head as of the migration. Data only: the manifest does not change.
+ */
+const ACTIVATION_BACKFILL_V7_SQL = `
+UPDATE discovery_activations SET start_sequence = (
+  SELECT coalesce(max(e.sequence), 0) FROM events e WHERE e.channel_id = discovery_activations.channel_id
+);
+`;
+
 export type MigrationStage =
   | 'after_mode_controls' | 'after_mode_operations' | 'before_user_version' | 'after_user_version'
   | 'after_receipt_tables' | 'before_receipt_user_version'
   | 'after_discovery_tables' | 'before_discovery_user_version'
-  | 'after_mode_rebuild' | 'before_mode_rebuild_user_version';
+  | 'after_mode_rebuild' | 'before_mode_rebuild_user_version'
+  | 'after_activation_start' | 'before_activation_start_user_version';
 export type MigrationFault = (stage: MigrationStage) => void;
 
 function pragmaNumber(db: DatabaseSync, name: 'application_id' | 'user_version'): number {
@@ -304,6 +324,7 @@ function expectedManifest(version: number): readonly SchemaRow[] {
     if (version >= 4) expected.exec(RECEIPT_SCHEMA_V4_SQL);
     if (version >= 5) expected.exec(DISCOVERY_SCHEMA_V5_SQL);
     if (version >= 6) expected.exec(MODE_SCHEMA_V6_SQL);
+    if (version >= 7) expected.exec(ACTIVATION_SCHEMA_V7_SQL);
     const rows = schemaRows(expected).map(row => ({ ...row, sql: normalizeSql(row.sql) }));
     expectedManifests.set(version, rows);
     return rows;
@@ -347,6 +368,7 @@ export function prepareSchema(
     db.exec(RECEIPT_SCHEMA_V4_SQL);
     db.exec(DISCOVERY_SCHEMA_V5_SQL);
     db.exec(MODE_SCHEMA_V6_SQL);
+    db.exec(ACTIVATION_SCHEMA_V7_SQL);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     assertManifest(db, SCHEMA_VERSION);
     assertIntegrity(db);
@@ -407,5 +429,15 @@ export function prepareSchema(
     assertIntegrity(db);
     migrationFault?.('before_mode_rebuild_user_version');
     db.exec('PRAGMA user_version = 6');
+  }
+
+  if (version <= 6) {
+    db.exec(ACTIVATION_SCHEMA_V7_SQL);
+    db.exec(ACTIVATION_BACKFILL_V7_SQL);
+    migrationFault?.('after_activation_start');
+    assertManifest(db, 7);
+    assertIntegrity(db);
+    migrationFault?.('before_activation_start_user_version');
+    db.exec('PRAGMA user_version = 7');
   }
 }

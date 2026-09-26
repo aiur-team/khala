@@ -533,6 +533,52 @@ describe('Claude delivery through the internal launcher', () => {
     return { ...launch, post, run: (op: string) => claude(launch.report.descriptorPath, op, sessionId) };
   }
 
+  // Wrong-implementation test (#443): a feed that starts at sequence 0 hands the rejoined
+  // binding every earlier message, including the one sent while no agent was bound.
+  it('delivers a session that rejoins after Stop only what was said after it rejoined, under history: none', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const sessionId = 'session-rejoins';
+    const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
+    const run = (op: string) => claude(report.descriptorPath, op, sessionId);
+    let posted = 0;
+    const post = async (body: string) => {
+      posted += 1;
+      const sent = await call(report.origin, {
+        method: 'POST', path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/messages`, headers: owner,
+        body: { clientTxnId: `txn-rejoin-${posted}`, content: { v: 1, kind: 'text', body } },
+      });
+      expect(sent.status).toBe(201);
+    };
+    const join = async () => {
+      const [requested] = await serve(report.descriptorPath, sessionId, [['khala_request_channel_access', { target: channelUrl }]]);
+      expect(requested).toMatchObject({ ok: true, outcome: 'pending_owner' });
+      await approvePending(report.origin, owner);
+      await expect(hooks.hook(sessionId, { stop: true })).resolves.toMatchObject({ kind: 'hook', access: 'connected' });
+    };
+
+    await post('said before any admission');
+    await join();
+    await post('said to the first binding');
+    const first = await run('read');
+    expect(first).toContain('said to the first binding');
+    expect(first).not.toContain('said before any admission');
+
+    const stopped = await call(report.origin, {
+      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/stop`, headers: owner,
+      body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+    await post('said while no agent was bound');
+
+    await join();
+    await post('said after the rejoin');
+    const rejoined = await run('read');
+    expect(rejoined).toContain('said after the rejoin');
+    for (const earlier of ['said before any admission', 'said to the first binding', 'said while no agent was bound']) {
+      expect(rejoined).not.toContain(earlier);
+    }
+  });
+
   it('delivers to a bound session on an experimental route: hook pull, then read, then next-call acknowledgement', async () => {
     const session = await bound('session-delivered');
 

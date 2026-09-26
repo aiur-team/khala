@@ -796,6 +796,8 @@ describe('internal channel discovery', () => {
     expect(await w.discovery.admission.reconcile(input)).toEqual({ kind: 'admitted', membership: 'joined' });
     // A stale generation is never admitted.
     expect(await w.discovery.admission.admit({ ...input, providerOperationId: 'padmit-2', sessionGeneration: 2 })).toEqual({ kind: 'rejected' });
+    // Channel access shares no history: any other history choice is refused, never widened.
+    expect(await w.discovery.admission.admit({ ...input, providerOperationId: 'padmit-3', history: 'full' as never })).toEqual({ kind: 'rejected' });
   });
 
   describe('local activation by the agent client', () => {
