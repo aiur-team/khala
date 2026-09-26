@@ -136,6 +136,8 @@ importers:
         specifier: workspace:*
         version: link:../agent-cli
 
+  packages/claude-plugin: {}
+
   packages/connector:
     dependencies:
       '@khala/contracts':
