@@ -2,7 +2,9 @@ import {
   decodeDeliveryLimits,
   type DeliveryReceipt,
   type HarnessCapabilities,
+  OPENCODE_ROUTE_EVIDENCE,
   type SessionBinding,
+  openCodePluginCapabilities,
   unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/ids';
@@ -129,6 +131,23 @@ describe('connector agent presence source', () => {
     const snapshot = await source.snapshot('room-1' as RoomId, new AbortController().signal);
 
     expect(snapshot.agents[0]).toMatchObject({ connection: 'offline', routeLabel: 'Khala skill' });
+  });
+
+  it('labels the OpenCode plugin route', async () => {
+    const source = createAgentPresenceSource(runtime(status({
+      harnessCapabilities: openCodePluginCapabilities({
+        version: '1.17.10', limits: decodedLimits.value, claims: OPENCODE_ROUTE_EVIDENCE,
+      }),
+    })), {
+      identity: async () => ({ roomId: 'room-1' as RoomId, displayName: 'Agent', ownerDisplayName: 'Owner' }),
+      lastReceipt: async () => null,
+      installCommand: async () => 'khala connect link',
+      subscribe: () => () => undefined,
+    });
+
+    const snapshot = await source.snapshot('room-1' as RoomId, new AbortController().signal);
+
+    expect(snapshot.agents[0]).toMatchObject({ routeLabel: 'OpenCode plugin' });
   });
 
   it('does not expose a binding to another channel and forwards metadata subscriptions', async () => {
