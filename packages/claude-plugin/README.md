@@ -25,8 +25,15 @@ is the source; `validatePlugin` enforces it.
 | Plugin | `khala` |
 | Hook events | `PostToolUse`, `Stop`, `SessionEnd`; the idle watcher is a second `Stop` entry with `asyncRewake` (#178 amendment, no `UserPromptSubmit`) |
 | Hook commands | `hooks/post-tool-use.mjs`, `hooks/stop.mjs`, `hooks/stop-watcher.mjs`, `hooks/session-end.mjs` |
-| Skill and commands | skill `khala`; exact forms `/khala send` and `/khala read` |
-| MCP entry | server `khala`, launched as `khala mcp-serve`; tools `khala_send`, `khala_read`, `khala_status` (status carries tokens) |
+| Skill and commands | skill `khala`; exact forms `/khala send`, `/khala read`, `/khala create`, `/khala join <channel-url>`, `/khala who` |
+| MCP entry | server `khala`, launched as `khala mcp-serve`; tools `khala_send`, `khala_read`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_list_agents` |
+
+The command and tool lists are the full planned set from decisions 24 and 30 and
+the claude-plugin, room-discovery and listening-modes contracts. Later tickets
+implement them; adding a name still needs a decision.
+
+Who edits what: #252 owns `hooks/`, #253 owns `skills/khala/`, and #259 lives
+outside this package.
 
 The MCP entry embeds no port or token; the runtime reads them from the local
 descriptor. Nothing in this package uses `--dangerously-*` flags or isolated

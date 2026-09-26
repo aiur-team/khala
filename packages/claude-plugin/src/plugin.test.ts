@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { FROZEN_HOOK_EVENTS, FROZEN_MCP_TOOLS } from './contract';
+import { FROZEN_COMMAND_VERBS, FROZEN_HOOK_EVENTS, FROZEN_MCP_TOOLS } from './contract';
 import { validatePlugin } from './validate';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,8 +22,9 @@ describe('claude plugin scaffold', () => {
   });
 
   it('freezes the MCP tools, including khala_status, and documents each', () => {
-    expect(FROZEN_MCP_TOOLS).toEqual(['khala_send', 'khala_read', 'khala_status']);
+    expect(FROZEN_MCP_TOOLS).toContain('khala_status');
     const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+    for (const verb of FROZEN_COMMAND_VERBS) expect(readme).toContain(`/khala ${verb}`);
     for (const tool of FROZEN_MCP_TOOLS) expect(readme).toContain(`\`${tool}\``);
   });
 

@@ -20,10 +20,19 @@ export const FROZEN_WATCHER_SCRIPT = 'hooks/stop-watcher.mjs';
 
 /** The one bundled skill, and the exact `/khala <verb>` forms it resolves. */
 export const FROZEN_SKILL_NAME = 'khala';
-export const FROZEN_COMMAND_VERBS = ['send', 'read'] as const;
+export const FROZEN_COMMAND_VERBS = ['send', 'read', 'create', 'join', 'who'] as const;
 
 /** The one MCP server entry, launched as `khala mcp-serve`, and its tools. */
 export const FROZEN_MCP_SERVER = { name: 'khala', command: 'khala', args: ['mcp-serve'] } as const;
-export const FROZEN_MCP_TOOLS = ['khala_send', 'khala_read', 'khala_status'] as const;
+export const FROZEN_MCP_TOOLS = [
+  'khala_send',
+  'khala_read',
+  'khala_status',
+  'khala_listening_mode',
+  'khala_create_channel',
+  'khala_list_channels',
+  'khala_request_channel_access',
+  'khala_list_agents',
+] as const;
 
 export const FROZEN_PLUGIN_NAME = 'khala';
