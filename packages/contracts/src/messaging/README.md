@@ -212,6 +212,31 @@ drives the conversion through these steps:
   commit still running in the same process is never failed by a concurrent `resume`. After
   the link, recovery only releases the remaining bindings forward.
 - Start-fresh copies no message.
+- Carry-history runs only when the service is composed with a `HistoryTransferPort`, and is
+  `unsupported` otherwise. After the destination exists it moves through `history_copying`
+  and up to three `history_catching_up` rounds while the source stays writable. It then takes
+  the final delta under the drain's write pause, which holds until the link, a cancel or a
+  failure. If catch-up does not converge the conversion waits in `drain_required` until the
+  human confirms (`confirmDrain`). Access requests are made only after the history
+  converges. The entry journals `ConversionHistoryProgress` (counts and digests only). A
+  drain beyond its ceiling or a `source_changed` fails the conversion, which reopens the
+  source and reports the orphan destination.
+
+### Make-external journey
+
+`make-external.ts` is the browser protocol of the journey: `MakeExternalJourneyView` (hosted
+sign-in state, the reviewable roster, and the journaled conversion with each agent's exact
+session) and `MakeExternalAction`. `decodeMakeExternalAction` reads an omitted `start`
+visibility as `secret`. The loopback server serves it at
+`GET|POST /api/v1/channels/:channelId/make-external` to the browser human only, and only when
+the launch is composed with a journey (`apps/internal/src/composition/make-external.ts`).
+Before confirmation the only state is an in-memory hosted sign-in draft. After it, the
+conversion journal is authoritative, so a reload or a restarted server resumes the same
+conversion after a new sign-in. Every hosted step requires that sign-in, but cancel does not.
+The history transfer takes its destination and owner from the journal entry, never from the
+request. No hosted adapter exists yet for sign-in, channel creation, channel access or the
+imported-history transport, so the launcher does not offer the journey. It is proven only
+against the fakes in `apps/internal/src/composition/fixtures/make-external-provider.ts`.
 
 ## Outcomes
 
