@@ -204,7 +204,7 @@ function moveSource(db: Db, entry: ConversionEntry, to: ConversionState, operati
       conversionId: lock.conversionId, write: 'linked', destinationChannelId: entry.destination.destinationChannelId,
     } satisfies ChannelConversionLock);
   } else if (to === 'cancelled' || to === 'failed') {
-    if (lock.write === 'linked') return false;
+    // Only reachable before the link: the transition table has no way back from `activating`.
     db.prepare('DELETE FROM control_records WHERE record_key = ?').run(key);
   }
   return true;

@@ -42,7 +42,6 @@ class FakeHosted implements HostedChannelPort, ConversionAccessPort, ConversionB
   withheld = new Set<string>();
   blocked = new Map<string, ConversionAgentBlock>();
   releaseFails = new Set<string>();
-  messages = 0;
 
   async create(input: Readonly<{ idempotencyKey: string; title: string | null; visibility: ConversionVisibility }>) {
     if (this.createMode === 'unavailable') return unavailable();
@@ -236,6 +235,10 @@ describe('start-fresh conversion', () => {
     expect(await h.service.start(startInput({ operationId: 'op-other', agents: ['agent-1'] }))).toEqual(rejected('conflict'));
     expect(await h.service.start(startInput({ visibility: 'public' }))).toEqual(rejected('conflict'));
     expect(await h.service.start(startInput({ conversionId: 'conversion-2', operationId: 'op-2' }))).toEqual(rejected('conflict'));
+    // Once cancelled the source is free, but the conversion ID still names the first choice.
+    value(await h.service.cancel('conversion-1'));
+    expect(await h.service.start(startInput({ operationId: 'op-again', agents: ['agent-1'] }))).toEqual(rejected('conflict'));
+    expect(value(await h.service.view('conversion-1')).agents.map(agent => agent.participantId)).toEqual(['agent-1', 'agent-2', 'agent-3']);
   });
 
   it('makes one request per selected agent and grants exactly those from one batch decision', async () => {
@@ -390,7 +393,6 @@ describe('start-fresh conversion', () => {
     await readyToCommit(h);
     value(await h.service.commit('conversion-1'));
     expect(h.events()).toBe(before);
-    expect(h.hosted.messages).toBe(0);
     expect(h.hosted.effects.every(effect => effect.startsWith('create:') || effect.startsWith('request:'))).toBe(true);
   });
 
