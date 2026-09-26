@@ -50,8 +50,8 @@ export type ExternalCli = Readonly<{
   /** Runs `khala internal discovery` for this session against the launcher's state root. */
   discover(launcher: KhalaProfile): Promise<void>;
   /**
-   * Takes the resumed launcher's transport-only `active.json`, as the launcher rewrites the
-   * shared one: the grant from the previous launch ends with it.
+   * Follows the resumed launcher's port. The session's `grant.json` still names the previous
+   * launch's grant, which ended with it; the next `join` reseeds it from the new `active.json`.
    */
   relaunched(launcher: KhalaProfile): void;
   /** `khala join <channel-url>`: files an access request, or finishes an approved one. */
@@ -120,22 +120,19 @@ export function createExternalCli(options: Options): ExternalCli {
   const pid = child.pid;
   const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
 
-  // Khala state private to this session. Today every discovery descriptor resolves
-  // its grant to the one root `active.json`, which holds a single agent's grant, so
-  // two sessions of one OS user cannot both bind (#391). Each session therefore keeps
-  // its discovery files and granted descriptor under its own root, as a session on
-  // another profile would. The server, store and grant flow are unchanged.
+  // Both sessions share the launcher's Khala root, as two CLIs of one OS user do. Each
+  // joins with its own discovery descriptor and then uses its own granted descriptor
+  // beside it (#391); only the CLI's local inbox state is kept per session.
   const khalaState = privateDirectory(options.stateDirectory, 'khala');
-  const internalRoot = privateDirectory(khalaState, 'internal');
-  const activePath = path.join(internalRoot, 'active.json');
   let discoveryPath: string | null = null;
+  let grantPath: string | null = null;
   let launcherPort = 0;
   const profile = (): KhalaProfile => ({ stateHome: options.stateDirectory, stateDirectory: khalaState, port: launcherPort });
   const delivered = new Map<string, number>();
   const record = (kind: string, operationId: string) => options.record(kind, { ownerId: options.ownerId, operationId });
 
   const cli = async (argv: readonly string[], stdin?: string, claim?: LocalHarnessCapabilities) =>
-    khalaOnce(profile(), ['--internal-descriptor', argv[0] === 'join' ? discoveryPath! : activePath, ...argv], stdin,
+    khalaOnce(profile(), ['--internal-descriptor', argv[0] === 'join' ? discoveryPath! : grantPath!, ...argv], stdin,
       claim ? { capabilities: claim } : {});
 
   return {
@@ -155,18 +152,12 @@ export function createExternalCli(options: Options): ExternalCli {
       const issued = await khalaOnce(launcher, ['internal', 'discovery', '--harness', options.harness, '--session', options.sessionId]);
       if (issued.code !== 0) throw new Error(`discovery failed: ${issued.stderr}`);
       const { descriptorPath } = JSON.parse(issued.stdout) as { descriptorPath: string };
-      const principalDirectory = path.dirname(descriptorPath);
-      const privateCopy = path.join(privateDirectory(internalRoot, 'discovery'), path.basename(principalDirectory));
-      fs.renameSync(principalDirectory, privateCopy);
-      fs.copyFileSync(path.join(path.dirname(path.dirname(principalDirectory)), 'active.json'), activePath);
-      fs.chmodSync(activePath, 0o600);
-      discoveryPath = path.join(privateCopy, path.basename(descriptorPath));
+      discoveryPath = descriptorPath;
+      grantPath = path.join(path.dirname(descriptorPath), 'grant.json');
     },
 
     relaunched(launcher) {
       launcherPort = launcher.port;
-      fs.copyFileSync(path.join(launcher.stateDirectory, 'internal', 'active.json'), activePath);
-      fs.chmodSync(activePath, 0o600);
     },
 
     async join(channelUrl) {
@@ -213,8 +204,10 @@ export function createExternalCli(options: Options): ExternalCli {
     },
 
     // The exact installed command: `khala codex-hook`, with no descriptor option.
+    // It reads the launcher's `active.json`, which the first grant mirrors into (#401; per-session hook identity is #407).
     codexHook: (input, claim, observation) => khalaOnce(profile(), ['codex-hook'], JSON.stringify(input), {
       ...(claim ? { capabilities: claim } : {}), ...(observation ? { observation } : {}),
+      defaultDescriptorPath: path.join(path.dirname(discoveryPath!), '..', '..', 'active.json'),
     }),
 
     async endTurnWithProse() {
@@ -223,6 +216,6 @@ export function createExternalCli(options: Options): ExternalCli {
     },
 
     deliveries: () => delivered,
-    descriptorPath: () => activePath,
+    descriptorPath: () => grantPath!,
   };
 }

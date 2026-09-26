@@ -53,6 +53,8 @@ export type KhalaOptions = Readonly<{
   capabilities?: LocalHarnessCapabilities;
   /** What that CLI reports about its harness to the server, as `localHarness` reads it in production. */
   observation?: LocalHarnessObservation;
+  /** The runtime descriptor a bare installed entry reads; defaults to this profile's own `internal/active.json`. */
+  defaultDescriptorPath?: string;
 }>;
 
 /** One `khala` CLI process: the production command table with test streams. */
@@ -81,7 +83,7 @@ export function khala(profile: KhalaProfile, argv: readonly string[], options: K
     env: { XDG_STATE_HOME: profile.stateHome },
     cwd: profile.stateHome,
     // As in `main.ts`: the installed hook has no option and reads the runtime descriptor.
-    defaultDescriptorPath: path.join(profile.stateDirectory, 'internal', 'active.json'),
+    defaultDescriptorPath: options.defaultDescriptorPath ?? path.join(profile.stateDirectory, 'internal', 'active.json'),
     internalClient: async descriptorPath => createInternalClient({
       descriptorPath, ...(options.capabilities ? { capabilities: options.capabilities } : {}),
       ...(options.observation ? { observation: options.observation } : {}),

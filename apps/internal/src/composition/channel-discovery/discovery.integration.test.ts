@@ -804,12 +804,13 @@ describe('internal channel discovery', () => {
       };
       const client = createInternalClient({ descriptorPath: agent.descriptorPath, fetch: transport, clock: () => NOW });
       const channelUrl = `${w.server.origin}/channels/${channelId}`;
-      const activePath = path.join(fixture.root, 'active.json');
-      const readActive = () => JSON.parse(fs.readFileSync(activePath, 'utf8')) as Record<string, string>;
+      // The agent's own granted descriptor beside its discovery descriptor is the binding of record.
+      const grantPath = path.join(path.dirname(agent.descriptorPath), 'grant.json');
+      const readGrant = () => JSON.parse(fs.readFileSync(grantPath, 'utf8')) as Record<string, string>;
       const bindingRows = () => w.handle.read(db => (db.prepare('SELECT count(*) AS n FROM bindings WHERE participant_id = ?')
         .get(`participant_${agent.principal}`) as { n: number }).n);
       return {
-        w, agent, client, channelUrl, calls, activePath, readActive, bindingRows, fixture,
+        w, agent, client, channelUrl, calls, grantPath, readGrant, bindingRows, fixture,
         failNext(...attempts: Attempt[]) { plan = attempts; },
         async approve() {
           expect(await client.requestAccess!(channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
@@ -823,7 +824,7 @@ describe('internal channel discovery', () => {
           stdout.on('data', chunk => { chunks.out += String(chunk); });
           stderr.on('data', chunk => { chunks.err += String(chunk); });
           const stateDirectory = path.join(fixture.root, 'agent-state');
-          const code = await runCli(['--internal-descriptor', activePath, ...args], {
+          const code = await runCli(['--internal-descriptor', grantPath, ...args], {
             client: null as never,
             inbox: (bindingId, generation) => openInbox({
               stateDirectory, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
@@ -852,9 +853,9 @@ describe('internal channel discovery', () => {
       expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
       expect(a.calls).toEqual(['exchange', 'activate', 'ready']);
       expect(a.bindingRows()).toBe(1);
-      const active = a.readActive();
+      const active = a.readGrant();
       expect(active).toMatchObject({ channelId, grantRef: expect.any(String), bindingId: expect.any(String), bindingCapability: expect.any(String) });
-      expect(fs.statSync(a.activePath).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(a.grantPath).mode & 0o777).toBe(0o600);
       // Ready is acknowledged only after the descriptor was written.
       expect((await accessStatus(a.w, a.agent, active.grantRef!)).json.outcome).toBe('connected');
 
@@ -878,12 +879,12 @@ describe('internal channel discovery', () => {
       a.failNext({ action: 'ready', outcome: 'lose' });
       expect((await a.client.requestAccess!(a.channelUrl)).kind).toBe('status');
       expect(a.bindingRows()).toBe(1);
-      const written = a.readActive();
+      const written = a.readGrant();
       a.calls.length = 0;
       expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
       // The held binding is never re-activated, so the running client's capability survives.
       expect(a.calls).not.toContain('activate');
-      expect(a.readActive()).toEqual(written);
+      expect(a.readGrant()).toEqual(written);
       expect(a.bindingRows()).toBe(1);
     });
 
@@ -893,10 +894,10 @@ describe('internal channel discovery', () => {
       a.failNext({ action: 'activate', outcome: 'lose' });
       await a.client.requestAccess!(a.channelUrl);
       expect(a.bindingRows()).toBe(1);
-      expect(() => a.readActive().bindingId).not.toThrow();
+      expect(() => a.readGrant().bindingId).not.toThrow();
       expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
       expect(a.bindingRows()).toBe(1);
-      const active = a.readActive();
+      const active = a.readGrant();
       expect(active.bindingId).toBeDefined();
       const timeline = await call(a.w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(active.bindingCapability!) });
       expect(timeline.status).toBe(200);
@@ -906,13 +907,13 @@ describe('internal channel discovery', () => {
       const a = await activationWorld();
       await a.approve();
       await a.client.requestAccess!(a.channelUrl);
-      const stale = a.readActive().bindingCapability!;
+      const stale = a.readGrant().bindingCapability!;
       const eventId = a.human(BODY);
-      const active = a.readActive();
+      const active = a.readGrant();
       // The listener read the descriptor before activation rotated the capability.
       let reads = 0;
       const delivery = createInternalDelivery({
-        descriptorPath: a.activePath, stateDirectory: path.join(a.fixture.root, 'agent-state'),
+        descriptorPath: a.grantPath, stateDirectory: path.join(a.fixture.root, 'agent-state'),
         readDescriptor: file => {
           const read = readInternalDescriptor(file);
           return reads++ === 0 && read.ok ? { ...read, value: { ...read.value, bindingCapability: stale } as typeof read.value } : read;
@@ -928,7 +929,7 @@ describe('internal channel discovery', () => {
       });
       expect(rotated.status).toBe(200);
       const next = { ...active, bindingCapability: rotated.json.capability as string };
-      fs.writeFileSync(a.activePath, JSON.stringify(next), { mode: 0o600 });
+      fs.writeFileSync(a.grantPath, JSON.stringify(next), { mode: 0o600 });
       expect(next.bindingCapability).not.toBe(stale);
       const inboxFor = () => openInbox({
         stateDirectory: path.join(a.fixture.root, 'agent-state'), bindingId: active.bindingId!, generation: 1,
@@ -941,6 +942,38 @@ describe('internal channel discovery', () => {
       const batch = await listener.readBatch({ maxBytes: 1024 * 1024 });
       await listener.release();
       expect(batch?.items.map(item => item.record.releaseId)).toEqual([internalReleaseId({ bindingId: active.bindingId, generation: 1 } as never, eventId as never)]);
+    });
+
+    // Wrong-implementation test (#391): with one shared grant file, the second session's
+    // activation is refused as `repair_required` and only one binding is ever usable.
+    it('binds two agent sessions of one OS user to one channel, each through its own granted descriptor', async () => {
+      const a = await activationWorld();
+      const launchPath = path.join(a.fixture.root, 'active.json');
+      const launch = fs.readFileSync(launchPath, 'utf8');
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      const second = await issue(a.w, 'session-second');
+      const client = createInternalClient({ descriptorPath: second.descriptorPath, clock: () => NOW });
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      const pending = (await inbox(a.w)).find(entry => entry.outcome === 'pending_owner')!;
+      expect((await decide(a.w, pending.requestHandle, pending.revision, 'approve')).status).toBe(200);
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      const secondGrantPath = path.join(path.dirname(second.descriptorPath), 'grant.json');
+      const grants = [a.grantPath, secondGrantPath].map(file => JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>);
+      expect(grants[0]!.bindingId).not.toBe(grants[1]!.bindingId);
+      expect(fs.statSync(secondGrantPath).mode & 0o777).toBe(0o600);
+      // The launch's descriptor, which the session-less Codex and OpenCode entries read, keeps
+      // the first agent's grant; the second binds through its own file alone.
+      const mirrored = JSON.parse(fs.readFileSync(launchPath, 'utf8')) as Record<string, string>;
+      expect(mirrored).toEqual({ ...JSON.parse(launch), ...grants[0] });
+      expect(fs.statSync(launchPath).mode & 0o777).toBe(0o600);
+      // Each session, pointed at its own file, is connected as its own binding.
+      for (const [index, file] of [a.grantPath, secondGrantPath].entries()) {
+        const status = await createInternalClient({ descriptorPath: file }).status();
+        expect(status).toMatchObject({ connected: true, binding: { bindingId: grants[index]!.bindingId } });
+      }
     });
   });
 
