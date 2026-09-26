@@ -343,9 +343,123 @@ describe('setup planning', () => {
     expect(setupResultExitCode(status)).toBe(0);
     expect(setupResultExitCode(status, true)).toBe(4);
     const result = await setup.lifecycle('setup', noConfirm);
-    expect(result.state).toBe('recovery_required');
+    expect(result).toMatchObject({ state: 'recovery_required', planDigest: null });
     expect(setupResultExitCode(result)).toBe(4);
+    // An unreadable journal has no provable recovery, so it names why instead of offering one.
+    for (const output of [status, result]) {
+      expect(output.diagnostics).toContainEqual(expect.objectContaining({ code: 'journal_corrupt', severity: 'error' }));
+    }
     expect(JSON.stringify([status, result])).not.toContain(SECRET);
+  });
+
+  describe('recovering an interrupted transaction', () => {
+    const JOURNAL = `${HOME}/.local/state/khala/setup/transaction.v1.json`;
+    const SKILL = `${HOME}/.codex/skills/khala/SKILL.md`;
+    const journal = (state: 'prepared' | 'committed' = 'prepared', status: 'planned' | 'applied' = 'applied') => JSON.stringify({
+      v: 1, id: '0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0', command: 'setup', planDigest: sha('original plan'), state,
+      operations: [{
+        operation: { id: 'codex-skill', type: 'file_create', harness: 'codex', component: 'skill', path: SKILL, postimage: sha('skill') },
+        status,
+        targets: [{ path: SKILL, preimage: null, mode: null, backup: null, postimage: sha('skill'), postimageKnown: true, createdDirectories: [] }],
+      }],
+      manifest: state === 'committed' ? { v: 1, transaction: '0f1e2d3c-4b5a-4968-8776-a5b4c3d2e1f0', planDigest: sha('original plan'), entries: [] } : null,
+    });
+    /** Honours the executor contract: recovers only for the digest of the recovery plan it replans. */
+    const recoveringExecutor = (state: World) => countingExecutor((request, plan) => {
+      if (plan.planDigest !== request.confirmedDigest) return { kind: 'replanned', plan };
+      expect(plan.operations).toEqual([]);
+      state.files.delete(JOURNAL);
+      return { kind: 'recovered', resolution: 'rolled_back', operations: [] };
+    });
+
+    it('offers a confirmable recovery plan bound to the journal, and names the next step', async () => {
+      const state = world();
+      install(state, 'codex');
+      state.files.set(JOURNAL, journal());
+      const executor = recoveringExecutor(state);
+      const setup = service(state, allFake(), executor);
+
+      const status = await setup.configuration();
+      expect(status.state).toBe('recovery_required');
+      expect(status.diagnostics).toContainEqual(expect.objectContaining({ code: 'recovery_pending' }));
+
+      const plan = await setup.lifecycle('setup', noConfirm);
+      expect(decodeSetupResult(JSON.parse(JSON.stringify(plan)))).toEqual(plan);
+      expect(plan).toMatchObject({ state: 'confirmation_required', changed: false, operations: [] });
+      expect(setupResultExitCode(plan)).toBe(5);
+      expect(plan.planDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(plan.confirmation).toMatchObject({ required: true, command: 'setup', harnesses: ['codex'],
+        actions: [{ harness: 'codex', component: 'skill', action: 'restore' }], paths: [SKILL], planDigest: plan.planDigest });
+      expect(plan.confirmation.required && plan.confirmation.request).toContain(`khala setup --confirm ${plan.planDigest}`);
+      expect(plan.diagnostics).toContainEqual(expect.objectContaining({ code: 'recovery_available' }));
+      // Deterministic for the same journal, distinct per command and per journal.
+      expect((await setup.lifecycle('setup', noConfirm)).planDigest).toBe(plan.planDigest);
+      const remove = await setup.lifecycle('remove', noConfirm);
+      expect(remove.state).toBe('confirmation_required');
+      expect(remove.planDigest).not.toBe(plan.planDigest);
+      expect(executor.calls).toBe(0);
+    });
+
+    it('never recovers on a dry run, a stale digest, or another command digest (wrong-implementation killer)', async () => {
+      const state = world();
+      state.files.set(JOURNAL, journal());
+      const executor = recoveringExecutor(state);
+      const setup = service(state, allFake(), executor);
+      const digest = (await setup.lifecycle('setup', noConfirm)).planDigest!;
+      const removeDigest = (await setup.lifecycle('remove', noConfirm)).planDigest!;
+
+      expect((await setup.lifecycle('setup', { dryRun: true, confirm: digest })).state).toBe('confirmation_required');
+      expect((await setup.lifecycle('setup', { dryRun: false, confirm: removeDigest })).state).toBe('confirmation_required');
+      expect((await setup.lifecycle('setup', { dryRun: false, confirm: sha('original plan') })).state).toBe('confirmation_required');
+      // The journal moved on after the person approved: the old approval recovers nothing.
+      state.files.set(JOURNAL, journal('prepared', 'planned'));
+      const moved = await setup.lifecycle('setup', { dryRun: false, confirm: digest });
+      expect(moved.state).toBe('confirmation_required');
+      expect(moved.planDigest).not.toBe(digest);
+      expect(moved.confirmation).toMatchObject({ actions: [], paths: [] });
+      expect(executor.calls).toBe(0);
+      expect(state.files.has(JOURNAL)).toBe(true);
+    });
+
+    it('a confirmed recovery hands back the next plan, or the settled state when nothing is left', async () => {
+      const state = world();
+      install(state, 'codex');
+      state.files.set(JOURNAL, journal());
+      const executor = recoveringExecutor(state);
+      const setup = service(state, allFake(), executor);
+      const recovery = await setup.lifecycle('setup', noConfirm);
+      const next = await setup.lifecycle('setup', { dryRun: false, confirm: recovery.planDigest });
+      expect(executor.calls).toBe(1);
+      expect(state.files.has(JOURNAL)).toBe(false);
+      expect(next).toMatchObject({ state: 'confirmation_required', changed: true });
+      expect(next.planDigest).not.toBe(recovery.planDigest);
+      expect(next.diagnostics).toContainEqual(expect.objectContaining({ code: 'recovered', severity: 'info' }));
+      expect(decodeSetupResult(JSON.parse(JSON.stringify(next)))).toEqual(next);
+
+      const empty = world();
+      empty.files.set(JOURNAL, journal());
+      const removal = service(empty, allFake(), recoveringExecutor(empty));
+      const plan = await removal.lifecycle('remove', noConfirm);
+      const done = await removal.lifecycle('remove', { dryRun: false, confirm: plan.planDigest });
+      expect(done).toMatchObject({ state: 'no_harness', ok: true, changed: true });
+      expect(setupResultExitCode(done)).toBe(0);
+    });
+
+    it('offers to finish a committed journal, keeping its applied changes', async () => {
+      const state = world();
+      state.files.set(JOURNAL, journal('committed'));
+      const plan = await service(state, allFake()).lifecycle('remove', noConfirm);
+      expect(plan.confirmation).toMatchObject({ required: true, actions: [{ harness: 'codex', component: 'skill', action: 'create' }] });
+      expect(plan.confirmation.required && plan.confirmation.request).toContain('finish the interrupted `khala setup`');
+    });
+
+    it('refuses a newer journal schema without offering a recovery', async () => {
+      const state = world();
+      state.files.set(JOURNAL, JSON.stringify({ v: 2 }));
+      const result = await service(state, allFake()).lifecycle('setup', noConfirm);
+      expect(result).toMatchObject({ state: 'recovery_required', planDigest: null });
+      expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'journal_unsupported' }));
+    });
   });
 
   it('keeps sentinel secrets out of every public result', async () => {

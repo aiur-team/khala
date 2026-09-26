@@ -544,10 +544,12 @@ asynchronous, synchronous, steerable, or actively listening.
 ## Setup transactions
 
 `src/setup/transaction.ts` applies a confirmed `setup` or `remove` plan.
-`executeSetupPlan` takes the exclusive lock under `$XDG_STATE_HOME/khala/setup/`
-and finishes or rolls back any interrupted journal. It then reruns the planner
-and applies nothing unless the new plan digest equals the confirmed one. A
-second process gets a stable `busy` result.
+`executeSetupPlan` takes the exclusive lock under `$XDG_STATE_HOME/khala/setup/`,
+reruns the planner, and applies nothing unless the new plan digest equals the
+confirmed one. While an interrupted journal exists, the planner's plan is a
+recovery plan whose digest covers the journal bytes. A match finishes a
+committed journal or rolls back any other, removes the temporaries a killed
+write left, and applies nothing else. A second process gets a stable `busy` result.
 
 Before the first write, every target is checked against its planned preimage,
 and every managed path of each selected harness is checked for drift. A symlink
@@ -558,11 +560,16 @@ operations in order with no-follow atomic replacement. The journal is advanced
 around each operation, and every postimage's hash, mode, and owner is verified.
 On success the executor publishes `manifest.v1.json`. Any failure restores the
 applied operations from backup. A rollback that cannot be proven exact becomes
-`rollback_failed`. The executor retries it once it holds the lock. The CLI
-does not reach that point yet: while a journal exists, `setup`, `remove`, and
-`status --check` all return `recovery_required` (exit 4) and plan nothing
-([#385](https://github.com/aiur-team/khala/issues/385)). Setup never overwrites
-user bytes that changed while it ran.
+`rollback_failed`, and each later confirmed recovery retries it. While a journal
+exists, `status --check` returns `recovery_required` (exit 4) with a
+`recovery_pending` diagnostic. `setup` and `remove` return that recovery plan
+as `confirmation_required` (exit 5) with a `recovery_available` diagnostic. Its
+confirmation names the journaled paths, and its request names the
+`--confirm` command. After a confirmed recovery, the command relays its fresh
+plan (exit 5) or its settled state, with a `recovered` diagnostic. An unreadable
+journal (`journal_corrupt`) or a newer one (`journal_unsupported`) is offered no
+recovery and stays `recovery_required`. Setup never overwrites user bytes that
+changed while it ran.
 
 The manifest keeps each path's original pre-Khala preimage (or absence) across
 upgrades, so removal restores the state from before the first setup. Backups
@@ -949,6 +956,7 @@ unsupported harnesses the executor enforces. Outcomes map to results as follows:
 | --- | --- | ---: |
 | committed | the post-apply state (`ready` after a completed setup or remove) | 0 |
 | replanned | `confirmation_required` with the fresh plan and a `plan_changed` diagnostic: relay it and confirm again | 5 |
+| recovered (a confirmed recovery plan) | the fresh plan (`confirmation_required`) or the settled state, with `changed: true` and a `recovered` diagnostic | 5 or 0 |
 | refused (drift, conflict, unsupported) | that state | 3 |
 | busy, or failed and rolled back exactly | `conflict` with `setup_busy` or `apply_failed` (the frozen states have no closer member) | 3 |
 | recovery required, or any thrown executor, lock, or replan error | `recovery_required` (`execution_failed` when thrown) | 4 |

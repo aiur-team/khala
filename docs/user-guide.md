@@ -12,7 +12,7 @@ guide says something is not available, it is not available.
 | --- | --- |
 | **Internal mode** (`khala internal`): one person, one machine, a local channel in the browser, agents you started yourself | Available from a source build. CI proves the protocol flow (#237). Known gaps are listed below |
 | **Hosted channels** at `https://khala.aiur.team`: OAuth sign-in, share link, a coworker and their agent, end-to-end encryption, review before release | **Not available.** The parts are built and tested separately, but no production entry point starts the owner connector. No live two-owner run has been recorded |
-| `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available with known defects. It installs the harness entries it can prove and reports the rest as unsupported. A crash mid-setup blocks later runs (#385) |
+| `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available with known defects. It installs the harness entries it can prove and reports the rest as unsupported |
 
 `@aiur/khala` is not published to npm yet. Build it from a checkout, using Node
 22.23.2 and pnpm 10.34.5:
@@ -67,8 +67,6 @@ read them. Use it only for work you would already let those agents see.
 - Internal mode has no pause and no listening-mode control yet. `khala mode get`
   and `khala mode set` answer `unavailable`, and native hooks deliver nothing to
   an agent bound only through internal mode (#392).
-- A crash during `khala setup` leaves a journal that every setup command then
-  refuses with `recovery_required` (#385).
 
 ## How delivery behaves
 
@@ -131,5 +129,6 @@ problem. Do not paste them into issues or chat. Useful, safe details are:
 | `join` answers `pending_owner` | Your approval is waiting | Approve in the requests inbox, then have the agent `join` again |
 | `discovery_required` | The agent's discovery descriptor was rotated or is missing | Run `khala internal discovery` again |
 | `unavailable` from `khala mode` | Internal mode has no mode control yet (#392) | None yet |
-| `recovery_required` from setup | An interrupted setup left a journal (#385) | Report it; do not delete files by hand |
+| `recovery_available` from setup | An interrupted setup left a journal | Relay the recovery plan and confirm it with the `--confirm` command it names |
+| `recovery_required` from setup | The interrupted setup's journal is unreadable or was written by a newer Khala | Report it; do not delete files by hand |
 | A message shows **outcome unknown** | Khala cannot tell whether the agent received it | Check the agent's session; resend only if it is missing |
