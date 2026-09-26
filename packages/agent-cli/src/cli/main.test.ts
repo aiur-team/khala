@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { HARNESS_IDS } from '../setup/types.js';
 
 const packageDirectory = fileURLToPath(new URL('../..', import.meta.url));
 const bundleScript = fileURLToPath(new URL('../../scripts/bundle.mjs', import.meta.url));
@@ -58,7 +59,9 @@ describe('bundled CLI entrypoint', () => {
       inbox: null,
       configuration: {
         v: 1, command: 'status', ok: true, changed: false, state: 'no_harness', planDigest: null,
-        confirmation: { required: false, confirmed: false }, harnesses: [], operations: [], diagnostics: [],
+        confirmation: { required: false, confirmed: false }, operations: [], diagnostics: [],
+        harnesses: HARNESS_IDS.map(harness => ({ harness, executable: { present: false, path: null },
+          version: { detected: null, supported: false }, components: [], route: 'unavailable' })),
       },
     });
     expect(fs.readdirSync(home)).toEqual([]);
