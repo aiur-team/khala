@@ -107,20 +107,21 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
       return result(command, 'confirmation_required', snapshot, operations, digest,
         confirmationRequest(command, snapshot, operations, digest));
     }
-    let outcome: ExecutionOutcome;
+    // Any throw once execution may have started, including re-inspection afterwards, leaves the
+    // final state unproven.
     try {
-      outcome = await options.execute({
+      const outcome = await options.execute({
         command, confirmedDigest: digest, replan: async () => (await prepare(command)).executable,
       });
+      return await settle(command, digest, outcome);
     } catch {
       return result(command, 'recovery_required', snapshot, [], digest, CONFIRMED, [...snapshot.diagnostics,
         { code: 'execution_failed', severity: 'error', message: 'Setup stopped unexpectedly; its final state is not proven.' }]);
     }
-    return settle(command, digest, outcome, snapshot);
   }
 
   async function settle(
-    command: LifecycleCommand, digest: Sha256Digest, outcome: ExecutionOutcome, before: Snapshot,
+    command: LifecycleCommand, digest: Sha256Digest, outcome: ExecutionOutcome,
   ): Promise<SetupResult> {
     switch (outcome.kind) {
       case 'replanned': {
@@ -135,23 +136,23 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
         return { ...result(command, state, after, [], digest, CONFIRMED), changed: outcome.changed, operations: outcome.operations };
       }
       case 'refused':
-        return executed(command, outcome.state, digest, [], outcome.diagnostics, before);
+        return executed(command, outcome.state, digest, [], outcome.diagnostics);
       // No member of the frozen state vocabulary means "busy" or "failed and fully reversed";
       // both are safe refusals that changed nothing, reported as conflict with their diagnostics.
       case 'busy':
-        return executed(command, 'conflict', digest, [], outcome.diagnostics, before);
+        return executed(command, 'conflict', digest, [], outcome.diagnostics);
       case 'rolled_back':
-        return executed(command, 'conflict', digest, outcome.operations, outcome.diagnostics, before);
+        return executed(command, 'conflict', digest, outcome.operations, outcome.diagnostics);
       case 'recovery_required':
-        return executed(command, 'recovery_required', digest, outcome.operations, outcome.diagnostics, before);
+        return executed(command, 'recovery_required', digest, outcome.operations, outcome.diagnostics);
     }
   }
 
   async function executed(
     command: LifecycleCommand, state: SetupState, digest: Sha256Digest,
-    operations: readonly SetupOperationReport[], diagnostics: readonly SetupDiagnostic[], before: Snapshot,
+    operations: readonly SetupOperationReport[], diagnostics: readonly SetupDiagnostic[],
   ): Promise<SetupResult> {
-    const after = await observe(options.environment(), adapters).catch(() => before);
+    const after = await observe(options.environment(), adapters);
     const base = result(command, state, after, [], digest, CONFIRMED, after.diagnostics);
     return { ...base, operations, diagnostics: [...base.diagnostics, ...diagnostics.map(projectExecutorDiagnostic)] };
   }
