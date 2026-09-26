@@ -126,6 +126,9 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:GET /api/v1/channels/:channelId/releases': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/receipts': probe('internal-http'),
   'http-internal:GET /channels/:channelId': probe('internal-http'),
+  'http-internal:GET /channels/:channelId/settings': probe('internal-http'),
+  'http-internal:GET /channel-requests': probe('internal-http'),
+  'http-internal:GET /channel-requests/:handle': probe('internal-http'),
   // Internal discovery routes.
   ...Object.fromEntries(Object.values(DISCOVERY_ROUTES).map(route => [
     `http-internal:${route.method} ${route.path}`,

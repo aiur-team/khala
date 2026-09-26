@@ -144,6 +144,16 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
   'http-internal:GET /channels/:channelId': async s => {
     for (const id of [channelId, otherChannelId]) add(s, `GET page ${id}`, await s.world.http('GET', `/channels/${id}`, { bearer: null }));
   },
+  // App-shell documents mount only with a built asset manifest; this world has none, so they answer 404.
+  'http-internal:GET /channels/:channelId/settings': async s => {
+    for (const id of [channelId, otherChannelId]) add(s, `GET settings page ${id}`, await s.world.http('GET', `/channels/${id}/settings`, { bearer: null }));
+  },
+  'http-internal:GET /channel-requests': async s => {
+    add(s, 'GET requests page', await s.world.http('GET', '/channel-requests', { bearer: null }));
+  },
+  'http-internal:GET /channel-requests/:handle': async s => {
+    add(s, 'GET request page', await s.world.http('GET', '/channel-requests/alice', { bearer: null }));
+  },
 };
 
 const hookInput = (event: string) => JSON.stringify({ hook_event_name: event, session_id: bobBinding.sessionId, turn_id: 'turn-1' });
