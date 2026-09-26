@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { currentLockIdentity, holderIsLive, type LockIdentity } from './lock-identity.js';
 import { ConfinedFilesystem, SetupFilesystemError, sha256, type FileObservation } from './filesystem.js';
 import {
   MANIFEST_FILE, ManifestSchemaError, decodeManifest, encodeManifest, fileMode, parseManifest,
@@ -293,7 +294,7 @@ class Executor {
   async acquireLock(): Promise<boolean> {
     await fsp.mkdir(this.options.roots.xdgStateHome, { recursive: true, mode: 0o700 });
     await this.fs.createDirectories(await this.fs.missingDirectories(this.paths.lock));
-    const record = encodeJson({ pid: process.pid });
+    const record = encodeJson({ ...currentLockIdentity() });
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await this.fs.replace(this.paths.lock, null, record, 0o600);
@@ -303,9 +304,9 @@ class Executor {
       }
       const holder = await this.fs.observe(this.paths.lock).catch(() => null);
       if (holder === null) continue;
-      const pid = lockPid(holder.bytes);
-      if (pid !== null && processIsLive(pid)) return false;
-      // A dead holder's lock is stale; its journal (if any) is recovered once we hold the lock.
+      const identity = lockIdentity(holder.bytes);
+      if (identity !== null && holderIsLive(identity, processIsLive)) return false;
+      // A dead holder's lock (or a reused pid from another boot or start time) is stale; its journal (if any) is recovered once we hold the lock.
       if (!(await this.reclaimStaleLock(holder.hash))) return false;
     }
     return false;
@@ -747,9 +748,19 @@ function failure(error: unknown, operation?: SetupOperation): SetupDiagnostic {
 }
 
 function lockPid(bytes: Uint8Array): number | null {
+  return lockIdentity(bytes)?.pid ?? null;
+}
+
+function lockIdentity(bytes: Uint8Array): LockIdentity | null {
   try {
-    const pid = (JSON.parse(new TextDecoder().decode(bytes)) as Rec).pid;
-    return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null;
+    const record = JSON.parse(new TextDecoder().decode(bytes)) as Rec;
+    const pid = record.pid;
+    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return null;
+    return {
+      pid,
+      bootId: typeof record.bootId === 'string' ? record.bootId : null,
+      startTime: typeof record.startTime === 'string' ? record.startTime : null,
+    };
   } catch {
     return null;
   }
