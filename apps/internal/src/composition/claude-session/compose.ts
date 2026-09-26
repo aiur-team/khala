@@ -18,7 +18,7 @@ import {
 import { type SessionBinding, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { type GrantedDescriptor, encodeInternalDescriptor, isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
 import {
-  INTERNAL_DISCOVERY_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DIRECTORY,
+  INTERNAL_CLAUDE_GRANT_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DIRECTORY,
 } from '@khala/contracts/internal/discovery-descriptor';
 import type { RoomId } from '@khala/contracts/messaging/index';
 import { claudeCapabilities } from '@khala/harnesses/claude/capabilities';
@@ -42,7 +42,7 @@ import { issueDiscoveryDescriptor } from '../discovery-descriptor';
 
 export const CLAUDE_HARNESS = 'claude';
 /** The per-session granted descriptor beside the session's discovery descriptor. */
-export const CLAUDE_GRANT_FILE = 'claude-grant.json';
+export const CLAUDE_GRANT_FILE = INTERNAL_CLAUDE_GRANT_DESCRIPTOR_FILE;
 const STATE_DIRECTORY = 'claude-session';
 /** Answers that may still owe a local binding; a `connected` one after a launcher restart. */
 const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'connected', 'repair_required']);
@@ -111,7 +111,7 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     const activated = await activateInternalAccess({
       descriptorPath, descriptor: selected.selection.descriptor, origin: selected.selection.origin, operationId,
       // The approved channel need not be the launch channel; the grant records the one it names.
-      activePath: grantPath, adoptChannel: true, repair: outcome === 'repair_required', fetch: options.fetch, clock: options.clock,
+      grantPath, repair: outcome === 'repair_required', fetch: options.fetch, clock: options.clock,
     });
     return activated === 'unavailable' ? fallback : activated;
   }
