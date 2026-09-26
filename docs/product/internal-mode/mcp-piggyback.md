@@ -70,7 +70,7 @@ The oversized-head exception prevents permanent starvation while keeping the har
 
 ### Acknowledgement and deduplication
 
-1. Acquire the existing per-binding-generation listener lock for the MCP server lifetime; `khala listen` and a second MCP consumer receive `listener_busy`.
+1. Acquire the existing per-binding-generation listener lock around each selection, waiting briefly for another short-lived holder. `interactive-codex` changed this from the MCP server lifetime so that native hooks can pull between tool calls. `khala listen` still holds the lock for its own lifetime, so a concurrent MCP selection receives `listener_busy` once the wait expires.
 2. Resolve and fence the held binding/generation before opening the inbox. Revalidate the same connected binding and generation before acknowledgement, selection, and response composition; a mismatch returns no piggyback content and acknowledges nothing.
 3. Parse the shared optional `ackBatchToken` before tool-specific validation. Only an exact match for the durable outstanding token and current binding generation advances the cursor. An absent, stale, foreign, partial, or skip-ahead token acknowledges nothing and leaves the outstanding batch available for replay.
 4. Compute the primary tool outcome and its remaining serialized byte budget, then invoke the shared pull operation once. If a batch remains outstanding, return its identical token and bytes even when the new primary result crosses the soft limit. Otherwise atomically stage the maximal ordered whole-prefix and its opaque generation-fenced token in durable Khala state before composing response bytes; staging does not move the cursor.
@@ -96,7 +96,7 @@ Point-in-time status checks cannot close the final check-to-write race: a concur
 
 | Choice | Benefit | Cost |
 |---|---|---|
-| Reuse one durable inbox/cursor | No parallel queue, restart semantics, or new dedup domain. | MCP and `khala listen` are mutually exclusive consumers. |
+| Reuse one durable inbox/cursor | No parallel queue, restart semantics, or new dedup domain. | MCP and `khala listen` never select concurrently; `listen` excludes MCP selections while it runs. |
 | Next-call token acknowledgement | Keeps delivery and cursor movement on one Khala-owned protocol and removes receiver deduplication. | Holds one batch outstanding until another Khala call and requires durable token recovery. |
 | Exact canonical release JSON | Preserves digest-bound provenance and keeps changes package-local. | Less ergonomic than normalized message objects. |
 | Soft cap plus one-head exception | Bounded normal results without head-of-line starvation. | A single maximum-size release can produce a larger result. |
@@ -109,7 +109,7 @@ Point-in-time status checks cannot close the final check-to-write race: a concur
 | A host treats peer text as instructions. | Delimit and type it as untrusted channel message data; keep D3 guidance in tool descriptions and setup prompts. |
 | A token is acknowledged on the response that first carries it. | Require an exact `ackBatchToken` echo on a later Khala call; failure-injection tests must prove the first response never advances its own batch. |
 | Concurrent calls cross the acknowledgement boundary. | Serialize each MCP connection through token validation, selection, durable staging, and response write; block a second call until the first write completes. |
-| Concurrent consumers reorder or skip. | Reuse the listener lock for the MCP process lifetime. |
+| Concurrent consumers reorder or skip. | Reuse the listener lock for every selection; acknowledgement and staging stay atomic inside it. |
 | Long-lived MCP process drains an old generation after rebind. | Revalidate binding ID/generation before selection, before write, and before acknowledgement; fail closed on mismatch. Document the remaining check-to-write race for already-released bytes. Dynamic rotation is out of scope. |
 | Capability UI overclaims any MCP listening mode. | Keep MCP-only `async` unproven until `mcp-piggyback-evidence`; this route provides no `sync` or `steer` claim. |
 | Restart loses or changes the outstanding batch. | Atomically persist the exact batch and token before response emission; replay identical bytes until a later call echoes the token. Proofs must run without receiver-side release-ID memory. |
