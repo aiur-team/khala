@@ -70,8 +70,18 @@ keeps any import except a Node built-in. It then installs the tarball into an
 empty prefix without network access and runs `npx @aiur/khala status`. It also
 fails if a live file outside `docs/` still names the old workspace package.
 
+The setup acceptance suite, `tests/integration/agent-setup/`, gates
+`setup`, `status` and `remove` the same way. It installs the packed tarball
+outside the repository and drives it against synthetic homes with fake Claude
+Code, Codex and OpenCode executables. The runs cover mixed installed, absent
+and unsupported harnesses; confirmation, idempotency and dry runs; drift-safe
+removal; upgrade then remove; lock contention; kill and restart; and
+descriptor-secret redaction. Its README lists what it proves and the known gaps
+it tracks as `todo`. CI runs it on every pull request. The release workflow
+runs it against the exact tarball the gate accepted, before publishing.
+
 `.github/workflows/release-khala-cli.yml` publishes the tarball the gate
-accepted, using npm trusted publishing: GitHub OIDC authenticates the publish
+and the setup acceptance suite accepted, using npm trusted publishing: GitHub OIDC authenticates the publish
 and signs provenance, and no long-lived npm token exists. The npm package needs
 a trusted publisher bound to that workflow file and its `npm-publish`
 environment before the first release.
@@ -530,7 +540,10 @@ operations in order with no-follow atomic replacement. The journal is advanced
 around each operation, and every postimage's hash, mode, and owner is verified.
 On success the executor publishes `manifest.v1.json`. Any failure restores the
 applied operations from backup. A rollback that cannot be proven exact becomes
-`rollback_failed`, and each later command retries it. Setup never overwrites
+`rollback_failed`. The executor retries it once it holds the lock. The CLI
+does not reach that point yet: while a journal exists, `setup`, `remove`, and
+`status --check` all return `recovery_required` (exit 4) and plan nothing
+([#385](https://github.com/aiur-team/khala/issues/385)). Setup never overwrites
 user bytes that changed while it ran.
 
 The manifest keeps each path's original pre-Khala preimage (or absence) across
