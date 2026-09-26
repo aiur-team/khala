@@ -94,6 +94,17 @@ test('sibling features and unresolved workspace imports fail', t => {
   assert(errors.some(error => error.includes('sibling feature')));
   assert(errors.some(error => error.includes('unresolved workspace')));
 });
+test('features may import the shared decision shell, which may not import features', t => {
+  assert.deepEqual(fixture(t, {
+    'apps/web/src/features/channel-access/index.ts': "import '../approval-decision/model';",
+    'apps/web/src/features/approval-decision/model.ts': 'export {};',
+  }), []);
+  const errors = fixture(t, {
+    'apps/web/src/features/approval-decision/model.ts': "import '../channel-access/index';",
+    'apps/web/src/features/channel-access/index.ts': 'export {};',
+  });
+  assert(errors.some(error => error.includes('sibling feature') && error.includes('../channel-access/index')));
+});
 test('loopback server imports only built-ins, the internal store and contracts', t => {
   assert.deepEqual(fixture(t, {
     'apps/internal/src/server/server.ts': "import http from 'node:http'; import { store } from '../store/channel-store'; import type { Room } from '../../../../packages/contracts/src/messaging/room';",

@@ -10,6 +10,7 @@ import { CliError } from '../cli/errors.js';
 import { SendService } from '../cli/send.js';
 import type { AgentClientPort, InboxDelivery } from '../cli/types.js';
 import { postprocessMcpResult, postprocessPreselectedMcpResult } from './result-postprocessor.js';
+import type { ChannelToolsPort } from './channels/tools.js';
 import type { ReadOperationPort } from './read-tool.js';
 import { runMcpServer, type McpServerOptions } from './server.js';
 
@@ -38,7 +39,7 @@ afterEach(async () => {
 });
 
 describe('MCP server', () => {
-  it('initializes, lists exactly khala_send and khala_read, pings and sends through SendService', async () => {
+  it('initializes, lists exactly the registered tools, pings and sends through SendService', async () => {
     const client = fakeClient();
     const responses = await exchange(client, [
       request(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test' } }),
@@ -49,7 +50,7 @@ describe('MCP server', () => {
 
     expect(responses[0]).toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26' } });
     expect(responses[1]).toEqual({ jsonrpc: '2.0', id: 2, result: {} });
-    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read']);
+    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_list_channels', 'khala_list_agents']);
     expect(responses[2]).toMatchObject({
       result: { tools: [ {
         name: 'khala_send',
@@ -68,6 +69,12 @@ describe('MCP server', () => {
         name: 'khala_read',
         description: expect.stringMatching(/untrusted.*exact batchToken.*releaseId/i),
         inputSchema: { additionalProperties: false, required: [] },
+      }, {
+        name: 'khala_list_channels',
+        inputSchema: { additionalProperties: false, required: [] },
+      }, {
+        name: 'khala_list_agents',
+        inputSchema: { additionalProperties: false, required: ['channel'] },
       }] },
     });
     expect(client.sent).toEqual([{ bindingId: 'binding-1', body: 'hello' }]);
@@ -206,7 +213,7 @@ describe('MCP server', () => {
       request(6, 'tools/list', { ...meta, cursor: 'next' }),
     ]);
 
-    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read']);
+    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_list_channels', 'khala_list_agents']);
     expect(responses.map(response => response.error?.code ?? 'ok')).toEqual(['ok', 'ok', 'ok', 'ok', -32602, -32602]);
     expect(client.sent).toEqual([{ bindingId: null, body: 'hello' }]);
   });
@@ -262,7 +269,7 @@ describe('MCP server', () => {
     const output = new WritableCapture();
     const abort = new AbortController();
     const running = runMcpServer({
-      input, output, send: new SendService(fakeClient()), read: emptyReadOperation(),
+      input, output, send: new SendService(fakeClient()), read: emptyReadOperation(), channels: unusedChannels(),
       postprocessResult: identityPostprocessor, postprocessReadResult: identityReadPostprocessor,
       signal: abort.signal,
     });
@@ -278,7 +285,7 @@ describe('MCP server', () => {
       input: Readable.from([oversized, `\n${JSON.stringify(request(2, 'ping', {}))}\n`]),
       output,
       send: new SendService(client),
-      read: emptyReadOperation(),
+      read: emptyReadOperation(), channels: unusedChannels(),
       postprocessResult: identityPostprocessor,
       postprocessReadResult: identityReadPostprocessor,
     });
@@ -427,7 +434,7 @@ describe('MCP server', () => {
     ].map(item => JSON.stringify(item)).join('\n') + '\n']);
 
     const running = runMcpServer({
-      input, output, send: new SendService(client), read: emptyReadOperation(), postprocessResult,
+      input, output, send: new SendService(client), read: emptyReadOperation(), channels: unusedChannels(), postprocessResult,
       postprocessReadResult: identityReadPostprocessor,
     });
     await output.waitForWrite();
@@ -459,7 +466,7 @@ describe('MCP server', () => {
     const abort = new AbortController();
     const postprocessResult = vi.fn(async postprocessInput => postprocessInput.primaryResult);
     const running = runMcpServer({
-      input, output, send: new SendService(client), read: emptyReadOperation(), signal: abort.signal,
+      input, output, send: new SendService(client), read: emptyReadOperation(), channels: unusedChannels(), signal: abort.signal,
       postprocessResult, postprocessReadResult: identityReadPostprocessor,
     });
     await output.waitForWrite();
@@ -515,6 +522,8 @@ function fakeClient(): AgentClientPort & {
     async status() {
       return { v: 1 as const, connected: false, binding: null, route: 'unknown' as const, sourceCursor: null };
     },
+    async listChannels() { return { kind: 'unavailable' as const }; },
+    async listAgents() { return { kind: 'unavailable' as const }; },
     async send(input: Parameters<AgentClientPort['send']>[0]) {
       client.sent.push({ bindingId: input.bindingId, body: input.body });
       return client.onSend(input);
@@ -556,12 +565,18 @@ async function exchangeChunksWithOptions(
     output,
     send: new SendService(client),
     read: options.read ?? emptyReadOperation(),
+    channels: unusedChannels(),
     postprocessResult: options.postprocessResult ?? identityPostprocessor,
     postprocessReadResult: options.postprocessReadResult ?? identityReadPostprocessor,
   });
   return stdout.trim().length === 0
     ? []
     : stdout.trim().split('\n').map(line => JSON.parse(line) as Response);
+}
+
+function unusedChannels(): ChannelToolsPort {
+  const unused = async () => { throw new Error('channel listing is not under test'); };
+  return { listChannels: unused, listAgents: unused };
 }
 
 function emptyReadOperation(): ReadOperationPort {

@@ -1,0 +1,166 @@
+/*
+ * Shared owner-decision dialog. Depends on ../../brand/tokens.css custom
+ * properties being in scope.
+ */
+
+.decision-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 55%);
+}
+
+.decision-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(40rem, 100%);
+  max-height: calc(100dvh - 2rem);
+  min-width: 0;
+  background: var(--khala-fill-raised);
+  color: var(--khala-ink);
+  border: 1px solid var(--khala-line);
+  border-radius: var(--khala-dialog-radius);
+}
+
+.decision-dialog:focus-visible {
+  outline: 2px solid var(--khala-accent);
+  outline-offset: 2px;
+}
+
+.decision-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 1rem 0.5rem;
+  border-bottom: 1px solid var(--khala-line);
+}
+
+.decision-dialog__kind {
+  margin: 0;
+  color: var(--khala-ink-muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.decision-dialog__question {
+  margin: 0.25rem 0 0.5rem;
+  font-family: var(--khala-font-heading);
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+/* Details scroll; the header and the actions stay put. */
+.decision-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.5rem 1rem;
+}
+
+.decision-dialog__body h3 {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 1rem;
+}
+
+.decision-dialog__facts {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.decision-dialog__fact {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.decision-dialog__fact dt {
+  font-weight: 600;
+}
+
+.decision-dialog__fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.decision-dialog__fact code {
+  font-family: var(--khala-font-mono);
+}
+
+.decision-dialog__untrusted {
+  border-left: 3px solid var(--khala-status-caution);
+  padding-left: 0.75rem;
+}
+
+.decision-dialog__untrusted dd {
+  color: var(--khala-ink-muted);
+}
+
+.decision-dialog__hint {
+  margin: 0 0 0.5rem;
+  color: var(--khala-ink-muted);
+}
+
+.decision-dialog__notices {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.decision-dialog__footer {
+  flex: 0 0 auto;
+  padding: 0.5rem 1rem 1rem;
+  border-top: 1px solid var(--khala-line);
+  background: var(--khala-fill-raised);
+}
+
+.decision-dialog__status {
+  min-height: 1.25rem;
+  margin: 0 0 0.5rem;
+}
+
+.decision-dialog__alert {
+  margin: 0 0 0.5rem;
+  color: var(--khala-status-critical);
+}
+
+.decision-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.decision-dialog button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.5rem 0.9rem;
+}
+
+.decision-dialog__approve {
+  font-weight: 600;
+}
+
+@media (max-width: 40rem) {
+  .decision-dialog__backdrop {
+    padding: 0.5rem;
+    align-items: stretch;
+  }
+
+  .decision-dialog {
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .decision-dialog__fact {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.1rem;
+  }
+
+  .decision-dialog__actions button {
+    flex: 1 1 100%;
+  }
+}

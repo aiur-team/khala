@@ -87,7 +87,10 @@ test('the tarball file list is an exact allowlist', () => {
     'tarball contains non-allowlisted file dist/khala.js.meta.json',
     'tarball contains non-allowlisted file src/cli/main.ts',
   ]);
-  assert.deepEqual(packedFileErrors(['package.json', 'README.md']), ['tarball is missing dist/khala.js']);
+  assert.deepEqual(packedFileErrors(['package.json', 'README.md']), [
+    'tarball is missing dist/khala-internal.js',
+    'tarball is missing dist/khala.js',
+  ]);
 });
 
 test('publish metadata names @aiur/khala with provenance and keeps workspace source unexported', () => {
