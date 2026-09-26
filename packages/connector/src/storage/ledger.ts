@@ -355,7 +355,8 @@ function toPendingRecord(db: DatabaseSync, row: PendingRow): PendingRecord {
   };
 }
 
-function readBindingRow(db: DatabaseSync, bindingId: string): SessionBinding | null {
+/** @internal Shared by storage adapters that authorize against the current binding. */
+export function readBindingRow(db: DatabaseSync, bindingId: string): SessionBinding | null {
   const row = db.prepare('SELECT binding FROM bindings WHERE binding_id = ?').get(bindingId) as { binding: string } | undefined;
   return row ? parseOrCorrupt(row.binding, decodeSessionBinding) : null;
 }
@@ -364,7 +365,7 @@ function readBindingRow(db: DatabaseSync, bindingId: string): SessionBinding | n
  * True when the binding, at any generation, or the device it delivers through is
  * revoked. Binding revocation is terminal for the binding ID: re-bootstrap mints a new one.
  */
-function isRevoked(db: DatabaseSync, bindingId: string, deviceId: string): boolean {
+export function isRevoked(db: DatabaseSync, bindingId: string, deviceId: string): boolean {
   return db.prepare(`SELECT 1 FROM revocations WHERE (target_kind = 'binding' AND target_id = ?)
     OR (target_kind = 'device' AND target_id = ?) LIMIT 1`).get(bindingId, deviceId) !== undefined;
 }

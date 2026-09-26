@@ -73,6 +73,7 @@ describe('durable harness route selection', () => {
 
     const db = new DatabaseSync(path.join(state, LEDGER_FILE));
     db.exec(`
+      DROP TABLE receipt_outbox;
       DROP TABLE harness_route_selections;
       PRAGMA user_version = 2;
     `);
