@@ -10,6 +10,7 @@ import { type EventRef, decodeEventRef, decodeTimelineItem } from './events';
 import {
   type ImportedHistoryChunk, type ImportedHistoryLimits, type ImportedHistoryManifest, type ImportedHistoryRecord,
   type ImportedHistoryRecordInput, type SealedImportedHistory, decodeImportedHistoryChunk, decodeImportedHistoryLimits,
+  digestImportedHistoryManifest, encodeImportedHistoryManifest,
   decodeImportedHistoryManifest, encodeImportedHistoryChunk, encodeImportedRecord, openImportedHistory, sealImportedHistory,
 } from './imported-history';
 
@@ -82,6 +83,22 @@ describe('deterministic encoding', () => {
     expect(chunk!.records[0]!.recordDigest).toBe(vectors.encoding.recordDigest);
     expect(chunk!.chunkDigest).toBe(sha256(Buffer.from(vectors.encoding.chunkUtf8, 'utf8')));
     expect(chunk!.chunkDigest).toBe(vectors.encoding.chunkDigest);
+  });
+
+  it('digests the manifest over its canonical encoding, and any listed change moves the digest', async () => {
+    const sealed = await seal([fixtureRecord]);
+    const digest = await digestImportedHistoryManifest(sealed.manifest);
+    expect(digest).toEqual({ ok: true, value: sha256(encodeImportedHistoryManifest(sealed.manifest)) });
+    expect(Buffer.from(encodeImportedHistoryManifest(sealed.manifest)).toString('utf8')).toBe(JSON.stringify([
+      'khala.imported-history.manifest.v1', 'archive-1', 'internal-channel-1', 'rev-7', 'owner-1', '@ada:example.org',
+      '2026-09-25T13:00:00Z', 1, [[0, 1, 1, 1, vectors.encoding.chunkDigest]],
+    ]));
+    const changed = [
+      { ...sealed.manifest, source: { ...sealed.manifest.source, revision: 'rev-8' } },
+      { ...sealed.manifest, importedBy: { ...sealed.manifest.importedBy, participantId: '@eve:example.org' } },
+      { ...sealed.manifest, chunks: [{ ...sealed.manifest.chunks[0]!, chunkDigest: vectors.encoding.recordDigest }] },
+    ] as ImportedHistoryManifest[];
+    for (const manifest of changed) expect(await digestImportedHistoryManifest(manifest)).not.toEqual(digest);
   });
 
   it('seals the same input to the same bytes every time', async () => {

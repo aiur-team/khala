@@ -127,7 +127,10 @@ external channel's end-to-end encryption; this contract adds no cryptography of 
   kind, sentAt, body]`. It binds a body to one source channel, record, position and
   attribution, so a body carried with another record's digest is rejected.
   `chunkDigest` is SHA-256 over `encodeImportedHistoryChunk`, which is also the size
-  that `maxChunkBytes` bounds. String escaping follows `encodeMessageContent`.
+  that `maxChunkBytes` bounds. `digestImportedHistoryManifest` hashes the manifest's
+  positional encoding, including every chunk digest, so one digest names one exact
+  archive, for example `HistoryTransferProgress.manifestDigest`. String escaping follows
+  `encodeMessageContent`.
 - **Verification.** `decodeImportedHistoryChunk` recomputes every record digest and the
   chunk digest against the manifest's entry. `openImportedHistory` also requires every
   listed chunk, in manifest order, with no source record repeated. A reordered, dropped,

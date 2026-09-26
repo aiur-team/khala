@@ -115,6 +115,7 @@ export {
   type ImportedHistoryActor, type ImportedHistoryChunk, type ImportedHistoryChunkEntry, type ImportedHistoryLimits,
   type ImportedHistoryManifest, type ImportedHistoryRecord, type ImportedHistoryRecordInput, type ImportedHistorySource,
   type ImportedOriginalAuthor, type SealImportedHistoryInput, type SealedImportedHistory, type VerifiedImportedHistory,
-  IMPORTED_CHUNK_ENCODING_V1, IMPORTED_RECORD_ENCODING_V1, decodeImportedHistoryChunk, decodeImportedHistoryLimits,
+  IMPORTED_CHUNK_ENCODING_V1, IMPORTED_MANIFEST_ENCODING_V1, IMPORTED_RECORD_ENCODING_V1, decodeImportedHistoryChunk,
+  decodeImportedHistoryLimits, digestImportedHistoryManifest, encodeImportedHistoryManifest,
   decodeImportedHistoryManifest, encodeImportedHistoryChunk, encodeImportedRecord, openImportedHistory, sealImportedHistory,
 } from './imported-history';

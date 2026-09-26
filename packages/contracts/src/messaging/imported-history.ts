@@ -14,6 +14,8 @@ import { type OwnerId, type ParticipantId, readId } from './ids';
 export const IMPORTED_RECORD_ENCODING_V1 = 'khala.imported-history.record.v1';
 /** Domain separator of the version 1 chunk encoding. */
 export const IMPORTED_CHUNK_ENCODING_V1 = 'khala.imported-history.chunk.v1';
+/** Domain separator of the version 1 manifest digest encoding. */
+export const IMPORTED_MANIFEST_ENCODING_V1 = 'khala.imported-history.manifest.v1';
 
 /**
  * Bounds of one archive. `maxChunkBytes` bounds `encodeImportedHistoryChunk`; the
@@ -140,6 +142,24 @@ function chunkRecordTuple(record: ImportedHistoryRecord): unknown[] {
  */
 export function encodeImportedHistoryChunk(chunk: Pick<ImportedHistoryChunk, 'archiveId' | 'index' | 'records'>): Uint8Array {
   return encoder.encode(JSON.stringify([IMPORTED_CHUNK_ENCODING_V1, chunk.archiveId, chunk.index, chunk.records.map(chunkRecordTuple)]));
+}
+
+/**
+ * Manifest encoding: UTF-8 of `["khala.imported-history.manifest.v1",archiveId,channelId,revision,ownerId,
+ * participantId,importedAt,recordCount,[[index,recordCount,firstSequence,lastSequence,chunkDigest],...]]`.
+ * Its digest names one exact archive, for example as a transfer's `manifestDigest`.
+ */
+export function encodeImportedHistoryManifest(manifest: ImportedHistoryManifest): Uint8Array {
+  return encoder.encode(JSON.stringify([
+    IMPORTED_MANIFEST_ENCODING_V1, manifest.archiveId, manifest.source.channelId, manifest.source.revision,
+    manifest.importedBy.ownerId, manifest.importedBy.participantId, manifest.importedAt, manifest.recordCount,
+    manifest.chunks.map(entry => [entry.index, entry.recordCount, entry.firstSequence, entry.lastSequence, entry.chunkDigest]),
+  ]));
+}
+
+/** `sha256:<hex>` over `encodeImportedHistoryManifest`. Only `digest_unavailable` can fail it. */
+export async function digestImportedHistoryManifest(manifest: ImportedHistoryManifest): Promise<Decoded<string>> {
+  return decodeAsync(() => sha256(encodeImportedHistoryManifest(manifest)));
 }
 
 class DigestUnavailable extends Error {}
