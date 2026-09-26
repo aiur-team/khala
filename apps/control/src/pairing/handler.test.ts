@@ -60,7 +60,7 @@ function stubStore(overrides: Partial<PairingStore> = {}): PairingStore {
     decide: async () => ({ kind: 'not_found' }),
     result: async () => ({ kind: 'result', value: { v: 1, state: 'pending' } }),
     claimProofReplay: async () => ({ kind: 'claimed' }),
-    grantPort: { redeem: async () => ({ kind: 'invalid_grant' }) },
+    grantPort: { redeem: async () => ({ kind: 'invalid_grant' }), markIssued: async () => 'replayed' },
     ...overrides,
   };
 }

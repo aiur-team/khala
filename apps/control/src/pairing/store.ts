@@ -66,11 +66,23 @@ export type PairingBootstrapAuthorization = Readonly<{
 }>;
 
 export interface PairingGrantPort {
-  redeem(input: Readonly<{ grant: string; operationId: string; jkt: string }>): Promise<
+  redeem(input: Readonly<{
+    grant: string;
+    operationId: string;
+    /** The presenter's proven key. */
+    jkt: string;
+    /** The session and device the presenter names; they must equal the approved claim. */
+    session: Readonly<{ harness: string; sessionId: string; generation: number }>;
+    deviceId: string;
+  }>): Promise<
     | Readonly<{ kind: 'redeemed'; authorization: PairingBootstrapAuthorization }>
+    /** The grant was already spent to a capability, or its window closed before that operation finished. */
+    | Readonly<{ kind: 'replayed' }>
     | Readonly<{ kind: 'invalid_grant' }>
     | Readonly<{ kind: 'unavailable' }>
   >;
+  /** Durably records that the spending operation is about to mint its capability; a retry is then refused. */
+  markIssued(input: Readonly<{ grant: string; operationId: string }>): Promise<'applied' | 'replayed' | 'unavailable'>;
 }
 
 export interface PairingStore {
@@ -162,7 +174,7 @@ type GrantRecord = Readonly<{
   resultOperationId: string;
   state: 'unspent' | 'spent' | 'expired';
   binding: GrantBinding;
-  redemption: Readonly<{ operationId: string; authorization: PairingBootstrapAuthorization }> | null;
+  redemption: Readonly<{ operationId: string; authorization: PairingBootstrapAuthorization; issued: boolean }> | null;
 }>;
 
 type DomainRecord<T> = Readonly<{ envelope: ControlRecord; value: T }>;
@@ -590,11 +602,16 @@ export function createPairingStore(deps: Readonly<{
         if (located === 'absent') continue;
         let current = located;
         for (;;) {
-          if (current.value.keyId !== candidate.keyId || current.value.binding.jkt !== input.jkt) return { kind: 'invalid_grant' };
+          const bound = current.value.binding;
+          // Checked before any spend: a wrong key, session or device must not burn the grant.
+          if (current.value.keyId !== candidate.keyId || bound.jkt !== input.jkt
+            || bound.harness !== input.session.harness || bound.sessionId !== input.session.sessionId
+            || bound.generation !== input.session.generation || bound.deviceId !== input.deviceId) return { kind: 'invalid_grant' };
           if (current.value.state === 'spent') {
-            return current.value.redemption?.operationId === input.operationId
-              ? { kind: 'redeemed', authorization: current.value.redemption.authorization }
-              : { kind: 'invalid_grant' };
+            if (current.value.redemption?.operationId !== input.operationId) return { kind: 'invalid_grant' };
+            // A retry resumes only until the capability is issued and only inside the grant's lifetime.
+            if (current.value.redemption.issued || clock() >= Date.parse(bound.expiresAt)) return { kind: 'replayed' };
+            return { kind: 'redeemed', authorization: current.value.redemption.authorization };
           }
           if (current.value.state === 'expired') return { kind: 'invalid_grant' };
           // Grant expiry is sampled immediately before its spend CAS.
@@ -605,7 +622,7 @@ export function createPairingStore(deps: Readonly<{
           const next: GrantRecord = {
             ...current.value,
             state: 'spent',
-            redemption: { operationId: input.operationId, authorization: current.value.binding },
+            redemption: { operationId: input.operationId, authorization: current.value.binding, issued: false },
           };
           const spent = await write({
             key: grantKey(candidate.digest),
@@ -623,6 +640,38 @@ export function createPairingStore(deps: Readonly<{
         }
       }
       return { kind: 'invalid_grant' };
+    },
+    async markIssued(input) {
+      let candidates;
+      try {
+        candidates = policy.digestGrantCandidates(input.grant);
+      } catch {
+        return 'replayed';
+      }
+      for (const candidate of candidates) {
+        const located = await readGrant(candidate.digest);
+        if (located === 'unavailable') return 'unavailable';
+        if (located === 'absent') continue;
+        let current = located;
+        for (;;) {
+          const held = current.value.redemption;
+          if (current.value.state !== 'spent' || held === null || held.operationId !== input.operationId
+            || held.issued || clock() >= Date.parse(current.value.binding.expiresAt)) return 'replayed';
+          const settled = await write({
+            key: grantKey(candidate.digest),
+            expectedRevision: current.envelope.revision,
+            operationId: operation('grant-issued', candidate.digest, input.operationId),
+            next: permanent({ ...current.value, redemption: { ...held, issued: true } }),
+          });
+          if (settled.kind === 'applied') return 'applied';
+          if (settled.kind === 'unavailable' || settled.kind === 'operation_mismatch') return 'unavailable';
+          const reread = await readGrant(candidate.digest);
+          if (reread === 'unavailable') return 'unavailable';
+          if (reread === 'absent') return 'replayed';
+          current = reread;
+        }
+      }
+      return 'replayed';
     },
   };
 
@@ -790,7 +839,7 @@ function decodeGrant(input: JsonValue): GrantRecord | null {
     || Date.parse(binding.expiresAt) - Date.parse(binding.approvedAt) !== PAIRING_GRANT_LIFETIME_MS) return null;
   let redemption: GrantRecord['redemption'] = null;
   if (input.redemption !== null) {
-    if (!object(input.redemption) || !exactKeys(input.redemption, ['operationId', 'authorization'])
+    if (!object(input.redemption) || !exactKeys(input.redemption, ['operationId', 'authorization', 'issued']) || typeof input.redemption.issued !== 'boolean'
       || !text(input.redemption.operationId) || !decodeBinding(input.redemption.authorization)) return null;
     redemption = input.redemption as unknown as NonNullable<GrantRecord['redemption']>;
     if (!sameAuthorization(redemption.authorization, binding)) return null;
