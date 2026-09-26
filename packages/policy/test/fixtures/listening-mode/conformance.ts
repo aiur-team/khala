@@ -1,4 +1,4 @@
-import type { BindingId, ListeningModeControl } from '@khala/contracts/delivery/index';
+import type { BindingId, ListeningModeActor, ListeningModeControl, ParticipantId } from '@khala/contracts/delivery/index';
 import { describe, expect, it } from 'vitest';
 import type {
   ListeningModeStore,
@@ -11,6 +11,8 @@ export type ListeningModeStoreFixture = Readonly<{
   key: ListeningModeStoreKey;
   initial: ListeningModeControl;
 }>;
+
+const actor: ListeningModeActor = { kind: 'agent', participantId: 'conformance-agent' as ParticipantId };
 
 const write = (
   fixture: ListeningModeStoreFixture,
@@ -26,6 +28,7 @@ const write = (
     requested,
     experimentalGrants: fixture.initial.experimentalGrants,
     hardCancelGrants: fixture.initial.hardCancelGrants,
+    lastChangedBy: actor,
   },
 });
 
@@ -74,6 +77,27 @@ export function listeningModeStoreConformance(
       await expect(fixture.store.compareAndSet(firstWrite)).resolves.toEqual(first);
       await expect(fixture.store.compareAndSet({ ...firstWrite, operationFingerprint: 'changed' }))
         .resolves.toEqual({ kind: 'idempotency_conflict' });
+    });
+
+    it('records the actor of the applied write and keeps it across a conflict', async () => {
+      const fixture = createFixture();
+      const applied = await fixture.store.compareAndSet(write(fixture, 'actor-operation', 'steer'));
+      expect(applied).toMatchObject({ kind: 'applied', control: { lastChangedBy: actor } });
+      await expect(fixture.store.read(fixture.key)).resolves.toMatchObject({
+        kind: 'record',
+        control: { lastChangedBy: actor },
+      });
+
+      const owner: ListeningModeActor = { kind: 'owner', participantId: 'conformance-owner' as ParticipantId };
+      const stale = await fixture.store.compareAndSet({
+        ...write(fixture, 'stale-actor-operation', 'async', fixture.initial.version),
+        next: { ...write(fixture, 'unused', 'async').next, lastChangedBy: owner },
+      });
+      expect(stale).toMatchObject({ kind: 'conflict', current: { lastChangedBy: actor } });
+      await expect(fixture.store.read(fixture.key)).resolves.toMatchObject({
+        kind: 'record',
+        control: { lastChangedBy: actor },
+      });
     });
 
     it('returns the current record on a stale version conflict', async () => {

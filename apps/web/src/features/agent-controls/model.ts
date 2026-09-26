@@ -375,14 +375,16 @@ function inactiveReasonFor(snapshot: AgentControlsSnapshot, viewerOwnerId: Owner
 }
 
 function lastChangeLabelFor(listening: ListeningModeSnapshot, isViewerOwned: boolean, sessionLabel: string): string {
-  const change = listening.lastChange;
-  if (change === null || change.version !== listening.view.version) {
-    return `Last change: not recorded for v${listening.view.version}`;
-  }
-  const actor = change.actor === 'agent'
+  const version = listening.view.version;
+  const recorded = listening.view.lastChangedBy;
+  const actor = recorded.kind !== 'unknown'
+    ? recorded.kind
+    : listening.lastChange?.version === version ? listening.lastChange.actor : null;
+  if (actor === null) return `Last change: not recorded for v${version}`;
+  const who = actor === 'agent'
     ? `the agent (${sessionLabel})`
     : isViewerOwned ? 'you (owner)' : 'the owner';
-  return `Last changed by ${actor} (v${change.version})`;
+  return `Last changed by ${who} (v${version})`;
 }
 
 function secondaryEvidenceFor(capabilities: HarnessCapabilities | null): string | null {
