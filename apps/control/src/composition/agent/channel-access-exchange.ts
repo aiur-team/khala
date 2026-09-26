@@ -9,7 +9,7 @@ import type {
 } from '@khala/contracts/messaging/index';
 import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-access/exchange/ports';
 import { createGrantExchangeService } from '@khala/messaging/channel-access/exchange/service';
-import { createGrantExchangeAuthority } from '../../channel-access/exchange/authority';
+import { type GrantExchangeAuthority, createGrantExchangeAuthority } from '../../channel-access/exchange/authority';
 import { createExchangeGrantIssuer } from '../../channel-access/exchange/grants';
 import {
   type GrantExchangeHandlerDependencies,
@@ -26,10 +26,13 @@ export function composeChannelAccessExchange(deps: Readonly<{
   provider: ChannelAdmissionProviderPort;
   authenticateConnector: GrantExchangeHandlerDependencies['authenticateConnector'];
   clock: TrustedClock;
+  /** Wraps the access authority; `composeChannelCreate` supplies one for created channels. */
+  authority?: (access: GrantExchangeAuthority) => GrantExchangeAuthority;
 }>): readonly RouteRegistration[] {
+  const access = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: deps.clock });
   const service = createGrantExchangeService({
     store: deps.store,
-    authority: createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: deps.clock }),
+    authority: deps.authority ? deps.authority(access) : access,
     provider: deps.provider,
     issuer: createExchangeGrantIssuer({ store: deps.store, clock: deps.clock }),
     clock: deps.clock,
