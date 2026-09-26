@@ -277,18 +277,24 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       consumer: {
         // `ReadOperation` refuses a replaced generation before this runs, and again after.
         async readBatch(input) {
-          // What the server released for this generation becomes durable in its inbox first.
-          // An unreachable feed still leaves the inbox readable, and its outstanding batch replays.
-          await delivery.pull(held, open);
+          // What the server released for this generation becomes durable in its inbox first, except
+          // for a zero-byte read, which only acknowledges. An unreachable feed still leaves the inbox
+          // readable, and its outstanding batch replays.
+          if (input.maxBytes > 0) await delivery.pull(held, open);
           return callScopedConsumer(await open()).readBatch(input);
         },
         async release() {},
       },
       currentBinding: current,
     });
-    /** A token carried by a send or mode change acknowledges its batch before the call runs. */
+    /**
+     * A token carried by a send or mode change acknowledges its batch before the call runs. The
+     * inbox never stands in the way of the call itself: an acknowledgement that fails leaves the
+     * batch outstanding, and it replays until a later Khala call acknowledges it.
+     */
     const acknowledge = async (token: string | undefined): Promise<void> => {
-      if (token !== undefined) await read.read({ bindingId: binding.bindingId, maxBytes: 0, acknowledgeToken: token });
+      if (token === undefined) return;
+      await read.read({ bindingId: binding.bindingId, maxBytes: 0, acknowledgeToken: token }).catch(() => undefined);
     };
     return {
       read,
