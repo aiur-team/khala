@@ -786,21 +786,27 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           }
           const maximum = (db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM events WHERE channel_id = ?')
             .get(input.channelId) as { value: number }).value;
+          // An admitted binding's feed starts after the channel head at its activation, so it
+          // never receives what was said before it was admitted, whatever cursor it presents.
+          const start = (db.prepare(`
+            SELECT start_sequence FROM discovery_activations WHERE binding_id = ? AND generation = ? AND channel_id = ?
+          `).get(row.binding_id, row.generation, input.channelId) as { start_sequence: number } | undefined)?.start_sequence ?? 0;
           const cursor = input.cursor === null
-            ? { channelId: input.channelId, bindingId: row.binding_id, generation: row.generation, lastCoveredSequence: 0 }
+            ? { channelId: input.channelId, bindingId: row.binding_id, generation: row.generation, lastCoveredSequence: start }
             : decodeSubscriptionCursor(input.cursor);
           if (!cursor || cursor.channelId !== input.channelId || cursor.bindingId !== row.binding_id
             || cursor.generation !== row.generation || cursor.lastCoveredSequence > maximum) {
             return { kind: 'rejected', code: 'invalid_cursor' } as const;
           }
+          const after = Math.max(cursor.lastCoveredSequence, start);
           const rows = db.prepare(`
             SELECT * FROM events WHERE channel_id = ? AND sequence > ? ORDER BY sequence LIMIT ?
-          `).all(input.channelId, cursor.lastCoveredSequence, input.limit + 1) as unknown as EventRow[];
+          `).all(input.channelId, after, input.limit + 1) as unknown as EventRow[];
           const covered = rows.slice(0, input.limit);
           const eligible = covered.filter(event => event.author_participant_id !== row.participant_id);
           const events = storedEvents(db, eligible);
           if (!events) return { kind: 'unavailable' } as const;
-          const lastCoveredSequence = covered.at(-1)?.sequence ?? cursor.lastCoveredSequence;
+          const lastCoveredSequence = covered.at(-1)?.sequence ?? after;
           return {
             kind: 'page',
             events,
