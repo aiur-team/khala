@@ -113,7 +113,8 @@ export function initialListeningModeControl(
   return {
     bindingId: binding.bindingId,
     generation: binding.generation,
-    requested: initialListeningMode(modesOf(capabilities)).requested,
+    // Unavailable capabilities are not evidence that the harness has no mode, so keep the shared default.
+    requested: capabilities === null ? 'sync' : initialListeningMode(capabilities.modes).requested,
     version: 1,
     experimentalGrants: [],
     hardCancelGrants: [],
@@ -130,11 +131,13 @@ export function listeningModeView(
     return { ...control, effective: null, effectiveReason: 'capabilities_unavailable', support };
   }
 
-  const selected = support[control.requested];
+  const requested = control.requested;
+  if (requested === null) return { ...control, effective: null, effectiveReason: 'no_requested_mode', support };
+  const selected = support[requested];
   if (selected.status !== 'proven' && selected.status !== 'experimental') {
     return { ...control, effective: null, effectiveReason: `support_${selected.status}`, support };
   }
-  if (control.requested === 'async' && capabilities.acknowledgement !== 'batch_token_next_call') {
+  if (requested === 'async' && capabilities.acknowledgement !== 'batch_token_next_call') {
     return { ...control, effective: null, effectiveReason: 'acknowledgement_unavailable', support };
   }
   if (selected.status === 'experimental') {
@@ -142,13 +145,13 @@ export function listeningModeView(
       bindingId: control.bindingId,
       generation: control.generation,
       grantRevision: grant.grantRevision,
-      mode: control.requested,
+      mode: requested,
       expectedKind: 'experimental_route',
       support: selected,
     }));
     if (!granted) return { ...control, effective: null, effectiveReason: 'experimental_grant_required', support };
   }
-  return { ...control, effective: control.requested, effectiveReason: null, support };
+  return { ...control, effective: requested, effectiveReason: null, support };
 }
 
 function isAgentAuthority(authority: ListeningModeAuthority): authority is AgentBindingAuthority {
