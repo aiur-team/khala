@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverRoutes } from '../../../apps/control/src/runtime/discover';
 import { DISCOVERY_ROUTES } from '../../../apps/internal/src/server/discovery';
+import { STOP_ROUTE } from '../../../apps/internal/src/server/stop/route';
 import { CLI_COMMANDS } from '../../../packages/agent-cli/src/cli/registry';
 import { CODEX_APP_HOOK_EVENTS } from '../../../packages/agent-cli/src/codex-app/hook';
 import { CODEX_HOOK_EVENTS } from '../../../packages/agent-cli/src/codex/hook';
@@ -128,6 +129,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:GET /api/v1/agent/binding': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/releases': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/receipts': probe('internal-http'),
+  'http-internal:POST /api/v1/channels/:channelId/stop': probe('internal-http'),
   'http-internal:GET /channels/:channelId': probe('internal-http'),
   'http-internal:GET /channels/:channelId/settings': probe('internal-http'),
   'http-internal:GET /channel-requests': probe('internal-http'),
@@ -173,11 +175,27 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
 export const DECLARED_UNREGISTERED_TOOLS: Readonly<Record<string, string>> = {};
 
 /**
- * The internal server's route table is module-private, so its entries are read from
- * the source. A route registered outside `ROUTES` would not be seen here.
+ * Route registrations in the internal server that `internalServerRoutes` accounts for
+ * outside the `ROUTES` table. Any other `routes.push(...)` fails discovery, so a route
+ * mounted from a new module cannot escape the audit.
  */
-export function internalServerRoutes(): string[] {
-  const source = fs.readFileSync(path.join(REPO_ROOT, 'apps/internal/src/server/channel-server.ts'), 'utf8');
+const KNOWN_ROUTE_PUSHES: ReadonlySet<string> = new Set([
+  'STOP_ROUTE',
+  // Discovery routes are enumerated from `DISCOVERY_ROUTES`.
+  '...discovery.routes',
+  // App-shell documents are `ROUTES` entries.
+  '...APP_DOCUMENT_ROUTES',
+  // Static assets from a built manifest: public files, no channel state.
+  "{ method: 'GET', path: route, template: 'asset', admission: 'public' }",
+]);
+
+/**
+ * The internal server's route table is module-private, so its entries are read from
+ * the source. Routes pushed from elsewhere must be listed in `KNOWN_ROUTE_PUSHES`.
+ */
+export function internalServerRoutes(
+  source = fs.readFileSync(path.join(REPO_ROOT, 'apps/internal/src/server/channel-server.ts'), 'utf8'),
+): string[] {
   const table = /const ROUTES = \{([\s\S]*?)\n\} as const/.exec(source)?.[1];
   if (table === undefined) throw new Error('internal server route table not found; update the inventory scan');
   const constants: Record<string, string> = {};
@@ -186,7 +204,13 @@ export function internalServerRoutes(): string[] {
     const text = fs.readFileSync(path.join(REPO_ROOT, 'apps/internal/src/server', file), 'utf8');
     for (const match of text.matchAll(/export const ([A-Z_]+_ROUTE) = '([^']+)'/g)) constants[match[1]!] = match[2]!;
   }
-  const routes: string[] = [];
+  for (const match of source.matchAll(/routes\.push\(([\s\S]*?)\);/g)) {
+    const pushed = match[1]!.trim();
+    if (!pushed.startsWith('ROUTES.') && !KNOWN_ROUTE_PUSHES.has(pushed)) {
+      throw new Error(`internal server registers an unaccounted route: routes.push(${pushed}); update the inventory scan`);
+    }
+  }
+  const routes: string[] = [`${STOP_ROUTE.method} ${STOP_ROUTE.path}`];
   for (const match of table.matchAll(/method: '(GET|POST)', path: ('([^']+)'|[A-Z_]+)/g)) {
     const routePath = match[3] ?? constants[match[2]!];
     if (routePath === undefined) throw new Error(`internal server route constant ${match[2]} not found`);

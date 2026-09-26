@@ -141,6 +141,15 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
       add(s, `GET receipts ${id}`, receipts);
     }
   },
+  'http-internal:POST /api/v1/channels/:channelId/stop': async s => {
+    // Human-only Stop: the agent binding cannot revoke bindings in either channel, and its own read still works.
+    for (const id of [channelId, otherChannelId]) {
+      const stopped = await s.world.http('POST', channelRoute(id, '/stop'), { body: { v: 1, targets: null } });
+      expect(stopped.status).toBe(403);
+      add(s, `POST stop ${id}`, stopped);
+    }
+    expect((await s.world.http('GET', channelRoute(channelId, '/timeline'))).status).toBe(200);
+  },
   'http-internal:GET /channels/:channelId': async s => {
     for (const id of [channelId, otherChannelId]) add(s, `GET page ${id}`, await s.world.http('GET', `/channels/${id}`, { bearer: null }));
   },

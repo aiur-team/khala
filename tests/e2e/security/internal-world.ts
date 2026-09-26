@@ -11,6 +11,7 @@ import { PassThrough } from 'node:stream';
 import type { EventId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
 import { createSqliteListeningModeRepository } from '../../../apps/internal/src/listening-mode-store/sqlite';
+import { composeBindingControl } from '../../../apps/internal/src/composition/binding-control/index';
 import { createInternalReleaseFeed } from '../../../apps/internal/src/composition/internal-delivery/release-feed';
 import { startChannelServer } from '../../../apps/internal/src/server/channel-server';
 import { createReceiptReadModel } from '../../../apps/internal/src/store/receipts';
@@ -78,6 +79,8 @@ export async function startInternalWorld(): Promise<InternalWorld> {
     clock: () => NOW,
     log: event => logs.push(event),
     receipts: createReceiptReadModel(fixture.handle),
+    // Composed as the launcher composes it, so the human-only Stop route is mounted and probed.
+    stop: composeBindingControl({ handle: fixture.handle, root: path.join(root, 'state') }),
     startPort: 0,
   });
   fs.writeFileSync(descriptorPath, encodeInternalDescriptor({

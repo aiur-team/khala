@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { createSurfaceCapture, findLeaks, leakForms, listFiles, mintCanary, scanTree } from './fixtures';
 import {
   DECLARED_UNREGISTERED_TOOLS, PROBES, REPO_ROOT, SURFACE_INVENTORY, auditInventory, discoverSurfaces,
-  harnessDependencies, surfacesFor,
+  harnessDependencies, internalServerRoutes, surfacesFor,
 } from './inventory';
 
 describe('surface inventory', () => {
@@ -26,6 +26,14 @@ describe('surface inventory', () => {
     const { ids } = await discoverSurfaces();
     const audit = auditInventory(ids.filter(id => id !== 'mcp-tool:khala_read'), SURFACE_INVENTORY);
     expect(audit.stale).toEqual(['mcp-tool:khala_read']);
+  });
+
+  it('fails discovery when the internal server mounts a route from outside its known sources', () => {
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'apps/internal/src/server/channel-server.ts'), 'utf8');
+    expect(internalServerRoutes(source)).toContain('POST /api/v1/channels/:channelId/stop');
+    const extended = source.replace('if (options.stop) routes.push(STOP_ROUTE);', '$&\n  routes.push(HISTORY_ROUTE);');
+    expect(extended).not.toBe(source);
+    expect(() => internalServerRoutes(extended)).toThrow(/unaccounted route: routes\.push\(HISTORY_ROUTE\)/);
   });
 
   it('gives every probe at least one surface and every uncovered surface a reason', () => {
