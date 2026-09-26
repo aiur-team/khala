@@ -76,12 +76,29 @@ export interface BatchInbox extends Inbox {
   notifyListener(): Promise<ListenerNotification>;
 }
 
+/**
+ * A content-free acknowledgement of one outstanding batch: the held binding and the
+ * release IDs of that batch's committed prefix, in order. It never carries the token.
+ */
+export type BatchAcknowledgement = Readonly<{
+  bindingId: BindingId;
+  generation: number;
+  releaseIds: readonly string[];
+}>;
+
+/**
+ * Consumer hook for the batch-token acknowledgement. It must durably record the
+ * acknowledgement, or throw; the cursor advances only after it resolves.
+ */
+export type BatchAcknowledgementRecorder = (acknowledgement: BatchAcknowledgement) => Promise<void>;
+
 export type OpenInboxOptions = Readonly<{
   stateDirectory: string;
   bindingId: string;
   generation: number;
   maxPayloadBytes: number;
   maxSelectionEvents: number;
+  recordAcknowledgement?: BatchAcknowledgementRecorder;
 }>;
 
 type ValidatedOptions = Omit<OpenInboxOptions, 'bindingId'> & Readonly<{ bindingId: BindingId }>;
@@ -269,6 +286,10 @@ class FileInbox implements BatchInbox {
         }
       }
       if (outstanding !== null && input.acknowledgeToken === outstanding.state.token) {
+        // The receipt commits before the cursor moves. If recording fails the cursor
+        // stays put and the same batch replays; a replayed acknowledgement returns the
+        // receipts already recorded, so a crash between the two stores loses nothing.
+        await this.#recordAcknowledgement(outstanding.batch);
         await writeCursorAtomic(this.#cursorPath, this.#bindingDirectory, {
           v: 1, offset: outstanding.state.endOffset, releaseId: outstanding.state.releaseId,
         });
@@ -309,6 +330,21 @@ class FileInbox implements BatchInbox {
     });
   }
 
+  async #recordAcknowledgement(batch: InboxBatch): Promise<void> {
+    const record = this.#options.recordAcknowledgement;
+    if (record === undefined) return;
+    try {
+      await record({
+        bindingId: this.#options.bindingId,
+        generation: this.#options.generation,
+        releaseIds: batch.items.map(item => item.record.releaseId),
+      });
+    } catch (error) {
+      if (error instanceof CliError) throw error;
+      throw new CliError('storage_failed');
+    }
+  }
+
   async acknowledge(item: InboxItem): Promise<void> {
     await this.#serial(async () => {
       if (await readBatchState(this.#batchPath, this.#inboxPath, this.#options) !== null) throw new CliError('invalid_input');
@@ -344,7 +380,10 @@ function validateOptions(options: OpenInboxOptions): ValidatedOptions {
     || !Number.isSafeInteger(options.maxPayloadBytes) || options.maxPayloadBytes < 1
     || options.maxPayloadBytes > 64 * 1024 * 1024
     || !Number.isSafeInteger(options.maxSelectionEvents) || options.maxSelectionEvents < 1
-    || options.maxSelectionEvents > 10_000) throw new CliError('invalid_input');
+    || options.maxSelectionEvents > 10_000
+    || !(options.recordAcknowledgement === undefined || typeof options.recordAcknowledgement === 'function')) {
+    throw new CliError('invalid_input');
+  }
   return { ...options, bindingId: options.bindingId as BindingId };
 }
 
