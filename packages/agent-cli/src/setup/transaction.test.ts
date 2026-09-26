@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sha256 } from './filesystem.js';
+import { currentBootId, processStartTime } from './lock-identity.js';
 import { parseManifest, type SetupManifest } from './manifest.js';
 import {
   executeSetupPlan, inspectSetupRecovery, setupStatePaths, type ExecutablePlan, type ExecuteOptions, type ExecutionOutcome,
@@ -368,6 +369,25 @@ describe('setup transaction', () => {
     await seedConfig();
     expectKind(await run(setupV1()), 'committed');
     await expectNoTransactionLeftovers();
+  });
+
+  const reusedPid: Array<[string, (identity: { pid: number | undefined; bootId: string | null; startTime: string | null }) => object, 'committed' | 'busy']> = [
+    ['a different boot id', identity => ({ ...identity, bootId: 'some-previous-boot' }), 'committed'],
+    ['a different process start time', identity => ({ ...identity, startTime: 'not-the-start-time' }), 'committed'],
+    ['a matching identity is a live holder', identity => identity, 'busy'],
+  ];
+  it.each(reusedPid)('lock held by a live pid with %s', async (_name, record, expected) => {
+    await fsp.mkdir(state.stateDirectory, { recursive: true });
+    const holder = spawn('sleep', ['30']);
+    try {
+      const identity = { pid: holder.pid, bootId: currentBootId(), startTime: processStartTime(holder.pid!) };
+      await fsp.writeFile(state.lock, JSON.stringify(record(identity)));
+      await seedConfig();
+      expectKind(await run(setupV1()), expected);
+      if (expected === 'committed') await expectNoTransactionLeftovers();
+    } finally {
+      holder.kill('SIGKILL');
+    }
   });
 
   it('lets exactly one of two competing transactions mutate', async () => {
