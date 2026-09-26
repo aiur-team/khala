@@ -505,10 +505,13 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
             binding.bindingId, binding.generation, binding.ownerId, binding.agentParticipantId,
             binding.deviceId, binding.harness, binding.sessionId,
           );
+          // Admission shares no history: the feed starts after the channel's head right now.
+          const head = (db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM events WHERE channel_id = ?')
+            .get(input.channelId) as { value: number }).value;
           db.prepare(`
-            INSERT INTO discovery_activations (operation_key, binding_id, generation, channel_id, session_generation)
-            VALUES (?, ?, ?, ?, ?)
-          `).run(input.operationKey, binding.bindingId, binding.generation, input.channelId, input.sessionGeneration);
+            INSERT INTO discovery_activations (operation_key, binding_id, generation, channel_id, session_generation, start_sequence)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(input.operationKey, binding.bindingId, binding.generation, input.channelId, input.sessionGeneration, head);
           return {
             kind: 'activated',
             activation: activationFromRow(db.prepare(ACTIVATION_SELECT).get(input.operationKey) as ActivationRow),
