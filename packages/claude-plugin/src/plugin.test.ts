@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { FROZEN_HOOK_EVENTS } from './contract';
+import { FROZEN_HOOK_EVENTS, FROZEN_MCP_TOOLS } from './contract';
 import { validatePlugin } from './validate';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,6 +19,12 @@ function copyPlugin(): string {
 describe('claude plugin scaffold', () => {
   it('conforms to the frozen contract', () => {
     expect(validatePlugin(root)).toEqual([]);
+  });
+
+  it('freezes the MCP tools, including khala_status, and documents each', () => {
+    expect(FROZEN_MCP_TOOLS).toEqual(['khala_send', 'khala_read', 'khala_status']);
+    const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+    for (const tool of FROZEN_MCP_TOOLS) expect(readme).toContain(`\`${tool}\``);
   });
 
   it('fails validation when the manifest registers a hook event outside the frozen list', () => {

@@ -26,7 +26,7 @@ is the source; `validatePlugin` enforces it.
 | Hook events | `PostToolUse`, `Stop`, `SessionEnd`; the idle watcher is a second `Stop` entry with `asyncRewake` (#178 amendment, no `UserPromptSubmit`) |
 | Hook commands | `hooks/post-tool-use.mjs`, `hooks/stop.mjs`, `hooks/stop-watcher.mjs`, `hooks/session-end.mjs` |
 | Skill and commands | skill `khala`; exact forms `/khala send` and `/khala read` |
-| MCP entry | server `khala`, launched as `khala mcp-serve`; tools `khala_send`, `khala_read` |
+| MCP entry | server `khala`, launched as `khala mcp-serve`; tools `khala_send`, `khala_read`, `khala_status` (status carries tokens) |
 
 The MCP entry embeds no port or token; the runtime reads them from the local
 descriptor. Nothing in this package uses `--dangerously-*` flags or isolated

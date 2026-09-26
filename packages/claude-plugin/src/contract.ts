@@ -24,6 +24,6 @@ export const FROZEN_COMMAND_VERBS = ['send', 'read'] as const;
 
 /** The one MCP server entry, launched as `khala mcp-serve`, and its tools. */
 export const FROZEN_MCP_SERVER = { name: 'khala', command: 'khala', args: ['mcp-serve'] } as const;
-export const FROZEN_MCP_TOOLS = ['khala_send', 'khala_read'] as const;
+export const FROZEN_MCP_TOOLS = ['khala_send', 'khala_read', 'khala_status'] as const;
 
 export const FROZEN_PLUGIN_NAME = 'khala';
