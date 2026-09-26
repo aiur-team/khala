@@ -6,6 +6,7 @@ import type { ChannelSettingsPort } from '../../features/channel-settings/ports'
 import { ChannelRequestsRoute, OwnerShell } from '../channel-requests/OwnerShell';
 import { ChannelSettingsRoute } from '../channel-settings/ChannelSettingsRoute';
 import { CreateChannelScreen } from '../../features/create-channel/CreateChannelScreen';
+import type { ReceiptEvidencePort } from '../../features/receipt-evidence/controller';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ShellMode } from '../../shell/types';
 import type { HumanApplicationHandle, HumanRouteContext } from '../../composition/human/application';
@@ -17,6 +18,8 @@ export type LocalApplicationScreenProps = Readonly<{
   application: HumanApplicationHandle;
   routes: LocalRouteCodec;
   transport: LocalTransport;
+  /** The owner's receipt evidence; without it the timeline shows none. */
+  evidencePort?: ReceiptEvidencePort;
   navigateRoute: (path: string) => void;
   /** Owner-only capabilities, backed by human-cookie routes and never by an agent credential. */
   owner: Readonly<{
@@ -57,7 +60,9 @@ function RouteLinks({ routes, navigateRoute, children }: {
     if (!(event.target instanceof Element)) return;
     const anchor = event.target.closest('a[href]');
     if (!anchor || (anchor.getAttribute('target') ?? '_self') !== '_self' || anchor.hasAttribute('download')) return;
-    const route = routes.parse(anchor.getAttribute('href')!);
+    const href = anchor.getAttribute('href')!;
+    if (!href.startsWith('/') || href.startsWith('//') || href.includes('#')) return;
+    const route = routes.parse(href);
     if (route.kind === 'not_found') return;
     event.preventDefault();
     navigateRoute(route.path);
@@ -70,7 +75,9 @@ function RouteLinks({ routes, navigateRoute, children }: {
  * has no sign-in, share, join or recovery route, and a refused session is a
  * terminal relaunch instruction rather than a sign-in prompt.
  */
-export function LocalApplicationScreen({ application, routes, transport, navigateRoute, owner, mode = 'standalone' }: LocalApplicationScreenProps) {
+export function LocalApplicationScreen({
+  application, routes, transport, navigateRoute, owner, mode = 'standalone', evidencePort,
+}: LocalApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: LocalRoute): ReactNode => {
     switch (route.kind) {
       case 'create':
@@ -83,7 +90,7 @@ export function LocalApplicationScreen({ application, routes, transport, navigat
         return (
           <>
             <p><a className="internal-owner-link" href={routes.settingsPath(route.roomId)}>Channel discovery settings</a></p>
-            <LocalRoom context={context} roomId={route.roomId} transport={transport} />
+            <LocalRoom context={context} roomId={route.roomId} transport={transport} {...(evidencePort ? { evidencePort } : {})} />
           </>
         );
       case 'channel_settings':

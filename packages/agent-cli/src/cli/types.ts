@@ -5,6 +5,7 @@ import type {
 import type { InternalRuntime } from '@khala/contracts/internal/command';
 import type { AccessRequestOutcome } from '@khala/contracts/messaging/discovery';
 import type { AgentListeningModeApplication } from '../composition/listening-mode.js';
+import type { ChannelCreatePort } from './channels/create/types.js';
 import type { ChannelAccessPort, ChannelListingPort } from './channels/types.js';
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { InternalDelivery } from '../composition/internal-delivery.js';
@@ -90,6 +91,9 @@ export interface AgentClientPort {
   /** Absent until composition supplies the discovery-credentialed access client; both operations then report `unavailable`. */
   requestChannelAccess?: ChannelAccessPort['requestChannelAccess'];
   channelAccessStatus?: ChannelAccessPort['channelAccessStatus'];
+  /** Absent until composition supplies a create-capable client; both operations then report `unavailable`. */
+  requestChannelCreate?: ChannelCreatePort['requestChannelCreate'];
+  channelCreateStatus?: ChannelCreatePort['channelCreateStatus'];
   listChannels: ChannelListingPort['listChannels'];
   listAgents: ChannelListingPort['listAgents'];
 }

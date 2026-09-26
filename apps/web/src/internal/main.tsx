@@ -10,7 +10,7 @@ import { createChannelAccessInboxController } from '../features/channel-access/c
 import { createLocalChannelAccessPort } from './channel-requests/ports';
 import { createLocalChannelSettingsPort } from './channel-settings/ports';
 import { createHumanClient } from './composition/human-client';
-import { createLocalPorts, readRequestSecret } from './composition/ports';
+import { createLocalEvidencePort, createLocalPorts, readRequestSecret } from './composition/ports';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
 import { mountLocalApplication } from './composition/screen';
@@ -19,6 +19,7 @@ import '../brand/tokens.css';
 import '../shell/shell.css';
 import '../features/create-channel/create-channel.css';
 import '../features/timeline/timeline.css';
+import '../features/receipt-evidence/receipt-evidence.css';
 import '../features/channel/channel.css';
 import '../features/approval-decision/approval-decision.css';
 import '../features/channel-access/channel-access.css';
@@ -54,8 +55,10 @@ if (requestSecret === null) {
     participant: ports.participant,
     limits: ports.limits,
   }, { initialPath: `${location.pathname}${location.search}` });
+  let routedPath = `${location.pathname}${location.search}`;
   const navigateRoute = (path: string) => {
     history.pushState(null, '', path);
+    routedPath = path;
     application.navigate(path);
   };
   const humanClient = createHumanClient({ origin: location.origin, requestSecret });
@@ -63,9 +66,22 @@ if (requestSecret === null) {
     createChannelAccess: () => createChannelAccessInboxController({ requests: createLocalChannelAccessPort(humanClient) }),
     settings: createLocalChannelSettingsPort(humanClient),
   };
-  const mounted = mountLocalApplication(target, { application, routes, transport: ports.substrate.transport, navigateRoute, owner });
+  const mounted = mountLocalApplication(target, {
+    application,
+    routes,
+    transport: ports.substrate.transport,
+    navigateRoute,
+    evidencePort: createLocalEvidencePort(ports.substrate),
+    owner,
+  });
 
-  const onPopState = () => application.navigate(`${location.pathname}${location.search}`);
+  // A hash-only history step (evidence navigation) stays on the mounted route.
+  const onPopState = () => {
+    const path = `${location.pathname}${location.search}`;
+    if (path === routedPath) return;
+    routedPath = path;
+    application.navigate(path);
+  };
   addEventListener('popstate', onPopState);
   addEventListener('pagehide', () => {
     removeEventListener('popstate', onPopState);

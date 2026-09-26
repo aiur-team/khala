@@ -3,7 +3,10 @@
 // each builds against these types and `externalization.fake`, and neither
 // imports the other.
 
-import { type Decoded, type Reader, decodeWith, fail, identifier, literal, object, safeInteger, version } from './decode';
+import {
+  type Decoded, type Reader, array, decodeWith, elementPath, fail, identifier, literal, object, safeInteger, version,
+} from './decode';
+import type { OwnerId, ParticipantId } from './ids';
 import type { CallOptions, OperationResult } from './outcomes';
 
 export const CONVERSION_VERSION = 1;
@@ -187,6 +190,174 @@ export function decodeHistoryTransferProgress(input: unknown): Decoded<HistoryTr
       lastAckChunk: safeInteger(r.field('lastAckChunk'), r.at('lastAckChunk')),
       chunkCount: safeInteger(r.field('chunkCount'), r.at('chunkCount')),
       manifestDigest: identifier(r.field('manifestDigest'), r.at('manifestDigest')),
+    };
+  });
+}
+
+// Start-fresh conversion: what the human confirmed, per-agent status, and the ports
+// the conversion service drives. Khala never binds an agent on the human's behalf:
+// every selected agent joins the destination through its own channel-access request,
+// the human's grant of that exact request and the activation readiness of that
+// request. The resulting destination binding stays conversion-paused until the link
+// commit releases it.
+
+export type ConversionVisibility = 'public' | 'private' | 'secret';
+
+/** An omitted visibility choice is never widened. */
+export const DEFAULT_CONVERSION_VISIBILITY: ConversionVisibility = 'secret';
+
+/** The exact verified identity the human selected; a later session or generation is another agent. */
+export type ConversionAgentIdentity = Readonly<{
+  participantId: string;
+  harness: string;
+  sessionId: string;
+  generation: number;
+}>;
+
+/**
+ * The signed-in human who started a conversion: the owner of the source channel and
+ * the human participant acting for that owner. Every later step must come from the
+ * same owner and participant.
+ */
+export type ConversionOwner = Readonly<{ ownerId: OwnerId; participantId: ParticipantId }>;
+
+/** What the human asked for. `agents` names participants of the source channel. */
+export type ConversionStart = Readonly<{
+  v: 1;
+  conversionId: string;
+  operationId: string;
+  sourceChannelId: string;
+  historyMode: HistoryMode;
+  visibility: ConversionVisibility;
+  agents: readonly string[];
+}>;
+
+/** Immutable once journaled. `sourceRevision` is the channel revision the human confirmed. */
+export type ConversionSnapshot = Readonly<{
+  v: 1;
+  historyMode: HistoryMode;
+  /** Verified at start to own the source channel. */
+  owner: ConversionOwner;
+  sourceChannelId: string;
+  sourceRevision: number;
+  title: string | null;
+  visibility: ConversionVisibility;
+  /** Joined human participants at snapshot time; they follow through their own accounts. */
+  humans: readonly string[];
+  /** The selected agents in participant order, each with its exact active session. */
+  agents: readonly ConversionAgentIdentity[];
+}>;
+
+export const CONVERSION_AGENT_STATUSES = ['verifying', 'requested', 'ready', 'blocked', 'skipped'] as const;
+
+export type ConversionAgentStatus = typeof CONVERSION_AGENT_STATUSES[number];
+
+/**
+ * Why an agent cannot proceed until the human re-invites or skips it.
+ * `stale_session`: the session or generation is no longer the selected one.
+ */
+export const CONVERSION_AGENT_BLOCKS = ['stale_session', 'revoked', 'unsupported', 'denied', 'expired', 'request_failed'] as const;
+
+export type ConversionAgentBlock = typeof CONVERSION_AGENT_BLOCKS[number];
+
+export type ConversionAgentState = Readonly<{
+  participantId: string;
+  status: ConversionAgentStatus;
+  /** The channel-access request of the current attempt; null until the destination exists. */
+  requestHandle: string | null;
+  block: ConversionAgentBlock | null;
+  /** Re-invite count; every attempt makes a new individual request. */
+  attempt: number;
+  /** Set only after the link commit released this agent's conversion pause. */
+  released: boolean;
+}>;
+
+/** Session re-verification against the exact selected identity. */
+export type ConversionSessionCheck = 'current' | 'stale_session' | 'revoked' | 'unsupported' | 'unavailable';
+
+export interface ConversionSessionPort {
+  verify(agent: ConversionAgentIdentity, options?: CallOptions): Promise<ConversionSessionCheck>;
+}
+
+export type HostedChannelCreate = Readonly<{
+  /** Deterministic per conversion; a retry or a reconciliation names the same destination. */
+  idempotencyKey: string;
+  title: string | null;
+  visibility: ConversionVisibility;
+}>;
+
+export type HostedChannelCreated = Readonly<{ idempotencyKey: string; destinationChannelId: string; visibility: ConversionVisibility }>;
+
+/** Authenticated hosted channel creation, called as the signed-in human. */
+export interface HostedChannelPort {
+  create(input: HostedChannelCreate, options?: CallOptions): Promise<OperationResult<HostedChannelCreated, 'forbidden' | 'operation_mismatch'>>;
+  /** After a lost create response: the channel that key created, or null when it created none. */
+  reconcile(input: Readonly<{ idempotencyKey: string }>, options?: CallOptions): Promise<OperationResult<HostedChannelCreated | null, 'forbidden'>>;
+}
+
+export type ConversionAccessRequest = Readonly<{
+  /** Deterministic per conversion, agent and attempt. */
+  operationId: string;
+  destinationChannelId: string;
+  agent: ConversionAgentIdentity;
+}>;
+
+/**
+ * Where one access request stands. `ready` is the activation readiness of that exact
+ * request: its destination binding exists and is conversion-paused. `blocked` ends
+ * this attempt.
+ */
+export type ConversionAccessReadiness =
+  | Readonly<{ kind: 'pending_owner' | 'granted' | 'ready' }>
+  | Readonly<{ kind: 'blocked'; block: ConversionAgentBlock }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+export type ConversionGrantRejection = 'not_found' | 'denied' | 'expired' | 'revoked' | 'operation_mismatch';
+
+/** The shared channel-access journal, inbox and activation, as a conversion consumes them. */
+export interface ConversionAccessPort {
+  /** Makes one individual journal request for one agent; idempotent by `operationId`. */
+  request(
+    input: ConversionAccessRequest, options?: CallOptions,
+  ): Promise<OperationResult<Readonly<{ requestHandle: string }>, 'forbidden' | 'operation_mismatch'>>;
+  /** The human's grant of one exact request; idempotent by `operationId`. */
+  grant(
+    input: Readonly<{ requestHandle: string; operationId: string }>, options?: CallOptions,
+  ): Promise<OperationResult<Readonly<{ requestHandle: string }>, ConversionGrantRejection>>;
+  readiness(requestHandle: string, options?: CallOptions): Promise<ConversionAccessReadiness>;
+  /** Withdraws a request the conversion no longer uses, in any state; idempotent by `operationId`. */
+  withdraw(
+    input: Readonly<{ requestHandle: string; operationId: string }>, options?: CallOptions,
+  ): Promise<'withdrawn' | 'unavailable'>;
+}
+
+/** Releases the conversion pause of one ready destination binding. Idempotent by `operationId`. */
+export interface ConversionBindingPort {
+  release(
+    input: Readonly<{ requestHandle: string; destinationChannelId: string; operationId: string }>, options?: CallOptions,
+  ): Promise<'released' | 'unavailable'>;
+}
+
+const START_KEYS = ['v', 'conversionId', 'operationId', 'sourceChannelId', 'historyMode', 'agents'] as const;
+
+/** An omitted `visibility` decodes as `secret`; every other field is required. */
+export function decodeConversionStart(input: unknown): Decoded<ConversionStart> {
+  return decodeWith(() => {
+    const chosen = typeof input === 'object' && input !== null && Object.hasOwn(input, 'visibility');
+    const r = object(input, '', chosen ? [...START_KEYS, 'visibility'] : START_KEYS);
+    const visibility: ConversionVisibility = chosen
+      ? literal(r.field('visibility'), r.at('visibility'), ['public', 'private', 'secret'])
+      : DEFAULT_CONVERSION_VISIBILITY;
+    const agents = array(r.field('agents'), r.at('agents'))
+      .map((value, index) => identifier(value, elementPath(r.at('agents'), index)));
+    if (new Set(agents).size !== agents.length) fail(r.at('agents'), 'invalid_value');
+    return {
+      v: version(r.field('v'), r.at('v')),
+      ...ids(r),
+      sourceChannelId: identifier(r.field('sourceChannelId'), r.at('sourceChannelId')),
+      historyMode: historyMode(r),
+      visibility,
+      agents,
     };
   });
 }

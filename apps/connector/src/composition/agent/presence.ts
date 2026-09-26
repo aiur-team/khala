@@ -1,5 +1,6 @@
 import {
-  type DeliveryReceipt,
+  type AcknowledgementSupport,
+  type DeliveryReceiptTransport,
   type HarnessCapabilities,
   OPENCODE_PLUGIN_ROUTE_LABEL,
   type ParticipantId,
@@ -19,7 +20,9 @@ export type AgentPresenceSnapshot = Readonly<{
     ownerDisplayName: string;
     connection: PresenceConnection;
     routeLabel: string;
-    lastReceipt: Readonly<{ kind: DeliveryReceipt['kind']; observedAt: string }> | null;
+    lastReceipt: Readonly<{ kind: DeliveryReceiptTransport['kind']; observedAt: string }> | null;
+    /** The selected route's closed batch-token capability; never inferred from receipts or the route label. */
+    acknowledgement: AcknowledgementSupport;
     installCommand: string;
   }>[];
 }>;
@@ -30,7 +33,7 @@ export interface AgentPresenceMetadataPort {
     displayName: string;
     ownerDisplayName: string;
   }> | null>;
-  lastReceipt(binding: SessionBinding, signal: AbortSignal): Promise<DeliveryReceipt | null>;
+  lastReceipt(binding: SessionBinding, signal: AbortSignal): Promise<DeliveryReceiptTransport | null>;
   installCommand(binding: SessionBinding, signal: AbortSignal): Promise<string>;
   subscribe(listener: () => void): () => void;
 }
@@ -72,7 +75,7 @@ function routeLabel(capabilities: HarnessCapabilities | null, harnessReady: bool
 
 function connection(
   runtime: RuntimeStatus,
-  lastReceipt: DeliveryReceipt | null,
+  lastReceipt: DeliveryReceiptTransport | null,
   now: Date,
   staleAfterMs: number,
 ): PresenceConnection {
@@ -125,6 +128,7 @@ export function createAgentPresenceSource(
             kind: lastReceipt.kind,
             observedAt: lastReceipt.observedAt,
           },
+          acknowledgement: current.harnessCapabilities?.acknowledgement ?? 'unknown',
           installCommand,
         }],
       };

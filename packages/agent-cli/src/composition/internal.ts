@@ -12,7 +12,8 @@ import type {
 } from '../cli/types.js';
 import { plainObject, validIdentifier } from '../cli/validation.js';
 import { activateInternalAccess } from './internal-activation.js';
-import { type InternalDiscoverySelection, selectInternalDiscovery } from './internal-discovery.js';
+import { createInternalChannelCreate } from './internal-channel-create.js';
+import { type InternalDiscoverySelection, createInternalDiscoveryClient, selectInternalDiscovery } from './internal-discovery.js';
 
 // The descriptor-backed local client for `--internal-descriptor <path>`. The
 // only stable input is the path: every operation reopens that exact file, so a
@@ -113,6 +114,13 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     descriptorPath: options.descriptorPath,
     activePath: path.resolve(path.dirname(options.descriptorPath), '..', '..', INTERNAL_ACTIVE_DESCRIPTOR_FILE),
   });
+
+  // Create intents ride the discovery principal; the owner's decision, not this client, creates a channel.
+  const channelCreate = createInternalChannelCreate(createInternalDiscoveryClient({
+    select: discoverySelection,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  }));
 
   async function request(
     descriptor: Readonly<{ origin: string }>, capability: string, target: string,
@@ -217,6 +225,10 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
       // The launch's transport capability carries no agent identity, so it cannot file a request.
       return { kind: 'refused', code: 'discovery_required' };
     },
+
+
+    requestChannelCreate: channelCreate.requestChannelCreate,
+    channelCreateStatus: channelCreate.channelCreateStatus,
 
     async listChannels() { return { kind: 'unavailable' }; },
     async listAgents() { return { kind: 'unavailable' }; },
