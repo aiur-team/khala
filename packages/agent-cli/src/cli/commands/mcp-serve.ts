@@ -17,7 +17,7 @@ export const mcpServeCommand: CliCommand = {
   async run(args, deps) {
     if (args.length !== 0) throw new CliError('invalid_arguments');
     if (isClaudeMcpEntry(deps.env)) {
-      await runClaudeMcpServer({ claude: deps.claude, env: deps.env ?? {}, input: deps.stdin, output: deps.stdout, signal: deps.signal });
+      await runClaudeMcpServer({ claude: deps.claude, channels: composeChannelTools(deps.client), env: deps.env ?? {}, input: deps.stdin, output: deps.stdout, signal: deps.signal });
       return 0;
     }
     const current = publicStatus(await deps.client.status(deps.signal));

@@ -5,7 +5,7 @@ import type { AgentListeningModeReadResult } from '@khala/connector/agent/listen
 import { CliError } from '../cli/errors.js';
 import type { InboxBatch } from '../cli/inbox.js';
 import type { SendResult } from '../cli/types.js';
-import { validIdentifier } from '../cli/validation.js';
+import { plainObject, validIdentifier } from '../cli/validation.js';
 import type { ReadOperationPort } from '../mcp/read-tool.js';
 import { renderInboxBatchWithoutToken } from '../mcp/result-postprocessor.js';
 
@@ -92,6 +92,11 @@ export type ClaudeBindingServices = Readonly<{
    * it grants none. Hooks take the watcher window only from here.
    */
   watchWindow(): Promise<Readonly<{ seconds: number }> | null>;
+  /**
+   * The raw `listAgents` port result for this binding's channel. The adapter passes
+   * the roster on; the client decodes it. Never carries a token.
+   */
+  roster(): Promise<unknown>;
 }>;
 
 export type ClaudeSessionAdapterOptions = Readonly<{
@@ -131,6 +136,8 @@ export type ClaudeModeSetOutcome = (Readonly<{
   effective: ListeningMode | null;
   version: number;
 }> & Piggyback) | ClaudeSessionRefusal;
+/** The channel roster for the session's own binding, undecoded; the client applies the closed roster decoder. */
+export type ClaudeRosterOutcome = Readonly<{ kind: 'roster'; roster: unknown }> | ClaudeSessionRefusal;
 export type ClaudePendingOutcome = Readonly<{ kind: 'pending' | 'idle' }> | ClaudeSessionRefusal;
 /**
  * What a hook needs to pick its boundary, and nothing else: the effective mode, and
@@ -158,6 +165,7 @@ export interface ClaudeSessionAdapter {
   setMode(call: ClaudeSessionCall, input: Omit<ModeSetInput, 'acknowledgeToken'>): Promise<ClaudeModeSetOutcome>;
   pending(call: ClaudeSessionCall): Promise<ClaudePendingOutcome>;
   hook(call: ClaudeSessionCall): Promise<ClaudeHookOutcome>;
+  roster(call: ClaudeSessionCall): Promise<ClaudeRosterOutcome>;
 }
 
 type Resolved = Readonly<{ binding: SessionBinding; scope: SessionScope; services: ClaudeBindingServices }>;
@@ -344,6 +352,18 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
           kind: 'mode_set', outcome: result.outcome, requested: result.requested, effective: result.effective, version: result.version,
           ...(batch === null ? {} : { batch }),
         };
+      });
+    },
+
+    async roster(call) {
+      return guarded(async () => {
+        const resolved = await resolve(call);
+        if ('kind' in resolved) return resolved;
+        const result = await resolved.services.roster();
+        if (plainObject(result) && result.kind === 'listed') return { kind: 'roster', roster: result.roster };
+        // A server-side not_joined is the same answer as an unbound session.
+        if (plainObject(result) && result.kind === 'refused' && result.code === 'not_joined') return refused('session_not_bound');
+        return refused('unavailable');
       });
     },
 

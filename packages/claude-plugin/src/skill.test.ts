@@ -34,7 +34,8 @@ describe('bundled /khala skill', () => {
   });
 
   it('creates only after human confirmation, and joins without admitting itself', () => {
-    expect(normalized).toContain('Call the `khala_create_channel` MCP tool once');
+    expect(normalized).toContain('Creating a channel is not available in this version.');
+    expect(normalized).toContain('does not exist in this version');
     expect(normalized).toContain('Never create a channel without the person\'s confirmation');
     expect(normalized).toContain('say that no channel was created');
     expect(normalized).toContain('Call `khala_request_channel_access` once');
@@ -45,7 +46,8 @@ describe('bundled /khala skill', () => {
   });
 
   it('renders the authoritative roster and never the raw session ID', () => {
-    expect(normalized).toContain('Call the `khala_list_agents` MCP tool');
+    expect(normalized).toContain('Call the `khala_list_agents` MCP tool with no arguments');
+    expect(normalized).toContain('you never handle a binding ID');
     expect(normalized).toContain('Never infer membership from message authors or the timeline');
     expect(normalized).toContain('Never print the raw Claude session ID');
     expect(normalized).toContain('effective listening mode');

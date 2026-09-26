@@ -11,6 +11,7 @@ function client() {
     mode: vi.fn(async () => ({ kind: 'refused' as const, code: 'unproven' as const })),
     setMode: vi.fn(async () => ({ kind: 'refused' as const, code: 'unproven' as const })),
     pending: vi.fn(async () => ({ kind: 'idle' as const })),
+    roster: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
     hook: vi.fn(async () => ({ kind: 'hook' as const, effective: null, watchSeconds: null })),
   } satisfies ClaudeSessionClient;
 }
@@ -36,7 +37,7 @@ describe('Claude agent entry point', () => {
     // Agent calls acknowledge; they never take the hook-only, non-acknowledging pull.
     expect(composed.pull).not.toHaveBeenCalled();
     expect(composed.pending).not.toHaveBeenCalled();
-    expect(Object.keys(agent).sort()).toEqual(['mode', 'read', 'send', 'setMode', 'status']);
+    expect(Object.keys(agent).sort()).toEqual(['mode', 'read', 'roster', 'send', 'setMode', 'status']);
   });
 
   it('fails closed before any call when the session ID is missing or malformed', async () => {

@@ -4,7 +4,7 @@ import type { ClaudeModeSetRequest, ClaudeSessionClient } from './claude-session
 /** The environment variable Claude sets in the MCP server it launches for a session. */
 export const CLAUDE_SESSION_ENV = 'CLAUDE_CODE_SESSION_ID';
 
-type AgentCalls = Pick<ClaudeSessionClient, 'read' | 'send' | 'status' | 'mode' | 'setMode'>;
+type AgentCalls = Pick<ClaudeSessionClient, 'read' | 'send' | 'status' | 'mode' | 'setMode' | 'roster'>;
 type Outcome<K extends keyof AgentCalls> = Awaited<ReturnType<AgentCalls[K]>>;
 type SessionMissing = Readonly<{ kind: 'refused'; code: 'session_missing' }>;
 
@@ -20,6 +20,7 @@ export interface ClaudeAgentEntry {
   status(signal?: AbortSignal): Promise<Outcome<'status'> | SessionMissing>;
   mode(signal?: AbortSignal): Promise<Outcome<'mode'> | SessionMissing>;
   setMode(input: ClaudeModeSetRequest, signal?: AbortSignal): Promise<Outcome<'setMode'> | SessionMissing>;
+  roster(signal?: AbortSignal): Promise<Outcome<'roster'> | SessionMissing>;
 }
 
 /**
@@ -36,7 +37,7 @@ export function createClaudeAgentEntry(
   const missing: SessionMissing = { kind: 'refused', code: 'session_missing' };
   if (!validIdentifier(sessionId)) {
     const refuse = async () => missing;
-    return { read: refuse, send: refuse, status: refuse, mode: refuse, setMode: refuse };
+    return { read: refuse, send: refuse, status: refuse, mode: refuse, setMode: refuse, roster: refuse };
   }
   return {
     read: signal => client.read(sessionId, signal),
@@ -44,5 +45,6 @@ export function createClaudeAgentEntry(
     status: signal => client.status(sessionId, signal),
     mode: signal => client.mode(sessionId, signal),
     setMode: (input, signal) => client.setMode(sessionId, input, signal),
+    roster: signal => client.roster(sessionId, signal),
   };
 }
