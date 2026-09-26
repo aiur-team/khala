@@ -1,23 +1,29 @@
 import path from 'node:path';
 import { plainObject } from '../cli/validation.js';
+import { shellWord } from '../setup/paths.js';
 import { CODEX_HOOK_EVENTS, type CodexHookEvent } from './hook.js';
 
 /**
- * The installed handler. Codex hashes each handler when the user trusts it, so this
+ * The installed handler: the staged launcher's absolute path, so the hook never depends
+ * on `khala` being on PATH. Codex hashes each handler when the user trusts it, so this
  * string must stay byte-stable across Khala releases: any change asks for a fresh
- * review. It carries no channel, binding, token or message bytes.
+ * review. The launcher path never moves across upgrades. It carries no channel,
+ * binding, token or message bytes.
  */
-export const CODEX_HOOK_COMMAND = 'khala codex-hook';
+export function codexHookCommand(launcher: string): string {
+  if (!path.isAbsolute(launcher)) throw new Error('the codex hook launcher path must be absolute');
+  return `${shellWord(launcher)} codex-hook`;
+}
 export const CODEX_HOOK_TIMEOUT_SECONDS = 30;
 
-type CodexHookHandler = Readonly<{ type: 'command'; command: typeof CODEX_HOOK_COMMAND; timeout: number }>;
+type CodexHookHandler = Readonly<{ type: 'command'; command: string; timeout: number }>;
 export type CodexHooksFragment = Readonly<{
   hooks: Readonly<Record<CodexHookEvent, readonly Readonly<{ hooks: readonly CodexHookHandler[] }>[]>>;
 }>;
 
 /** The `hooks.json` entries `setup-cli-codex` merges into the user's Codex config layer. */
-export function codexHooksFragment(): CodexHooksFragment {
-  const handler: CodexHookHandler = { type: 'command', command: CODEX_HOOK_COMMAND, timeout: CODEX_HOOK_TIMEOUT_SECONDS };
+export function codexHooksFragment(launcher: string): CodexHooksFragment {
+  const handler: CodexHookHandler = { type: 'command', command: codexHookCommand(launcher), timeout: CODEX_HOOK_TIMEOUT_SECONDS };
   const group = [{ hooks: [handler] }];
   return { hooks: { PreToolUse: group, PostToolUse: group, UserPromptSubmit: group, Stop: group } };
 }
@@ -46,11 +52,13 @@ export function codexHookReviewState(input: Readonly<{
   hooksPath: string;
   hooksJson: unknown;
   configToml: string | null;
+  /** The staged launcher the installed handler runs. */
+  launcher: string;
 }>): CodexHookReview {
   if (!path.isAbsolute(input.hooksPath)) {
     return { state: 'unknown', reason: 'The Codex hooks.json path is not absolute.' };
   }
-  const installed = installedKhalaHandlers(input.hooksJson);
+  const installed = installedKhalaHandlers(input.hooksJson, codexHookCommand(input.launcher));
   if (installed === null) return { state: 'unknown', reason: 'The Codex hooks.json file is not valid hook configuration.' };
   const missing = CODEX_HOOK_EVENTS.filter(event => installed[event].length === 0);
   if (missing.length > 0) {
@@ -72,7 +80,7 @@ export function codexHookReviewState(input: Readonly<{
 
 type HandlerPosition = Readonly<{ group: number; handler: number }>;
 
-function installedKhalaHandlers(value: unknown): Record<CodexHookEvent, HandlerPosition[]> | null {
+function installedKhalaHandlers(value: unknown, command: string): Record<CodexHookEvent, HandlerPosition[]> | null {
   if (!plainObject(value) || !(value.hooks === undefined || plainObject(value.hooks))) return null;
   const hooks = (value.hooks ?? {}) as Record<string, unknown>;
   const found = Object.fromEntries(CODEX_HOOK_EVENTS.map(event => [event, [] as HandlerPosition[]])) as
@@ -84,7 +92,7 @@ function installedKhalaHandlers(value: unknown): Record<CodexHookEvent, HandlerP
     for (const [group, entry] of groups.entries()) {
       if (!plainObject(entry) || !Array.isArray(entry.hooks)) return null;
       for (const [handler, candidate] of entry.hooks.entries()) {
-        if (plainObject(candidate) && candidate.type === 'command' && candidate.command === CODEX_HOOK_COMMAND) {
+        if (plainObject(candidate) && candidate.type === 'command' && candidate.command === command) {
           found[event].push({ group, handler });
         }
       }

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setupEnvironment, setupExecute } from '../cli/main.js';
-import { CODEX_HOOK_COMMAND } from '../codex/hooks-config.js';
+import { codexHookCommand } from '../codex/hooks-config.js';
 import { OPENCODE_TESTED_VERSIONS } from '../opencode/index.js';
 import { CLAUDE_SUPPORTED_VERSIONS, readClaudePluginAssets } from '../setup/adapters/claude.js';
 import { CODEX_SUPPORTED_VERSIONS } from '../setup/adapters/codex.js';
@@ -63,7 +63,7 @@ async function service(): Promise<SetupService> {
   const packaged = await payload();
   return createSetupService({
     environment: () => setupEnvironment(env),
-    adapters: createSetupAdapters(packaged),
+    adapters: createSetupAdapters(packaged, process.execPath),
     execute: setupExecute(env),
     payload: packagedPayloadSource(packaged, process.execPath),
   });
@@ -78,7 +78,7 @@ async function approveCodexHooks(codexHome: string): Promise<string> {
   for (const [name, spelled] of Object.entries(events)) {
     for (const [group, entry] of (hooks.hooks[name] ?? []).entries()) {
       for (const [handler, candidate] of entry.hooks.entries()) {
-        if (candidate.command === CODEX_HOOK_COMMAND) {
+        if (candidate.command === codexHookCommand(path.join(roots.xdgDataHome, 'khala', 'bin', 'khala'))) {
           tables += `\n[hooks.state."${hooksPath}:${spelled}:${group}:${handler}"]\ntrusted_hash = "sha256:${'cd'.repeat(32)}"\n`;
         }
       }

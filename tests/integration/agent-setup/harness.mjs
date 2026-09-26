@@ -265,11 +265,13 @@ export function approveCodexHooksNatively(machine) {
   const hooksPath = path.join(codex, 'hooks.json');
   const hooks = JSON.parse(fs.readFileSync(hooksPath, 'utf8')).hooks;
   const events = { PreToolUse: 'pre_tool_use', PostToolUse: 'post_tool_use', UserPromptSubmit: 'user_prompt_submit', Stop: 'stop' };
+  // The installed handler: the staged launcher by absolute path, shell-quoted.
+  const command = `'${path.join(machine.home, '.local', 'share', 'khala', 'bin', 'khala')}' codex-hook`;
   let tables = '';
   for (const [event, spelled] of Object.entries(events)) {
     for (const [group, entry] of (hooks[event] ?? []).entries()) {
       for (const [handler, candidate] of entry.hooks.entries()) {
-        if (candidate.command !== 'khala codex-hook') continue;
+        if (candidate.command !== command) continue;
         tables += `\n[hooks.state."${hooksPath}:${spelled}:${group}:${handler}"]\ntrusted_hash = "sha256:${'cd'.repeat(32)}"\n`;
       }
     }

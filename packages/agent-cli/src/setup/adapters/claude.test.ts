@@ -7,13 +7,16 @@ import { snapshot, syntheticHome, type Snapshot } from '../fixtures/setup-home.j
 import { executeSetupPlan, setupStatePaths, type ExecutablePlan, type SetupRoots } from '../transaction.js';
 import type { HarnessObservation, SetupEnvironment, SetupOperation, SetupProbe } from '../types.js';
 import {
-  CLAUDE_PLUGIN_ID, ClaudeSetupAdapter, ClaudeSetupRefusal, claudePaths, parseClaudeVersion, readClaudePluginAssets,
+  CLAUDE_PLUGIN_ID, ClaudeSetupAdapter, ClaudeSetupRefusal, claudePaths, installedPluginAssets, parseClaudeVersion,
+  readClaudePluginAssets,
 } from './claude.js';
 
 const PLUGIN_PACKAGE = fileURLToPath(new URL('../../../../claude-plugin/', import.meta.url));
 const SUPPORTED = '2.1.283 (Claude Code)';
 const SENTINEL_PORT = '48713';
 const SENTINEL_TOKEN = 'SENTINELtokenSENTINELtokenSENTINELtoken0123';
+/** The Node that ran setup: an absolute path the installed hooks run, never a `node` from PATH. */
+const NODE = '/opt/node-22/bin/node';
 
 let root: string;
 let roots: SetupRoots;
@@ -46,7 +49,7 @@ function probe(versionOutput: string | Error = SUPPORTED): SetupProbe {
 }
 
 const environment = (versionOutput?: string | Error): SetupEnvironment => ({ ...roots, probe: probe(versionOutput) });
-const adapter = (version = '1.0.0', cwd?: string) => new ClaudeSetupAdapter({ version, assets, ...(cwd === undefined ? {} : { cwd }) });
+const adapter = (version = '1.0.0', cwd?: string) => new ClaudeSetupAdapter({ version, assets, nodePath: NODE, ...(cwd === undefined ? {} : { cwd }) });
 const paths = (version = '1.0.0') => claudePaths(roots, version);
 const installClaude = async () => {
   await fsp.writeFile(path.join(binDirectory, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
@@ -229,8 +232,47 @@ describe('claude setup adapter: footprint', () => {
       expect(text).not.toContain(SENTINEL_PORT);
     }
     const mcp = JSON.parse(await read(path.join(paths().pluginRoot, '.mcp.json')));
-    // The frozen entry (#316, amended by #333 with the harness marker) carries no port or token.
-    expect(mcp.mcpServers.khala).toEqual({ command: 'khala', args: ['mcp-serve'], env: { KHALA_MCP_HARNESS: 'claude' } });
+    // The frozen entry (#316, amended by #333 with the harness marker) carries no port or token,
+    // and runs the staged launcher by absolute path rather than a `khala` from PATH (#403).
+    expect(mcp.mcpServers.khala).toEqual({ command: paths().launcher, args: ['mcp-serve'], env: { KHALA_MCP_HARNESS: 'claude' } });
+  });
+});
+
+describe('claude setup adapter: installed entries never depend on PATH', () => {
+  const runtime = { launcher: '/home/u/.local/share/khala/bin/khala', nodePath: NODE };
+  const decode = (bytes: Uint8Array | undefined) => JSON.parse(new TextDecoder().decode(bytes));
+
+  it('installs the MCP entry and every hook with absolute paths, and leaves the other files as packaged', async () => {
+    await installClaude();
+    await apply(adapter(), 'present');
+    expect(paths().launcher).toBe(path.join(roots.xdgDataHome, 'khala', 'bin', 'khala'));
+    const hooks = JSON.parse(await read(path.join(paths().pluginRoot, 'hooks', 'hooks.json'))) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+    const commands = Object.values(hooks.hooks).flatMap(groups => groups.flatMap(group => group.hooks.map(hook => hook.command)));
+    expect(commands).toHaveLength(5);
+    for (const command of commands) {
+      expect(command).toMatch(new RegExp(`^'${NODE}' "\\$\\{CLAUDE_PLUGIN_ROOT\\}/hooks/[a-z-]+\\.mjs" '${paths().launcher}'$`));
+    }
+    for (const [name, bytes] of assets) {
+      if (name === '.mcp.json' || name === 'hooks/hooks.json') continue;
+      expect(await read(path.join(paths().pluginRoot, ...name.split('/')))).toBe(new TextDecoder().decode(bytes));
+    }
+  });
+
+  it('keeps every other hook and MCP field, and quotes paths for the shell', () => {
+    const installed = installedPluginAssets(assets, { launcher: "/home/o'neil/khala", nodePath: NODE });
+    const stop = decode(installed.get('hooks/hooks.json')).hooks.Stop[0].hooks;
+    expect(stop).toEqual([
+      { type: 'command', command: `'${NODE}' "\${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs" '/home/o'\\''neil/khala'`, timeout: 30 },
+      { type: 'command', command: `'${NODE}' "\${CLAUDE_PLUGIN_ROOT}/hooks/stop-watcher.mjs" '/home/o'\\''neil/khala'`, asyncRewake: true, timeout: 3600 },
+    ]);
+  });
+
+  it('refuses a packaged entry it cannot render, rather than install a PATH lookup', () => {
+    const replaced = (name: string, value: unknown) => new Map([...assets, [name, new TextEncoder().encode(JSON.stringify(value))]]);
+    expect(() => installedPluginAssets(replaced('.mcp.json', { mcpServers: { khala: { command: 'other' } } }), runtime)).toThrow();
+    expect(() => installedPluginAssets(replaced('hooks/hooks.json', { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'khala claude pull' }] }] } }), runtime))
+      .toThrow();
+    expect(() => new ClaudeSetupAdapter({ version: '1.0.0', assets, nodePath: 'node' })).toThrow();
   });
 });
 

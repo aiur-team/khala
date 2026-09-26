@@ -1,10 +1,12 @@
 // The packaged installer payload. The published package carries the self-contained CLI
 // runtime (`dist/khala.js`), the OpenCode plugin (`dist/opencode.js`), and the reviewed harness
 // assets under `dist/payload/`. Setup stages the runtime under a versioned directory, the stable
-// `khala` launcher every harness MCP entry runs, and a stable copy of the OpenCode plugin.
+// `khala` launcher every installed harness entry runs by its absolute path, and a stable copy of
+// the OpenCode plugin.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { readClaudePluginAssets } from './adapters/claude.js';
+import { shellWord } from './paths.js';
 import type { InstallerFile, SetupPayloadSource } from './plan.js';
 import type { HarnessId, SetupEnvironment } from './types.js';
 
@@ -13,8 +15,8 @@ export const PAYLOAD_DIRECTORY = 'payload';
 export const PAYLOAD_CLAUDE_PLUGIN = 'claude-plugin';
 export const PAYLOAD_CODEX_SKILL = 'codex/SKILL.md';
 
-/** Harnesses whose installed MCP entry runs `$XDG_DATA_HOME/khala/bin/khala`. */
-const LAUNCHER_HARNESSES: readonly HarnessId[] = ['codex', 'opencode', 'cursor'];
+/** Harnesses whose installed entries run `$XDG_DATA_HOME/khala/bin/khala`; none depends on PATH. */
+const LAUNCHER_HARNESSES: readonly HarnessId[] = ['claude', 'codex', 'opencode', 'cursor'];
 
 export type PackagedPayload = Readonly<{
   /** The package version; the runtime and the Claude marketplace live below `versions/<version>/`. */
@@ -39,15 +41,13 @@ export async function readPackagedPayload(distDirectory: string): Promise<Packag
   };
 }
 
-const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-
 /**
  * The stable launcher. It runs the versioned runtime with the Node that ran setup, so the
  * bytes name only absolute paths and never a port, token, or channel.
  */
 export function launcherScript(nodePath: string, runtimePath: string): Uint8Array {
   if (!path.isAbsolute(nodePath) || !path.isAbsolute(runtimePath)) throw new Error('launcher paths must be absolute');
-  return new TextEncoder().encode(`#!/bin/sh\nexec ${shellQuote(nodePath)} ${shellQuote(runtimePath)} "$@"\n`);
+  return new TextEncoder().encode(`#!/bin/sh\nexec ${shellWord(nodePath)} ${shellWord(runtimePath)} "$@"\n`);
 }
 
 /** The installer files for one environment, each tagged with the harnesses that run it. */

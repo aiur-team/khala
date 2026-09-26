@@ -14,9 +14,11 @@ import { packagedPayloadSource, readPackagedPayload, type PackagedPayload } from
 import type { SetupEnvironment } from '../setup/types.js';
 
 /** Every harness adapter, in harness order. Claude Desktop reports only and plans nothing. */
-export function createSetupAdapters(payload: PackagedPayload, options: Readonly<{ cwd?: string }> = {}): readonly ComposedSetupAdapter[] {
+export function createSetupAdapters(
+  payload: PackagedPayload, nodePath: string, options: Readonly<{ cwd?: string }> = {},
+): readonly ComposedSetupAdapter[] {
   const claude = createClaudeSetupAdapter({
-    version: payload.version, assets: payload.claudePlugin, ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    version: payload.version, assets: payload.claudePlugin, nodePath, ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   });
   const codex = createCodexSetupAdapter({ skill: payload.codexSkill });
   const opencode = createOpenCodeAdapter();
@@ -45,7 +47,7 @@ export function createSetupAdapters(payload: PackagedPayload, options: Readonly<
 export type PackagedSetupOptions = Readonly<{
   /** The package's `dist/` directory, which carries the runtime and the reviewed assets. */
   distDirectory: string;
-  /** The Node that runs this CLI; the staged launcher runs the runtime with it. */
+  /** The Node that runs this CLI; the staged launcher and the Claude hooks run with it. */
   nodePath: string;
   environment: () => SetupEnvironment;
   execute: SetupExecute;
@@ -61,7 +63,7 @@ export function packagedSetupService(options: PackagedSetupOptions): SetupServic
   let loaded: Promise<SetupService> | undefined;
   const service = () => loaded ??= readPackagedPayload(options.distDirectory).then(payload => createSetupService({
     environment: options.environment,
-    adapters: createSetupAdapters(payload, options.cwd === undefined ? {} : { cwd: options.cwd }),
+    adapters: createSetupAdapters(payload, options.nodePath, options.cwd === undefined ? {} : { cwd: options.cwd }),
     execute: options.execute,
     payload: packagedPayloadSource(payload, options.nodePath),
   }));

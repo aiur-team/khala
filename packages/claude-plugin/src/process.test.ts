@@ -17,7 +17,7 @@ function fakeBinary(mode: string, pendingRelease = true) {
   const dir = scratch();
   const log = path.join(dir, 'calls.jsonl');
   const source = [
-    '#!/usr/bin/env node',
+    `#!${process.execPath}`,
     "const fs = require('node:fs');",
     `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), env: process.env }) + '\\n');`,
     "const [, op] = process.argv.slice(2);",
@@ -34,9 +34,9 @@ function fakeBinary(mode: string, pendingRelease = true) {
   return { dir, calls };
 }
 
-function runScript(script: string, input: string, env: Record<string, string>) {
+function runScript(script: string, input: string, env: Record<string, string>, args: readonly string[] = []) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
-    const child = spawn(process.execPath, [path.join(root, 'hooks', script)], { env, cwd: scratch() });
+    const child = spawn(process.execPath, [path.join(root, 'hooks', script), ...args], { env, cwd: scratch() });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; });
@@ -83,5 +83,20 @@ describe('hook processes', () => {
     const claim = await runScript('user-prompt-submit.mjs', hookInput('UserPromptSubmit', 'session-idle', { prompt: WAKE_NOTICE }), env);
     expect(claim.code).toBe(0);
     expect(JSON.parse(claim.stdout).hookSpecificOutput.additionalContext).toContain('<khala-channel-batch-v1>');
+  });
+
+  it('run the launcher an installed hook command names, with no `khala` on PATH', async () => {
+    const fake = fakeBinary('steer');
+    const launcher = path.join(fake.dir, 'khala');
+    const env = { PATH: '', HOME: scratch(), XDG_STATE_HOME: scratch() };
+    const result = await runScript('post-tool-use.mjs', hookInput('PostToolUse', 'session-abs', { tool_name: 'Bash' }), env, [launcher]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).hookSpecificOutput.additionalContext).toContain('<khala-channel-batch-v1>');
+    expect(fake.calls().map(call => call.argv[1])).toEqual(['hook', 'pull']);
+
+    // Without the argument the source plugin looks `khala` up on PATH, which is empty here.
+    const bare = await runScript('post-tool-use.mjs', hookInput('PostToolUse', 'session-bare', { tool_name: 'Bash' }), env);
+    expect(bare.stdout).toBe('');
+    expect(fake.calls()).toHaveLength(2);
   });
 });
