@@ -112,6 +112,8 @@ describe('fallback skill documentation', () => {
     expect(normalized).toMatch(/always inspect first.*using the `version` from that `get`/);
     expect(normalized).toMatch(/`stale_version`.*Run `get` again.*never retry the same set automatically/);
     expect(normalized).toMatch(/only act on your own binding.*no argument for another binding, a generation, an owner, or a grant/);
+    expect(normalized).toMatch(/`refused` result never means the requested mode took effect/);
+    expect(normalized).toMatch(/`outcome_unknown` means the write may already have committed\. Run `get`/);
     expect(normalized).toMatch(/`requested` and `effective` can differ.*support reasons explain why/);
     expect(normalized).toContain('Neither value proves that any message was or will be delivered');
     expect(normalized).toMatch(/never starts, stops, or interrupts any agent process/);

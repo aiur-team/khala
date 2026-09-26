@@ -1,4 +1,7 @@
-import type { ListeningModeOutcome, ListeningModeSetRequest } from '../composition/listening-mode.js';
+import type { ListeningMode } from '@khala/contracts/delivery/index';
+import {
+  LISTENING_MODES, type ListeningModeOutcome, type ListeningModeSetRequest,
+} from '../composition/listening-mode.js';
 import { CliError } from './errors.js';
 
 export type ModeArguments =
@@ -12,9 +15,9 @@ export function parseModeArguments(args: readonly string[]): ModeArguments {
   if (action === 'set' && rest.length === 3 && rest[1] === '--expected-version'
     && /^(0|[1-9][0-9]*)$/.test(rest[2]!)) {
     const expectedVersion = Number(rest[2]);
-    const requested = rest[0];
-    if (Number.isSafeInteger(expectedVersion) && (requested === 'steer' || requested === 'sync' || requested === 'async')) {
-      return { action: 'set', request: { requested, expectedVersion } };
+    const requested = rest[0]!;
+    if (Number.isSafeInteger(expectedVersion) && (LISTENING_MODES as readonly string[]).includes(requested)) {
+      return { action: 'set', request: { requested: requested as ListeningMode, expectedVersion } };
     }
   }
   throw new CliError('invalid_arguments');

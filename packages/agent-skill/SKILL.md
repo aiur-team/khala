@@ -88,8 +88,10 @@ from that `get`.
 - A `conflict` result with `stale_version` means someone else changed the mode
   after your `get`. Run `get` again and decide afresh against the new state;
   never retry the same set automatically.
-- A `refused` result means nothing changed. Report its reason instead of
-  claiming the mode was set.
+- A `refused` result never means the requested mode took effect. Report its
+  reason instead of claiming the mode was set.
+- `outcome_unknown` means the write may already have committed. Run `get` to
+  see the current state before deciding anything; never retry automatically.
 
 `requested` and `effective` can differ: the requested mode may be unsupported,
 unknown, or blocked on this route, and the support reasons explain why. Neither

@@ -141,6 +141,31 @@ describe('ListeningModeOperation', () => {
     expect(Object.keys(application).sort()).toEqual(['read', 'set']);
   });
 
+  it('fails closed on malformed port views and on commandId-matched but invalid or unknown set results', async () => {
+    for (const view of [
+      { ...MODE_VIEW, requested: 'fast' },
+      { ...MODE_VIEW, version: -1 },
+      { ...MODE_VIEW, support: { steer: MODE_VIEW.support.steer, sync: MODE_VIEW.support.sync } },
+      { ...MODE_VIEW, support: { ...MODE_VIEW.support, async: { ...MODE_VIEW.support.async, status: 'guessed' } } },
+      { ...MODE_VIEW, support: { ...MODE_VIEW.support, sync: { ...MODE_VIEW.support.sync, evidenceRef: 7 } } },
+    ]) {
+      const application = { read: vi.fn(async () => ({ ok: true as const, view: view as unknown as ListeningModeView })), set: vi.fn() };
+      await expect(operation(application).get()).resolves.toEqual({ kind: 'refused', reason: 'unavailable' });
+    }
+
+    for (const overrides of [{ requested: 'fast' }, { outcome: 'mystery' }, { version: 1.5 }]) {
+      const application = {
+        read: vi.fn(),
+        set: vi.fn(async (input: AgentListeningModeSetInput) => ({
+          v: 1, commandId: input.commandId, bindingId: 'binding-1', generation: 3, outcome: 'applied', version: 5,
+          requested: input.requested, effective: input.requested, reason: null, ...overrides,
+        }) as unknown as ListeningModeResult),
+      };
+      await expect(operation(application).set({ requested: 'sync', expectedVersion: 4 }))
+        .resolves.toEqual({ kind: 'refused', reason: 'outcome_unknown' });
+    }
+  });
+
   it('rejects partial, extra, target-, generation-, authority-, and grant-shaped input before the application', async () => {
     const fake = fakeModeApplication();
     const mode = operation(fake.application);
