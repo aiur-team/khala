@@ -17,6 +17,7 @@ interface DeploymentInputs {
   stateNamespace: string;
   serverName: string;
   publicOrigin: string;
+  registrationSharedSecret: string;
   dbHost: string;
   dbPort: number;
   dbName: string;
@@ -41,6 +42,7 @@ const requiredKeys = [
   'KHALA_STATE_NAMESPACE',
   'KHALA_MATRIX_SERVER_NAME',
   'KHALA_MATRIX_PUBLIC_ORIGIN',
+  'KHALA_MATRIX_REGISTRATION_SHARED_SECRET',
   'KHALA_DB_HOST',
   'KHALA_DB_PORT',
   'KHALA_DB_NAME',
@@ -95,6 +97,10 @@ export function validateInputs(env: Environment, expectedEnvironment?: string): 
 
   const allowLoopback = env.KHALA_ALLOW_INSECURE_LOOPBACK === 'true';
   const publicOrigin = parseOrigin(required(env, 'KHALA_MATRIX_PUBLIC_ORIGIN'));
+  const registrationSharedSecret = required(env, 'KHALA_MATRIX_REGISTRATION_SHARED_SECRET');
+  if (registrationSharedSecret.length < 32 || placeholders.test(registrationSharedSecret)) {
+    throw new CheckError('weak-registration-secret');
+  }
   const dbHost = required(env, 'KHALA_DB_HOST');
   if (!/^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/.test(dbHost) || placeholders.test(dbHost)) throw new CheckError('invalid-database-host');
   const dbPortText = required(env, 'KHALA_DB_PORT');
@@ -113,12 +119,13 @@ export function validateInputs(env: Environment, expectedEnvironment?: string): 
   if (validatedEnvironment === 'production' && checkOrigin && checkOrigin !== publicOrigin) {
     throw new CheckError('check-origin-mismatch');
   }
-  return { environment: validatedEnvironment, stateNamespace, serverName, publicOrigin, dbHost, dbPort, dbName, dbUser, dbPassword, configDir, checkOrigin };
+  return { environment: validatedEnvironment, stateNamespace, serverName, publicOrigin, registrationSharedSecret, dbHost, dbPort, dbName, dbUser, dbPassword, configDir, checkOrigin };
 }
 
 const substitutions: Record<string, keyof DeploymentInputs> = {
   '__KHALA_MATRIX_SERVER_NAME__': 'serverName',
   '__KHALA_MATRIX_PUBLIC_ORIGIN__': 'publicOrigin',
+  '__KHALA_MATRIX_REGISTRATION_SHARED_SECRET__': 'registrationSharedSecret',
   '__KHALA_DB_HOST__': 'dbHost',
   '__KHALA_DB_PORT__': 'dbPort',
   '__KHALA_DB_USER__': 'dbUser',
@@ -202,6 +209,19 @@ export async function probeBoundary(origin: string, fetchImpl: FetchLike = fetch
   await discardBody(registration);
   if (registration.status >= 500) throw new CheckError('database-unavailable');
   if (registration.status !== 403) throw new CheckError('registration-not-rejected');
+
+  const sharedSecretRegistration = await request(fetchImpl, origin, '/_synapse/admin/v1/register', {
+    headers: { accept: 'application/json' },
+  });
+  let sharedSecretBody;
+  try {
+    sharedSecretBody = await sharedSecretRegistration.json();
+  } catch {
+    throw new CheckError('registration-ingress-unavailable');
+  }
+  if (sharedSecretRegistration.status !== 200 || typeof sharedSecretBody.nonce !== 'string' || sharedSecretBody.nonce.length === 0) {
+    throw new CheckError('registration-ingress-unavailable');
+  }
 
   const admin = await request(fetchImpl, origin, '/_synapse/admin/v2/users');
   await discardBody(admin);

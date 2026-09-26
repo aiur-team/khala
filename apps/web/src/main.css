@@ -1,0 +1,18 @@
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #16171a;
+  color: #edeef0;
+  font-family: 'Khala Space Grotesk', system-ui, sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
