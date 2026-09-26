@@ -1,6 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import type { BindingId, EventRef, HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
 import type { InternalRuntime } from '@khala/contracts/internal/command';
+import type { AccessRequestOutcome } from '@khala/contracts/messaging/discovery';
 import type { ChannelListingPort } from './channels/types.js';
 import type { BatchInbox } from './inbox.js';
 
@@ -48,8 +49,14 @@ export type SendResult =
 export type AgentStatus = Readonly<{
   v: 1; connected: boolean; binding: SessionBinding | null; route: AgentRoute; sourceCursor: string | null;
 }>;
+export type AccessRequestResult =
+  | Readonly<{ kind: 'status'; outcome: AccessRequestOutcome }>
+  | Readonly<{ kind: 'refused'; code: 'invalid_link' }>
+  | Readonly<{ kind: 'unavailable' }>;
 export interface AgentClientPort {
   connect(link: string, signal?: AbortSignal): Promise<ConnectResult>;
+  /** Present only on a descriptor-backed local client; asks the channel-access journal for a human grant. */
+  requestAccess?(channelUrl: string, signal?: AbortSignal): Promise<AccessRequestResult>;
   send(input: Readonly<{ bindingId: BindingId | null; clientTxnId: string; body: string }>, signal?: AbortSignal): Promise<SendResult>;
   status(signal?: AbortSignal): Promise<AgentStatus>;
   listChannels: ChannelListingPort['listChannels'];
@@ -72,6 +79,8 @@ export type CliDependencies = Readonly<{
   inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
   internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
+  /** Lazily composes the descriptor-backed local client; called only when `--internal-descriptor` is given. */
+  internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
 }>;
 /** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
 export type CliCommand = Readonly<{
