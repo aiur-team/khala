@@ -374,6 +374,36 @@ Setup never writes either one, and neither affects readiness (decision 25).
 Configuration reports the route as `unknown`. New plugin configuration takes
 effect when Claude next starts (`restart_required`).
 
+A plan can mark a foreign file entry-owned (`entryOwnedPaths`) when the harness
+itself rewrites the rest of that file. Khala then owns only the named
+`config_entry_set` entry. Whole-file drift no longer refuses, but every operation
+still checks its preimage, and a later plan may only edit that same entry.
+`config_entry_remove` releases the path and leaves every other byte in place.
+
+## Codex setup adapter
+
+`src/setup/adapters/codex.ts` detects `codex --version` and plans three guarded
+direct edits, with no plugin and no vendor command:
+
+| Component | Path | Setup | Remove |
+| --- | --- | --- | --- |
+| `skill` | `~/.codex/skills/khala/SKILL.md` | create; replace on upgrade | delete |
+| `hooks` | `~/.codex/hooks.json` | append the Khala groups after the user's own | restore the byte-exact preimage |
+| `mcp_entry` | `~/.codex/config.toml` | append one `[mcp_servers.khala]` table (entry-owned) | delete exactly that table |
+
+The MCP table runs the stable launcher `$XDG_DATA_HOME/khala/bin/khala
+mcp-serve`, which reads the port and token from the runtime descriptor on each
+call. Codex writes hook trust into the same `config.toml`, so setup, upgrade,
+and remove never touch a `hooks.state` or `trusted_hash` byte. Hooks report
+`awaiting_hook_review` until the user trusts them in Codex's own dialog. An
+upgrade leaves `hooks.json` alone, so trust carries over. An unowned Khala
+entry is a conflict, even if identical, and an edited Khala table is drift.
+
+| Codex | Support |
+| --- | --- |
+| 0.154.0 | Supported |
+| Any other version | `unsupported`: setup refuses; manifest-driven remove still works |
+
 ## Codex hooks
 
 `khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
@@ -442,6 +472,31 @@ permission hook, so its tools follow OpenCode's normal permission policy.
 Like the `khala` binary, the shipped entry has no live Khala transport until
 live composition supplies one, so it binds and delivers nothing.
 `createKhalaOpenCodeServer` takes the controls, send, inbox and state ports.
+
+## Cursor setup
+
+`createCursorSetupAdapter()` in `src/cursor/setup.ts` is the Cursor `SetupAdapter`.
+**Cursor delivery is unproven.** The 2026-09-25 proof
+(`experiments/interactive-cli/cursor-app/`) kept every cell Blocked. Every
+listening mode therefore reports `unknown`, and Khala selects no mode for a
+Cursor agent. Setup installs no Cursor hook. It adds exactly one entry,
+`mcpServers.khala` = `{ "command": "<XDG_DATA_HOME>/khala/bin/khala", "args":
+["mcp-serve"] }`, to the person's global `~/.cursor/mcp.json`. That gives their
+own Agent Chat the shared channel tools. The entry carries no port, token,
+channel or message bytes; the launcher reads the runtime descriptor on each call.
+
+The version comes from the first line of `cursor --version`. An absent `cursor`
+with nothing installed creates and reads nothing. An unreadable version is
+`unsupported`. Ownership comes only from the setup manifest. A `khala` entry
+the manifest does not record is a `conflict`, even when it is identical. So is a
+config that is not a plain JSON object or that starts with a byte-order mark.
+Both are left untouched. Khala's own entry reports `ready`, or `drifted` after
+a user edit, even when `cursor` is no longer on PATH. An outdated own entry is
+replaced. Every inspection of an installed Cursor carries the
+`cursor_delivery_unproven` warning. `plan({ desired: 'absent' })` returns
+`cursorRemovalOperations(manifest)`, which restores each managed Cursor path to
+its recorded pre-Khala bytes, or deletes it if it was absent before. The planner
+must pass back the exact observation object `inspect` returned.
 
 ## Claude session adapter
 

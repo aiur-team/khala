@@ -181,6 +181,11 @@ A cell becomes `proven` only when a single trial shows all of the following:
 - a recorded launch of the running Cursor desktop app, with normal trust settings (decision 33). A `cursor-agent` CLI session never proves the app cell;
 - for `steer` and `sync`, delivery to an idle chat (decisions 34 and 37).
 
+The shipped `cursor-channel-adapter` ([`packages/harnesses/src/cursor/`](../../../packages/harnesses/src/cursor/README.md))
+is fail-closed until that happens. Its proof table is empty and must match
+`matrix.json`, so every Cursor mode reports `unknown`. Setup adds only the `khala` MCP
+entry to `~/.cursor/mcp.json`, installs no hook, and reports that delivery is unproven.
+
 The census comes from a raw process list, never from typed counts. A background
 agent, any Cursor or `cursor-agent` process (matched anywhere in argv) with a Khala
 ancestor or a parent missing from the census, a headless agent run, a bypass flag
