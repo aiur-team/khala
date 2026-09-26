@@ -69,7 +69,7 @@ contracts hold. It does not show that the collaboration product works.
 | ID | Requirement | Result | Evidence |
 | --- | --- | --- | --- |
 | R1 | Validate the chosen collaboration journey on the merged base with real existing sessions | **fail** | No live run. The three KHA-139 runs are all `blocked` before any action. The latest one is blocked only because no harness version is pinned |
-| R2 | Separate security, operational and user-experience evidence tied to exact builds | **fail** | Security: rerun on the candidate, with one failing row (#380). Operational: backup/restore rehearsal passed on 2026-09-18 against the packaged Synapse (`docs/operations/backend.md`); no hosted deployment exists. User experience: not observed (#238 open) |
+| R2 | Separate security, operational and user-experience evidence tied to exact builds | **fail** | Security: rerun on the candidate, with one failing row (#380, fixed after this candidate by #395; the row must pass on the next rerun). Operational: backup/restore rehearsal passed on 2026-09-18 against the packaged Synapse (`docs/operations/backend.md`); no hosted deployment exists. User experience: not observed (#238 open) |
 | R3 | Finish user and adapter docs and record limitations without expanding scope | **pass** | [User guide](../user-guide.md), [adapter guide](../adapter-guide.md), and the [findings](#findings) below |
 | AE1 | Leaf tickets closed but no evidence of third-owner admission, so the root stays unaccepted | **holds** | `third_owner_independent` and `third_owner_history` are `blocked` in every run |
 | AE2 | A proof on a stale build is rerun on the candidate | **holds** | The security and collaboration suites were rerun on `a120b9e` (above) |
@@ -87,7 +87,7 @@ These are the IDs from [requirements coverage](requirements-coverage.md).
 | R05 | Disable review for a trusted peer and re-arm it | unknown | Pause/resume across a restart passes locally. A reconnect with an unacknowledged re-arm is not observed. Hosted `auto` is closed (G-AUTOMATION) |
 | R06 | End-to-end encryption | unknown | Relay confidentiality is **not observed**: no disposable Synapse with database and log access. The crypto experiments are feasibility evidence only |
 | R07 | Attach to the existing session | unknown | OpenCode plugin 1.17.10 tested. Claude Code hooks: no proven version. Codex routes blocked on #230 and #266 |
-| R08 | Agent sets up pub/sub itself | unknown | `khala setup` passes the packaged gate. Installed entries cannot find the runtime descriptor (#386) |
+| R08 | Agent sets up pub/sub itself | unknown | `khala setup` passes the packaged gate. On this candidate, installed entries could not find the runtime descriptor (#386, fixed after this candidate by #402). Installed Claude and Codex entries still depend on `khala` being on PATH (#403) |
 | R09 | Any model, cross-owner | unknown | Conformance passes in `fake-contract` mode. No `live-harness` report has been accepted |
 | R10 | TypeScript and OSS reuse | pass | Product source is TypeScript. The exceptions are the Claude plugin's hook entry points and runtime, which ship as `.mjs` with a `.d.mts` declaration so that Claude Code can run them unbuilt, plus build configuration and one landing-page script. Synapse and `matrix-js-sdk` are reused (`client-reuse.md`, `backend.md`) |
 | R11 | Netlify preferred, Railway acceptable | pass | Topology decided in P16 (Synapse on Railway, web on Netlify at P11's origin). Neither is provisioned, so this is a design pass, not a deployment pass |
@@ -129,7 +129,6 @@ ticket does not fix them.
 
 | Finding | Owner | Needed for |
 | --- | --- | --- |
-| #380: the recovery view misses dispatcher evidence, which makes the KHA-138 "delivery ambiguity" row fail | KHA-136 (in CI) | Security report |
 | No live collaboration run. The case needs a pinned harness version, a registered live driver and a disposable environment | #239, #240, #241. Under decision 43 the Executor owes the Claude and OpenCode live runs (#240, #241) | R1, R01–R03, R15, AE1 |
 | No disposable preview environment exists for the live human proof | #134 (Executor-owned) | R1, R01–R03, R06, R15 |
 | No production composition of the hosted connector, and no protected human control transport | KHA-133/134/135/136 integration owners | R04, R05, R07, R15 |
@@ -139,7 +138,7 @@ ticket does not fix them.
 | Codex is required (P15, decisions 23 and 37) but unproven. It is parked on a broken Codex API key (operational), not deferred by decision | #230, #266 | R07, R08 |
 | OpenCode and cross-harness read receipts are not proven. Acknowledgement is core to decision 3 | #232, #233 | R02, R03, R07 |
 | Internal mode has no pause or listening-mode control. Decisions 23 and 42 require mode control | #392 | R05, R07 |
-| Installed harness entries cannot find the runtime descriptor, and only one agent session per user can bind. Both gate the internal-mode flow | #386, #391 | R08, R1 |
+| Only one agent session per user can bind, which gates the internal-mode flow | #391 | R1 |
 | Browser acceptance (desktop, mobile, keyboard) is not recorded | #238 | R12 |
 
 ### Contained rework (owned elsewhere, not blocking this record's scope)
@@ -150,6 +149,14 @@ ticket does not fix them.
 
 - #384 (flaky listing-ref tamper test): fixed on `main` by #397 (`a8bee18`),
   which changes one test only. The next rerun of this record covers it.
+- #380 (the recovery view missed dispatcher evidence, which made the KHA-138
+  "delivery ambiguity" row fail): fixed on `main` by #395 (`08c3b10`). The
+  `security: fail (#380)` result stays, because it is scoped to this
+  candidate. The delivery-ambiguity row must pass on the next candidate's
+  security rerun before R2 can pass.
+- #386 (installed entries could not find the runtime descriptor): fixed on
+  `main` by #402 (`d2e8efa`). Entries that run a bare `khala` still depend on
+  PATH (#403).
 
 ### Deferred, nonblocking by decision
 

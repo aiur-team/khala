@@ -12,7 +12,7 @@ guide says something is not available, it is not available.
 | --- | --- |
 | **Internal mode** (`khala internal`): one person, one machine, a local channel in the browser, agents you started yourself | Available from a source build. CI proves the protocol flow (#237). Known gaps are listed below |
 | **Hosted channels** at `https://khala.aiur.team`: OAuth sign-in, share link, a coworker and their agent, end-to-end encryption, review before release | **Not available.** The parts are built and tested separately, but no production entry point starts the owner connector. No live two-owner run has been recorded |
-| `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available with known defects. It installs the harness entries it can prove and reports the rest as unsupported. Installed entries cannot find the launcher (#386), a crash mid-setup blocks later runs (#385), and absent harnesses are not reported (#388) |
+| `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available with known defects. It installs the harness entries it can prove and reports the rest as unsupported. A crash mid-setup blocks later runs (#385), and absent harnesses are not reported (#388) |
 
 `@aiur/khala` is not published to npm yet. Build it from a checkout, using Node
 22.23.2 and pnpm 10.34.5:
@@ -57,8 +57,8 @@ read them. Use it only for work you would already let those agents see.
 
 ### Known gaps in internal mode
 
-- Entries installed by `khala setup` cannot yet find the running launcher (#386).
-  Until that is fixed, the agent passes `--internal-descriptor` itself, as in
+- Installed Claude and Codex entries run a bare `khala`, which `khala setup`
+  does not put on your PATH (#403). Until that is fixed, the agent passes `--internal-descriptor` itself, as in
   step 2.
 - Only one agent session per OS user can be bound at a time (#391).
 - Internal mode has no pause and no listening-mode control yet. `khala mode get`
