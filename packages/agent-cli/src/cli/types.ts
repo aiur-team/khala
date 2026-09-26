@@ -1,4 +1,7 @@
+import type { Readable, Writable } from 'node:stream';
 import type { BindingId, EventRef, HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
+import type { AgentListeningModeApplication } from '../composition/listening-mode.js';
+import type { BatchInbox } from './inbox.js';
 
 export const CLI_ERROR_CODES = [
   'invalid_arguments', 'invalid_link', 'invalid_input', 'not_connected', 'binding_not_held',
@@ -57,3 +60,16 @@ export type InboxRecord = Readonly<{
   payloadDigest: string; payloadBase64: string; receivedAt: string;
 }>;
 export type InboxCursor = Readonly<{ v: 1; offset: number; releaseId: string | null }>;
+
+export type CliDependencies = Readonly<{
+  client: AgentClientPort;
+  inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
+  /** Pre-bound to the held binding by trusted composition; absent or null means no mode control is composed. */
+  listeningMode?: AgentListeningModeApplication | null;
+  stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
+}>;
+/** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
+export type CliCommand = Readonly<{
+  name: string;
+  run(args: readonly string[], deps: CliDependencies): Promise<number>;
+}>;

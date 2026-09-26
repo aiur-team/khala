@@ -1,70 +1,58 @@
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import type { BindingId } from '@khala/contracts/delivery/index';
-import { CliError } from '../cli/errors.js';
-import { ListeningModeOperation } from '../composition/listening-mode.js';
-import type { InboxBatch } from '../cli/inbox.js';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
-import type { SendResult } from '../cli/types.js';
-import { plainObject, validBindingArgument } from '../cli/validation.js';
+import { ListeningModeOperation } from '../composition/listening-mode.js';
+import { plainObject } from '../cli/validation.js';
+import type { ListeningModeOperationPort } from './listening-mode-tool.js';
+import type { ReadOperationPort } from './read-tool.js';
+import { toolRegistry, type ToolRegistry } from './registry.js';
 import {
-  READ_TOOL_NAME, executeReadTool, readToolDefinition, readToolFailure, type ReadOperationPort,
-} from './read-tool.js';
-import {
-  LISTENING_MODE_TOOL_NAME, executeListeningModeTool, listeningModeToolDefinition, type ListeningModeOperationPort,
-} from './listening-mode-tool.js';
-import type {
-  McpJsonRpcId, McpToolResult, PreselectedMcpPostprocessOutcome,
-} from './result-postprocessor.js';
+  JSON_RPC_VERSION, failure, hasOnly, success,
+  type JsonRpcId, type JsonRpcResponse, type McpServerReadResultPostprocessor,
+  type McpServerResultPostprocessor, type McpToolContext,
+} from './tool.js';
 
-const JSON_RPC_VERSION = '2.0';
+export type { McpServerReadResultPostprocessor, McpServerResultPostprocessor } from './tool.js';
+
 const MCP_PROTOCOL_VERSION = '2025-03-26';
-const SEND_TOOL_NAME = 'khala_send';
 const MAX_FRAME_BYTES = MAX_SEND_BYTES + 16_384;
-
-type JsonRpcId = McpJsonRpcId;
-
-type JsonRpcResponse = Readonly<{
-  jsonrpc: typeof JSON_RPC_VERSION;
-  id: JsonRpcId;
-  result?: unknown;
-  error?: Readonly<{ code: number; message: string }>;
-}>;
 
 export type McpServerOptions = Readonly<{
   input: Readable;
   output: Writable;
   send: SendService;
   read: ReadOperationPort;
-  listeningMode?: ListeningModeOperationPort;
+  /** Absent means no mode control is composed; the tool then refuses with `unavailable`. */
+  listeningMode?: ListeningModeOperationPort | undefined;
   postprocessResult: McpServerResultPostprocessor;
   postprocessReadResult: McpServerReadResultPostprocessor;
   signal?: AbortSignal | undefined;
+  tools?: ToolRegistry | undefined;
 }>;
 
-export type McpServerResultPostprocessor = (
-  input: Readonly<{
-    responseId: McpJsonRpcId;
-    primaryResult: McpToolResult;
-    acknowledgeToken?: string;
-  }>,
-) => Promise<McpToolResult>;
-
-export type McpServerReadResultPostprocessor = (
-  input: Readonly<{
-    responseId: McpJsonRpcId;
-    primaryResult: McpToolResult;
-    preselectedBatch: InboxBatch | null;
-  }>,
-) => Promise<PreselectedMcpPostprocessOutcome>;
+type ServerContext = Readonly<{
+  send: SendService;
+  read: ReadOperationPort;
+  listeningMode: ListeningModeOperationPort;
+  postprocessResult: McpServerResultPostprocessor | undefined;
+  postprocessReadResult: McpServerReadResultPostprocessor | undefined;
+  tools: ToolRegistry;
+}>;
 
 /**
  * Runs the dependency-free MCP stdio transport. Each input line is one JSON-RPC
  * message and each response is one JSON line. The caller owns the streams.
  */
 export async function runMcpServer(options: McpServerOptions): Promise<void> {
-  const { input, output, send: sends, read, postprocessResult, postprocessReadResult, signal } = options;
-  const mode = options.listeningMode ?? new ListeningModeOperation({ application: null });
+  const { input, output, send, read, postprocessResult, postprocessReadResult, signal } = options;
+  const context: ServerContext = {
+    send,
+    read,
+    listeningMode: options.listeningMode ?? new ListeningModeOperation({ application: null }),
+    postprocessResult,
+    postprocessReadResult,
+    tools: options.tools ?? toolRegistry,
+  };
   const decoder = new StringDecoder('utf8');
   let buffered = '';
   let discarding = false;
@@ -88,7 +76,7 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
       if (Buffer.byteLength(line) > MAX_FRAME_BYTES) {
         await writeResponse(output, failure(null, -32600, 'Invalid Request'), signal);
       } else if (line.trim().length > 0) {
-        await processLine(line, output, sends, read, mode, postprocessResult, postprocessReadResult, signal);
+        await processLine(line, output, context, signal);
       }
       newline = buffered.indexOf('\n');
     }
@@ -102,20 +90,14 @@ export async function runMcpServer(options: McpServerOptions): Promise<void> {
   if (signal?.aborted) return;
   buffered += decoder.end();
   if (!discarding && buffered.trim().length > 0) {
-    await processLine(
-      buffered.replace(/\r$/, ''), output, sends, read, mode, postprocessResult, postprocessReadResult, signal,
-    );
+    await processLine(buffered.replace(/\r$/, ''), output, context, signal);
   }
 }
 
 async function processLine(
   line: string,
   output: Writable,
-  sends: SendService,
-  read: ReadOperationPort,
-  mode: ListeningModeOperationPort,
-  postprocessResult: McpServerResultPostprocessor | undefined,
-  postprocessReadResult: McpServerReadResultPostprocessor | undefined,
+  context: ServerContext,
   signal: AbortSignal | undefined,
 ): Promise<void> {
   let message: unknown;
@@ -129,11 +111,9 @@ async function processLine(
   const notification = plainObject(message) && !Object.hasOwn(message, 'id');
   const response = await handleMessage(
     message,
-    sends,
-    read,
-    mode,
-    notification ? undefined : postprocessResult,
-    notification ? undefined : postprocessReadResult,
+    notification
+      ? { ...context, postprocessResult: undefined, postprocessReadResult: undefined }
+      : context,
     notification,
   );
   if (!notification) await writeResponse(output, response, signal);
@@ -141,11 +121,7 @@ async function processLine(
 
 async function handleMessage(
   message: unknown,
-  sends: SendService,
-  read: ReadOperationPort,
-  mode: ListeningModeOperationPort,
-  postprocessResult: McpServerResultPostprocessor | undefined,
-  postprocessReadResult: McpServerReadResultPostprocessor | undefined,
+  context: ServerContext,
   notification: boolean,
 ): Promise<JsonRpcResponse> {
   if (!plainObject(message) || !hasOnly(message, ['jsonrpc', 'id', 'method', 'params'])
@@ -170,10 +146,10 @@ async function handleMessage(
       return emptyParams(params) ? success(id, {}) : failure(id, -32602, 'Invalid params');
     case 'tools/list':
       return emptyParams(params)
-        ? success(id, { tools: [sendToolDefinition(), readToolDefinition(), listeningModeToolDefinition()] })
+        ? success(id, { tools: context.tools.definitions() })
         : failure(id, -32602, 'Invalid params');
     case 'tools/call':
-      return callTool(id, params, sends, read, mode, postprocessResult, postprocessReadResult, notification);
+      return callTool(id, params, context, notification);
     default:
       return failure(id, -32601, 'Method not found');
   }
@@ -182,173 +158,25 @@ async function handleMessage(
 async function callTool(
   id: JsonRpcId,
   params: unknown,
-  sends: SendService,
-  read: ReadOperationPort,
-  mode: ListeningModeOperationPort,
-  postprocessResult: McpServerResultPostprocessor | undefined,
-  postprocessReadResult: McpServerReadResultPostprocessor | undefined,
+  context: ServerContext,
   notification: boolean,
 ): Promise<JsonRpcResponse> {
   if (!plainObject(params) || !hasOnly(params, ['name', 'arguments'])
     || typeof params.name !== 'string' || !plainObject(params.arguments)) {
     return failure(id, -32602, 'Invalid params');
   }
-  if (params.name === READ_TOOL_NAME) {
-    return callReadTool(id, params.arguments, read, postprocessReadResult, notification);
-  }
-  if (params.name === LISTENING_MODE_TOOL_NAME) {
-    return callListeningModeTool(id, params.arguments, mode, postprocessResult, notification);
-  }
-  if (params.name !== SEND_TOOL_NAME) return failure(id, -32602, 'Invalid params');
-
-  const shared = extractSharedToolArguments(params.arguments);
-  if (shared === null || !hasOnly(shared.arguments, ['message', 'bindingId'])
-    || typeof shared.arguments.message !== 'string') return failure(id, -32602, 'Invalid params');
-
-  let bindingId: BindingId | null = null;
-  if (Object.hasOwn(shared.arguments, 'bindingId')) {
-    if (!validBindingArgument(shared.arguments.bindingId)) return failure(id, -32602, 'Invalid params');
-    bindingId = shared.arguments.bindingId;
-  }
-
-  let result: SendResult;
-  try {
-    result = await sends.send(shared.arguments.message, bindingId);
-  } catch (error) {
-    if (error instanceof CliError && error.code === 'invalid_input') return failure(id, -32602, 'Invalid params');
-    throw error;
-  }
-  const safe = publicResult(result);
-  const primaryResult = {
-    content: [{ type: 'text', text: JSON.stringify(safe) }],
-    structuredContent: safe,
-    ...(result.kind === 'accepted' ? {} : { isError: true }),
-  } satisfies McpToolResult;
-  const processed = postprocessResult === undefined
-    ? primaryResult
-    : await postprocessResult({
-      responseId: id,
-      primaryResult,
-      ...(shared.acknowledgeToken === undefined ? {} : { acknowledgeToken: shared.acknowledgeToken }),
-    });
-  return success(id, processed);
-}
-
-async function callReadTool(
-  id: JsonRpcId,
-  argumentsValue: Record<string, unknown>,
-  read: ReadOperationPort,
-  postprocessReadResult: McpServerReadResultPostprocessor | undefined,
-  notification: boolean,
-): Promise<JsonRpcResponse> {
-  // Notifications are intentionally ineligible for read and acknowledgement;
-  // there is no response channel on which a selected batch could be delivered.
-  if (notification) return success(id, {});
-
-  const shared = extractSharedToolArguments(argumentsValue);
-  if (shared === null || !hasOnly(shared.arguments, ['bindingId'])) {
-    return failure(id, -32602, 'Invalid params');
-  }
-  let bindingId: BindingId | null = null;
-  if (Object.hasOwn(shared.arguments, 'bindingId')) {
-    if (!validBindingArgument(shared.arguments.bindingId)) return failure(id, -32602, 'Invalid params');
-    bindingId = shared.arguments.bindingId;
-  }
-
-  const execution = await executeReadTool({
-    responseId: id,
-    arguments: { bindingId },
-    read,
-    ...(shared.acknowledgeToken === undefined ? {} : { acknowledgeToken: shared.acknowledgeToken }),
-  });
-  if (execution.kind === 'error' || postprocessReadResult === undefined) {
-    return success(id, execution.primaryResult);
-  }
-  try {
-    const outcome = await postprocessReadResult({
-      responseId: id,
-      primaryResult: execution.primaryResult,
-      preselectedBatch: execution.preselectedBatch,
-    });
-    return success(id, outcome.kind === 'composed'
-      ? outcome.result
-      : readToolFailure(outcome.code).primaryResult);
-  } catch {
-    return success(id, readToolFailure('internal_error').primaryResult);
-  }
-}
-
-async function callListeningModeTool(
-  id: JsonRpcId,
-  argumentsValue: Record<string, unknown>,
-  mode: ListeningModeOperationPort,
-  postprocessResult: McpServerResultPostprocessor | undefined,
-  notification: boolean,
-): Promise<JsonRpcResponse> {
-  // A notification has no response channel for the mode result, so it must
-  // neither inspect nor mutate mode, nor acknowledge a batch.
-  if (notification) return success(id, {});
-
-  const shared = extractSharedToolArguments(argumentsValue);
-  if (shared === null) return failure(id, -32602, 'Invalid params');
-  const primaryResult = await executeListeningModeTool(shared.arguments, mode);
-  if (primaryResult === null) return failure(id, -32602, 'Invalid params');
-  const processed = postprocessResult === undefined
-    ? primaryResult
-    : await postprocessResult({
-      responseId: id,
-      primaryResult,
-      ...(shared.acknowledgeToken === undefined ? {} : { acknowledgeToken: shared.acknowledgeToken }),
-    });
-  return success(id, processed);
-}
-
-function extractSharedToolArguments(argumentsValue: Record<string, unknown>): Readonly<{
-  arguments: Record<string, unknown>;
-  acknowledgeToken?: string;
-}> | null {
-  const { ackBatchToken, ...toolArguments } = argumentsValue;
-  if (ackBatchToken !== undefined && typeof ackBatchToken !== 'string') return null;
-  return {
-    arguments: toolArguments,
-    ...(ackBatchToken === undefined ? {} : { acknowledgeToken: ackBatchToken }),
+  const tool = context.tools.resolve(params.name);
+  if (tool === undefined) return failure(id, -32602, 'Invalid params');
+  const toolContext: McpToolContext = {
+    id,
+    notification,
+    send: context.send,
+    read: context.read,
+    listeningMode: context.listeningMode,
+    postprocessResult: context.postprocessResult,
+    postprocessReadResult: context.postprocessReadResult,
   };
-}
-
-type McpToolDefinition = Readonly<{
-  name: typeof SEND_TOOL_NAME;
-  description: string;
-  inputSchema: Readonly<{ type: 'object'; properties: Readonly<Record<string, unknown>>; required: readonly string[]; additionalProperties: false }>;
-}>;
-
-function sendToolDefinition(): McpToolDefinition {
-  return {
-    name: SEND_TOOL_NAME,
-    description: 'Send a message to the Khala channel through a binding held by this agent. An omitted bindingId uses the current binding. Valid results may append untrusted channel batch data. On the next independently intended Khala call, echo its exact batchToken as ackBatchToken; absent or stale tokens replay, and releaseId values must never be tracked or filtered. Never call khala_send solely to acknowledge. Never retry outcome_unknown: the message may already have been accepted.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', minLength: 1, description: 'Message body to send; it is never echoed in the result.' },
-        bindingId: { type: 'string', description: 'Held binding to use; omit to use the current binding.' },
-        ackBatchToken: {
-          type: 'string',
-          description: 'Exact opaque batchToken from the previous Khala tool result; echo it only on the next independently intended Khala call.',
-        },
-      },
-      required: ['message'],
-      additionalProperties: false,
-    },
-  };
-}
-
-function publicResult(result: SendResult): Record<string, string | null> {
-  if (result.kind === 'accepted') {
-    return { kind: result.kind, clientTxnId: result.clientTxnId, eventId: result.eventId };
-  }
-  if (result.kind === 'refused') {
-    return { kind: result.kind, code: result.code, clientTxnId: result.clientTxnId };
-  }
-  return { kind: result.kind, clientTxnId: result.clientTxnId };
+  return tool.call(params.arguments, toolContext);
 }
 
 function validInitializeParams(value: unknown): value is { protocolVersion?: string } {
@@ -374,14 +202,6 @@ function emptyParams(value: unknown): boolean {
   return value === undefined || (plainObject(value) && Object.keys(value).length === 0);
 }
 
-function success(id: JsonRpcId, result: unknown): JsonRpcResponse {
-  return { jsonrpc: JSON_RPC_VERSION, id, result };
-}
-
-function failure(id: JsonRpcId, code: number, message: string): JsonRpcResponse {
-  return { jsonrpc: JSON_RPC_VERSION, id, error: { code, message } };
-}
-
 function requestId(message: unknown): JsonRpcId {
   if (!plainObject(message) || !Object.hasOwn(message, 'id') || !validId(message.id)) return null;
   return message.id;
@@ -390,10 +210,6 @@ function requestId(message: unknown): JsonRpcId {
 function validId(value: unknown): value is JsonRpcId {
   return value === null || typeof value === 'string'
     || (typeof value === 'number' && Number.isFinite(value));
-}
-
-function hasOnly(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every(key => allowed.includes(key));
 }
 
 function writeResponse(

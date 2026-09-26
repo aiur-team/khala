@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { StoreErrorCode } from './errors';
 import { ROOM_DATABASE_FILE } from './path';
 import { openChannelStore } from './open';
-import { APPLICATION_ID, CORE_SCHEMA_V1_SQL, SCHEMA_VERSION } from './schema';
+import { APPLICATION_ID, CORE_SCHEMA_V1_SQL, MODE_SCHEMA_V2_SQL, SCHEMA_VERSION } from './schema';
 
 const roots: string[] = [];
 const handles: Array<{ close(): void }> = [];
@@ -66,14 +66,15 @@ function snapshot(directory: string): ReadonlyArray<readonly [string, string, nu
   });
 }
 
-function createV1(directory: string): string {
+function createV1(directory: string, version: 1 | 2 = 1): string {
   fs.mkdirSync(directory, { mode: 0o700 });
   const target = file(directory);
   const db = new DatabaseSync(target);
   db.exec('BEGIN IMMEDIATE');
   db.exec(CORE_SCHEMA_V1_SQL);
+  if (version === 2) db.exec(MODE_SCHEMA_V2_SQL);
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
-  db.exec('PRAGMA user_version = 1');
+  db.exec(`PRAGMA user_version = ${version}`);
   db.exec("INSERT INTO participants (participant_id, owner_id, kind, display_name) VALUES ('p1', 'o1', 'agent', 'Agent')");
   db.exec("INSERT INTO devices (device_id, participant_id) VALUES ('d1', 'p1')");
   db.exec('COMMIT');
@@ -107,15 +108,25 @@ describe('openChannelStore', () => {
     ]);
   });
 
-  it('migrates a seeded v1 core database to the v2 mode schema without changing core rows', () => {
+  it('migrates a seeded v1 core database to the current mode schema without changing core rows', () => {
     const directory = scratchDirectory();
     createV1(directory);
     const handle = open(directory, 'existing');
     expect(handle.read(db => db.prepare('SELECT * FROM participants').get())).toMatchObject({ participant_id: 'p1' });
     expect(handle.read(db => db.prepare('SELECT * FROM devices').get())).toEqual({ device_id: 'd1', participant_id: 'p1' });
-    expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: 2 });
+    expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: SCHEMA_VERSION });
     expect(handle.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE name = 'mode_controls'").get()))
       .toEqual({ name: 'mode_controls' });
+  });
+
+  it('migrates a v2 database by adding the nullable last_changed_by column', () => {
+    const directory = scratchDirectory();
+    createV1(directory, 2);
+    const handle = open(directory, 'existing');
+    expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: 3 });
+    expect(handle.read(db => db.prepare("SELECT name FROM pragma_table_info('mode_controls') WHERE name = 'last_changed_by'").get()))
+      .toEqual({ name: 'last_changed_by' });
+    expect(handle.read(db => db.prepare('SELECT participant_id FROM participants').get())).toEqual({ participant_id: 'p1' });
   });
 
   it('rolls every injected v1 migration failure back and retries from intact v1 state', () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type {
-  BindingId, DeliveryReceipt, HarnessCapabilities, ModeSupport, ModeSupportMap, OwnerId, ParticipantId, RoomId,
+  BindingId, DeliveryReceipt, HarnessCapabilities, ListeningModeLastChangedBy, ModeSupport, ModeSupportMap, OwnerId, ParticipantId, RoomId,
   RouteGrant,
 } from '@khala/contracts/delivery/index';
 import { decodeDeliveryLimits, unknownModeSupportMap } from '@khala/contracts/delivery/index';
@@ -60,6 +60,7 @@ type Options = Readonly<{
   experimentalGrants?: RouteGrant[];
   hardCancelGrants?: RouteGrant[];
   hardCancel?: ModeSupport | null;
+  lastChangedBy?: ListeningModeLastChangedBy;
   latestReceipt?: DeliveryReceipt | null;
 }>;
 
@@ -69,7 +70,7 @@ function snapshot(options: Options = {}): AgentControlsSnapshot {
   const listening: ListeningModeSnapshot = {
     view: {
       bindingId: BINDING_ID, generation: 2, requested, version: 3,
-      experimentalGrants: options.experimentalGrants ?? [], hardCancelGrants: options.hardCancelGrants ?? [],
+      experimentalGrants: options.experimentalGrants ?? [], hardCancelGrants: options.hardCancelGrants ?? [], lastChangedBy: options.lastChangedBy ?? { kind: 'unknown' },
       effective: options.effective === undefined ? requested : options.effective,
       effectiveReason: options.effectiveReason ?? null,
       support: modes,
@@ -143,6 +144,11 @@ describe('AgentControlsPanel listening section', () => {
     expect(section).toContain('Requested: sync · Effective: sync');
     expect(section).toMatch(/Last changed by the agent \(Codex CLI/);
     expect(section).toContain('Idle agents receive messages only at their next turn.');
+  });
+
+  it('shows the actor recorded on the store view, taking precedence over the legacy snapshot hint', () => {
+    const owner = { kind: 'owner' as const, participantId: 'owner-1' as ParticipantId };
+    expect(listeningSection(render({ lastChangedBy: owner }))).toMatch(/Last changed by (you \(owner\)|the owner) \(v3\)/);
   });
 
   it('WRONG-IMPLEMENTATION: a hosted Codex proof never renders a green TUI badge or an enabled mode', () => {

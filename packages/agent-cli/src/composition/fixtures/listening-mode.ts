@@ -3,7 +3,7 @@ import type {
   AgentListeningModeApplication, AgentListeningModeSetInput,
 } from '@khala/connector/agent/listening-mode';
 import type {
-  BindingId, ListeningMode, ListeningModeResult, ListeningModeView,
+  BindingId, ListeningMode, ListeningModeResult, ListeningModeView, ParticipantId,
 } from '@khala/contracts/delivery/index';
 
 export const MODE_VIEW = {
@@ -13,6 +13,7 @@ export const MODE_VIEW = {
   version: 4,
   experimentalGrants: [],
   hardCancelGrants: [],
+  lastChangedBy: { kind: 'owner', participantId: 'owner-1' as ParticipantId },
   effective: 'sync',
   effectiveReason: 'steer_unsupported',
   support: {
