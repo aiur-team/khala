@@ -1,0 +1,25 @@
+/* Local transport status: quiet while live, prominent when action is needed. */
+.local-transport__status:empty {
+  display: none;
+}
+
+.local-transport__status {
+  margin: 0 0 var(--space-2, 0.5rem);
+}
+
+.local-transport__terminal {
+  margin: 0 0 var(--space-3, 0.75rem);
+  padding: var(--space-3, 0.75rem);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+}
+
+.local-transport__terminal h2:focus {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.local-transport__terminal pre {
+  overflow-x: auto;
+  user-select: all;
+}

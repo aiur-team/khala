@@ -63,6 +63,7 @@ const ROUTES = {
   bootstrapDocument: { method: 'GET', path: BOOTSTRAP_DOCUMENT_ROUTE, admission: 'public' },
   bootstrapScript: { method: 'GET', path: BOOTSTRAP_SCRIPT_ROUTE, admission: 'public' },
   exchange: { method: 'POST', path: SESSION_EXCHANGE_ROUTE, admission: 'bootstrap' },
+  session: { method: 'GET', path: '/api/v1/session', admission: 'authenticated' },
   create: { method: 'POST', path: '/api/v1/channels', admission: 'authenticated' },
   channel: { method: 'GET', path: '/api/v1/channels/:channelId', admission: 'authenticated' },
   timeline: { method: 'GET', path: '/api/v1/channels/:channelId/timeline', admission: 'authenticated', allowQuery: true },
@@ -161,7 +162,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
 
   const routes: RouteSpec[] = [
     ROUTES.bootstrapDocument, ROUTES.bootstrapScript, ROUTES.exchange,
-    ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
+    ROUTES.session, ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
   ];
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
@@ -273,6 +274,16 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       // An unavailable write may or may not have committed; never report success.
       fail(response, failure(503, 'outcome_unknown'));
     }
+  }
+
+  /** Lets the local browser learn the human authority its session was bootstrapped with. */
+  function session({ principal, response }: RouteContext<Principal>): void {
+    if (principal?.kind !== 'human') {
+      fail(response, failure(403, 'forbidden'));
+      return;
+    }
+    const { ownerId, participantId, deviceId } = principal.human;
+    sendJson(response, 200, { human: { ownerId, participantId, deviceId } });
   }
 
   /** Lets a local agent client learn the exact live binding its capability holds. */
@@ -454,6 +465,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
             sendBytes(context.response, 200, 'text/javascript; charset=utf-8', BOOTSTRAP_SCRIPT);
             return;
           case ROUTES.exchange: return await exchange(context);
+          case ROUTES.session: return session(context);
           case ROUTES.create: return await create(context);
           case ROUTES.channel: return channel(context);
           case ROUTES.timeline: return timeline(context);

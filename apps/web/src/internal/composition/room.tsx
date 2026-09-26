@@ -1,0 +1,158 @@
+import { useEffect, useMemo, useRef, useSyncExternalStore, type Ref } from 'react';
+import type { RoomId } from '@khala/contracts/messaging/index';
+import type { LocalTransport, LocalTransportState } from '@khala/messaging/local/http/index';
+import { createChannelController } from '../../features/channel/controller';
+import type { ChannelUiPort } from '../../features/channel/ports';
+import { ChannelScreen } from '../../features/channel/ChannelScreen';
+import { createTimelineController } from '../../features/timeline/controller';
+import { TimelineScreen } from '../../features/timeline/TimelineScreen';
+import { Panel } from '../../shell/Panel';
+import type { HumanRouteContext } from '../../composition/human/application';
+import { createPendingSendStore } from './pending-store';
+
+// Agent presence, listening mode and Stop belong to their own tickets; they
+// arrive here as injected capabilities, never as UI built by this entry.
+const unavailablePresence: ChannelUiPort = {
+  async agents() { throw new Error('agent presence unavailable'); },
+  subscribeAgents: () => () => undefined,
+  async installCommand() { throw new Error('agent onboarding unavailable'); },
+};
+
+/** Exactly what the launcher prints: channel arguments only need quoting for a leading `~`. */
+export function resumeCommand(roomId: string): string {
+  return `khala internal --resume ${roomId.startsWith('~') ? `'${roomId}'` : roomId}`;
+}
+
+/** Why the composer is paused in a transport state, or `null` when it may send. */
+export function sendBlockedReason(state: LocalTransportState): string | null {
+  switch (state.kind) {
+    case 'live':
+      return null;
+    case 'connecting':
+      return 'Sending starts once Khala connects to the local server.';
+    case 'reconnecting':
+      return 'Sending is paused while Khala reconnects. Your draft is kept.';
+    case 'stopped':
+      return 'Sending is paused because the local server is not reachable. Your draft is kept.';
+    case 'auth_failed':
+      return 'Sending is unavailable because this local session has ended.';
+  }
+}
+
+export function TransportStatus({ state, roomId, onRetry }: {
+  state: LocalTransportState;
+  roomId: string;
+  onRetry: () => void;
+}) {
+  const terminal = useRef<HTMLHeadingElement | null>(null);
+  const everLive = useRef(false);
+  if (state.kind === 'live') everLive.current = true;
+
+  // A state that needs the reader's action takes focus so it is never missed.
+  useEffect(() => {
+    if (state.kind === 'stopped' || state.kind === 'auth_failed') terminal.current?.focus();
+  }, [state.kind]);
+
+  let message: string;
+  switch (state.kind) {
+    case 'connecting':
+      message = 'Connecting to the local Khala server…';
+      break;
+    case 'live':
+      message = everLive.current ? 'Connected to the local Khala server.' : '';
+      break;
+    case 'reconnecting':
+      message = `Lost the connection to the local Khala server. Reconnecting (attempt ${state.attempt})…`;
+      break;
+    default:
+      message = '';
+  }
+
+  return (
+    <div className="local-transport">
+      <p className="local-transport__status" role="status" aria-live="polite">{message}</p>
+      {state.kind === 'stopped' ? (
+        <div className="local-transport__terminal" role="alert">
+          <h2 ref={terminal} tabIndex={-1}>The local Khala server stopped</h2>
+          <p>
+            Channel <code>{roomId}</code> is still saved on this computer. Resume it with:
+          </p>
+          <pre><code>{resumeCommand(roomId)}</code></pre>
+          <button type="button" onClick={onRetry}>Try to reconnect</button>
+        </div>
+      ) : null}
+      {state.kind === 'auth_failed' ? <SessionEnded roomId={roomId} headingRef={terminal} /> : null}
+    </div>
+  );
+}
+
+export function SessionEnded({ roomId, headingRef }: {
+  roomId: string | null;
+  headingRef?: Ref<HTMLHeadingElement>;
+}) {
+  return (
+    <div className="local-transport__terminal" role="alert">
+      <h2 ref={headingRef} tabIndex={-1}>This local session has ended</h2>
+      <p>The link that opened this page has expired or was replaced. Relaunch Khala from your terminal to get a new one.</p>
+      {roomId === null ? null : <pre><code>{resumeCommand(roomId)}</code></pre>}
+    </div>
+  );
+}
+
+export function LocalRoom({ context, roomId, transport }: {
+  context: HumanRouteContext;
+  roomId: RoomId;
+  transport: LocalTransport;
+}) {
+  const state = useSyncExternalStore(transport.subscribe, transport.current, transport.current);
+  const timeline = useMemo(
+    () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
+    [context.generation, context.room, roomId],
+  );
+  const channel = useMemo(
+    () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
+    [context.generation, roomId],
+  );
+  const pendingStore = useMemo(() => createPendingSendStore(context.principal.ownerId, roomId), [context.principal.ownerId, roomId]);
+  useEffect(() => () => {
+    timeline.dispose();
+    channel.dispose();
+  }, [channel, timeline]);
+  // A history read that failed while the server was unreachable is reread once
+  // the transport is live again, so the transcript never stays degraded.
+  useEffect(() => {
+    const phase = timeline.getSnapshot().phase;
+    if (state.kind === 'live' && (phase === 'unavailable' || phase === 'partial')) void timeline.loadOlder();
+  }, [state.kind, timeline]);
+  const viewer = context.participant?.() ?? null;
+  if (viewer === null) {
+    return (
+      <Panel heading="Channel unavailable">
+        <p role="alert">Participant attribution is unavailable for this session.</p>
+      </Panel>
+    );
+  }
+
+  return (
+    <ChannelScreen
+      title="Local channel"
+      description="Messages are stored in plaintext on this computer."
+      controller={channel}
+      renderTimeline={() => (
+        <>
+          <TransportStatus state={state} roomId={roomId} onRetry={() => transport.retry()} />
+          <TimelineScreen
+            controller={timeline}
+            roomPort={context.room}
+            roomId={roomId}
+            viewer={viewer}
+            sendBlockedReason={sendBlockedReason(state)}
+            pendingStore={pendingStore}
+          />
+        </>
+      )}
+      renderReview={() => null}
+      renderControls={() => null}
+    />
+  );
+}

@@ -105,8 +105,19 @@ start yourself connect through the runtime descriptor later.
   result carries the notice that internal channel data is stored in plaintext
   and that deletion does not securely erase it.
 
+The page the URL opens is the local build of the Khala channel UI. It lands
+directly on the launched channel, needs no account, and has no sign-in, share,
+join, or recovery screens; its create page (`/`) makes another private channel
+and opens it. It shows the transport state: while the server is unreachable it
+reconnects with backoff, keeps the timeline and your draft, and pauses sending.
+After the retries run out it shows the channel ID and exact resume command. A
+refused or expired session is final, and the page asks you to relaunch. Sends
+whose outcome is unknown survive a reload and resolve under their original
+transaction when you choose **Check delivery**.
+
 Launching needs the built internal web bundle in `internal-web/` beside
-`khala-internal.js`. Without it, launch fails with `web_bundle_unavailable`
+`khala-internal.js`. `pnpm --filter @khala/web build:internal` builds it into
+`apps/web/dist/internal-web/`. Without it, launch fails with `web_bundle_unavailable`
 before it takes the lock or changes any state. Failures print
 `{"ok":false,"error":<code>}` to stderr and exit 3. When a channel was created
 but its server could not start, the failure also includes `channelId` and
