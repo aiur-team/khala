@@ -1,0 +1,39 @@
+{
+  "limits": {
+    "maxBodyBytes": 4096,
+    "maxAuthorLabelBytes": 128,
+    "maxRecordsPerChunk": 64,
+    "maxChunkBytes": 65536,
+    "maxChunks": 1024,
+    "maxPageRecords": 50,
+    "maxPageBytes": 16384
+  },
+  "archive": {
+    "archiveId": "archive-1",
+    "source": {
+      "channelId": "internal-channel-1",
+      "revision": "rev-7"
+    },
+    "importedBy": {
+      "ownerId": "owner-1",
+      "participantId": "@ada:example.org"
+    },
+    "importedAt": "2026-09-25T13:00:00Z"
+  },
+  "record": {
+    "sourceRecordId": "msg-1",
+    "sequence": 1,
+    "originalAuthor": {
+      "label": "Ada",
+      "kind": "human"
+    },
+    "originalSentAt": "2026-09-25T12:00:00.123Z",
+    "body": "Ship it?\nYes — 👍 \"quoted\" \\ done"
+  },
+  "encoding": {
+    "recordUtf8": "[\"khala.imported-history.record.v1\",\"internal-channel-1\",\"msg-1\",1,\"Ada\",\"human\",\"2026-09-25T12:00:00.123Z\",\"Ship it?\\nYes — 👍 \\\"quoted\\\" \\\\ done\"]",
+    "recordDigest": "sha256:e017af28e136e4bed38a0d67f78819e9a2712c364cda5975c6fb5d4edbe87bc5",
+    "chunkUtf8": "[\"khala.imported-history.chunk.v1\",\"archive-1\",0,[[\"msg-1\",1,\"Ada\",\"human\",\"2026-09-25T12:00:00.123Z\",\"Ship it?\\nYes — 👍 \\\"quoted\\\" \\\\ done\",\"sha256:e017af28e136e4bed38a0d67f78819e9a2712c364cda5975c6fb5d4edbe87bc5\"]]]",
+    "chunkDigest": "sha256:fb0b794c82c96cdc9bee8c646dc1909a6a200d89bc485cfc21ad43f3281f7aeb"
+  }
+}

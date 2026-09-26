@@ -1,5 +1,27 @@
 # Codex harness adapter (KHA-118, KHA-150)
 
+## Interactive hook route (E09 `interactive-codex`)
+
+`interactiveCodexCapabilities(version, limits, review)` in `interactive.ts` declares
+delivery into the user's own Codex TUI through the native hooks that
+`setup-cli-codex` installs (`khala codex-hook`, see `packages/agent-cli/README.md`).
+Khala never starts, hosts or signals Codex on this route. The claim is `tested`,
+with `existingSession: native_hooks`, `acknowledgement: batch_token_next_call` and
+every mode `proven`, only when both of these hold:
+
+- the exact version is in `CODEX_INTERACTIVE_VERSIONS` (`0.154.0`, `0.156.1`), the
+  versions whose TUI passed every cell under normal trust settings in
+  [`interactive-codex.md`](../../../../docs/product/internal-mode/interactive-codex.md#mode-matrix);
+- the user has trusted every installed Khala hook in Codex's **Hooks need review**
+  dialog.
+
+Otherwise every mode is `unknown`, with the review or version reason. `steer`
+means the next tool boundary, and hard abort is disabled. `immediateNotification`
+stays `unknown`: until `codex-idle-wake` is proven, idle agents receive messages
+only at their next turn.
+
+The routes below are the earlier Khala-hosted and notification-only adapters.
+
 `createCodexHarness(deps): HarnessPort` from `@khala/harnesses/codex/index`. It
 selects one evidence-backed route during `inspect` and imports the KHA-106 contracts
 from `@khala/contracts/delivery/index`.
