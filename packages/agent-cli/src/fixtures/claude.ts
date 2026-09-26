@@ -103,6 +103,14 @@ export type FakeServices = Readonly<{
   rosterCalls: string[];
   /** The effective mode `readMode` reports. */
   mode: { value: ListeningMode | null };
+  /**
+   * The versioned mode record behind `readMode` and `setMode`: a set applies only at the
+   * current version and is otherwise a conflict, as the listening-mode store does.
+   * `effectiveReason` is what the store derives while nothing is effective.
+   */
+  modeRecord: { requested: ListeningMode | null; version: number; effectiveReason: string | null };
+  /** Every mode command the agent's calls reached, as issued. */
+  modeCommands: Array<Readonly<{ bindingId: string; commandId: string; expectedVersion: number; requested: ListeningMode; issuedAt: string }>>;
   /** Piggyback batches the next send or mode-set calls select, in order. */
   piggyback: Array<InboxBatch | null>;
   services(binding: SessionBinding): ClaudeBindingServices;
@@ -118,9 +126,11 @@ export function fakeServices(): FakeServices {
   const roster: FakeServices['roster'] = { value: { kind: 'listed', roster: { v: 1, agents: [] } } };
   const rosterCalls: string[] = [];
   const mode: FakeServices['mode'] = { value: null };
+  const modeRecord: FakeServices['modeRecord'] = { requested: 'sync', version: 1, effectiveReason: 'support_unknown' };
+  const modeCommands: FakeServices['modeCommands'] = [];
   const piggyback: Array<InboxBatch | null> = [];
   return {
-    reads, sends, modeSets, pending, capabilities: caps, watch, roster, rosterCalls, mode, piggyback,
+    reads, sends, modeSets, pending, capabilities: caps, watch, roster, rosterCalls, mode, modeRecord, modeCommands, piggyback,
     services(bound) {
       if (!reads.has(bound.bindingId)) reads.set(bound.bindingId, fakeRead());
       return {
@@ -131,17 +141,26 @@ export function fakeServices(): FakeServices {
         },
         async setMode(input) {
           modeSets.push({ bindingId: bound.bindingId, ...(input.acknowledgeToken === undefined ? {} : { acknowledgeToken: input.acknowledgeToken }) });
+          modeCommands.push({
+            bindingId: bound.bindingId, commandId: input.commandId, expectedVersion: input.expectedVersion, requested: input.requested, issuedAt: input.issuedAt,
+          });
+          const applied = input.expectedVersion === modeRecord.version;
+          if (applied) Object.assign(modeRecord, { requested: input.requested, version: modeRecord.version + 1 });
           return {
             value: {
-              v: 1, commandId: input.commandId, bindingId: bound.bindingId, generation: bound.generation, outcome: 'applied',
-              version: input.expectedVersion + 1, requested: input.requested, effective: null, reason: null,
+              v: 1, commandId: input.commandId, bindingId: bound.bindingId, generation: bound.generation, outcome: applied ? 'applied' : 'conflict',
+              version: modeRecord.version, requested: modeRecord.requested, effective: mode.value,
+              reason: mode.value === null ? modeRecord.effectiveReason : null,
             } as never,
             batch: piggyback.shift() ?? null,
           };
         },
         readMode: async () => ({
           ok: true,
-          view: { requested: 'sync', effective: mode.value, version: 1 } as never,
+          view: {
+            requested: modeRecord.requested, effective: mode.value, version: modeRecord.version,
+            effectiveReason: mode.value === null ? modeRecord.effectiveReason : null,
+          } as never,
         }),
         capabilities: async () => caps.value,
         pending: async () => ({ pending: pending.value }),
