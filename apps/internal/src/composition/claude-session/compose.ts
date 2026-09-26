@@ -1,7 +1,8 @@
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { CliError } from '@aiur/khala/cli/errors';
+import { callScopedConsumer } from '@aiur/khala/cli/call-consumer';
+import { openInbox } from '@aiur/khala/cli/inbox';
 import { MAX_SEND_BYTES, SendService } from '@aiur/khala/cli/send';
 import type { AccessRequestInput, AccessStatusInput, ChannelAccessResult, ChannelListInput } from '@aiur/khala/cli/channels/types';
 import type { CreateRequestInput } from '@aiur/khala/cli/channels/create/types';
@@ -11,17 +12,23 @@ import {
 import { CLAUDE_SESSION_PATH, handleClaudeSessionRequest } from '@aiur/khala/composition/claude-session-http';
 import { openClaudeSessionState } from '@aiur/khala/composition/claude-session-state';
 import { createInternalClient, readInternalDescriptor } from '@aiur/khala/composition/internal';
+import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import { activateInternalAccess } from '@aiur/khala/composition/internal-activation';
 import {
   type InternalDiscoveryCallResult, createInternalDiscoveryClient, selectInternalDiscovery,
 } from '@aiur/khala/composition/internal-discovery';
-import { type CommandId, type SessionBinding, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
+import { inspectClaudeVersion } from '@aiur/khala/composition/local-harness-capabilities';
+import { ReadOperation } from '@aiur/khala/composition/read';
+import { setupEnvironment } from '@aiur/khala/setup/environment';
+import {
+  type CommandId, type HarnessCapabilities, type SessionBinding, decodeDeliveryLimits,
+} from '@khala/contracts/delivery/index';
 import { type GrantedDescriptor, encodeInternalDescriptor, isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
 import {
   INTERNAL_CLAUDE_GRANT_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DIRECTORY,
 } from '@khala/contracts/internal/discovery-descriptor';
 import type { RoomId } from '@khala/contracts/messaging/index';
-import { claudeCapabilities } from '@khala/harnesses/claude/capabilities';
+import { installedClaudeCapabilities } from '@khala/harnesses/claude/interactive';
 import { activeDescriptorPath, writePrivateFile } from '../../descriptor/write';
 import type { AgentSessionRoute } from '../../server/channel-server';
 import type { ChannelStore } from '../../store/channel-store';
@@ -39,11 +46,20 @@ import { issueDiscoveryDescriptor } from '../discovery-descriptor';
 // `active.json`. The session then resolves only to the binding its own granted
 // descriptor names, and only while the store holds that binding active for its
 // session digest; before a grant it resolves to nothing.
+//
+// The route's capabilities come from the locally installed Claude Code, inspected as
+// setup inspects it: an exactly proven version is tested, any other inspected version
+// is experimental, and one that cannot be inspected stays unproven. A bound session
+// reads by pulling its binding generation's releases from the server's release feed
+// into that generation's own inbox, and the batch token the adapter retains is
+// acknowledged by the session's next Khala call.
 
 export const CLAUDE_HARNESS = 'claude';
 /** The per-session granted descriptor beside the session's discovery descriptor. */
 export const CLAUDE_GRANT_FILE = INTERNAL_CLAUDE_GRANT_DESCRIPTOR_FILE;
 const STATE_DIRECTORY = 'claude-session';
+/** Per binding generation inboxes and pull cursors, beside the adapter's retained tokens. */
+const INBOX_DIRECTORY = 'claude-inbox';
 /** Answers that may still owe a local binding; a `connected` one after a launcher restart. */
 const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'connected', 'repair_required']);
 /** The installation principal: every Claude session of this launch shares it. */
@@ -57,7 +73,24 @@ export type ClaudeSessionCompositionOptions = Readonly<{
   transportCapability: string;
   fetch?: typeof fetch;
   clock?: () => number;
+  /** The route claim for the installed Claude Code, from `inspectClaudeRoute`. */
+  capabilities: HarnessCapabilities;
 }>;
+
+const limits = decodeDeliveryLimits({ maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32 });
+if (!limits.ok) throw new Error('claude session: invalid delivery limits');
+const DELIVERY_LIMITS = limits.value;
+
+/**
+ * The Claude route claim for this launch, from the installed Claude Code version read as
+ * setup reads it (`version` overrides that inspection). A failed inspection claims nothing.
+ */
+export async function inspectClaudeRoute(version?: () => Promise<string | null>): Promise<HarnessCapabilities> {
+  const inspect = version ?? (() => inspectClaudeVersion(setupEnvironment(process.env)));
+  let found: string | null;
+  try { found = await inspect(); } catch { found = null; }
+  return installedClaudeCapabilities(found, DELIVERY_LIMITS);
+}
 
 export type ClaudeSessionComposition = Readonly<{ adapter: ClaudeSessionAdapter; route: AgentSessionRoute }>;
 
@@ -219,36 +252,59 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     return launch.ok && launch.value.origin === origin;
   }
 
-  const limits = decodeDeliveryLimits({ maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32 });
-  if (!limits.ok) throw new Error('claude session: invalid delivery limits');
-  // No installed Claude version is inspected here, so every route stays unproven.
-  const capabilities = claudeCapabilities(null, limits.value);
+  const capabilities = async (): Promise<HarnessCapabilities> => options.capabilities;
+  const inboxRoot = path.join(root, INBOX_DIRECTORY);
 
   function services(binding: SessionBinding): ClaudeBindingServices {
+    const { grantPath } = paths(binding.sessionId);
     const client = createInternalClient({
-      descriptorPath: paths(binding.sessionId).grantPath,
+      descriptorPath: grantPath,
       ...(options.fetch ? { fetch: options.fetch } : {}),
-      capabilities: async () => capabilities,
+      capabilities,
     });
     const modes = client.listeningModeControl!;
-    const unproven = async (): Promise<never> => { throw new CliError('transport_unavailable'); };
+    const delivery = createInternalDelivery({ descriptorPath: grantPath, stateDirectory: inboxRoot, ...(options.fetch ? { fetch: options.fetch } : {}) });
+    const held = { bindingId: binding.bindingId, generation: binding.generation };
+    const open = () => openInbox({
+      stateDirectory: inboxRoot, ...held, maxPayloadBytes: DELIVERY_LIMITS.maxPayloadBytes, maxSelectionEvents: DELIVERY_LIMITS.maxSelectionEvents,
+    });
+    const current = async (): Promise<SessionBinding | null> => {
+      const found = bound(binding.sessionId);
+      return found === null ? null : { ...found, sessionId: binding.sessionId };
+    };
+    const read = new ReadOperation({
+      heldBinding: binding,
+      consumer: {
+        // `ReadOperation` refuses a replaced generation before this runs, and again after.
+        async readBatch(input) {
+          // What the server released for this generation becomes durable in its inbox first.
+          // An unreachable feed still leaves the inbox readable, and its outstanding batch replays.
+          await delivery.pull(held, open);
+          return callScopedConsumer(await open()).readBatch(input);
+        },
+        async release() {},
+      },
+      currentBinding: current,
+    });
+    /** A token carried by a send or mode change acknowledges its batch before the call runs. */
+    const acknowledge = async (token: string | undefined): Promise<void> => {
+      if (token !== undefined) await read.read({ bindingId: binding.bindingId, maxBytes: 0, acknowledgeToken: token });
+    };
     return {
-      // Claude's acknowledgement route is unproven, so the adapter refuses every pull and
-      // read before it reaches this port; nothing is ever pulled into an inbox here.
-      read: { read: unproven },
+      read,
       async send(input) {
-        if (input.acknowledgeToken !== undefined) return unproven();
+        await acknowledge(input.acknowledgeToken);
         return { value: await new SendService(client).send(input.body, binding.bindingId), batch: null };
       },
-      // The session's own binding mode, through the server's agent mode route. Claude's routes are
-      // unproven, so the mode it reads is recorded but never effective.
+      // The session's own binding mode, through the server's agent mode route. An experimental
+      // mode is effective only under the owner's experimental-route grant.
       async setMode(input) {
-        if (input.acknowledgeToken !== undefined) return unproven();
+        await acknowledge(input.acknowledgeToken);
         const { commandId, expectedVersion, requested, issuedAt } = input;
         return { value: await modes.set({ commandId: commandId as CommandId, expectedVersion, requested, issuedAt }), batch: null };
       },
       readMode: () => modes.read(),
-      capabilities: async () => capabilities,
+      capabilities,
       // No local automation fence is composed: nothing pending, and no idle watcher.
       pending: async () => ({ pending: false }),
       watchWindow: async () => null,

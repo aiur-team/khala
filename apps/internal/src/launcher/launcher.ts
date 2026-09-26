@@ -10,7 +10,7 @@ import {
 import { type BindingControl, composeBindingControl } from '../composition/binding-control/index';
 import { composeBindingModes } from '../composition/binding-modes/index';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
-import { composeClaudeSession } from '../composition/claude-session/compose';
+import { composeClaudeSession, inspectClaudeRoute } from '../composition/claude-session/compose';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
 import { resumeInternalChannel } from '../lifecycle/resume';
 import type { AssetManifest } from '../server/assets';
@@ -107,6 +107,8 @@ export type LauncherOptions = Readonly<{
   openBrowser?: (input: Pick<OpenBootstrapInput, 'bootstrapUrl' | 'credential' | 'handoffParent'>) => Promise<OpenOutcome>;
   /** Test seam: runs after the lease is taken and before any other state is touched. */
   afterLease?: () => void;
+  /** Test seam: the installed Claude Code version. Defaults to setup's inspection of the local CLI. */
+  claudeVersion?: () => Promise<string | null>;
 }>;
 
 export function resumeCommandFor(channelId: string): string {
@@ -281,11 +283,13 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         newChannelId: () => `ch_${token()}`,
       });
       // Claude sessions present the transport capability from `active.json` and join as themselves.
+      // One inspection of the installed Claude Code backs both the owner's view and the session route.
+      const claudeRoute = await inspectClaudeRoute(options.claudeVersion);
       const claude = await composeClaudeSession({
-        root, store: channel.store, transportCapability, clock,
+        root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
       });
       bindingControl = composeBindingControl({ handle: channel.handle, root });
-      const modes = composeBindingModes({ handle: channel.handle, store: channel.store });
+      const modes = composeBindingModes({ handle: channel.handle, store: channel.store, claude: claudeRoute });
       server = await startChannelServer({
         store: channel.store,
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],

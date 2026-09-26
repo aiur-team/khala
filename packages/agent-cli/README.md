@@ -233,8 +233,9 @@ commands never load the local client.
   mode; this side projects it through the released claim of the harness
   actually installed here, read as setup reads it. For Codex, that means an
   exactly proven version whose Khala hooks you trusted. `async` stays unproven
-  until a receipt proof ships. Claude's internal routes are unproven, so its
-  effective mode stays `null`.
+  until a receipt proof ships. For Claude, an inspected version outside the
+  proven list is `experimental`, so a mode takes effect only under the owner's
+  experimental-route grant; an uninspectable version stays unproven.
 - `codex-hook` is installed as the byte-stable `khala codex-hook`, so without
   the option it uses the runtime `active.json` under the Khala state
   directory. It recognises its session by the digest the launcher stores for

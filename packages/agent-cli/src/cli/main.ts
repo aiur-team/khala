@@ -12,26 +12,13 @@ import { isClaudeMcpEntry } from '../composition/claude-mcp.js';
 import { createClaudeSessionClient } from '../composition/claude-session-http.js';
 import { packagedSetupService } from '../composition/setup.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
-import { createNodeSetupProbe } from '../setup/detect.js';
+import { setupEnvironment } from '../setup/environment.js';
 import { resolveSetupPaths } from '../setup/paths.js';
 import type { SetupExecute } from '../setup/plan.js';
 import { PAYLOAD_DIRECTORY } from '../setup/payload.js';
 import { executeSetupPlan } from '../setup/transaction.js';
-import type { SetupEnvironment } from '../setup/types.js';
 
-/** Builds the setup environment from explicit HOME/XDG/CODEX_HOME/PATH values only; nothing else is inherited. */
-export function setupEnvironment(env: NodeJS.ProcessEnv): SetupEnvironment {
-  const paths = resolveSetupPaths(env);
-  const probeEnvironment = {
-    HOME: paths.home, XDG_CONFIG_HOME: paths.configHome, XDG_DATA_HOME: paths.dataHome,
-    XDG_STATE_HOME: paths.stateHome, CODEX_HOME: paths.codexHome, PATH: paths.pathEntries.join(path.delimiter),
-  };
-  return {
-    home: paths.home, xdgConfigHome: paths.configHome, xdgDataHome: paths.dataHome, xdgStateHome: paths.stateHome,
-    codexHome: paths.codexHome,
-    probe: createNodeSetupProbe({ pathEntries: paths.pathEntries, environment: probeEnvironment }),
-  };
-}
+export { setupEnvironment };
 
 /** Applies a confirmed plan through the transactional executor, rooted at the same HOME/XDG/CODEX_HOME/PATH. */
 export function setupExecute(env: NodeJS.ProcessEnv): SetupExecute {
