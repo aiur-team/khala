@@ -1,6 +1,10 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { LocalTransport } from '@khala/messaging/local/http/index';
+import type { ChannelAccessInboxController } from '../../features/channel-access/controller';
+import type { ChannelSettingsPort } from '../../features/channel-settings/ports';
+import { ChannelRequestsRoute, OwnerShell } from '../channel-requests/OwnerShell';
+import { ChannelSettingsRoute } from '../channel-settings/ChannelSettingsRoute';
 import { CreateChannelScreen } from '../../features/create-channel/CreateChannelScreen';
 import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ShellMode } from '../../shell/types';
@@ -14,6 +18,11 @@ export type LocalApplicationScreenProps = Readonly<{
   routes: LocalRouteCodec;
   transport: LocalTransport;
   navigateRoute: (path: string) => void;
+  /** Owner-only capabilities, backed by human-cookie routes and never by an agent credential. */
+  owner: Readonly<{
+    createChannelAccess: () => ChannelAccessInboxController;
+    settings: ChannelSettingsPort;
+  }>;
   mode?: ShellMode;
 }>;
 
@@ -38,7 +47,7 @@ function channelIdIn(path: string, routes: LocalRouteCodec): string | null {
  * has no sign-in, share, join or recovery route, and a refused session is a
  * terminal relaunch instruction rather than a sign-in prompt.
  */
-export function LocalApplicationScreen({ application, routes, transport, navigateRoute, mode = 'standalone' }: LocalApplicationScreenProps) {
+export function LocalApplicationScreen({ application, routes, transport, navigateRoute, owner, mode = 'standalone' }: LocalApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: LocalRoute): ReactNode => {
     switch (route.kind) {
       case 'create':
@@ -48,7 +57,16 @@ export function LocalApplicationScreen({ application, routes, transport, navigat
           </KhalaPageFrame>
         );
       case 'channel':
-        return <LocalRoom context={context} roomId={route.roomId} transport={transport} />;
+        return (
+          <>
+            <p><a href={routes.settingsPath(route.roomId)}>Channel discovery settings</a></p>
+            <LocalRoom context={context} roomId={route.roomId} transport={transport} />
+          </>
+        );
+      case 'channel_settings':
+        return <ChannelSettingsRoute settings={owner.settings} roomId={route.roomId} channelHref={routes.roomPath(route.roomId)} />;
+      case 'channel_requests':
+        return <ChannelRequestsRoute selectedHandle={route.selectedHandle} />;
       case 'not_found':
         return <NotFound />;
     }
@@ -60,6 +78,11 @@ export function LocalApplicationScreen({ application, routes, transport, navigat
       routes={routes}
       mode={mode}
       renderRoute={renderRoute}
+      renderReadyShell={(context, chrome, children) => (
+        <OwnerShell key={context.principal.ownerId} createController={owner.createChannelAccess} routes={routes} chrome={chrome}>
+          {children}
+        </OwnerShell>
+      )}
       renderSignedOut={path => (
         <KhalaPageFrame model={{ title: 'Khala', labelledBy: 'khala-session-ended' }}>
           <SessionEnded roomId={channelIdIn(path, routes)} />

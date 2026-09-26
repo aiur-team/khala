@@ -6,6 +6,10 @@ import { createRoot } from 'react-dom/client';
 import { MAX_CHANNEL_TITLE_BYTES, decodeContentLimits } from '@khala/contracts/messaging/index';
 import { createHumanApplication } from '../composition/human/application';
 import { KhalaPageFrame } from '../shell/KhalaPageFrame';
+import { createChannelAccessInboxController } from '../features/channel-access/controller';
+import { createLocalChannelAccessPort } from './channel-requests/ports';
+import { createLocalChannelSettingsPort } from './channel-settings/ports';
+import { createHumanClient } from './composition/human-client';
 import { createLocalPorts, readRequestSecret } from './composition/ports';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
@@ -16,6 +20,9 @@ import '../shell/shell.css';
 import '../features/create-channel/create-channel.css';
 import '../features/timeline/timeline.css';
 import '../features/channel/channel.css';
+import '../features/approval-decision/approval-decision.css';
+import '../features/channel-access/channel-access.css';
+import '../features/channel-settings/channel-settings.css';
 import '../main.css';
 import './internal.css';
 
@@ -51,7 +58,12 @@ if (requestSecret === null) {
     history.pushState(null, '', path);
     application.navigate(path);
   };
-  const mounted = mountLocalApplication(target, { application, routes, transport: ports.substrate.transport, navigateRoute });
+  const humanClient = createHumanClient({ origin: location.origin, requestSecret });
+  const owner = {
+    createChannelAccess: () => createChannelAccessInboxController({ requests: createLocalChannelAccessPort(humanClient) }),
+    settings: createLocalChannelSettingsPort(humanClient),
+  };
+  const mounted = mountLocalApplication(target, { application, routes, transport: ports.substrate.transport, navigateRoute, owner });
 
   const onPopState = () => application.navigate(`${location.pathname}${location.search}`);
   addEventListener('popstate', onPopState);
