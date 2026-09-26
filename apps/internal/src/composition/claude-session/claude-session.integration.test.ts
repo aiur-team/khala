@@ -352,6 +352,61 @@ describe('Claude mcp-serve against the internal launcher', () => {
     await expect(hooks.hook(session)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
   });
 
+  it('Stop cancels an approval the session has not activated yet: its next status reports it revoked', async () => {
+    const { report, owner, channelUrl, parent } = await launched();
+    const sessionId = 'session-stopped';
+    const [requested] = await serve(report.descriptorPath, sessionId, [['khala_request_channel_access', { target: channelUrl }]]);
+    const operationId = requested!.operationId as string;
+    await approvePending(report.origin, owner);
+
+    // No binding exists yet, so Stop has none to name; it still closes the approval.
+    const stopped = await call(report.origin, {
+      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/stop`, headers: owner,
+      body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+    expect(stopped.json).toEqual({ v: 1, outcome: 'stopped', stopped: [], remaining: [] });
+
+    // The session's next status is where it would have bound: it binds nothing.
+    const [status, send, who] = await serve(report.descriptorPath, sessionId, [
+      ['khala_channel_access_status', { operationId }],
+      ['khala_send', { message: 'after Stop' }],
+      ['khala_list_agents'],
+    ]);
+    expect(status).toMatchObject({ ok: true, operationId, outcome: 'revoked' });
+    expect(send).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    expect(who).toEqual({ ok: false, error: 'not_joined' });
+    await expect(sessionGranted(path.join(parent, 'internal'), sessionId)).resolves.toBe(false);
+    const timeline = await call(report.origin, { path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/timeline`, headers: owner });
+    expect(JSON.stringify(timeline.json)).not.toContain('after Stop');
+  });
+
+  // Wrong-implementation test (#431): without the cancellation, the boundary after Stop
+  // settles the approval and reports the session connected.
+  it('Stop before the next hook boundary leaves the approved session unbound', async () => {
+    const { report, owner, channelUrl, parent } = await launched();
+    const sessionId = 'session-hook-stopped';
+    const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
+    const [requested] = await serve(report.descriptorPath, sessionId, [['khala_request_channel_access', { target: channelUrl }]]);
+    expect(requested).toMatchObject({ outcome: 'pending_owner' });
+    await approvePending(report.origin, owner);
+    const stopped = await call(report.origin, {
+      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/stop`, headers: owner,
+      body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+
+    await expect(hooks.hook(sessionId, { stop: true })).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+    await expect(hooks.hook(sessionId)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+    const [send, status] = await serve(report.descriptorPath, sessionId, [
+      ['khala_send', { message: 'after Stop' }],
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+    ]);
+    expect(send).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    expect(status).toMatchObject({ ok: true, outcome: 'revoked' });
+    await expect(sessionGranted(path.join(parent, 'internal'), sessionId)).resolves.toBe(false);
+  });
+
   it('re-activates a granted session after the launcher resumes, with the same binding', async () => {
     const first = await launched();
     const sessionId = 'session-restart';

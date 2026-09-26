@@ -98,6 +98,7 @@ async function boot(
   const discovery = await composeInternalChannelDiscovery({
     control: createSqliteControlStore(handle, () => clock.now),
     store: wrapStore(createDiscoveryStore(handle)),
+    bindings: createChannelStore(handle),
     human: { ownerId: alice.ownerId, participantId: alice.participantId, deviceId: aliceDevice },
     clock: () => clock.now,
     newChannelId: () => `ch_${randomBytes(8).toString('hex')}`,
@@ -538,6 +539,30 @@ describe('internal channel discovery', () => {
     const activated = await activateCall(w, agent, 'op-crash', { deviceId: body.deviceId, grant });
     expect(activated.status).toBe(200);
     expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(200);
+  });
+
+  it('Stop closes an approval mid-exchange: the activation that raced it is revoked, and another channel keeps its own', async () => {
+    const w = await world();
+    const agent = await issue(w, 'session-stop');
+    await approvedAccess(w, agent, 'op-stop');
+    const recovery = await recoveryKey();
+    const body = await exchangeRequest(w, agent, 'op-stop', 'device_stop_1', recovery);
+    const exchangeUrl = `${w.server.origin}/api/connector/channel-access-requests/op-stop/exchange`;
+    const grant = openGrant((await exchangeCall(w, agent, 'op-stop', body, proof(w, agent, exchangeUrl))).json, recovery);
+
+    // Stopping another channel leaves this approval alone.
+    expect(await w.discovery.cancelApproved(otherChannelId)).toBe('cancelled');
+    expect((await accessStatus(w, agent, 'op-stop')).json.outcome).toBe('connecting');
+
+    // Stop of this channel closes the exchanged request before its connector activates the grant.
+    expect(await w.discovery.cancelApproved(channelId)).toBe('cancelled');
+    expect((await accessStatus(w, agent, 'op-stop')).json).toEqual({ v: 1, operationId: 'op-stop', outcome: 'revoked' });
+    expect((await activateCall(w, agent, 'op-stop', { deviceId: body.deviceId, grant })).status).toBe(410);
+    // The binding the late activation recorded never became live.
+    const rows = w.handle.read(db => db.prepare('SELECT status FROM bindings WHERE participant_id = ?')
+      .all(`participant_${agent.principal}`)) as Array<{ status: string }>;
+    expect(rows).toEqual([{ status: 'revoked' }]);
+    expect((await activateCall(w, agent, 'op-stop', { deviceId: body.deviceId, grant: null })).status).toBe(410);
   });
 
   it('keeps visibility, allowlists, pending decisions and exchange recovery across restart', async () => {
@@ -1078,6 +1103,22 @@ describe('internal channel discovery', () => {
       expect(sent.status).toBe(201);
       expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(403);
       expect(channelCount(w)).toBe(before + 1);
+    });
+
+    it('Stop of the created channel closes the approved create before its requester is admitted', async () => {
+      const w = await world();
+      const agent = await issue(w, 'session-create-stop');
+      expect((await requestCreate(w, agent, 'op-create-stop', 'Stopped proposal')).json.outcome).toBe('pending_owner');
+      const pending = await pendingCreate(w);
+      expect((await decide(w, pending.requestHandle, pending.revision, 'approve', w.human, 'create')).status).toBe(200);
+      const created = w.handle.read(db => db.prepare("SELECT channel_id FROM channels WHERE title = 'Stopped proposal'").all()) as Array<{ channel_id: string }>;
+      expect(created).toHaveLength(1);
+
+      expect(await w.discovery.cancelApproved(created[0]!.channel_id)).toBe('cancelled');
+      expect((await inbox(w)).find(entry => entry.requestHandle === pending.requestHandle)?.outcome).toBe('revoked');
+      const { reply } = await createExchange(w, agent, 'op-create-stop', await recoveryKey());
+      expect(reply.status).not.toBe(200);
+      expect(membersOf(w, created[0]!.channel_id)).toEqual([{ participant_id: alice.participantId }]);
     });
 
     it('denial creates nothing and the exchange stays closed', async () => {

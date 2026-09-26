@@ -52,6 +52,7 @@ function ports(input: Readonly<{
   candidates: readonly StopCandidate[] | 'unavailable';
   revoke?: (key: BindingKey) => 'revoked' | 'failed';
   clearGrant?: BindingStopPorts['clearGrant'];
+  cancelApproved?: BindingStopPorts['cancelApproved'];
 }>, calls: Calls = []): BindingStopPorts {
   const barrier = createRevocationBarrier();
   return {
@@ -60,10 +61,11 @@ function ports(input: Readonly<{
       raise: key => { calls.push(`raise:${key.bindingId}`); barrier.raise(key); },
       drain: async key => { calls.push(`drain:${key.bindingId}`); await barrier.drain(key); },
     },
-    candidates: () => input.candidates,
+    candidates: () => { calls.push('candidates'); return input.candidates; },
     revoke: key => { calls.push(`revoke:${key.bindingId}`); return input.revoke?.(key) ?? 'revoked'; },
     dropCapability: key => { calls.push(`drop:${key.bindingId}`); },
     ...(input.clearGrant ? { clearGrant: input.clearGrant } : {}),
+    ...(input.cancelApproved ? { cancelApproved: input.cancelApproved } : {}),
   };
 }
 
@@ -76,7 +78,7 @@ describe('binding Stop service', () => {
     const result = await service.stop('channel-one', null);
     expect(result.kind).toBe('stopped');
     expect(calls).toEqual([
-      'raise:binding-bob', 'drop:binding-bob', 'raise:binding-carol', 'drop:binding-carol',
+      'candidates', 'raise:binding-bob', 'drop:binding-bob', 'raise:binding-carol', 'drop:binding-carol',
       'drain:binding-bob', 'drain:binding-carol', 'revoke:binding-bob', 'revoke:binding-carol',
     ]);
   });
@@ -87,9 +89,33 @@ describe('binding Stop service', () => {
       candidates: [{ binding: bobBinding, status: 'revoked', latest: true }],
     }, calls));
     expect(await service.stop('channel-one', null)).toEqual({ kind: 'stopped', stopped: [] });
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(['candidates']);
     expect(await createBindingStopService(ports({ candidates: 'unavailable' })).stop('channel-one', null))
       .toEqual({ kind: 'unavailable' });
+  });
+
+  it('closes the channel\'s approved requests before it reads the bindings to revoke', async () => {
+    const calls: Calls = [];
+    const service = createBindingStopService(ports({
+      candidates: [active(bobBinding)],
+      cancelApproved: async channelId => { calls.push(`cancel:${channelId}`); return 'cancelled'; },
+    }, calls));
+    expect((await service.stop('channel-one', null)).kind).toBe('stopped');
+    expect(calls.slice(0, 2)).toEqual(['cancel:channel-one', 'candidates']);
+    // A Stop of named bindings leaves approvals alone.
+    calls.length = 0;
+    await service.stop('channel-one', [{ bindingId: 'binding-bob', generation: 1, agentParticipantId: 'participant-bob' }]);
+    expect(calls).not.toContain('cancel:channel-one');
+  });
+
+  it('still revokes the bindings, but never reports stopped, when approvals could not be closed', async () => {
+    const calls: Calls = [];
+    for (const cancelApproved of [async () => 'unavailable' as const, async () => { throw new Error('journal down'); }]) {
+      calls.length = 0;
+      const service = createBindingStopService(ports({ candidates: [active(bobBinding)], cancelApproved }, calls));
+      expect(await service.stop('channel-one', null)).toEqual({ kind: 'unavailable' });
+      expect(calls).toContain('revoke:binding-bob');
+    }
   });
 
   it('refuses a target that is not the newest generation', async () => {
@@ -106,7 +132,7 @@ describe('binding Stop service', () => {
       { bindingId: 'binding-carol', generation: 1, agentParticipantId: 'participant-bob' },
     ]);
     expect(result).toEqual({ kind: 'rejected', code: 'participant_mismatch' });
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(['candidates']);
   });
 
   it('never reports a binding as stopped while the descriptor may still grant it', async () => {
