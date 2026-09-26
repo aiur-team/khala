@@ -17,7 +17,7 @@ describe('resolveSetupPaths', () => {
       manifestPath: '/home/alice/.local/state/khala/setup/manifest.v1.json',
       transactionPath: '/home/alice/.local/state/khala/setup/transaction.v1.json',
       backupsRoot: '/home/alice/.local/state/khala/setup/backups',
-      runtimeDescriptorPath: '/home/alice/.local/share/khala/internal/active.json',
+      runtimeDescriptorPath: '/home/alice/.local/state/khala/internal/active.json',
       pathEntries: ['/opt/bin', '/usr/bin'],
     });
   });
@@ -25,7 +25,7 @@ describe('resolveSetupPaths', () => {
   it('overrides each XDG root independently and treats empty values as unset', () => {
     const overridden = resolveSetupPaths({ HOME: '/h', XDG_CONFIG_HOME: '/c', XDG_DATA_HOME: '/d', XDG_STATE_HOME: '/s' });
     expect([overridden.configHome, overridden.dataHome, overridden.stateHome]).toEqual(['/c', '/d', '/s']);
-    expect(overridden.runtimeDescriptorPath).toBe('/d/khala/internal/active.json');
+    expect(overridden.runtimeDescriptorPath).toBe('/s/khala/internal/active.json');
     expect(overridden.transactionPath).toBe('/s/khala/setup/transaction.v1.json');
     const empty = resolveSetupPaths({ HOME: '/h', XDG_CONFIG_HOME: '', XDG_DATA_HOME: '', XDG_STATE_HOME: '' });
     expect([empty.configHome, empty.dataHome, empty.stateHome]).toEqual(['/h/.config', '/h/.local/share', '/h/.local/state']);
