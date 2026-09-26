@@ -26,6 +26,7 @@ const OTHER_CHANNEL = 'room_2' as RoomId;
 const DEVICE = 'device_1' as DeviceId;
 const JKT = 'j'.repeat(43);
 const OTHER_JKT = 'k'.repeat(43);
+const BOUND = { session: { harness: 'codex', sessionId: 'thread_1', generation: 3 }, deviceId: DEVICE as string };
 
 const key = (fill: number) => new Uint8Array(32).fill(fill);
 const keyring = (activeKeyId = 'key-2', keys = [{ id: 'key-2', key: key(2) }, { id: 'key-1', key: key(1) }]): PairingKeyring => ({
@@ -580,13 +581,21 @@ describe('PairingStore approved result and internal grant redemption', () => {
     const result = await h.pairing.result({ requestHandle: created.requestHandle, receipt: winner.receipt, operationId: 'result_1', jkt: JKT });
     if (result.kind !== 'result' || result.value.state !== 'approved') throw new Error('result failed');
 
-    expect(await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_wrong_key', jkt: OTHER_JKT }))
+    expect(await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_wrong_key', jkt: OTHER_JKT, ...BOUND }))
       .toEqual({ kind: 'invalid_grant' });
+    for (const wrong of [
+      { session: { ...BOUND.session, sessionId: 'thread_2' } },
+      { session: { ...BOUND.session, generation: 4 } },
+      { deviceId: 'device_2' },
+    ]) {
+      expect(await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_wrong_binding', jkt: JKT, ...BOUND, ...wrong }))
+        .toEqual({ kind: 'invalid_grant' });
+    }
     h.inject('compareAndSet', 'lose_response');
-    const redeemed = await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT });
+    const redeemed = await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT, ...BOUND });
     expect(redeemed).toMatchObject({ kind: 'redeemed', authorization: { ownerId: OWNER, channelId: CHANNEL, jkt: JKT } });
-    expect(await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT })).toEqual(redeemed);
-    expect(await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_2', jkt: JKT }))
+    expect(await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT, ...BOUND })).toEqual(redeemed);
+    expect(await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_2', jkt: JKT, ...BOUND }))
       .toEqual({ kind: 'invalid_grant' });
     expect(await h.pairing.result({
       requestHandle: created.requestHandle,
@@ -608,8 +617,8 @@ describe('PairingStore approved result and internal grant redemption', () => {
       if (input.key.startsWith('pairing.grant.') && value.state === 'spent') await rendezvous();
     });
     const outcomes = await Promise.all([
-      h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_a', jkt: JKT }),
-      h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_b', jkt: JKT }),
+      h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_a', jkt: JKT, ...BOUND }),
+      h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_b', jkt: JKT, ...BOUND }),
     ]);
     expect(outcomes.filter(outcome => outcome.kind === 'redeemed')).toHaveLength(1);
     expect(outcomes.filter(outcome => outcome.kind === 'invalid_grant')).toHaveLength(1);
@@ -672,7 +681,7 @@ describe('PairingStore DPoP replay and secrecy', () => {
     await approve(h, created.requestHandle);
     const result = await h.pairing.result({ requestHandle: created.requestHandle, receipt: winner.receipt, operationId: 'result_1', jkt: JKT });
     if (result.kind !== 'result' || result.value.state !== 'approved') throw new Error('result failed');
-    await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT });
+    await h.pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT, ...BOUND });
     const snapshot = JSON.stringify({
       records: [...h.records],
       operations: [...h.operations],
@@ -746,7 +755,7 @@ describe('PairingStore persisted-record validation', () => {
     const value = structuredClone(record.value) as Record<string, JsonValue>;
     corrupt(value);
     h.records.set(recordKey, { ...record, revision: 'corrupt-grant', value });
-    expect(await h.pairing.grantPort.redeem({ grant: issued.value.grant, operationId: 'redeem', jkt: JKT }))
+    expect(await h.pairing.grantPort.redeem({ grant: issued.value.grant, operationId: 'redeem', jkt: JKT, ...BOUND }))
       .toEqual({ kind: 'unavailable' });
   });
 });
@@ -791,7 +800,7 @@ describe('PairingStore real ControlStore adapter chain', () => {
     })).kind).toBe('decided');
     const result = await pairing.result({ requestHandle: created.requestHandle, receipt: winner.receipt, operationId: 'result_1', jkt: JKT });
     if (result.kind !== 'result' || result.value.state !== 'approved') throw new Error('result failed');
-    expect((await pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT })).kind).toBe('redeemed');
+    expect((await pairing.grantPort.redeem({ grant: result.value.grant, operationId: 'redeem_1', jkt: JKT, ...BOUND })).kind).toBe('redeemed');
     expect(await pairing.result({
       requestHandle: created.requestHandle,
       receipt: winner.receipt,

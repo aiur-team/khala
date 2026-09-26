@@ -6,6 +6,16 @@ import {
   type ChannelAccessRequestHandle,
 } from '@khala/contracts/messaging/index';
 import type { DecisionFact, DecisionPrompt, DecisionStatus } from '../approval-decision/model';
+import {
+  CREATE_APPROVE_LABEL,
+  CREATE_CAPABILITIES,
+  CREATE_NOTICES,
+  CREATE_OPERATION_LABEL,
+  CREATE_QUESTION,
+  CREATE_SUBJECT_LABEL,
+  createConnectionLabel,
+  createUntrustedFacts,
+} from '../channel-create/model';
 
 export type OwnerRequest = ChannelAccessOwnerProjection;
 
@@ -58,12 +68,12 @@ export function recentRequests(requests: readonly OwnerRequest[]): readonly Owne
 }
 
 export function operationLabel(request: OwnerRequest): string {
-  return request.operationKind === 'access' ? 'Channel access request' : 'Channel creation request';
+  return request.operationKind === 'access' ? 'Channel access request' : CREATE_OPERATION_LABEL;
 }
 
 /** The channel as the owner knows it. A proposed title is the agent's text and is not used here. */
 export function subjectLabel(request: OwnerRequest): string {
-  return request.detail.kind === 'access' ? `Join “${request.detail.title}”` : 'Create a new secret channel';
+  return request.detail.kind === 'access' ? `Join “${request.detail.title}”` : CREATE_SUBJECT_LABEL;
 }
 
 const DECISION_LABEL: Readonly<Record<OwnerRequest['ownerDecision'], string>> = {
@@ -83,6 +93,8 @@ export function decisionLabel(request: OwnerRequest): string {
  * decision. Approval alone never reads as connected.
  */
 export function connectionLabel(request: OwnerRequest): string {
+  const creation = request.operationKind === 'create' ? createConnectionLabel(request.outcome) : null;
+  if (creation !== null) return creation;
   switch (request.outcome) {
     case 'pending_owner':
       return 'Not started. Nothing happens until you decide.';
@@ -109,13 +121,6 @@ const ACCESS_CAPABILITIES: readonly DecisionFact[] = [
   { label: 'Admits', value: 'Only the requesting agent session' },
 ];
 
-const CREATE_CAPABILITIES: readonly DecisionFact[] = [
-  { label: 'Creates', value: 'One new secret channel that you own' },
-  { label: 'Messages', value: 'Read new messages and send messages in that channel' },
-  { label: 'history', value: 'none' },
-  { label: 'Admits', value: 'Only the requesting agent session' },
-];
-
 /** The operation adapter for the shared decision dialog. */
 export function toDecisionPrompt(request: OwnerRequest): DecisionPrompt {
   const verified: DecisionFact[] = [
@@ -128,26 +133,37 @@ export function toDecisionPrompt(request: OwnerRequest): DecisionPrompt {
   const untrusted: DecisionFact[] = [];
   if (request.requester.displayLabel !== null) untrusted.push({ label: 'Name', value: request.requester.displayLabel });
   if (request.requester.workspaceLabel !== null) untrusted.push({ label: 'Workspace', value: request.requester.workspaceLabel });
-  if (request.detail.kind === 'create') untrusted.push({ label: 'Proposed channel title', value: request.detail.proposedTitle });
+  if (request.operationKind === 'create') untrusted.push(...createUntrustedFacts(request));
 
-  const access = request.operationKind === 'access';
+  const progress = [
+    { label: 'Your decision', value: decisionLabel(request) },
+    { label: 'Agent connection', value: connectionLabel(request) },
+  ];
+  if (request.detail.kind === 'create') {
+    return {
+      kind: CREATE_OPERATION_LABEL,
+      question: CREATE_QUESTION,
+      verified,
+      untrusted,
+      capabilities: CREATE_CAPABILITIES,
+      notices: CREATE_NOTICES,
+      progress,
+      approveLabel: CREATE_APPROVE_LABEL,
+      denyLabel: 'Deny',
+    };
+  }
   return {
     kind: operationLabel(request),
-    question: access ? `Let this agent session join “${request.detail.kind === 'access' ? request.detail.title : ''}”?` : 'Create a secret channel for this agent session?',
+    question: `Let this agent session join “${request.detail.title}”?`,
     verified,
     untrusted,
-    capabilities: access ? ACCESS_CAPABILITIES : CREATE_CAPABILITIES,
+    capabilities: ACCESS_CAPABILITIES,
     notices: [
-      access
-        ? 'The agent sees no earlier messages, members, or activity.'
-        : 'Approving creates exactly one secret channel and authorizes admission only for the requesting session. Nobody else can find it.',
+      'The agent sees no earlier messages, members, or activity.',
       'Your approval is recorded first. The agent connects only when its own connector picks it up, and this page shows that separately.',
     ],
-    progress: [
-      { label: 'Your decision', value: decisionLabel(request) },
-      { label: 'Agent connection', value: connectionLabel(request) },
-    ],
-    approveLabel: access ? 'Approve access' : 'Approve and create',
+    progress,
+    approveLabel: 'Approve access',
     denyLabel: 'Deny',
   };
 }

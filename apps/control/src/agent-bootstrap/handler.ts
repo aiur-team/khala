@@ -27,7 +27,8 @@ import { LOGIN_PATH } from '../auth/callback';
 import { checkMutationOrigin, csrfMatches, safeEqual } from '../auth/csrf';
 import { type Random, guardStore, randomToken, settleWrite } from '../auth/store';
 import type { RouteRegistration } from '../runtime/handler';
-import { type ProofCheck, checkProof } from './proof';
+import type { PairingGrantPort } from '../pairing/store';
+import { type ProofCheck, checkProof, proofKeyThumbprint } from './proof';
 import { type BindingRecord, createAgentBindingStore } from './store';
 
 export const DESCRIPTOR_PATH = '/api/agent/bootstrap/descriptor';
@@ -35,6 +36,15 @@ export const AUTHORIZE_PATH = '/api/human/agent-bootstrap/authorize';
 export const TOKEN_PATH = '/api/agent/bootstrap/token';
 export const REDEEM_PATH = '/api/agent/bootstrap/redeem';
 export const OWNERSHIP_METHOD = 'loopback-browser-v1';
+
+/**
+ * A pairing grant names a channel, not an invite. Its admission `inviteRef` is this
+ * prefix plus the room id, so an admission port can tell the two apart.
+ */
+export const PAIRING_INVITE_PREFIX = 'pairing:';
+export function pairingInviteRef(roomId: RoomId): string {
+  return `${PAIRING_INVITE_PREFIX}${roomId}`;
+}
 
 /** Lifetime of a one-time code and of a bootstrap grant (KHA-144: 60 s each). */
 export const CODE_TTL_MS = 60_000;
@@ -84,6 +94,16 @@ export type AdapterRefusal =
   | 'proof_required' | 'invalid_proof' | 'proof_key_mismatch' | 'proof_target_mismatch' | 'proof_token_mismatch' | 'proof_replayed';
 
 /**
+ * A binding as the revocation service (KHA-128) and trust policy see it. `generation` is the
+ * control plane's authoritative generation: the bound generation while active, and the revoked
+ * generation once revoked, which never advances. The messaging device key is not held here; the
+ * composition root resolves it from the substrate.
+ */
+export type BindingLookupResult =
+  | Readonly<{ kind: 'found'; ownerId: OwnerId; generation: number; deviceId: SessionBinding['deviceId']; status: 'active' | 'revoked' }>
+  | Readonly<{ kind: 'absent' | 'unavailable' }>;
+
+/**
  * The adapter capability's side of KHA-128. `revokeAdapterCapability` has the shape of
  * `RevocationControlPort.revokeAdapterCapability` in `@khala/messaging/revocation`, so a
  * composition root can pass it straight through.
@@ -91,6 +111,17 @@ export type AdapterRefusal =
 export interface AdapterCapabilities {
   /** Checks an adapter request: `Authorization: DPoP <capability>` plus a proof for this exact request. */
   authorize(request: Request, action: string): Promise<AdapterAuthorization>;
+  /** Reads one binding by ID. A replaced binding is `absent`: it holds no authority any more. */
+  lookupBinding(bindingId: BindingId | string): Promise<BindingLookupResult>;
+  /**
+   * The binding side of `RevocationControlPort.disable`: moves an active binding at `expectedGeneration`
+   * to `revokedGeneration` and drops its capability. Idempotent: a binding already revoked at
+   * `revokedGeneration` answers `applied`. Any other binding state is `stale`.
+   */
+  disableBinding(
+    input: Readonly<{ operationId: string; bindingId: BindingId; expectedGeneration: number; revokedGeneration: number }>,
+    options?: CallOptions,
+  ): Promise<Readonly<{ kind: 'applied' | 'stale' | 'outcome_unknown' | 'unavailable' }>>;
   /** After `applied`, no capability issued for `bindingId` is accepted, whatever its generation. Idempotent. */
   revokeAdapterCapability(
     input: Readonly<{ operationId: string; bindingId: BindingId; revokedGeneration: number }>,
@@ -113,6 +144,10 @@ export type AgentBootstrapDeps = Readonly<{
   /** No default: the deployment must decide G-ADMISSION explicitly. */
   admissionPolicy: AdmissionPolicy;
   agents: AgentAdmissionPort;
+  /** Pairing-code grants (`pairing-code-v1`), redeemed at the same route as bootstrap grants. Absent disables them. */
+  pairingGrants?: PairingGrantPort;
+  /** Serves the code-only descriptor from the shared descriptor path; `null` means "not a pairing request". */
+  pairingDescriptor?: (request: Request) => Response | null;
   /** Roll-forward gate for legacy singleton records; marker-aware reads are always enabled. */
   legacyMigrationWritesEnabled: boolean;
 }>;
@@ -165,6 +200,8 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   const redeemUrl = `${deps.origin}${REDEEM_PATH}`;
 
   async function describe(request: Request): Promise<Response> {
+    const paired = deps.pairingDescriptor?.(request) ?? null;
+    if (paired !== null) return paired;
     const raw = new URL(request.url).searchParams.get('link');
     let link: URL | null = null;
     try {
@@ -306,7 +343,11 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const grantKey = key('grant', grant);
     const read = await store.read<GrantRecord>(grantKey);
     if (read.kind === 'unavailable') return json(503, { code: 'unavailable' });
-    if (read.kind === 'absent') return json(401, { code: 'invalid_grant' });
+    if (read.kind === 'absent') {
+      return deps.pairingGrants === undefined
+        ? json(401, { code: 'invalid_grant' })
+        : redeemPairing(request, deps.pairingGrants, { grant, operationId, session, deviceId: body.device_id });
+    }
     const held = read.record.value;
     const proof = await verifyFreshProof(request, { method: 'POST', url: redeemUrl, jkt: held.jkt, accessToken: grant });
     if (proof) return proof;
@@ -315,7 +356,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     // The first operation claims the grant. Only that operation may continue, and only
     // until it has been issued a capability: after that the grant is spent.
     let revision = read.record.revision;
-    let redemption = held.redemption;
+    const tracker: { redemption: Redemption | null } = { redemption: held.redemption };
     const saveRedemption = async (next: Redemption) => {
       const written = await settleWrite<JsonValue>(store, {
         key: grantKey, expectedRevision: revision, operationId: `redeem-${randomToken(deps.random, 16)}`,
@@ -323,18 +364,74 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       });
       if (written.kind === 'applied') {
         revision = written.record.revision;
-        redemption = next;
+        tracker.redemption = next;
       }
       return written.kind;
     };
-    if (redemption === null) {
+    if (tracker.redemption === null) {
       const claimed = await saveRedemption({ operationId, admitted: null, issued: false });
       if (claimed === 'conflict') return json(401, { code: 'grant_replayed' });
       if (claimed !== 'applied') return json(503, { code: 'unavailable' });
-    } else if (redemption.operationId !== operationId || redemption.issued) {
+    } else if (tracker.redemption.operationId !== operationId || tracker.redemption.issued) {
       return json(401, { code: 'grant_replayed' });
     }
+    return finishRedeem(held, tracker, saveRedemption);
+  }
 
+  /**
+   * A pairing grant lives in the pairing store, which spends it once per operation and
+   * returns the same authorization to a retry of that operation. The proof key is read
+   * from the proof itself and verified, then the store refuses any grant not bound to it.
+   */
+  async function redeemPairing(
+    request: Request, grants: PairingGrantPort,
+    presented: Readonly<{ grant: string; operationId: string; session: SessionRef; deviceId: string }>,
+  ): Promise<Response> {
+    const dpop = request.headers.get('dpop');
+    const jkt = proofKeyThumbprint(dpop);
+    if (jkt === null) return json(401, { code: 'invalid_grant' });
+    const proof = await verifyFreshProof(request, { method: 'POST', url: redeemUrl, jkt, accessToken: presented.grant });
+    if (proof) return proof;
+    const redeemed = await safeCall(() => grants.redeem({
+      grant: presented.grant, operationId: presented.operationId, jkt,
+      session: presented.session, deviceId: presented.deviceId,
+    }));
+    if (redeemed === null || redeemed.kind === 'unavailable') return json(503, { code: 'unavailable' });
+    if (redeemed.kind === 'replayed') return json(401, { code: 'grant_replayed' });
+    if (redeemed.kind !== 'redeemed') return json(401, { code: 'invalid_grant' });
+    const { authorization } = redeemed;
+    if (authorization.origin !== deps.origin || authorization.jkt !== jkt) return json(401, { code: 'invalid_grant' });
+    const held: GrantRecord = {
+      ownerId: authorization.ownerId,
+      invite: pairingInviteRef(authorization.channelId),
+      harness: authorization.harness,
+      sessionId: authorization.sessionId,
+      generation: authorization.generation,
+      deviceId: authorization.deviceId,
+      jkt,
+      redemption: null,
+    };
+    // The store already made the spend durable; admission and binding converge on stable
+    // operation ids, so a retry resumes here without a second spend.
+    const tracker: { redemption: Redemption | null } = { redemption: { operationId: presented.operationId, admitted: null, issued: false } };
+    const saveRedemption = async (next: Redemption) => {
+      if (next.issued) {
+        // The store spends the issuance too, so a later retry cannot mint a second capability.
+        const marked = await safeCall(() => grants.markIssued({ grant: presented.grant, operationId: presented.operationId }));
+        if (marked === 'replayed') return 'conflict';
+        if (marked !== 'applied') return 'unavailable';
+      }
+      tracker.redemption = next;
+      return 'applied';
+    };
+    return finishRedeem(held, tracker, saveRedemption);
+  }
+
+  async function finishRedeem(
+    held: GrantRecord,
+    tracker: { redemption: Redemption | null },
+    saveRedemption: (next: Redemption) => Promise<string>,
+  ): Promise<Response> {
     const ownerId = held.ownerId as OwnerId;
     const sessionRef: SessionRef = { harness: held.harness, sessionId: held.sessionId, generation: held.generation };
     // Resolve the verified session's exact participant without joining a device.
@@ -357,7 +454,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     if (claimed.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (claimed.kind === 'conflict') return json(409, { code: 'binding_conflict' });
 
-    let admitted = redemption!.admitted;
+    let admitted = tracker.redemption!.admitted;
     if (admitted === null) {
       // Independent grants for this verified binding converge on one provider commit.
       const scopedOperationId = `bootstrap-${createHash('sha256').update(JSON.stringify([
@@ -381,7 +478,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       }
       admitted = { agentParticipantId: result.value.agentParticipantId, roomId: result.value.roomId };
       // Recorded so a retry of this operation resumes here instead of admitting again.
-      const recorded = await saveRedemption({ ...redemption!, admitted });
+      const recorded = await saveRedemption({ ...tracker.redemption!, admitted });
       if (recorded === 'conflict') return json(401, { code: 'grant_replayed' });
       if (recorded !== 'applied') return json(503, { code: 'unavailable' });
     }
@@ -394,7 +491,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     if (bound.kind === 'refused') return json(409, { code: bound.code });
 
     // Spend the grant before minting, so concurrent retries cannot both be issued one.
-    const spent = await saveRedemption({ ...redemption!, issued: true });
+    const spent = await saveRedemption({ ...tracker.redemption!, issued: true });
     if (spent === 'conflict') return json(401, { code: 'grant_replayed' });
     if (spent !== 'applied') return json(503, { code: 'unavailable' });
     const capability = await issueCapability(ownerId, address.roomId, bound.binding, held.jkt);
@@ -496,6 +593,38 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       return { kind: 'authorized', action: action as AdapterAction, ownerId: held.ownerId as OwnerId, roomId: held.roomId as RoomId, binding: record.binding };
     },
 
+    async lookupBinding(bindingId) {
+      if (typeof bindingId !== 'string') return { kind: 'absent' };
+      const found = await bindings.findBinding(bindingId);
+      if (found.kind !== 'found') return found;
+      const { binding, revokedGeneration } = found.record;
+      return {
+        kind: 'found', ownerId: binding.ownerId, deviceId: binding.deviceId,
+        generation: revokedGeneration ?? binding.generation, status: revokedGeneration === null ? 'active' : 'revoked',
+      };
+    },
+
+    async disableBinding(input) {
+      if (typeof input?.bindingId !== 'string' || !Number.isSafeInteger(input.expectedGeneration)
+        || !Number.isSafeInteger(input.revokedGeneration) || input.revokedGeneration <= input.expectedGeneration) {
+        return { kind: 'unavailable' };
+      }
+      const { expectedGeneration, revokedGeneration } = input;
+      let stale = false;
+      const result = await bindings.updateBinding(input.bindingId, record => {
+        stale = false;
+        if (record.revokedGeneration === revokedGeneration) return null;
+        if (record.revokedGeneration !== null || record.binding.generation !== expectedGeneration) {
+          stale = true;
+          return null;
+        }
+        return { ...record, revokedGeneration, capability: null };
+      });
+      if (result === 'unavailable') return { kind: 'unavailable' };
+      if (result === 'absent' || stale) return { kind: 'stale' };
+      return { kind: 'applied' };
+    },
+
     async revokeAdapterCapability(input) {
       if (typeof input?.bindingId !== 'string' || !Number.isSafeInteger(input.revokedGeneration) || input.revokedGeneration < 0) {
         return { kind: 'unavailable' };
@@ -565,7 +694,8 @@ function bindingVerdict(record: BindingRecord, held: GrantRecord, agentParticipa
     && binding.agentParticipantId === agentParticipantId;
   if (revokedGeneration !== null) {
     if (!sameIdentity) return 'binding_conflict';
-    return held.generation > Math.max(revokedGeneration, binding.generation) ? 'replace' : 'binding_revoked';
+    // The revoked generation is the first one a replacement may use, so a harness bumps its generation once.
+    return held.generation > binding.generation && held.generation >= revokedGeneration ? 'replace' : 'binding_revoked';
   }
   return sameIdentity && binding.generation === held.generation ? 'reuse' : 'binding_conflict';
 }

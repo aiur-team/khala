@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./claude/*": "./src/claude/*.ts",
+    "./claude-app/*": "./src/claude-app/*.ts",
     "./codex-app/*": "./src/codex-app/*.ts",
     "./codex/fakes": null,
     "./codex/*": "./src/codex/*.ts",

@@ -214,7 +214,14 @@ the local client.
   launch's transport capability names no agent, so `join` with `active.json`
   alone is refused with `discovery_required`, unless the file already holds a
   live grant for that channel. The owner approves in the channel-requests
-  inbox.
+  inbox. Once it is approved, the next `join` finishes the binding: it
+  exchanges with a fresh proof from `connector-key.json`, opens the sealed
+  grant, activates, writes `grantRef`, `bindingId` and `bindingCapability`
+  into `active.json`, and only then acknowledges readiness, so `read`,
+  `listen` and `mcp-serve` pick it up without a restart. Progress is
+  journaled beside the discovery descriptor, so a `join` after a crash
+  resumes the same binding and never mints a second one. No grant or
+  capability is printed.
 - A granted descriptor sends with its binding capability. The server derives
   the sender from that capability and rechecks the grant for every effect.
   Because the file is reread for every call, a long-lived `mcp-serve` sees Stop
@@ -539,6 +546,17 @@ itself rewrites the rest of that file. Khala then owns only the named
 `config_entry_set` entry. Whole-file drift no longer refuses, but every operation
 still checks its preimage, and a later plan may only edit that same entry.
 `config_entry_remove` releases the path and leaves every other byte in place.
+
+## Claude Desktop setup
+
+`src/setup/adapters/claude-app.ts` is the `claude-app` setup adapter. The
+`claude-app` id reports Claude Desktop separately from Claude Code (`claude`).
+It detects the macOS bundle or the Windows per-user install and reads the
+version when it can. It always reports `supported: false`, the `mcp_entry`
+component as `unsupported` (or `absent`), and the route as `unavailable`.
+Each Claude app shape gets its own `claude_app_delivery_unproven`
+diagnostic. It plans no writes, because no Claude app route has exact-version
+evidence. See `packages/harnesses/src/claude-app/README.md`.
 
 ## Codex setup adapter
 
