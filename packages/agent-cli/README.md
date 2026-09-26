@@ -98,6 +98,13 @@ start yourself connect through the runtime descriptor later.
   `active.json` (mode 0600) holds `{v, channelId, origin, transportCapability}`
   for local clients, and `<channel>/launch.json` (mode 0600) holds the browser
   sign-in credential until it expires. Every launch rotates both credentials.
+- With a granted descriptor, `read`, `listen` and `mcp-serve` pull the channel's
+  new messages from the server into the held binding generation's inbox before
+  reading, and keep pulling while they run. Each message is enqueued once under a
+  release ID derived from the binding, generation and event, so a restart never
+  duplicates or drops it. Only a human message in `steer` or `sync` mode wakes a
+  listener; a revoked or superseded generation receives nothing. The pull cursor
+  lives under `$XDG_STATE_HOME/khala/internal-delivery/`.
 - Ctrl+C or SIGTERM removes `active.json` and `launch.json`, closes the server so
   the URL stops working, closes the store, and releases the launcher lock. It
   leaves agent processes alone.
