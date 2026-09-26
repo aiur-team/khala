@@ -37,6 +37,11 @@ export type ChannelAccessService = Readonly<{
   decisions: ChannelAccessDecisionPort;
   fulfillment: ChannelAccessFulfillmentPort;
   flushNotifications(ownerId: OwnerId, options?: CallOptions): Promise<void>;
+  /**
+   * Closes an approved request whose grant has not yet become an active binding, as the
+   * owner's Stop does. A request that is already terminal, or still pending, is `unchanged`.
+   */
+  revokeApproved(requestHandle: string, operationId: string, options?: CallOptions): Promise<'revoked' | 'unchanged' | 'unavailable'>;
 }>;
 
 export function createChannelAccessService(deps: Readonly<{
@@ -222,6 +227,15 @@ export function createChannelAccessService(deps: Readonly<{
     });
   }
 
+  async function revokeApproved(requestHandle: string, operationId: string, options?: CallOptions) {
+    const located = await safe(() => deps.store.readContext({ requestHandle }, options));
+    if (!located || located.kind === 'unavailable') return 'unavailable' as const;
+    if (located.kind !== 'found') return 'unchanged' as const;
+    const { outcome } = located.context;
+    if (outcome !== 'approved' && outcome !== 'connecting') return 'unchanged' as const;
+    return await revokeConfirmed(deps.store, located.context, operationId, options) ? 'revoked' as const : 'unavailable' as const;
+  }
+
   async function claimAccess(input: ChannelAccessFulfillmentClaim, options?: CallOptions) {
     return claim('access', input, options);
   }
@@ -334,6 +348,7 @@ export function createChannelAccessService(deps: Readonly<{
       updateCreate: (input: ChannelAccessFulfillmentUpdate, options?: CallOptions) => update('create', input, options),
     }),
     flushNotifications,
+    revokeApproved,
   });
 }
 

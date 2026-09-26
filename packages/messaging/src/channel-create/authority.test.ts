@@ -67,6 +67,7 @@ function authority(located: 'create' | 'none' = 'create') {
       workflow: {
         async fulfill() { return { kind: 'created', channelRef: CREATED, authorization }; },
         async unsettled() { return false; },
+        async createdChannel() { return null; },
       },
       clock: () => T0,
     }),
