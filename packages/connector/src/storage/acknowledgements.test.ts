@@ -102,7 +102,11 @@ describe('batch acknowledgement recording', () => {
     const outbox = await recorder.readReceiptOutbox();
     expect(outbox.map(entry => entry.receipt)).toEqual(result.receipts);
     expect(new Set(outbox.map(entry => entry.evidenceRef))).toEqual(new Set(['ack_evidence_1']));
+    // Each entry names its release's channel events by identity only: no digest, no content.
+    expect(outbox.map(entry => entry.events)).toEqual(['event_0_0', 'event_1_0', 'event_2_0']
+      .map(eventId => [{ roomId: eventRef(eventId, '').roomId, eventId }]));
     for (const entry of outbox) {
+      expect(JSON.stringify(entry)).not.toContain('sha256:');
       expect(JSON.stringify(entry)).not.toContain('payload release');
       expect(JSON.stringify(entry)).not.toContain('body release');
     }

@@ -76,6 +76,7 @@ and absent), or a value naming the proven scope:
 | `existingSession` | `native_cli_queue` | A harness-native CLI queues into a session Khala did not start. The capability record's evidence scopes the supported harness and version. |
 | `existingSession` | `agent_installed_listener` | The agent starts a listener inside its session trust boundary. The route remains unsupported until a capability record cites live proof. |
 | `existingSession` | `opencode_plugin` | The `@aiur/khala/opencode` plugin runs in-process in the person's OpenCode TUI and targets only the admitted session. Its modes count only for exact keys recorded in `opencode.ts`. |
+| `existingSession` | `native_hooks` | The harness's own user-trusted lifecycle hooks pull released batches into a session Khala did not start. `modes` names the boundary each listening mode uses. |
 | `immediateNotification` | `khala_hosted_idle` | An idle session in a Khala-started host starts a turn for a queued release without a human prompt. Busy handling is `busy`. |
 | `immediateNotification` | `native_cli_queue` | A harness-native CLI accepts a notification without a human prompt. Acceptance does not promise immediate model consumption. |
 | `immediateNotification` | `agent_installed_listener` | An agent-installed listener accepts a notification without a human prompt; busy behavior remains a separate fact. |

@@ -73,7 +73,7 @@ describe('fallback skill documentation', () => {
       .filter((command, index, commands) => commands.indexOf(command) === index)
       .sort();
 
-    expect(documentedCommands).toEqual(['connect', 'listen', 'mode', 'read', 'send', 'status']);
+    expect(documentedCommands).toEqual(['codex-hook', 'connect', 'listen', 'mode', 'read', 'send', 'status']);
     for (const command of documentedCommands) {
       const result = await invokeCli(command);
       expect(result.error, `documented command "${command}" was rejected by runCli`).not.toContain('invalid_arguments');

@@ -41,7 +41,22 @@ export type InboxBatch = Readonly<{
 export type ReadBatchInput = Readonly<{
   maxBytes: number;
   acknowledgeToken?: string | null;
+  /**
+   * Opaque boundary identity, such as a hashed harness session and turn. When
+   * present, the outstanding batch is returned only if it was not already
+   * offered to this exact scope, nor returned by an explicit Khala call since its
+   * last offer unless `turnStart` is set. The mark lives in the outstanding batch
+   * state, so it ends with that batch's acknowledgement.
+   */
+  offerScope?: string;
+  /** With `offerScope`: this boundary starts a turn, so a batch the agent already read is offered again. */
+  turnStart?: boolean;
+  /** An agent's own Khala call (explicit read or piggyback): always returns the batch and marks it seen. */
+  explicitRead?: boolean;
 }>;
+
+/** The offer mark left by an explicit Khala call; boundary scopes can never equal it. */
+const EXPLICIT_READ_SCOPE = 'khala-call';
 
 export type InboxConsumer = Readonly<{
   readBatch(input: ReadBatchInput): Promise<InboxBatch | null>;
@@ -286,7 +301,12 @@ class FileInbox implements BatchInbox {
     if (!ownsListener()) throw new CliError('listener_busy');
     if (input === null || typeof input !== 'object' || !Number.isSafeInteger(input.maxBytes) || input.maxBytes < 0
       || !(input.acknowledgeToken === undefined || input.acknowledgeToken === null
-        || typeof input.acknowledgeToken === 'string')) throw new CliError('invalid_input');
+        || typeof input.acknowledgeToken === 'string')
+      || !(input.offerScope === undefined
+        || (validIdentifier(input.offerScope) && input.offerScope !== EXPLICIT_READ_SCOPE))
+      || !(input.turnStart === undefined || (typeof input.turnStart === 'boolean' && input.offerScope !== undefined))
+      || !(input.explicitRead === undefined || typeof input.explicitRead === 'boolean')
+      || (input.explicitRead === true && input.offerScope !== undefined)) throw new CliError('invalid_input');
     return this.#serial(async () => {
       if (!ownsListener()) throw new CliError('listener_busy');
       let cursor = await readCursor(this.#cursorPath);
@@ -311,7 +331,17 @@ class FileInbox implements BatchInbox {
         cursor = { v: 1, offset: outstanding.state.endOffset, releaseId: outstanding.state.releaseId };
         outstanding = null;
       }
-      if (outstanding !== null) return outstanding.batch;
+      if (outstanding !== null) {
+        const mark = input.explicitRead === true ? EXPLICIT_READ_SCOPE : input.offerScope;
+        if (mark === undefined) return outstanding.batch;
+        const previous = outstanding.state.offeredScope;
+        if (mark !== EXPLICIT_READ_SCOPE
+          && (previous === mark || (previous === EXPLICIT_READ_SCOPE && input.turnStart !== true))) return null;
+        if (previous !== mark) {
+          await writeBatchStateAtomic(this.#batchPath, this.#bindingDirectory, { ...outstanding.state, offeredScope: mark });
+        }
+        return outstanding.batch;
+      }
 
       const records: string[] = [];
       const items: InboxItem[] = [];
@@ -338,6 +368,8 @@ class FileInbox implements BatchInbox {
         endOffset: offset,
         releaseId,
         records,
+        ...(input.explicitRead === true ? { offeredScope: EXPLICIT_READ_SCOPE }
+          : input.offerScope === undefined ? {} : { offeredScope: input.offerScope }),
       };
       await writeBatchStateAtomic(this.#batchPath, this.#bindingDirectory, state);
       return { token: state.token, items };
@@ -568,6 +600,7 @@ type BatchState = Readonly<{
   endOffset: number;
   releaseId: string;
   records: readonly string[];
+  offeredScope?: string;
 }>;
 
 type LoadedBatchState = Readonly<{ state: BatchState; batch: InboxBatch }>;
@@ -592,7 +625,9 @@ async function readBatchState(
     throw new CliError('storage_failed');
   }
   const keys = ['v', 'bindingId', 'generation', 'token', 'startOffset', 'endOffset', 'releaseId', 'records'];
-  if (!plainObject(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))
+  const offered = plainObject(value) && Object.hasOwn(value, 'offeredScope');
+  if (!plainObject(value) || Object.keys(value).length !== keys.length + (offered ? 1 : 0)
+    || keys.some(key => !Object.hasOwn(value, key)) || (offered && !validIdentifier(value.offeredScope))
     || value.v !== 1 || value.bindingId !== options.bindingId || value.generation !== options.generation
     || !validIdentifier(value.token) || !Number.isSafeInteger(value.startOffset) || typeof value.startOffset !== 'number'
     || value.startOffset < 0 || !Number.isSafeInteger(value.endOffset) || typeof value.endOffset !== 'number'
@@ -620,6 +655,7 @@ async function readBatchState(
     endOffset: value.endOffset,
     releaseId: value.releaseId,
     records,
+    ...(offered ? { offeredScope: value.offeredScope as string } : {}),
   };
   return { state, batch: { token: state.token, items } };
 }
