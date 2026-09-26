@@ -21,7 +21,7 @@ function route(bodies: readonly string[], options: Readonly<{ dropToken?: boolea
     return {
       ...base.services(bound),
       // A broken route that loses the pending token: the inbox never sees it.
-      read: options.dropToken === true ? { read: (input) => read.read({ ...input, acknowledgeToken: undefined }) } : read,
+      read: options.dropToken === true ? { read: (input) => read.read({ bindingId: input.bindingId, maxBytes: input.maxBytes, ...(input.offerScope === undefined ? {} : { offerScope: input.offerScope }), ...(input.turnStart === undefined ? {} : { turnStart: input.turnStart }) }) } : read,
       async send(input) {
         if (input.acknowledgeToken !== undefined && options.dropToken !== true) inbox.acknowledge(bound.generation, input.acknowledgeToken);
         return base.services(bound).send({ body: input.body });
