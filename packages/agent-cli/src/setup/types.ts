@@ -9,10 +9,12 @@ export const SETUP_SCHEMA_VERSION = 1 as const;
 export const SETUP_COMMANDS = Object.freeze(['setup', 'remove', 'status'] as const);
 export type SetupCommand = (typeof SETUP_COMMANDS)[number];
 
+// `claude-app` (Claude Desktop) is reported apart from `claude` (Claude Code):
+// they have separate config, evidence, and routes.
 // `cursor` (cursor-channel-adapter) is an additive widening: every earlier result and
 // manifest still decodes, but a build from before it cannot read a manifest with a
 // Cursor entry.
-export const HARNESS_IDS = Object.freeze(['claude', 'codex', 'opencode', 'cursor'] as const);
+export const HARNESS_IDS = Object.freeze(['claude', 'codex', 'opencode', 'cursor', 'claude-app'] as const);
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 export const SETUP_COMPONENTS = Object.freeze([
