@@ -55,13 +55,10 @@ describe('restore and damaged state', () => {
     expect(leaks, describeLeaks(leaks)).toEqual([]);
   });
 
-  // KNOWN DEFECT (KHA-136 composition), #380: `recoverConnectorStorage`
-  // reads dispatch evidence only from the `receipts` table, but the KHA-121 dispatcher keeps its
-  // receipts inside `dispatch_records`. In the composed connector the recovery view therefore
-  // reports a release already written to the session as undispatched and never reconciles it.
-  // The dispatcher's own ledger still prevents a resubmission (above); the owner-facing
-  // recovery status is wrong. `it.fails` keeps this visible and flips when it is fixed.
-  it.fails('KNOWN DEFECT: the recovery view reports that release as an unknown outcome, not undispatched', async () => {
+  // #380: the KHA-121 dispatcher keeps its dispatch evidence in `dispatch_records`, not the
+  // `receipts` table. The KHA-136 recovery view must still read a release already written to the
+  // session as an unknown outcome, so the lifecycle holds and reconciles it.
+  it('the recovery view reports that release as an unknown outcome, not undispatched', async () => {
     const { lifecycle } = await restoredAfterLostReply();
     expect(lifecycle.observe()).toMatchObject({ state: 'ready', unknownReleaseIds: ['release_1'], undispatchedReleases: 0 });
   });

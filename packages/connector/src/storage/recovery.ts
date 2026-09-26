@@ -3,10 +3,13 @@
 // newer binding, quarantined conflicts keep replay blocked, and a release without a
 // terminal receipt is reported by what is known about it: a release with any dispatch
 // evidence has an unknown outcome and must never be resubmitted; only a release with no
-// dispatch evidence at all is undispatched. Storage authorises neither.
+// dispatch evidence at all is undispatched. Storage authorises neither. Evidence comes
+// from both the `receipts` table and the dispatcher's own `dispatch_records`, whose state
+// and receipts never reach `receipts`.
 
 import type { BindingId, ReleaseId, ReceiptKindV2 } from '@khala/contracts/delivery/index';
 import type { DatabaseSync } from 'node:sqlite';
+import type { DispatchState } from '../dispatch/types';
 import { StorageError, toStorageError } from './errors';
 import { readEpoch } from './leases';
 import { type ConnectorStorage, storageInternals } from './open';
@@ -35,7 +38,8 @@ export type RecoveryReport = Readonly<{
   quarantined: number;
   /**
    * No terminal receipt, but some evidence (from any receipt for the release, correlated
-   * or not) that dispatch began. The harness may have acted: never resubmit these.
+   * or not, or from the dispatcher's record) that dispatch began. The harness may have
+   * acted: never resubmit these.
    */
   outcomeUnknownReleases: readonly ReleaseId[];
   /** No terminal receipt and no dispatch evidence of any kind. */
@@ -55,6 +59,13 @@ const TERMINAL_RECEIPTS: readonly ReceiptKindV2[] = ['completed', 'failed', 'can
 const DISPATCH_EVIDENCE: readonly ReceiptKindV2[] = [
   'dispatching', 'transport_written', 'harness_queued', 'context_consumed', 'outcome_unknown', 'agent_acknowledged',
 ];
+/** Dispatcher states reached only after the dispatch intent was persisted, still unsettled. */
+const DISPATCHED_STATES: readonly DispatchState[] = ['dispatching', 'accepted', 'outcome_unknown'];
+/**
+ * Dispatcher states that settle a release. `queued`, `claimed`, `quarantined` and `rejected`
+ * ran no effect, so they are neither dispatch evidence nor terminal.
+ */
+const SETTLED_STATES: readonly DispatchState[] = ['completed', 'failed', 'cancelled', 'abandoned'];
 const sqlList = (kinds: readonly string[]) => kinds.map(kind => `'${kind}'`).join(', ');
 
 const count = (value: unknown): number => (value as { n: number }).n;
@@ -106,10 +117,14 @@ function inspect(db: DatabaseSync): RecoveryReport {
 
   const open = db.prepare(`SELECT release_id,
       EXISTS (SELECT 1 FROM receipts c WHERE c.release_id = r.release_id
-        AND json_extract(c.receipt, '$.kind') IN (${sqlList(DISPATCH_EVIDENCE)})) AS dispatched
+        AND json_extract(c.receipt, '$.kind') IN (${sqlList(DISPATCH_EVIDENCE)}))
+      OR EXISTS (SELECT 1 FROM dispatch_records d WHERE d.release_id = r.release_id
+        AND d.state IN (${sqlList(DISPATCHED_STATES)})) AS dispatched
     FROM releases r WHERE NOT EXISTS (
       SELECT 1 FROM receipts c WHERE c.release_id = r.release_id AND c.correlation = 'correlated'
         AND json_extract(c.receipt, '$.kind') IN (${sqlList(TERMINAL_RECEIPTS)}))
+      AND NOT EXISTS (SELECT 1 FROM dispatch_records d WHERE d.release_id = r.release_id
+        AND d.state IN (${sqlList(SETTLED_STATES)}))
     ORDER BY ledger_revision`).all() as { release_id: string; dispatched: number }[];
 
   const revision = db.prepare("SELECT value FROM meta WHERE key = 'ledger_revision'").get() as { value: string };
