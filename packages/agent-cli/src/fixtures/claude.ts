@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import {
   decodeHarnessCapabilities, decodeSessionBinding, unknownModeSupportMap,
-  type AcknowledgementSupport, type HarnessCapabilities, type SessionBinding,
+  type AcknowledgementSupport, type HarnessCapabilities, type ListeningMode, type SessionBinding,
 } from '@khala/contracts/delivery/index';
 import { CliError } from '../cli/errors.js';
 import type { InboxBatch } from '../cli/inbox.js';
@@ -96,6 +96,10 @@ export type FakeServices = Readonly<{
   modeSets: Array<Readonly<{ bindingId: string; acknowledgeToken?: string }>>;
   pending: { value: boolean };
   capabilities: { value: HarnessCapabilities };
+  /** The fence's idle-watcher window. */
+  watch: { value: Readonly<{ seconds: number }> | null };
+  /** The effective mode `readMode` reports. */
+  mode: { value: ListeningMode | null };
   /** Piggyback batches the next send or mode-set calls select, in order. */
   piggyback: Array<InboxBatch | null>;
   services(binding: SessionBinding): ClaudeBindingServices;
@@ -107,9 +111,11 @@ export function fakeServices(): FakeServices {
   const modeSets: FakeServices['modeSets'] = [];
   const pending = { value: false };
   const caps = { value: capabilities() };
+  const watch: FakeServices['watch'] = { value: { seconds: 3000 } };
+  const mode: FakeServices['mode'] = { value: null };
   const piggyback: Array<InboxBatch | null> = [];
   return {
-    reads, sends, modeSets, pending, capabilities: caps, piggyback,
+    reads, sends, modeSets, pending, capabilities: caps, watch, mode, piggyback,
     services(bound) {
       if (!reads.has(bound.bindingId)) reads.set(bound.bindingId, fakeRead());
       return {
@@ -130,10 +136,11 @@ export function fakeServices(): FakeServices {
         },
         readMode: async () => ({
           ok: true,
-          view: { requested: 'sync', effective: null, version: 1 } as never,
+          view: { requested: 'sync', effective: mode.value, version: 1 } as never,
         }),
         capabilities: async () => caps.value,
         pending: async () => ({ pending: pending.value }),
+        watchWindow: async () => watch.value,
       };
     },
   };

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FROZEN_COMMAND_VERBS, FROZEN_HOOK_EVENTS, FROZEN_MCP_TOOLS } from './contract';
 import { validatePlugin } from './validate';
+import { HOOK_ROLES } from '../hooks/lib/runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scripts = Object.values(FROZEN_HOOK_EVENTS).flat();
@@ -71,16 +72,30 @@ describe('claude plugin scaffold', () => {
     ]));
   });
 
-  it.each(scripts)('stub %s exits 0 with no output', script => {
+  it.each(scripts)('hook %s exits 0 with no output on input that is not its Claude event', script => {
     const result = spawnSync(process.execPath, [path.join(root, script)], { input: '{}', encoding: 'utf8' });
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('');
     expect(result.stderr).toBe('');
   });
 
-  it.each(scripts)('stub %s has no imports and no network access', script => {
-    const source = fs.readFileSync(path.join(root, script), 'utf8').replace(/^\s*\/\/.*$/gm, '');
-    expect(source).not.toMatch(/\b(?:import|require|fetch|XMLHttpRequest|WebSocket)\b/);
+  it.each(scripts)('hook %s is a thin entry into the runtime with its own role', script => {
+    const source = fs.readFileSync(path.join(root, script), 'utf8').replace(/^\s*\/\/.*$/gm, '').trim();
+    const role = path.basename(script, '.mjs');
+    expect(HOOK_ROLES).toHaveProperty(role);
+    expect(source).toBe(`import { main } from './lib/runtime.mjs';\n\nawait main('${role}');`);
+  });
+
+  it('reaches Khala only through the khala adapter command: no network, inbox, or acknowledgement path', () => {
+    const source = fs.readFileSync(path.join(root, 'hooks/lib/runtime.mjs'), 'utf8');
+    const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map(match => match[1]).sort();
+    expect(imports).toEqual(['node:child_process', 'node:crypto', 'node:fs/promises', 'node:os', 'node:path']);
+    const code = source.replace(/^\s*\/\/.*$/gm, '').replace(/^\s*\*.*$/gm, '');
+    expect(code).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|require)\b|node:(?:https?|net|tls|dgram)/);
+    expect(code).not.toMatch(/inbox|ackBatchToken|--ack|exec\(|shell:\s*true/);
+    // Only the non-acknowledging adapter ops; `read`, `send`, `status` and `mode` are agent calls.
+    const ops = [...code.matchAll(/deps\.khala\('([a-z]+)'/g)].map(match => match[1]).sort();
+    expect(ops).toEqual(['hook', 'pending', 'pull']);
   });
 
   it('carries no dangerous flags or isolated setting sources', () => {
