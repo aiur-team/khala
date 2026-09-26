@@ -49,6 +49,16 @@ export type InternalActivationOptions = Readonly<{
   descriptor: InternalDiscoveryDescriptor;
   origin: string;
   operationId: string;
+  /**
+   * The granted descriptor to write instead of the shared `active.json`. It must already
+   * hold the launch's transport descriptor. The Claude session route keeps one per session.
+   */
+  activePath?: string | undefined;
+  /**
+   * Record the approved binding's channel in `activePath` even when it is not the launch
+   * channel. Only for a descriptor that serves this one binding, never the shared `active.json`.
+   */
+  adoptChannel?: boolean;
   /** `repair_required` from the service: resume the same operation with its device and recovery key. */
   repair?: boolean;
   fetch?: typeof fetch | undefined;
@@ -74,7 +84,8 @@ export function activationPaths(descriptorPath: string) {
 
 /** Runs one journaled activation of `operationId` as far as it goes. Never throws. */
 export async function activateInternalAccess(options: InternalActivationOptions): Promise<InternalActivationOutcome> {
-  const paths = activationPaths(options.descriptorPath);
+  const derived = activationPaths(options.descriptorPath);
+  const paths = options.activePath === undefined ? derived : { ...derived, activePath: options.activePath };
   const signer = loadSigner(paths.keyFile, options.descriptor, options.clock);
   if (signer === null) return 'unavailable';
   let lock: Readonly<{ release(): Promise<void> }>;
@@ -287,7 +298,7 @@ function createPorts(
         if (channelId === null) return { kind: 'failed', reason: 'initialization_failed' };
         return writeBinding(paths.activePath, {
           channelId, grantRef: operationId, bindingId: input.binding.bindingId, bindingCapability: input.capability.token,
-        });
+        }, options.adoptChannel === true);
       },
       async status() {
         const loaded = await journal.load(operationId);
@@ -308,22 +319,25 @@ function createPorts(
 
 /**
  * Atomically adds `{grantRef, bindingId, bindingCapability}` to `active.json`. It refuses
- * a different live binding, so an approval never replaces another agent's grant.
+ * a different live binding, so an approval never replaces another agent's grant. With
+ * `adoptChannel` the descriptor takes the grant's channel instead of requiring the launch's.
  */
 function writeBinding(activePath: string, grant: Readonly<{
   channelId: string; grantRef: string; bindingId: string; bindingCapability: string;
-}>): Readonly<{ kind: 'ready' }> | Readonly<{ kind: 'failed'; reason: 'storage_unavailable' | 'initialization_failed' }> {
+}>, adoptChannel: boolean): Readonly<{ kind: 'ready' }> | Readonly<{ kind: 'failed'; reason: 'storage_unavailable' | 'initialization_failed' }> {
   const current = readInternalDescriptor(activePath);
   if (!current.ok) return { kind: 'failed', reason: 'storage_unavailable' };
-  if (current.value.channelId !== grant.channelId) return { kind: 'failed', reason: 'initialization_failed' };
   if (isGrantedDescriptor(current.value)) {
     // The same binding is the completed write. Anything else belongs to another grant.
-    return current.value.bindingId === grant.bindingId ? { kind: 'ready' } : { kind: 'failed', reason: 'initialization_failed' };
+    return current.value.bindingId === grant.bindingId && current.value.channelId === grant.channelId
+      ? { kind: 'ready' } : { kind: 'failed', reason: 'initialization_failed' };
   }
+  if (!adoptChannel && current.value.channelId !== grant.channelId) return { kind: 'failed', reason: 'initialization_failed' };
   let text: string;
   try {
     text = encodeInternalDescriptor({
-      ...current.value, grantRef: grant.grantRef, bindingId: grant.bindingId, bindingCapability: grant.bindingCapability,
+      ...current.value, channelId: grant.channelId,
+      grantRef: grant.grantRef, bindingId: grant.bindingId, bindingCapability: grant.bindingCapability,
     });
   } catch {
     return { kind: 'failed', reason: 'initialization_failed' };

@@ -29,7 +29,8 @@ function stateHome(): string {
 type Run = Readonly<{ child: ChildProcess; stdout: () => string; stderr: () => string; exited: Promise<number | null> }>;
 
 function start(state: string, args: readonly string[]): Run {
-  const child = spawn(process.execPath, ['--no-warnings', '--import', 'tsx', harness, ...args], {
+  // The bundle resolves the agent CLI's workspace source through `khala-source`; so does this run.
+  const child = spawn(process.execPath, ['--no-warnings', '--conditions=khala-source', '--import', 'tsx', harness, ...args], {
     cwd: packageDirectory,
     env: { ...process.env, XDG_STATE_HOME: state },
     stdio: ['ignore', 'pipe', 'pipe'],

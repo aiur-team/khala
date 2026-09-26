@@ -76,6 +76,18 @@ export type AgentReleaseFeed = Readonly<{
   read(input: Readonly<{ binding: SessionBinding; channelId: RoomId; cursor: string | null; limit: number }>): AgentReleaseRead;
 }>;
 
+/**
+ * One composition-supplied agent route, admitted only for the launch's transport
+ * capability. The server authenticates and bounds the body; the handler rechecks the
+ * bearer itself and owns everything else, including its status and closed body.
+ */
+export type AgentSessionRoute = Readonly<{
+  path: string;
+  handle(input: Readonly<{ authorization: string; body: Record<string, unknown> }>): Promise<Readonly<{
+    status: 200 | 400 | 401; body: Readonly<Record<string, unknown>>;
+  }>>;
+}>;
+
 /** Composition-supplied parts of the binding Stop control. */
 export type BindingStopOptions = Readonly<{
   /** Binding generations activated for the channel through channel access. */
@@ -96,6 +108,8 @@ export type ChannelServerOptions = Readonly<{
   transportCapability?: string;
   /** Channel discovery, access requests and the connector exchange. Absent means those routes do not exist. */
   discovery?: InternalDiscoveryPort;
+  /** The Claude session route. Absent means the route does not exist. */
+  agentSession?: AgentSessionRoute;
   /** Serves the human-only binding Stop endpoint; the route is absent without it. */
   stop?: BindingStopOptions;
   /** The human's Make-external journey. Absent means its routes do not exist and the browser offers no action. */
@@ -201,8 +215,12 @@ function actor(principal: Principal): Readonly<{ participantId: ParticipantId; d
   throw new Error('channel route reached without a channel principal');
 }
 
-/** Channel content routes: the creating human, or the human and bound agents. */
-function admits(route: RouteSpec, principal: Principal): boolean {
+/**
+ * Channel content routes: the creating human, or the human and bound agents. The
+ * agent-session route belongs to the installation's transport capability alone.
+ */
+function admits(route: RouteSpec, principal: Principal, agentSession: RouteSpec | null): boolean {
+  if (route === agentSession) return principal.kind === 'transport';
   const role = discoveryRole(route);
   if (role !== null) return role === principal.kind;
   // Receipt evidence is owner-only: a bound agent never reads delivery metadata.
@@ -274,6 +292,10 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     ? createMakeExternalRoutes({ journey: options.makeExternal, maxBodyBytes: limits.maxBodyBytes })
     : null;
   if (makeExternal) routes.push(...makeExternal.routes);
+  const agentSession: RouteSpec | null = options.agentSession
+    ? { method: 'POST', path: options.agentSession.path, admission: 'authenticated' }
+    : null;
+  if (agentSession) routes.push(agentSession);
   if (assets?.channelDocument) routes.push(...APP_DOCUMENT_ROUTES);
   if (assets?.channelDocument && makeExternal) routes.push(ROUTES.makeExternalDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
@@ -378,7 +400,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       principal = authority.authenticateSession(cookie, secrets[0]!);
     }
     if (!principal) return { ok: false, status: 401, code: 'unauthenticated' };
-    if (!admits(route, principal)) return { ok: false, status: 403, code: 'forbidden' };
+    if (!admits(route, principal, agentSession)) return { ok: false, status: 403, code: 'forbidden' };
     try {
       const live = bindingLive(principal);
       if (live === 'unavailable') return { ok: false, status: 503, code: 'unavailable' };
@@ -707,6 +729,12 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     }
   }
 
+  async function agentSessionCall(context: RouteContext<Principal>): Promise<void> {
+    const body = await readJsonObject(context, limits.maxBodyBytes);
+    const reply = await options.agentSession!.handle({ authorization: headerValues(context.request, 'authorization')[0]!, body });
+    sendJson(context.response, reply.status, reply.body);
+  }
+
   function staticAsset({ route, response }: RouteContext<Principal>): void {
     const asset = APP_DOCUMENT_ROUTES.includes(route) || route === ROUTES.makeExternalDocument
       ? assets?.channelDocument
@@ -743,6 +771,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.binding: return binding(context);
           case ROUTES.releases: return releases(context);
           case ROUTES.receipts: return receipts(context);
+          case agentSession: return await agentSessionCall(context);
           case STOP_ROUTE: return await handleStop(context, { service: stopService, maxBodyBytes: limits.maxBodyBytes, humanMayStop });
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);

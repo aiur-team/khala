@@ -10,6 +10,7 @@ import {
 import { type BindingControl, composeBindingControl } from '../composition/binding-control/index';
 import { createInternalReleaseFeed } from '../composition/internal-delivery/release-feed';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
+import { composeClaudeSession } from '../composition/claude-session/compose';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
 import { createSqliteListeningModeRepository } from '../listening-mode-store/sqlite';
 import { resumeInternalChannel } from '../lifecycle/resume';
@@ -280,6 +281,10 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         clock,
         newChannelId: () => `ch_${token()}`,
       });
+      // Claude sessions present the transport capability from `active.json` and join as themselves.
+      const claude = await composeClaudeSession({
+        root, store: channel.store, transportCapability, clock,
+      });
       bindingControl = composeBindingControl({ handle: channel.handle, root });
       server = await startChannelServer({
         store: channel.store,
@@ -296,6 +301,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         // The transport capability may only obtain a discovery-only descriptor.
         transportCapability,
         discovery: discovery.port,
+        agentSession: claude.route,
         // Stop revokes bindings and delivery only; the server keeps running until launcher shutdown.
         stop: bindingControl,
         assets: options.assets,
