@@ -6,8 +6,7 @@
 delivery into the user's own Codex TUI through the native hooks that
 `setup-cli-codex` installs (`khala codex-hook`, see `packages/agent-cli/README.md`).
 Khala never starts, hosts or signals Codex on this route. The claim is `tested`,
-with `existingSession: native_hooks`, `acknowledgement: batch_token_next_call` and
-every mode `proven`, only when both of these hold:
+with `existingSession: native_hooks` and every mode `proven`, only when both of these hold:
 
 - the exact version is in `CODEX_INTERACTIVE_VERSIONS` (`0.154.0`, `0.156.1`), the
   versions whose TUI passed every cell under normal trust settings in
@@ -15,7 +14,22 @@ every mode `proven`, only when both of these hold:
 - the user has trusted every installed Khala hook in Codex's **Hooks need review**
   dialog.
 
-Otherwise every mode is `unknown`, with the review or version reason. `steer`
+Otherwise every mode is `unknown`, with the review or version reason. `async` is
+additionally `unknown` until the receipt proof below is supplied, because it needs a
+returned batch token (`listeningModeView` refuses it while acknowledgement is `unknown`).
+The offline proof is derived from the real `khala codex-hook`, the shared inbox and the
+next-call token echo in `packages/agent-cli/src/codex/receipt-proof.test.ts`; the live
+Codex run stays with the Executor (decision 43).
+
+`acknowledgement` is `batch_token_next_call` only when a `CodexReceiptProof` from
+`assessCodexReceiptConformance` (`receipt-conformance.ts`) is passed for that exact
+version and the `hook` route. The proof requires a user-started CLI run (a hosted
+app-server pass is secondary and never counts), the shared journal/inbox, a delivered
+batch, an authenticated binding, the token returned on the next Khala call, a correlated
+receipt and CLI/MCP contention that serializes or fails closed. Without it, or when any
+step is missing, the value stays `unknown`: queue acceptance, `item/started`, context
+insertion and the batch response never establish it, and no later call stays neutral.
+Evidence holds booleans and labels only, never token bytes. `steer`
 means the next tool boundary, and hard abort is disabled. `immediateNotification`
 is `native_cli_queue` only while the idle wake works (`createCodexIdleWake`): for an
 idle `steer` or `sync` session it runs `codex queue --thread <sessionId> --message

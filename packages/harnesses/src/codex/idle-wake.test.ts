@@ -92,7 +92,7 @@ describe('idle wake state and dispatch adapter', () => {
     expect(wake.state(binding)).toBe('available');
     await wake.wake(binding, 'sync', '0.154.0');
     expect(wake.state(binding)).toBe('unavailable');
-    expect(interactiveCodexCapabilities('0.154.0', limits, { state: 'trusted' }, wake.state(binding)).immediateNotification)
+    expect(interactiveCodexCapabilities('0.154.0', limits, { state: 'trusted' }, undefined, wake.state(binding)).immediateNotification)
       .toBe('unknown');
     outcome = { status: 'queued' };
     await wake.wake(binding, 'sync', '0.154.0');
