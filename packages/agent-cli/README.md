@@ -212,7 +212,14 @@ the local client.
   launch's transport capability names no agent, so `join` with `active.json`
   alone is refused with `discovery_required`, unless the file already holds a
   live grant for that channel. The owner approves in the channel-requests
-  inbox.
+  inbox. Once it is approved, the next `join` finishes the binding: it
+  exchanges with a fresh proof from `connector-key.json`, opens the sealed
+  grant, activates, writes `grantRef`, `bindingId` and `bindingCapability`
+  into `active.json`, and only then acknowledges readiness, so `read`,
+  `listen` and `mcp-serve` pick it up without a restart. Progress is
+  journaled beside the discovery descriptor, so a `join` after a crash
+  resumes the same binding and never mints a second one. No grant or
+  capability is printed.
 - A granted descriptor sends with its binding capability. The server derives
   the sender from that capability and rechecks the grant for every effect.
   Because the file is reread for every call, a long-lived `mcp-serve` sees Stop

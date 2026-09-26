@@ -11,6 +11,7 @@ import type {
   AccessRequestResult, AgentClientPort, AgentStatus, SendRefusalCode, SendResult,
 } from '../cli/types.js';
 import { plainObject, validIdentifier } from '../cli/validation.js';
+import { activateInternalAccess } from './internal-activation.js';
 import { type InternalDiscoverySelection, selectInternalDiscovery } from './internal-discovery.js';
 
 // The descriptor-backed local client for `--internal-descriptor <path>`. The
@@ -88,6 +89,8 @@ export type InternalClientOptions = Readonly<{
   fetch?: typeof globalThis.fetch;
   readDescriptor?: (file: string) => DescriptorRead;
   timeoutMs?: number;
+  /** Epoch-ms clock for the activation proofs and grant checks; tests pin it to the server's. */
+  clock?: (() => number) | undefined;
 }>;
 
 type Reply = Readonly<{ status: number; body: unknown }>;
@@ -190,8 +193,16 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
       const discovery = discoverySelection();
       if (discovery.kind === 'selected') {
         const { selection } = discovery;
-        return joinWithDiscovery(selection, channelUrl, signal,
-          (capability, target, init) => request(selection, capability, target, init, signal));
+        const answered: { operationId: string | null } = { operationId: null };
+        const joined = await joinWithDiscovery(selection, channelUrl, signal,
+          (capability, target, init) => request(selection, capability, target, init, signal), answered);
+        if (joined.kind !== 'status' || answered.operationId === null || !ACTIVATABLE.has(joined.outcome)) return joined;
+        // Approved: finish the binding now. Every step is journaled, so a later `join` resumes it.
+        const activated = await activateInternalAccess({
+          descriptorPath: options.descriptorPath, descriptor: selection.descriptor, origin: selection.origin,
+          operationId: answered.operationId, repair: joined.outcome === 'repair_required', fetch: options.fetch, signal, clock: options.clock,
+        });
+        return { kind: 'status', outcome: activated === 'unavailable' ? joined.outcome : activated };
       }
       const descriptor = current();
       if (descriptor === null) return { kind: 'unavailable' };
@@ -213,6 +224,9 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
 }
 
 type AccessOutcome = (typeof ACCESS_REQUEST_OUTCOMES)[number];
+
+/** Owner-approved answers that still owe a local binding. `connected` is already acknowledged. */
+const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'repair_required']);
 
 /** A 401 means the discovery capability was rotated or is unknown here: reissue it. */
 const DISCOVERY_REJECTED = 'discovery_rejected' as const;
@@ -238,6 +252,7 @@ async function joinWithDiscovery(
   channelUrl: string,
   signal: AbortSignal | undefined,
   call: (capability: string, target: string, init: Readonly<{ method: 'GET' | 'POST'; body?: unknown }>) => Promise<Reply>,
+  answered: { operationId: string | null },
 ): Promise<AccessRequestResult> {
   if (localChannelId(channelUrl, selection.origin) === null) return { kind: 'refused', code: 'invalid_link' };
   const { principal, generation, discoveryCapability } = selection.descriptor;
@@ -259,7 +274,10 @@ async function joinWithDiscovery(
       closed = outcome;
       continue;
     }
-    if (outcome !== 'unavailable') return { kind: 'status', outcome };
+    if (outcome !== 'unavailable') {
+      answered.operationId = operationId;
+      return { kind: 'status', outcome };
+    }
     // Nothing is journaled under this operation yet: submit exactly this operation.
     try {
       outcome = accessOutcome(await call(discoveryCapability, AGENT_CHANNEL_ACCESS_REQUEST_PATH, {
@@ -269,7 +287,9 @@ async function joinWithDiscovery(
       return { kind: 'unavailable' };
     }
     if (outcome === DISCOVERY_REJECTED) return { kind: 'refused', code: 'discovery_required' };
-    return outcome === null ? { kind: 'unavailable' } : { kind: 'status', outcome };
+    if (outcome === null) return { kind: 'unavailable' };
+    answered.operationId = operationId;
+    return { kind: 'status', outcome };
   }
   return closed === null ? { kind: 'unavailable' } : { kind: 'status', outcome: closed };
 }

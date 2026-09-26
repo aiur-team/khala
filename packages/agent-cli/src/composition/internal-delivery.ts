@@ -115,9 +115,10 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
 
   return {
     async pull(held, openInbox, signal) {
-      const descriptor = currentGrant(readDescriptor, options.descriptorPath, held);
-      if (descriptor === 'unavailable') return 'unavailable';
-      if (descriptor === 'revoked') return 'revoked';
+      const first = currentGrant(readDescriptor, options.descriptorPath, held);
+      if (first === 'unavailable') return 'unavailable';
+      if (first === 'revoked') return 'revoked';
+      let descriptor: GrantedDescriptor = first;
       let directory: string;
       try { directory = await deliveryDirectory(options.stateDirectory, descriptor.channelId, held); }
       catch { return 'unavailable'; }
@@ -136,7 +137,15 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
         if (cursor === 'unavailable') return 'unavailable';
         for (let pages = 0; pages < maxPages; pages += 1) {
           if (signal?.aborted) return 'unavailable';
-          const page = await fetchPage(descriptor, held, cursor, signal);
+          let page = await fetchPage(descriptor, held, cursor, signal);
+          if (page.kind === 'revoked') {
+            // Activation may have rewritten the descriptor with a fresh capability since it was read
+            // for this pull. Only a capability the file no longer holds for this binding is revocation.
+            const reread = currentGrant(readDescriptor, options.descriptorPath, held);
+            if (typeof reread !== 'object' || reread.bindingCapability === descriptor.bindingCapability) return 'revoked';
+            descriptor = reread;
+            page = await fetchPage(descriptor, held, cursor, signal);
+          }
           if (page.kind !== 'page') return page.kind;
           let wake = false;
           for (const release of page.releases) {
