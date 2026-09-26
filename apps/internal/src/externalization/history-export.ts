@@ -230,6 +230,11 @@ function mapTransport(result: Exclude<OperationResult<unknown, string>, Readonly
 }
 
 export function createHistoryExport(deps: HistoryExportDeps): HistoryTransferPort {
+  const { maxDrainChunks, drainDeadlineMs } = deps.ceiling;
+  // An unbounded ceiling would let a paused drain run forever.
+  if (![maxDrainChunks, drainDeadlineMs].every(value => Number.isSafeInteger(value) && value > 0)) {
+    throw new RangeError('history drain ceiling must be finite and positive');
+  }
   const log = (entry: HistoryExportLogEntry) => deps.log?.(entry);
 
   function save(current: Ledgered, next: TransferLedgerState): Ledgered {
@@ -274,13 +279,13 @@ export function createHistoryExport(deps: HistoryExportDeps): HistoryTransferPor
   }
 
   /** Seals the backlog after `sealedThrough` for `key` and records it pending; a resumed step reuses its seal. */
-  async function sealBacklog(current: Ledgered, key: TransferStepKey, maxChunks: number): Promise<Ledgered> {
+  async function sealBacklog(current: Ledgered, key: TransferStepKey): Promise<Ledgered> {
     if (sameStep(current.state.pending, key)) return current;
     const read = readSource(deps.source, current.state.sourceChannelId, current.state.sealedThrough, null);
     if (read === null) return stop(rejected('source_changed'));
     const base = { ...current.state, sourceRevision: read.revision };
     const chunks = await sealFrom(base, read.records, base.chunks.length, deps.limits);
-    if (chunks === null || chunks.length > maxChunks || base.chunks.length + chunks.length > deps.limits.maxChunks) {
+    if (chunks === null || base.chunks.length + chunks.length > deps.limits.maxChunks) {
       return stop(rejected('ceiling_exceeded'));
     }
     const refs: SealedChunkRef[] = chunks.map(chunk => ({
@@ -313,7 +318,7 @@ export function createHistoryExport(deps: HistoryExportDeps): HistoryTransferPor
       ledgered = complete(ledgered, key, 'converged');
       return ok(progress(ledgered.state, 'converged', await currentDigest(ledgered.state)));
     }
-    ledgered = await sealBacklog(ledgered, key, Number.POSITIVE_INFINITY);
+    ledgered = await sealBacklog(ledgered, key);
     ledgered = await sendPending(ledgered, deps.limits, null, options);
     let outcome: HistoryTransferProgress['outcome'] = 'more';
     if (key.phase === 'catch_up' && key.round >= MAX_CATCH_UP_ROUNDS) {
@@ -338,18 +343,53 @@ export function createHistoryExport(deps: HistoryExportDeps): HistoryTransferPor
     return rejected('ceiling_exceeded');
   }
 
+  /**
+   * Seals everything after `sealedThrough` while the source is paused. Unlike a
+   * catch-up, a retried drain re-reads the tail every time: a caller that resumed the
+   * source after a failed attempt may have let messages in, and they must not be lost.
+   */
+  async function sealDrain(current: Ledgered, key: TransferStepKey): Promise<Ledgered> {
+    const read = readSource(deps.source, current.state.sourceChannelId, current.state.sealedThrough, null);
+    if (read === null) return stop(rejected('source_changed'));
+    if (read.records.length === 0) return sameStep(current.state.pending, key) ? current : save(current, { ...current.state, pending: key });
+    // The manifest already names the archive; messages written after it cannot join it.
+    if (current.state.manifest !== null) return stop(rejected('source_changed'));
+    const base = { ...current.state, sourceRevision: read.revision };
+    const chunks = await sealFrom(base, read.records, base.chunks.length, deps.limits);
+    const drained = base.chunks.length - base.drainFromChunk! + (chunks?.length ?? 0);
+    if (chunks === null || drained > deps.ceiling.maxDrainChunks || base.chunks.length + chunks.length > deps.limits.maxChunks) {
+      return stop(rejected('ceiling_exceeded'));
+    }
+    const refs: SealedChunkRef[] = chunks.map(chunk => ({
+      index: chunk.index, recordCount: chunk.records.length, firstSequence: chunk.records[0]!.sequence,
+      lastSequence: chunk.records.at(-1)!.sequence, chunkDigest: chunk.chunkDigest, partId: null,
+    }));
+    return save(current, {
+      ...base, chunks: [...base.chunks, ...refs], sealedThrough: Math.max(base.sealedThrough, read.latestSequence), pending: key,
+    });
+  }
+
   async function drain(current: Ledgered, key: TransferStepKey, options?: CallOptions): Promise<Result> {
     let ledgered = current;
     if (await deps.gate.pause(ledgered.state.sourceChannelId, options) !== 'paused') return unavailable();
-    if (ledgered.state.drainStartedAt === null) ledgered = save(ledgered, { ...ledgered.state, drainStartedAt: deps.now() });
+    if (ledgered.state.drainStartedAt === null) {
+      ledgered = save(ledgered, { ...ledgered.state, drainStartedAt: deps.now(), drainFromChunk: ledgered.state.chunks.length });
+    }
     const deadline = ledgered.state.drainStartedAt! + deps.ceiling.drainDeadlineMs;
+    // Other failures leave the source paused: the caller retries, bounded by the persisted
+    // deadline, or fails the conversion, which resumes the internal channel.
     try {
       if (deps.now() > deadline) stop(rejected('ceiling_exceeded'));
-      ledgered = await sealBacklog(ledgered, key, deps.ceiling.maxDrainChunks);
+      ledgered = await sealDrain(ledgered, key);
       ledgered = await sendPending(ledgered, deps.limits, deadline, options);
     } catch (error) {
       if (error instanceof Stop && error.result.kind === 'rejected' && error.result.code === 'ceiling_exceeded') {
         return block(ledgered.state.conversionId, options);
+      }
+      if (error instanceof Stop && error.result.kind === 'rejected' && error.result.code === 'source_changed') {
+        // No drain can finish this archive; hand the channel back before reporting it.
+        if (await deps.gate.resume(ledgered.state.sourceChannelId, options) !== 'resumed') return unavailable();
+        log({ event: 'source_resumed', conversionId: ledgered.state.conversionId });
       }
       throw error;
     }
@@ -412,7 +452,7 @@ export function createHistoryExport(deps: HistoryExportDeps): HistoryTransferPor
           importedAt: new Date(deps.now()).toISOString().replace(/\.\d{3}Z$/, 'Z'),
           sourceChannelId: target.sourceChannelId, destinationRoomId: target.destinationRoomId,
           ownerId: target.owner.ownerId, participantId: target.owner.participantId,
-          sealedThrough: 0, sourceRevision: '0', chunks: [], pending: null, completed: null, drainStartedAt: null,
+          sealedThrough: 0, sourceRevision: '0', chunks: [], pending: null, completed: null, drainStartedAt: null, drainFromChunk: null,
           manifest: null, blocked: false,
         },
       };

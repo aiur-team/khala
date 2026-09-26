@@ -170,7 +170,10 @@ reports `drain_required`. `final_drain` pauses source writes, seals the rest and
 manifest. It runs only in `history_catching_up` after convergence, or in `drain_required`
 after the human confirms. The drain is bounded by `maxDrainChunks` and by a deadline that
 holds across retries. When it exceeds either one, it resumes the source and returns
-`ceiling_exceeded`, which stays terminal. `lastAckChunk` and `afterChunk` count
+`ceiling_exceeded`, which stays terminal. Other drain failures leave the source paused for
+a retry. Every retry re-reads the tail, so messages written while a caller had resumed the
+source are sealed too. Once the manifest is fixed, new messages make the drain resume the
+source and return `source_changed`. `lastAckChunk` and `afterChunk` count
 acknowledged chunks. Each step is authorized against the signed-in owner, the journaled
 `operationId` and the bound destination (`forbidden` or `operation_mismatch`).
 Acknowledgements persist in a 0600 `history-transfer.sqlite` inside an owner-private

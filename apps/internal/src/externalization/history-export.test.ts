@@ -390,6 +390,46 @@ describe('checkpointed history transfer', () => {
     expect(h.gate.paused).toBe(false);
   });
 
+  it('seals messages written while a failed drain had handed the source back', async () => {
+    const h = await harness();
+    h.append();
+    expectOk(await h.port.step(step('copy', 0)));
+    await h.advance('history_catching_up');
+    h.append();
+    expect(expectOk(await h.port.step(step('catch_up', 1))).outcome).toBe('converged');
+    h.transport.fault = () => 'unavailable';
+    expect((await h.port.step(step('final_drain', 0))).kind).toBe('unavailable');
+    // The caller gives up on this attempt and resumes the internal channel; people keep talking.
+    await h.gate.resume();
+    h.append();
+    h.append();
+    h.transport.fault = () => 'ok';
+    const done = expectOk(await h.reopen().step(step('final_drain', 0)));
+    const view = await openArchive(h, done.manifestDigest);
+    expect(view.records.map(record => record.body)).toEqual(h.bodies());
+  });
+
+  it('refuses to close an archive the source outgrew after its manifest was fixed, and resumes the source', async () => {
+    const h = await harness();
+    h.append();
+    expectOk(await h.port.step(step('copy', 0)));
+    await h.advance('history_catching_up');
+    expect(expectOk(await h.port.step(step('catch_up', 1))).outcome).toBe('converged');
+    h.transport.fault = id => (id.endsWith('.manifest') ? 'unavailable' : 'ok');
+    expect((await h.port.step(step('final_drain', 0))).kind).toBe('unavailable');
+    await h.gate.resume();
+    h.append();
+    h.transport.fault = () => 'ok';
+    expect(await h.reopen().step(step('final_drain', 0))).toEqual({ kind: 'rejected', code: 'source_changed' });
+    expect(h.gate.paused).toBe(false);
+    expect(h.transport.puts.filter(id => id.endsWith('.manifest'))).toHaveLength(0);
+  });
+
+  it('refuses a drain ceiling that is not finite', async () => {
+    await expect(harness({ maxDrainChunks: Number.POSITIVE_INFINITY, drainDeadlineMs: 1_000 })).rejects.toThrow(RangeError);
+    await expect(harness({ maxDrainChunks: 8, drainDeadlineMs: Number.NaN })).rejects.toThrow(RangeError);
+  });
+
   it('reconciles a lost final acknowledgement from the destination without sending the manifest twice', async () => {
     const h = await harness();
     for (let i = 0; i < 3; i += 1) h.append();

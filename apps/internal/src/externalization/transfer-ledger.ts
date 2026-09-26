@@ -45,6 +45,8 @@ export type TransferLedgerState = Readonly<{
   completed: (TransferStepKey & Readonly<{ outcome: 'more' | 'converged' | 'drain_required' }>) | null;
   /** Wall-clock milliseconds when the paused drain first started; bounds every retry. */
   drainStartedAt: number | null;
+  /** Chunk count when the drain first started; every chunk from here on counts against `maxDrainChunks`. */
+  drainFromChunk: number | null;
   manifest: Readonly<{ digest: string; partId: string | null }> | null;
   /** A drain that exceeded its ceiling; the transfer stays blocked and never restarts. */
   blocked: boolean;
@@ -96,7 +98,7 @@ export function decodeTransferLedgerState(input: unknown): Decoded<TransferLedge
   return decodeWith(() => {
     const r = object(input, '', [
       'v', 'conversionId', 'operationId', 'archiveId', 'importedAt', 'sourceChannelId', 'destinationRoomId', 'ownerId',
-      'participantId', 'sealedThrough', 'sourceRevision', 'chunks', 'pending', 'completed', 'drainStartedAt', 'manifest', 'blocked',
+      'participantId', 'sealedThrough', 'sourceRevision', 'chunks', 'pending', 'completed', 'drainStartedAt', 'drainFromChunk', 'manifest', 'blocked',
     ]);
     const id = (key: string) => identifier(r.field(key), r.at(key));
     return {
@@ -118,6 +120,7 @@ export function decodeTransferLedgerState(input: unknown): Decoded<TransferLedge
         return { ...step(c), outcome: literal(c.field('outcome'), c.at('outcome'), ['more', 'converged', 'drain_required']) };
       }),
       drainStartedAt: nullable(r.field('drainStartedAt'), value => safeInteger(value, r.at('drainStartedAt'))),
+      drainFromChunk: nullable(r.field('drainFromChunk'), value => safeInteger(value, r.at('drainFromChunk'))),
       manifest: nullable(r.field('manifest'), value => {
         const m = object(value, r.at('manifest'), ['digest', 'partId']);
         return {
