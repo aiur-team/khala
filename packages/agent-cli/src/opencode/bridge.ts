@@ -17,7 +17,7 @@ import {
   OPENCODE_ROUTE_EVIDENCE, decodeDeliveryLimits, openCodePluginCapabilities, resolveOpenCodeModes,
 } from '@khala/contracts/delivery/index';
 import { cliErrorCode } from '../cli/errors.js';
-import type { InboxBatch, ReadBatchInput } from '../cli/inbox.js';
+import type { InboxBatch, WakeableInboxConsumer } from '../cli/inbox.js';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import type { SendResult } from '../cli/types.js';
 import { sameHeldBinding } from '../composition/read.js';
@@ -52,10 +52,7 @@ export interface OpenCodeSessionPort {
 }
 
 /** The held inbox consumer: the shared batch read plus content-free notifier wakes. */
-export interface OpenCodeBatchPort {
-  readBatch(input: ReadBatchInput): Promise<InboxBatch | null>;
-  nextWake(): Promise<void>;
-}
+export type OpenCodeBatchPort = Pick<WakeableInboxConsumer, 'readBatch' | 'nextWake'>;
 
 /** Human controls, re-read before every action. A null binding means Stop revoked it. */
 export type OpenCodeControls = Readonly<{ binding: SessionBinding | null; paused: boolean; mode: ListeningMode | null }>;
@@ -480,6 +477,7 @@ export class OpenCodeSessionBridge {
   async #readForTool(ackBatchToken: string | undefined): Promise<InboxBatch | null> {
     return this.#batch.readBatch({
       maxBytes: OPENCODE_BATCH_READ_BYTES,
+      explicitRead: true,
       ...(ackBatchToken === undefined ? {} : { acknowledgeToken: ackBatchToken }),
     });
   }

@@ -4,11 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BindingId, EventRef, SessionBinding } from '@khala/contracts/delivery/index';
-import { type BatchInbox, type InboxConsumer, type ReadBatchInput, openInbox } from '../cli/inbox.js';
+import { type BatchInbox, type ReadBatchInput, type WakeableInboxConsumer, openInbox } from '../cli/inbox.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import { type OpenCodeBridgeReport, type OpenCodeControls, OpenCodeSessionBridge } from './bridge.js';
 import { OPENCODE_BATCH_READ_BYTES, encodeOpenCodeEnvelope, parseOpenCodeEnvelope } from './envelope.js';
-import { DEEPSEEK, FakeControls, FakeOpenCode, FakeSend, FakeWakes, envelopeTokens } from './fakes.js';
+import { DEEPSEEK, FakeControls, FakeOpenCode, FakeSend, envelopeTokens } from './fakes.js';
 import { type OpenCodeBridgeStore, openOpenCodeBridgeStore } from './store.js';
 
 const A = 'ses_A';
@@ -53,10 +53,9 @@ async function harness(options: Readonly<{ mode: OpenCodeControls['mode']; versi
   const send = new FakeSend();
   const h = {
     state, inbox, opencode, controls, send,
-    wakes: new FakeWakes(),
     reads: [] as ReadBatchInput[],
     reports: [] as OpenCodeBridgeReport[],
-    consumer: null as unknown as InboxConsumer,
+    consumer: null as unknown as WakeableInboxConsumer,
     store: null as unknown as OpenCodeBridgeStore,
     bridge: null as unknown as OpenCodeSessionBridge,
     version: options.version === undefined ? '1.17.10' : options.version,
@@ -68,20 +67,19 @@ async function harness(options: Readonly<{ mode: OpenCodeControls['mode']; versi
 /** Starts (or, after `stop`, restarts) the plugin process over the same durable state. */
 async function start(h: {
   state: string; inbox: BatchInbox; opencode: FakeOpenCode; controls: FakeControls; send: FakeSend;
-  wakes: FakeWakes; reads: ReadBatchInput[]; reports: OpenCodeBridgeReport[]; consumer: InboxConsumer;
+  reads: ReadBatchInput[]; reports: OpenCodeBridgeReport[]; consumer: WakeableInboxConsumer;
   store: OpenCodeBridgeStore; bridge: OpenCodeSessionBridge; version: string | null;
 }): Promise<void> {
+  // The real listener: hints arrive over its socket through `inbox.notifyListener`.
   const consumer = await h.inbox.acquireListener();
   cleanups.push(() => consumer.release());
   h.consumer = consumer;
-  h.wakes = new FakeWakes();
   h.store = await openOpenCodeBridgeStore({ stateDirectory: h.state, bindingId, generation: 3 });
-  const wakes = h.wakes;
   h.bridge = new OpenCodeSessionBridge({
     binding,
     batch: {
       readBatch: input => { h.reads.push(input); return consumer.readBatch(input); },
-      nextWake: () => wakes.nextWake(),
+      nextWake: () => consumer.nextWake(),
     },
     session: h.opencode,
     controls: h.controls,
@@ -93,7 +91,6 @@ async function start(h: {
 }
 
 async function restart(h: Harness): Promise<void> {
-  h.wakes.release();
   await h.consumer.release();
   await start(h);
 }
@@ -221,8 +218,11 @@ describe('OpenCode session bridge: idle delivery', () => {
     h.opencode.statuses.set(A, 'idle');
     const abort = new AbortController();
     const watcher = h.bridge.runIdleWatcher(abort.signal);
+    // Let the start-up catch-up find the inbox empty, so only the hint can deliver.
+    await vi.waitFor(() => expect(h.reads).toHaveLength(1));
     await release(h, 'release-1', 'are you there?');
-    h.wakes.hint();
+    expect(h.opencode.prompts).toEqual([]);
+    expect(await h.inbox.notifyListener('released')).toBe('notified');
 
     // No user turn, no session event: the hint alone delivers.
     await vi.waitFor(() => expect(h.opencode.prompts).toHaveLength(1));
@@ -236,7 +236,7 @@ describe('OpenCode session bridge: idle delivery', () => {
     h.opencode.userTurn(A, 'join');
     h.opencode.statuses.set(A, 'idle');
     await release(h, 'release-1', 'queued while closed');
-    h.wakes.hint(); // the listener's first wait resolves at once
+    // No hint: the listener's first wait is the start-up catch-up.
     const abort = new AbortController();
     const watcher = h.bridge.runIdleWatcher(abort.signal);
     await vi.waitFor(() => expect(h.opencode.prompts).toHaveLength(1));
@@ -593,7 +593,7 @@ describe('OpenCode session bridge: stored, not stored and ambiguous outcomes', (
     await h.bridge.wake('hint');
     const token = parseOpenCodeEnvelope(h.opencode.prompts[0]!.text)!.token;
     await restart(h);
-    h.wakes.hint();
+    expect(await h.inbox.notifyListener('released')).toBe('notified');
     await h.bridge.wake('hint');
     expect(h.opencode.prompts).toHaveLength(1);
     expect(await outstandingToken(h)).toBe(token);
