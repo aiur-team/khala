@@ -3,6 +3,7 @@ import { claudeCommand } from './commands/claude.js';
 import { codexHookCommand } from './commands/codex-hook.js';
 import { connectCommand } from './commands/connect.js';
 import { internalCommand } from './commands/internal.js';
+import { joinCommand } from './commands/join.js';
 import { listenCommand } from './commands/listen.js';
 import { mcpServeCommand } from './commands/mcp-serve.js';
 import { modeCommand } from './commands/mode.js';
@@ -54,6 +55,7 @@ export const CLI_COMMANDS: readonly CliCommand[] = Object.freeze([
   agentsCommand,
   internalCommand,
   codexHookCommand,
+  joinCommand,
   claudeCommand,
 ]);
 
