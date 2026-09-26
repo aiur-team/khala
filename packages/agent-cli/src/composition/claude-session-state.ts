@@ -37,7 +37,9 @@ export async function openClaudeSessionState(directory: string): Promise<ClaudeS
         const file = path.join(directory, `${key}.json`);
         const retained = await take(file, scope);
         const step = await call(retained);
-        if (step.batchToken !== null) await store(directory, file, scope, step.batchToken);
+        // The call already happened; failing to persist its token must not hide the
+        // result (an accepted send would look retryable). A lost token only replays.
+        if (step.batchToken !== null) await store(directory, file, scope, step.batchToken).catch(() => undefined);
         return step.value;
       };
       const previous = queues.get(key) ?? Promise.resolve();

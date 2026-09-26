@@ -64,6 +64,13 @@ describe('khala claude command registration', () => {
     });
   });
 
+  it('exits 4 on an unknown send outcome so callers never retry it', async () => {
+    const composed = client({ send: vi.fn(async () => ({ kind: 'outcome_unknown' as const, clientTxnId: 'txn-12345678' })) });
+    await expect(run(['claude', 'send', '--session', 's-1'], composed, 'hello')).resolves.toEqual({
+      code: 4, out: '{"ok":false,"kind":"outcome_unknown","clientTxnId":"txn-12345678"}\n', err: '',
+    });
+  });
+
   it('touches the shared registration files only to register the command', () => {
     const app = fs.readFileSync(new URL('../cli/app.ts', import.meta.url), 'utf8');
     const server = fs.readFileSync(new URL('../mcp/server.ts', import.meta.url), 'utf8');

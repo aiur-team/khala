@@ -37,6 +37,18 @@ describe('durable Claude session state port', () => {
     expect(seen).toEqual([undefined]);
   });
 
+  it('returns a completed call’s result even when its token cannot be persisted', async () => {
+    const directory = root();
+    const state = await openClaudeSessionState(directory);
+    fs.chmodSync(directory, 0o500);
+    try {
+      await expect(state.envelope(SCOPE, async () => ({ value: 'accepted', batchToken: 'unpersisted' }))).resolves.toBe('accepted');
+    } finally {
+      fs.chmodSync(directory, 0o700);
+    }
+    await state.envelope(SCOPE, async retained => { expect(retained).toBeUndefined(); return { value: null, batchToken: null }; });
+  });
+
   it('linearizes concurrent calls so each sees the previous call’s token', async () => {
     const state = await openClaudeSessionState(root());
     const seen: Array<string | undefined> = [];

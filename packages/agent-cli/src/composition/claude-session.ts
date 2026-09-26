@@ -3,6 +3,7 @@ import type {
 } from '@khala/contracts/delivery/index';
 import type { AgentListeningModeReadResult } from '@khala/connector/agent/listening-mode';
 import { CliError } from '../cli/errors.js';
+import type { InboxBatch } from '../cli/inbox.js';
 import type { SendResult } from '../cli/types.js';
 import { validIdentifier } from '../cli/validation.js';
 import type { ReadOperationPort } from '../mcp/read-tool.js';
@@ -50,15 +51,18 @@ export type ModeSetInput = Readonly<{
   commandId: string; expectedVersion: number; requested: ListeningMode; issuedAt: string; acknowledgeToken?: string;
 }>;
 
+/** A token-bearing call's result and the piggyback batch it selected, if any. */
+export type PiggybackStep<T> = Readonly<{ value: T; batch: InboxBatch | null }>;
+
 /**
  * The shared application operations for one verified binding. `read` is the single
  * `khala_read` operation; send and mode control carry the prior token through the
- * shared contract and may return a new one. None of them is Claude-specific.
+ * shared contract and may select a piggyback batch. None of them is Claude-specific.
  */
 export type ClaudeBindingServices = Readonly<{
   read: ReadOperationPort;
-  send(input: Readonly<{ body: string; acknowledgeToken?: string }>): Promise<EnvelopeStep<SendResult>>;
-  setMode(input: ModeSetInput): Promise<EnvelopeStep<ListeningModeResult>>;
+  send(input: Readonly<{ body: string; acknowledgeToken?: string }>): Promise<PiggybackStep<SendResult>>;
+  setMode(input: ModeSetInput): Promise<PiggybackStep<ListeningModeResult>>;
   readMode(): Promise<AgentListeningModeReadResult>;
   capabilities(): Promise<HarnessCapabilities>;
   /**
@@ -83,10 +87,12 @@ export type ClaudeSessionRefusal = Readonly<{ kind: 'refused'; code: (typeof CLA
 export type ClaudeSessionCall = Readonly<{ credential: string; sessionId: string }>;
 
 export type ClaudeReadOutcome = Readonly<{ kind: 'batch'; text: string }> | Readonly<{ kind: 'empty' }> | ClaudeSessionRefusal;
+/** A piggyback batch, rendered without its token, delivered alongside a send or mode change. */
+type Piggyback = Readonly<{ batch?: string }>;
 export type ClaudeSendOutcome =
-  | Readonly<{ kind: 'accepted'; clientTxnId: string; eventId: string | null }>
-  | Readonly<{ kind: 'refused'; code: string; clientTxnId: string }>
-  | Readonly<{ kind: 'outcome_unknown'; clientTxnId: string }>
+  | (Readonly<{ kind: 'accepted'; clientTxnId: string; eventId: string | null }> & Piggyback)
+  | (Readonly<{ kind: 'refused'; code: string; clientTxnId: string }> & Piggyback)
+  | (Readonly<{ kind: 'outcome_unknown'; clientTxnId: string }> & Piggyback)
   | ClaudeSessionRefusal;
 export type ClaudeModeOutcome = Readonly<{
   kind: 'mode';
@@ -96,13 +102,13 @@ export type ClaudeModeOutcome = Readonly<{
   support: Readonly<Record<ListeningMode, string>>;
   acknowledgement: HarnessCapabilities['acknowledgement'];
 }> | ClaudeSessionRefusal;
-export type ClaudeModeSetOutcome = Readonly<{
+export type ClaudeModeSetOutcome = (Readonly<{
   kind: 'mode_set';
   outcome: ListeningModeResult['outcome'];
   requested: ListeningMode;
   effective: ListeningMode | null;
   version: number;
-}> | ClaudeSessionRefusal;
+}> & Piggyback) | ClaudeSessionRefusal;
 export type ClaudePendingOutcome = Readonly<{ kind: 'pending' | 'idle' }> | ClaudeSessionRefusal;
 
 export interface ClaudeSessionAdapter {
@@ -155,15 +161,16 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
         if ('kind' in resolved) return resolved;
         // Without batch-token handoff a pulled batch could never be acknowledged.
         if (!await handoff(resolved)) return refused('unproven');
-        const result = await options.state.envelope(resolved.scope, async retained => {
+        return options.state.envelope<ClaudeReadOutcome>(resolved.scope, async retained => {
           const read = await resolved.services.read.read({
             bindingId: resolved.binding.bindingId,
             maxBytes: input.maxBytes,
             ...(retained === undefined ? {} : { acknowledgeToken: retained }),
           });
-          return { value: read, batchToken: read.kind === 'batch' ? read.batch.token : null };
+          if (read.kind === 'empty') return { value: { kind: 'empty' } as const, batchToken: null };
+          // Render before the token is stored: a batch that cannot be delivered is never retained.
+          return { value: { kind: 'batch', text: renderInboxBatchWithoutToken(read.batch) } as const, batchToken: read.batch.token };
         });
-        return result.kind === 'batch' ? { kind: 'batch', text: renderInboxBatchWithoutToken(result.batch) } : { kind: 'empty' };
       });
     },
 
@@ -171,12 +178,13 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        const result = await tokenBearing(resolved, retained => resolved.services.send({
+        const { value: result, batch } = await tokenBearing(resolved, retained => resolved.services.send({
           body: input.body, ...(retained === undefined ? {} : { acknowledgeToken: retained }),
         }));
-        if (result.kind === 'accepted') return { kind: 'accepted', clientTxnId: result.clientTxnId, eventId: result.eventId };
-        if (result.kind === 'refused') return { kind: 'refused', code: result.code, clientTxnId: result.clientTxnId };
-        return { kind: 'outcome_unknown', clientTxnId: result.clientTxnId };
+        const piggyback = batch === null ? {} : { batch };
+        if (result.kind === 'accepted') return { kind: 'accepted', clientTxnId: result.clientTxnId, eventId: result.eventId, ...piggyback };
+        if (result.kind === 'refused') return { kind: 'refused', code: result.code, clientTxnId: result.clientTxnId, ...piggyback };
+        return { kind: 'outcome_unknown', clientTxnId: result.clientTxnId, ...piggyback };
       });
     },
 
@@ -205,7 +213,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        const result = await tokenBearing(resolved, retained => resolved.services.setMode({
+        const { value: result, batch } = await tokenBearing(resolved, retained => resolved.services.setMode({
           commandId: input.commandId,
           expectedVersion: input.expectedVersion,
           requested: input.requested,
@@ -214,6 +222,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
         }));
         return {
           kind: 'mode_set', outcome: result.outcome, requested: result.requested, effective: result.effective, version: result.version,
+          ...(batch === null ? {} : { batch }),
         };
       });
     },
@@ -231,13 +240,23 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
 
   async function tokenBearing<T>(
     resolved: Resolved,
-    call: (retained: string | undefined) => Promise<EnvelopeStep<T>>,
-  ): Promise<T> {
+    call: (retained: string | undefined) => Promise<PiggybackStep<T>>,
+  ): Promise<Readonly<{ value: T; batch: string | null }>> {
     // Only `batch_token_next_call` permits retained-token handoff; otherwise the call
-    // runs bare and any token it returns is dropped, so its batch replays.
-    if (!await handoff(resolved)) return (await call(undefined)).value;
-    return options.state.envelope(resolved.scope, call);
+    // runs bare and its piggyback batch is neither shown nor retained, so it replays.
+    if (!await handoff(resolved)) return { value: (await call(undefined)).value, batch: null };
+    return options.state.envelope(resolved.scope, async retained => {
+      const step = await call(retained);
+      const text = step.batch === null ? null : renderOrNull(step.batch);
+      // The token is retained only when its batch is actually delivered with the result;
+      // an unrenderable batch is dropped without hiding the call's own outcome.
+      return { value: { value: step.value, batch: text }, batchToken: text === null ? null : step.batch!.token };
+    });
   }
+}
+
+function renderOrNull(batch: InboxBatch): string | null {
+  try { return renderInboxBatchWithoutToken(batch); } catch { return null; }
 }
 
 function publicSupport(status: string): string {

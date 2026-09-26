@@ -149,7 +149,9 @@ entries hold only the descriptor path; the port and credential never appear in
 configuration, argv, environment variables, output, or errors. A missing,
 malformed, or insecure descriptor fails closed with `descriptor_missing`,
 `descriptor_malformed`, or `descriptor_insecure`; a stale one is refused by
-the server as `unauthorized`. `send` reads its message from stdin.
+the server as `unauthorized`, and a server that does not answer within 10
+seconds as `unavailable`. `send` reads its message from stdin; its JSON result
+may carry a token-free `batch` delivered alongside it.
 
 Server-side, `createClaudeSessionAdapter` authenticates the installation
 credential and treats the Claude session ID only as a selector among that
@@ -158,8 +160,10 @@ and a foreign session is refused exactly like an unknown one
 (`session_not_bound`). Reads call the single `khala_read` operation. The
 server's `ClaudeSessionStatePort` durably keeps the returned batch token and
 attaches it to exactly one next send, pull, or mode-control call for the same
-principal, binding, and generation, including across a server restart. The
-token never reaches the hook or command process: `read` prints the shared
+principal, binding, and generation, including across a server restart. A token
+is retained only when its batch was rendered into the result; a batch that
+cannot be delivered replays instead. The token never reaches the hook or
+command process: `read` prints the shared
 `<khala-channel-batch-v1>` frame without its `batchToken` line. Handoff runs only
 when `HarnessCapabilities.acknowledgement` is `batch_token_next_call`;
 otherwise `read` is refused as `unproven`, and mode support without evidence

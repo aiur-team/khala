@@ -9,7 +9,8 @@ import {
 
 /** The local server route that mounts `handleClaudeSessionRequest`. */
 export const CLAUDE_SESSION_PATH = '/api/agent/claude/session';
-const MAX_RESPONSE_BYTES = MAX_SEND_BYTES * 2 + 16_384;
+// One batch of at most MAX_SEND_BYTES payload, JSON-escaped (up to 6x), plus framing.
+const MAX_RESPONSE_BYTES = MAX_SEND_BYTES * 6 + 65_536;
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
 
 export type ClaudeSessionRequest =
@@ -40,7 +41,7 @@ export async function handleClaudeSessionRequest(
   const call = { credential: bearer[1]!, sessionId: request.sessionId };
   let outcome: Readonly<Record<string, unknown>>;
   switch (request.op) {
-    case 'read': outcome = await adapter.read(call, { maxBytes: input.readBudgetBytes }); break;
+    case 'read': outcome = await adapter.read(call, { maxBytes: Math.min(input.readBudgetBytes, MAX_SEND_BYTES) }); break;
     case 'send': outcome = await adapter.send(call, { body: request.body }); break;
     case 'mode': outcome = await adapter.mode(call); break;
     case 'mode_set': outcome = await adapter.setMode(call, {
@@ -87,7 +88,9 @@ export interface ClaudeSessionClient {
   pending(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudePendingOutcome>>;
 }
 
-export type ClaudeSessionClientOptions = Readonly<{ descriptorPath: string; fetch?: typeof fetch }>;
+export const DEFAULT_CLIENT_TIMEOUT_MS = 10_000;
+
+export type ClaudeSessionClientOptions = Readonly<{ descriptorPath: string; fetch?: typeof fetch; timeoutMs?: number }>;
 
 /**
  * The hook- and command-process side. Each call re-reads the owner-only runtime
@@ -97,10 +100,13 @@ export type ClaudeSessionClientOptions = Readonly<{ descriptorPath: string; fetc
  */
 export function createClaudeSessionClient(options: ClaudeSessionClientOptions): ClaudeSessionClient {
   const transport = options.fetch ?? fetch;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CLIENT_TIMEOUT_MS;
 
   async function call(request: ClaudeSessionRequest, signal: AbortSignal | undefined): Promise<unknown> {
     const descriptor = await readRuntimeDescriptor(options.descriptorPath);
     if (!descriptor.ok) return { kind: 'refused', code: descriptor.code };
+    // A hook must never hang on a server that accepts the connection and goes quiet.
+    const deadline = AbortSignal.timeout(timeoutMs);
     let response: Response;
     try {
       response = await transport(`${descriptor.target.origin}${CLAUDE_SESSION_PATH}`, {
@@ -108,13 +114,14 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
         headers: { authorization: `Bearer ${descriptor.target.credential}`, 'content-type': 'application/json' },
         body: JSON.stringify(request),
         redirect: 'error',
-        ...(signal === undefined ? {} : { signal }),
+        signal: signal === undefined ? deadline : AbortSignal.any([signal, deadline]),
       });
     } catch {
       return { kind: 'refused', code: 'unavailable' };
     }
     // A rotated or stale descriptor fails closed here, without a retry.
     if (response.status === 401) return { kind: 'refused', code: 'unauthorized' };
+    if (response.status === 400) return { kind: 'refused', code: 'invalid_request' };
     if (response.status !== 200) return { kind: 'refused', code: 'unavailable' };
     try {
       const text = await response.text();
@@ -135,20 +142,21 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
     },
     async send(sessionId, body, signal) {
       const value = await call({ v: 1, op: 'send', sessionId, body }, signal);
-      if (plainObject(value) && ['accepted', 'outcome_unknown'].includes(value.kind as string) && validIdentifier(value.clientTxnId)) {
+      if (!plainObject(value)) return refusal(value);
+      const piggyback = typeof value.batch === 'string' ? { batch: value.batch } : {};
+      if ((value.kind === 'accepted' || value.kind === 'outcome_unknown') && validIdentifier(value.clientTxnId)) {
         return value.kind === 'accepted'
-          ? { kind: 'accepted', clientTxnId: value.clientTxnId, eventId: validIdentifier(value.eventId) ? value.eventId : null }
-          : { kind: 'outcome_unknown', clientTxnId: value.clientTxnId };
+          ? { kind: 'accepted', clientTxnId: value.clientTxnId, eventId: validIdentifier(value.eventId) ? value.eventId : null, ...piggyback }
+          : { kind: 'outcome_unknown', clientTxnId: value.clientTxnId, ...piggyback };
       }
-      if (plainObject(value) && value.kind === 'refused' && validIdentifier(value.clientTxnId) && validIdentifier(value.code)) {
-        return { kind: 'refused', code: value.code, clientTxnId: value.clientTxnId };
+      if (value.kind === 'refused' && validIdentifier(value.clientTxnId) && validIdentifier(value.code)) {
+        return { kind: 'refused', code: value.code, clientTxnId: value.clientTxnId, ...piggyback };
       }
       return refusal(value);
     },
     async mode(sessionId, signal) {
       const value = await call({ v: 1, op: 'mode', sessionId }, signal);
-      if (plainObject(value) && value.kind === 'mode') return value as Exclude<ClaudeModeOutcome, ClaudeSessionRefusal>;
-      return refusal(value);
+      return publicMode(value) ?? refusal(value);
     },
     async pending(sessionId, signal) {
       const value = await call({ v: 1, op: 'pending', sessionId }, signal);
@@ -163,6 +171,27 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
 const CLIENT_REFUSALS: readonly string[] = [
   ...CLAUDE_SESSION_REFUSALS, 'descriptor_missing', 'descriptor_insecure', 'descriptor_malformed',
 ];
+
+const ACKNOWLEDGEMENT = ['unknown', 'unsupported', 'batch_token_next_call'] as const;
+
+/** Rebuilds a mode outcome from exactly its closed fields; anything else is refused. */
+function publicMode(value: unknown): Exclude<ClaudeModeOutcome, ClaudeSessionRefusal> | null {
+  if (!plainObject(value) || value.kind !== 'mode' || !plainObject(value.support)) return null;
+  const mode = (candidate: unknown): candidate is ListeningMode => (LISTENING_MODES as readonly unknown[]).includes(candidate);
+  const support = value.support;
+  if (!mode(value.requested) || !(value.effective === null || mode(value.effective))
+    || !Number.isSafeInteger(value.version) || (value.version as number) < 0
+    || !(ACKNOWLEDGEMENT as readonly unknown[]).includes(value.acknowledgement)
+    || !LISTENING_MODES.every(name => validIdentifier(support[name]))) return null;
+  return {
+    kind: 'mode',
+    requested: value.requested,
+    effective: value.effective,
+    version: value.version as number,
+    support: { steer: support.steer as string, sync: support.sync as string, async: support.async as string },
+    acknowledgement: value.acknowledgement as (typeof ACKNOWLEDGEMENT)[number],
+  };
+}
 
 function refusal(value: unknown): ClaudeClientRefusal {
   return plainObject(value) && value.kind === 'refused' && CLIENT_REFUSALS.includes(value.code as string)

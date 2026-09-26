@@ -167,6 +167,63 @@ describe('Claude session adapter over the loopback server', () => {
     expect(second.logs).toHaveLength(2);
   });
 
+  it('fails closed within its deadline when the server accepts but never answers', async () => {
+    const root = workspace();
+    const silent = createServer(() => { /* never responds */ });
+    await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', resolve));
+    servers.push(silent);
+    const descriptor = path.join(root, 'active.json');
+    writeDescriptor(descriptor, { origin: `http://127.0.0.1:${(silent.address() as AddressInfo).port}`, credential: 'T'.repeat(43) });
+    const started = Date.now();
+    await expect(createClaudeSessionClient({ descriptorPath: descriptor, timeoutMs: 200 }).pending('s-1'))
+      .resolves.toEqual({ kind: 'refused', code: 'unavailable' });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    silent.closeAllConnections();
+  });
+
+  it('passes only the closed mode fields through to the caller', async () => {
+    const root = workspace();
+    const descriptor = path.join(root, 'active.json');
+    const answers: unknown[] = [];
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answers.shift()));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    writeDescriptor(descriptor, { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, credential: 'U'.repeat(43) });
+    const client = createClaudeSessionClient({ descriptorPath: descriptor });
+    const mode = {
+      kind: 'mode', requested: 'sync', effective: null, version: 2,
+      support: { steer: 'unproven', sync: 'unproven', async: 'unproven' }, acknowledgement: 'batch_token_next_call',
+    };
+    answers.push({ ...mode, bindingId: 'binding-1', support: { ...mode.support, extra: 'x' } }, { ...mode, requested: 'loud' });
+    await expect(client.mode('s-1')).resolves.toEqual(mode);
+    await expect(client.mode('s-1')).resolves.toEqual({ kind: 'refused', code: 'unavailable' });
+  });
+
+  it('decodes mode_set requests strictly before reaching the adapter', async () => {
+    const services = fakeServices();
+    const adapter = createClaudeSessionAdapter({
+      authenticator: { authenticate: async () => ({ principalId: 'principal-a' }) },
+      sessions: directory(), state: await openClaudeSessionState(path.join(workspace(), 'state')), services: services.services,
+    });
+    const authorization = `Bearer ${'A'.repeat(43)}`;
+    const valid = {
+      v: 1, op: 'mode_set', sessionId: 's-1', commandId: 'command-1', expectedVersion: 1, requested: 'steer', issuedAt: '2026-09-25T00:00:00Z',
+    };
+    await expect(handleClaudeSessionRequest(adapter, { authorization, body: valid, readBudgetBytes: 1 })).resolves.toEqual({
+      status: 200, body: { kind: 'mode_set', outcome: 'applied', requested: 'steer', effective: null, version: 2 },
+    });
+    for (const invalid of [
+      { ...valid, requested: 'loud' }, { ...valid, expectedVersion: -1 }, { ...valid, expectedVersion: 1.5 },
+      { ...valid, issuedAt: 'yesterday' }, { ...valid, commandId: '' }, { ...valid, ackBatchToken: 'x' },
+    ]) {
+      await expect(handleClaudeSessionRequest(adapter, { authorization, body: invalid, readBudgetBytes: 1 }))
+        .resolves.toEqual({ status: 400, body: { kind: 'refused', code: 'invalid_request' } });
+    }
+    expect(services.modeSets).toEqual([{ bindingId: 'binding-1' }]);
+  });
+
   it('rejects requests without a well-formed bearer credential', async () => {
     const services = fakeServices();
     const adapter = createClaudeSessionAdapter({

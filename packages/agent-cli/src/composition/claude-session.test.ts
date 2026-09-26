@@ -148,6 +148,37 @@ describe('Claude session adapter', () => {
     expect(services.reads.get('binding-1')!.calls.at(-1)).toMatchObject({ acknowledgeToken: 'leak-canary-token' });
   });
 
+  it('delivers a send piggyback batch token-free and forwards its token on the next call', async () => {
+    const { adapter: claude, services } = adapter();
+    services.services(BINDINGS['s-1']);
+    services.piggyback.push(batch('piggyback-token', '{"body":"arrived during send"}'));
+
+    const sent = await claude.send(A1, { body: 'hello' });
+    expect(sent).toMatchObject({ kind: 'accepted', clientTxnId: 'txn-12345678' });
+    expect(JSON.stringify(sent)).toContain('arrived during send');
+    expect(JSON.stringify(sent)).not.toContain('piggyback-token');
+    await claude.setMode(A1, { commandId: 'command-1', expectedVersion: 1, requested: 'async', issuedAt: '2026-09-25T00:00:00Z' });
+    expect(services.modeSets).toEqual([{ bindingId: 'binding-1', acknowledgeToken: 'piggyback-token' }]);
+  });
+
+  it('never retains the token of a batch it could not deliver', async () => {
+    const { adapter: claude, services } = adapter();
+    services.services(BINDINGS['s-1']);
+    const read = services.reads.get('binding-1')!;
+    const unrenderable = { token: 'undeliverable-token', items: [] } as never;
+
+    read.next.push({ kind: 'batch', batch: unrenderable });
+    await expect(claude.read(A1, { maxBytes: 64 })).resolves.toEqual({ kind: 'refused', code: 'unavailable' });
+    services.piggyback.push(unrenderable);
+    // The send's own outcome survives; only its undeliverable batch is dropped.
+    await expect(claude.send(A1, { body: 'hello' })).resolves.toEqual({
+      kind: 'accepted', clientTxnId: 'txn-12345678', eventId: 'event-1',
+    });
+    await claude.read(A1, { maxBytes: 64 });
+    expect(read.calls.map(call => call.acknowledgeToken)).toEqual([undefined, undefined]);
+    expect(services.sends).toEqual([{ bindingId: 'binding-1' }]);
+  });
+
   it('does not carry a token across a generation change', async () => {
     const services = fakeServices();
     const state = memoryState();

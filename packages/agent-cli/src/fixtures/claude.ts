@@ -95,6 +95,8 @@ export type FakeServices = Readonly<{
   modeSets: Array<Readonly<{ bindingId: string; acknowledgeToken?: string }>>;
   pending: { value: boolean };
   capabilities: { value: HarnessCapabilities };
+  /** Piggyback batches the next send or mode-set calls select, in order. */
+  piggyback: Array<InboxBatch | null>;
   services(binding: SessionBinding): ClaudeBindingServices;
 }>;
 
@@ -104,15 +106,16 @@ export function fakeServices(): FakeServices {
   const modeSets: FakeServices['modeSets'] = [];
   const pending = { value: false };
   const caps = { value: capabilities() };
+  const piggyback: Array<InboxBatch | null> = [];
   return {
-    reads, sends, modeSets, pending, capabilities: caps,
+    reads, sends, modeSets, pending, capabilities: caps, piggyback,
     services(bound) {
       if (!reads.has(bound.bindingId)) reads.set(bound.bindingId, fakeRead());
       return {
         read: reads.get(bound.bindingId)!.port,
         async send(input) {
           sends.push({ bindingId: bound.bindingId, ...(input.acknowledgeToken === undefined ? {} : { acknowledgeToken: input.acknowledgeToken }) });
-          return { value: { kind: 'accepted', clientTxnId: 'txn-12345678', eventId: 'event-1' }, batchToken: null };
+          return { value: { kind: 'accepted', clientTxnId: 'txn-12345678', eventId: 'event-1' }, batch: piggyback.shift() ?? null };
         },
         async setMode(input) {
           modeSets.push({ bindingId: bound.bindingId, ...(input.acknowledgeToken === undefined ? {} : { acknowledgeToken: input.acknowledgeToken }) });
@@ -121,7 +124,7 @@ export function fakeServices(): FakeServices {
               v: 1, commandId: input.commandId, bindingId: bound.bindingId, generation: bound.generation, outcome: 'applied',
               version: input.expectedVersion + 1, requested: input.requested, effective: null, reason: null,
             } as never,
-            batchToken: null,
+            batch: piggyback.shift() ?? null,
           };
         },
         readMode: async () => ({
