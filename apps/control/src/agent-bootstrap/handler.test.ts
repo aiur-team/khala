@@ -12,6 +12,8 @@ import {
 } from './handler';
 import { thumbprint } from './proof';
 import { agentBindingStoreKeys } from './store';
+import { type ProtocolRevocationPort, type RevocationTargets, createRevocationService } from '@khala/messaging/revocation/index';
+import type { ControlStore, DeviceId } from '@khala/contracts/messaging/index';
 
 const ORIGIN = 'https://khala.aiur.team';
 const SESSION = { harness: 'codex', session_id: 'thread-existing-b', generation: 3 };
@@ -818,9 +820,9 @@ describe('adapter capability', () => {
     moveBindingToLegacy(h, first.binding);
     const admitted = h.admits.length;
 
-    expect(await h.bootstrap(4, 'legacy-g4')).toEqual({ status: 409, body: { code: 'binding_revoked' } });
+    expect(await h.bootstrap(3, 'legacy-g3')).toEqual({ status: 409, body: { code: 'binding_revoked' } });
     expect(h.admits).toHaveLength(admitted);
-    const rebound = await h.bootstrap(5, 'legacy-g5');
+    const rebound = await h.bootstrap(4, 'legacy-g4');
     expect(rebound.status).toBe(200);
     expect(rebound.body.binding.bindingId).not.toBe(first.binding.bindingId);
     expect(await h.adapter(rebound.body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
@@ -860,22 +862,22 @@ describe('adapter capability', () => {
     expect(await h.handlers.capabilities.revokeAdapterCapability({ ...revoke, bindingId: 'bnd_unknown' as BindingId })).toEqual({ kind: 'applied' });
   });
 
-  it('never revives a revoked binding: re-bootstrap needs a later generation and gets a new binding and authority', async () => {
+  it('never revives a revoked binding: re-bootstrap needs the revoked generation and gets a new binding and authority', async () => {
     const h = setup();
     const first = (await h.bootstrap()).body;
     await h.handlers.capabilities.revokeAdapterCapability({ operationId: 'revoke-1', bindingId: first.binding.bindingId as BindingId, revokedGeneration: 4 });
     const admitted = h.admits.length;
 
-    for (const generation of [3, 4]) {
+    for (const generation of [2, 3]) {
       const again = await h.bootstrap(generation, `bootstrap-b-g${generation}`);
       expect(again).toEqual({ status: 409, body: { code: 'binding_revoked' } });
     }
     expect(h.admits).toHaveLength(admitted);
 
-    const rebound = await h.bootstrap(5, 'bootstrap-b-g5');
+    const rebound = await h.bootstrap(4, 'bootstrap-b-g4');
     expect(rebound.status).toBe(200);
     expect(rebound.body.binding.bindingId).not.toBe(first.binding.bindingId);
-    expect(rebound.body.binding.generation).toBe(5);
+    expect(rebound.body.binding.generation).toBe(4);
     expect(await h.adapter(rebound.body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
     expect(await h.adapter(first.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'refused', status: 401 });
     // Revoking the old binding again cannot touch the new one.
@@ -909,5 +911,127 @@ describe('adapter capability', () => {
     const token = (await h.bootstrap()).body.adapter_capability.token;
     h.advance(3_600_000);
     expect(await h.adapter(token, 'publish_own', h.key.proof(ADAPTER_URL, token))).toMatchObject({ code: 'invalid_capability' });
+  });
+});
+
+describe('revocation composition (KHA-136)', () => {
+  /** KHA-128's service bound to the bootstrap handlers, as the control composition root binds it. */
+  function revocation(h: Harness, ownerId = 'owner_b') {
+    const targets: RevocationTargets = {
+      async lookup(subject) {
+        if (subject.targetKind !== 'binding') return { kind: 'absent' };
+        const found = await h.handlers.capabilities.lookupBinding(subject.targetId);
+        if (found.kind !== 'found') return found;
+        return { kind: 'found', ownerId: found.ownerId, generation: found.generation, device: { deviceId: found.deviceId as DeviceId, deviceKey: 'curve-key-1' } };
+      },
+    };
+    const protocol: ProtocolRevocationPort = {
+      removeDevice: async () => ({ kind: 'removed' }),
+      deviceStatus: async () => ({ kind: 'removed' }),
+      rotateSessions: async () => ({ kind: 'rotated' }),
+    };
+    return createRevocationService({
+      principal: principal(ownerId),
+      journal: fakeStore(() => T0).store,
+      targets,
+      control: {
+        disable: input => (input.targetKind === 'binding' ? h.handlers.capabilities.disableBinding({ ...input, bindingId: input.targetId }) : Promise.resolve({ kind: 'unavailable' })),
+        revokeAdapterCapability: input => h.handlers.capabilities.revokeAdapterCapability(input),
+      },
+      protocol,
+    });
+  }
+
+  it('looks a binding up by ID with the authoritative generation and status', async () => {
+    const h = setup();
+    const { body } = await h.bootstrap();
+    const bindingId = body.binding.bindingId as BindingId;
+    expect(await h.handlers.capabilities.lookupBinding(bindingId)).toEqual({
+      kind: 'found', ownerId: 'owner_b', deviceId: 'KHALADEV1', generation: 3, status: 'active',
+    });
+    await h.handlers.capabilities.revokeAdapterCapability({ operationId: 'revoke-1', bindingId, revokedGeneration: 4 });
+    expect(await h.handlers.capabilities.lookupBinding(bindingId)).toMatchObject({ generation: 4, status: 'revoked' });
+    expect(await h.handlers.capabilities.lookupBinding('bnd_unknown')).toEqual({ kind: 'absent' });
+    h.store.inject('read', 'unavailable');
+    expect(await h.handlers.capabilities.lookupBinding(bindingId)).toEqual({ kind: 'unavailable' });
+  });
+
+  it('disables a binding once, idempotently, and only at its expected generation', async () => {
+    const h = setup();
+    const { body } = await h.bootstrap();
+    const bindingId = body.binding.bindingId as BindingId;
+    const input = { operationId: 'revoke-1', bindingId, expectedGeneration: 3, revokedGeneration: 4 };
+    expect(await h.handlers.capabilities.disableBinding({ ...input, expectedGeneration: 2, revokedGeneration: 3 })).toEqual({ kind: 'stale' });
+    expect(await h.handlers.capabilities.disableBinding(input)).toEqual({ kind: 'applied' });
+    expect(await h.handlers.capabilities.disableBinding(input)).toEqual({ kind: 'applied' });
+    expect(await h.adapter(body.adapter_capability.token, 'receive_released')).toEqual({ kind: 'refused', status: 401, code: 'binding_revoked' });
+    expect(await h.handlers.capabilities.disableBinding({ ...input, revokedGeneration: 5 })).toEqual({ kind: 'stale' });
+    expect(await h.handlers.capabilities.disableBinding({ ...input, bindingId: 'bnd_unknown' as BindingId })).toEqual({ kind: 'stale' });
+  });
+
+  it('revokes through the KHA-128 port, then re-bootstraps one generation later with new authority', async () => {
+    const h = setup();
+    const first = (await h.bootstrap()).body;
+    const bindingId = first.binding.bindingId as BindingId;
+    const service = revocation(h);
+
+    expect(await service.revoke({ operationId: 'revoke-1', targetKind: 'binding', targetId: bindingId, expectedGeneration: 3 })).toEqual({
+      kind: 'ok', value: { operationId: 'revoke-1', targetKind: 'binding', targetId: bindingId, generation: 4, state: 'partial' },
+    });
+    const status = await service.status('revoke-1');
+    expect(status).toMatchObject({ kind: 'ok', value: { control: 'disabled', capability: 'revoked', removal: 'removed', rotation: 'rotated' } });
+    expect(await h.adapter(first.adapter_capability.token, 'publish_own')).toEqual({ kind: 'refused', status: 401, code: 'binding_revoked' });
+    // A stale request for the old generation cannot revoke again.
+    expect(await service.revoke({ operationId: 'revoke-2', targetKind: 'binding', targetId: bindingId, expectedGeneration: 3 }))
+      .toEqual({ kind: 'rejected', code: 'stale_generation' });
+
+    expect(await h.bootstrap(3, 'bootstrap-b-again')).toEqual({ status: 409, body: { code: 'binding_revoked' } });
+    const rebound = await h.bootstrap(4, 'bootstrap-b-g4');
+    expect(rebound.status).toBe(200);
+    expect(rebound.body.binding.bindingId).not.toBe(bindingId);
+    expect(await h.adapter(rebound.body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+    // The replaced binding is absent, so a retried revocation converges without touching the new one.
+    expect(await service.revoke({ operationId: 'revoke-1', targetKind: 'binding', targetId: bindingId, expectedGeneration: 3 }))
+      .toMatchObject({ kind: 'ok', value: { state: 'partial' } });
+    expect(await h.adapter(rebound.body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+    expect(await h.handlers.capabilities.lookupBinding(rebound.body.binding.bindingId)).toMatchObject({ generation: 4, status: 'active' });
+  });
+
+  it('refuses another owner revoking the binding', async () => {
+    const h = setup();
+    const { body } = await h.bootstrap();
+    expect(await revocation(h, 'owner_other').revoke({
+      operationId: 'revoke-1', targetKind: 'binding', targetId: body.binding.bindingId as BindingId, expectedGeneration: 3,
+    })).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await h.adapter(body.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+  });
+
+  it('issues nothing usable when revocation lands between binding and capability issue', async () => {
+    const backing = fakeStore(() => T0);
+    let revokeBeforeIssue: (() => Promise<unknown>) | null = null;
+    const store: ControlStore = {
+      ...backing.store,
+      async compareAndSet(input) {
+        if (revokeBeforeIssue && input.key.startsWith('agent-bootstrap:capability:')) {
+          const revoke = revokeBeforeIssue;
+          revokeBeforeIssue = null;
+          await revoke();
+        }
+        return backing.store.compareAndSet(input);
+      },
+    };
+    const h = setup({ store });
+    revokeBeforeIssue = async () => {
+      const [bindingKey] = backing.keys('agent-bootstrap:binding:');
+      const bindingId = (backing.records.get(bindingKey!)!.value as { binding: { bindingId: BindingId } }).binding.bindingId;
+      await h.handlers.capabilities.disableBinding({ operationId: 'revoke-race', bindingId, expectedGeneration: 3, revokedGeneration: 4 });
+    };
+
+    const response = await h.bootstrap();
+    expect(response).toEqual({ status: 409, body: { code: 'binding_revoked' } });
+    // The capability record written before the revocation is never pointed to by the binding.
+    expect(backing.keys('agent-bootstrap:capability:')).toHaveLength(1);
+    const [bindingKey] = backing.keys('agent-bootstrap:binding:');
+    expect(backing.records.get(bindingKey!)!.value).toMatchObject({ revokedGeneration: 4, capability: null });
   });
 });
