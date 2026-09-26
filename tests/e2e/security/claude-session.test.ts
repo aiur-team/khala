@@ -124,7 +124,9 @@ describe('Claude session surfaces never carry content the session was not releas
     const granted = (surface: string) => seed.capture.text(`${surface} ${GRANTED}`);
     // Every mode is labelled experimental: the default `sync` request needs the owner's
     // experimental-route grant, so nothing is effective and hooks deliver nothing.
-    expect(granted('claude-op:hook')).toContain('"kind":"hook","effective":null');
+    for (const surface of ['claude-op:hook', 'claude-op:watch']) {
+      expect(granted(surface), surface).toContain('"kind":"hook","effective":null');
+    }
     // Surfaces are driven in sorted order, so `khala_mode_get` reads before `khala_mode_set` writes.
     for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_mode_get']) {
       const text = granted(surface).replaceAll('\\"', '"');

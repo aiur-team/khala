@@ -4,10 +4,11 @@ import path from 'node:path';
 import { callScopedConsumer } from '@aiur/khala/cli/call-consumer';
 import { openInbox } from '@aiur/khala/cli/inbox';
 import { MAX_SEND_BYTES, SendService } from '@aiur/khala/cli/send';
+import { validOperationArgument } from '@aiur/khala/cli/channels/access';
 import type { AccessRequestInput, AccessStatusInput, ChannelAccessResult, ChannelListInput } from '@aiur/khala/cli/channels/types';
 import type { CreateRequestInput } from '@aiur/khala/cli/channels/create/types';
 import {
-  type ClaudeBindingServices, type ClaudeSessionAccess, type ClaudeSessionAdapter, createClaudeSessionAdapter,
+  type ClaudeAccessNotice, type ClaudeBindingServices, type ClaudeHookInput, type ClaudeSessionAccess, type ClaudeSessionAdapter, createClaudeSessionAdapter,
 } from '@aiur/khala/composition/claude-session';
 import { CLAUDE_SESSION_PATH, handleClaudeSessionRequest } from '@aiur/khala/composition/claude-session-http';
 import { openClaudeSessionState } from '@aiur/khala/composition/claude-session-state';
@@ -27,7 +28,7 @@ import { type GrantedDescriptor, encodeInternalDescriptor, isGrantedDescriptor }
 import {
   INTERNAL_CLAUDE_GRANT_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DIRECTORY,
 } from '@khala/contracts/internal/discovery-descriptor';
-import type { RoomId } from '@khala/contracts/messaging/index';
+import { MAX_CHANNEL_ACCESS_REQUESTER_PENDING, type RoomId } from '@khala/contracts/messaging/index';
 import { installedClaudeCapabilities } from '@khala/harnesses/claude/interactive';
 import { activeDescriptorPath, writePrivateFile } from '../../descriptor/write';
 import type { AgentSessionRoute } from '../../server/channel-server';
@@ -47,6 +48,11 @@ import { issueDiscoveryDescriptor } from '../discovery-descriptor';
 // descriptor names, and only while the store holds that binding active for its
 // session digest; before a grant it resolves to nothing.
 //
+// The session's outstanding access operations are kept beside its identity. Each hook
+// boundary settles them, throttled per session except at the turn-ending `Stop`, so an
+// approval activates the session's binding at its next boundary without the agent retrying
+// the request.
+//
 // The route's capabilities come from the locally installed Claude Code, inspected as
 // setup inspects it: an exactly proven version is tested, any other inspected version
 // is experimental, and one that cannot be inspected stays unproven. A bound session
@@ -62,6 +68,14 @@ const STATE_DIRECTORY = 'claude-session';
 const INBOX_DIRECTORY = 'claude-inbox';
 /** Answers that may still owe a local binding; a `connected` one after a launcher restart. */
 const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'connected', 'repair_required']);
+/** Answers after which nothing is left to settle. */
+const FINAL: ReadonlySet<string> = new Set(['connected', 'denied', 'expired', 'revoked']);
+/** Refusals that mean the operation can never be read again under this session's identity. */
+const LOST: ReadonlySet<string> = new Set(['discovery_required', 'discovery_denied', 'invalid_request', 'not_found', 'operation_conflict']);
+/** The session's outstanding access operation IDs, beside its discovery descriptor. */
+const OUTSTANDING_FILE = 'claude-access-outstanding.json';
+/** How often one session's hook boundaries may ask the control plane about its outstanding requests. */
+export const CLAUDE_SETTLE_INTERVAL_MS = 5_000;
 /** The installation principal: every Claude session of this launch shares it. */
 const INSTALLATION = { principalId: 'installation' } as const;
 
@@ -99,7 +113,12 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
   const expected = Buffer.from(options.transportCapability);
   const paths = (sessionId: string) => {
     const directory = path.join(root, INTERNAL_DISCOVERY_DIRECTORY, discoveryPrincipal(CLAUDE_HARNESS, sessionId));
-    return { descriptorPath: path.join(directory, INTERNAL_DISCOVERY_DESCRIPTOR_FILE), grantPath: path.join(directory, CLAUDE_GRANT_FILE) };
+    return {
+      directory,
+      descriptorPath: path.join(directory, INTERNAL_DISCOVERY_DESCRIPTOR_FILE),
+      grantPath: path.join(directory, CLAUDE_GRANT_FILE),
+      outstandingPath: path.join(directory, OUTSTANDING_FILE),
+    };
   };
   const discovery = (sessionId: string) => createInternalDiscoveryClient({
     select: () => selectInternalDiscovery({ descriptorPath: paths(sessionId).descriptorPath, activePath: activeDescriptorPath(root) }),
@@ -211,12 +230,76 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     return { kind: 'unavailable' };
   }
 
-  /** An approved status is activated before it is answered, as `khala join` does. */
-  async function answered(sessionId: string, result: InternalDiscoveryCallResult): Promise<ChannelAccessResult> {
+  /**
+   * An approved status is activated before it is answered, as `khala join` does. The
+   * operation stays outstanding for this session until its answer is final.
+   */
+  async function answered(sessionId: string, operationId: string, result: InternalDiscoveryCallResult): Promise<ChannelAccessResult> {
     const access = accessResult(result);
-    if (access.kind !== 'status' || !isStatus(access.status) || !ACTIVATABLE.has(access.status.outcome)) return access;
-    const outcome = await activate(sessionId, access.status.operationId, access.status.outcome);
-    return { kind: 'status', status: { ...access.status, outcome } };
+    if (access.kind === 'refused' && LOST.has(access.code)) track(sessionId, operationId, false);
+    if (access.kind !== 'status' || !isStatus(access.status)) return access;
+    let outcome = access.status.outcome;
+    if (ACTIVATABLE.has(outcome)) outcome = await activate(sessionId, access.status.operationId, outcome);
+    if (FINAL.has(outcome)) track(sessionId, operationId, false);
+    else if (outcome === 'pending_owner' || ACTIVATABLE.has(outcome)) track(sessionId, operationId, true);
+    return outcome === access.status.outcome ? access : { kind: 'status', status: { ...access.status, outcome } };
+  }
+
+  function outstanding(sessionId: string): string[] {
+    try {
+      const value: unknown = JSON.parse(fs.readFileSync(paths(sessionId).outstandingPath, 'utf8'));
+      return Array.isArray(value) ? value.filter(validOperationArgument).slice(-MAX_CHANNEL_ACCESS_REQUESTER_PENDING) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Keeps or drops one outstanding operation. Best effort: an explicit status call still settles it. */
+  function track(sessionId: string, operationId: string, keep: boolean): void {
+    const current = outstanding(sessionId);
+    const others = current.filter(each => each !== operationId);
+    const next = keep ? [...others, operationId].slice(-MAX_CHANNEL_ACCESS_REQUESTER_PENDING) : others;
+    if (next.length === current.length && next.every((each, index) => each === current[index])) return;
+    const { directory, outstandingPath } = paths(sessionId);
+    try {
+      if (next.length === 0) fs.rmSync(outstandingPath, { force: true });
+      else writePrivateFile(directory, OUTSTANDING_FILE, JSON.stringify(next));
+    } catch { /* the operation is simply not settled at a hook boundary */ }
+  }
+
+  const clock = options.clock ?? Date.now;
+  const settling = new Set<string>();
+  const settledAt = new Map<string, number>();
+
+  /**
+   * Reads each outstanding operation once per interval and answers it as a status call
+   * would, so an approved one is activated into this session's binding. The turn-ending
+   * `Stop` settles whatever the interval, since the session may idle after it. Concurrent
+   * boundaries of one session share nothing: only the first settles, and only it reports.
+   */
+  async function settle(sessionId: string, input: ClaudeHookInput): Promise<ClaudeAccessNotice | null> {
+    const operations = outstanding(sessionId);
+    if (operations.length === 0) {
+      settledAt.delete(sessionId);
+      return null;
+    }
+    const last = settledAt.get(sessionId);
+    if (settling.has(sessionId)) return null;
+    if (!input.stop && last !== undefined && clock() - last < CLAUDE_SETTLE_INTERVAL_MS) return null;
+    settling.add(sessionId);
+    settledAt.set(sessionId, clock());
+    try {
+      let notice: ClaudeAccessNotice | null = null;
+      for (const operationId of operations) {
+        const answer = await answered(sessionId, operationId, await discovery(sessionId).status('access', operationId));
+        const outcome = answer.kind === 'status' && isStatus(answer.status) ? answer.status.outcome : null;
+        if (outcome === 'connected') notice = 'connected';
+        else if ((outcome === 'denied' || outcome === 'expired') && notice === null) notice = outcome;
+      }
+      return notice;
+    } finally {
+      settling.delete(sessionId);
+    }
   }
 
   const access: ClaudeSessionAccess = {
@@ -231,12 +314,13 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       const body = input.target.kind === 'channel_url'
         ? { v: 1 as const, kind: 'channel_url' as const, operationId: input.operationId, channelUrl: input.target.channelUrl }
         : { v: 1 as const, kind: 'listing_ref' as const, operationId: input.operationId, listingRef: input.target.listingRef };
-      return answered(sessionId, await withIdentity(sessionId, () => discovery(sessionId).requestAccess(body)));
+      return answered(sessionId, input.operationId, await withIdentity(sessionId, () => discovery(sessionId).requestAccess(body)));
     },
     async status(_principal, sessionId, input: AccessStatusInput) {
       if (!localOrigin(input.origin)) return { kind: 'refused', code: 'untrusted_origin' };
-      return answered(sessionId, await withIdentity(sessionId, () => discovery(sessionId).status('access', input.operationId)));
+      return answered(sessionId, input.operationId, await withIdentity(sessionId, () => discovery(sessionId).status('access', input.operationId)));
     },
+    settle: (_principal, sessionId, input) => settle(sessionId, input),
     // A create intent only asks: like `khala channels create`, nothing is activated here.
     async create(_principal, sessionId, input: CreateRequestInput) {
       if (!localOrigin(input.origin)) return { kind: 'refused', code: 'untrusted_origin' };

@@ -22,18 +22,22 @@ src/validate.ts              fails on any departure from them
 every Claude session on the machine. Each hook except `SessionEnd` first checks
 for the session's own grant, `$XDG_STATE_HOME/khala/internal/discovery/<principal>/claude-grant.json`.
 The grant must name a binding and carry the transport capability of the current
-`active.json`. That check reads at most two small files and takes about 20 µs.
-A session without a grant is a plain Claude session. Its hooks produce no
+`active.json`. That check reads at most three small files and takes about 20 µs.
+A session with an access request outstanding (a non-empty
+`claude-access-outstanding.json` beside the grant) is engaged too: it opted in
+by asking, and its hooks must run so the owner's decision can reach it. Once the
+request settles and its notice is shown, the record is gone. A session with
+neither is a plain Claude session. Its hooks produce no
 output and write no state, and they never run `khala`, so they make no network
 call. `SessionEnd` only removes the session's own state directory, which an
 unbound session never has. The adapter still makes every decision for a bound
 session.
 
 Each hook reads Claude's hook JSON and uses its `session_id`, never the cwd. It
-reaches Khala only by running `khala claude <hook|pull|pending> --session <id>`
+reaches Khala only by running `khala claude <hook|watch|pull|pending> --session <id>`
 without a shell. The session ID is the only argv element taken from input, and
 message bodies never enter argv, the environment, logs or errors. None of those
-three ops acknowledges anything. Batch tokens stay in the local Khala server's
+four ops acknowledges anything. Batch tokens stay in the local Khala server's
 Claude session adapter, which acknowledges a delivered batch on the agent's
 next Khala call (`khala_send`, `khala_read`, `khala_status` or a mode call). The
 runtime never sees a token, reads or acknowledges the inbox, deduplicates, or
@@ -55,6 +59,21 @@ both up on PATH.
 | `Stop` watcher (`asyncRewake`) | wakes an idle session | same | never armed |
 | `UserPromptSubmit` | marks the session busy, cancels the watcher, and pulls only for a watcher's wake | same | no pull |
 | `SessionEnd` | removes the session's hook state | same | same |
+
+**Access outcomes.** Every synchronous hook first calls `khala claude hook`,
+which also settles the session's outstanding access requests: the local server
+reads each one, at most once every 5 seconds per session, and activates an
+approved one into the session's own binding. `Stop` calls
+`khala claude hook --stop`, which settles whatever the interval: the session may
+idle after the turn ends, so that boundary always checks. An outcome it settled (`connected`,
+`denied` or `expired`) is reported once, in any mode and before any binding
+exists, as a fixed notice from `ACCESS_NOTICES` that names no channel. It is
+`additionalContext` at `UserPromptSubmit` and `PostToolUse`, and
+`decision: block` at `Stop`, which keeps the session for one continuation so
+the model can tell the user. A batch pulled at the same boundary follows the
+notice. The watcher calls `khala claude watch` instead, the same answer without
+settling, so it cannot take the notice from the `Stop` hook beside it. An idle
+session learns the outcome at its next prompt.
 
 `steer` is delivered at the next safe boundary, after the running tool finishes.
 It never interrupts. Each pull delivers the bounded batch that Khala hands out
@@ -162,8 +181,8 @@ session's own `CLAUDE_CODE_SESSION_ID`:
               confirms in Khala, and a retry under the same operationId reports the answer
 /khala join <channel-url>
               calls khala_request_channel_access once and returns pending; after the
-              owner decides, khala_channel_access_status activates an approval for
-              this session only, or reports the denial or expiry
+              owner decides, the next hook boundary activates an approval for this
+              session only, or reports the denial or expiry, with no retry
 /khala who    khala_list_agents roster plus the effective mode from khala_status
 /khala        help, plus per-mode support from khala_status ("unproven" stays unproven)
 ```
@@ -198,6 +217,13 @@ The hook runtime's wrong-implementation tests are:
   injects after revocation or a watcher keeps watching a revoked binding.
 - `-t "disarmed past the hook timeout"`: fails when status still claims `armed`
   after Claude has killed the watcher.
+- `-t "reports a grant at the next prompt with no retry"`: fails when a grant
+  reaches the model only after the agent retries the access request (#420).
+- `-t "unthrottled settle only at the turn-ending Stop"`: fails when `Stop`
+  settles under the per-session throttle like any other boundary.
+- `-t "engage a session with an access request outstanding"`: fails when the
+  unbound gate keeps a session that requested access inert, so no boundary can
+  report its grant.
 
 The scaffold's wrong-implementation test is
 `pnpm --filter @khala/claude-plugin test -t "outside the frozen list"`: a
