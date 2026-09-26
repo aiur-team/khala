@@ -12,6 +12,7 @@ import path from 'node:path';
 import { CODEX_HOOK_COMMAND, codexHookReviewState, codexHooksFragment } from '../../codex/hooks-config.js';
 import { CODEX_HOOK_EVENTS } from '../../codex/hook.js';
 import { plainObject } from '../../cli/validation.js';
+import { codexAppSetupEntries } from '../../composition/codex-app.js';
 import { sha256 } from '../filesystem.js';
 import { MANIFEST_FILE, parseManifest, type ManifestEntry, type SetupManifest } from '../manifest.js';
 import type {
@@ -403,6 +404,9 @@ export function createCodexSetupAdapter(assets: CodexSetupAssets): SetupAdapter 
         diagnostics.push(diagnostic('codex_version_unsupported',
           `Codex ${detection.version ?? 'unknown'} is not a supported version (${CODEX_SUPPORTED_VERSIONS.join(', ')}).`));
       }
+      // The Codex desktop app and cloud tasks are reported whether or not a Codex CLI is
+      // detected. Their entries only diagnose; they never add an operation.
+      diagnostics.push(...codexAppSetupEntries().diagnostics);
       const observation: HarnessObservation = {
         detection,
         components,
