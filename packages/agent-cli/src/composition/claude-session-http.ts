@@ -303,6 +303,7 @@ function publicMode(value: unknown): Exclude<ClaudeModeOutcome, ClaudeSessionRef
   const mode = (candidate: unknown): candidate is ListeningMode => (LISTENING_MODES as readonly unknown[]).includes(candidate);
   const support = value.support;
   if (!(value.requested === null || mode(value.requested)) || !(value.effective === null || mode(value.effective))
+    || !(value.effectiveReason === null || reasonCode(value.effectiveReason))
     || !Number.isSafeInteger(value.version) || (value.version as number) < 0
     || !(ACKNOWLEDGEMENT as readonly unknown[]).includes(value.acknowledgement)
     || !LISTENING_MODES.every(name => validIdentifier(support[name]))) return null;
@@ -310,6 +311,7 @@ function publicMode(value: unknown): Exclude<ClaudeModeOutcome, ClaudeSessionRef
     kind: 'mode',
     requested: value.requested,
     effective: value.effective,
+    effectiveReason: value.effectiveReason as string | null,
     version: value.version as number,
     support: { steer: support.steer as string, sync: support.sync as string, async: support.async as string },
     acknowledgement: value.acknowledgement as (typeof ACKNOWLEDGEMENT)[number],
@@ -323,6 +325,7 @@ function publicModeSet(value: unknown): Exclude<ClaudeModeSetOutcome, ClaudeSess
   if (!(LISTENING_MODE_RESULT_OUTCOMES as readonly unknown[]).includes(value.outcome)
     || !(value.requested === null || mode(value.requested))
     || !(value.effective === null || mode(value.effective))
+    || !(value.reason === null || reasonCode(value.reason))
     || !Number.isSafeInteger(value.version) || (value.version as number) < 0
     || !(value.batch === undefined || typeof value.batch === 'string')) return null;
   return {
@@ -330,9 +333,15 @@ function publicModeSet(value: unknown): Exclude<ClaudeModeSetOutcome, ClaudeSess
     outcome: value.outcome as (typeof LISTENING_MODE_RESULT_OUTCOMES)[number],
     requested: value.requested,
     effective: value.effective,
+    reason: value.reason as string | null,
     version: value.version as number,
     ...(typeof value.batch === 'string' ? { batch: value.batch } : {}),
   };
+}
+
+/** A mode reason is a short code such as `support_unknown`, never free text. */
+function reasonCode(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value);
 }
 
 function refusal(value: unknown): ClaudeClientRefusal {

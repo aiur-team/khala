@@ -66,7 +66,8 @@ function toolArguments(tool: string, seed: Seeded, sessionId: string): Record<st
     case 'khala_request_channel_access': return { target: other };
     case 'khala_channel_access_status': return { operationId: seed.operationId };
     case 'khala_create_channel': return { title: 'Probe', operationId: 'create-13800000' };
-    case 'khala_read': case 'khala_status': case 'khala_list_channels': case 'khala_list_agents': return {};
+    case 'khala_mode_set': return { requested: 'sync', expectedVersion: 1 };
+    case 'khala_read': case 'khala_status': case 'khala_mode_get': case 'khala_list_channels': case 'khala_list_agents': return {};
     default: throw new Error(`claude-session: no arguments defined for ${tool}; add a probe for it`);
   }
 }
@@ -121,11 +122,19 @@ describe('Claude session surfaces never carry content the session was not releas
     // The mode is read from the composed store, but Claude has no evidenced mode: nothing is
     // requested, nothing is effective, and hooks therefore deliver nothing.
     expect(granted('claude-op:hook')).toContain('"kind":"hook","effective":null');
-    for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_status']) {
+    // Surfaces are driven in sorted order, so `khala_mode_get` reads before `khala_mode_set` writes.
+    for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_mode_get']) {
       const text = granted(surface).replaceAll('\\"', '"');
-      expect(text, surface).toContain('"kind":"mode","requested":null,"effective":null');
+      expect(text, surface).toContain('"kind":"mode","requested":null,"effective":null,"effectiveReason":"no_requested_mode"');
       expect(text, surface).toContain('"support":{"steer":"unproven","sync":"unproven","async":"unproven"}');
     }
+    // The agent may request a mode on its own (decision 42), but an unproven route never becomes
+    // effective: it stays null, with the honest reason (decisions 34 and 37).
+    const set = granted('claude-mcp-tool:khala_mode_set').replaceAll('\\"', '"');
+    expect(set).toContain('"kind":"applied","requested":"sync","effective":null,"effectiveReason":"support_unknown","version":2');
+    const status = granted('claude-mcp-tool:khala_status').replaceAll('\\"', '"');
+    expect(status).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"support_unknown"');
+    expect(status).toContain('"support":{"steer":"unproven","sync":"unproven","async":"unproven"}');
   });
 
   it('the granted binding is real: its sends reach its own channel only, and the bystander\'s reach nothing', async () => {
