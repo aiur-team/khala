@@ -17,7 +17,8 @@ execution: code
 > `SetupAdapter`, and top-level states replace the operation/precondition vocabulary and
 > adapter ports sketched below. The frozen states have no "detected, not configured"
 > member, so status reports that case as `drifted` with a `setup_required` diagnostic.
-> Execution-unavailable is `unsupported` with an `execution_unavailable` diagnostic.
+> A later code-owner scope amendment moved non-dry wiring into this ticket: a matching
+> confirmation now calls `executeSetupPlan` (#320), not an execution-unavailable seam.
 
 ## Goal Capsule
 

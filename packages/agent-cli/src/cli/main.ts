@@ -10,7 +10,8 @@ import { MAX_SEND_BYTES } from './send.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
 import { createDiscoveryOnlyAdapter, createNodeSetupProbe } from '../setup/detect.js';
 import { resolveSetupPaths } from '../setup/paths.js';
-import { createSetupService, unavailableSetupExecutor } from '../setup/plan.js';
+import { createSetupService, type SetupExecute } from '../setup/plan.js';
+import { executeSetupPlan } from '../setup/transaction.js';
 import { HARNESS_IDS, type SetupEnvironment } from '../setup/types.js';
 
 /** Builds the setup environment from explicit HOME/XDG/PATH values only; nothing else is inherited. */
@@ -23,6 +24,20 @@ export function setupEnvironment(env: NodeJS.ProcessEnv): SetupEnvironment {
   return {
     home: paths.home, xdgConfigHome: paths.configHome, xdgDataHome: paths.dataHome, xdgStateHome: paths.stateHome,
     probe: createNodeSetupProbe({ pathEntries: paths.pathEntries, environment: probeEnvironment }),
+  };
+}
+
+/** Applies a confirmed plan through the transactional executor, rooted at the same HOME/XDG/PATH. */
+export function setupExecute(env: NodeJS.ProcessEnv): SetupExecute {
+  return request => {
+    const paths = resolveSetupPaths(env);
+    return executeSetupPlan({
+      roots: { home: paths.home, xdgConfigHome: paths.configHome, xdgDataHome: paths.dataHome, xdgStateHome: paths.stateHome },
+      searchPath: paths.pathEntries.join(path.delimiter),
+      confirmedDigest: request.confirmedDigest,
+      // The executor passes its committed manifest; adapters observe the same state themselves.
+      replan: () => request.replan(),
+    });
   };
 }
 
@@ -44,7 +59,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         environment: () => setupEnvironment(process.env),
         // Real harness adapters replace these one by one; until then a detected harness is unsupported.
         adapters: HARNESS_IDS.map(createDiscoveryOnlyAdapter),
-        executor: unavailableSetupExecutor,
+        execute: setupExecute(process.env),
       }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),

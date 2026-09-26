@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { AgentRoute } from '../cli/types.js';
 import { createDiscoveryOnlyAdapter } from './detect.js';
 import {
-  createSetupService, setupResultExitCode, unavailableSetupExecutor, type SetupExecutor, type SetupService,
+  createSetupService, setupResultExitCode, type SetupExecute, type SetupPayloadSource, type SetupService,
 } from './plan.js';
+import type { ExecutablePlan, ExecutionOutcome } from './transaction.js';
 import {
   HARNESS_IDS, decodeSetupResult,
   type ComponentState, type HarnessId, type SetupAdapter, type SetupComponent, type SetupEnvironment,
@@ -98,19 +99,34 @@ function install(state: World, harness: HarnessId, version = '1.2.3') {
   state.files.set(`${HOME}/.${harness}/config.json`, `{"token":"${SECRET}"}`);
 }
 
-function countingExecutor(): SetupExecutor & { calls: number } {
+type Request = Parameters<SetupExecute>[0];
+
+/**
+ * A fake executor that honours the real contract: it replans and commits only when the fresh
+ * digest still equals the confirmed one. `outcome` overrides what it returns after replanning.
+ */
+function countingExecutor(outcome?: (request: Request, plan: ExecutablePlan) => ExecutionOutcome | Promise<ExecutionOutcome>) {
   const executor = {
     calls: 0,
-    async execute(request: Parameters<SetupExecutor['execute']>[0]) {
+    plans: [] as ExecutablePlan[],
+    execute: (async request => {
       executor.calls += 1;
-      return unavailableSetupExecutor.execute(request);
-    },
+      const plan = await request.replan();
+      executor.plans.push(plan);
+      if (outcome !== undefined) return outcome(request, plan);
+      if (plan.planDigest !== request.confirmedDigest) return { kind: 'replanned', plan };
+      return { kind: 'committed', changed: true, plan,
+        operations: plan.operations.map(operation => ({ ...operation, status: 'applied' as const })) };
+    }) as SetupExecute,
   };
   return executor;
 }
 
-function service(state: World, adapters: readonly SetupAdapter[], executor: SetupExecutor = countingExecutor()): SetupService {
-  return createSetupService({ environment: () => environment(state), adapters, executor });
+function service(
+  state: World, adapters: readonly SetupAdapter[], executor = countingExecutor(), payload?: SetupPayloadSource,
+): SetupService {
+  return createSetupService({ environment: () => environment(state), adapters, execute: executor.execute,
+    ...(payload === undefined ? {} : { payload }) });
 }
 
 const allFake = (options: FakeAdapterOptions = {}) => HARNESS_IDS.map(harness => fakeAdapter(harness, options));
@@ -210,7 +226,7 @@ describe('setup planning', () => {
     expect(state.files).toEqual(filesBefore);
   });
 
-  it('hands only the command and digest to the executor when the fresh plan matches', async () => {
+  it('hands the executor the approved digest and a fresh replan when the plan matches', async () => {
     const state = world();
     install(state, 'codex');
     const executor = countingExecutor();
@@ -219,17 +235,79 @@ describe('setup planning', () => {
     const applied = await setup.lifecycle('setup', { dryRun: false, confirm: planA.planDigest });
 
     expect(executor.calls).toBe(1);
-    expect(applied).toMatchObject({ ok: false, changed: false, state: 'unsupported',
-      diagnostics: [{ code: 'execution_unavailable' }] });
-    expect(setupResultExitCode(applied)).toBe(3);
+    expect(executor.plans[0]).toMatchObject({ command: 'setup', planDigest: planA.planDigest, unsupportedHarnesses: [] });
+    expect(executor.plans[0]!.operations).toEqual(planA.operations.map(({ status: _status, ...operation }) => operation));
+    expect(applied).toMatchObject({ changed: true, planDigest: planA.planDigest, confirmation: { required: false, confirmed: true },
+      operations: [{ status: 'applied' }, { status: 'applied' }] });
+    expect(decodeSetupResult(JSON.parse(JSON.stringify(applied)))).toEqual(applied);
   });
 
-  it('never lets a dry run reach the executor, even with a matching plan', async () => {
+  it('never lets a dry run reach the executor, even with a matching digest', async () => {
     const state = world();
     install(state, 'codex');
     const executor = countingExecutor();
-    await service(state, allFake(), executor).lifecycle('setup', { dryRun: true, confirm: null });
+    const setup = service(state, allFake(), executor);
+    const planA = await setup.lifecycle('setup', noConfirm);
+    const dry = await setup.lifecycle('setup', { dryRun: true, confirm: planA.planDigest });
+    expect(dry.state).toBe('confirmation_required');
     expect(executor.calls).toBe(0);
+  });
+
+  it('relays the fresh plan with a re-confirm diagnostic when the executor replans under its lock', async () => {
+    const state = world();
+    install(state, 'codex');
+    // The config changes after the CLI preflight but before the executor's replan.
+    const executor = countingExecutor(async request => {
+      state.files.set(`${HOME}/.codex/config.json`, '{"raced":true}');
+      return { kind: 'replanned', plan: await request.replan() };
+    });
+    const setup = service(state, allFake(), executor);
+    const planA = await setup.lifecycle('setup', noConfirm);
+    const result = await setup.lifecycle('setup', { dryRun: false, confirm: planA.planDigest });
+    expect(result.state).toBe('confirmation_required');
+    expect(result.planDigest).not.toBe(planA.planDigest);
+    expect(result.diagnostics.map(diagnostic => diagnostic.code)).toContain('plan_changed');
+    expect(setupResultExitCode(result)).toBe(5);
+  });
+
+  it.each([
+    ['a thrown executor error', () => { throw new Error(`lock failed ${SECRET}`); }, 'recovery_required', 4, 'execution_failed'],
+    ['a recovery-required outcome', () => ({ kind: 'recovery_required', operations: [],
+      diagnostics: [{ code: 'journal_corrupt', severity: 'error', message: 'unknown' }] }), 'recovery_required', 4, 'journal_corrupt'],
+    ['a busy lock', () => ({ kind: 'busy', diagnostics: [{ code: 'setup_busy', severity: 'error', message: 'busy' }] }),
+      'conflict', 3, 'setup_busy'],
+    ['a drift refusal', () => ({ kind: 'refused', state: 'drifted', diagnostics: [{ code: 'drift', severity: 'error', message: 'd' }] }),
+      'drifted', 3, 'drift'],
+    ['an exact rollback', () => ({ kind: 'rolled_back', operations: [],
+      diagnostics: [{ code: 'apply_failed', severity: 'error', message: 'f' }] }), 'conflict', 3, 'apply_failed'],
+  ] as const)('maps %s to a structured result', async (_name, outcome, state, exit, code) => {
+    const machine = world();
+    install(machine, 'codex');
+    const setup = service(machine, allFake(), countingExecutor(outcome as never));
+    const planA = await setup.lifecycle('setup', noConfirm);
+    const result = await setup.lifecycle('setup', { dryRun: false, confirm: planA.planDigest });
+    expect(result).toMatchObject({ state, changed: false });
+    expect(result.diagnostics.map(diagnostic => diagnostic.code)).toContain(code);
+    expect(setupResultExitCode(result)).toBe(exit);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+    expect(decodeSetupResult(JSON.parse(JSON.stringify(result)))).toEqual(result);
+  });
+
+  it('binds the digest to mode overrides and unsupported harnesses', async () => {
+    const state = world();
+    install(state, 'codex');
+    const withMode = (mode: number): SetupPayloadSource => async () => ({
+      contents: new Map(), modes: new Map([[`${HOME}/.local/share/khala/bin/khala`, mode]]) });
+    const a = await service(state, allFake(), undefined, withMode(0o500)).lifecycle('remove', noConfirm);
+    const b = await service(state, allFake(), undefined, withMode(0o400)).lifecycle('remove', noConfirm);
+    expect(a.planDigest).not.toBe(b.planDigest);
+    const unsupported = await service(state, allFake({ supported: false })).lifecycle('remove', noConfirm);
+    const supported = await service(state, allFake()).lifecycle('remove', noConfirm);
+    expect(unsupported.planDigest).not.toBe(supported.planDigest);
+    const executor = countingExecutor();
+    const setup = service(state, allFake({ supported: false }), executor);
+    await setup.lifecycle('remove', { dryRun: false, confirm: unsupported.planDigest });
+    expect(executor.plans[0]!.unsupportedHarnesses).toEqual(['codex']);
   });
 
   it('refuses setup on an unsupported harness but still plans removal', async () => {

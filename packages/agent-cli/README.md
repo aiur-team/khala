@@ -457,10 +457,22 @@ replacement plan and exits 5 without executing anything. `--dry-run` prints the
 same plan and exit code but can never execute. An empty plan succeeds without
 confirmation.
 
-This release only plans. A matching confirmation reaches the executor seam, and
-the production executor refuses with `execution_unavailable` (exit 3,
-`changed: false`). Transactional apply, backups, and harness adapters land
-separately. Until an adapter lands, a detected harness reports `unsupported`.
+A matching confirmation goes to `executeSetupPlan` (see Setup transactions). It
+receives only the digest and a replan callback, reruns this planner under its
+lock, and applies nothing unless the fresh digest still matches. A dry run never
+reaches it. The digest also covers installer mode overrides and the detected
+unsupported harnesses the executor enforces. Outcomes map to results as follows:
+
+| Executor outcome | Result state | Exit |
+| --- | --- | ---: |
+| committed | the post-apply state (`ready` after a completed setup or remove) | 0 |
+| replanned | `confirmation_required` with the fresh plan and a `plan_changed` diagnostic: relay it and confirm again | 5 |
+| refused (drift, conflict, unsupported) | that state | 3 |
+| busy, or failed and rolled back exactly | `conflict` with `setup_busy` or `apply_failed` (the frozen states have no closer member) | 3 |
+| recovery required, or any thrown executor, lock, or replan error | `recovery_required` (`execution_failed` when thrown) | 4 |
+
+Harness adapters and their payload bytes land separately. Until an adapter
+lands, a detected harness reports `unsupported` and setup has nothing to apply.
 Discovery can prove presence and a version string, never support or delivery.
 
 `status` keeps its connection fields and adds a `configuration` result. Bare

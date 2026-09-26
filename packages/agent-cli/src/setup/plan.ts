@@ -1,13 +1,16 @@
 // The one `discover -> inspect -> plan` pipeline behind `setup`, `remove`, and status
 // configuration. It projects adapter output through closed allowlists, sorts and canonicalizes
 // it, digests the plan, and gates execution on a digest the person approved for the plan
-// computed from fresh state in this same invocation. Nothing here writes, locks, or prompts.
+// computed from fresh state in this same invocation. Nothing here writes, locks, or prompts;
+// every effect goes through the injected executor.
 import { createHash } from 'node:crypto';
 import { resolveSetupPaths } from './paths.js';
+import type { ExecutablePlan, ExecutionOutcome } from './transaction.js';
 import {
   HARNESS_IDS, SETUP_COMPONENTS, SETUP_SCHEMA_VERSION, setupExitCode,
   type ConfirmationAction, type HarnessDetection, type HarnessId, type HarnessReport, type SetupAdapter,
-  type SetupDiagnostic, type SetupEnvironment, type SetupOperation, type SetupResult, type SetupState, type Sha256Digest,
+  type SetupDiagnostic, type SetupEnvironment, type SetupOperation, type SetupOperationReport, type SetupResult,
+  type SetupState, type Sha256Digest,
 } from './types.js';
 
 /** Bumped whenever projection, ordering, or digest input changes, so an old approval never matches. */
@@ -17,25 +20,24 @@ export type LifecycleCommand = 'setup' | 'remove';
 export type LifecycleOptions = Readonly<{ dryRun: boolean; confirm: Sha256Digest | null }>;
 
 /**
- * Seam for the transaction executor. It receives only the command and the approved digest,
- * never a plan to trust: the executor must take its lock, reinspect, replan, and apply only if
- * its own digest still matches.
+ * Seam for the transaction executor (`executeSetupPlan`). It receives the command and the
+ * approved digest, never a plan to trust: it takes its lock, calls `replan` for a fresh plan,
+ * and applies only if that plan's digest still equals the approved one.
  */
-export interface SetupExecutor {
-  execute(request: Readonly<{ command: LifecycleCommand; planDigest: Sha256Digest }>): Promise<SetupResult>;
-}
+export type SetupExecute = (request: Readonly<{
+  command: LifecycleCommand;
+  confirmedDigest: Sha256Digest;
+  replan: () => Promise<ExecutablePlan>;
+}>) => Promise<ExecutionOutcome>;
 
-/** The production executor until transactional apply lands: it refuses and changes nothing. */
-export const unavailableSetupExecutor: SetupExecutor = Object.freeze({
-  async execute(request: Readonly<{ command: LifecycleCommand; planDigest: Sha256Digest }>): Promise<SetupResult> {
-    return {
-      v: SETUP_SCHEMA_VERSION, command: request.command, ok: false, changed: false, state: 'unsupported',
-      planDigest: request.planDigest, confirmation: { required: false, confirmed: true }, harnesses: [], operations: [],
-      diagnostics: [{ code: 'execution_unavailable', severity: 'error',
-        message: 'This Khala release can plan setup but cannot apply it yet; nothing was changed.' }],
-    };
-  },
-});
+/**
+ * Supplies the bytes and non-default modes a plan writes. Harness adapters describe operations
+ * by hash only; the payload that backs those hashes comes from here. Modes are digest inputs.
+ */
+export type SetupPayloadSource = (request: Readonly<{ command: LifecycleCommand; operations: readonly SetupOperation[] }>) =>
+  Promise<Readonly<{ contents: ReadonlyMap<Sha256Digest, Uint8Array>; modes: ReadonlyMap<string, number> }>>;
+
+const EMPTY_PAYLOAD: SetupPayloadSource = async () => ({ contents: new Map(), modes: new Map() });
 
 export type SetupService = Readonly<{
   configuration(): Promise<SetupResult>;
@@ -46,7 +48,16 @@ export type SetupServiceOptions = Readonly<{
   /** Resolved per invocation so a bad HOME/XDG input fails that command, not module load. */
   environment: () => SetupEnvironment;
   adapters: readonly SetupAdapter[];
-  executor: SetupExecutor;
+  execute: SetupExecute;
+  payload?: SetupPayloadSource;
+}>;
+
+type Prepared = Readonly<{
+  snapshot: Snapshot;
+  /** A refusal or recovery state that stops planning, or `null` when a plan was built. */
+  stop: SetupState | null;
+  operations: readonly SetupOperation[];
+  executable: ExecutablePlan;
 }>;
 
 type Observed = Readonly<{
@@ -67,32 +78,92 @@ type Snapshot = Readonly<{
 
 export function createSetupService(options: SetupServiceOptions): SetupService {
   const adapters = orderedAdapters(options.adapters);
+  const payload = options.payload ?? EMPTY_PAYLOAD;
+
+  // Every invocation, including a confirmed one and the executor's replan under its lock,
+  // starts from fresh state. An approval is never checked against a plan computed earlier.
+  async function prepare(command: LifecycleCommand): Promise<Prepared> {
+    const snapshot = await observe(options.environment(), adapters);
+    const stop = snapshot.recovery ? 'recovery_required' : refusalState(command, snapshot);
+    const operations = stop === null ? planOperations(command, snapshot) : [];
+    const { contents, modes } = await payload({ command, operations });
+    const unsupportedHarnesses = snapshot.observed
+      .filter(entry => !entry.report.version.supported).map(entry => entry.report.harness);
+    const digest = planDigest(command, snapshot, operations, modes, unsupportedHarnesses);
+    return { snapshot, stop, operations,
+      executable: { command, planDigest: digest, operations, contents, modes, unsupportedHarnesses } };
+  }
+
+  async function lifecycle(command: LifecycleCommand, lifecycleOptions: LifecycleOptions): Promise<SetupResult> {
+    const { snapshot, stop, operations, executable } = await prepare(command);
+    if (stop !== null) return result(command, stop, snapshot, [], null, NOT_REQUIRED);
+    if (operations.length === 0) {
+      return result(command, command === 'setup' ? statusState(snapshot) : settledRemoveState(snapshot), snapshot,
+        [], null, NOT_REQUIRED);
+    }
+    const digest = executable.planDigest;
+    // A dry run never reaches the executor, whatever digest it carries.
+    if (lifecycleOptions.dryRun || lifecycleOptions.confirm !== digest) {
+      return result(command, 'confirmation_required', snapshot, operations, digest,
+        confirmationRequest(command, snapshot, operations, digest));
+    }
+    let outcome: ExecutionOutcome;
+    try {
+      outcome = await options.execute({
+        command, confirmedDigest: digest, replan: async () => (await prepare(command)).executable,
+      });
+    } catch {
+      return result(command, 'recovery_required', snapshot, [], digest, CONFIRMED, [...snapshot.diagnostics,
+        { code: 'execution_failed', severity: 'error', message: 'Setup stopped unexpectedly; its final state is not proven.' }]);
+    }
+    return settle(command, digest, outcome, snapshot);
+  }
+
+  async function settle(
+    command: LifecycleCommand, digest: Sha256Digest, outcome: ExecutionOutcome, before: Snapshot,
+  ): Promise<SetupResult> {
+    switch (outcome.kind) {
+      case 'replanned': {
+        // State moved between approval and the lock: relay the fresh plan for a new approval.
+        const fresh = await lifecycle(command, { dryRun: false, confirm: null });
+        return { ...fresh, diagnostics: [...fresh.diagnostics, { code: 'plan_changed', severity: 'warning',
+          message: 'The plan changed since it was approved; nothing was applied. Relay this plan and confirm it again.' }] };
+      }
+      case 'committed': {
+        const after = await observe(options.environment(), adapters);
+        const state = command === 'setup' ? statusState(after) : settledRemoveState(after);
+        return { ...result(command, state, after, [], digest, CONFIRMED), changed: outcome.changed, operations: outcome.operations };
+      }
+      case 'refused':
+        return executed(command, outcome.state, digest, [], outcome.diagnostics, before);
+      // No member of the frozen state vocabulary means "busy" or "failed and fully reversed";
+      // both are safe refusals that changed nothing, reported as conflict with their diagnostics.
+      case 'busy':
+        return executed(command, 'conflict', digest, [], outcome.diagnostics, before);
+      case 'rolled_back':
+        return executed(command, 'conflict', digest, outcome.operations, outcome.diagnostics, before);
+      case 'recovery_required':
+        return executed(command, 'recovery_required', digest, outcome.operations, outcome.diagnostics, before);
+    }
+  }
+
+  async function executed(
+    command: LifecycleCommand, state: SetupState, digest: Sha256Digest,
+    operations: readonly SetupOperationReport[], diagnostics: readonly SetupDiagnostic[], before: Snapshot,
+  ): Promise<SetupResult> {
+    const after = await observe(options.environment(), adapters).catch(() => before);
+    const base = result(command, state, after, [], digest, CONFIRMED, after.diagnostics);
+    return { ...base, operations, diagnostics: [...base.diagnostics, ...diagnostics.map(projectExecutorDiagnostic)] };
+  }
+
   return Object.freeze({
     async configuration() {
       const snapshot = await observe(options.environment(), adapters);
       const state = statusState(snapshot);
-      return result('status', state, snapshot, [], null, { required: false, confirmed: false },
+      return result('status', state, snapshot, [], null, NOT_REQUIRED,
         [...snapshot.diagnostics, ...fallbackDiagnostics(state, snapshot.fallbackRoute)]);
     },
-    async lifecycle(command, lifecycleOptions) {
-      // Every invocation, including a confirmed one, starts from fresh state. An approval is
-      // never checked against a plan computed earlier.
-      const snapshot = await observe(options.environment(), adapters);
-      if (snapshot.recovery) return result(command, 'recovery_required', snapshot, [], null, NOT_REQUIRED);
-      const refusal = refusalState(command, snapshot);
-      if (refusal !== null) return result(command, refusal, snapshot, [], null, NOT_REQUIRED);
-      const operations = planOperations(command, snapshot);
-      if (operations.length === 0) {
-        return result(command, command === 'setup' ? statusState(snapshot) : settledRemoveState(snapshot), snapshot,
-          [], null, NOT_REQUIRED);
-      }
-      const digest = planDigest(command, snapshot, operations);
-      if (lifecycleOptions.dryRun || lifecycleOptions.confirm !== digest) {
-        return result(command, 'confirmation_required', snapshot, operations, digest,
-          confirmationRequest(command, snapshot, operations, digest));
-      }
-      return options.executor.execute({ command, planDigest: digest });
-    },
+    lifecycle,
   });
 }
 
@@ -312,14 +383,20 @@ function canonical(value: unknown): string {
 }
 
 /**
- * Binds the planner identity, command, every detected harness fact, and every operation with
- * its pre/post hashes. Timestamps, transaction IDs, temporary paths, and backup bytes are not
- * inputs, so identical state yields an identical digest.
+ * Binds the planner identity, command, every detected harness fact, every operation with its
+ * pre/post hashes, the installer-file mode overrides, and the unsupported harnesses the
+ * executor must honour. Payload bytes are bound through the postimage hashes. Timestamps,
+ * transaction IDs, temporary paths, and backup bytes are not inputs, so identical state yields
+ * an identical digest.
  */
-function planDigest(command: LifecycleCommand, snapshot: Snapshot, operations: readonly SetupOperation[]): Sha256Digest {
+function planDigest(
+  command: LifecycleCommand, snapshot: Snapshot, operations: readonly SetupOperation[],
+  modes: ReadonlyMap<string, number>, unsupportedHarnesses: readonly HarnessId[],
+): Sha256Digest {
   const input = canonical({
     planner: SETUP_PLANNER_ID, schema: SETUP_SCHEMA_VERSION, command,
     harnesses: snapshot.observed.map(entry => entry.report), operations,
+    modes: [...modes].sort(([a], [b]) => compareText(a, b)), unsupportedHarnesses,
   });
   return `sha256:${createHash('sha256').update(input).digest('hex')}`;
 }
@@ -365,6 +442,16 @@ function confirmationRequest(
 
 // A supplied digest confirms nothing unless it reached the executor, so these paths report false.
 const NOT_REQUIRED: SetupResult['confirmation'] = Object.freeze({ required: false, confirmed: false });
+const CONFIRMED: SetupResult['confirmation'] = Object.freeze({ required: false, confirmed: true });
+
+function projectExecutorDiagnostic(value: SetupDiagnostic): SetupDiagnostic {
+  return {
+    code: value.code, severity: value.severity,
+    ...(value.harness === undefined ? {} : { harness: value.harness }),
+    ...(value.component === undefined ? {} : { component: value.component }),
+    message: value.message,
+  };
+}
 
 function result(
   command: SetupResult['command'], state: SetupState, snapshot: Snapshot, operations: readonly SetupOperation[],

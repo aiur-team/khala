@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,10 +7,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createUnavailableClient } from '../composition/unavailable.js';
 import { createDiscoveryOnlyAdapter } from '../setup/detect.js';
 import { SetupPathError } from '../setup/paths.js';
-import { createSetupService, unavailableSetupExecutor, type SetupService } from '../setup/plan.js';
-import { HARNESS_IDS, decodeSetupResult, type SetupResult } from '../setup/types.js';
+import { createSetupService, type SetupService } from '../setup/plan.js';
+import { HARNESS_IDS, decodeSetupResult, type SetupAdapter, type SetupResult } from '../setup/types.js';
 import { runCli } from './app.js';
-import { setupEnvironment } from './main.js';
+import { setupEnvironment, setupExecute } from './main.js';
 import type { CliDependencies } from './types.js';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
@@ -137,10 +138,11 @@ describe('production setup composition', () => {
     fs.mkdirSync(path.join(home, '.claude'));
     fs.writeFileSync(path.join(home, '.claude', 'settings.json'), '{"user":"state"}');
     const before = snapshot(home);
+    const env = { HOME: home, PATH: `${bin}:relative` };
     const service = createSetupService({
-      environment: () => setupEnvironment({ HOME: home, PATH: `${bin}:relative` }),
+      environment: () => setupEnvironment(env),
       adapters: HARNESS_IDS.map(createDiscoveryOnlyAdapter),
-      executor: unavailableSetupExecutor,
+      execute: setupExecute(env),
     });
 
     const status = await run(['status', '--check'], service);
@@ -162,10 +164,11 @@ describe('production setup composition', () => {
   it('reports no harness for an empty synthetic home and PATH', async () => {
     const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-setup-empty-'));
     directories.push(home);
+    const env = { HOME: home, PATH: '' };
     const service = createSetupService({
-      environment: () => setupEnvironment({ HOME: home, PATH: '' }),
+      environment: () => setupEnvironment(env),
       adapters: HARNESS_IDS.map(createDiscoveryOnlyAdapter),
-      executor: unavailableSetupExecutor,
+      execute: setupExecute(env),
     });
     for (const command of ['setup', 'remove']) {
       const outcome = await run([command], service);
@@ -173,5 +176,69 @@ describe('production setup composition', () => {
       expect(JSON.parse(outcome.stdout)).toMatchObject({ state: 'no_harness', ok: true, operations: [], planDigest: null });
     }
     expect(fs.readdirSync(home)).toEqual([]);
+  });
+
+  it('applies a confirmed plan through the transactional executor and never from a dry run', async () => {
+    const home = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-setup-apply-'));
+    directories.push(home);
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\necho "codex-cli 0.154.0"\n', { mode: 0o755 });
+    const env = { HOME: home, PATH: bin };
+    // The executor creates paths below existing XDG roots, as its own fixtures do; it never creates a root.
+    for (const root of ['.config', '.local/share', '.local/state']) fs.mkdirSync(path.join(home, root), { recursive: true });
+    const marker = path.join(home, '.local', 'share', 'khala', 'versions', 'test', 'marker');
+    const bytes = new TextEncoder().encode('khala payload');
+    const postimage = `sha256:${createHash('sha256').update(bytes).digest('hex')}` as const;
+    // A supported test adapter owning one installer file; the real adapters land separately.
+    const adapter: SetupAdapter = {
+      harness: 'codex',
+      async detect(environment) {
+        return { ...(await createDiscoveryOnlyAdapter('codex').detect(environment)), supported: true };
+      },
+      async inspect(environment, detection) {
+        const present = (await environment.probe.readFile(marker)) !== null;
+        return { detection, components: [{ component: 'payload', state: present ? 'ready' : 'absent' }],
+          route: 'native_cli_queue', diagnostics: [] };
+      },
+      plan(request) {
+        const present = request.observation.components.some(component => component.state === 'ready');
+        if (request.desired === 'present') {
+          return present ? [] : [{ id: 'marker', type: 'file_create', harness: 'codex', component: 'payload', path: marker, postimage }];
+        }
+        return present ? [{ id: 'marker', type: 'file_delete', harness: 'codex', component: 'payload', path: marker, preimage: postimage }] : [];
+      },
+    };
+    const service = createSetupService({
+      environment: () => setupEnvironment(env),
+      adapters: [adapter],
+      execute: setupExecute(env),
+      payload: async () => ({ contents: new Map([[postimage, bytes]]), modes: new Map() }),
+    });
+
+    const beforeDryRun = snapshot(home);
+    const plan = await run(['setup'], service);
+    expect(plan.code).toBe(5);
+    const digest = JSON.parse(plan.stdout).planDigest as string;
+    const dry = await run(['setup', '--dry-run'], service);
+    expect(dry.code).toBe(5);
+    expect(snapshot(home)).toEqual(beforeDryRun);
+
+    const applied = await run(['setup', '--confirm', digest], service);
+    expect(applied.stderr).toBe('');
+    expect(applied.code).toBe(0);
+    expect(JSON.parse(applied.stdout)).toMatchObject({ state: 'ready', ok: true, changed: true,
+      operations: [{ id: 'marker', status: 'applied' }] });
+    expect(fs.readFileSync(marker, 'utf8')).toBe('khala payload');
+
+    const again = await run(['setup'], service);
+    expect(JSON.parse(again.stdout)).toMatchObject({ state: 'ready', changed: false, operations: [] });
+
+    const removal = await run(['remove'], service);
+    expect(removal.code).toBe(5);
+    const removed = await run(['remove', '--confirm', JSON.parse(removal.stdout).planDigest], service);
+    expect(removed.code).toBe(0);
+    expect(JSON.parse(removed.stdout)).toMatchObject({ changed: true });
+    expect(fs.existsSync(marker)).toBe(false);
   });
 });
