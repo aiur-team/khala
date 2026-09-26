@@ -22,10 +22,11 @@ const focused = (page: Page) => page.evaluate(() => document.activeElement?.text
 const rowWith = (page: Page, text: string) => page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: text });
 
 /** The owner approves the one pending request from `agent` in the inbox, by keyboard only. */
-async function approveByKeyboard(page: Page, origin: string, agent: string, dialogName: RegExp | string, approve: string) {
+async function approveByKeyboard(page: Page, origin: string, agent: string, dialogName: RegExp | string, approve: string, subject?: string) {
   await page.getByRole('link', { name: /Channel requests/ }).click();
   await page.waitForURL(`${origin}/channel-requests`);
-  const row = page.locator('.channel-requests__row', { hasText: agent });
+  const waiting = page.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row', { hasText: agent });
+  const row = subject === undefined ? waiting : waiting.filter({ hasText: subject });
   await row.waitFor();
   const review = row.getByRole('button', { name: 'Review request' });
   await review.focus();
@@ -278,10 +279,16 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     await rowWith(page, 'Bea: hello Ada').waitFor();
     assert.equal(await page.getByText('No messages yet.').count(), 0);
     // The agent picks up the resumed launcher's descriptor and rejoins: its stopped
-    // binding is revoked in the store, not merely absent from the descriptor.
+    // binding is not re-activated; the rejoin asks the owner again instead.
     fs.copyFileSync(path.join(internalRootOf(ownerHome), 'active.json'), ada.activePath);
-    assert.equal(await ada.join(channelUrl), 'revoked', 'a stopped binding is not re-activated on resume');
+    assert.equal(await ada.join(channelUrl), 'pending_owner', 'a stopped binding is not re-activated on resume');
     assert.notEqual((await ada.send('Ada: after resume')).code, 0, 'a stopped binding stays revoked after resume');
+    // Once the owner approves the new request, the same session connects again.
+    await approveByKeyboard(page, origin, 'Ada', /Let this agent session join/, 'Approve access', 'Join');
+    assert.equal(await ada.join(channelUrl), 'connected', 'an approved request after Stop connects');
+    assert.equal((await ada.send('Ada: after resume')).code, 0, 'the new binding can post');
+    await page.goto(`${origin}/channels/${channelId}`);
+    await rowWith(page, 'Ada: after resume').waitFor();
 
     // Narrow viewport: the channel and its Stop outcome fit without horizontal scrolling.
     await page.setViewportSize({ width: 320, height: 800 });
