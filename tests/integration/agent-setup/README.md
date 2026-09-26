@@ -55,6 +55,7 @@ source). The named test then failed:
 | `transaction.ts` `acquireLock`: treat a live holder as stale | `a second mutation while one holds the lock gets a stable busy result …` |
 | `plan.ts` `refusalState` and `transaction.ts` drift check: allow removal over drift | `drift refuses the whole removal …` |
 | `plan.ts` `observe`: skip a harness with no executable instead of reporting it absent | `absent harnesses are reported without creating their config roots` |
+| `plan.ts` and `transaction.ts`: let one unsupported harness refuse setup for all (pre-#419), or only the executor guard | `Claude plus an untested OpenCode sets up Claude …` |
 | `plan.ts` `prepare`: ignore an existing journal | `a crash mid-transaction leaves no torn file …` |
 | `transaction.ts` `rollback`: skip `restoreTarget`, so recovery restores nothing | `a crash mid-transaction is recovered by the next confirmed command` |
 | `cli/main.ts`: read the Claude descriptor from `$XDG_DATA_HOME` instead of `$XDG_STATE_HOME` | `the Claude hook entry re-reads a moved runtime descriptor …` |
