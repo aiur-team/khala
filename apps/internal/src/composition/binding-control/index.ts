@@ -130,10 +130,13 @@ export function composeBindingControl(input: Readonly<{
   root: string;
   /** Channel access's share of Stop: its approved requests that have not become bindings yet. */
   cancelApproved?: BindingStopOptions['cancelApproved'];
+  /** Channel access's share of Stop once bindings are revoked: the requests that activated them. */
+  closeStopped?: BindingStopOptions['closeStopped'];
 }>): BindingControl {
   let open = true;
   return {
     ...(input.cancelApproved ? { cancelApproved: input.cancelApproved } : {}),
+    ...(input.closeStopped ? { closeStopped: input.closeStopped } : {}),
     activatedBindings: channelId => readActivatedBindings(input.handle, channelId),
     clearGrant: bindingIds => (open ? clearDescriptorGrant(input.root, bindingIds) : 'absent'),
     close() {

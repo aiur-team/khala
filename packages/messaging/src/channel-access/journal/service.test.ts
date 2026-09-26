@@ -200,6 +200,29 @@ describe('channel-access service', () => {
     expect(await c.outcome(claimed)).toBe('revoked');
   });
 
+  it('revokes a connected request whose binding the owner stopped, and leaves pending ones alone', async () => {
+    const pending = harness();
+    const waiting = await pending.requestAccess();
+    expect(await pending.service.revokeStopped(waiting, 'stop_1')).toBe('unchanged');
+    expect(await pending.outcome(waiting)).toBe('pending_owner');
+
+    const h = harness();
+    const connected = await h.requestAccess();
+    await h.service.decisions.decide(approve(connected), owner);
+    await h.service.fulfillment.claimAccess({ v: 1, requestHandle: connected as never, expectedRevision: 'carev_2', operationId: 'claim_1' });
+    await h.service.fulfillment.updateAccess({
+      v: 1, requestHandle: connected as never, expectedRevision: 'carev_3', outcome: 'connected', operationId: 'connected_1',
+    });
+    expect(await h.outcome(connected)).toBe('connected');
+    // Stop's pre-binding pass never touches a connected request.
+    expect(await h.service.revokeApproved(connected, 'stop_1')).toBe('unchanged');
+    expect(await h.service.revokeStopped(connected, 'stop_1')).toBe('revoked');
+    expect(await h.outcome(connected)).toBe('revoked');
+    expect(await h.service.journal.inspect({ v: 1, operationId: 'request_1', operationKind: 'access' }, requester, context))
+      .toEqual({ v: 1, operationId: 'request_1', outcome: 'revoked' });
+    expect(await h.service.revokeStopped(connected, 'stop_2')).toBe('unchanged');
+  });
+
   it('revokes active work on status reads once the requester generation is revoked', async () => {
     const h = harness();
     const requestHandle = await h.requestAccess();

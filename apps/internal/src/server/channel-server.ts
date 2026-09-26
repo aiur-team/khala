@@ -108,6 +108,8 @@ export type BindingStopOptions = Readonly<{
   clearGrant?(bindingIds: ReadonlySet<string>): GrantClearing;
   /** Closes the channel's approved access and create requests that are not yet active bindings. */
   cancelApproved?(channelId: RoomId): Promise<'cancelled' | 'unavailable'>;
+  /** Closes the access and create requests that activated any of the revoked `bindingIds`. */
+  closeStopped?(bindingIds: ReadonlySet<string>): Promise<'closed' | 'unavailable'>;
 }>;
 
 export type ChannelServerOptions = Readonly<{
@@ -388,6 +390,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     dropCapability: key => authority.revokeBinding(key),
     ...(options.stop?.clearGrant ? { clearGrant: options.stop.clearGrant } : {}),
     ...(options.stop?.cancelApproved ? { cancelApproved: options.stop.cancelApproved } : {}),
+    ...(options.stop?.closeStopped ? { closeStopped: options.stop.closeStopped } : {}),
   });
 
   function humanMayStop(channelId: string, principal: Principal): 'allowed' | 'not_found' | 'forbidden' | 'unavailable' {
