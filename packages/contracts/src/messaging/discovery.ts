@@ -57,6 +57,10 @@ export const CHANNEL_CREATE_OUTCOMES = [
 
 /** Libsodium sealed boxes: X25519 plus XSalsa20-Poly1305. */
 export const CHANNEL_SEALED_BOX_ALGORITHM = 'crypto_box_seal_x25519_xsalsa20poly1305' as const;
+/** Lifetime of the one-time grant inside a sealed envelope, from sealing. */
+export const CHANNEL_ACCESS_GRANT_LIFETIME_MS = 15 * 60_000;
+/** Hard recovery expiry of a stored envelope and of an admitted operation, from sealing. */
+export const CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS = 7 * 24 * 60 * 60_000;
 
 export type ChannelVisibility = 'public' | 'private' | 'secret';
 export type ChannelServiceKind = 'internal' | 'external';

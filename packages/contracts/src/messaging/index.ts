@@ -65,7 +65,7 @@ export {
   type ChannelAccessReadiness, type HumanAuthorizedWorkflowContext, type KeyThumbprintResult, type ListingRefAccessRequest, type PrivateEligibilityMutation,
   type SealedGrantEnvelope, type SealedGrantPayload, type SealedGrantPayloadValidity, type StableAgentPrincipal,
   type ValidatedGrantExchangeRequest, type X25519EncryptionKey,
-  ACCESS_REQUEST_OUTCOMES, CHANNEL_CREATE_OUTCOMES, CHANNEL_DISCOVERY_SCOPES, CHANNEL_SEALED_BOX_ALGORITHM,
+  ACCESS_REQUEST_OUTCOMES, CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS, CHANNEL_ACCESS_GRANT_LIFETIME_MS, CHANNEL_CREATE_OUTCOMES, CHANNEL_DISCOVERY_SCOPES, CHANNEL_SEALED_BOX_ALGORITHM,
   MAX_CHANNEL_LIST_PAGE_SIZE,
   MAX_CHANNEL_TITLE_BYTES, MAX_CHANNEL_URL_BYTES, MAX_SEALED_GRANT_BYTES, classifyGrantExchangeBinding,
   deriveOkpKeyThumbprint,

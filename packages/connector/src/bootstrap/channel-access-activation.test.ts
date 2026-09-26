@@ -10,6 +10,7 @@ import {
   type SealedGrantEnvelope,
   type SessionBinding,
   type StableAgentPrincipal,
+  CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS,
   CHANNEL_SEALED_BOX_ALGORITHM,
 } from '@khala/contracts/messaging/index';
 import sodium from 'libsodium-wrappers';
@@ -29,7 +30,7 @@ import {
   journalChannelAccessRequest,
   resumeChannelAccessActivations,
 } from './channel-access-activation';
-import type { AdapterCapability, DeviceActivation } from './ports';
+import type { AdapterCapability, AdmissionOutcome, DeviceActivation } from './ports';
 import { createProofSigner } from './proof';
 
 const T0 = Date.parse('2026-09-25T12:00:00Z');
@@ -37,6 +38,7 @@ const ORIGIN = 'https://khala.example';
 const REQUESTER = 'principal_1' as StableAgentPrincipal;
 const OPERATION = 'op_access_1';
 const GRANT_LIFETIME_MS = 15 * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
 const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey, () => T0);
 
 /** In-memory journal with the same compare-and-set and record/key atomicity as SQLite. */
@@ -96,6 +98,8 @@ function fakeService(clock: () => number) {
     exchanges: [] as GrantExchangeRequest[],
     acks: [] as ChannelAccessReadiness[],
     redeems: [] as string[],
+    resumes: [] as string[],
+    admitted: new Set<string>(),
     loseNextExchangeResponse: false,
     loseNextAckResponse: false,
     tamper: null as ((envelope: SealedGrantEnvelope) => unknown) | null,
@@ -189,27 +193,36 @@ function harness(overrides: Partial<{
   const devices = { reserved: new Map<string, string>(), ready: new Set<string>(), activations: 0, statusOverride: null as null | 'missing' };
   const sleeps: number[] = [];
   const trustCalls: SessionBinding[] = [];
+  const admitted = (deviceId: string): AdmissionOutcome => ({
+    kind: 'admitted',
+    binding: bindingFor(deviceId),
+    capability: {
+      token: 'adapter-capability-secret',
+      scope: ['publish_own', 'receive_released', 'ack_delivery'],
+      bindingId: 'bnd_1',
+      generation: 3,
+      expiresAt: now + 3_600_000,
+      ...service.state.redeemCapability,
+    },
+  });
   const ports: { -readonly [K in keyof ChannelAccessActivationPorts]: ChannelAccessActivationPorts[K] } = {
     journal: store.journal,
     status: { inspect: async () => service.state.status },
     exchange: service.exchange,
     redeem: {
-      async redeem({ grant, deviceId }) {
+      async redeem({ grant, operationId, deviceId }) {
         service.state.redeems.push(grant);
         if (service.state.stored === null || grant !== service.state.stored.grant) return { kind: 'refused', code: 'admission_denied' };
         if (service.state.redeemRefusal) return { kind: 'refused', code: service.state.redeemRefusal };
-        return {
-          kind: 'admitted',
-          binding: bindingFor(deviceId),
-          capability: {
-            token: 'adapter-capability-secret',
-            scope: ['publish_own', 'receive_released', 'ack_delivery'],
-            bindingId: 'bnd_1',
-            generation: 3,
-            expiresAt: now + 3_600_000,
-            ...service.state.redeemCapability,
-          },
-        };
+        service.state.admitted.add(operationId);
+        return admitted(deviceId);
+      },
+      // The grant is not presented again: an admitted operation is looked up by ID.
+      async resume({ operationId, deviceId }) {
+        service.state.resumes.push(operationId);
+        if (!service.state.admitted.has(operationId)) return { kind: 'refused', code: 'admission_denied' };
+        if (service.state.redeemRefusal) return { kind: 'refused', code: service.state.redeemRefusal };
+        return admitted(deviceId);
       },
     },
     devices: {
@@ -429,7 +442,7 @@ describe('channel-access activation', () => {
     expect(h.service.state.exchanges[1]!.encryptionKey).toEqual(h.service.state.exchanges[0]!.encryptionKey);
   });
 
-  it('recovers after a crash between admission and activation by redeeming the same recovered grant', async () => {
+  it('recovers after a crash between admission and activation by resuming the operation, not the grant', async () => {
     let crash = true;
     const h = await approvedAndJournaled({
       activate: () => {
@@ -442,7 +455,74 @@ describe('channel-access activation', () => {
     crash = false;
     expect(await h.activate()).toMatchObject({ kind: 'connected', reused: false });
     expect(h.service.state.seals).toBe(1);
-    expect(new Set(h.service.state.redeems).size).toBe(1);
+    expect(h.service.state.exchanges).toHaveLength(1);
+    expect(h.service.state.redeems).toHaveLength(1);
+    expect(h.service.state.resumes.length).toBeGreaterThan(0);
+  });
+
+  describe('after admission, recovery outlives the grant', () => {
+    // Without a new owner prompt: one exchange, one seal, one grant redemption, one device.
+    function expectSameOperation(h: Awaited<ReturnType<typeof approvedAndJournaled>>) {
+      expect(h.service.state.exchanges).toHaveLength(1);
+      expect(h.service.state.seals).toBe(1);
+      expect(h.service.state.redeems).toHaveLength(1);
+      expect(h.devices.reserved.size).toBe(1);
+      expect(h.store.record()).toMatchObject({ phase: 'connected', deviceId: 'device_1', sessionGeneration: 3 });
+    }
+
+    async function crashedInAdmitted() {
+      let crash = true;
+      const h = await approvedAndJournaled({
+        activate: () => {
+          if (crash) throw new Error('process died');
+          return { kind: 'ready' };
+        },
+      });
+      expect(await h.activate()).toEqual({ kind: 'unavailable', retryable: true });
+      expect(h.store.record()).toMatchObject({ phase: 'admitted', recoverableUntil: T0 + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS });
+      crash = false;
+      return h;
+    }
+
+    async function failedActivation() {
+      let fail = true;
+      const h = await approvedAndJournaled({
+        activate: () => (fail ? { kind: 'failed', reason: 'initialization_failed' } : { kind: 'ready' }),
+      });
+      expect(await h.activate()).toEqual({ kind: 'repair_required', reason: 'activation_failed' });
+      fail = false;
+      return h;
+    }
+
+    for (const [label, elapsed] of [['16 minutes', 16 * 60_000], ['6 days', 6 * DAY_MS]] as const) {
+      it(`resumes a crash in admitted ${label} after sealing`, async () => {
+        const h = await crashedInAdmitted();
+        h.setNow(T0 + elapsed);
+        expect(await h.activate()).toEqual({ kind: 'connected', binding: bindingFor('device_1'), reused: false });
+        expectSameOperation(h);
+      });
+
+      it(`repairs a deterministic activation failure ${label} after sealing`, async () => {
+        const h = await failedActivation();
+        h.setNow(T0 + elapsed);
+        expect(await h.activate({ repair: true })).toEqual({ kind: 'connected', binding: bindingFor('device_1'), reused: false });
+        expectSameOperation(h);
+      });
+    }
+
+    it('fails closed once the seven-day recovery window has passed', async () => {
+      for (const setup of [crashedInAdmitted, failedActivation]) {
+        const h = await setup();
+        const resumes = h.service.state.resumes.length;
+        h.setNow(T0 + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS);
+        expect(await h.activate({ repair: true })).toEqual({ kind: 'closed', outcome: 'expired' });
+        expect(h.service.state.resumes).toHaveLength(resumes);
+        expect(h.store.record()).toMatchObject({ phase: 'closed', closed: 'expired' });
+        expect(h.store.key()).toBeNull();
+        expect(h.service.state.redeems).toHaveLength(1);
+        expect(h.service.state.seals).toBe(1);
+      }
+    });
   });
 
   it('rotates a recovery key lost before the exchange sealed anything', async () => {
@@ -622,7 +702,8 @@ describe('channel-access activation', () => {
   it('refuses a journaled record whose phase invariants do not hold', () => {
     const base = {
       v: 1, operationId: OPERATION, requester: REQUESTER, origin: ORIGIN, sessionGeneration: 3, proofKeyThumbprint: signer.jkt,
-      phase: 'pending', deviceId: null, recoveryPublicKey: null, recoveryKeyThumbprint: null, binding: null, repair: null, closed: null,
+      phase: 'pending', deviceId: null, recoveryPublicKey: null, recoveryKeyThumbprint: null, binding: null, recoverableUntil: null,
+      repair: null, closed: null,
     };
     expect(decodeActivationRecord(base)).toEqual(base);
     expect(decodeActivationRecord({ ...base, phase: 'connected' })).toBeNull();
@@ -630,5 +711,7 @@ describe('channel-access activation', () => {
     expect(decodeActivationRecord({ ...base, privateKey: 'x' })).toBeNull();
     expect(decodeActivationRecord({ ...base, phase: 'closed' })).toBeNull();
     expect(decodeActivationRecord({ ...base, phase: 'closed', closed: 'denied' })).toMatchObject({ phase: 'closed' });
+    // A recovery window exists exactly when a binding does.
+    expect(decodeActivationRecord({ ...base, recoverableUntil: T0 })).toBeNull();
   });
 });

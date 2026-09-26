@@ -14,6 +14,8 @@ import {
   type GrantExchangeRequest,
   type SessionBinding,
   type StableAgentPrincipal,
+  CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS,
+  CHANNEL_ACCESS_GRANT_LIFETIME_MS,
   decodeSealedGrantEnvelope,
   decodeSealedGrantPayload,
   decodeSessionBinding,
@@ -30,8 +32,8 @@ export const ACTIVATION_PHASES = ['pending', 'keyed', 'admitted', 'activated', '
 export type ActivationPhase = (typeof ACTIVATION_PHASES)[number];
 
 /**
- * Known post-approval connector failures. `recovery_key_lost` and `grant_expired`
- * cannot be repaired without a new grant, and the connector never asks for one.
+ * Known post-approval connector failures. Before admission, `recovery_key_lost` and
+ * `grant_expired` cannot be repaired without a new grant, and the connector never asks for one.
  */
 export const REPAIR_REASONS = [
   'recovery_key_lost',
@@ -51,7 +53,8 @@ export type ClosedOutcome = (typeof CLOSED_OUTCOMES)[number];
  * private key is stored beside it by the journal, never inside it:
  * - `pending`: journaled; waiting for the owner.
  * - `keyed`: approved; the device and recovery key are fixed before any exchange.
- * - `admitted`: the grant was redeemed for `binding`; the device is not ready yet.
+ * - `admitted`: the grant was redeemed for `binding`; the device is not ready yet. From here
+ *   on the operation resumes by ID, without the grant, until `recoverableUntil`.
  * - `activated`: the device is ready on the review baseline; readiness is unacknowledged.
  * - `connected`: the service acknowledged readiness.
  */
@@ -67,6 +70,8 @@ export type ActivationRecord = Readonly<{
   recoveryPublicKey: string | null;
   recoveryKeyThumbprint: string | null;
   binding: SessionBinding | null;
+  /** Epoch ms: the sealed envelope's recovery expiry, set with `binding`. */
+  recoverableUntil: number | null;
   repair: RepairReason | null;
   closed: ClosedOutcome | null;
 }>;
@@ -117,12 +122,16 @@ export interface ChannelAccessExchangeClient {
 }
 
 /**
- * Redeems the opened one-time grant for the binding and adapter capability. It must be
- * idempotent per operation for the same bound tuple, as `BootstrapAdmissionPort` is:
- * a crash after redemption resumes by redeeming the same recovered grant again.
+ * Redeems the opened one-time grant for the binding and adapter capability. Both calls
+ * must be idempotent per operation for the same bound tuple, as `BootstrapAdmissionPort` is.
  */
 export interface ChannelAccessRedeemPort {
   redeem(input: Readonly<{ grant: string; operationId: string; deviceId: string; origin: string }>): Promise<AdmissionOutcome>;
+  /**
+   * Returns the same binding with a fresh capability for an operation already redeemed. It needs
+   * no grant, so a crash or repair after admission works after the 15-minute grant has expired.
+   */
+  resume(input: Readonly<{ operationId: string; deviceId: string; origin: string; bindingId: string }>): Promise<AdmissionOutcome>;
 }
 
 export type TrustInitialization =
@@ -213,6 +222,7 @@ export async function journalChannelAccessRequest(
     recoveryPublicKey: null,
     recoveryKeyThumbprint: null,
     binding: null,
+    recoverableUntil: null,
     repair: null,
     closed: null,
   };
@@ -299,16 +309,19 @@ async function advance(loaded: Loaded, ports: ChannelAccessActivationPorts, repa
       return reconnected(loaded, ports);
     case 'repair_required':
       if (!repair || UNREPAIRABLE.has(record.repair!)) return done({ kind: 'repair_required', reason: record.repair! });
-      // Resume the same operation, device and recovery key; no new owner prompt.
-      return saved(await save(ports, loaded, { ...record, phase: 'keyed', repair: null }, { kind: 'keep' }));
+      // Resume the same operation, device and recovery key; no new owner prompt. An admitted
+      // operation resumes by ID and never needs the grant again.
+      return saved(await save(ports, loaded, {
+        ...record, phase: record.binding === null ? 'keyed' : 'admitted', repair: null,
+      }, { kind: 'keep' }));
     case 'pending':
       return approve(loaded, ports);
     case 'activated':
       return acknowledge(loaded, ports);
     case 'keyed':
-    case 'admitted':
-      // The capability is never stored, so `admitted` recovers the same envelope and redeems again.
       return recover(loaded, ports);
+    case 'admitted':
+      return resume(loaded, ports);
   }
 }
 
@@ -383,16 +396,38 @@ async function recover(loaded: Loaded, ports: ChannelAccessActivationPorts): Pro
     return repairRequired(ports, loaded, 'exchange_conflict');
   }
 
-  const opened = await openEnvelope(exchanged.envelope, record, privateKey, clock());
+  const now = clock();
+  const opened = await openEnvelope(exchanged.envelope, record, privateKey, now);
   if (opened.kind === 'rejected') return repairRequired(ports, loaded, opened.reason);
 
   const redeemed = await guard(() => ports.redeem.redeem({
     grant: opened.grant, operationId: record.operationId, deviceId: record.deviceId!, origin: record.origin,
   }), { kind: 'unavailable' } as const);
-  return activate(loaded, ports, redeemed);
+  // The service seals the grant with a fixed lifetime, so its expiry dates the sealing that
+  // starts the recovery window. It never counts from later than now.
+  const sealedAt = Math.min(opened.expiresAtMs - CHANNEL_ACCESS_GRANT_LIFETIME_MS, now);
+  return activate(loaded, ports, redeemed, sealedAt + CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS);
 }
 
-async function activate(loaded: Loaded, ports: ChannelAccessActivationPorts, redeemed: AdmissionOutcome): Promise<Step> {
+/** Resumes an admitted operation by ID with the same device and binding; no grant is needed. */
+async function resume(loaded: Loaded, ports: ChannelAccessActivationPorts): Promise<Step> {
+  const { record } = loaded;
+  const clock = ports.clock ?? Date.now;
+  // Past the recovery window the service has dropped the envelope, so recovery fails closed.
+  if (!(clock() < record.recoverableUntil!)) return close(ports, loaded, 'expired');
+  if (record.proofKeyThumbprint !== ports.signer.jkt) return repairRequired(ports, loaded, 'exchange_conflict');
+  const redeemed = await guard(() => ports.redeem.resume({
+    operationId: record.operationId, deviceId: record.deviceId!, origin: record.origin, bindingId: record.binding!.bindingId,
+  }), { kind: 'unavailable' } as const);
+  return activate(loaded, ports, redeemed, record.recoverableUntil!);
+}
+
+async function activate(
+  loaded: Loaded,
+  ports: ChannelAccessActivationPorts,
+  redeemed: AdmissionOutcome,
+  recoverableUntil: number,
+): Promise<Step> {
   const { record } = loaded;
   const clock = ports.clock ?? Date.now;
   if (redeemed.kind === 'unavailable' || redeemed.kind === 'outcome_unknown') return wait(unavailable());
@@ -414,7 +449,7 @@ async function activate(loaded: Loaded, ports: ChannelAccessActivationPorts, red
 
   let current = loaded;
   if (record.phase !== 'admitted' || record.binding === null) {
-    const write = await save(ports, loaded, { ...record, phase: 'admitted', binding }, { kind: 'keep' });
+    const write = await save(ports, loaded, { ...record, phase: 'admitted', binding, recoverableUntil }, { kind: 'keep' });
     if (write.kind !== 'saved') return saved(write);
     current = write.loaded;
   }
@@ -459,7 +494,7 @@ async function acknowledge(loaded: Loaded, ports: ChannelAccessActivationPorts):
 }
 
 type Opened =
-  | Readonly<{ kind: 'opened'; grant: string }>
+  | Readonly<{ kind: 'opened'; grant: string; expiresAtMs: number }>
   | Readonly<{ kind: 'rejected'; reason: 'grant_expired' | 'envelope_rejected' }>;
 
 /** Opens the sealed result and checks version, algorithm, both thumbprints and the sealed context. */
@@ -498,7 +533,7 @@ async function openEnvelope(input: unknown, record: ActivationRecord, privateKey
   });
   if (validity === 'expired') return { kind: 'rejected', reason: 'grant_expired' };
   if (validity !== 'valid') return { kind: 'rejected', reason: 'envelope_rejected' };
-  return { kind: 'opened', grant: payload.value.grant };
+  return { kind: 'opened', grant: payload.value.grant, expiresAtMs: Date.parse(payload.value.expiresAt) };
 }
 
 type RecoveryKey = Readonly<{ publicKey: string; thumbprint: string; privateKey: Uint8Array }>;
@@ -587,7 +622,7 @@ export function decodeActivationRecord(value: unknown): ActivationRecord | null 
   const r = value as Record<string, unknown>;
   const fields = [
     'v', 'operationId', 'requester', 'origin', 'sessionGeneration', 'proofKeyThumbprint', 'phase', 'deviceId',
-    'recoveryPublicKey', 'recoveryKeyThumbprint', 'binding', 'repair', 'closed',
+    'recoveryPublicKey', 'recoveryKeyThumbprint', 'binding', 'recoverableUntil', 'repair', 'closed',
   ];
   if (Object.keys(r).length !== fields.length || !fields.every(field => Object.hasOwn(r, field))) return null;
   if (r.v !== 1 || !ACTIVATION_PHASES.includes(r.phase as ActivationPhase)) return null;
@@ -607,12 +642,14 @@ export function decodeActivationRecord(value: unknown): ActivationRecord | null 
     if (!decoded.ok || decoded.value.deviceId !== r.deviceId) return null;
     binding = decoded.value;
   }
-  // Phase invariants: a key and device from `keyed` on, a binding from `admitted` through
-  // `connected`, and a reason exactly on the repair and closed phases.
+  if (r.recoverableUntil !== null && !(Number.isSafeInteger(r.recoverableUntil) && (r.recoverableUntil as number) > 0)) return null;
+  // Phase invariants: a key and device from `keyed` on, a binding and its recovery window from
+  // `admitted` through `connected`, and a reason exactly on the repair and closed phases.
   const keyed = r.deviceId !== null && r.recoveryPublicKey !== null && r.recoveryKeyThumbprint !== null;
   if (phase === 'pending' && (r.deviceId !== null || r.recoveryPublicKey !== null || binding !== null)) return null;
   if ((phase === 'keyed' || phase === 'admitted' || phase === 'activated' || phase === 'connected') && !keyed) return null;
   if ((phase === 'admitted' || phase === 'activated' || phase === 'connected') && binding === null) return null;
+  if ((binding === null) !== (r.recoverableUntil === null)) return null;
   if ((phase === 'repair_required') !== (r.repair !== null)) return null;
   if (phase === 'repair_required' && !keyed) return null;
   if ((phase === 'closed') !== (r.closed !== null)) return null;
@@ -628,6 +665,7 @@ export function decodeActivationRecord(value: unknown): ActivationRecord | null 
     recoveryPublicKey: r.recoveryPublicKey as string | null,
     recoveryKeyThumbprint: r.recoveryKeyThumbprint as string | null,
     binding,
+    recoverableUntil: r.recoverableUntil as number | null,
     repair: r.repair as RepairReason | null,
     closed: r.closed as ClosedOutcome | null,
   };

@@ -45,6 +45,7 @@ const PENDING: ActivationRecord = {
   recoveryPublicKey: null,
   recoveryKeyThumbprint: null,
   binding: null,
+  recoverableUntil: null,
   repair: null,
   closed: null,
 };

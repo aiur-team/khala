@@ -125,7 +125,10 @@ origin is rejected before browser launch.
    box is opened. `validateSealedGrantPayload` then checks the sealed operation, requester, origin,
    generation, device and both thumbprints. A lost response re-fetches the same stored envelope.
 5. **Activate.** The grant is redeemed once. The binding and capability are checked like bootstrap
-   admission, the device is activated, and the `review`, unpaused trust baseline is required.
+   admission, the device is activated, and the `review`, unpaused trust baseline is required. After
+   admission the record keeps the binding and a recovery window: seven days from sealing. A crash or
+   repair from here resumes by operation ID (`redeem.resume`) with the same device and generation, and
+   needs no unexpired grant. Once the window has passed, the operation closes as `expired`.
 6. **Readiness.** Only an acknowledged readiness moves the record to `connected`. The service then reports
    `connected` and deletes its envelope. The local private key is cleared.
 
@@ -134,7 +137,7 @@ origin is rejected before browser launch.
 | `connected` | Readiness was acknowledged. `reused: true` means an earlier call already finished |
 | `pending` | The owner has not decided; call again later |
 | `unavailable` | Nothing conclusive happened; call again with the same operation |
-| `repair_required` | A known local failure. `activateChannelAccess(id, ports, { repair: true })` resumes the same operation and device without a new owner prompt. The exception is `recovery_key_lost` or `grant_expired`: these need a new grant, and the connector never requests one |
+| `repair_required` | A known local failure. `activateChannelAccess(id, ports, { repair: true })` resumes the same operation and device without a new owner prompt. The exception is `recovery_key_lost` or `grant_expired` before admission: these need a new grant, and the connector never requests one |
 | `closed` | Denied, expired, revoked or closed by the service |
 
 A private key lost **before** a result was sealed is rotated, and the service supersedes the old one. After
@@ -147,7 +150,7 @@ consumption, the service refuses a new key (`encryption_key_mismatch`) and the o
 | `journal` | `createChannelAccessActivationStore(storage)` |
 | `status` | `createHttpChannelAccessStatus({ signer, trustedOrigins, credential })`, using the live discovery credential |
 | `exchange` | `createHttpChannelAccessClient({ signer, trustedOrigins })`: exchange and readiness routes with DPoP proofs |
-| `redeem` | Grant redemption. Its hosted route is not built yet; it must be idempotent per operation, like `BootstrapAdmissionPort` |
+| `redeem` | Grant redemption, and `resume` of an admitted operation by ID without the grant. The hosted routes are not built yet; both must be idempotent per operation, like `BootstrapAdmissionPort` |
 | `devices` | The same `ConnectorDevicePort` bootstrap uses |
 | `trust` | Trust initialization for the new binding (`@khala/policy` `initialTrustState` gives the review baseline) |
 

@@ -18,6 +18,8 @@ import {
   type SealedGrantEnvelope,
   type TrustedClock,
   type ValidatedGrantExchangeRequest,
+  CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS,
+  CHANNEL_ACCESS_GRANT_LIFETIME_MS,
   classifyGrantExchangeBinding,
 } from '@khala/contracts/messaging/index';
 import { type ExchangeRecord, type StoredExchange, exchangeJournal, sha256Hex } from './journal';
@@ -30,10 +32,7 @@ import type {
 } from './ports';
 import { sealGrantPayload } from './seal';
 
-/** Lifetime of the one-time grant inside the envelope. */
-export const CHANNEL_ACCESS_GRANT_LIFETIME_MS = 15 * 60_000;
-/** Hard recovery expiry of a stored envelope, counted from sealing. */
-export const CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS = 7 * 24 * 60 * 60_000;
+export { CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS, CHANNEL_ACCESS_GRANT_LIFETIME_MS };
 // Sealing always happens before the request deadline, which is at most seven days after
 // the record is created, so two windows cover every use of an encryption key.
 const KEY_INDEX_LIFETIME_MS = 2 * CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS;
