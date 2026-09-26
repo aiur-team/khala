@@ -68,7 +68,10 @@ export type ExecutablePlan = Readonly<{
   contents: ReadonlyMap<Sha256Digest, Uint8Array>;
   /** Exact modes for installer-owned files whose mode is not the default (0400; launchers 0500). */
   modes?: ReadonlyMap<string, number>;
-  /** Detected harnesses with an unsupported version: setup refuses before mutation, remove proceeds. */
+  /**
+   * Detected harnesses setup must not configure: a setup operation for one refuses before any
+   * mutation, while the other harnesses' operations and removal proceed.
+   */
   unsupportedHarnesses?: readonly HarnessId[];
   /**
    * Foreign files whose `config_entry_set` makes Khala the owner of that one entry, not of
@@ -540,8 +543,10 @@ class Executor {
     const refuse = (state: 'drifted' | 'conflict', code: string, message: string, operation?: SetupOperation): never => {
       throw new Refusal(state, diagnostic(code, message, operation));
     };
-    if (plan.command === 'setup' && (plan.unsupportedHarnesses?.length ?? 0) > 0) {
-      throw new Refusal('unsupported', diagnostic('unsupported_harness', `Unsupported harness version detected: ${plan.unsupportedHarnesses!.join(', ')}.`));
+    const unsupported = plan.command === 'setup'
+      ? plan.operations.find(operation => plan.unsupportedHarnesses?.includes(operation.harness)) : undefined;
+    if (unsupported !== undefined) {
+      throw new Refusal('unsupported', diagnostic('unsupported_harness', `Setup must not change unsupported harness ${unsupported.harness}.`, unsupported));
     }
     const ids = new Set<string>();
     for (const operation of plan.operations) {

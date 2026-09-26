@@ -66,7 +66,7 @@ const EMPTY_PAYLOAD: SetupPayloadSource = async () => [];
 
 /**
  * Harnesses that only report. Claude Desktop has no proven route and Cursor installs no hook,
- * so their `unsupported` never refuses setup for another harness and never gates readiness.
+ * so their `unsupported` never gates readiness, not even when no other harness is detected.
  */
 const REPORT_ONLY_WHEN_UNSUPPORTED: ReadonlySet<HarnessId> = new Set(['cursor', 'claude-app']);
 const INSTALLER_COMPONENTS: ReadonlySet<SetupComponent> = new Set(['payload', 'launcher']);
@@ -161,9 +161,7 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
     const { operations, contents, entryOwnedPaths } = planned;
     const modes = new Map(snapshot.installer.flatMap(({ file, operation }) =>
       operation !== null && file.mode !== undefined ? [[file.path, file.mode] as const] : []));
-    const unsupportedHarnesses = snapshot.observed
-      .filter(entry => !entry.report.version.supported && !REPORT_ONLY_WHEN_UNSUPPORTED.has(entry.report.harness))
-      .map(entry => entry.report.harness);
+    const unsupportedHarnesses = snapshot.observed.filter(unsupportedForSetup).map(entry => entry.report.harness);
     const digest = planDigest(command, snapshot, operations, modes, unsupportedHarnesses);
     return { snapshot, stop, operations, diagnostics, recovery: null,
       executable: { command, planDigest: digest, operations, contents, modes, unsupportedHarnesses, entryOwnedPaths } };
@@ -173,15 +171,16 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
     const { snapshot, stop, operations, diagnostics, executable, recovery } = await prepare(command);
     if (recovery !== null) return await recover(command, lifecycleOptions, snapshot, executable.planDigest, recovery);
     if (stop !== null) return result(command, stop, snapshot, [], null, NOT_REQUIRED, diagnostics);
+    const skipped = command === 'setup' ? skippedDiagnostics(snapshot) : [];
     if (operations.length === 0) {
       return result(command, command === 'setup' ? statusState(snapshot) : settledRemoveState(snapshot), snapshot,
-        [], null, NOT_REQUIRED);
+        [], null, NOT_REQUIRED, [...snapshot.diagnostics, ...skipped]);
     }
     const digest = executable.planDigest;
     // A dry run never reaches the executor, whatever digest it carries.
     if (lifecycleOptions.dryRun || lifecycleOptions.confirm !== digest) {
       return result(command, 'confirmation_required', snapshot, operations, digest,
-        confirmationRequest(command, snapshot, operations, digest));
+        confirmationRequest(command, snapshot, operations, digest), [...snapshot.diagnostics, ...skipped]);
     }
     return await confirmed(command, digest, snapshot);
   }
@@ -240,7 +239,9 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
       case 'committed': {
         const after = await observe(options.environment(), adapters, payload);
         const state = command === 'setup' ? statusState(after) : settledRemoveState(after);
-        return { ...result(command, state, after, [], digest, CONFIRMED), changed: outcome.changed, operations: outcome.operations };
+        const diagnostics = command === 'setup' ? [...after.diagnostics, ...skippedDiagnostics(after)] : after.diagnostics;
+        return { ...result(command, state, after, [], digest, CONFIRMED, diagnostics),
+          changed: outcome.changed, operations: outcome.operations };
       }
       case 'refused':
         return executed(command, outcome.state, digest, [], outcome.diagnostics);
@@ -444,7 +445,7 @@ async function observeInstaller(
   const targets: InstallerTarget[] = [];
   for (const file of await payload(environment)) {
     const owner = observed.find(entry => file.harnesses.includes(entry.report.harness)
-      && entry.report.version.supported && entry.refusal === null);
+      && entry.refusal === null && !unsupportedForSetup(entry));
     if (owner === undefined) continue;
     const harness = owner.report.harness;
     const hash = current.get(file.path) ?? await read(file.path);
@@ -573,6 +574,9 @@ function planOperations(command: LifecycleCommand, snapshot: Snapshot): Planned 
   for (const entry of snapshot.observed) {
     // A harness whose inspection failed has no observation its adapter could plan from.
     if (entry.report.executable.path === null) continue;
+    // Setup leaves an unsupported harness untouched and configures the rest; removal still
+    // takes out whatever the manifest says Khala installed for it.
+    if (command === 'setup' && unsupportedForSetup(entry)) continue;
     const request = { desired, observation: entry.observation } as const;
     let planned: readonly SetupOperation[];
     try {
@@ -660,29 +664,47 @@ function recoveryDiagnostic(snapshot: Snapshot, journal: SetupJournalSummary): S
   }
 }
 
+/**
+ * A detected harness setup will not configure: its version is untested, or its adapter reports
+ * it unsupported. It refuses setup only for itself: the other harnesses are still planned, and
+ * it gates readiness only when no harness setup can configure is detected.
+ */
+function unsupportedForSetup(entry: Observed): boolean {
+  if (REPORT_ONLY_WHEN_UNSUPPORTED.has(entry.report.harness)) return false;
+  return !entry.report.version.supported || entry.refusal?.state === 'unsupported'
+    || entry.report.components.some(component => component.state === 'unsupported');
+}
+
 function statusState(snapshot: Snapshot): SetupState {
   if (snapshot.recovery) return 'recovery_required';
-  const states = new Set(snapshot.observed.map(harnessState).filter(state => state !== null));
-  if (states.size === 0) return 'no_harness';
+  const configurable = snapshot.observed.filter(entry => !unsupportedForSetup(entry));
+  const states = new Set(configurable.map(harnessState).filter(state => state !== null));
+  if (states.size === 0) return configurable.length < snapshot.observed.length ? 'unsupported' : 'no_harness';
   return STATE_PRECEDENCE.find(state => states.has(state)) ?? 'ready';
 }
 
 function refusalState(command: LifecycleCommand, snapshot: Snapshot): SetupState | null {
-  for (const state of ['conflict', 'drifted', 'unsupported'] as const) {
-    const blocked = snapshot.observed.some(entry => {
-      if (command === 'setup' && entry.refusal?.state === state) return true;
-      const components = entry.report.components.some(component => component.state === state);
-      // Removal stays available for an unsupported harness; drift or conflict refuses both. A
-      // report-only harness being unsupported never refuses setup for the others.
-      if (state === 'unsupported') {
-        return command === 'setup' && !REPORT_ONLY_WHEN_UNSUPPORTED.has(entry.report.harness)
-          && (components || !entry.report.version.supported);
-      }
-      return components;
-    });
+  // Setup never plans an unsupported harness, so only the harnesses it would change can refuse
+  // it. Removal stays available for an unsupported harness; drift or conflict refuses both.
+  const planned = command === 'setup' ? snapshot.observed.filter(entry => !unsupportedForSetup(entry)) : snapshot.observed;
+  for (const state of ['conflict', 'drifted'] as const) {
+    const blocked = planned.some(entry => (command === 'setup' && entry.refusal?.state === state)
+      || entry.report.components.some(component => component.state === state));
     if (blocked) return state;
   }
+  // With every detected harness unsupported there is nothing setup may configure.
+  if (command === 'setup' && planned.length < snapshot.observed.length
+    && planned.every(entry => REPORT_ONLY_WHEN_UNSUPPORTED.has(entry.report.harness))) return 'unsupported';
   return null;
+}
+
+/** Names each unsupported harness a setup leaves unchanged while it configures the others. */
+function skippedDiagnostics(snapshot: Snapshot): SetupDiagnostic[] {
+  return snapshot.observed.filter(unsupportedForSetup).map(entry => ({
+    code: 'harness_unsupported', severity: 'warning', harness: entry.report.harness,
+    message: `${entry.report.harness} ${entry.report.version.detected ?? '(unknown version)'} is not supported; `
+      + 'setup leaves it unchanged and configures the other detected harnesses.',
+  }));
 }
 
 function settledRemoveState(snapshot: Snapshot): SetupState {
