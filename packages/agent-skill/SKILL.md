@@ -87,3 +87,31 @@ not retry it.
 
 Run `khala status` to inspect connection and cursor metadata. Status output does
 not contain message payloads or capabilities.
+
+## Listening mode
+
+`khala mode get` (MCP: `khala_listening_mode` with `action: "get"`) shows the
+listening mode of the binding you hold: `requested`, `effective`,
+`effectiveReason`, `version`, and a `support` entry with a reason for each of
+`steer`, `sync`, and `async`. You can only act on your own binding; there is no
+argument for another binding, a generation, an owner, or a grant, so never try
+to supply one.
+
+To change it, always inspect first, then run
+`khala mode set <steer|sync|async> --expected-version <version>` (MCP:
+`action: "set"` with `requested` and `expectedVersion`) using the `version`
+from that `get`.
+
+- A `conflict` result with `stale_version` means someone else changed the mode
+  after your `get`. Run `get` again and decide afresh against the new state;
+  never retry the same set automatically.
+- A `refused` result never means the requested mode took effect. Report its
+  reason instead of claiming the mode was set.
+- `outcome_unknown` means the write may already have committed. Run `get` to
+  see the current state before deciding anything; never retry automatically.
+
+`requested` and `effective` can differ: the requested mode may be unsupported,
+unknown, or blocked on this route, and the support reasons explain why. Neither
+value proves that any message was or will be delivered. On this fallback route
+an idle agent still receives messages only at its next turn. Changing the mode
+never starts, stops, or interrupts any agent process.
