@@ -2,6 +2,8 @@ import { LISTENING_MODE_RESULT_OUTCOMES, LISTENING_MODES, type ListeningMode } f
 import { parseAccessTarget, validOperationArgument } from '../cli/channels/access.js';
 import { validCursorArgument, validOriginArgument } from '../cli/channels/service.js';
 import type { AccessRequestInput, AccessStatusInput, ChannelListInput } from '../cli/channels/types.js';
+import { parseCreateTitle } from '../cli/channels/create/service.js';
+import type { CreateRequestInput } from '../cli/channels/create/types.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import { plainObject, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { readRuntimeDescriptor, type RuntimeDescriptorFailure } from './claude-descriptor.js';
@@ -28,7 +30,8 @@ export type ClaudeSessionRequest =
   | Readonly<{ v: 1; op: 'pending' | 'hook'; sessionId: string }>
   | (Readonly<{ v: 1; op: 'channels'; sessionId: string }> & ChannelListInput)
   | (Readonly<{ v: 1; op: 'access_request'; sessionId: string }> & AccessRequestInput)
-  | (Readonly<{ v: 1; op: 'access_status'; sessionId: string }> & AccessStatusInput);
+  | (Readonly<{ v: 1; op: 'access_status'; sessionId: string }> & AccessStatusInput)
+  | (Readonly<{ v: 1; op: 'create_request'; sessionId: string }> & CreateRequestInput);
 
 export type ClaudeSessionResponse = Readonly<{ status: 200 | 400 | 401; body: Readonly<Record<string, unknown>> }>;
 
@@ -64,6 +67,9 @@ export async function handleClaudeSessionRequest(
       target: request.target, operationId: request.operationId, origin: request.origin,
     }); break;
     case 'access_status': outcome = await adapter.accessStatus(call, { operationId: request.operationId, origin: request.origin }); break;
+    case 'create_request': outcome = await adapter.requestCreate(call, {
+      title: request.title, operationId: request.operationId, origin: request.origin,
+    }); break;
   }
   return { status: outcome.kind === 'refused' && outcome.code === 'unauthorized' ? 401 : 200, body: outcome };
 }
@@ -98,6 +104,13 @@ function decodeRequest(value: unknown): ClaudeSessionRequest | null {
     case 'access_status':
       if (!only('operationId', 'origin') || !validOperationArgument(value.operationId) || !optional(value.origin, validOriginArgument)) return null;
       return { v: 1, op: 'access_status', sessionId, operationId: value.operationId, origin: value.origin ?? null } as ClaudeSessionRequest;
+    case 'create_request': {
+      const title = parseCreateTitle(value.title);
+      // A title the create service would rewrite was not sent by the client: refuse it.
+      if (!only('title', 'operationId', 'origin') || title === null || title !== value.title
+        || !validOperationArgument(value.operationId) || !optional(value.origin, validOriginArgument)) return null;
+      return { v: 1, op: 'create_request', sessionId, title, operationId: value.operationId, origin: value.origin ?? null } as ClaudeSessionRequest;
+    }
     default:
       return null;
   }
@@ -137,6 +150,11 @@ export interface ClaudeSessionClient {
   listChannels(sessionId: string, input: ChannelListInput, signal?: AbortSignal): Promise<Result<ClaudeAccessOutcome>>;
   requestAccess(sessionId: string, input: AccessRequestInput, signal?: AbortSignal): Promise<Result<ClaudeAccessOutcome>>;
   accessStatus(sessionId: string, input: AccessStatusInput, signal?: AbortSignal): Promise<Result<ClaudeAccessOutcome>>;
+  /**
+   * A create intent filed for this session; a retry under the same operation ID reads its
+   * current state. The result is the raw port result, decoded by the caller.
+   */
+  requestCreate(sessionId: string, input: CreateRequestInput, signal?: AbortSignal): Promise<Result<ClaudeAccessOutcome>>;
 }
 
 export const DEFAULT_CLIENT_TIMEOUT_MS = 10_000;
@@ -249,6 +267,11 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
     },
     async accessStatus(sessionId, input, signal) {
       return accessResult(await call({ v: 1, op: 'access_status', sessionId, operationId: input.operationId, origin: input.origin }, signal));
+    },
+    async requestCreate(sessionId, input, signal) {
+      return accessResult(await call({
+        v: 1, op: 'create_request', sessionId, title: input.title, operationId: input.operationId, origin: input.origin,
+      }, signal));
     },
     async hook(sessionId, signal) {
       const value = await call({ v: 1, op: 'hook', sessionId }, signal);

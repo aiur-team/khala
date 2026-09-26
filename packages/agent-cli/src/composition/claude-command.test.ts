@@ -34,6 +34,7 @@ function client(overrides: Partial<ClaudeSessionClient> = {}): ClaudeSessionClie
     listChannels: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
     requestAccess: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
     accessStatus: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
+    requestCreate: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
     hook: vi.fn(async () => ({ kind: 'hook' as const, effective: 'sync' as const, watchSeconds: 3000 })),
     ...overrides,
   };
