@@ -9,9 +9,11 @@ import {
 } from '@khala/connector/bootstrap/channel-access-activation';
 import { type ProofSigner, createProofSigner } from '@khala/connector/bootstrap/proof';
 import { ADAPTER_CAPABILITIES } from '@khala/connector/bootstrap/ports';
-import { INTERNAL_ACTIVE_DESCRIPTOR_FILE, encodeInternalDescriptor, isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
 import {
-  INTERNAL_CONNECTOR_KEY_FILE, type InternalDiscoveryDescriptor, parseInternalConnectorKey,
+  INTERNAL_ACTIVE_DESCRIPTOR_FILE, type InternalDescriptor, encodeInternalDescriptor, isGrantedDescriptor,
+} from '@khala/contracts/internal/descriptor';
+import {
+  INTERNAL_CONNECTOR_KEY_FILE, INTERNAL_GRANT_DESCRIPTOR_FILE, type InternalDiscoveryDescriptor, parseInternalConnectorKey,
 } from '@khala/contracts/internal/discovery-descriptor';
 import {
   type AccessRequestOutcome, type GrantExchangeRejection, type StableAgentPrincipal, decodeAccessRequestStatus,
@@ -23,17 +25,22 @@ import { readInternalDescriptor } from './internal.js';
 
 // Finishes an owner-approved channel-access request against the local internal
 // server: exchange with a fresh DPoP proof from the discovery `connector-key.json`,
-// open the sealed grant, `/activate`, write the returned binding into `active.json`
-// and only then acknowledge `/ready`. It drives the connector's activation state
+// open the sealed grant, `/activate`, write the returned binding into the agent's own
+// `grant.json` and only then acknowledge `/ready`. It drives the connector's activation state
 // machine with internal ports, so every step is journaled and resumable: a crash at
 // any point resumes by operation ID with the same device and the same binding.
 // The server's binding ID is derived from the operation, so a resume never mints a
 // second binding, and `grant: null` resumes an activation that already happened.
 // That is also how a connected binding survives a launcher restart: capabilities are
-// launch-scoped, a resumed launcher writes a transport-only descriptor, and the next
-// activation of the connected operation takes a fresh capability for the same binding.
+// launch-scoped, a resumed launcher's new transport capability reseeds the agent's grant
+// file transport-only, and the next activation of the connected operation takes a fresh
+// capability for the same binding.
 //
-// A capability lives only in memory and in `active.json` (0600). Nothing here
+// Each agent's grant lives in its own file beside its discovery descriptor, so two
+// sessions of one OS user never compete for the launch's single `active.json`. The first
+// agent to bind also mirrors its grant there for the session-less Codex and OpenCode entries.
+//
+// A capability lives only in memory and in the granted descriptor (0600). Nothing here
 // writes a grant, capability or recovery key to any output.
 
 export const INTERNAL_CONNECTOR_PATH = '/api/connector/channel-access-requests';
@@ -53,15 +60,10 @@ export type InternalActivationOptions = Readonly<{
   origin: string;
   operationId: string;
   /**
-   * The granted descriptor to write instead of the shared `active.json`. It must already
+   * The granted descriptor to write instead of the agent's `grant.json`. It must already
    * hold the launch's transport descriptor. The Claude session route keeps one per session.
    */
-  activePath?: string | undefined;
-  /**
-   * Record the approved binding's channel in `activePath` even when it is not the launch
-   * channel. Only for a descriptor that serves this one binding, never the shared `active.json`.
-   */
-  adoptChannel?: boolean;
+  grantPath?: string | undefined;
   /** `repair_required` from the service: resume the same operation with its device and recovery key. */
   repair?: boolean;
   fetch?: typeof fetch | undefined;
@@ -74,23 +76,28 @@ export type InternalActivationOptions = Readonly<{
 export type InternalActivationOutcome =
   | 'connected' | 'connecting' | 'repair_required' | 'denied' | 'expired' | 'revoked' | 'unavailable';
 
-/** The private state root beside the discovery descriptor, and the stable `active.json` above it. */
+/**
+ * The private state root beside the discovery descriptor: the agent's own granted
+ * descriptor lives there, and the launch's stable `active.json` two levels above it.
+ */
 export function activationPaths(descriptorPath: string) {
   const directory = path.dirname(descriptorPath);
   return {
     directory,
     keyFile: path.join(directory, INTERNAL_CONNECTOR_KEY_FILE),
     journalDirectory: path.join(directory, ACTIVATION_DIRECTORY),
-    activePath: path.resolve(directory, '..', '..', INTERNAL_ACTIVE_DESCRIPTOR_FILE),
+    grantPath: path.join(directory, INTERNAL_GRANT_DESCRIPTOR_FILE),
+    launchPath: path.resolve(directory, '..', '..', INTERNAL_ACTIVE_DESCRIPTOR_FILE),
   };
 }
 
 /** Runs one journaled activation of `operationId` as far as it goes. Never throws. */
 export async function activateInternalAccess(options: InternalActivationOptions): Promise<InternalActivationOutcome> {
   const derived = activationPaths(options.descriptorPath);
-  const paths = options.activePath === undefined ? derived : { ...derived, activePath: options.activePath };
+  const paths = options.grantPath === undefined ? derived : { ...derived, grantPath: options.grantPath };
   const signer = loadSigner(paths.keyFile, options.descriptor, options.clock);
   if (signer === null) return 'unavailable';
+  if (options.grantPath === undefined && !seedGrant(paths.grantPath, paths.launchPath)) return 'unavailable';
   let lock: Readonly<{ release(): Promise<void> }>;
   try {
     await ensureDirectory(paths.journalDirectory);
@@ -107,7 +114,7 @@ export async function activateInternalAccess(options: InternalActivationOptions)
       sessionGeneration: options.descriptor.generation,
     }, ports);
     if (journaled !== 'journaled') return 'unavailable';
-    const restored = await restoreConnected(options.operationId, ports, paths.activePath);
+    const restored = await restoreConnected(options.operationId, ports, paths.grantPath);
     if (restored !== null) return restored;
     const result = await activateChannelAccess(options.operationId, ports, {
       repair: options.repair === true, signal: options.signal,
@@ -127,13 +134,13 @@ export async function activateInternalAccess(options: InternalActivationOptions)
  * leaves every other case to the activation state machine.
  */
 async function restoreConnected(
-  operationId: string, ports: ChannelAccessActivationPorts, activePath: string,
+  operationId: string, ports: ChannelAccessActivationPorts, grantPath: string,
 ): Promise<InternalActivationOutcome | null> {
   const loaded = await ports.journal.load(operationId);
   if (loaded.kind !== 'record' || loaded.record.phase !== 'connected') return null;
   const { binding, deviceId, origin } = loaded.record;
   if (binding === null || deviceId === null) return null;
-  const held = readInternalDescriptor(activePath);
+  const held = readInternalDescriptor(grantPath);
   if (!held.ok) return 'unavailable';
   if (isGrantedDescriptor(held.value)) {
     // Another grant holds the descriptor: leave both it and this journal untouched.
@@ -275,7 +282,7 @@ function createPorts(
     async resume(input) {
       // A descriptor that already holds this binding is the finished write: never call
       // `/activate` again, which would rotate the capability out from under a running client.
-      const held = readInternalDescriptor(paths.activePath);
+      const held = readInternalDescriptor(paths.grantPath);
       if (held.ok && isGrantedDescriptor(held.value) && held.value.bindingId === input.bindingId) {
         const loaded = await journal.load(operationId);
         if (loaded.kind !== 'record' || loaded.record.binding === null || loaded.record.binding.bindingId !== input.bindingId) {
@@ -329,14 +336,15 @@ function createPorts(
       },
       async activate(input) {
         if (channelId === null) return { kind: 'failed', reason: 'initialization_failed' };
-        return writeBinding(paths.activePath, {
-          channelId, grantRef: operationId, bindingId: input.binding.bindingId, bindingCapability: input.capability.token,
-        }, options.adoptChannel === true);
+        const grant = { channelId, grantRef: operationId, bindingId: input.binding.bindingId, bindingCapability: input.capability.token };
+        const written = writeBinding(paths.grantPath, grant);
+        if (written.kind === 'ready' && options.grantPath === undefined) mirrorLaunchGrant(paths.launchPath, paths.grantPath, grant);
+        return written;
       },
       async status() {
         const loaded = await journal.load(operationId);
         if (loaded.kind !== 'record' || loaded.record.binding === null) return 'missing';
-        const held = readInternalDescriptor(paths.activePath);
+        const held = readInternalDescriptor(paths.grantPath);
         if (!held.ok) return 'unavailable';
         return isGrantedDescriptor(held.value) && held.value.bindingId === loaded.record.binding.bindingId ? 'ready' : 'incomplete';
       },
@@ -351,31 +359,67 @@ function createPorts(
 }
 
 /**
- * Atomically adds `{grantRef, bindingId, bindingCapability}` to `active.json`. It refuses
- * a different live binding, so an approval never replaces another agent's grant. With
- * `adoptChannel` the descriptor takes the grant's channel instead of requiring the launch's.
+ * Seeds the agent's granted descriptor from the launch's transport descriptor. A file from
+ * this launch is kept, grant and all, so an agent holds one binding at a time and a resumed
+ * `join` finds its finished write. A file from an earlier launch holds a capability that
+ * launch's shutdown ended, so it is replaced.
  */
-function writeBinding(activePath: string, grant: Readonly<{
+function seedGrant(grantPath: string, launchPath: string): boolean {
+  const launch = readInternalDescriptor(launchPath);
+  if (!launch.ok) return false;
+  const held = readInternalDescriptor(grantPath);
+  if (held.ok && held.value.origin === launch.value.origin
+    && held.value.transportCapability === launch.value.transportCapability) return true;
+  const { v, channelId, origin, transportCapability } = launch.value;
+  const text = encodeOrNull({ v, channelId, origin, transportCapability });
+  return text !== null && writeDescriptor(grantPath, text);
+}
+
+/**
+ * Atomically adds `{grantRef, bindingId, bindingCapability}` to the agent's granted
+ * descriptor, which takes the grant's channel. It refuses a different live binding, so an
+ * approval never replaces the grant the file already holds.
+ */
+function writeBinding(grantPath: string, grant: Readonly<{
   channelId: string; grantRef: string; bindingId: string; bindingCapability: string;
-}>, adoptChannel: boolean): Readonly<{ kind: 'ready' }> | Readonly<{ kind: 'failed'; reason: 'storage_unavailable' | 'initialization_failed' }> {
-  const current = readInternalDescriptor(activePath);
+}>): Readonly<{ kind: 'ready' }> | Readonly<{ kind: 'failed'; reason: 'storage_unavailable' | 'initialization_failed' }> {
+  const current = readInternalDescriptor(grantPath);
   if (!current.ok) return { kind: 'failed', reason: 'storage_unavailable' };
   if (isGrantedDescriptor(current.value)) {
     // The same binding is the completed write. Anything else belongs to another grant.
     return current.value.bindingId === grant.bindingId && current.value.channelId === grant.channelId
       ? { kind: 'ready' } : { kind: 'failed', reason: 'initialization_failed' };
   }
-  if (!adoptChannel && current.value.channelId !== grant.channelId) return { kind: 'failed', reason: 'initialization_failed' };
-  let text: string;
-  try {
-    text = encodeInternalDescriptor({
-      ...current.value, channelId: grant.channelId,
-      grantRef: grant.grantRef, bindingId: grant.bindingId, bindingCapability: grant.bindingCapability,
-    });
-  } catch {
-    return { kind: 'failed', reason: 'initialization_failed' };
-  }
-  const temporary = path.join(path.dirname(activePath), `.${INTERNAL_ACTIVE_DESCRIPTOR_FILE}.${randomUUID()}.tmp`);
+  const text = encodeOrNull({
+    ...current.value, channelId: grant.channelId,
+    grantRef: grant.grantRef, bindingId: grant.bindingId, bindingCapability: grant.bindingCapability,
+  });
+  if (text === null) return { kind: 'failed', reason: 'initialization_failed' };
+  return writeDescriptor(grantPath, text) ? { kind: 'ready' } : { kind: 'failed', reason: 'storage_unavailable' };
+}
+
+/**
+ * Mirrors the agent's grant into the launch's `active.json`, which the installed Codex and
+ * OpenCode `mcp-serve` entries read with no session to pick a `grant.json` by. Only a
+ * launch file from the same launch that holds no other live grant takes it, so the first
+ * agent to bind owns it and later agents keep their grant in `grant.json` alone. Best
+ * effort: the agent's own `grant.json` is the binding of record.
+ */
+function mirrorLaunchGrant(launchPath: string, grantPath: string, grant: Parameters<typeof writeBinding>[1]): void {
+  const launch = readInternalDescriptor(launchPath);
+  const held = readInternalDescriptor(grantPath);
+  if (!launch.ok || !held.ok || launch.value.origin !== held.value.origin
+    || launch.value.transportCapability !== held.value.transportCapability) return;
+  writeBinding(launchPath, grant);
+}
+
+function encodeOrNull(descriptor: InternalDescriptor): string | null {
+  try { return encodeInternalDescriptor(descriptor); } catch { return null; }
+}
+
+/** Replaces `file` with `text` as one owner-only 0600 file, fsynced with its directory. */
+function writeDescriptor(file: string, text: string): boolean {
+  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
   try {
     const handle = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
     try {
@@ -385,13 +429,13 @@ function writeBinding(activePath: string, grant: Readonly<{
     } finally {
       fs.closeSync(handle);
     }
-    fs.renameSync(temporary, activePath);
-    const parent = fs.openSync(path.dirname(activePath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+    fs.renameSync(temporary, file);
+    const parent = fs.openSync(path.dirname(file), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
     try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
-    return { kind: 'ready' };
+    return true;
   } catch {
     try { fs.unlinkSync(temporary); } catch { /* never written, or already renamed */ }
-    return { kind: 'failed', reason: 'storage_unavailable' };
+    return false;
   }
 }
 

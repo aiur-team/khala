@@ -4,10 +4,17 @@
 // server stops: launcher shutdown remains the only normal server stop.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
-import { isGrantedDescriptor, parseInternalDescriptor, MAX_INTERNAL_DESCRIPTOR_BYTES } from '@khala/contracts/internal/descriptor';
-import { activeDescriptorPath, writeActiveDescriptor } from '../../descriptor/write';
+import {
+  INTERNAL_ACTIVE_DESCRIPTOR_FILE, MAX_INTERNAL_DESCRIPTOR_BYTES, encodeInternalDescriptor, isGrantedDescriptor,
+  parseInternalDescriptor,
+} from '@khala/contracts/internal/descriptor';
+import {
+  INTERNAL_CLAUDE_GRANT_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DIRECTORY, INTERNAL_GRANT_DESCRIPTOR_FILE,
+} from '@khala/contracts/internal/discovery-descriptor';
+import { writePrivateFile } from '../../descriptor/write';
 import type { BindingStopOptions } from '../../server/channel-server';
 import type { GrantClearing } from '../../server/stop/service';
 import type { InternalStoreHandle } from '../../store/open';
@@ -64,21 +71,49 @@ function readDescriptorText(file: string): string | null {
 }
 
 /**
- * Rewrites `active.json` without its grant when the grant names one of
- * `bindingIds`. A missing descriptor is never recreated: the launcher removes it
- * first on shutdown, and a Stop must not republish discovery for a server that is going away.
+ * Rewrites every granted descriptor whose grant names one of `bindingIds` without that
+ * grant: the root `active.json`, and each agent's own `grant.json` (and Claude session
+ * grant) below `discovery/<principal>/`. A missing descriptor is never recreated: the
+ * launcher removes `active.json` first on shutdown, and a Stop must not republish
+ * discovery for a server that is going away. One failed file fails the clearing, but
+ * every other file is still cleared.
  */
 export function clearDescriptorGrant(root: string, bindingIds: ReadonlySet<string>): GrantClearing {
+  let clearing: GrantClearing = 'absent';
+  const merge = (next: GrantClearing) => {
+    if (clearing === 'failed' || next === 'absent') return;
+    clearing = next;
+  };
+  merge(clearGrantFile(root, INTERNAL_ACTIVE_DESCRIPTOR_FILE, bindingIds));
+  const discovery = path.join(root, INTERNAL_DISCOVERY_DIRECTORY);
+  let principals: fs.Dirent[];
   try {
-    const text = readDescriptorText(activeDescriptorPath(root));
+    principals = fs.readdirSync(discovery, { withFileTypes: true });
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? clearing : 'failed';
+  }
+  for (const principal of principals) {
+    // A symlinked principal directory is never followed.
+    if (!principal.isDirectory()) continue;
+    for (const name of AGENT_GRANT_FILES) merge(clearGrantFile(path.join(discovery, principal.name), name, bindingIds));
+  }
+  return clearing;
+}
+
+/** Each agent's own granted descriptor names, beside its discovery descriptor. */
+const AGENT_GRANT_FILES = [INTERNAL_GRANT_DESCRIPTOR_FILE, INTERNAL_CLAUDE_GRANT_DESCRIPTOR_FILE] as const;
+
+function clearGrantFile(directory: string, name: string, bindingIds: ReadonlySet<string>): GrantClearing {
+  try {
+    const text = readDescriptorText(path.join(directory, name));
     if (text === null) return 'absent';
     const decoded = parseInternalDescriptor(text);
     if (!decoded.ok) return 'failed';
     const current = decoded.value;
     if (!isGrantedDescriptor(current) || !bindingIds.has(current.bindingId)) return 'absent';
-    writeActiveDescriptor(root, {
+    writePrivateFile(directory, name, encodeInternalDescriptor({
       v: 1, channelId: current.channelId, origin: current.origin, transportCapability: current.transportCapability,
-    });
+    }));
     return 'cleared';
   } catch {
     return 'failed';
