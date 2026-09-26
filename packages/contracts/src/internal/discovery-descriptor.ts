@@ -1,6 +1,7 @@
 // Discovery-only descriptor for an unjoined internal agent, plus its separate
 // connector proof key. `khala internal discovery` writes both as owner-private
-// 0600 files below `<internal root>/discovery/<principal>/`.
+// 0600 files below `<internal root>/discovery/<principal>/`, where `join` later
+// writes that agent's own granted descriptor.
 //
 // The descriptor's capability authorizes exactly listing channels, requesting
 // access and submitting a create intent. It never sends, receives, decides,
@@ -16,6 +17,14 @@ import { isInternalCapability, isInternalIdentifier } from './descriptor';
 export const INTERNAL_DISCOVERY_DIRECTORY = 'discovery';
 export const INTERNAL_DISCOVERY_DESCRIPTOR_FILE = 'descriptor.json';
 export const INTERNAL_CONNECTOR_KEY_FILE = 'connector-key.json';
+/**
+ * The agent's own 0600 granted descriptor beside its discovery descriptor. `join` writes
+ * the approved binding here, never into the shared `active.json`, so every agent session
+ * of one OS user holds its own grant.
+ */
+export const INTERNAL_GRANT_DESCRIPTOR_FILE = 'grant.json';
+/** A Claude session's granted descriptor, kept by the launcher's Claude session route. */
+export const INTERNAL_CLAUDE_GRANT_DESCRIPTOR_FILE = 'claude-grant.json';
 export const MAX_INTERNAL_DISCOVERY_FILE_BYTES = 1_024;
 
 export const INTERNAL_DISCOVERY_SCOPES = ['list_channels', 'request_channel_access', 'request_channel_create'] as const;

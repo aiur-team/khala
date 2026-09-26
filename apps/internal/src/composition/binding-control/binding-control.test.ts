@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
-import { writeActiveDescriptor } from '../../descriptor/write';
+import { ensurePrivateDirectory, writeActiveDescriptor, writePrivateFile } from '../../descriptor/write';
 import { mintCredential } from '../../server/credentials';
 import { bobBinding, channelId, createChannelFixture, otherChannelId, type ChannelFixture } from '../../server/fixtures/channel-fixture';
 import { clearDescriptorGrant, composeBindingControl, readActivatedBindings } from './index';
@@ -46,6 +46,33 @@ describe('descriptor grant clearing', () => {
     fs.rmSync(activePath(fx));
     expect(clearDescriptorGrant(fx.root, new Set(['binding-bob']))).toBe('absent');
     expect(fs.existsSync(activePath(fx))).toBe(false);
+  });
+
+  it("clears each agent's own granted descriptor whose binding was stopped, and only those", () => {
+    const fx = fixture();
+    writeActiveDescriptor(fx.root, transport);
+    const agentDirectory = (principal: string) => path.join(fx.root, 'discovery', principal);
+    const write = (principal: string, name: string, bindingId: string) => {
+      ensurePrivateDirectory(path.join(fx.root, 'discovery'));
+      writePrivateFile(agentDirectory(principal), name, encodeInternalDescriptor(granted(bindingId)));
+    };
+    write('agent-bob', 'grant.json', 'binding-bob');
+    write('agent-claude', 'claude-grant.json', 'binding-claude');
+    write('agent-other', 'grant.json', 'binding-other');
+    const other = fs.readFileSync(path.join(agentDirectory('agent-other'), 'grant.json'), 'utf8');
+
+    expect(clearDescriptorGrant(fx.root, new Set(['binding-bob', 'binding-claude']))).toBe('cleared');
+    expect(fs.readFileSync(path.join(agentDirectory('agent-bob'), 'grant.json'), 'utf8')).toBe(encodeInternalDescriptor(transport));
+    expect(fs.readFileSync(path.join(agentDirectory('agent-claude'), 'claude-grant.json'), 'utf8')).toBe(encodeInternalDescriptor(transport));
+    expect(fs.statSync(path.join(agentDirectory('agent-bob'), 'grant.json')).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(path.join(agentDirectory('agent-other'), 'grant.json'), 'utf8')).toBe(other);
+    expect(clearDescriptorGrant(fx.root, new Set(['binding-bob']))).toBe('absent');
+
+    // One unreadable agent file fails the clearing without keeping the others granted.
+    write('agent-bob', 'grant.json', 'binding-bob');
+    fs.writeFileSync(path.join(agentDirectory('agent-other'), 'grant.json'), '{not json', { mode: 0o600 });
+    expect(clearDescriptorGrant(fx.root, new Set(['binding-bob']))).toBe('failed');
+    expect(fs.readFileSync(path.join(agentDirectory('agent-bob'), 'grant.json'), 'utf8')).toBe(encodeInternalDescriptor(transport));
   });
 
   it('fails closed on an unreadable descriptor', () => {

@@ -208,8 +208,10 @@ but its server could not start, the failure also includes `channelId` and
 ### Local agent client
 
 An agent session you start yourself reaches the running launcher with a leading
-`--internal-descriptor <absolute-path>` naming `active.json`, or, for `join`
-before a grant, naming its discovery `descriptor.json`. The path is the
+`--internal-descriptor <absolute-path>`. For `join`, that path names the
+session's discovery `descriptor.json`. After the grant, it names that session's
+own `grant.json` in the same directory. Before `join`, it can also name
+`active.json`. The path is the
 only thing an installed MCP or plugin entry stores; the port and capabilities
 are never passed in arguments, the environment, or configuration. The option
 selects the local client for `status`, `send`, `read`, `listen`, `mcp-serve`,
@@ -237,9 +239,15 @@ the local client.
   live grant for that channel. The owner approves in the channel-requests
   inbox. Once it is approved, the next `join` finishes the binding: it
   exchanges with a fresh proof from `connector-key.json`, opens the sealed
-  grant, activates, writes `grantRef`, `bindingId` and `bindingCapability`
-  into `active.json`, and only then acknowledges readiness, so `read`,
-  `listen` and `mcp-serve` pick it up without a restart. Progress is
+  grant, and activates. It then writes the launch's transport descriptor plus
+  `grantRef`, `bindingId` and `bindingCapability` into `grant.json` (mode 0600)
+  beside that discovery descriptor, and only then acknowledges readiness.
+  `read`, `listen` and `mcp-serve` pointed at `grant.json` pick it up without a
+  restart. Each agent session keeps its own `grant.json`, so two sessions of
+  one OS user can both join one channel as separate bindings. `active.json`
+  stays transport-only. A `grant.json` left from an earlier launch is replaced
+  on the next `join`. Stop removes the grant from every `grant.json` whose
+  binding it revokes. Progress is
   journaled beside the discovery descriptor, so a `join` after a crash
   resumes the same binding and never mints a second one. No grant or
   capability is printed.
