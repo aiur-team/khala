@@ -514,11 +514,26 @@ automation fence's notification signal; it never pulls or acknowledges.
 For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
 (`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the
 MCP server's own `CLAUDE_CODE_SESSION_ID`, so a tool call cannot name another
-session. It has no pull. A missing ID fails closed as `session_missing`. Wiring
-it into `mcp-serve` belongs to the plugin dispatch work.
+session. It has no pull. A missing ID fails closed as `session_missing`.
+
+The Claude plugin's MCP entry launches `khala mcp-serve` with
+`KHALA_MCP_HARNESS=claude`. The session ID alone does not select this mode,
+because every process a Claude Bash tool starts inherits it. In this mode
+`mcp-serve` holds no binding, inbox, or listener lock. It serves three tools
+over `createClaudeAgentEntry`:
+
+- `khala_send { message }`: the plugin's `/khala send`.
+- `khala_read {}`: both a person-entered `/khala read` and the agent's own read.
+- `khala_status {}`: the requested and effective mode, plus per-mode support
+  from `HarnessCapabilities`, where unevidenced modes read `unproven`.
+
+None of these tools accepts `bindingId` or `ackBatchToken`. The session selects
+the binding, and tokens stay inside Khala. A read or piggyback batch arrives as
+its own content item in the shared `<khala-channel-batch-v1>` frame, without its
+token.
 
 The installed binary does not compose this client yet, so `khala claude`
-fails closed with `transport_unavailable`.
+and the plugin's `mcp-serve` fail closed with `transport_unavailable`.
 
 ## Composition boundary
 
