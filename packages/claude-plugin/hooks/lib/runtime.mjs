@@ -4,6 +4,9 @@
 // this runtime never sees a token, never reads or acknowledges the inbox, and
 // never deduplicates. The only state it keeps is ephemeral and content-free:
 // whether the session is idle, which watcher owns the session, and a wake marker.
+// A synchronous hook's `hook` call also settles the session's access requests, so an
+// owner's grant, denial or expiry reaches the model at the next boundary as a fixed notice.
+// `Stop` passes `--stop`, so the turn-ending boundary settles regardless of the throttle.
 
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -13,6 +16,17 @@ import path from 'node:path';
 
 /** The fixed, content-free notice a watcher wakes Claude with. It carries no message bytes. */
 export const WAKE_NOTICE = 'Khala: channel messages are pending for this session. They arrive in the next hook context.';
+
+/**
+ * The fixed, content-free notice for an access outcome Khala settled at this boundary.
+ * It names no channel and carries nothing the requester or owner wrote.
+ */
+export const ACCESS_NOTICES = Object.freeze({
+  connected: 'Khala: the channel owner granted this session\'s access request. This session is now connected to the channel; '
+    + 'do not retry the request. Tell the user.',
+  denied: 'Khala: the channel owner denied this session\'s access request. This session is not joined. Tell the user.',
+  expired: 'Khala: this session\'s access request expired without a decision. This session is not joined. Tell the user.',
+});
 
 /** Upper bound for one pulled frame; anything larger is treated as malformed and stays queued. */
 export const MAX_FRAME_BYTES = 512 * 1024;
@@ -117,8 +131,8 @@ export function defaultDependencies(env = process.env, command = 'khala') {
   const parent = process.ppid;
   const internalRoot = path.join(stateHome, 'khala', 'internal');
   return {
-    bound: sessionId => sessionGranted(internalRoot, sessionId),
-    khala: (op, sessionId) => runKhala(command, op, sessionId),
+    bound: sessionId => sessionEngaged(internalRoot, sessionId),
+    khala: (op, sessionId, flags) => runKhala(command, op, sessionId, flags),
     stateRoot: path.join(stateHome, 'khala', 'claude-hooks'),
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     now: () => Date.now(),
@@ -136,6 +150,11 @@ export function defaultDependencies(env = process.env, command = 'khala') {
 export function claudeGrantPath(internalRoot, sessionId) {
   const principal = createHash('sha256').update(['khala.internal.principal.v1', 'claude', sessionId].join('\0')).digest('base64url');
   return path.join(internalRoot, 'discovery', `agent_${principal}`, 'claude-grant.json');
+}
+
+/** The session's outstanding access operations, which the launcher's route keeps beside its grant. */
+export function claudeOutstandingPath(internalRoot, sessionId) {
+  return path.join(path.dirname(claudeGrantPath(internalRoot, sessionId)), 'claude-access-outstanding.json');
 }
 
 async function readDescriptor(file) {
@@ -163,6 +182,22 @@ export async function sessionGranted(internalRoot, sessionId) {
   return typeof launch?.transportCapability === 'string' && launch.transportCapability === grant.transportCapability;
 }
 
+/**
+ * Whether this session's hooks run at all: it holds a grant, or it has an access request
+ * outstanding, so the boundary that follows the owner's decision can settle and report it.
+ * Once the request settles the record is gone, and an ungranted session is inert again.
+ */
+export async function sessionEngaged(internalRoot, sessionId) {
+  if (await sessionGranted(internalRoot, sessionId)) return true;
+  if (!validSessionId(sessionId)) return false;
+  try {
+    const operations = JSON.parse(await fs.readFile(claudeOutstandingPath(internalRoot, sessionId), 'utf8'));
+    return Array.isArray(operations) && operations.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function processAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -177,9 +212,9 @@ function processAlive(pid) {
  * body ever travels in argv or the environment, and stdin is closed. Error text is
  * never forwarded, only whether the call answered.
  */
-function runKhala(command, op, sessionId) {
+function runKhala(command, op, sessionId, flags = []) {
   return new Promise(resolve => {
-    execFile(command, ['claude', op, '--session', sessionId], {
+    execFile(command, ['claude', op, '--session', sessionId, ...flags], {
       encoding: 'utf8', timeout: KHALA_CALL_TIMEOUT_MS, maxBuffer: MAX_FRAME_BYTES * 2, windowsHide: true,
     }, (error, stdout) => {
       resolve({ code: error ? (typeof error.code === 'number' ? error.code : -1) : 0, stdout: typeof stdout === 'string' ? stdout : '' });
@@ -196,14 +231,18 @@ function parseLine(stdout) {
   }
 }
 
-/** The adapter's content-free `hook` state, or `null` when the runtime is unavailable or refuses. */
-async function hookState(deps, sessionId) {
-  const result = await deps.khala('hook', sessionId);
+/**
+ * The adapter's content-free `hook` state, or `null` when the runtime is unavailable or
+ * refuses. `hook` settles access and may carry a notice; the watcher's `watch` never does.
+ */
+async function hookState(deps, sessionId, op, stop = false) {
+  const result = await (stop ? deps.khala(op, sessionId, ['--stop']) : deps.khala(op, sessionId));
   const value = result.code === 0 ? parseLine(result.stdout) : null;
   if (value?.ok !== true || value.kind !== 'hook') return null;
   const effective = ['steer', 'sync', 'async'].includes(value.effective) ? value.effective : null;
   const watchSeconds = Number.isSafeInteger(value.watchSeconds) && value.watchSeconds > 0 ? value.watchSeconds : null;
-  return { effective, watchSeconds };
+  const notice = Object.hasOwn(ACCESS_NOTICES, value.access) ? ACCESS_NOTICES[value.access] : null;
+  return { effective, watchSeconds, notice };
 }
 
 /** One hook pull through the adapter: `batch`, `empty`, or a content-free failure code. */
@@ -310,6 +349,7 @@ export async function runHook(role, raw, deps) {
   if (input === null) return { stdout: '', stderr: '', exitCode: 0 };
   const state = sessionState(deps, input.sessionId);
   // An unbound session is a plain Claude session: no output, no state, no `khala` call.
+  // One with an access request outstanding is engaged, so its grant can reach it.
   // SessionEnd still removes the session's own state, which an unbound one never has.
   if (role !== 'session-end' && !await deps.bound(input.sessionId).catch(() => false)) {
     return { stdout: '', stderr: '', exitCode: 0 };
@@ -331,19 +371,30 @@ export async function runHook(role, raw, deps) {
   }
 }
 
-async function deliver(role, event, sessionId, deps, render) {
-  const pulled = await pull(deps, sessionId);
-  if (pulled.kind === 'batch') return { delivered: true, result: { stdout: render(event, renderDelivery(pulled.frame)), stderr: '', exitCode: 0 } };
+/**
+ * Pulls when `pulls`, and shows the model whatever this boundary has: the access notice,
+ * the pulled batch, or both. Nothing shown is an empty result.
+ */
+async function deliver(role, event, sessionId, deps, render, hook, pulls) {
+  const pulled = pulls ? await pull(deps, sessionId) : { kind: 'empty' };
+  const parts = [hook?.notice, pulled.kind === 'batch' ? renderDelivery(pulled.frame) : null].filter(part => typeof part === 'string');
   return {
-    delivered: false,
-    result: { stdout: '', stderr: pulled.kind === 'failed' ? diagnostic(role, pulled.code) : '', exitCode: 0 },
+    delivered: parts.length > 0,
+    result: {
+      stdout: parts.length > 0 ? render(event, parts.join('\n\n')) : '',
+      stderr: pulled.kind === 'failed' ? diagnostic(role, pulled.code) : '',
+      exitCode: 0,
+    },
   };
 }
+
+const delivering = hook => hook?.effective === 'steer' || hook?.effective === 'sync';
 
 /**
  * The session is busy again: supersede any watcher, then claim a wake. A watcher
  * that woke this session left a marker; this synchronous hook, whose output
- * reaches the model, is the one that pulls for it.
+ * reaches the model, is the one that pulls for it. Every prompt is also a boundary
+ * where a settled access outcome reaches the model.
  */
 async function userPromptSubmit(input, state, deps) {
   await state.setActivity('active');
@@ -352,17 +403,15 @@ async function userPromptSubmit(input, state, deps) {
     await state.clearOwner();
     await state.setWatcher({ nonce: owner.nonce, state: 'cancelled', at: deps.now() });
   }
-  if (!await state.consumeWake()) return { stdout: '', stderr: '', exitCode: 0 };
-  const hook = await hookState(deps, input.sessionId);
-  if (hook?.effective !== 'steer' && hook?.effective !== 'sync') return { stdout: '', stderr: '', exitCode: 0 };
-  return (await deliver('user-prompt-submit', input.event, input.sessionId, deps, context)).result;
+  const woken = await state.consumeWake();
+  const hook = await hookState(deps, input.sessionId, 'hook');
+  return (await deliver('user-prompt-submit', input.event, input.sessionId, deps, context, hook, woken && delivering(hook))).result;
 }
 
-/** `steer` only: the batch available at this tool boundary, never an abort. */
+/** `steer` pulls the batch available at this tool boundary, never an abort; any mode shows an access notice. */
 async function postToolUse(input, deps) {
-  const hook = await hookState(deps, input.sessionId);
-  if (hook?.effective !== 'steer') return { stdout: '', stderr: '', exitCode: 0 };
-  return (await deliver('post-tool-use', input.event, input.sessionId, deps, context)).result;
+  const hook = await hookState(deps, input.sessionId, 'hook');
+  return (await deliver('post-tool-use', input.event, input.sessionId, deps, context, hook, hook?.effective === 'steer')).result;
 }
 
 /**
@@ -378,13 +427,11 @@ async function stop(input, state, deps) {
   }
   // This turn's own Stop pulls whatever a wake announced.
   await state.consumeWake();
-  const hook = await hookState(deps, input.sessionId);
-  if (hook?.effective !== 'steer' && hook?.effective !== 'sync') {
-    await state.setActivity('idle');
-    return { stdout: '', stderr: '', exitCode: 0 };
-  }
+  // The session may idle after this boundary, so it settles access whatever the throttle.
+  const hook = await hookState(deps, input.sessionId, 'hook', true);
+  // An access notice alone also keeps the session for one continuation, so the model can tell the user.
   const { delivered, result } = await deliver('stop', input.event, input.sessionId, deps,
-    (_event, text) => JSON.stringify({ decision: 'block', reason: text }));
+    (_event, text) => JSON.stringify({ decision: 'block', reason: text }), hook, delivering(hook));
   await state.setActivity(delivered ? 'active' : 'idle');
   return result;
 }
@@ -408,7 +455,8 @@ async function watch(input, state, deps) {
   const owns = async () => (await state.owner())?.nonce === nonce;
   const record = async (status) => { if (await owns()) await state.setWatcher({ nonce, state: status, at: deps.now() }); };
 
-  const hook = await hookState(deps, input.sessionId);
+  // `watch`, never `hook`: settling here would take the access notice from the Stop hook beside it.
+  const hook = await hookState(deps, input.sessionId, 'watch');
   if (hook === null || (hook.effective !== 'steer' && hook.effective !== 'sync') || hook.watchSeconds === null) {
     await record('off');
     return { stdout: '', stderr: '', exitCode: 0 };

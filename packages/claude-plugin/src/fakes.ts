@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { HookDependencies, KhalaOp, KhalaResult } from '../hooks/lib/runtime.mjs';
 
 type Mode = 'steer' | 'sync' | 'async';
+type Notice = 'connected' | 'denied' | 'expired';
 
 type Session = {
   mode: Mode | null;
@@ -24,7 +25,11 @@ type Session = {
 export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
   const maxItems = options.maxItems ?? 8;
   const sessions = new Map<string, Session>();
-  const calls: Array<Readonly<{ op: KhalaOp; sessionId: string }>> = [];
+  /** Access outcomes the server settled and a synchronous `hook` call has not reported yet. */
+  const notices = new Map<string, Notice>();
+  /** Sessions with an access request outstanding, as the route's outstanding record holds them. */
+  const requested = new Set<string>();
+  const calls: Array<Readonly<{ op: KhalaOp; sessionId: string; flags?: readonly string[] }>> = [];
   const tails = new Map<string, Promise<unknown>>();
   let available = true;
   let malformed: string | null = null;
@@ -37,12 +42,21 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
 
   function answer(op: KhalaOp, sessionId: string): KhalaResult {
     if (!available) return { code: 2, stdout: '' };
+    // As the adapter does: only a synchronous `hook` settles, and reports the outcome once.
+    const access = op === 'hook' ? notices.get(sessionId) ?? null : null;
+    if (access !== null) {
+      notices.delete(sessionId);
+      requested.delete(sessionId);
+    }
     const bound = sessions.get(sessionId);
+    if (bound === undefined && access !== null) {
+      return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: null, watchSeconds: null, access })}\n` };
+    }
     if (bound === undefined) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"session_not_bound"}\n' };
     if (bound.revoked) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"binding_not_held"}\n' };
-    if (op === 'hook') {
+    if (op === 'hook' || op === 'watch') {
       const watchSeconds = bound.mode === 'steer' || bound.mode === 'sync' ? bound.watchSeconds : null;
-      return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: bound.mode, watchSeconds })}\n` };
+      return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: bound.mode, watchSeconds, access })}\n` };
     }
     if (op === 'pending') {
       // As the adapter does: a delivered batch awaiting acknowledgement is not pending again.
@@ -58,8 +72,8 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
     return { code: 0, stdout: `${frame(bound.outstanding)}\n` };
   }
 
-  const khala = (op: KhalaOp, sessionId: string): Promise<KhalaResult> => {
-    calls.push({ op, sessionId });
+  const khala = (op: KhalaOp, sessionId: string, flags: readonly string[] = []): Promise<KhalaResult> => {
+    calls.push(flags.length > 0 ? { op, sessionId, flags } : { op, sessionId });
     const run = async () => {
       await new Promise(resolve => setImmediate(resolve));
       return answer(op, sessionId);
@@ -77,10 +91,24 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
       Object.assign(session(sessionId), { mode, watchSeconds });
     },
     release(sessionId: string, body: string) { session(sessionId).queue.push(body); },
+    /** The agent requested access: the request stays outstanding until a `hook` call settles it. */
+    request(sessionId: string) { requested.add(sessionId); },
+    /**
+     * The owner decided this session's access request. A grant binds the session with no
+     * listening mode; every outcome waits for the next `hook` call to settle and report it.
+     */
+    decide(sessionId: string, outcome: Notice) {
+      requested.add(sessionId);
+      if (outcome === 'connected') session(sessionId);
+      notices.set(sessionId, outcome);
+    },
     /** The user's Stop (decision 36): the binding is gone, and every op is refused as the adapter refuses it. */
     revoke(sessionId: string) { session(sessionId).revoked = true; },
-    /** Whether the session was ever bound, as its grant file records; a revoked binding keeps its file. */
-    granted: (sessionId: string) => sessions.has(sessionId),
+    /**
+     * The hooks' local check: whether the session was ever bound, as its grant file records
+     * (a revoked binding keeps its file), or has an access request outstanding.
+     */
+    engaged: (sessionId: string) => sessions.has(sessionId) || requested.has(sessionId),
     /** The agent's next Khala call: acknowledges the outstanding batch on Khala's side. */
     agentCall(sessionId: string) { session(sessionId).outstanding = null; },
     set available(value: boolean) { available = value; },

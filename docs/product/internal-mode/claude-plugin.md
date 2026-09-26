@@ -165,9 +165,12 @@ owns any separate cross-harness control surface.
 Setup enables the plugin user-wide, so its hooks run in every Claude session on
 the machine. Each hook first checks that its session holds a grant from the
 running launch: the session's own `claude-grant.json` names a binding and
-matches `active.json`'s transport capability. Without one, the hook exits 0
-with no output. It calls no `khala`, makes no network call and writes no file.
-The actions below apply only to bound sessions. `SessionEnd` still removes the
+matches `active.json`'s transport capability. A session with an access request
+outstanding (a non-empty `claude-access-outstanding.json`) is engaged too, so
+the owner's decision can reach it; once the request settles, it is inert again
+unless granted. Otherwise the hook exits 0 with no output. It calls no `khala`,
+makes no network call and writes no file. The actions below apply only to
+engaged sessions. `SessionEnd` still removes the
 session's own hook state, which an unbound session never has.
 
 | Event | Action | Guard/failure behavior |
@@ -496,12 +499,15 @@ Acceptance criteria:
   `channel-access-journal`, observes the human grant through
   `channel-access-inbox`, and never admits the agent itself. Without approval it
   reports a pending decision and creates no admitted binding.
-- `join` is non-blocking. `channel-access-inbox` is the single resume path: its
-  grant, denial, or expiry control event is delivered to the same session at
-  the next eligible hook boundary, or through explicit `khala_read` in `async`.
-  A grant lets the shared access flow create the binding; denial/expiry reports
-  the finite outcome. Retries reuse the journaled operation and never create a
-  second request.
+- `join` is non-blocking. The local server keeps the session's outstanding
+  access operations and settles them at each synchronous hook boundary
+  (`khala claude hook`, at most once every 5 seconds per session, except the
+  turn-ending `Stop`, which passes `--stop` and always settles), in every listening mode and
+  before any binding exists. A grant is activated into the session's own
+  binding there, and the boundary reports `connected`, `denied` or `expired`
+  once as a fixed notice, so the agent never retries to learn the outcome
+  (#420). The idle watcher never settles. An explicit status check reuses the
+  journaled operation and never creates a second request.
 - `who` uses the authoritative roster API, includes a safe current-session label
   plus effective mode, and never infers membership from timeline authors or
   renders the raw Claude session ID unless the listing contract explicitly

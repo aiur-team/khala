@@ -43,7 +43,9 @@ describe('bundled /khala skill', () => {
     expect(normalized).toContain('Never wait, poll, or loop for the decision');
     expect(normalized).toContain('You never admit this agent, create a binding, or treat a request as a grant');
     expect(normalized).toContain('reuse the `operationId` returned by the first call');
-    expect(normalized).toMatch(/single resume path/);
+    expect(normalized).toContain('reaches this same session at a hook boundary');
+    expect(normalized).toContain('at most once every 5 seconds per session, except at the end of a turn, which always checks');
+    expect(normalized).toContain('Never retry to find out');
   });
 
   it('renders the authoritative roster and never the raw session ID', () => {
