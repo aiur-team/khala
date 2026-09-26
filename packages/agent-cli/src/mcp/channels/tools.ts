@@ -1,5 +1,7 @@
 import type { BindingId } from '@khala/contracts/delivery/index';
 import { ChannelAccessService } from '../../cli/channels/access.js';
+import { ChannelCreateService } from '../../cli/channels/create/service.js';
+import type { CreateOutput } from '../../cli/channels/create/types.js';
 import { ChannelListingService } from '../../cli/channels/service.js';
 import type { AgentClientPort } from '../../cli/types.js';
 import {
@@ -14,19 +16,23 @@ import {
 export const LIST_CHANNELS_TOOL_NAME = 'khala_list_channels';
 export const LIST_AGENTS_TOOL_NAME = 'khala_list_agents';
 
-type ChannelToolOutput = ChannelListOutput | AgentListOutput | AccessOutput;
+type ChannelToolOutput = ChannelListOutput | AgentListOutput | AccessOutput | CreateOutput;
 
 export type ChannelToolsPort = Pick<ChannelListingService, 'listChannels' | 'listAgents'>
-  & Pick<ChannelAccessService, 'request' | 'status'>;
+  & Pick<ChannelAccessService, 'request' | 'status'>
+  & Readonly<{ createChannel: ChannelCreateService['request']; createChannelStatus: ChannelCreateService['status'] }>;
 
 export function composeChannelTools(client: AgentClientPort): ChannelToolsPort {
   const listing = new ChannelListingService(client);
   const access = new ChannelAccessService(client);
+  const create = new ChannelCreateService(client);
   return {
     listChannels: (input, signal) => listing.listChannels(input, signal),
     listAgents: (channel, signal) => listing.listAgents(channel, signal),
     request: (input, signal) => access.request(input, signal),
     status: (input, signal) => access.status(input, signal),
+    createChannel: (input, signal) => create.request(input, signal),
+    createChannelStatus: (input, signal) => create.status(input, signal),
   };
 }
 

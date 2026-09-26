@@ -9,9 +9,11 @@ import type { DiscoveryCredential } from '@khala/contracts/messaging/index';
 import type {
   AccessRefusalCode, ChannelAccessPort, ChannelAccessResult,
 } from '../cli/channels/types.js';
+import type { ChannelCreatePort } from '../cli/channels/create/types.js';
 import { discard, redirectsOffOrigin } from './channel-listing.js';
 
 export const CHANNEL_ACCESS_REQUEST_PATH = '/api/agent/channel-access/request';
+export const CHANNEL_ACCESS_CREATE_PATH = '/api/agent/channel-access/create';
 export const CHANNEL_ACCESS_STATUS_PATH = '/api/agent/channel-access/status';
 const MAX_RESPONSE_BYTES = 4_096;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -27,7 +29,7 @@ export type HttpChannelAccessOptions = Readonly<{
   timeoutMs?: number;
 }>;
 
-export function createHttpChannelAccess(options: HttpChannelAccessOptions): ChannelAccessPort {
+export function createHttpChannelAccess(options: HttpChannelAccessOptions): ChannelAccessPort & ChannelCreatePort {
   for (const origin of options.trustedOrigins) {
     if (!isAcceptableOrigin(origin)) throw new Error('trusted origins must be exact https (or loopback http) origins');
   }
@@ -122,16 +124,35 @@ export function createHttpChannelAccess(options: HttpChannelAccessOptions): Chan
       }));
     },
     channelAccessStatus(input, signal) {
+      return status(input, 'access', signal);
+    },
+    // Create intents ride the same discovery credential and never follow redirects;
+    // the owner's approval, not this call, is what creates a channel.
+    requestChannelCreate(input, signal) {
       const origin = input.origin ?? options.defaultOrigin;
-      return call(origin, signal, () => {
-        const target = new URL(CHANNEL_ACCESS_STATUS_PATH, origin);
-        target.searchParams.set('v', '1');
-        target.searchParams.set('operationId', input.operationId);
-        target.searchParams.set('operationKind', 'access');
-        return { target, method: 'GET' };
-      });
+      return call(origin, signal, credential => ({
+        target: new URL(CHANNEL_ACCESS_CREATE_PATH, origin),
+        method: 'POST',
+        body: {
+          v: 1, operationId: input.operationId, credentialRef: credential.credentialRef, origin, proposedTitle: input.title,
+        },
+      }));
+    },
+    channelCreateStatus(input, signal) {
+      return status(input, 'create', signal);
     },
   };
+
+  function status(input: Readonly<{ operationId: string; origin: string | null }>, kind: 'access' | 'create', signal: AbortSignal | undefined) {
+    const origin = input.origin ?? options.defaultOrigin;
+    return call(origin, signal, () => {
+      const target = new URL(CHANNEL_ACCESS_STATUS_PATH, origin);
+      target.searchParams.set('v', '1');
+      target.searchParams.set('operationId', input.operationId);
+      target.searchParams.set('operationKind', kind);
+      return { target, method: 'GET' };
+    });
+  }
 }
 
 const STATUS_REFUSALS: ReadonlyMap<number, AccessRefusalCode> = new Map([

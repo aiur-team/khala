@@ -8,6 +8,8 @@ import {
   aliceDevice, bob, bobBinding, bobDevice, channelId, createChannelFixture, otherChannelId, type ChannelFixture,
 } from './fixtures/channel-fixture';
 import type { LogEvent, LoopbackServer } from './server';
+import type { DeviceId, OwnerId, ParticipantId } from '@khala/contracts/messaging/index';
+import { createReceiptReadModel, type ProjectedReceipt } from '../store/receipts';
 
 const NOW = Date.parse('2026-09-25T00:00:00.000Z');
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -475,6 +477,96 @@ async function eventually(check: () => boolean, timeoutMs = 2_000): Promise<void
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
+
+describe('owner-gated receipt evidence', () => {
+  const receiptsPath = (id: string = channelId) => `/api/v1/channels/${id}/receipts`;
+
+  function acknowledgement(receiptId: string, releaseId: string, eventIds: readonly string[]): ProjectedReceipt {
+    return {
+      receipt: {
+        v: 2, receiptId, releaseId, bindingId: bobBinding.bindingId, generation: 1, kind: 'agent_acknowledged',
+        observedAt: '2026-09-25T00:00:01.000Z', source: 'agent', evidenceRef: 'ack_batch_1', errorCode: null,
+      } as ProjectedReceipt['receipt'],
+      evidenceRef: 'ack_batch_1',
+      ledgerRevision: Number(receiptId.slice(-1)),
+      events: eventIds.map(eventId => ({ channelId, eventId: eventId as ProjectedReceipt['events'][number]['eventId'] })),
+    };
+  }
+
+  it('serves content-free facts, their channel events and shared batch groups to the owner session', async () => {
+    const fx = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-server-'), now: NOW });
+    cleanups.push(() => fx.dispose());
+    const readModel = createReceiptReadModel(fx.handle);
+    const h = await start({ receipts: readModel }, fx);
+    const session = await humanSession(h);
+    const sent = await call(h.server.port, { method: 'POST', path: `/api/v1/channels/${channelId}/messages`, headers: session, body: message('CANARY-BODY') });
+    const eventId = sent.json.event.eventId as string;
+    expect(await readModel.projectReceipt(acknowledgement('receipt_2', 'release_b', [eventId]))).toEqual({ kind: 'stored' });
+    expect(await readModel.projectReceipt(acknowledgement('receipt_1', 'release_a', [eventId]))).toEqual({ kind: 'stored' });
+
+    const reply = await call(h.server.port, { path: receiptsPath(), headers: session });
+    expect(reply.status).toBe(200);
+    expect(reply.headers['cache-control']).toBe('no-store');
+    expect(reply.json.v).toBe(1);
+    expect(reply.json.facts.map((fact: { receipt: { receiptId: string } }) => fact.receipt.receiptId)).toEqual(['receipt_1', 'receipt_2']);
+    expect(reply.json.facts[0].events).toEqual([{ eventId, sequence: expect.any(Number) }]);
+    expect(reply.json.groups).toEqual([{ evidenceRef: 'ack_batch_1', receiptIds: ['receipt_1', 'receipt_2'] }]);
+    expect(reply.text).not.toContain('CANARY-BODY');
+  });
+
+  it('refuses unauthenticated, invalid-launch-token, wrong-Origin, agent and wrong-owner reads before any evidence', async () => {
+    const fx = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-server-'), now: NOW });
+    cleanups.push(() => fx.dispose());
+    const readModel = createReceiptReadModel(fx.handle);
+    const dave = { participantId: 'participant-dave' as ParticipantId, ownerId: 'owner-dave' as OwnerId, deviceId: 'device-dave' as DeviceId };
+    fx.store.registerParticipant({ participantId: dave.participantId, ownerId: dave.ownerId, kind: 'human', displayName: 'Dave' });
+    fx.store.registerDevice({ deviceId: dave.deviceId, participantId: dave.participantId });
+    const daveBootstrap = { credential: mintCredential(), channelId, expiresAt: NOW + 60_000, human: dave };
+    const h = await start({ receipts: readModel, bootstrap: [fx.bootstrap, daveBootstrap] }, fx);
+    const session = await humanSession(h);
+    const sent = await call(h.server.port, { method: 'POST', path: `/api/v1/channels/${channelId}/messages`, headers: session, body: message('one') });
+    await readModel.projectReceipt(acknowledgement('receipt_1', 'release_a', [sent.json.event.eventId]));
+
+    // Unauthenticated, and a forged cookie/secret pair from no launch token at all.
+    expect((await call(h.server.port, { path: receiptsPath() })).status).toBe(401);
+    expect((await call(h.server.port, { path: receiptsPath(), headers: { ...session, 'x-khala-request-secret': mintCredential() } })).status).toBe(401);
+    // An invalid launch token never yields a session that could read evidence.
+    const invalid = await exchange(h, { credential: mintCredential(), channelId });
+    expect(invalid.status).toBe(401);
+    expect(invalid.headers['set-cookie']).toBeUndefined();
+    // A hostile or cross-site Origin is refused before the read model runs.
+    expect((await call(h.server.port, { path: receiptsPath(), headers: { ...session, origin: 'https://hostile.example' } })).status).toBe(403);
+    expect((await call(h.server.port, { path: receiptsPath(), headers: { ...session, 'sec-fetch-site': 'cross-site' } })).status).toBe(403);
+    // A bound agent in the channel is not the owner.
+    const agent = await call(h.server.port, { path: receiptsPath(), headers: bearer(h.fixture.bob.credential) });
+    expect(agent.status).toBe(403);
+    expect(agent.text).not.toContain('receipt_1');
+    // Another owner's human session, even bootstrapped for this channel, is not a member.
+    const daveExchange = await exchange(h, { credential: daveBootstrap.credential, channelId });
+    const daveSession = {
+      cookie: String(daveExchange.headers['set-cookie']![0]).split(';')[0]!,
+      'x-khala-request-secret': daveExchange.json.requestSecret, origin: h.origin,
+    };
+    const wrongOwner = await call(h.server.port, { path: receiptsPath(), headers: daveSession });
+    expect(wrongOwner.status).toBe(403);
+    expect(wrongOwner.text).not.toContain('receipt_1');
+    // The owner still reads; a missing channel is not found.
+    expect((await call(h.server.port, { path: receiptsPath(), headers: session })).status).toBe(200);
+    expect((await call(h.server.port, { path: receiptsPath('missing'), headers: session })).status).toBe(404);
+  });
+
+  it('reports a failed read as unavailable, never as an empty evidence set', async () => {
+    const h = await start({ receipts: { channelReceipts: () => ({ kind: 'unavailable' }) } });
+    const reply = await call(h.server.port, { path: receiptsPath(), headers: await humanSession(h) });
+    expect(reply.status).toBe(503);
+    expect(reply.json.facts).toBeUndefined();
+  });
+
+  it('has no receipt route without a read model', async () => {
+    const h = await start();
+    expect((await call(h.server.port, { path: receiptsPath(), headers: await humanSession(h) })).status).toBe(404);
+  });
+});
 
 describe('credential-scoped SSE hints', () => {
   it('delivers content-free hints only to principals authorized for the changed channel', async () => {

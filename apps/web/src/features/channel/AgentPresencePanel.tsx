@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from 'react';
-import type { ReceiptKind } from '@khala/contracts/delivery/index';
 import type { ParticipantId } from '@khala/contracts/messaging/ids';
+import { ACKNOWLEDGEMENT_SUPPORT_LABELS, RECEIPT_EVIDENCE_LABELS } from '../receipt-evidence/vocabulary';
 import { Panel } from '../../shell/Panel';
 import { StatusBadge, type StatusTone } from '../../shell/StatusBadge';
 import type { ChannelAgentView, ChannelController } from './controller';
@@ -23,19 +23,6 @@ const CONNECTION_TONE: Record<AgentConnectionState, StatusTone> = {
   stale: 'caution',
   offline: 'caution',
   unknown: 'neutral',
-};
-
-const RECEIPT_LABEL: Record<ReceiptKind, string> = {
-  queued: 'Queued for delivery',
-  dispatching: 'Delivery in progress',
-  transport_written: 'Delivered to the connector',
-  harness_queued: 'Queued at the agent session',
-  context_consumed: 'Read by the agent',
-  completed: 'Agent turn completed',
-  outcome_unknown: 'Delivery outcome unknown',
-  failed: 'Delivery failed',
-  cancel_requested: 'Cancellation requested',
-  cancelled: 'Delivery cancelled',
 };
 
 function defaultCopyText(value: string): Promise<void> {
@@ -122,10 +109,14 @@ export function AgentPresencePanel({ controller, copyText = defaultCopyText }: A
                   <dd>{agent.routeLabel}</dd>
                 </div>
                 <div>
+                  <dt>Batch-token return</dt>
+                  <dd>{ACKNOWLEDGEMENT_SUPPORT_LABELS[agent.acknowledgement]}</dd>
+                </div>
+                <div>
                   <dt>Last receipt</dt>
                   <dd>
                     {agent.lastReceipt ? (
-                      <>{RECEIPT_LABEL[agent.lastReceipt.kind]} <time dateTime={agent.lastReceipt.observedAt}>{agent.lastReceipt.observedAt}</time></>
+                      <>{RECEIPT_EVIDENCE_LABELS[agent.lastReceipt.kind]} <time dateTime={agent.lastReceipt.observedAt}>{agent.lastReceipt.observedAt}</time></>
                     ) : 'No delivery receipt yet'}
                   </dd>
                 </div>

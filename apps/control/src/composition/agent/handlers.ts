@@ -1,4 +1,4 @@
-import type { ReceiptKind } from '@khala/contracts/delivery/index';
+import type { AcknowledgementSupport, ReceiptKindV2 } from '@khala/contracts/delivery/index';
 import { decodeRoomId, type RoomId } from '@khala/contracts/messaging/ids';
 import type { RouteRegistration } from '../../runtime/handler';
 
@@ -11,7 +11,8 @@ export type AgentStatusSnapshot = Readonly<{
     ownerDisplayName: string;
     connection: 'connected' | 'stale' | 'offline' | 'unknown';
     routeLabel: string;
-    lastReceipt: Readonly<{ kind: ReceiptKind; observedAt: string }> | null;
+    lastReceipt: Readonly<{ kind: ReceiptKindV2; observedAt: string }> | null;
+    acknowledgement: AcknowledgementSupport;
     installCommand: string;
   }>[];
 }>;
@@ -114,6 +115,7 @@ function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
         kind: agent.lastReceipt.kind,
         observedAt: agent.lastReceipt.observedAt,
       },
+      acknowledgement: agent.acknowledgement,
       installCommand: agent.installCommand,
     })),
   };

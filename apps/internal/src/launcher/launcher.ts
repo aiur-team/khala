@@ -22,6 +22,7 @@ import { createSqliteControlStore } from '../store/control-store';
 import { createDiscoveryStore } from '../store/discovery-store';
 import { bindLifecycleChannel } from '../store/lifecycle-snapshot';
 import { type InternalStoreHandle, openChannelStore } from '../store/open';
+import { createReceiptReadModel } from '../store/receipts';
 import type { OpenBootstrapInput, OpenOutcome } from './browser-handoff';
 import { type RootLease, acquireRootLease } from './lock';
 
@@ -286,6 +287,8 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
           store: channel.store,
           listeningModes: createSqliteListeningModeRepository(channel.handle),
         }),
+        // The owner's projected receipt evidence, read-only; the projector owns writes.
+        receipts: createReceiptReadModel(channel.handle),
         // The transport capability may only obtain a discovery-only descriptor.
         transportCapability,
         discovery: discovery.port,
