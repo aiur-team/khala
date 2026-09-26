@@ -107,6 +107,19 @@ describe('MCP channel listing tools', () => {
     expect(listAgents).not.toHaveBeenCalled();
   });
 
+  it('ignores listing tool notifications without calling the service', async () => {
+    const listChannels = vi.fn<AgentClientPort['listChannels']>();
+    const listAgents = vi.fn<AgentClientPort['listAgents']>();
+    const responses = await mcp(listingClient({ listChannels, listAgents }), [
+      { jsonrpc: '2.0', method: 'tools/call', params: { name: 'khala_list_channels', arguments: {} } },
+      { jsonrpc: '2.0', method: 'tools/call', params: { name: 'khala_list_agents', arguments: { channel: 'binding-1' } } },
+      { jsonrpc: '2.0', id: 1, method: 'ping' },
+    ]);
+    expect(responses).toEqual([{ jsonrpc: '2.0', id: 1, result: {} }]);
+    expect(listChannels).not.toHaveBeenCalled();
+    expect(listAgents).not.toHaveBeenCalled();
+  });
+
   it('accepts an ackBatchToken alongside listing arguments', async () => {
     const [response] = await mcp(listingClient(), [call(1, 'khala_list_agents', { channel: 'binding-1', ackBatchToken: 'token-1' })]);
     expect(response?.result?.structuredContent).toMatchObject({ ok: true, channel: 'binding-1' });

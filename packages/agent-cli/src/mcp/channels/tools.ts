@@ -78,9 +78,12 @@ export const listAgentsTool: McpTool = {
  */
 async function callListingTool(
   argumentsValue: Record<string, unknown>,
-  { id, channels, postprocessResult }: McpToolContext,
+  { id, notification, channels, postprocessResult }: McpToolContext,
   project: (args: Record<string, unknown>, channels: ChannelToolsPort) => Promise<ChannelListOutput | AgentListOutput | null>,
 ): Promise<JsonRpcResponse> {
+  // Like read, a notification has no response channel, so it must not start
+  // a listing that may ask the owner to authorize discovery.
+  if (notification) return success(id, {});
   const shared = extractSharedToolArguments(argumentsValue);
   const output = shared === null ? null : await project(shared.arguments, channels);
   if (shared === null || output === null) return failure(id, -32602, 'Invalid params');
