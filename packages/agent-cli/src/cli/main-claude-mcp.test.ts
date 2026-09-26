@@ -74,9 +74,16 @@ describe('main: the Claude plugin MCP entry', () => {
     expect(loaded).toEqual({ client: [], delivery: [] });
   });
 
-  it('still composes them for a bare Codex or OpenCode mcp-serve (positive control)', async () => {
+  it('still composes them for a bare Codex mcp-serve, over the calling session\'s own grant (positive control)', async () => {
     vi.stubEnv('KHALA_MCP_HARNESS', undefined);
+    const call = JSON.stringify({
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: { _meta: { threadId: 'thread-a' }, name: 'khala_send', arguments: { message: 'm' } },
+    });
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(Readable.from([INITIALIZE, `${call}\n`]) as typeof process.stdin);
     await main(['mcp-serve']);
-    expect(loaded.client).toEqual([path.join(state, 'khala', 'internal', 'active.json')]);
+    const grant = path.join(state, 'khala', 'internal', 'discovery', 'agent_YG_M2xayccGs_VhHoWWJry3F7eXPGAHA30zODavNjXA', 'grant.json');
+    expect(loaded).toEqual({ client: [grant], delivery: [grant] });
+    expect(written).toContain('not_connected');
   });
 });
