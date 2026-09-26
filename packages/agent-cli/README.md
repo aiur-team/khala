@@ -1,8 +1,9 @@
 # Khala agent CLI (KHA-148)
 
 `@aiur/khala` owns the `khala` binary an agent uses to connect to a channel,
-consume released messages, send replies, inspect status, and expose the same send
-and explicit-read operations as MCP tools.
+consume released messages, send replies, inspect status, inspect or change its
+listening mode, and expose the same send, explicit-read, and listening-mode
+operations as MCP tools.
 
 ```text
 khala connect <https-channel-link>
@@ -10,6 +11,8 @@ khala listen [--binding <binding-id>]
 khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
 khala status
+khala mode get
+khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
 khala agents list --channel <held-binding-id>
 khala mcp-serve
@@ -18,6 +21,7 @@ khala internal --resume <channel-id>
 khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
 khala internal delete <channel-id> [--yes]
 khala codex-hook
+khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
 ```
 
 Released or model-authored bytes are accepted only through stdin, MCP stdio, or
@@ -112,6 +116,7 @@ but its server could not start, the failure also includes `channelId` and
 | Connect | KHA-114 bootstrap through an injected composition port; retries reuse one deterministic operation ID. |
 | Receive | A released-delivery port appends exact payload bytes to the per-binding inbox; `khala read` and `khala_read` explicitly pull released batches, while KHA-116's pending-review subscription is deliberately not used as a model feed. |
 | Send | One injected capability-backed send port shared by `khala send` and the `khala_send` MCP tool. |
+| Listening mode | One operation over the injected, pre-bound agent listening-mode application, shared by `khala mode get/set` and the `khala_listening_mode` MCP tool. |
 | Required human setup | None in the CLI. Provider route installation and capability selection belong to KHA-149, KHA-150, and KHA-153. |
 | Reconciliation | Enqueue deduplicates immutable release IDs. `listen` advances after output succeeds. MCP advances a durable batch only when a later Khala tool call supplies its exact token. |
 
@@ -160,6 +165,35 @@ harness call, injection, send, receipt, or agent lifecycle action. Only an
 explicit `read` selects a batch, and only the existing durable inbox advances
 after a later exact token.
 
+## Listening mode
+
+`khala mode get` and `khala mode set <steer|sync|async> --expected-version
+<version>` act only on the binding that trusted composition bound to this agent.
+Neither accepts a binding, generation, owner, route, evidence, or grant argument;
+the binding authority is ambient and never serialized. One shared operation
+backs the CLI and the `khala_listening_mode` MCP tool, so both return the same
+JSON.
+
+`get` returns `kind: "view"` with `requested`, `effective`, `effectiveReason`,
+`version`, and every mode's `support` entry (status, route, tested version,
+evidence reference and revision, and reason). `set` sends only `{requested,
+expectedVersion}` with a fresh command ID and returns one of:
+
+- `kind: "applied"`: the new `requested`, `effective`, `effectiveReason`, and
+  `version`; run `get` for the full support map.
+- `kind: "conflict"`, `reason: "stale_version"`: someone else changed the mode
+  first, and `current` holds the winning state. Run `get` again and decide
+  afresh; the CLI never retries.
+- `kind: "refused"` with `forbidden`, `binding_mismatch`, `stale_binding`,
+  `binding_revoked`, `idempotency_conflict`, `unavailable`, or
+  `outcome_unknown` (the write failed in a way that may already have
+  committed). A refusal never means the requested mode took effect.
+
+The CLI exits 0 for a view or applied result and 3 for a conflict or refusal.
+The installed binary has no trusted composition yet, so both commands currently
+refuse with `unavailable`. `requested` and `effective` can differ, and neither
+proves that any message was or will be delivered, including to an idle agent.
+
 ## Channel and agent listing
 
 `khala channels list` prints one JSON object with one page of channels this
@@ -198,13 +232,17 @@ arguments exit 2 with `invalid_arguments` on stderr.
 ## MCP mode
 
 `khala mcp-serve` speaks newline-delimited JSON-RPC on stdin/stdout and exposes
-`khala_send` and `khala_read`, plus `khala_list_channels` (`{ origin?, cursor?,
-ackBatchToken? }`) and `khala_list_agents` (`{ channel, ackBatchToken? }`). The
-listing tools return the CLI's JSON object unchanged as `structuredContent`,
-with `isError` set on failures. Like `khala_send`, they may append a
-piggyback batch. `khala_send` accepts
+`khala_send`, `khala_read`, and `khala_listening_mode`, plus `khala_list_channels`
+(`{ origin?, cursor?, ackBatchToken? }`) and `khala_list_agents`
+(`{ channel, ackBatchToken? }`). `khala_send` accepts
 `{ message, bindingId?, ackBatchToken? }`; `khala_read` accepts
-`{ bindingId?, ackBatchToken? }`. Unknown tools, unknown arguments, and unheld
+`{ bindingId?, ackBatchToken? }`; `khala_listening_mode` accepts
+`{ action: "get", ackBatchToken? }` or `{ action: "set", requested,
+expectedVersion, ackBatchToken? }`, and marks conflicts and refusals with
+`isError`. Notifications for it neither inspect nor change the mode. The
+listing tools return the CLI's JSON object unchanged as `structuredContent`,
+with `isError` set on failures. Like `khala_send`, they may append a piggyback
+batch. Unknown tools, unknown arguments, and unheld
 bindings are refused. Send results keep the stable client transaction ID and
 outcome first, never the submitted message. Read results keep a typed
 `kind: "batch"` or `kind: "empty"` primary result first, then append their one
@@ -231,12 +269,41 @@ content-free line such as
 seconds for another short-lived holder, so a harness's native hooks can pull
 between MCP tool calls; a holder that stays busy past that wait yields
 `listener_busy`. Explicit `khala_read` selects directly;
-every valid `khala_send` result may also select and append an incidental
-piggyback batch. Both paths share the same batch operation and renderer, while
+every valid `khala_send` or `khala_listening_mode` result may also select and
+append an incidental piggyback batch. Both paths share the same batch operation and renderer, while
 arrival alone selects nothing. Neither delivery path publishes or forwards a
 message; only an explicit `khala_send` call sends. Pull or piggyback delivery
 creates no receipt, advertises no capability, and makes no claim that a peer is
 asynchronous, synchronous, steerable, or actively listening.
+
+## Setup transactions
+
+`src/setup/transaction.ts` applies a confirmed `setup` or `remove` plan.
+`executeSetupPlan` takes the exclusive lock under `$XDG_STATE_HOME/khala/setup/`
+and finishes or rolls back any interrupted journal. It then reruns the planner
+and applies nothing unless the new plan digest equals the confirmed one. A
+second process gets a stable `busy` result.
+
+Before the first write, every target is checked against its planned preimage,
+and every managed path of each selected harness is checked for drift. A symlink
+below a root, an unowned target, or a restore to anything other than the
+original baseline refuses the whole plan. The executor then writes owner-only
+byte-exact backups and a `prepared` journal, `transaction.v1.json`. It applies
+operations in order with no-follow atomic replacement. The journal is advanced
+around each operation, and every postimage's hash, mode, and owner is verified.
+On success the executor publishes `manifest.v1.json`. Any failure restores the
+applied operations from backup. A rollback that cannot be proven exact becomes
+`rollback_failed`, and each later command retries it. Setup never overwrites
+user bytes that changed while it ran.
+
+The manifest keeps each path's original pre-Khala preimage (or absence) across
+upgrades, so removal restores the state from before the first setup. Backups
+are kept only while the manifest refers to them. A clean remove deletes the
+manifest, backups, and installer tree. Vendor commands run with an absolute
+executable, no shell, and only `HOME`, `XDG_*`, and `PATH`. Only the paths an
+adapter declares are backed up and reversed; adapters own proof of that
+footprint. `inspectSetupRecovery` gives `status` a read-only view of the
+journal.
 
 ## Codex hooks
 
@@ -276,6 +343,62 @@ session, an unavailable mode, or any failure returns without output, exits 0,
 and writes only a content-free code to stderr. The handler never starts,
 signals or waits on Codex. Channel bytes reach Codex only on the hook's stdout,
 inside the shared untrusted-data frame.
+
+## Claude session adapter
+
+```text
+khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
+```
+
+This is the entry point for the Claude plugin's hooks and `/khala` skill. The
+command resolves the loopback origin and installation credential from the
+owner-only (exactly `0600`, not a symlink) runtime descriptor on every call,
+posts one request to the local Khala server, and exits. Installed plugin or MCP
+entries hold only the descriptor path; the port and credential never appear in
+configuration, argv, environment variables, output, or errors. A missing,
+malformed, or insecure descriptor fails closed with `descriptor_missing`,
+`descriptor_malformed`, or `descriptor_insecure`; a stale one is refused by
+the server as `unauthorized`, and a server that does not answer within 10
+seconds as `unavailable`. `send` reads its message from stdin; its JSON result
+may carry a token-free `batch` delivered alongside it.
+
+Server-side, `createClaudeSessionAdapter` authenticates the installation
+credential and treats the Claude session ID only as a selector among that
+principal's verified bindings, at their active generation. Cwd is never used,
+and a foreign session is refused exactly like an unknown one
+(`session_not_bound`). Reads call the single `khala_read` operation.
+
+There are two kinds of call. A hook pull (`pull`, used by `PostToolUse`, `Stop`,
+and the watcher) never acknowledges: it reads with no token and retains the
+returned batch token. The shared inbox has at most one outstanding batch per
+binding and generation and replays it until it is acknowledged, so a repeated
+pull shows the same batch again. An agent-initiated call (`read`, `send`,
+`status`, `mode`, or a mode change) acknowledges every retained token. The
+current generation's token rides on the call itself; each other generation gets
+one `readBatch` call of its own, and a replaced generation's token is fenced
+and dropped so its release is redelivered. The server's `ClaudeSessionStatePort`
+durably keeps retained tokens per principal and binding. It clears them only
+after the call that carried them resolves, including across a server restart. A
+replay after a crash is answered as `duplicate`. `status` is content-free: it
+reports only how many retained tokens it acknowledged.
+
+A token is retained only when its batch was rendered into the result; a batch
+that cannot be delivered replays instead. The token never reaches the hook or
+command process: `pull` and `read` print the shared `<khala-channel-batch-v1>`
+frame without its `batchToken` line. Handoff runs only when
+`HarnessCapabilities.acknowledgement` is `batch_token_next_call`; otherwise
+`pull` and `read` are refused as `unproven`, and mode support without evidence
+reports `unproven`. `pending` returns only `pending` or `idle` from the local
+automation fence's notification signal; it never pulls or acknowledges.
+
+For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
+(`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the
+MCP server's own `CLAUDE_CODE_SESSION_ID`, so a tool call cannot name another
+session. It has no pull. A missing ID fails closed as `session_missing`. Wiring
+it into `mcp-serve` belongs to the plugin dispatch work.
+
+The installed binary does not compose this client yet, so `khala claude`
+fails closed with `transport_unavailable`.
 
 ## Composition boundary
 
