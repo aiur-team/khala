@@ -1,5 +1,6 @@
 import { agentsCommand, channelsCommand } from './channels/commands.js';
 import { connectCommand } from './commands/connect.js';
+import { internalCommand } from './commands/internal.js';
 import { listenCommand } from './commands/listen.js';
 import { mcpServeCommand } from './commands/mcp-serve.js';
 import { modeCommand } from './commands/mode.js';
@@ -49,6 +50,7 @@ export const CLI_COMMANDS: readonly CliCommand[] = Object.freeze([
   mcpServeCommand,
   channelsCommand,
   agentsCommand,
+  internalCommand,
 ]);
 
 export const commandRegistry: CommandRegistry = createCommandRegistry(CLI_COMMANDS);

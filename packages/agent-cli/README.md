@@ -16,6 +16,10 @@ khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
 khala agents list --channel <held-binding-id>
 khala mcp-serve
+khala internal
+khala internal --resume <channel-id>
+khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
+khala internal delete <channel-id> [--yes]
 ```
 
 Released or model-authored bytes are accepted only through stdin, MCP stdio, or
@@ -26,10 +30,14 @@ stdout for JSON-RPC.
 
 ## Package and release
 
-The published package is one self-contained file. `scripts/bundle.mjs` (run by
+The published package is two self-contained files. `scripts/bundle.mjs` (run by
 `build` and `prepack`) bundles `src/cli/main.ts` and its whole runtime closure,
-including the workspace connector and contracts, into `dist/khala.js`. The
-tarball carries only that file, this README and `package.json`; it declares no
+including the workspace connector and contracts, into `dist/khala.js`. It
+bundles the internal application's composition entry
+(`apps/internal/src/composition/internal-cli.ts`) separately into
+`dist/khala-internal.js`, which `khala.js` imports only for `khala internal`, so
+no other command loads the local store, server, or `node:sqlite`. The tarball
+carries only those two files, this README and `package.json`; it declares no
 runtime dependencies, so installing it fetches nothing and runs no lifecycle
 script. On Node 22.23.2 or later:
 
@@ -56,6 +64,47 @@ accepted, using npm trusted publishing: GitHub OIDC authenticates the publish
 and signs provenance, and no long-lived npm token exists. The npm package needs
 a trusted publisher bound to that workflow file and its `npm-publish`
 environment before the first release.
+
+## Internal mode
+
+`khala internal` starts one local channel server for the operator and nothing
+else. It never starts, wraps, signals, or stops an agent CLI; agent sessions you
+start yourself connect through the runtime descriptor later.
+
+- `khala internal` creates a channel whose only participant is you, and
+  `--resume <channel-id>` reopens exactly that existing channel. Either one
+  serves the channel on `http://127.0.0.1:4870`, or on the next free port when
+  another program already listens there. It prints one JSON object to stdout
+  with `channelId`, `resumeCommand`, `descriptorPath`, `origin`, `port`,
+  `portFallback` and `url`, and prints the same URL and resume command for
+  people on stderr. The URL carries a one-time sign-in credential in its
+  fragment and expires after 15 minutes. Only after printing does it try to open
+  a browser, and only in a desktop profile proven by the browser-handoff spike.
+  Even then the opener receives a private file path, never the URL, and that
+  file is removed within a minute.
+- Only one internal launcher runs per OS user. A second one exits with
+  `launcher_running` even when another port is free, and changes nothing.
+- State lives under `$XDG_STATE_HOME/khala/internal` (default
+  `~/.local/state/khala/internal`, mode 0700). While a launcher runs,
+  `active.json` (mode 0600) holds `{v, channelId, origin, transportCapability}`
+  for local clients, and `<channel>/launch.json` (mode 0600) holds the browser
+  sign-in credential until it expires. Every launch rotates both credentials.
+- Ctrl+C or SIGTERM removes `active.json` and `launch.json`, closes the server so
+  the URL stops working, closes the store, and releases the launcher lock. It
+  leaves agent processes alone.
+- `export` and `delete` work only on a stopped channel and never start a
+  server. `export` resolves a relative `--output` against the current directory
+  and refuses to overwrite an existing file unless you pass `--replace`.
+  `delete` without `--yes` exits with `confirmation_required`. Every `delete`
+  result carries the notice that internal channel data is stored in plaintext
+  and that deletion does not securely erase it.
+
+Launching needs the built internal web bundle in `internal-web/` beside
+`khala-internal.js`. Without it, launch fails with `web_bundle_unavailable`
+before it takes the lock or changes any state. Failures print
+`{"ok":false,"error":<code>}` to stderr and exit 3. When a channel was created
+but its server could not start, the failure also includes `channelId` and
+`resumeCommand`.
 
 ## Support row
 
