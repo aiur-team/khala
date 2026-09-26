@@ -1,0 +1,13 @@
+{
+  "runId": "2026-09-25-blocked-remote-connector",
+  "app": "claude",
+  "shape": "remote_connector",
+  "appVersion": "unknown",
+  "accountTier": "unknown",
+  "administratorPolicyScope": "unknown",
+  "os": "Linux 7.1.4-arch1-1 x86_64",
+  "launch": "none: no live session",
+  "expectedClientNames": [],
+  "targetConversations": [],
+  "blocked": "Claude Desktop is not installed (no official Linux build), no Claude account was provided for the proof, and the connector needs a publicly reachable HTTPS endpoint that only the operator may expose (../../host-inventory.txt)."
+}
