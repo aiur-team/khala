@@ -8,11 +8,18 @@ import {
 import {
   type DeviceId, type GrantExchangeRequest, type RoomId, deriveOkpKeyThumbprint,
 } from '@khala/contracts/messaging/index';
+import { PassThrough } from 'node:stream';
+import { runCli } from '@aiur/khala/cli/app';
+import { openInbox } from '@aiur/khala/cli/inbox';
+import { createInternalClient, readInternalDescriptor } from '@aiur/khala/composition/internal';
+import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import sodium from 'libsodium-wrappers';
 import { afterEach, describe, expect, it } from 'vitest';
 import { writeActiveDescriptor } from '../../descriptor/write';
-import { startChannelServer } from '../../server/channel-server';
+import { type ChannelServerOptions, startChannelServer } from '../../server/channel-server';
 import { mintCredential } from '../../server/credentials';
+import { createInternalReleaseFeed, internalReleaseId } from '../internal-delivery/release-feed';
+import { createSqliteListeningModeRepository } from '../../listening-mode-store/sqlite';
 import { aliceDevice, alice, channelId, createChannelFixture, otherChannelId, type ChannelFixture } from '../../server/fixtures/channel-fixture';
 import type { LoopbackServer } from '../../server/server';
 import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
@@ -83,6 +90,7 @@ type World = {
 
 async function boot(
   fixture: ChannelFixture, handle: InternalStoreHandle, clock: { now: number }, startPort = 0,
+  extra: Partial<ChannelServerOptions> = {},
   wrapStore: (store: DiscoveryStore) => DiscoveryStore = store => store,
 ): Promise<World> {
   const discovery = await composeInternalChannelDiscovery({
@@ -104,6 +112,7 @@ async function boot(
     newId: () => `id-${++id}`,
     clock: () => clock.now,
     startPort,
+    ...extra,
   });
   cleanups.push(() => server.close());
   writeActiveDescriptor(fixture.root, { v: 1, channelId, origin: server.origin, transportCapability });
@@ -122,7 +131,7 @@ async function boot(
 async function world(wrapStore?: (store: DiscoveryStore) => DiscoveryStore): Promise<World> {
   const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-discovery-'), now: NOW });
   cleanups.push(() => fixture.dispose());
-  return boot(fixture, fixture.handle, { now: NOW }, 0, wrapStore);
+  return boot(fixture, fixture.handle, { now: NOW }, 0, {}, wrapStore);
 }
 
 async function issue(w: World, sessionId: string, label: string | null = null): Promise<Agent> {
@@ -709,6 +718,178 @@ describe('internal channel discovery', () => {
     expect(await w.discovery.admission.reconcile(input)).toEqual({ kind: 'admitted', membership: 'joined' });
     // A stale generation is never admitted.
     expect(await w.discovery.admission.admit({ ...input, providerOperationId: 'padmit-2', sessionGeneration: 2 })).toEqual({ kind: 'rejected' });
+  });
+
+  describe('local activation by the agent client', () => {
+    const BODY = 'meet at the north door';
+    type Attempt = Readonly<{ action: string; outcome: 'pass' | 'lose' }>;
+
+    async function activationWorld() {
+      const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-activation-'), now: NOW });
+      cleanups.push(() => fixture.dispose());
+      const clock = { now: NOW };
+      const w = await boot(fixture, fixture.handle, clock, 0, {
+        releases: createInternalReleaseFeed({
+          store: fixture.store, listeningModes: createSqliteListeningModeRepository(fixture.handle), paused: () => false,
+        }),
+      });
+      const agent = await issue(w, 'session-local');
+      const calls: string[] = [];
+      // `lose` runs the request on the server, then drops the response: a crash after the effect.
+      let plan: Attempt[] = [];
+      const transport: typeof fetch = async (input, init) => {
+        const url = String(input instanceof Request ? input.url : input);
+        const action = /\/(exchange|activate|ready)$/.exec(url)?.[1];
+        if (action !== undefined) calls.push(action);
+        const step = action === undefined ? undefined : plan.find(each => each.action === action);
+        const response = await fetch(input, init);
+        if (step?.outcome === 'lose') {
+          plan = plan.filter(each => each !== step);
+          await response.body?.cancel();
+          throw new TypeError('connection lost');
+        }
+        return response;
+      };
+      const client = createInternalClient({ descriptorPath: agent.descriptorPath, fetch: transport, clock: () => NOW });
+      const channelUrl = `${w.server.origin}/channels/${channelId}`;
+      const activePath = path.join(fixture.root, 'active.json');
+      const readActive = () => JSON.parse(fs.readFileSync(activePath, 'utf8')) as Record<string, string>;
+      const bindingRows = () => w.handle.read(db => (db.prepare('SELECT count(*) AS n FROM bindings WHERE participant_id = ?')
+        .get(`participant_${agent.principal}`) as { n: number }).n);
+      return {
+        w, agent, client, channelUrl, calls, activePath, readActive, bindingRows, fixture,
+        failNext(...attempts: Attempt[]) { plan = attempts; },
+        async approve() {
+          expect(await client.requestAccess!(channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+          const pending = (await inbox(w)).find(entry => entry.outcome === 'pending_owner')!;
+          expect((await decide(w, pending.requestHandle, pending.revision, 'approve')).status).toBe(200);
+        },
+        async khala(args: readonly string[]) {
+          const stdout = new PassThrough();
+          const stderr = new PassThrough();
+          const chunks = { out: '', err: '' };
+          stdout.on('data', chunk => { chunks.out += String(chunk); });
+          stderr.on('data', chunk => { chunks.err += String(chunk); });
+          const stateDirectory = path.join(fixture.root, 'agent-state');
+          const code = await runCli(['--internal-descriptor', activePath, ...args], {
+            client: null as never,
+            inbox: (bindingId, generation) => openInbox({
+              stateDirectory, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
+            }),
+            stdin: new PassThrough(), stdout, stderr,
+            internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
+            internalDelivery: async descriptorPath => createInternalDelivery({ descriptorPath, stateDirectory }),
+          });
+          return { code, ...chunks };
+        },
+        human(body: string) {
+          const eventId = `event-local-${body.length}`;
+          expect(fixture.store.send({
+            channelId, eventId: eventId as never, authorParticipantId: alice.participantId as never, authorDeviceId: aliceDevice,
+            clientTxnId: `txn-${eventId}`, content: { v: 1, kind: 'text', body }, receivedAt: new Date(NOW + 1).toISOString(),
+          }).kind).toBe('stored');
+          return eventId;
+        },
+      };
+    }
+
+    it('activates an approved request, then a human message is read exactly once', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(a.bindingRows()).toBe(0);
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      expect(a.calls).toEqual(['exchange', 'activate', 'ready']);
+      expect(a.bindingRows()).toBe(1);
+      const active = a.readActive();
+      expect(active).toMatchObject({ channelId, grantRef: expect.any(String), bindingId: expect.any(String), bindingCapability: expect.any(String) });
+      expect(fs.statSync(a.activePath).mode & 0o777).toBe(0o600);
+      // Ready is acknowledged only after the descriptor was written.
+      expect((await accessStatus(a.w, a.agent, active.grantRef!)).json.outcome).toBe('connected');
+
+      const eventId = a.human(BODY);
+      const first = await a.khala(['read']);
+      expect(first.code).toBe(0);
+      expect(first.out.split(BODY).length - 1).toBe(1);
+      expect(first.out).toContain(internalReleaseId({ bindingId: active.bindingId, generation: 1 } as never, eventId as never));
+      const token = /batchToken: (\S+)/.exec(first.out)![1]!;
+      expect(JSON.parse((await a.khala(['read', '--ack', token])).out)).toEqual({ ok: true, kind: 'empty' });
+      expect(JSON.parse((await a.khala(['read'])).out)).toEqual({ ok: true, kind: 'empty' });
+
+      // Nothing secret reaches output: no capability, discovery capability, grant reference or key.
+      const streams = first.out + first.err;
+      for (const secret of [active.bindingCapability!, a.agent.capability, a.agent.connector.privateKey]) expect(streams).not.toContain(secret);
+    });
+
+    it('resumes a lost ready acknowledgement without a second binding or capability', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      a.failNext({ action: 'ready', outcome: 'lose' });
+      expect((await a.client.requestAccess!(a.channelUrl)).kind).toBe('status');
+      expect(a.bindingRows()).toBe(1);
+      const written = a.readActive();
+      a.calls.length = 0;
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      // The held binding is never re-activated, so the running client's capability survives.
+      expect(a.calls).not.toContain('activate');
+      expect(a.readActive()).toEqual(written);
+      expect(a.bindingRows()).toBe(1);
+    });
+
+    it('resumes a lost activate response with a grant-free activation and writes one binding', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      a.failNext({ action: 'activate', outcome: 'lose' });
+      await a.client.requestAccess!(a.channelUrl);
+      expect(a.bindingRows()).toBe(1);
+      expect(() => a.readActive().bindingId).not.toThrow();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      expect(a.bindingRows()).toBe(1);
+      const active = a.readActive();
+      expect(active.bindingId).toBeDefined();
+      const timeline = await call(a.w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(active.bindingCapability!) });
+      expect(timeline.status).toBe(200);
+    });
+
+    it('keeps a running listener working when activation rotates the capability', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      await a.client.requestAccess!(a.channelUrl);
+      const stale = a.readActive().bindingCapability!;
+      const eventId = a.human(BODY);
+      const active = a.readActive();
+      // The listener read the descriptor before activation rotated the capability.
+      let reads = 0;
+      const delivery = createInternalDelivery({
+        descriptorPath: a.activePath, stateDirectory: path.join(a.fixture.root, 'agent-state'),
+        readDescriptor: file => {
+          const read = readInternalDescriptor(file);
+          return reads++ === 0 && read.ok ? { ...read, value: { ...read.value, bindingCapability: stale } as typeof read.value } : read;
+        },
+      });
+      // A second `/activate` (a repair) rotates the capability and the descriptor is rewritten with it.
+      const route = `/api/connector/channel-access-requests/${active.grantRef}/activate`;
+      const journal = JSON.parse(fs.readFileSync(path.join(path.dirname(a.agent.descriptorPath), 'activation', `${active.grantRef}.json`), 'utf8'));
+      const deviceId = journal.record.deviceId as string;
+      const rotated = await call(a.w.server.port, {
+        method: 'POST', path: route, headers: { ...bearer(a.agent), dpop: proof(a.w, a.agent, `${a.w.server.origin}${route}`) },
+        body: { v: 1, operationId: active.grantRef, deviceId, grant: null },
+      });
+      expect(rotated.status).toBe(200);
+      const next = { ...active, bindingCapability: rotated.json.capability as string };
+      fs.writeFileSync(a.activePath, JSON.stringify(next), { mode: 0o600 });
+      expect(next.bindingCapability).not.toBe(stale);
+      const inboxFor = () => openInbox({
+        stateDirectory: path.join(a.fixture.root, 'agent-state'), bindingId: active.bindingId!, generation: 1,
+        maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
+      });
+      // The stale capability is refused, the rewritten descriptor is re-read, and it is not treated as revocation.
+      expect(await delivery.pull({ bindingId: active.bindingId!, generation: 1 }, inboxFor)).toBe('caught_up');
+      const inbox = await inboxFor();
+      const listener = await inbox.acquireListener();
+      const batch = await listener.readBatch({ maxBytes: 1024 * 1024 });
+      await listener.release();
+      expect(batch?.items.map(item => item.record.releaseId)).toEqual([internalReleaseId({ bindingId: active.bindingId, generation: 1 } as never, eventId as never)]);
+    });
   });
 
   describe('human-confirmed channel creation', () => {
