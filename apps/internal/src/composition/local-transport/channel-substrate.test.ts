@@ -200,7 +200,8 @@ describe('local channel substrate', () => {
     expect(receivedIds).toEqual(eventIds);
     expect(new Set(receivedIds)).toHaveLength(eventIds.length);
     dispose();
-  });
+  // Stopgap: CI runners take ~6 s for this real-SQLite paging run; #351 makes it fast and deterministic.
+  }, 30_000);
 
   it('maps unavailable effect storage conservatively to unknown and read storage to unavailable', async () => {
     const store = fresh();
