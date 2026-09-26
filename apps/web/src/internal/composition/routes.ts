@@ -8,15 +8,18 @@ import { isLoopbackOrigin } from '@khala/messaging/local/http/index';
 export type LocalRoute =
   | Readonly<{ kind: 'create'; path: string }>
   | Readonly<{ kind: 'channel'; path: string; roomId: RoomId }>
+  | Readonly<{ kind: 'make_external'; path: string; roomId: RoomId }>
   | Readonly<{ kind: 'not_found'; path: string }>;
 
 export interface LocalRouteCodec {
   parse(location: string): LocalRoute;
   createPath(): string;
   roomPath(roomId: string): string;
+  makeExternalPath(roomId: string): string;
 }
 
 const CHANNELS = '/channels/';
+const MAKE_EXTERNAL = '/make-external';
 
 export function createLocalRouteCodec(origin: string): LocalRouteCodec {
   if (!isLoopbackOrigin(origin)) throw new Error('local route origin must be http://127.0.0.1:<port>');
@@ -38,7 +41,9 @@ export function createLocalRouteCodec(origin: string): LocalRouteCodec {
     if (parsed.origin !== origin || parsed.username || parsed.password || parsed.search) return { kind: 'not_found', path };
     if (parsed.pathname === '/') return { kind: 'create', path: '/' };
     if (!parsed.pathname.startsWith(CHANNELS)) return { kind: 'not_found', path };
-    const encoded = parsed.pathname.slice(CHANNELS.length);
+    let encoded = parsed.pathname.slice(CHANNELS.length);
+    const makeExternal = encoded.endsWith(MAKE_EXTERNAL);
+    if (makeExternal) encoded = encoded.slice(0, -MAKE_EXTERNAL.length);
     if (!encoded || encoded.includes('/')) return { kind: 'not_found', path };
     let raw: string;
     try {
@@ -47,8 +52,11 @@ export function createLocalRouteCodec(origin: string): LocalRouteCodec {
       return { kind: 'not_found', path };
     }
     const decoded = decodeRoomId(raw);
-    return decoded.ok ? { kind: 'channel', path: roomPath(decoded.value), roomId: decoded.value } : { kind: 'not_found', path };
+    if (!decoded.ok) return { kind: 'not_found', path };
+    return makeExternal
+      ? { kind: 'make_external', path: `${roomPath(decoded.value)}${MAKE_EXTERNAL}`, roomId: decoded.value }
+      : { kind: 'channel', path: roomPath(decoded.value), roomId: decoded.value };
   }
 
-  return { parse, createPath: () => '/', roomPath };
+  return { parse, createPath: () => '/', roomPath, makeExternalPath: roomId => `${roomPath(roomId)}${MAKE_EXTERNAL}` };
 }

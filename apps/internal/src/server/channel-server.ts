@@ -105,6 +105,8 @@ const ROUTES = {
   binding: { method: 'GET', path: '/api/v1/agent/binding', admission: 'authenticated' },
   releases: { method: 'GET', path: '/api/v1/channels/:channelId/releases', admission: 'authenticated', allowQuery: true },
   channelDocument: { method: 'GET', path: '/channels/:channelId', admission: 'public' },
+  /** The same application document, so a reload of the Make-external page resumes it. */
+  makeExternalDocument: { method: 'GET', path: '/channels/:channelId/make-external', admission: 'public' },
 } as const satisfies Record<string, RouteSpec>;
 
 const TOKEN = /^[\x21-\x7e]+$/;
@@ -241,6 +243,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     : null;
   if (makeExternal) routes.push(...makeExternal.routes);
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
+  if (assets?.channelDocument && makeExternal) routes.push(ROUTES.makeExternalDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
   /**
@@ -584,7 +587,9 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   }
 
   function staticAsset({ route, response }: RouteContext<Principal>): void {
-    const asset = route === ROUTES.channelDocument ? assets?.channelDocument : assets?.get(route.path);
+    const asset = route === ROUTES.channelDocument || route === ROUTES.makeExternalDocument
+      ? assets?.channelDocument
+      : assets?.get(route.path);
     if (!asset) {
       fail(response, failure(404, 'not_found'));
       return;

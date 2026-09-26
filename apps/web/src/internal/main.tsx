@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { MAX_CHANNEL_TITLE_BYTES, decodeContentLimits } from '@khala/contracts/messaging/index';
 import { createHumanApplication } from '../composition/human/application';
 import { KhalaPageFrame } from '../shell/KhalaPageFrame';
+import { createHttpMakeExternalPort } from './composition/make-external-port';
 import { createLocalPorts, readRequestSecret } from './composition/ports';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
@@ -18,6 +19,7 @@ import '../features/timeline/timeline.css';
 import '../features/channel/channel.css';
 import '../main.css';
 import './internal.css';
+import './make-external/make-external.css';
 
 const target = document.querySelector('#app');
 if (!target) throw new Error('missing Khala application mount');
@@ -51,7 +53,8 @@ if (requestSecret === null) {
     history.pushState(null, '', path);
     application.navigate(path);
   };
-  const mounted = mountLocalApplication(target, { application, routes, transport: ports.substrate.transport, navigateRoute });
+  const makeExternal = createHttpMakeExternalPort({ origin: location.origin, requestSecret });
+  const mounted = mountLocalApplication(target, { application, routes, transport: ports.substrate.transport, navigateRoute, makeExternal });
 
   const onPopState = () => application.navigate(`${location.pathname}${location.search}`);
   addEventListener('popstate', onPopState);

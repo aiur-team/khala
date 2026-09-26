@@ -6,6 +6,8 @@ import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ShellMode } from '../../shell/types';
 import type { HumanApplicationHandle, HumanRouteContext } from '../../composition/human/application';
 import { HumanScreen } from '../../composition/human/screen';
+import { MakeExternalPage } from '../make-external/MakeExternalPage';
+import type { MakeExternalPort } from '../make-external/port';
 import { LocalRoom, SessionEnded } from './room';
 import type { LocalRoute, LocalRouteCodec } from './routes';
 
@@ -15,6 +17,8 @@ export type LocalApplicationScreenProps = Readonly<{
   transport: LocalTransport;
   navigateRoute: (path: string) => void;
   mode?: ShellMode;
+  /** The Make-external journey; without it the channel page offers no such action. */
+  makeExternal?: MakeExternalPort | null;
 }>;
 
 /** Moves focus to a route's heading so a screen-reader user hears the new page. */
@@ -30,7 +34,7 @@ function NotFound() {
 
 function channelIdIn(path: string, routes: LocalRouteCodec): string | null {
   const route = routes.parse(path);
-  return route.kind === 'channel' ? route.roomId : null;
+  return route.kind === 'channel' || route.kind === 'make_external' ? route.roomId : null;
 }
 
 /**
@@ -38,7 +42,9 @@ function channelIdIn(path: string, routes: LocalRouteCodec): string | null {
  * has no sign-in, share, join or recovery route, and a refused session is a
  * terminal relaunch instruction rather than a sign-in prompt.
  */
-export function LocalApplicationScreen({ application, routes, transport, navigateRoute, mode = 'standalone' }: LocalApplicationScreenProps) {
+export function LocalApplicationScreen({
+  application, routes, transport, navigateRoute, mode = 'standalone', makeExternal = null,
+}: LocalApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: LocalRoute): ReactNode => {
     switch (route.kind) {
       case 'create':
@@ -48,7 +54,19 @@ export function LocalApplicationScreen({ application, routes, transport, navigat
           </KhalaPageFrame>
         );
       case 'channel':
-        return <LocalRoom context={context} roomId={route.roomId} transport={transport} />;
+        return (
+          <LocalRoom
+            context={context}
+            roomId={route.roomId}
+            transport={transport}
+            makeExternal={makeExternal}
+            onMakeExternal={() => navigateRoute(routes.makeExternalPath(route.roomId))}
+          />
+        );
+      case 'make_external':
+        return makeExternal
+          ? <MakeExternalPage port={makeExternal} channelId={route.roomId} onBack={() => navigateRoute(routes.roomPath(route.roomId))} />
+          : <NotFound />;
       case 'not_found':
         return <NotFound />;
     }

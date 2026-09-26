@@ -19,6 +19,16 @@ describe('local route codec', () => {
     expect(routes.createPath()).toBe('/');
   });
 
+  it('maps a channel’s Make-external page', () => {
+    expect(routes.parse('/channels/ch_abc/make-external')).toEqual({
+      kind: 'make_external', path: '/channels/ch_abc/make-external', roomId: 'ch_abc',
+    });
+    expect(routes.makeExternalPath('ch_abc')).toBe('/channels/ch_abc/make-external');
+    for (const path of ['/channels//make-external', '/channels/a/b/make-external', '/channels/ch_abc/make-external?x=1']) {
+      expect(routes.parse(path).kind, path).toBe('not_found');
+    }
+  });
+
   it('has no join, share, sign-in, recovery or hosted create route', () => {
     for (const path of [
       '/join?invite=abc', '/join/abc', '/new', '/recovery', '/api/human/auth/login', '/?mount=hosted-content',

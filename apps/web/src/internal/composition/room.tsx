@@ -8,6 +8,8 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRouteContext } from '../../composition/human/application';
+import { MakeExternalEntry, linkedSendReason, useJourneySummary } from '../make-external/ChannelEntry';
+import type { MakeExternalPort } from '../make-external/port';
 import { createPendingSendStore } from './pending-store';
 
 // Agent presence, listening mode and Stop belong to their own tickets; they
@@ -109,11 +111,15 @@ export function SessionEnded({ roomId, headingRef }: {
   );
 }
 
-export function LocalRoom({ context, roomId, transport }: {
+export function LocalRoom({ context, roomId, transport, makeExternal = null, onMakeExternal = () => undefined }: {
   context: HumanRouteContext;
   roomId: RoomId;
   transport: LocalTransport;
+  /** The Make-external journey port; without it the page offers no such action. */
+  makeExternal?: MakeExternalPort | null;
+  onMakeExternal?: () => void;
 }) {
+  const journey = useJourneySummary(makeExternal, roomId);
   const state = useSyncExternalStore(transport.subscribe, transport.current, transport.current);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -157,13 +163,13 @@ export function LocalRoom({ context, roomId, transport }: {
             roomPort={context.room}
             roomId={roomId}
             viewer={viewer}
-            sendBlockedReason={sendBlockedReason(state)}
+            sendBlockedReason={linkedSendReason(journey) ?? sendBlockedReason(state)}
             pendingStore={pendingStore}
           />
         </>
       )}
       renderReview={() => null}
-      renderControls={() => null}
+      renderControls={() => <MakeExternalEntry summary={journey} onOpen={onMakeExternal} />}
     />
   );
 }
