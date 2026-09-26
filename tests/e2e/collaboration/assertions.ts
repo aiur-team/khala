@@ -75,6 +75,102 @@ function onboarded(records: readonly EvidenceRecord[], ownerId: string): Verdict
   return pass(`setup/${ownerId}`);
 }
 
+type TaskCheck = (records: readonly EvidenceRecord[], acceptance: CollaborationCase) => Verdict;
+
+/** The P05 plan exchange in order: sender (0 = A, 1 = B) and the `task.<step>` kind it records. */
+const PLAN_STEPS = [
+  ['plan_proposed', 0], ['critique_sent', 1], ['plan_revised', 0], ['plan_confirmed', 1],
+] as const;
+
+type ExchangeMessage = Readonly<{ step: string; sender: string; recipient: string; message: EvidenceRecord }>;
+
+/** The four exchange messages, each recorded exactly once by its sender, or why not. */
+function exchange(records: readonly EvidenceRecord[], acceptance: CollaborationCase): ExchangeMessage[] | string {
+  const ids = [acceptance.owners[0].ownerId, acceptance.owners[1].ownerId];
+  const messages: ExchangeMessage[] = [];
+  for (const [step, from] of PLAN_STEPS) {
+    const sent = records.filter(record => record.kind === `task.${step}`);
+    if (sent.length !== 1) return `expected one task.${step}, found ${sent.length}`;
+    const message = sent[0]!;
+    if (message.ownerId !== ids[from]) return `${ref(message)} was sent by ${message.ownerId}, not ${ids[from]}`;
+    messages.push({ step, sender: ids[from]!, recipient: ids[1 - from]!, message });
+  }
+  return messages;
+}
+
+/**
+ * Checks for the P05 plan-agreement task. Plan hashes travel as `op-planhash-<hex>`
+ * operation ids, so records still hold identifiers only.
+ */
+export const TASK_CHECKS: Readonly<Record<string, TaskCheck>> = Object.freeze({
+  /** Each message is released by the recipient's own review, reaches its model, and the reply follows it. */
+  plan_exchange_reviewed(records, acceptance) {
+    const messages = exchange(records, acceptance);
+    if (typeof messages === 'string') return fail(messages);
+    let previousInput: EvidenceRecord | undefined;
+    for (const { step, sender, recipient, message } of messages) {
+      if (previousInput && !before(records, previousInput, message)) {
+        return fail(`${sender} sent task.${step} before its model consumed the message it answers`);
+      }
+      const same = (candidate: EvidenceRecord) => candidate.operationId === message.operationId;
+      const release = owned(records, recipient, 'review.released').find(same);
+      if (!release) return fail(`${recipient} did not approve delivery of task.${step} (${ref(message)})`);
+      const input = owned(records, recipient, 'model.input').find(candidate => same(candidate) && before(records, release, candidate));
+      if (!input) return fail(`task.${step} never reached ${recipient}'s model after ${recipient} approved it`);
+      previousInput = input;
+    }
+    return pass(messages.map(({ message }) => ref(message)).join(','));
+  },
+  /** A's revised plan hash is the one both agents quote in their final messages. */
+  revised_plan_hash_agreed(records, acceptance) {
+    const messages = exchange(records, acceptance);
+    if (typeof messages === 'string') return fail(messages);
+    const revised = records.filter(record => record.kind === 'task.revised_plan_hash');
+    if (revised.length !== 1) return fail(`expected one task.revised_plan_hash, found ${revised.length}`);
+    const hash = revised[0]!.operationId;
+    const refs = [ref(revised[0]!)];
+    for (const ownerId of [acceptance.owners[0].ownerId, acceptance.owners[1].ownerId]) {
+      const quotes = owned(records, ownerId, 'task.final_plan_quote');
+      if (quotes.length !== 1) return fail(`expected one task.final_plan_quote from ${ownerId}, found ${quotes.length}`);
+      const quote = quotes[0]!;
+      if (quote.operationId !== hash) return fail(`${ownerId} quoted ${quote.operationId}, not the revised plan ${hash}`);
+      const last = messages.filter(({ sender }) => sender === ownerId).at(-1)!.message;
+      if (before(records, quote, last)) return fail(`${ref(quote)} precedes ${ownerId}'s final message ${ref(last)}`);
+      refs.push(ref(quote));
+    }
+    return pass(refs.join(','));
+  },
+  /** D11: a human approval names every agent granted access; no agent admits itself or another. */
+  no_agent_admission(records, acceptance) {
+    const byAgent = records.find(record => record.kind === 'admission.agent_approved');
+    if (byAgent) return fail(`an agent approved an admission (${ref(byAgent)})`);
+    const refs: string[] = [];
+    for (const owner of acceptance.owners.slice(0, 2)) {
+      const grants = owned(records, owner.ownerId, 'admission.granted');
+      if (grants.length === 0) return fail(`${owner.ownerId}'s agent has no recorded admission`);
+      for (const grant of grants) {
+        const approved = owned(records, owner.ownerId, 'admission.human_approved')
+          .some(candidate => candidate.operationId === grant.operationId && before(records, candidate, grant));
+        if (!approved) return fail(`${ref(grant)} was granted without a prior human approval`);
+        refs.push(ref(grant));
+      }
+    }
+    return pass(refs.join(','));
+  },
+  /** Every exchange message shows exactly once in A's and in B's timeline. */
+  exchange_once_per_timeline(records, acceptance) {
+    const messages = exchange(records, acceptance);
+    if (typeof messages === 'string') return fail(messages);
+    for (const owner of acceptance.owners.slice(0, 2)) {
+      for (const { step, message } of messages) {
+        const shown = owned(records, owner.ownerId, 'timeline.shown').filter(record => record.operationId === message.operationId);
+        if (shown.length !== 1) return fail(`task.${step} shows ${shown.length} times in ${owner.ownerId}'s timeline`);
+      }
+    }
+    return pass(`timeline.shown/${messages.length}x2`);
+  },
+});
+
 export const ASSERTIONS: readonly AssertionSpec[] = Object.freeze([
   {
     id: 'ordinary_onboarding', covers: ['R1'], unit: 'U2', gates: [],
@@ -132,12 +228,13 @@ export const ASSERTIONS: readonly AssertionSpec[] = Object.freeze([
   {
     id: 'useful_task_result', covers: ['R1', 'AE1'], unit: 'U2', gates: ['G-TASK'],
     check(records, acceptance) {
-      const consumed = new Set(records.filter(record => record.kind === 'model.input').map(record => record.operationId));
       const refs: string[] = [];
       for (const id of acceptance.expectedTaskAssertions) {
-        const result = records.find(record => record.kind === `task.${id}` && consumed.has(record.operationId));
-        if (!result) return fail(`task.${id} was not recorded against a message a model consumed`);
-        refs.push(ref(result));
+        const check = TASK_CHECKS[id];
+        if (!check) return fail(`task assertion ${id} has no check`);
+        const verdict = check(records, acceptance);
+        if (!verdict.passed) return fail(`${id}: ${verdict.reason}`);
+        refs.push(verdict.evidenceRef);
       }
       return pass(refs.join(','));
     },

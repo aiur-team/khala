@@ -1,8 +1,9 @@
 // Binds the KHA-139 collaboration acceptance case to the product decisions it needs.
 // The task content and the assertions that make its result useful come only from an
-// approved G-TASK decision. Until the gates that decide what may run are resolved,
-// binding returns `blocked` and no driver action is taken.
+// approved G-TASK decision (the P05 ruling below). Until the gates that decide what
+// may run are resolved, binding returns `blocked` and no driver action is taken.
 
+import { TASK_CHECKS } from './assertions';
 import { type OwnerControls, type OwnerFixture, assertIndependentOwners, createOwnerFixture } from '../harness/owners';
 
 /** Gates this acceptance case reads, from `docs/product/ticket-graph.proposal.json` and `docs/product/decisions.md`. */
@@ -24,7 +25,7 @@ export type BrowserClosedMode = 'not_required' | 'required' | 'unsupported' | 'u
 
 export type TaskDecision = Readonly<{
   decisionRef: string;
-  /** snake_case ids; a live driver records `task.<id>` against the release it answers. */
+  /** snake_case ids, each a key of `TASK_CHECKS` in `assertions.ts`. */
   assertions: readonly string[];
 }>;
 
@@ -35,15 +36,26 @@ export type CollaborationDecisions = Readonly<{
 }>;
 
 /**
+ * The P05 ruling. A's agent proposes a three-step plan to add `--version` to a toy CLI
+ * in a scratch repo. B's agent replies with one critique, A posts a revised plan, and
+ * B confirms it. Each owner approves delivery of every message (KHA-134). The task is
+ * harness-neutral, so the same script serves every approved harness route.
+ */
+export const PLAN_AGREEMENT_TASK: TaskDecision = Object.freeze({
+  decisionRef: 'P05 ruling: cross-owner plan agreement',
+  assertions: Object.freeze(['plan_exchange_reviewed', 'revised_plan_hash_agreed', 'no_agent_admission', 'exchange_once_per_timeline']),
+});
+
+/**
  * The decisions as recorded in the repository at the time of writing. A change here
  * must cite the decision that changed it; nothing in this suite may invent one.
  */
 export const RECORDED_DECISIONS: CollaborationDecisions = {
   gates: {
     'G-TASK': {
-      status: 'open',
-      question: 'P05: which first collaborative task (cross-repo coordination, technical Q&A or open-ended collaboration) and what success evidence',
-      source: 'docs/product/decisions.md#P05; ticket-graph external_gates G-TASK',
+      status: 'resolved',
+      decisionRef: 'P05 Executor ruling: cross-owner plan agreement on a toy CLI --version change',
+      source: 'https://github.com/aiur-team/khala/issues/48#issuecomment-5844004544',
     },
     'G-HARNESSES': {
       status: 'open',
@@ -66,7 +78,7 @@ export const RECORDED_DECISIONS: CollaborationDecisions = {
       source: 'docs/product/decisions.md#P02',
     },
   },
-  task: null,
+  task: PLAN_AGREEMENT_TASK,
   browserClosedMode: 'unresolved',
 };
 
@@ -124,6 +136,7 @@ export function bindCase(decisions: CollaborationDecisions, setup: CaseSetup): B
   }
   for (const id of decisions.task.assertions) {
     if (!TASK_ASSERTION.test(id)) throw new TypeError(`task assertion ${id} must match ${TASK_ASSERTION}`);
+    if (!Object.hasOwn(TASK_CHECKS, id)) throw new TypeError(`task assertion ${id} has no check in TASK_CHECKS`);
   }
   const owners = [
     createOwnerFixture('a', setup.owners.a),

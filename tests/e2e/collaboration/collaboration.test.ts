@@ -7,7 +7,7 @@ import { type DriverHandle, type ScenarioDriver, createScenarioHarness } from '.
 import { type AcceptanceResult, appendRun, blockedResult, evaluate, newRunId, renderRun } from './evidence';
 import {
   type CaseSetup, type CollaborationCase, type CollaborationDecisions, CollaborationBlocked, GATE_IDS, type GateId,
-  RECORDED_DECISIONS, bindCase,
+  PLAN_AGREEMENT_TASK, RECORDED_DECISIONS, bindCase,
 } from './scenario';
 
 const setup: CaseSetup = {
@@ -17,14 +17,14 @@ const setup: CaseSetup = {
   harnessVersions: { 'collaboration-script': '0' },
 };
 
-// Test-only decisions. They exercise the evaluator and are not product decisions.
+// Test-only gate states around the recorded P05 task. They exercise the evaluator and are not product decisions.
 function decisions(open: readonly GateId[] = []): CollaborationDecisions {
   const gates = Object.fromEntries(GATE_IDS.map(id => [id, open.includes(id)
     ? { status: 'open', question: `${id} test question`, source: 'test' }
     : { status: 'resolved', decisionRef: `${id} test decision`, source: 'test' }]));
   return {
     gates: gates as CollaborationDecisions['gates'],
-    task: { decisionRef: 'test-task', assertions: ['summary_agreed'] },
+    task: PLAN_AGREEMENT_TASK,
     browserClosedMode: open.includes('P02') ? 'unresolved' : 'required',
   };
 }
@@ -44,12 +44,35 @@ const passing: readonly Step[] = [
     ['setup.link_joined', seed, `op-join-${seed}`],
     ['setup.session_bound', seed, `op-bind-${seed}`],
   ] as const),
+  ...(['a', 'b'] as const).flatMap(seed => [
+    ['admission.human_approved', seed, `op-admit-${seed}`],
+    ['admission.granted', seed, `op-admit-${seed}`],
+  ] as const),
+  // The P05 exchange: A proposes (e1), B critiques (p2), A revises (p3), B confirms (p4).
+  ['task.plan_proposed', 'a', 'release-e1'],
   ['review.pending', 'b', 'release-e1'],
   ['review.previewed', 'b', 'release-e1'],
   ['review.released', 'b', 'release-e1'],
   ['model.input', 'b', 'release-e1'],
   ['session.identity_matched', 'b', 'release-e1'],
-  ['task.summary_agreed', 'a', 'release-e1'],
+  ['task.critique_sent', 'b', 'release-p2'],
+  ['review.released', 'a', 'release-p2'],
+  ['model.input', 'a', 'release-p2'],
+  ['session.identity_matched', 'a', 'release-p2'],
+  ['task.plan_revised', 'a', 'release-p3'],
+  ['task.revised_plan_hash', 'a', 'op-planhash-3f2a9c'],
+  ['task.final_plan_quote', 'a', 'op-planhash-3f2a9c'],
+  ['review.previewed', 'b', 'release-p3'],
+  ['review.released', 'b', 'release-p3'],
+  ['model.input', 'b', 'release-p3'],
+  ['session.identity_matched', 'b', 'release-p3'],
+  ['task.plan_confirmed', 'b', 'release-p4'],
+  ['task.final_plan_quote', 'b', 'op-planhash-3f2a9c'],
+  ['review.released', 'a', 'release-p4'],
+  ['model.input', 'a', 'release-p4'],
+  ['session.identity_matched', 'a', 'release-p4'],
+  ...(['a', 'b'] as const).flatMap(seed => (['release-e1', 'release-p2', 'release-p3', 'release-p4'] as const)
+    .map(op => ['timeline.shown', seed, op] as const)),
   ['trust.requested', 'b', 'cmd-trust-1'],
   ['trust.effective', 'b', 'cmd-trust-1'],
   ['trust.auto_released', 'b', 'release-e2'],
@@ -100,6 +123,8 @@ async function liveRun(steps: readonly Step[]): Promise<EvidenceManifest> {
   return scenario.manifest();
 }
 
+const taskRow = (manifest: EvidenceManifest) =>
+  evaluate(manifest, ready()).assertions.find(row => row.id === 'useful_task_result')!;
 const outcomes = (result: AcceptanceResult) => Object.fromEntries(result.assertions.map(row => [row.id, row.outcome]));
 const without = (steps: readonly Step[], kind: string, operationId: string) =>
   steps.filter(([k, , op]) => !(k === kind && op === operationId));
@@ -114,9 +139,9 @@ describe('collaboration case binding', () => {
     const bound = bindCase(RECORDED_DECISIONS, setup);
     expect(bound.kind).toBe('blocked');
     if (bound.kind !== 'blocked') return;
-    expect(bound.openGates).toEqual(['G-TASK', 'G-HARNESSES', 'G-AUTOMATION', 'P02']);
-    expect(bound.reasons.join('\n')).toMatch(/G-TASK is open/);
-    expect(bound.reasons.join('\n')).toMatch(/no approved collaboration task/);
+    expect(bound.openGates).toEqual(['G-HARNESSES', 'G-AUTOMATION', 'P02']);
+    expect(bound.reasons.join('\n')).toMatch(/G-HARNESSES is open/);
+    expect(bound.reasons.join('\n')).not.toMatch(/G-TASK|no approved collaboration task/);
     expect(() => { throw new CollaborationBlocked(bound); }).toThrow(/blocked before any action/);
   });
 
@@ -124,6 +149,14 @@ describe('collaboration case binding', () => {
     const recorded = { ...decisions(['P02']), browserClosedMode: 'required' as const };
     expect(bindCase(recorded, setup)).toMatchObject({ kind: 'blocked' });
     expect(bindCase({ ...decisions(), browserClosedMode: 'unresolved' }, setup)).toMatchObject({ kind: 'blocked' });
+  });
+
+  it('binds the P05 plan-agreement task once the harness gate clears', () => {
+    const harnesses = { status: 'resolved', decisionRef: 'test', source: 'test' } as const;
+    const bound = bindCase({ ...RECORDED_DECISIONS, gates: { ...RECORDED_DECISIONS.gates, 'G-HARNESSES': harnesses } }, setup);
+    expect(bound).toMatchObject({ kind: 'ready', case: { expectedTaskAssertions: PLAN_AGREEMENT_TASK.assertions } });
+    const unknown = { ...decisions(), task: { decisionRef: 'test', assertions: ['summary_agreed'] } };
+    expect(() => bindCase(unknown, setup)).toThrow(/no check in TASK_CHECKS/);
   });
 
   it('refuses a third owner that shares an identity with B', () => {
@@ -205,6 +238,27 @@ describe('collaboration acceptance evaluation', () => {
     expect(outcomes(result).offline_not_consumed).toBe('fail');
   });
 
+  it('fails the task when a final quote differs from the revised plan hash', async () => {
+    const steps = without(passing, 'task.final_plan_quote', 'op-planhash-3f2a9c')
+      .concat([['task.final_plan_quote', 'a', 'op-planhash-3f2a9c'], ['task.final_plan_quote', 'b', 'op-planhash-0bad00']]);
+    expect(taskRow(await liveRun(steps))).toMatchObject({ outcome: 'fail', detail: expect.stringMatching(/revised_plan_hash_agreed: owner-b quoted/) });
+  });
+
+  it('fails the task when a critique reaches A without A approving delivery', async () => {
+    const steps = without(passing, 'review.released', 'release-p2');
+    expect(taskRow(await liveRun(steps)).detail).toMatch(/plan_exchange_reviewed: owner-a did not approve delivery/);
+  });
+
+  it('fails the task when an agent approves an admission', async () => {
+    const steps = [...passing, ['admission.agent_approved', 'a', 'op-admit-b2'] as const];
+    expect(taskRow(await liveRun(steps)).detail).toMatch(/no_agent_admission: an agent approved/);
+  });
+
+  it('fails the task when a message shows twice in a timeline', async () => {
+    const steps = [...passing, ['timeline.shown', 'b', 'release-p3'] as const];
+    expect(taskRow(await liveRun(steps)).detail).toMatch(/exchange_once_per_timeline: task.plan_revised shows 2 times in owner-b/);
+  });
+
   it('refuses evidence from a harness version the case was not bound to', async () => {
     const bound = bindCase(decisions(), { ...setup, harnessVersions: { 'collaboration-script': '1' } });
     if (bound.kind !== 'ready') throw new Error('expected ready');
@@ -239,7 +293,7 @@ describe('collaboration evidence report', () => {
 
 describeLive('collaboration acceptance (KHA-139)', liveCase => {
   liveCase('two owners collaborate, then an independent third owner joins', async () => {
-    // No approved harness route exists yet, so nothing is pinned; the approved task will name it.
+    // G-HARNESSES is open, so no harness route is pinned. The P05 task is harness-neutral.
     const bound = bindCase(RECORDED_DECISIONS, { ...setup, harnessVersions: {} });
     // Blocked is a failed live run, never a skip: the report keeps the blocked row.
     if (bound.kind === 'blocked') throw new CollaborationBlocked(bound);
