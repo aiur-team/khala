@@ -192,7 +192,7 @@ manifests, backups, or status output.
 | Location | Contents | Ownership |
 | --- | --- | --- |
 | `$XDG_DATA_HOME/khala/versions/<version>/` | Self-contained CLI runtime plus reviewed plugin/skill assets | Installer-owned; directories 0700, regular files 0400, executables 0500; immutable after commit |
-| `$XDG_DATA_HOME/khala/bin/` | Stable `khala` and `khala-fallback` launchers | Installer-owned; directory 0700, launchers 0500 |
+| `$XDG_DATA_HOME/khala/bin/` | Stable `khala` and `khala-fallback` launchers, plus `opencode.js`: the stable copy of the packaged OpenCode plugin (`dist/opencode.js`) that the OpenCode config imports by file URL | Installer-owned; directory 0700, launchers 0500, `opencode.js` 0400 |
 | `$XDG_STATE_HOME/khala/setup/manifest.v1.json` | Active desired state, selected versions, operation IDs, pre/post hashes, and backup references | Installer-owned, mode 0600 |
 | `$XDG_STATE_HOME/khala/setup/transaction.v1.json` | Write-ahead state, operation preconditions, backup references, applied-operation cursor, and recovery state | Installer-owned, mode 0600 |
 | `$XDG_STATE_HOME/khala/setup/backups/<transaction>/` | Byte-exact foreign-file preimages and absence markers | Installer-owned directory 0700; files 0600 |

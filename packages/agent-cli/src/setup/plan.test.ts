@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { AgentRoute } from '../cli/types.js';
+import { ClaudeSetupRefusal } from './adapters/claude.js';
 import { PATH_HARNESS_IDS, createDiscoveryOnlyAdapter } from './detect.js';
 import {
   createSetupService, setupResultExitCode, type SetupExecute, type SetupPayloadSource, type SetupService,
@@ -296,10 +297,10 @@ describe('setup planning', () => {
   it('binds the digest to mode overrides and unsupported harnesses', async () => {
     const state = world();
     install(state, 'codex');
-    const withMode = (mode: number): SetupPayloadSource => async () => ({
-      contents: new Map(), modes: new Map([[`${HOME}/.local/share/khala/bin/khala`, mode]]) });
-    const a = await service(state, allFake(), undefined, withMode(0o500)).lifecycle('remove', noConfirm);
-    const b = await service(state, allFake(), undefined, withMode(0o400)).lifecycle('remove', noConfirm);
+    const withMode = (mode: number): SetupPayloadSource => async () => [{
+      path: `${HOME}/.local/share/khala/bin/khala`, component: 'launcher', bytes: Buffer.from('launcher'), harnesses: ['codex'], mode }];
+    const a = await service(state, allFake(), undefined, withMode(0o500)).lifecycle('setup', noConfirm);
+    const b = await service(state, allFake(), undefined, withMode(0o555)).lifecycle('setup', noConfirm);
     expect(a.planDigest).not.toBe(b.planDigest);
     const unsupported = await service(state, allFake({ supported: false })).lifecycle('remove', noConfirm);
     const supported = await service(state, allFake()).lifecycle('remove', noConfirm);
@@ -360,6 +361,120 @@ describe('setup planning', () => {
       expect(JSON.stringify(output)).not.toContain(SECRET);
       expect(decodeSetupResult(JSON.parse(JSON.stringify(output)))).toEqual(output);
     }
+  });
+});
+
+describe('adapter integration', () => {
+  /** An adapter that, like the real ones, plans only from the observation object it returned. */
+  function keyedAdapter(harness: HarnessId, plan: () => readonly SetupOperation[]): SetupAdapter {
+    const inspected = new WeakSet<object>();
+    return {
+      ...fakeAdapter(harness),
+      async inspect(env, detection) {
+        const observation = { detection, components: [{ component: 'mcp_entry' as const, state: 'absent' as const }], route: 'unknown' as const, diagnostics: [] };
+        inspected.add(observation);
+        return observation;
+      },
+      plan(request) {
+        if (!inspected.has(request.observation)) throw new Error('plan needs an observation from this adapter');
+        return plan();
+      },
+    };
+  }
+
+  it('hands each adapter back the exact observation its inspect returned', async () => {
+    const machine = world();
+    install(machine, 'codex');
+    const config = `${HOME}/.codex/config.json`;
+    const adapter = keyedAdapter('codex', () => [{ id: 'mcp', type: 'config_entry_set', harness: 'codex', component: 'mcp_entry',
+      path: config, entry: 'mcp_servers.khala', preimage: null, postimage: sha('after') }]);
+    const result = await service(machine, [adapter]).lifecycle('setup', noConfirm);
+    expect(result.state).toBe('confirmation_required');
+    expect(result.diagnostics.map(diagnostic => diagnostic.code)).not.toContain('inspection_failed');
+  });
+
+  it('reports a structured Claude refusal instead of throwing', async () => {
+    const machine = world();
+    install(machine, 'claude');
+    const diagnostic = { code: 'claude_command_collision', severity: 'error' as const, harness: 'claude' as const, message: '/khala is taken.' };
+    const adapter = keyedAdapter('claude', () => { throw new ClaudeSetupRefusal('conflict', [diagnostic]); });
+    const setup = service(machine, [adapter]);
+    const refused = await setup.lifecycle('setup', noConfirm);
+    expect(refused).toMatchObject({ state: 'conflict', ok: false, operations: [], planDigest: null });
+    expect(refused.diagnostics).toContainEqual(diagnostic);
+    expect(setupResultExitCode(refused)).toBe(3);
+    expect(decodeSetupResult(JSON.parse(JSON.stringify(refused)))).toEqual(refused);
+    expect((await setup.configuration()).state).toBe('conflict');
+  });
+
+  it('treats setup still to do with nothing planned as a conflict', async () => {
+    const machine = world();
+    install(machine, 'cursor');
+    const result = await service(machine, [keyedAdapter('cursor', () => [])]).lifecycle('setup', noConfirm);
+    expect(result).toMatchObject({ state: 'conflict', ok: false, operations: [] });
+    expect(result.diagnostics.map(diagnostic => diagnostic.code)).toContain('setup_not_planned');
+  });
+
+  it.each(['claude-app', 'cursor'] as const)('never lets an unsupported %s refuse setup or gate readiness', async harness => {
+    const machine = world();
+    install(machine, 'codex');
+    install(machine, harness);
+    const executor = countingExecutor();
+    const setup = service(machine, [fakeAdapter('codex'), fakeAdapter(harness, {
+      supported: false, components: [{ component: 'mcp_entry', state: 'unsupported' }] })], executor);
+    const planned = await setup.lifecycle('setup', noConfirm);
+    expect(planned.state).toBe('confirmation_required');
+    expect(planned.harnesses.map(report => report.harness)).toEqual(['codex', harness]);
+    await setup.lifecycle('setup', { dryRun: false, confirm: planned.planDigest });
+    expect(executor.plans[0]!.unsupportedHarnesses).toEqual([]);
+    const alone = world();
+    install(alone, harness);
+    const status = await service(alone, [fakeAdapter(harness, {
+      supported: false, components: [{ component: 'mcp_entry', state: 'unsupported' }] })]).configuration();
+    expect(status).toMatchObject({ state: 'no_harness', ok: true });
+  });
+
+  it('stages installer files for the first harness that runs them and removes them by manifest', async () => {
+    const machine = world();
+    install(machine, 'codex');
+    install(machine, 'opencode');
+    const launcher = `${HOME}/.local/share/khala/bin/khala`;
+    const plugin = `${HOME}/.local/share/khala/bin/opencode.js`;
+    const payload: SetupPayloadSource = async () => [
+      { path: launcher, component: 'launcher', bytes: Buffer.from('launcher'), harnesses: ['codex', 'opencode'] },
+      { path: plugin, component: 'payload', bytes: Buffer.from('plugin'), harnesses: ['opencode'] },
+      { path: `${HOME}/.local/share/khala/bin/unused`, component: 'payload', bytes: Buffer.from('x'), harnesses: ['cursor'] },
+    ];
+    const executor = countingExecutor();
+    const setup = service(machine, [fakeAdapter('codex'), fakeAdapter('opencode')], executor, payload);
+    const planned = await setup.lifecycle('setup', noConfirm);
+    const installer = planned.operations.filter(operation => operation.id.startsWith('installer:'));
+    expect(installer.map(operation => [operation.harness, operation.component, operation.path])).toEqual([
+      ['codex', 'launcher', launcher], ['opencode', 'payload', plugin]]);
+    expect(planned.harnesses.find(report => report.harness === 'codex')!.components)
+      .toContainEqual({ component: 'launcher', state: 'absent' });
+    await setup.lifecycle('setup', { dryRun: false, confirm: planned.planDigest });
+    expect(executor.plans[0]!.contents.get(sha('launcher'))).toEqual(Buffer.from('launcher'));
+
+    // A file Khala did not install is never replaced.
+    machine.files.set(launcher, 'mine');
+    const refused = await setup.lifecycle('setup', noConfirm);
+    expect(refused).toMatchObject({ state: 'conflict', operations: [] });
+    expect(refused.diagnostics.map(diagnostic => diagnostic.code)).toContain('installer_unowned');
+
+    // Removal comes from the manifest, whichever harness recorded the file.
+    machine.files.set(launcher, 'launcher');
+    machine.files.set(`${HOME}/.local/state/khala/setup/manifest.v1.json`, JSON.stringify({
+      v: 1, transaction: '00000000-0000-4000-8000-000000000000', planDigest: sha('plan'),
+      entries: [{ path: launcher, harness: 'codex', component: 'launcher', ownership: 'installer', operationId: 'installer',
+        postimage: sha('launcher'), mode: 0o500, baseline: { hash: null, backup: null, mode: null }, createdDirectories: [] }],
+    }));
+    const removal = await setup.lifecycle('remove', noConfirm);
+    expect(removal.operations).toContainEqual(expect.objectContaining({ type: 'file_delete', path: launcher, harness: 'codex' }));
+    machine.files.set(launcher, 'edited');
+    const drifted = await setup.lifecycle('remove', noConfirm);
+    expect(drifted).toMatchObject({ state: 'drifted', operations: [] });
+    expect(drifted.diagnostics.map(diagnostic => diagnostic.code)).toContain('installer_drifted');
   });
 });
 

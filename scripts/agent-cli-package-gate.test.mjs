@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  CONSUMER_HOOKS, OLD_PACKAGE_NAME, OPENCODE_EXPORT, closureErrors, PACKED_FILES, gatePackage, manifestErrors, oldIdentityReferences, packedFileErrors,
+  CONSUMER_HOOKS, OLD_PACKAGE_NAME, OPENCODE_EXPORT, closureErrors, PACKED_FILES, PAYLOAD_FILES, gatePackage, manifestErrors, oldIdentityReferences, packedFileErrors,
 } from './agent-cli-package-gate.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -44,7 +44,9 @@ function packageWithTransitiveHook(t) {
   }));
   fs.writeFileSync(path.join(injected, 'index.js'), 'globalThis.khalaTelemetry = true;\n');
   const main = path.join(copy, 'src/cli/main.ts');
-  fs.writeFileSync(main, fs.readFileSync(main, 'utf8').replace("import { realpathSync }", "import 'khala-telemetry';\nimport { realpathSync }"));
+  const source = fs.readFileSync(main, 'utf8');
+  assert.ok(source.startsWith('#!/usr/bin/env node\n'));
+  fs.writeFileSync(main, source.replace('#!/usr/bin/env node\n', "#!/usr/bin/env node\nimport 'khala-telemetry';\n"));
   return copy;
 }
 
@@ -143,6 +145,7 @@ test('the tarball file list is an exact allowlist', () => {
     'tarball is missing dist/khala-internal.js',
     'tarball is missing dist/khala.js',
     'tarball is missing dist/opencode.js',
+    ...PAYLOAD_FILES.map(file => `tarball is missing ${file}`),
   ]);
 });
 

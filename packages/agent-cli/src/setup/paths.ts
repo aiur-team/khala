@@ -7,6 +7,8 @@ export type SetupPathInputs = Readonly<{
   XDG_CONFIG_HOME?: string;
   XDG_DATA_HOME?: string;
   XDG_STATE_HOME?: string;
+  /** Codex's own config root override; defaults to `$HOME/.codex`. */
+  CODEX_HOME?: string;
   PATH?: string;
 }>;
 
@@ -15,6 +17,7 @@ export type SetupPaths = Readonly<{
   configHome: string;
   dataHome: string;
   stateHome: string;
+  codexHome: string;
   versionsRoot: string;
   binRoot: string;
   manifestPath: string;
@@ -26,7 +29,8 @@ export type SetupPaths = Readonly<{
   pathEntries: readonly string[];
 }>;
 
-export type SetupPathErrorCode = 'invalid_home' | 'invalid_xdg_config_home' | 'invalid_xdg_data_home' | 'invalid_xdg_state_home';
+export type SetupPathErrorCode =
+  | 'invalid_home' | 'invalid_xdg_config_home' | 'invalid_xdg_data_home' | 'invalid_xdg_state_home' | 'invalid_codex_home';
 
 export class SetupPathError extends Error {
   constructor(readonly code: SetupPathErrorCode) {
@@ -58,6 +62,8 @@ export function resolveSetupPaths(input: SetupPathInputs): SetupPaths {
   const configHome = xdgRoot(input.XDG_CONFIG_HOME, path.join(home, '.config'), 'invalid_xdg_config_home');
   const dataHome = xdgRoot(input.XDG_DATA_HOME, path.join(home, '.local', 'share'), 'invalid_xdg_data_home');
   const stateHome = xdgRoot(input.XDG_STATE_HOME, path.join(home, '.local', 'state'), 'invalid_xdg_state_home');
+  // Codex treats an empty CODEX_HOME as unset too; a relative one fails closed like XDG.
+  const codexHome = xdgRoot(input.CODEX_HOME, path.join(home, '.codex'), 'invalid_codex_home');
   const khalaData = path.join(dataHome, 'khala');
   const setupState = path.join(stateHome, 'khala', 'setup');
   return {
@@ -65,6 +71,7 @@ export function resolveSetupPaths(input: SetupPathInputs): SetupPaths {
     configHome,
     dataHome,
     stateHome,
+    codexHome,
     versionsRoot: path.join(khalaData, 'versions'),
     binRoot: path.join(khalaData, 'bin'),
     manifestPath: path.join(setupState, 'manifest.v1.json'),

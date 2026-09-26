@@ -11,6 +11,7 @@ describe('resolveSetupPaths', () => {
       configHome: '/home/alice/.config',
       dataHome: '/home/alice/.local/share',
       stateHome: '/home/alice/.local/state',
+      codexHome: '/home/alice/.codex',
       versionsRoot: '/home/alice/.local/share/khala/versions',
       binRoot: '/home/alice/.local/share/khala/bin',
       manifestPath: '/home/alice/.local/state/khala/setup/manifest.v1.json',
@@ -30,6 +31,11 @@ describe('resolveSetupPaths', () => {
     expect([empty.configHome, empty.dataHome, empty.stateHome]).toEqual(['/h/.config', '/h/.local/share', '/h/.local/state']);
   });
 
+  it('honors CODEX_HOME and treats an empty one as unset', () => {
+    expect(resolveSetupPaths({ HOME: '/h', CODEX_HOME: '/srv/codex' }).codexHome).toBe('/srv/codex');
+    expect(resolveSetupPaths({ HOME: '/h', CODEX_HOME: '' }).codexHome).toBe('/h/.codex');
+  });
+
   it.each([
     [{}, 'invalid_home'],
     [{ HOME: '' }, 'invalid_home'],
@@ -37,6 +43,7 @@ describe('resolveSetupPaths', () => {
     [{ HOME: '/h', XDG_CONFIG_HOME: 'cfg' }, 'invalid_xdg_config_home'],
     [{ HOME: '/h', XDG_DATA_HOME: './data' }, 'invalid_xdg_data_home'],
     [{ HOME: '/h', XDG_STATE_HOME: 'state' }, 'invalid_xdg_state_home'],
+    [{ HOME: '/h', CODEX_HOME: 'codex' }, 'invalid_codex_home'],
   ])('fails closed on %j', (input, code) => {
     expect(() => resolveSetupPaths(input)).toThrow(expect.objectContaining({ code }));
     expect(() => resolveSetupPaths(input)).toThrow(SetupPathError);

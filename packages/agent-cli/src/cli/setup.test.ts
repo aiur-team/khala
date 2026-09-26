@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createUnavailableClient } from '../composition/unavailable.js';
 import { PATH_HARNESS_IDS, createDiscoveryOnlyAdapter } from '../setup/detect.js';
 import { SetupPathError } from '../setup/paths.js';
-import { createSetupService, type SetupService } from '../setup/plan.js';
-import { decodeSetupResult, type SetupAdapter, type SetupResult } from '../setup/types.js';
+import { createSetupService, type ComposedSetupAdapter, type SetupService } from '../setup/plan.js';
+import { decodeSetupResult, type SetupResult } from '../setup/types.js';
 import { runCli } from './app.js';
 import { setupEnvironment, setupExecute } from './main.js';
 import type { CliDependencies } from './types.js';
@@ -190,8 +190,8 @@ describe('production setup composition', () => {
     const marker = path.join(home, '.local', 'share', 'khala', 'versions', 'test', 'marker');
     const bytes = new TextEncoder().encode('khala payload');
     const postimage = `sha256:${createHash('sha256').update(bytes).digest('hex')}` as const;
-    // A supported test adapter owning one installer file; the real adapters land separately.
-    const adapter: SetupAdapter = {
+    // A supported test adapter owning one file under the installer root.
+    const adapter: ComposedSetupAdapter = {
       harness: 'codex',
       async detect(environment) {
         return { ...(await createDiscoveryOnlyAdapter('codex').detect(environment)), supported: true };
@@ -208,12 +208,12 @@ describe('production setup composition', () => {
         }
         return present ? [{ id: 'marker', type: 'file_delete', harness: 'codex', component: 'payload', path: marker, preimage: postimage }] : [];
       },
+      planBytes: () => ({ contents: new Map([[postimage, bytes]]) }),
     };
     const service = createSetupService({
       environment: () => setupEnvironment(env),
       adapters: [adapter],
       execute: setupExecute(env),
-      payload: async () => ({ contents: new Map([[postimage, bytes]]), modes: new Map() }),
     });
 
     const beforeDryRun = snapshot(home);
