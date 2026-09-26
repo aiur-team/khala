@@ -7,6 +7,7 @@ import type { AccessRequestOutcome } from '@khala/contracts/messaging/discovery'
 import type { AgentListeningModeApplication } from '../composition/listening-mode.js';
 import type { ChannelAccessPort, ChannelListingPort } from './channels/types.js';
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
+import type { InternalDelivery } from '../composition/internal-delivery.js';
 import type { BatchInbox } from './inbox.js';
 
 export const CLI_ERROR_CODES = [
@@ -23,6 +24,20 @@ export const CONNECT_REFUSAL_CODES = [
   'binding_conflict', 'binding_revoked', 'operation_conflict', 'device_unavailable',
 ] as const;
 export type ConnectRefusalCode = (typeof CONNECT_REFUSAL_CODES)[number];
+// Code-only pairing refusals: the connector bootstrap codes a pairing can reach.
+// None of them says whether a code or channel exists.
+export const PAIR_REFUSAL_CODES = [
+  'invalid_request', 'untrusted_origin', 'link_unavailable', 'unsupported_descriptor', 'harness_session_missing',
+  'unsupported_harness', 'ownership_required', 'admission_denied', 'binding_conflict', 'binding_revoked',
+  'operation_conflict', 'device_unavailable', 'pairing_refused', 'pairing_denied', 'pairing_expired', 'rate_limited',
+] as const;
+export type PairRefusalCode = (typeof PAIR_REFUSAL_CODES)[number];
+export type PairResult =
+  | Readonly<{ kind: 'connected'; binding: SessionBinding; reused: boolean }>
+  | Readonly<{ kind: 'refused'; code: PairRefusalCode }>
+  /** The owner has not decided yet; pairing again with the same code resumes the same claim. */
+  | Readonly<{ kind: 'pending'; reason: 'approval_timeout' | 'cancelled' }>
+  | Readonly<{ kind: 'unavailable' }>;
 export const SEND_REFUSAL_CODES = [
   'invalid_input', 'not_connected', 'binding_not_held', 'storage_failed', 'transport_unavailable',
 ] as const;
@@ -66,6 +81,8 @@ export interface AgentClientPort {
   connect(link: string, signal?: AbortSignal): Promise<ConnectResult>;
   /** Present only on a descriptor-backed local client; asks the channel-access journal for a human grant. */
   requestAccess?(channelUrl: string, signal?: AbortSignal): Promise<AccessRequestResult>;
+  /** Present only when the connector is configured for code-only pairing with a hosted origin. */
+  pair?(code: string, signal?: AbortSignal): Promise<PairResult>;
   send(input: Readonly<{ bindingId: BindingId | null; clientTxnId: string; body: string }>, signal?: AbortSignal): Promise<SendResult>;
   status(signal?: AbortSignal): Promise<AgentStatus>;
   /** Absent until live composition supplies the listening-mode store; native hooks then deliver nothing. */
@@ -97,6 +114,8 @@ export type CliDependencies = Readonly<{
   internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
   /** Lazily composes the descriptor-backed local client; called only when `--internal-descriptor` is given. */
   internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
+  /** Lazily composes delivery of local-server releases into the held binding's inbox, with `--internal-descriptor`. */
+  internalDelivery?: (descriptorPath: string) => Promise<InternalDelivery>;
   claude?: ClaudeSessionClient;
 }>;
 /** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
