@@ -234,7 +234,7 @@ describe('agent binding store migration', () => {
     await bindings.putParticipant({ ownerId, roomId, agentParticipantId: participantA, expectedBindingId: null, record: current });
 
     for (const replacement of [
-      { ...binding(participantA, { bindingId: 'binding_new' as BindingId, generation: 4 }), capability: null },
+      { ...binding(participantA, { bindingId: 'binding_new' as BindingId, generation: 3 }), capability: null },
       {
         ...binding(participantA, {
           bindingId: 'binding_new' as BindingId, generation: 5,
@@ -250,6 +250,18 @@ describe('agent binding store migration', () => {
         record: replacement,
       })).toEqual({ kind: 'conflict', record: current });
     }
+  });
+
+  it('accepts a replacement at the revoked generation itself', async () => {
+    const fake = fakeStore();
+    const current = { ...binding(), revokedGeneration: 4, capability: null };
+    const bindings = createAgentBindingStore({ store: fake.store, legacyMigrationWritesEnabled: true });
+    await bindings.putParticipant({ ownerId, roomId, agentParticipantId: participantA, expectedBindingId: null, record: current });
+    const replacement = { ...binding(participantA, { bindingId: 'binding_new' as BindingId, generation: 4 }), capability: null };
+
+    expect(await bindings.putParticipant({
+      ownerId, roomId, agentParticipantId: participantA, expectedBindingId: current.binding.bindingId, record: replacement,
+    })).toEqual({ kind: 'applied', record: replacement });
   });
 
   it.each(['copy', 'forward', 'index'] as const)('settles a lost %s response without widening authority', async stage => {
