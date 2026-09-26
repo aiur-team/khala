@@ -488,12 +488,14 @@ Acceptance criteria:
   `channel-access-journal`, observes the human grant through
   `channel-access-inbox`, and never admits the agent itself. Without approval it
   reports a pending decision and creates no admitted binding.
-- `join` is non-blocking. `channel-access-inbox` is the single resume path: its
-  grant, denial, or expiry control event is delivered to the same session at
-  the next eligible hook boundary, or through explicit `khala_read` in `async`.
-  A grant lets the shared access flow create the binding; denial/expiry reports
-  the finite outcome. Retries reuse the journaled operation and never create a
-  second request.
+- `join` is non-blocking. The local server keeps the session's outstanding
+  access operations and settles them at each synchronous hook boundary
+  (`khala claude hook`, throttled per session), in every listening mode and
+  before any binding exists. A grant is activated into the session's own
+  binding there, and the boundary reports `connected`, `denied` or `expired`
+  once as a fixed notice, so the agent never retries to learn the outcome
+  (#420). The idle watcher never settles. An explicit status check reuses the
+  journaled operation and never creates a second request.
 - `who` uses the authoritative roster API, includes a safe current-session label
   plus effective mode, and never infers membership from timeline authors or
   renders the raw Claude session ID unless the listing contract explicitly

@@ -33,6 +33,7 @@ function inProcessClient(adapter: ClaudeSessionAdapter, credential: string): Cla
     accessStatus: (sessionId, input) => adapter.accessStatus(call(sessionId), input),
     requestCreate: (sessionId, input) => adapter.requestCreate(call(sessionId), input),
     hook: sessionId => adapter.hook(call(sessionId)),
+    watch: sessionId => adapter.watch(call(sessionId)),
   };
 }
 

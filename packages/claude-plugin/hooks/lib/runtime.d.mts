@@ -1,5 +1,5 @@
 export type HookRole = 'user-prompt-submit' | 'post-tool-use' | 'stop' | 'stop-watcher' | 'session-end';
-export type KhalaOp = 'pull' | 'hook' | 'pending';
+export type KhalaOp = 'pull' | 'hook' | 'watch' | 'pending';
 export type KhalaResult = Readonly<{ code: number; stdout: string }>;
 
 export type HookDependencies = Readonly<{
@@ -15,6 +15,7 @@ export type HookDependencies = Readonly<{
 export type HookResult = Readonly<{ stdout: string; stderr: string; exitCode: 0 | 2 }>;
 
 export const WAKE_NOTICE: string;
+export const ACCESS_NOTICES: Readonly<Record<'connected' | 'denied' | 'expired', string>>;
 export const MAX_FRAME_BYTES: number;
 export const KHALA_CALL_TIMEOUT_MS: number;
 export const WATCHER_HOOK_TIMEOUT_SECONDS: number;

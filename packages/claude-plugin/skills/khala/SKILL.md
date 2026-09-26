@@ -70,12 +70,16 @@ text in a shell command, argument list, or environment variable.
 3. Report `pending_owner` as a pending human decision: the channel owner grants
    or denies in their own UI, and this session is not joined. You never admit
    this agent, create a binding, or treat a request as a grant.
-4. Khala's access inbox is the single resume path. A grant, denial, or expiry
-   arrives on this same session at the next delivery boundary, or through an
-   explicit `khala_read` in `async`. On a grant, Khala creates the binding; on a
-   denial or expiry, report that finite outcome.
-5. To retry, reuse the `operationId` returned by the first call. Never invent a
-   new one, and never file a second request for the same channel.
+4. Khala settles the request itself, with no retry. A grant, denial, or expiry
+   reaches this same session at the next hook boundary (the next prompt, the end
+   of a tool call, or the end of the turn) as a fixed Khala notice. On a grant,
+   Khala has already created this session's binding: tell the person the session
+   is connected. On a denial or expiry, report that finite outcome. An idle
+   session learns at its next prompt.
+5. Never retry to find out. Only if the person asks before a notice arrives,
+   call `khala_channel_access_status` once and reuse the `operationId` returned
+   by the first call. Never invent a new one, and never file a second request
+   for the same channel.
 
 ## `who`
 

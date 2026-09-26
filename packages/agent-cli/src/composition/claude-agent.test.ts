@@ -16,7 +16,8 @@ function client() {
     requestAccess: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
     accessStatus: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
     requestCreate: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
-    hook: vi.fn(async () => ({ kind: 'hook' as const, effective: null, watchSeconds: null })),
+    hook: vi.fn(async () => ({ kind: 'hook' as const, effective: null, watchSeconds: null, access: null })),
+    watch: vi.fn(async () => ({ kind: 'hook' as const, effective: null, watchSeconds: null, access: null })),
   } satisfies ClaudeSessionClient;
 }
 

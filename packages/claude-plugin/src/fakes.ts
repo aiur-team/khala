@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { HookDependencies, KhalaOp, KhalaResult } from '../hooks/lib/runtime.mjs';
 
 type Mode = 'steer' | 'sync' | 'async';
+type Notice = 'connected' | 'denied' | 'expired';
 
 type Session = {
   mode: Mode | null;
@@ -24,6 +25,8 @@ type Session = {
 export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
   const maxItems = options.maxItems ?? 8;
   const sessions = new Map<string, Session>();
+  /** Access outcomes the server settled and a synchronous `hook` call has not reported yet. */
+  const notices = new Map<string, Notice>();
   const calls: Array<Readonly<{ op: KhalaOp; sessionId: string }>> = [];
   const tails = new Map<string, Promise<unknown>>();
   let available = true;
@@ -37,12 +40,18 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
 
   function answer(op: KhalaOp, sessionId: string): KhalaResult {
     if (!available) return { code: 2, stdout: '' };
+    // As the adapter does: only a synchronous `hook` settles, and reports the outcome once.
+    const access = op === 'hook' ? notices.get(sessionId) ?? null : null;
+    notices.delete(op === 'hook' ? sessionId : '');
     const bound = sessions.get(sessionId);
+    if (bound === undefined && access !== null) {
+      return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: null, watchSeconds: null, access })}\n` };
+    }
     if (bound === undefined) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"session_not_bound"}\n' };
     if (bound.revoked) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"binding_not_held"}\n' };
-    if (op === 'hook') {
+    if (op === 'hook' || op === 'watch') {
       const watchSeconds = bound.mode === 'steer' || bound.mode === 'sync' ? bound.watchSeconds : null;
-      return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: bound.mode, watchSeconds })}\n` };
+      return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: bound.mode, watchSeconds, access })}\n` };
     }
     if (op === 'pending') {
       // As the adapter does: a delivered batch awaiting acknowledgement is not pending again.
@@ -77,6 +86,14 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
       Object.assign(session(sessionId), { mode, watchSeconds });
     },
     release(sessionId: string, body: string) { session(sessionId).queue.push(body); },
+    /**
+     * The owner decided this session's access request. A grant binds the session with no
+     * listening mode; every outcome waits for the next `hook` call to settle and report it.
+     */
+    decide(sessionId: string, outcome: Notice) {
+      if (outcome === 'connected') session(sessionId);
+      notices.set(sessionId, outcome);
+    },
     /** The user's Stop (decision 36): the binding is gone, and every op is refused as the adapter refuses it. */
     revoke(sessionId: string) { session(sessionId).revoked = true; },
     /** The agent's next Khala call: acknowledges the outstanding batch on Khala's side. */

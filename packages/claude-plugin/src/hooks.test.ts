@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  KHALA_CALL_TIMEOUT_MS, WAKE_NOTICE, WATCHER_HOOK_TIMEOUT_SECONDS, WATCH_POLL_MS, describeDelivery, readWatcher, runHook, validFrame,
+  ACCESS_NOTICES, KHALA_CALL_TIMEOUT_MS, WAKE_NOTICE, WATCHER_HOOK_TIMEOUT_SECONDS, WATCH_POLL_MS, describeDelivery, readWatcher, runHook, validFrame,
   type HookResult,
 } from '../hooks/lib/runtime.mjs';
 import { fakeKhala, frame, hookDeps, hookInput, scratch, until } from './fakes';
@@ -58,7 +58,8 @@ describe('session keying', () => {
     await stop(A);
     const before = khala.calls.length;
     await prompt(B);
-    expect(khala.calls.slice(before)).toEqual([]);
+    // Only the boundary state: no pull without B's own wake.
+    expect(khala.calls.slice(before)).toEqual([{ op: 'hook', sessionId: B }]);
   });
 
   it('keeps each session’s wake marker to that session', async () => {
@@ -72,7 +73,7 @@ describe('session keying', () => {
     expect(fs.readdirSync(stateRoot)).toHaveLength(1);
 
     await expect(prompt(B)).resolves.toEqual(silent);
-    expect(khala.ops(B)).toEqual([]);
+    expect(khala.ops(B)).toEqual(['hook']);
     expect(context(await prompt(A))).toContain('wake a');
   });
 
@@ -237,7 +238,7 @@ describe('idle watcher', () => {
     khala.bind(A, 'sync');
     const older = watcher(A);
     // Stops are sequential: the older watcher owns the session before the next one arms.
-    await until(() => khala.ops(A).includes('hook'));
+    await until(() => khala.ops(A).includes('watch'));
     const newer = watcher(A, true);
     await expect(older).resolves.toEqual(silent);
     await stop(A, true);
@@ -290,7 +291,7 @@ describe('idle watcher', () => {
     khala.bind(A, 'sync', null);
     await expect(watcher(A)).resolves.toEqual(silent);
     expect(await watcherState(A)).toBe('off');
-    expect(khala.ops(A)).toEqual(['hook']);
+    expect(khala.ops(A)).toEqual(['watch']);
   });
 
   it('exits when its Claude process is gone', async () => {
@@ -483,6 +484,52 @@ describe('timeouts', () => {
         else if (event !== 'SessionEnd') expect(hook.timeout * 1000).toBeGreaterThan(2 * KHALA_CALL_TIMEOUT_MS);
       }
     }
+  });
+});
+
+describe('access outcomes', () => {
+  // Wrong-implementation test (#420): a runtime that only pulls batches never tells the
+  // model its grant arrived, so the agent retries the request to find out.
+  it('reports a grant at the next prompt with no retry, once, and without a binding mode', async () => {
+    const { khala, prompt, postTool } = setup();
+    await expect(prompt(A)).resolves.toEqual(silent);
+    khala.decide(A, 'connected');
+    const told = context(await prompt(A));
+    expect(told).toBe(ACCESS_NOTICES.connected);
+    expect(told).toContain('now connected');
+    // Reported once; nothing was pulled for a session with no delivering mode.
+    await expect(postTool(A)).resolves.toEqual(silent);
+    expect(khala.ops(A)).toEqual(['hook', 'hook', 'hook']);
+  });
+
+  it('reports it after a tool call, and at Stop keeps the session for one continuation', async () => {
+    const { khala, postTool, stop, watcherState } = setup();
+    khala.decide(A, 'denied');
+    expect(context(await postTool(A))).toBe(ACCESS_NOTICES.denied);
+    khala.decide(B, 'expired');
+    const stopped = await stop(B);
+    expect(JSON.parse(stopped.stdout)).toEqual({ decision: 'block', reason: ACCESS_NOTICES.expired });
+    await expect(stop(B, true)).resolves.toEqual(silent);
+    expect(await watcherState(B)).toBeNull();
+  });
+
+  it('shows the notice beside a batch pulled at the same boundary', async () => {
+    const { khala, postTool } = setup();
+    khala.bind(A, 'steer');
+    khala.release(A, 'first message');
+    khala.decide(A, 'connected');
+    const shown = context(await postTool(A))!;
+    expect(shown.startsWith(`${ACCESS_NOTICES.connected}\n\n`)).toBe(true);
+    expect(shown).toContain(JSON.stringify({ body: 'first message' }));
+  });
+
+  it('never lets the watcher take the notice from the Stop hook beside it', async () => {
+    const { khala, stop, watcher } = setup();
+    khala.bind(A, 'sync', null);
+    khala.decide(A, 'connected');
+    await watcher(A);
+    expect(khala.ops(A)).toEqual(['watch']);
+    expect(reason(await stop(A))).toBe(ACCESS_NOTICES.connected);
   });
 });
 

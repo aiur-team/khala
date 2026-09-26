@@ -21,7 +21,7 @@ function fakeBinary(mode: string, pendingRelease = true) {
     "const fs = require('node:fs');",
     `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), env: process.env }) + '\\n');`,
     "const [, op] = process.argv.slice(2);",
-    `if (op === 'hook') process.stdout.write(JSON.stringify({ ok: true, kind: 'hook', effective: ${JSON.stringify(mode)}, watchSeconds: 60 }) + '\\n');`,
+    `if (op === 'hook' || op === 'watch') process.stdout.write(JSON.stringify({ ok: true, kind: 'hook', effective: ${JSON.stringify(mode)}, watchSeconds: 60, access: null }) + '\\n');`,
     `else if (op === 'pending') process.stdout.write(JSON.stringify({ ok: true, kind: ${pendingRelease ? "'pending'" : "'idle'"} }) + '\\n');`,
     `else if (op === 'pull') process.stdout.write(${JSON.stringify(`${frame([BODY])}\n`)});`,
     'else process.exit(2);',
@@ -78,7 +78,7 @@ describe('hook processes', () => {
     expect(stop).toEqual({ code: 0, stdout: '', stderr: '' });
     const watcher = await runScript('stop-watcher.mjs', hookInput('Stop', 'session-idle', { stop_hook_active: true }), env);
     expect(watcher).toEqual({ code: 2, stdout: '', stderr: `${WAKE_NOTICE}\n` });
-    expect(fake.calls().map(call => call.argv[1])).toEqual(['hook', 'pending']);
+    expect(fake.calls().map(call => call.argv[1])).toEqual(['watch', 'pending']);
 
     const claim = await runScript('user-prompt-submit.mjs', hookInput('UserPromptSubmit', 'session-idle', { prompt: WAKE_NOTICE }), env);
     expect(claim.code).toBe(0);
