@@ -12,12 +12,14 @@ const MARKER = 'marker-body-7f3a';
 function harness(outcome: () => Promise<CodexIdleWakeOutcome> = async () => ({ status: 'queued' })) {
   const runs: { argv: readonly string[]; signal: AbortSignal }[] = [];
   let live = true;
+  let idle = true;
   const wake = createCodexIdleWake({
     port: { run: (argv, signal) => { runs.push({ argv, signal }); return outcome(); } },
     isCurrent: async () => live,
+    isIdle: async () => idle,
     revocationPollMs: 5,
   });
-  return { wake, runs, revoke: () => { live = false; } };
+  return { wake, runs, revoke: () => { live = false; }, setIdle: (value: boolean) => { idle = value; } };
 }
 
 describe('codex idle wake', () => {
@@ -89,7 +91,7 @@ describe('idle wake state and dispatch adapter', () => {
   it('drops the wake claim after a failed queue command and restores it after a success', async () => {
     let outcome: CodexIdleWakeOutcome = { status: 'exited', code: 1 };
     const { wake } = harness(async () => outcome);
-    expect(wake.state(binding)).toBe('available');
+    expect(wake.state(binding)).toBe('unavailable');
     await wake.wake(binding, 'sync', '0.154.0');
     expect(wake.state(binding)).toBe('unavailable');
     expect(interactiveCodexCapabilities('0.154.0', limits, { state: 'trusted' }, undefined, wake.state(binding)).immediateNotification)
@@ -97,6 +99,18 @@ describe('idle wake state and dispatch adapter', () => {
     outcome = { status: 'queued' };
     await wake.wake(binding, 'sync', '0.154.0');
     expect(wake.state(binding)).toBe('available');
+  });
+
+  it('makes no wake claim before a wake has succeeded', () => {
+    expect(harness().wake.state(binding)).toBe('unavailable');
+  });
+
+  it('does not wake a session that is mid-turn', async () => {
+    const { wake, runs, setIdle } = harness();
+    setIdle(false);
+    expect(await wake.wake(binding, 'sync', '0.154.0')).toBe('not_idle');
+    expect(runs).toHaveLength(0);
+    expect(wake.state(binding)).toBe('unavailable');
   });
 
   it('passes the dispatcher mode through and wakes nothing for an unknown version', async () => {
