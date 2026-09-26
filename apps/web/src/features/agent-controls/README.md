@@ -179,7 +179,8 @@ policy control and never uses its owner-only policy port.
 
 - **Data.** `AgentControlsSnapshot.listening` carries the store's
   `ListeningModeView` for the exact binding generation, plus who wrote the
-  current version (`lastChange`, decision 42), sibling binding IDs, hard-cancel
+  current version (`view.lastChangedBy`, recorded by the store from the verified
+  authority; `lastChange` is only a fallback for `unknown`, decision 42), sibling binding IDs, hard-cancel
   support for the `steer` route, and whether idle delivery is proven. It is
   `null` until the store answers, and the section then offers no control.
 - **Label.** Every listening surface repeats `<CLI name> <version> ·
