@@ -623,7 +623,7 @@ its footprint cannot be declared up front.
 | Claude Code | Status | Footprint | Evidence |
 | --- | --- | --- | --- |
 | 2.1.283 | supported | installer payload plus `~/.claude/settings.json` | With only the two settings keys, `claude mcp list` resolves `plugin:khala:khala` from the directory marketplace. `claude.test.ts` applies clean, populated, hardened, and upgraded homes through the executor and asserts that the changed files equal the planned paths. |
-| any other | unsupported | nothing | Fails closed. Manifest-driven removal still works. |
+| any other | unsupported | nothing | Fails closed for Claude only; setup continues for the other harnesses. Manifest-driven removal still works. |
 
 Removal is manifest-driven: `settings.json` returns to its byte-exact pre-Khala
 bytes or absence, and drift refuses the whole removal. Absent Claude plans
@@ -688,15 +688,16 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 | Codex | Support |
 | --- | --- |
 | 0.154.0 | Supported |
-| Any other version | `unsupported`: setup refuses; manifest-driven remove still works |
+| Any other version | `unsupported`: setup leaves Codex unchanged and continues for the other harnesses; manifest-driven remove still works |
 
 ## OpenCode setup adapter
 
 `createOpenCodeAdapter()` in `src/setup/adapters/opencode.ts` plans the OpenCode
 side of `setup` and `remove`. It supports exactly OpenCode `1.17.10`, the version
 the route evidence records. The whole `opencode --version` output must be that
-version; any other version is `unsupported`. Setup refuses on an unsupported
-version, but manifest-driven removal still runs. When OpenCode is absent, the
+version; any other version is `unsupported`. Setup leaves an unsupported OpenCode
+unchanged and still configures the other detected harnesses; manifest-driven
+removal still runs. When OpenCode is absent, the
 adapter plans nothing and creates no files.
 
 | Path under `$XDG_CONFIG_HOME/opencode/` | Component | What setup writes |
@@ -976,7 +977,8 @@ A matching confirmation goes to `executeSetupPlan` (see Setup transactions). It
 receives only the digest and a replan callback, reruns this planner under its
 lock, and applies nothing unless the fresh digest still matches. A dry run never
 reaches it. The digest also covers installer mode overrides and the detected
-unsupported harnesses the executor enforces. Outcomes map to results as follows:
+unsupported harnesses the executor enforces: it refuses a setup plan with any operation for
+one of them. Outcomes map to results as follows:
 
 | Executor outcome | Result state | Exit |
 | --- | --- | ---: |
@@ -993,9 +995,12 @@ adapter supplies the bytes behind the exact plan it returned. The planner passes
 adapter the observation object its own `inspect` returned. A Claude refusal
 (`ClaudeSetupRefusal`) becomes that result state with its diagnostics. A harness with
 setup still to do but nothing planned (Cursor plans nothing on a conflict) is a
-`conflict` with `setup_not_planned`. Claude Desktop and Cursor only report: when either
-is unsupported, it neither refuses setup for other harnesses nor counts toward
-readiness.
+`conflict` with `setup_not_planned`. An unsupported harness (an untested version, or a
+component its adapter reports `unsupported`) refuses setup only for itself: setup leaves
+it unchanged, plans the other detected harnesses, and names it in a `harness_unsupported`
+warning. It counts toward readiness only when no other detected harness can be configured,
+and setup refuses as `unsupported` only then. Claude Desktop and Cursor only report: when
+either is unsupported, it never counts toward readiness.
 
 The packaged payload (`src/setup/payload.ts`) comes from the package's `dist/`. It
 contains the runtime (`khala.js`), the OpenCode plugin (`opencode.js`), the Claude
