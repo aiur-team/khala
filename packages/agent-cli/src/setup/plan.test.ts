@@ -130,6 +130,8 @@ function service(
     ...(payload === undefined ? {} : { payload }) });
 }
 
+const absentReport = (harness: HarnessId) => ({ harness, executable: { present: false, path: null },
+  version: { detected: null, supported: false }, components: [], route: 'unavailable' });
 const allFake = (options: FakeAdapterOptions = {}) => HARNESS_IDS.map(harness => fakeAdapter(harness, options));
 const noConfirm = { dryRun: false, confirm: null } as const;
 
@@ -138,11 +140,11 @@ describe('setup planning', () => {
     const setup = service(world(), allFake());
     const status = await setup.configuration();
     expect(status).toMatchObject({ command: 'status', ok: true, changed: false, state: 'no_harness', planDigest: null,
-      confirmation: { required: false, confirmed: false }, harnesses: [], operations: [] });
+      confirmation: { required: false, confirmed: false }, harnesses: HARNESS_IDS.map(absentReport), operations: [] });
     for (const command of ['setup', 'remove'] as const) {
       const result = await setup.lifecycle(command, noConfirm);
       expect(result).toMatchObject({ state: 'no_harness', ok: true, operations: [], planDigest: null,
-        confirmation: { required: false } });
+        confirmation: { required: false }, harnesses: HARNESS_IDS.map(absentReport) });
       expect(setupResultExitCode(result)).toBe(0);
     }
     expect(setupResultExitCode(status, true)).toBe(0);
@@ -512,7 +514,21 @@ describe('status truth table', () => {
     ];
     const status = await service(machine, adapters).configuration();
     expect(status.state).toBe('awaiting_hook_review');
-    expect(status.harnesses.map(harness => harness.harness)).toEqual(['claude', 'codex']);
+    expect(status.harnesses.map(harness => harness.harness)).toEqual(['claude', 'codex', 'opencode']);
+    expect(status.harnesses[2]).toEqual(absentReport('opencode'));
+  });
+
+  it('reports absent harnesses without inspecting, planning, or digesting them', async () => {
+    const machine = world();
+    install(machine, 'codex');
+    const alone = await service(machine, [fakeAdapter('codex')]).lifecycle('setup', noConfirm);
+    const all = await service(machine, allFake()).lifecycle('setup', noConfirm);
+    expect(all.harnesses).toEqual(HARNESS_IDS.map(harness => harness === 'codex'
+      ? alone.harnesses[0] : absentReport(harness)));
+    expect(all.confirmation).toMatchObject({ required: true, harnesses: ['codex'] });
+    expect(all.operations).toEqual(alone.operations);
+    expect(all.planDigest).toBe(alone.planDigest);
+    expect(all.diagnostics.filter(diagnostic => diagnostic.harness !== 'codex')).toEqual([]);
   });
 
   it('names the CLI fallback only when an installed khala is found', async () => {
@@ -533,6 +549,7 @@ describe('status truth table', () => {
     const status: SetupResult = await service(machine, PATH_HARNESS_IDS.map(createDiscoveryOnlyAdapter)).configuration();
     expect(status.state).toBe('unsupported');
     expect(status.harnesses).toEqual([{ harness: 'claude', executable: { present: true, path: '/usr/bin/claude' },
-      version: { detected: '1.2.3', supported: false }, components: [], route: 'unknown' }]);
+      version: { detected: '1.2.3', supported: false }, components: [], route: 'unknown' },
+    ...PATH_HARNESS_IDS.filter(harness => harness !== 'claude').map(absentReport)]);
   });
 });
