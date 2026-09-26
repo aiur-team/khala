@@ -1,9 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { SessionBinding } from '@khala/contracts/delivery/index';
+import type { EventId, RoomId } from '@khala/contracts/messaging/index';
+import { createChannelStore } from '../store/channel-store';
+import { createDiscoveryStore } from '../store/discovery-store';
 import { LIFECYCLE_CHANNEL_META_KEY } from '../store/lifecycle-snapshot';
-import { openChannelStore } from '../store/open';
-import { directoryFor, makeRoot, seedChannel, tree } from './fixtures/channel';
+import { type InternalStoreHandle, openChannelStore } from '../store/open';
+import { alice, aliceDevice, bob, bobDevice, directoryFor, makeRoot, seedChannel, tree } from './fixtures/channel';
 import { PLAINTEXT_DELETION_NOTICE, deleteConfirmation, deleteInternalChannel } from './delete';
 import { CHANNELS_DIRECTORY } from './paths';
 
@@ -20,6 +24,47 @@ afterEach(() => {
 
 function remove(root: string, channelId: string, extra: Partial<Parameters<typeof deleteInternalChannel>[0]> = {}) {
   return deleteInternalChannel({ root, channelId, confirmation: deleteConfirmation(channelId), ...extra });
+}
+
+/** Adds two channels the way an owner-confirmed create request does, each with a message and one activated binding. */
+function addCreatedChannels(handle: InternalStoreHandle): void {
+  const discovery = createDiscoveryStore(handle);
+  const store = createChannelStore(handle);
+  for (const [index, channelId] of ['channel-created-1', 'channel-created-2'].entries()) {
+    const created = discovery.createSecretChannel({
+      idempotencyKey: `create-${index}`, channelId, title: `Created ${index}`, ownerId: alice.ownerId,
+      creatorParticipantId: alice.participantId, creatorDeviceId: aliceDevice, createdAt: '2026-09-24T21:00:00.000Z',
+    });
+    if (created.kind !== 'created') throw new Error('fixture create');
+    store.setMembership({ channelId: channelId as RoomId, participantId: bob.participantId, membership: 'joined' });
+    const sent = store.send({
+      channelId: channelId as RoomId, eventId: `event-created-${index}` as EventId, authorParticipantId: bob.participantId,
+      authorDeviceId: bobDevice, clientTxnId: `txn-created-${index}`, content: { v: 1, kind: 'text', body: `in ${channelId}` },
+      receivedAt: '2026-09-24T21:01:00.000Z',
+    });
+    if (sent.kind !== 'stored') throw new Error('fixture send');
+    const binding: SessionBinding = {
+      v: 1, bindingId: `binding-${channelId}` as SessionBinding['bindingId'], ownerId: bob.ownerId,
+      agentParticipantId: bob.participantId, deviceId: bobDevice, harness: 'codex', sessionId: 'session-digest', generation: 1,
+    };
+    if (discovery.activate({ operationKey: `op-${channelId}`, binding, channelId, sessionGeneration: 1 }).kind !== 'activated') {
+      throw new Error('fixture activation');
+    }
+  }
+}
+
+function channelRows(directory: string) {
+  const handle = openChannelStore({ directory, mode: 'existing' });
+  try {
+    return handle.read(db => ({
+      channels: db.prepare('SELECT channel_id FROM channels ORDER BY channel_id').all().map(row => row.channel_id),
+      events: db.prepare('SELECT channel_id FROM events ORDER BY channel_id').all().map(row => row.channel_id),
+      memberships: db.prepare('SELECT DISTINCT channel_id FROM memberships ORDER BY channel_id').all().map(row => row.channel_id),
+      bindings: db.prepare("SELECT binding_id, status FROM bindings WHERE binding_id LIKE 'binding-%' ORDER BY binding_id").all(),
+    }));
+  } finally {
+    handle.close();
+  }
 }
 
 describe('deleteInternalChannel', () => {
@@ -52,6 +97,43 @@ describe('deleteInternalChannel', () => {
     expect(fs.readdirSync(path.join(root, CHANNELS_DIRECTORY))).toEqual([path.basename(sibling)]);
     expect(tree(sibling)).toEqual(siblingBefore);
     expect(remove(root, 'channel-one')).toEqual({ kind: 'failed', code: 'missing_state' });
+  });
+
+  it('deletes a channel created in a launch store and nothing else in that store', () => {
+    const root = makeRoot(roots);
+    const directory = seedChannel(root, 'channel-launch', [{ author: 'alice', body: 'launch stays' }], { extra: addCreatedChannels });
+    const siblingDirectory = seedChannel(root, 'channel-sibling', [{ author: 'bob', body: 'sibling stays' }]);
+    const sibling = tree(siblingDirectory);
+
+    expect(remove(root, 'channel-created-1')).toEqual({
+      kind: 'deleted', v: 1, channelId: 'channel-created-1', notice: PLAINTEXT_DELETION_NOTICE,
+    });
+    expect(channelRows(directory)).toEqual({
+      channels: ['channel-created-2', 'channel-launch'],
+      events: ['channel-created-2', 'channel-launch'],
+      memberships: ['channel-created-2', 'channel-launch'],
+      // The deleted channel's binding stops working; the other channel's binding is untouched.
+      bindings: [
+        { binding_id: 'binding-channel-created-1', status: 'revoked' },
+        { binding_id: 'binding-channel-created-2', status: 'active' },
+      ],
+    });
+    expect(tree(siblingDirectory)).toEqual(sibling);
+    expect(remove(root, 'channel-created-1')).toEqual({ kind: 'failed', code: 'missing_state' });
+
+    // The launch channel names the store, so it cannot be deleted out from under a created channel.
+    expect(remove(root, 'channel-launch')).toEqual({ kind: 'failed', code: 'channels_remain' });
+    expect(channelRows(directory).channels).toEqual(['channel-created-2', 'channel-launch']);
+
+    // A running launch keeps its channels until it stops.
+    const running = openChannelStore({ directory, mode: 'existing' });
+    handles.push(running);
+    expect(remove(root, 'channel-created-2')).toEqual({ kind: 'failed', code: 'channel_running' });
+    handles.pop()!.close();
+    expect(remove(root, 'channel-created-2').kind).toBe('deleted');
+    expect(remove(root, 'channel-launch').kind).toBe('deleted');
+    expect(fs.existsSync(directory)).toBe(false);
+    expect(tree(siblingDirectory)).toEqual(sibling);
   });
 
   it('refuses a running channel without changing it', () => {

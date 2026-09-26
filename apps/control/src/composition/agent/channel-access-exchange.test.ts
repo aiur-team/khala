@@ -2,8 +2,8 @@ import { CHANNEL_ACCESS_ENVELOPE_RECOVERY_MS } from '@khala/contracts/messaging/
 import type { ChannelAdmissionProviderPort, ChannelAdmissionRequest } from '@khala/messaging/channel-access/exchange/ports';
 import { describe, expect, it } from 'vitest';
 import { createChannelAccessHandlers } from '../../channel-access/handler';
-import { CHANNEL_REF, DEVICE, DIGEST, T0, connectorRequest, context, journalHarness, requester } from '../../channel-access/exchange/support.test';
-import { createExchangeGrantIssuer } from '../../channel-access/exchange/grants';
+import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
+import { CHANNEL_REF, DEVICE, DIGEST, T0, connectorRequest, context, journalHarness, requester } from '@khala/messaging/channel-access/exchange/journal-harness.test';
 import { composeChannelAccessExchange } from './channel-access-exchange';
 import { registerAgentHandlers } from './handlers';
 

@@ -16,8 +16,8 @@ import type {
   TrustedClock,
 } from '@khala/contracts/messaging/index';
 import type { AdapterAction, AdapterCapabilities } from '../../agent-bootstrap/handler';
-import type { GrantExchangeAuthority } from './authority';
-import type { ExchangeGrantIssuer } from './grants';
+import type { GrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
+import type { ExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 
 /** The part of the exchange record resume reads; the composition root supplies the journal. */
 export type ResumableExchange = Readonly<{
