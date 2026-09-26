@@ -1,5 +1,5 @@
 import type { BindingId } from '@khala/contracts/delivery/index';
-import type { ChannelListing } from '@khala/contracts/messaging/index';
+import type { AccessRequestOutcome, ChannelListing } from '@khala/contracts/messaging/index';
 
 export const CHANNEL_LIST_REFUSAL_CODES = [
   'untrusted_origin', 'discovery_required', 'discovery_denied', 'cursor_unavailable', 'rate_limited',
@@ -47,3 +47,37 @@ export type ChannelListOutput =
 export type AgentListOutput =
   | Readonly<{ ok: true; v: 1; channel: BindingId; agents: readonly ChannelAgent[] }>
   | ListingFailure;
+
+export const ACCESS_REFUSAL_CODES = [
+  'untrusted_origin', 'discovery_required', 'discovery_denied', 'invalid_request', 'operation_conflict', 'not_found', 'rate_limited',
+] as const;
+export type AccessRefusalCode = (typeof ACCESS_REFUSAL_CODES)[number];
+
+/** What an access request names: an opaque listing reference or a canonical channel URL. */
+export type AccessTarget =
+  | Readonly<{ kind: 'listing_ref'; listingRef: string }>
+  | Readonly<{ kind: 'channel_url'; channelUrl: string }>;
+export type AccessRequestInput = Readonly<{ target: AccessTarget; operationId: string; origin: string | null }>;
+export type AccessStatusInput = Readonly<{ operationId: string; origin: string | null }>;
+
+// `status` stays `unknown` so the access service decodes it with the closed contract decoder.
+export type ChannelAccessResult =
+  | Readonly<{ kind: 'status'; status: unknown }>
+  | Readonly<{ kind: 'refused'; code: AccessRefusalCode }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+export type ChannelAccessPort = Readonly<{
+  requestChannelAccess(input: AccessRequestInput, signal?: AbortSignal): Promise<ChannelAccessResult>;
+  channelAccessStatus(input: AccessStatusInput, signal?: AbortSignal): Promise<ChannelAccessResult>;
+}>;
+
+export type AccessErrorCode = AccessRefusalCode | 'unavailable';
+/**
+ * What the caller should do next. `reuse_operation_id` means the call may be
+ * repeated only under the same operation ID; a new ID could create a second request.
+ */
+export type AccessNextAction = 'repair_connector' | 'reuse_operation_id';
+/** The exact object printed by the access commands and returned by the access MCP tools. */
+export type AccessOutput =
+  | Readonly<{ ok: true; v: 1; operationId: string; outcome: AccessRequestOutcome; next: AccessNextAction | null }>
+  | Readonly<{ ok: false; v: 1; error: AccessErrorCode; operationId: string; next: AccessNextAction | null }>;
