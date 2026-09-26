@@ -30,20 +30,22 @@ export type CodexIdleWakeResult =
   | 'queued'
   /** Wake unavailable: idle agents receive messages only at their next turn (decision 34). */
   | 'unsupported_version' | 'queue_failed'
-  | 'not_idle_mode' | 'revoked';
+  | 'not_idle_mode' | 'not_idle' | 'revoked';
 
 export type CodexIdleWakeDeps = Readonly<{
   port: CodexIdleWakePort;
   /** True only while the binding is still the live, unrevoked binding (Stop revokes it). */
   isCurrent: (binding: SessionBinding) => Promise<boolean>;
+  /** True only while the session is between turns; a busy session takes the batch at its next hook. */
+  isIdle: (binding: SessionBinding) => Promise<boolean>;
   /** How often a wake in flight re-checks revocation, in ms. */
   revocationPollMs?: number;
 }>;
 
 export type CodexIdleWake = Readonly<{
   /**
-   * Whether the wake claim may be made for this binding: `unavailable` after its last wake failed,
-   * so capabilities fall back to the next-turn-only claim (decision 34). Feed it to
+   * Whether the wake claim may be made for this binding: `unavailable` until a wake has succeeded and
+   * again after its last wake failed (decisions 34/37), so capabilities fall back to the next-turn-only claim (decision 34). Feed it to
    * `interactiveCodexCapabilities(..., idleWake)`.
    */
   state: (binding: SessionBinding) => CodexIdleWakeState;
@@ -59,12 +61,13 @@ export function createCodexIdleWake(deps: CodexIdleWakeDeps): CodexIdleWake {
   const pollMs = deps.revocationPollMs ?? 250;
   const inFlight = new Map<string, Readonly<{ binding: SessionBinding; result: Promise<CodexIdleWakeResult> }>>();
 
-  const failed = new Set<string>();
+  const proven = new Set<string>();
   const key = (binding: SessionBinding) => `${binding.bindingId}:${binding.generation}`;
   const current = (binding: SessionBinding) => deps.isCurrent(binding).catch(() => false);
 
   async function run(binding: SessionBinding): Promise<CodexIdleWakeResult> {
     if (!await current(binding)) return 'revoked';
+    if (!await deps.isIdle(binding).catch(() => false)) return 'not_idle';
     const abort = new AbortController();
     const watch = setInterval(() => {
       void current(binding).then(live => { if (!live) abort.abort(); });
@@ -84,7 +87,7 @@ export function createCodexIdleWake(deps: CodexIdleWakeDeps): CodexIdleWake {
   }
 
   return {
-    state: binding => (failed.has(key(binding)) ? 'unavailable' : 'available'),
+    state: binding => (proven.has(key(binding)) ? 'available' : 'unavailable'),
     wake(binding, mode, version) {
       // `async` is never woken; an unproven version keeps the next-turn-only claim.
       if (mode === 'async') return Promise.resolve('not_idle_mode');
@@ -92,8 +95,8 @@ export function createCodexIdleWake(deps: CodexIdleWakeDeps): CodexIdleWake {
       const existing = inFlight.get(binding.bindingId);
       if (existing && sameSessionBinding(existing.binding, binding)) return existing.result;
       const result = run(binding).then(outcome => {
-        if (outcome === 'queued') failed.delete(key(binding));
-        else if (outcome === 'queue_failed') failed.add(key(binding));
+        if (outcome === 'queued') proven.add(key(binding));
+        else if (outcome === 'queue_failed') proven.delete(key(binding));
         return outcome;
       }).finally(() => {
         if (inFlight.get(binding.bindingId)?.result === result) inFlight.delete(binding.bindingId);
