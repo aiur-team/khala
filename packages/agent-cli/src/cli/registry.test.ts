@@ -27,7 +27,7 @@ const command = (name: string, code = 0): CliCommand => ({ name, run: async () =
 
 describe('command registry', () => {
   it('registers exactly the existing commands', () => {
-    expect(commandRegistry.names()).toEqual(['connect', 'listen', 'read', 'send', 'status', 'mcp-serve', 'channels', 'agents', 'internal', 'codex-hook', 'join']);
+    expect(commandRegistry.names()).toEqual(['connect', 'listen', 'read', 'send', 'status', 'mcp-serve', 'channels', 'agents', 'internal', 'codex-hook', 'join', 'claude']);
     for (const name of commandRegistry.names()) expect(commandRegistry.resolve(name)?.name).toBe(name);
   });
 

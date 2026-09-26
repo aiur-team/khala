@@ -5,6 +5,7 @@ import type {
 import type { InternalRuntime } from '@khala/contracts/internal/command';
 import type { AccessRequestOutcome } from '@khala/contracts/messaging/discovery';
 import type { ChannelListingPort } from './channels/types.js';
+import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { BatchInbox } from './inbox.js';
 
 export const CLI_ERROR_CODES = [
@@ -90,6 +91,7 @@ export type CliDependencies = Readonly<{
   internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
   /** Lazily composes the descriptor-backed local client; called only when `--internal-descriptor` is given. */
   internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
+  claude?: ClaudeSessionClient;
 }>;
 /** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
 export type CliCommand = Readonly<{
