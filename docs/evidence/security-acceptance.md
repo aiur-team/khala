@@ -2,7 +2,7 @@
 
 Scoped, reproducible evidence for the encryption and approval boundaries of the merged KHA-134/135/136/137 system. This is not a blanket security certification. Each row below says what was observed, on what composition, and what is still missing. A row is **pass** only for the paths and encodings the named tests exercise.
 
-Recorded 2026-09-26 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, Vitest 5.0.1, from this branch merged with base `3f5d3ee`. CI runs the same suite on Node 22.23.2. Codex adapter `khala-hosted-queue-1` against the package's fake app-server at Codex 0.154.0.
+Recorded 2026-09-26 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, Vitest 5.0.1, from this branch merged with base `499223c`. CI runs the same suite on Node 22.23.2. Codex adapter `khala-hosted-queue-1` against the package's fake app-server at Codex 0.154.0.
 
 ## Commands
 
@@ -51,6 +51,7 @@ A failed row blocks acceptance. Rows marked not observed are gaps, not passes.
 | Codex harness adapter | Driven through the review gate over its fake app-server. |
 | 5 other harness adapters, 2 OpenCode tools | **Not observed**. The dispatcher hands every adapter the same approved job, and `@khala/harnesses` depends only on `@khala/contracts` (checked), but these adapters' own behaviour was not driven. The shipped OpenCode entry composes no transport. |
 | 7 Claude MCP tools, 4 Claude plugin hooks, 2 Codex-app hooks | **Not observed**: no Claude or Codex app session could be started here. |
+| `khala setup`, `khala remove` | **Not observed**. They install or remove harness configuration from the packaged payload and read no channel state. The test composition has no payload, so neither command was driven. |
 | 17 internal discovery routes, 31 hosted control routes | Human routes are human-only. Agent routes **not observed**: discovery was not mounted, and control carries no message bodies in any wired flow. |
 
 The frozen Claude plugin contract (`FROZEN_MCP_TOOLS`) omits the registered `khala_pair`. That is contract drift, not a leak. `inventory.test.ts` also fails if the contract names a tool that no registry serves.

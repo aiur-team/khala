@@ -50,6 +50,7 @@ const CLAUDE_UNCOMPOSED = 'the shipped CLI composes no Claude session client (cl
 const OPENCODE_UNCOMPOSED = 'the shipped plugin entry composes no transport (unavailableOpenCodeDependencies), so it can reach no content to test';
 const ADAPTER_UNDRIVEN = 'not driven: the review gate was exercised through the Codex adapter only. The dispatcher hands every adapter the same approved job, but this adapter\'s own behaviour (including any file access) was not observed';
 const HOOK_RENDERS_CLI = 'hook renders what `khala claude`/`khala codex-hook` returns; no live harness session was started, so hook output itself was not captured';
+const SETUP_UNCOMPOSED = 'installs or removes harness configuration from the packaged payload and reads no channel state; the test composition has no payload, so the command was not driven';
 const DISCOVERY_UNMOUNTED = 'internal discovery routes are mounted only with a discovery port; they return channel listings and access state, and were not mounted here';
 
 /**
@@ -90,6 +91,8 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'cli:channels': probe('agent-cli'),
   'cli:agents': probe('agent-cli'),
   'cli:internal': notObserved('launches or deletes a local channel for the human operator; exercised only through its loopback server routes here'),
+  'cli:setup': notObserved(SETUP_UNCOMPOSED),
+  'cli:remove': notObserved(SETUP_UNCOMPOSED),
   'cli:codex-hook': probe('agent-cli'),
   'cli:join': probe('agent-cli'),
   'cli:claude': probe('agent-cli'),
