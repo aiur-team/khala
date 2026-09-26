@@ -69,7 +69,12 @@ describe('inspectCodexApp', () => {
     const inspection = inspectCodexApp(env, limits, proven(env));
     expect(decodeAppHarnessRecord(inspection.record).ok).toBe(true);
     expect(statuses(env, proven(env))).toEqual(['proven', 'proven', 'proven']);
-    expect(inspection.capabilities).toMatchObject({ support: 'tested', acknowledgement: 'batch_token_next_call' });
+    expect(inspection.capabilities).toMatchObject({
+      support: 'tested', acknowledgement: 'batch_token_next_call', existingSession: 'native_hooks',
+      reconcileByReleaseId: 'unsupported', immediateNotification: 'unknown',
+    });
+    const asyncOnly = inspectCodexApp(env, limits, proven(env).filter(cell => cell.mode === 'async')).capabilities;
+    expect(asyncOnly).toMatchObject({ support: 'tested', existingSession: 'unknown' });
     expect(inspection.capabilities.modes.steer.reason).toContain('Hard abort is disabled');
   });
 

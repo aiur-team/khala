@@ -173,6 +173,30 @@ describe('runCodexAppHook', () => {
     expect(JSON.stringify(result.json)).toContain(MARKER);
   });
 
+  it('suppresses a failure with a content-free code and no output', async () => {
+    const w = world('sync', ['sync']);
+    await enqueue(w, 'release-1');
+    const stderr = new PassThrough();
+    let err = '';
+    stderr.on('data', chunk => { err += String(chunk); });
+    const stdout = new PassThrough();
+    let out = '';
+    stdout.on('data', chunk => { out += String(chunk); });
+    const stdin = new PassThrough();
+    stdin.end(JSON.stringify({ hook_event_name: 'Stop', session_id: BINDING.sessionId, turn_id: 'turn-1' }));
+    await runCodexAppHook({
+      stdin, stdout, stderr,
+      currentBinding: async () => BINDING,
+      listeningMode: async () => ({ v: 1, bindingId: BINDING.bindingId, generation: BINDING.generation, effective: 'sync' }),
+      inbox: async () => open(w),
+      recordHookRun: async () => {},
+      inspect: async () => { throw new Error(`boom ${MARKER}`); },
+    });
+    expect(out).toBe('');
+    expect(JSON.parse(err)).toMatchObject({ ok: false, warning: 'codex_app_hook_suppressed' });
+    expect(err).not.toContain(MARKER);
+  });
+
   it('ignores PreToolUse even with every cell proven', async () => {
     const w = world('steer', ['steer', 'sync', 'async']);
     await enqueue(w, 'release-1');
