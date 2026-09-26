@@ -1,5 +1,5 @@
 import type {
-  AdmissionGrantExchangePort,
+  ChannelAccessReadiness,
   GrantExchangeRequest,
   OperationResult,
   SealedGrantEnvelope,
@@ -9,9 +9,12 @@ import type {
 import { describe, expect, it } from 'vitest';
 import {
   CONNECTOR_CHANNEL_ACCESS_EXCHANGE_PATH,
+  CONNECTOR_CHANNEL_ACCESS_READY_PATH,
+  type ConnectorGrantExchangePort,
   type ConnectorExchangeAuthentication,
   type VerifiedExchangeConnector,
   createGrantExchangeHandler,
+  createGrantReadinessHandler,
 } from './handler';
 import { DEVICE, DIGEST, T0, connectorRequest, requester } from './support.test';
 
@@ -36,11 +39,14 @@ async function setup(result: OperationResult<SealedGrantEnvelope, GrantExchangeR
   const state: { auth: ConnectorExchangeAuthentication } = { auth: { kind: 'authenticated', connector } };
   const route = createGrantExchangeHandler({
     authenticateConnector: async () => state.auth,
-    exchangeFor(value): AdmissionGrantExchangePort {
+    exchangeFor(value): ConnectorGrantExchangePort {
       return {
         async exchange(input) {
           calls.push({ connector: value, input });
           return typeof result === 'function' ? result() : result;
+        },
+        async acknowledge() {
+          throw new Error('not used by the exchange route');
         },
       };
     },
@@ -142,5 +148,94 @@ describe('connector grant-exchange route', () => {
     const failed = await throwing.post(throwing.body);
     expect(failed.status).toBe(503);
     expect(await failed.text()).not.toContain('secret');
+  });
+});
+
+async function readySetup(result: OperationResult<null, GrantExchangeRejection> = { kind: 'ok', value: null }) {
+  const body = await connectorRequest();
+  const connector: VerifiedExchangeConnector = {
+    requester: requester.principal,
+    origin: requester.origin,
+    sessionGeneration: 3,
+    sessionFingerprint: DIGEST,
+    deviceId: DEVICE,
+    proofKeyThumbprint: body.proofKey.thumbprint,
+  };
+  const calls: { connector: unknown; input: ChannelAccessReadiness }[] = [];
+  const state: { auth: ConnectorExchangeAuthentication } = { auth: { kind: 'authenticated', connector } };
+  const route = createGrantReadinessHandler({
+    authenticateConnector: async () => state.auth,
+    exchangeFor(value): ConnectorGrantExchangePort {
+      return {
+        async exchange() {
+          throw new Error('not used by the readiness route');
+        },
+        async acknowledge(input) {
+          calls.push({ connector: value, input });
+          return result;
+        },
+      };
+    },
+    clock: () => T0,
+  });
+  const readiness: ChannelAccessReadiness = {
+    v: 1,
+    operationId: 'op_access_1',
+    requester: requester.principal,
+    origin: requester.origin,
+    sessionGeneration: 3,
+    deviceId: DEVICE,
+    proofKeyThumbprint: body.proofKey.thumbprint,
+    recipientKeyThumbprint: body.encryptionKey.thumbprint,
+  };
+  const post = (payload: unknown, query = '?operation=op_access_1') => route.handle(new Request(
+    `${requester.origin}${CONNECTOR_CHANNEL_ACCESS_READY_PATH}${query}`,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) },
+  ));
+  return { route, readiness, calls, state, post };
+}
+
+describe('connector readiness route', () => {
+  it('registers one exact POST route and acknowledges for the authenticated connector', async () => {
+    const h = await readySetup();
+    expect(h.route.path).toBe('/api/agent/channel-access/ready');
+    expect(h.route.methods).toEqual(['POST']);
+    expect(await read(await h.post(h.readiness)))
+      .toEqual({ status: 200, cache: 'no-store', body: { v: 1, kind: 'acknowledged' } });
+    expect(h.calls).toEqual([{ connector: { sessionFingerprint: DIGEST }, input: h.readiness }]);
+  });
+
+  it('requires authentication and a strict body, and refuses assertions that differ from it', async () => {
+    const h = await readySetup();
+    h.state.auth = { kind: 'rejected', code: 'auth_required' };
+    expect((await h.post(h.readiness)).status).toBe(401);
+    h.state.auth = { kind: 'authenticated', connector: {
+      requester: requester.principal, origin: requester.origin, sessionGeneration: 3, sessionFingerprint: DIGEST,
+      deviceId: DEVICE, proofKeyThumbprint: h.readiness.proofKeyThumbprint,
+    } };
+    expect((await h.post({ ...h.readiness, grant: 'cagrant_x' })).status).toBe(400);
+    expect((await h.post(h.readiness, '')).status).toBe(400);
+    for (const [change, code] of [
+      [{ operationId: 'op_access_2' }, 'operation_mismatch'],
+      [{ requester: 'principal_2' }, 'wrong_requester'],
+      [{ origin: 'https://other.example' }, 'wrong_origin'],
+      [{ sessionGeneration: 4 }, 'wrong_generation'],
+      [{ deviceId: 'device_agent_2' }, 'wrong_device'],
+      [{ proofKeyThumbprint: 'A'.repeat(43) }, 'proof_mismatch'],
+    ] as const) {
+      expect(await read(await h.post({ ...h.readiness, ...change }))).toMatchObject({ status: 409, body: { code } });
+    }
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('maps acknowledgement outcomes to finite codes', async () => {
+    for (const [result, status] of [
+      [{ kind: 'rejected', code: 'closed' }, 410],
+      [{ kind: 'rejected', code: 'encryption_key_mismatch' }, 409],
+      [{ kind: 'unavailable', retryable: true }, 503],
+    ] as const) {
+      const h = await readySetup(result);
+      expect((await h.post(h.readiness)).status).toBe(status);
+    }
   });
 });
