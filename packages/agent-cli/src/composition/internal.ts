@@ -11,7 +11,7 @@ import type {
   AccessRequestResult, AgentClientPort, AgentStatus, SendRefusalCode, SendResult,
 } from '../cli/types.js';
 import { plainObject, validIdentifier } from '../cli/validation.js';
-import { activateInternalAccess } from './internal-activation.js';
+import { activateInternalAccess, activationPaths, releaseRevokedGrant } from './internal-activation.js';
 import { createInternalChannelCreate } from './internal-channel-create.js';
 import {
   type LocalHarnessCapabilities, type LocalHarnessObservation, createInternalListeningMode,
@@ -238,6 +238,14 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
         const joined = await joinWithDiscovery(selection, channelUrl, signal,
           (capability, target, init) => request(selection, capability, target, init, signal), answered);
         if (joined.kind !== 'status' || answered.operationId === null || !ACTIVATABLE.has(joined.outcome)) return joined;
+        // A grant whose binding the owner's Stop revoked would refuse the approved binding's write.
+        const { grantPath } = activationPaths(options.descriptorPath);
+        const held = readInternalDescriptor(grantPath);
+        if (held.ok && isGrantedDescriptor(held.value)) {
+          let binding;
+          try { binding = await heldBinding(held.value, signal); } catch { binding = 'unavailable' as const; }
+          if (binding === 'revoked') releaseRevokedGrant(grantPath, held.value.bindingId);
+        }
         // Approved: finish the binding now. Every step is journaled, so a later `join` resumes it.
         // A `connected` answer is checked too: after a launcher restart the descriptor holds no grant.
         const activated = await activateInternalAccess({

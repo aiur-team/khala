@@ -10,7 +10,9 @@
 // cleared and success reported. Any step that fails leaves the binding named in
 // `remaining`; the barrier stays raised, so it still cannot commit. A
 // whole-channel Stop first closes the channel's approved requests that have not
-// become bindings yet, so none of them binds after it.
+// become bindings yet, so none of them binds after it. Once the bindings are
+// revoked, the requests that activated them close too, so the owner's inbox no
+// longer reads them as connected and the agent's next request is a new one.
 
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { BindingKey, RevocationBarrier } from './barrier';
@@ -59,6 +61,8 @@ export type BindingStopPorts = Readonly<{
   clearGrant?(bindingIds: ReadonlySet<string>): GrantClearing;
   /** Closes the channel's approved requests that are not yet active bindings; `unavailable` when unsure. */
   cancelApproved?(channelId: string): Promise<'cancelled' | 'unavailable'>;
+  /** Closes the requests that activated any of `bindingIds`, connected ones included; `unavailable` when unsure. */
+  closeStopped?(bindingIds: ReadonlySet<string>): Promise<'closed' | 'unavailable'>;
 }>;
 
 export type BindingStopService = Readonly<{
@@ -138,10 +142,22 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
       else remaining.push({ ...view(binding), reason: 'revoke_failed' });
     }
 
+    // Every selected binding that is no longer active: revoked now, or by an earlier partial Stop.
+    const failedIds = new Set(remaining.map(entry => entry.bindingId));
+    const cleared = new Set(selected.map(candidate => candidate.binding.bindingId).filter(id => !failedIds.has(id)));
+
+    // The requests that activated them close as revoked, so none still reads as connected.
+    let closed: 'closed' | 'unavailable' = 'closed';
+    if (ports.closeStopped) {
+      try {
+        closed = await ports.closeStopped(cleared);
+      } catch {
+        closed = 'unavailable';
+      }
+    }
+
     if (ports.clearGrant) {
       // Every binding of the channel that is no longer active loses its descriptor grant.
-      const failedIds = new Set(remaining.map(entry => entry.bindingId));
-      const cleared = new Set(selected.map(candidate => candidate.binding.bindingId).filter(id => !failedIds.has(id)));
       let clearing: GrantClearing;
       try {
         clearing = cleared.size === 0 ? 'absent' : ports.clearGrant(cleared);
@@ -162,8 +178,9 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
     }
 
     if (remaining.length > 0) return { kind: 'partial', stopped, remaining };
-    // An approval that may still activate is not stopped; the Stop is retried whole.
-    return cancelled === 'cancelled' ? { kind: 'stopped', stopped } : { kind: 'unavailable' };
+    // An approval that may still activate, or a request still reading as connected, is not
+    // stopped; the Stop is retried whole.
+    return cancelled === 'cancelled' && closed === 'closed' ? { kind: 'stopped', stopped } : { kind: 'unavailable' };
   }
 
   return {

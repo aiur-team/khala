@@ -266,18 +266,10 @@ function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
     listAgents: async () => { throw new CliError('internal_error'); },
     // The target's default operation ID is per target only; salt it with the session so
     // two sessions joining one URL file two requests, and a retry in one reuses its own.
-    request: async input => {
-      if (input.operationId !== defaultOperationId(input.target)) return access.request(input);
-      // A revoked operation, or one whose binding the owner's Stop revoked, is closed for good,
-      // so asking again files its successor: a new request the owner decides. Successors are
-      // derived, so repeating a live request stays idempotent and reaches the same live one.
-      let operationId = sessionOperationId(entry.session, input.operationId);
-      for (let walked = 0; ; walked += 1) {
-        const output = await access.request({ ...input, operationId });
-        if (!output.ok || output.outcome !== 'revoked' || walked === MAX_REVOKED_SUCCESSORS) return output;
-        operationId = successorOperationId(operationId);
-      }
-    },
+    // Asking again after the owner's Stop files the revoked operation's successor.
+    request: input => (input.operationId === defaultOperationId(input.target)
+      ? access.requestAgain({ ...input, operationId: sessionOperationId(entry.session, input.operationId) })
+      : access.request(input)),
     status: input => access.status(input),
     // A create intent names no target, so the caller's operation ID is used as given.
     createChannel: input => create.request(input),
@@ -288,14 +280,6 @@ function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
 
 function sessionOperationId(session: string | null, operationId: string): string {
   return createHash('sha256').update(JSON.stringify(['khala.claude.access.v1', session, operationId])).digest('base64url').slice(0, 32);
-}
-
-/** How many revoked operations one request walks past before it answers the last one as revoked. */
-const MAX_REVOKED_SUCCESSORS = 32;
-
-/** The operation a session's request files once `operationId` is revoked. */
-function successorOperationId(operationId: string): string {
-  return createHash('sha256').update(JSON.stringify(['khala.claude.access.successor.v1', operationId])).digest('base64url').slice(0, 32);
 }
 
 function listingResult(output: Readonly<{ ok: boolean; [key: string]: unknown }>): McpToolResult {

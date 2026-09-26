@@ -42,6 +42,11 @@ export type ChannelAccessService = Readonly<{
    * owner's Stop does. A request that is already terminal, or still pending, is `unchanged`.
    */
   revokeApproved(requestHandle: string, operationId: string, options?: CallOptions): Promise<'revoked' | 'unchanged' | 'unavailable'>;
+  /**
+   * Closes an approved, connecting or connected request whose binding the owner's Stop revoked,
+   * so the owner's inbox and the requester both read `revoked`. Anything else is `unchanged`.
+   */
+  revokeStopped(requestHandle: string, operationId: string, options?: CallOptions): Promise<'revoked' | 'unchanged' | 'unavailable'>;
 }>;
 
 export function createChannelAccessService(deps: Readonly<{
@@ -236,6 +241,16 @@ export function createChannelAccessService(deps: Readonly<{
     return await revokeConfirmed(deps.store, located.context, operationId, options) ? 'revoked' as const : 'unavailable' as const;
   }
 
+  async function revokeStopped(requestHandle: string, operationId: string, options?: CallOptions) {
+    const located = await safe(() => deps.store.readContext({ requestHandle }, options));
+    if (!located || located.kind === 'unavailable') return 'unavailable' as const;
+    if (located.kind !== 'found') return 'unchanged' as const;
+    const { outcome } = located.context;
+    if (outcome !== 'approved' && outcome !== 'connecting' && outcome !== 'connected') return 'unchanged' as const;
+    return await revokeConfirmed(deps.store, located.context, operationId, options, true)
+      ? 'revoked' as const : 'unavailable' as const;
+  }
+
   async function claimAccess(input: ChannelAccessFulfillmentClaim, options?: CallOptions) {
     return claim('access', input, options);
   }
@@ -349,6 +364,7 @@ export function createChannelAccessService(deps: Readonly<{
     }),
     flushNotifications,
     revokeApproved,
+    revokeStopped,
   });
 }
 
@@ -487,6 +503,7 @@ async function revokeConfirmed(
   context: ChannelAccessStoredContext,
   operationId: string,
   options?: CallOptions,
+  connected = false,
 ): Promise<boolean> {
   let current = context;
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -494,12 +511,14 @@ async function revokeConfirmed(
       binding: bindingFrom(current),
       expectedRevision: current.revision,
       operationId,
+      ...(connected ? { connected } : {}),
     }, options));
     if (!result || result.kind === 'unavailable' || result.kind === 'not_found') return false;
     if (result.kind === 'updated') return true;
     const reread = await safe(() => store.readContext({ requestHandle: current.requestHandle }, options));
     if (!reread || reread.kind !== 'found') return false;
-    if (terminalOutcome(reread.context.outcome)) return true;
+    const { outcome } = reread.context;
+    if (terminalOutcome(outcome) && !(connected && outcome === 'connected')) return true;
     current = reread.context;
   }
   return false;

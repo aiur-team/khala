@@ -491,7 +491,12 @@ has activated the grant. Output is decoded with the closed
 
 The operation ID is idempotent. Without `--operation` it is derived from the
 target, so repeating the command reuses it; pass `--operation` to name your own,
-or a new one to deliberately start over after a denial or expiry. Every result,
+or a new one to deliberately start over after a denial or expiry. After the
+owner's Stop revokes that derived operation, repeating the command files a new
+request, under an ID derived from the revoked one, that waits for the owner's
+approval; repeating it again reaches that same request. An operation you named
+with `--operation` is read as given, revoked or not. `khala_request_channel_access`
+without `operationId` behaves the same way. Every result,
 including failures, echoes the ID. `next` says what to do:
 `repair_connector` (outcome `repair_required`) means repair the connector, and
 `reuse_operation_id` (outcome or error `unavailable`) means any retry must reuse

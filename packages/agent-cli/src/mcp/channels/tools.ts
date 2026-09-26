@@ -1,5 +1,5 @@
 import type { BindingId } from '@khala/contracts/delivery/index';
-import { ChannelAccessService } from '../../cli/channels/access.js';
+import { ChannelAccessService, defaultOperationId } from '../../cli/channels/access.js';
 import { ChannelCreateService } from '../../cli/channels/create/service.js';
 import type { CreateOutput } from '../../cli/channels/create/types.js';
 import { ChannelListingService } from '../../cli/channels/service.js';
@@ -29,7 +29,10 @@ export function composeChannelTools(client: AgentClientPort): ChannelToolsPort {
   return {
     listChannels: (input, signal) => listing.listChannels(input, signal),
     listAgents: (channel, signal) => listing.listAgents(channel, signal),
-    request: (input, signal) => access.request(input, signal),
+    // A request under the target's default operation asks again after the owner's Stop; an
+    // operation the caller named is its own and is read as given.
+    request: (input, signal) => (input.operationId === defaultOperationId(input.target)
+      ? access.requestAgain(input, signal) : access.request(input, signal)),
     status: (input, signal) => access.status(input, signal),
     createChannel: (input, signal) => create.request(input, signal),
     createChannelStatus: (input, signal) => create.status(input, signal),

@@ -115,6 +115,8 @@ async function boot(
     newId: () => `id-${++id}`,
     clock: () => clock.now,
     startPort,
+    // Channel access's share of the owner's Stop, as the launcher wires it.
+    stop: { cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped },
     ...extra,
   });
   cleanups.push(() => server.close());
@@ -1027,6 +1029,63 @@ describe('internal channel discovery', () => {
       const batch = await listener.readBatch({ maxBytes: 1024 * 1024 });
       await listener.release();
       expect(batch?.items.map(item => item.record.releaseId)).toEqual([internalReleaseId({ bindingId: active.bindingId, generation: 1 } as never, eventId as never)]);
+    });
+
+    const stop = (a: Awaited<ReturnType<typeof activationWorld>>) => call(a.w.server.port, {
+      method: 'POST', path: `/api/v1/channels/${channelId}/stop`, headers: a.w.human, body: { v: 1, targets: null },
+    });
+
+    // Wrong-implementation test (#441): a Stop that leaves the connected request as it was shows
+    // the owner a stopped agent as connected, and the agent's next join is that same operation.
+    it('after Stop, the owner sees the connected request revoked and the agent joins again as a new request', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      const first = a.readGrant();
+      expect((await stop(a)).status).toBe(200);
+
+      expect((await inbox(a.w)).map(entry => entry.outcome)).toEqual(['revoked']);
+      expect((await accessStatus(a.w, a.agent, first.grantRef!)).json).toEqual({ v: 1, operationId: first.grantRef, outcome: 'revoked' });
+      expect(await createInternalClient({ descriptorPath: a.grantPath }).status()).toMatchObject({ connected: false });
+
+      // Asking again files a new request for the owner; nothing is admitted by asking.
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      const pending = (await inbox(a.w)).filter(entry => entry.outcome === 'pending_owner');
+      expect(pending).toHaveLength(1);
+      expect((await decide(a.w, pending[0]!.requestHandle, pending[0]!.revision, 'approve')).status).toBe(200);
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      const second = a.readGrant();
+      expect(second.bindingId).not.toBe(first.bindingId);
+      expect(second.grantRef).not.toBe(first.grantRef);
+      const timeline = await call(a.w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(second.bindingCapability!) });
+      expect(timeline.status).toBe(200);
+      // The stopped operation itself never reads as connected again.
+      expect((await accessStatus(a.w, a.agent, first.grantRef!)).json.outcome).toBe('revoked');
+    });
+
+    // Wrong-implementation test (#441): keeping the revoked grant in the agent's descriptor refuses
+    // the new binding's write, so every join answers `repair_required` while the owner sees it bound.
+    it('after Stop and a new discovery identity, the agent joins, is approved and connects', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      const first = a.readGrant();
+      expect((await stop(a)).status).toBe(200);
+
+      const rediscovered = await issue(a.w, 'session-local');
+      expect(rediscovered.generation).toBeGreaterThan(a.agent.generation);
+      const client = createInternalClient({ descriptorPath: rediscovered.descriptorPath, clock: () => NOW });
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      const pending = (await inbox(a.w)).find(entry => entry.outcome === 'pending_owner')!;
+      expect((await decide(a.w, pending.requestHandle, pending.revision, 'approve')).status).toBe(200);
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      const second = a.readGrant();
+      expect(second.bindingId).not.toBe(first.bindingId);
+      expect(await createInternalClient({ descriptorPath: a.grantPath }).status())
+        .toMatchObject({ connected: true, binding: { bindingId: second.bindingId } });
     });
 
     // Wrong-implementation test (#391): with one shared grant file, the second session's

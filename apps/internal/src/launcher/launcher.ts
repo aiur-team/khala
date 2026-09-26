@@ -289,7 +289,9 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       const claude = await composeClaudeSession({
         root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
       });
-      bindingControl = composeBindingControl({ handle: channel.handle, root, cancelApproved: discovery.cancelApproved });
+      bindingControl = composeBindingControl({
+        handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,
+      });
       const modes = composeBindingModes({ handle: channel.handle, store: channel.store, claude: claudeRoute });
       server = await startChannelServer({
         store: channel.store,

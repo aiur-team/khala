@@ -144,6 +144,34 @@ describe('channel access journal creation', () => {
     await denied.journal.decide({ ownerId: 'owner_1', requestHandle: refused.requestHandle, expectedRevision: 1, decision: 'deny', operationId: 'deny' });
     expect(await denied.journal.create(request({ operationId: 'again' }))).toEqual({ kind: 'unavailable' });
   });
+
+  // Wrong-implementation test (#441): treating every revoked request as admitted lets a requester
+  // skip the cooldown whenever a revision change or its own revocation ends a pending request.
+  it('still cools a requester down after a request is revoked before the owner approved it', async () => {
+    const h = harness();
+    await accepted(h);
+    expect(await h.journal.revoke({ binding: request(), expectedRevision: 1, operationId: 'revision_changed' }))
+      .toMatchObject({ kind: 'updated', outcome: 'revoked' });
+    expect(await h.journal.create(request({ operationId: 'again' }))).toEqual({ kind: 'unavailable' });
+    h.setNow(T0 + CHANNEL_ACCESS_COOLDOWN_MS);
+    expect(await h.journal.create(request({ operationId: 'again' }))).toMatchObject({ kind: 'accepted', outcome: 'pending_owner' });
+  });
+
+  it('ends a connected request only when asked to, as the owner\'s Stop of its binding does', async () => {
+    const h = harness();
+    const granted = await accepted(h);
+    await h.journal.decide({ ownerId: 'owner_1', requestHandle: granted.requestHandle, expectedRevision: 1, decision: 'approve', operationId: 'approve' });
+    await h.journal.claimAccess({ binding: request(), expectedRevision: 2, consumerId: 'grant_exchange', operationId: 'claim' });
+    await h.journal.updateLifecycle({
+      requestHandle: granted.requestHandle, expectedRevision: 3, consumerId: 'grant_exchange', outcome: 'connected', operationId: 'connected',
+    });
+    // Revalidation never ends a connected request by itself.
+    expect(await h.journal.revoke({ binding: request(), expectedRevision: 4, operationId: 'revalidate' })).toEqual({ kind: 'stale' });
+    expect(await h.journal.revoke({ binding: request(), expectedRevision: 4, operationId: 'stop', connected: true }))
+      .toEqual({ kind: 'updated', outcome: 'revoked', revision: 5 });
+    // The owner admitted it before Stop ended it, so asking again is not cooled down.
+    expect(await h.journal.create(request({ operationId: 'again' }))).toMatchObject({ kind: 'accepted', outcome: 'pending_owner' });
+  });
 });
 
 describe('channel access journal reads and decisions', () => {
