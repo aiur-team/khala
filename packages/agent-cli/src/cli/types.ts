@@ -12,7 +12,7 @@ import type { BatchInbox } from './inbox.js';
 export const CLI_ERROR_CODES = [
   'invalid_arguments', 'invalid_link', 'invalid_input', 'not_connected', 'binding_not_held',
   'listener_busy', 'storage_failed', 'transport_unavailable', 'outcome_unknown', 'internal_error',
-  'internal_unavailable',
+  'internal_unavailable', 'discovery_required',
 ] as const;
 export type CliErrorCode = (typeof CLI_ERROR_CODES)[number];
 
@@ -56,7 +56,7 @@ export type AgentStatus = Readonly<{
 }>;
 export type AccessRequestResult =
   | Readonly<{ kind: 'status'; outcome: AccessRequestOutcome }>
-  | Readonly<{ kind: 'refused'; code: 'invalid_link' }>
+  | Readonly<{ kind: 'refused'; code: 'invalid_link' | 'discovery_required' }>
   | Readonly<{ kind: 'unavailable' }>;
 /** The held binding's effective listening mode; `effective` is null when no mode is currently usable. */
 export type AgentListeningModeStatus = Readonly<{

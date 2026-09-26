@@ -7,12 +7,15 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import { decodeSessionBinding, type EventRef, type SessionBinding } from '@khala/contracts/delivery/index';
 import { type InternalDescriptor, encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
+import { INTERNAL_DISCOVERY_SCOPES, encodeInternalDiscoveryDescriptor } from '@khala/contracts/internal/discovery-descriptor';
 import { runCli } from '../cli/app.js';
 import { openInbox } from '../cli/inbox.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import type { CliDependencies } from '../cli/types.js';
 import { ReadOperation } from './read.js';
-import { AGENT_CHANNEL_ACCESS_REQUEST_PATH, createInternalClient, localChannelId, readInternalDescriptor } from './internal.js';
+import {
+  AGENT_CHANNEL_ACCESS_REQUEST_PATH, AGENT_CHANNEL_ACCESS_STATUS_PATH, createInternalClient, localChannelId, readInternalDescriptor,
+} from './internal.js';
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -58,6 +61,9 @@ type Logged = Readonly<{ method: string; path: string; authorization: string | u
 async function fakeServer() {
   const grants = new Map<string, SessionBinding>();
   const transport = new Set<string>();
+  /** Discovery capability -> principal, and the journal's answer per operation. */
+  const discovery = new Map<string, string>();
+  const journal = new Map<string, string>();
   const log: Logged[] = [];
   const authors: string[] = [];
   let accessRoute = true;
@@ -85,9 +91,18 @@ async function fakeServer() {
         authors.push(held.agentParticipantId);
         return json(201, { state: 'stored', event: { eventId: `event-${++events}`, clientTxnId: input.clientTxnId } });
       }
+      // Only a discovery capability may file or read access requests; the transport capability is refused.
+      const statusMatch = new RegExp(`^${AGENT_CHANNEL_ACCESS_STATUS_PATH}/([^/]+)$`).exec(request.url ?? '');
+      if (request.method === 'GET' && statusMatch && accessRoute) {
+        if (!discovery.has(token)) return json(transport.has(token) ? 403 : 401, { error: { code: 'forbidden' } });
+        return json(200, { v: 1, operationId: statusMatch[1], outcome: journal.get(statusMatch[1]!) ?? 'unavailable' });
+      }
       if (request.method === 'POST' && request.url === AGENT_CHANNEL_ACCESS_REQUEST_PATH && accessRoute) {
-        if (!transport.has(token)) return json(401, { error: { code: 'unauthenticated' } });
-        return json(200, { v: 1, operationId: (body as { operationId: string }).operationId, outcome: 'pending_owner' });
+        if (!discovery.has(token)) return json(transport.has(token) ? 403 : 401, { error: { code: 'forbidden' } });
+        const input = body as { operationId: string; credentialRef: string };
+        if (input.credentialRef !== discovery.get(token)) return json(403, { error: { code: 'forbidden' } });
+        if (!journal.has(input.operationId)) journal.set(input.operationId, 'pending_owner');
+        return json(200, { v: 1, operationId: input.operationId, outcome: journal.get(input.operationId) });
       }
       return json(404, { error: { code: 'not_found' } });
     });
@@ -98,7 +113,7 @@ async function fakeServer() {
   if (address === null || typeof address === 'string') throw new Error('no port');
   return {
     origin: `http://127.0.0.1:${address.port}`,
-    grants, transport, log, authors,
+    grants, transport, discovery, journal, log, authors,
     disableAccessRoute() { accessRoute = false; },
     /** Every capability a request carried after `from`. */
     capabilitiesSince(from: number) { return log.slice(from).map(entry => entry.authorization?.slice('Bearer '.length)); },
@@ -222,6 +237,22 @@ describe('readInternalDescriptor', () => {
   });
 });
 
+/** Issues like `khala internal discovery`: `<root>/discovery/<principal>/descriptor.json` beside `active.json`. */
+function issueDiscovery(launched: Awaited<ReturnType<typeof launch>>, generation = 1): string {
+  const principal = `agent_${'p'.repeat(43)}`;
+  const discoveryCapability = capability();
+  launched.server.discovery.clear();
+  launched.server.discovery.set(discoveryCapability, principal);
+  const directory = path.join(path.dirname(launched.file), 'discovery', principal);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const file = path.join(directory, 'descriptor.json');
+  fs.writeFileSync(file, encodeInternalDiscoveryDescriptor({
+    v: 1, kind: 'discovery', principal, generation, discoveryCapability, scopes: INTERNAL_DISCOVERY_SCOPES,
+  }), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  return file;
+}
+
 describe('createInternalClient', () => {
   it('denies channel send before grant and never presents the transport capability to a channel route', async () => {
     const { server, file } = await launch();
@@ -334,39 +365,66 @@ describe('createInternalClient', () => {
     expect(server.log).toEqual([]);
   });
 
-  it('asks the access journal with the transport capability only for the descriptor channel', async () => {
-    const { server, file, transportOnly, grant } = await launch();
+  it('never files a request with the transport capability, which names no agent', async () => {
+    const { server, file, grant } = await launch();
     const client = createInternalClient({ descriptorPath: file });
     const url = `${server.origin}/channels/${CHANNEL}`;
     expect(await client.requestAccess!(`${server.origin}/channels/ch_other`)).toEqual({ kind: 'refused', code: 'invalid_link' });
-    expect(await client.requestAccess!(`http://127.0.0.1:1/channels/${CHANNEL}`)).toEqual({ kind: 'refused', code: 'invalid_link' });
+    expect(await client.requestAccess!(url)).toEqual({ kind: 'refused', code: 'discovery_required' });
     expect(server.log).toEqual([]);
-    expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'pending_owner' });
-    expect(server.log).toHaveLength(1);
-    expect(server.log[0]).toMatchObject({
-      method: 'POST', path: AGENT_CHANNEL_ACCESS_REQUEST_PATH,
-      authorization: `Bearer ${transportOnly.transportCapability}`,
-      body: { v: 1, kind: 'channel_url', credentialRef: 'internal-transport', channelUrl: url },
-    });
-    // Idempotent: the same channel URL is the same journal operation.
-    await client.requestAccess!(url);
-    expect((server.log[1]?.body as { operationId: string }).operationId)
-      .toBe((server.log[0]?.body as { operationId: string }).operationId);
     grant(1);
     expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'connected' });
-    expect(server.log.map(entry => entry.path)).toEqual([
-      AGENT_CHANNEL_ACCESS_REQUEST_PATH, AGENT_CHANNEL_ACCESS_REQUEST_PATH, '/api/v1/agent/binding',
-    ]);
     // A granted file the server no longer honors is not reported as joined.
     server.grants.clear();
+    expect(await client.requestAccess!(url)).toEqual({ kind: 'refused', code: 'discovery_required' });
+    expect(server.log.map(entry => entry.path)).toEqual(['/api/v1/agent/binding', '/api/v1/agent/binding']);
+  });
+
+  it('joins with the discovery descriptor, idempotently per attempt, and never collapses a new join into a closed answer', async () => {
+    const launched = await launch();
+    const { server } = launched;
+    const discoveryFile = issueDiscovery(launched);
+    const client = createInternalClient({ descriptorPath: discoveryFile });
+    const url = `${server.origin}/channels/${CHANNEL}`;
+    expect(await client.status()).toMatchObject({ connected: false, route: 'unknown' });
+    expect(await client.send({ bindingId: null, clientTxnId: 'txn-00001', body: 'x' })).toMatchObject({ kind: 'refused', code: 'not_connected' });
+    expect(await client.requestAccess!('http://127.0.0.1:1/channels/x')).toEqual({ kind: 'refused', code: 'invalid_link' });
+
     expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+    const [status, post] = server.log.slice(-2);
+    const principal = [...server.discovery.values()][0];
+    expect(post).toMatchObject({ method: 'POST', path: AGENT_CHANNEL_ACCESS_REQUEST_PATH, body: { kind: 'channel_url', credentialRef: principal, channelUrl: url } });
+    const first = (post!.body as { operationId: string }).operationId;
+    expect(status!.path).toBe(`${AGENT_CHANNEL_ACCESS_STATUS_PATH}/${first}`);
+    // A retry reads the same operation and files nothing new.
+    expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+    expect(server.journal.size).toBe(1);
+
+    // After a deny (or Stop, which revokes), the next join is a fresh operation.
+    server.journal.set(first, 'denied');
+    expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+    expect(server.journal.size).toBe(2);
+    const second = [...server.journal.keys()][1]!;
+    expect(second).not.toBe(first);
+    server.journal.set(second, 'revoked');
+    expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+    expect(server.journal.size).toBe(3);
+    // `unavailable` never advances to a new operation: the same one is resubmitted.
+    const third = [...server.journal.keys()][2]!;
+    server.journal.set(third, 'unavailable');
+    const before = server.journal.size;
+    expect(await client.requestAccess!(url)).toEqual({ kind: 'status', outcome: 'unavailable' });
+    expect(server.journal.size).toBe(before);
+    expect((server.log.at(-1)!.body as { operationId: string }).operationId).toBe(third);
+    // No request ever carried the transport capability.
+    expect(server.capabilitiesSince(0)).not.toContain(launched.transportOnly.transportCapability);
   });
 
   it('reports join as unavailable when the server exposes no access journal', async () => {
-    const { server, file } = await launch();
-    server.disableAccessRoute();
-    const client = createInternalClient({ descriptorPath: file });
-    expect(await client.requestAccess!(`${server.origin}/channels/${CHANNEL}`)).toEqual({ kind: 'unavailable' });
+    const launched = await launch();
+    launched.server.disableAccessRoute();
+    const client = createInternalClient({ descriptorPath: issueDiscovery(launched) });
+    expect(await client.requestAccess!(`${launched.server.origin}/channels/${CHANNEL}`)).toEqual({ kind: 'unavailable' });
   });
 
   it('parses only exact channel URLs on the descriptor origin', () => {
@@ -448,9 +506,13 @@ describe('--internal-descriptor through the CLI and MCP', () => {
   });
 
   it('joins through the access journal without an inbox or channel content', async () => {
-    const { server, file } = await launch();
+    const launched = await launch();
+    const { server, file } = launched;
+    const transportOnly = streams();
+    expect(await runCli(['--internal-descriptor', file, 'join', `${server.origin}/channels/${CHANNEL}`], cliDeps(transportOnly, temporaryDirectory()))).toBe(2);
+    expect(transportOnly.error()).toContain('discovery_required');
     const io = streams();
-    expect(await runCli(['--internal-descriptor', file, 'join', `${server.origin}/channels/${CHANNEL}`], cliDeps(io, temporaryDirectory()))).toBe(0);
+    expect(await runCli(['--internal-descriptor', issueDiscovery(launched), 'join', `${server.origin}/channels/${CHANNEL}`], cliDeps(io, temporaryDirectory()))).toBe(0);
     expect(JSON.parse(io.output())).toEqual({ ok: true, kind: 'access', outcome: 'pending_owner' });
     const bad = streams();
     expect(await runCli(['--internal-descriptor', file, 'join', 'https://khala.example/channels/x'], cliDeps(bad, temporaryDirectory()))).toBe(2);

@@ -20,6 +20,7 @@ khala internal
 khala internal --resume <channel-id>
 khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
 khala internal delete <channel-id> [--yes]
+khala internal discovery --harness <name> --session <id> [--label <text>] [--workspace <text>]
 khala codex-hook
 khala --internal-descriptor <absolute-path> status|send|read|listen|mcp-serve
 khala --internal-descriptor <absolute-path> join <channel-url>
@@ -103,6 +104,44 @@ start yourself connect through the runtime descriptor later.
   result carries the notice that internal channel data is stored in plaintext
   and that deletion does not securely erase it.
 
+### Channel discovery
+
+An agent session you started yourself gets discovery-only access to the running
+launcher with `khala internal discovery --harness <name> --session <id>`.
+`<name>` is `codex`, `claude`, `opencode` or another lowercase harness name, and
+`<id>` is that harness's own session ID. `--label` and `--workspace` are
+optional display text; the owner sees them marked as untrusted.
+
+- The command reads `active.json` and asks the running server, using the
+  launch's transport capability, to issue a durable discovery capability. It
+  writes two separate 0600 files into
+  `$XDG_STATE_HOME/khala/internal/discovery/<principal>/` (mode 0700):
+  `descriptor.json`, which holds the discovery capability, and
+  `connector-key.json`, which holds an Ed25519 connector key. It prints
+  `{"ok":true,"kind":"issued","principal":...,"generation":...,"descriptorPath":...,"connectorKeyPath":...}`.
+  Without a running launcher it exits 3 with `not_running`.
+- The principal is stable for one harness session. Running the command again
+  rotates the capability and the connector key and increments `generation`.
+  The old descriptor stops working, and pending requests bound to the old
+  generation close.
+- The discovery capability can only list channels, request access and submit a
+  channel-create intent. It cannot send, read, decide a request, create a
+  channel, change visibility or the allowlist, or exchange a grant. Only a
+  request that also carries a fresh DPoP proof signed by the connector key can
+  exchange an approved request for its sealed grant.
+- The server stores only a digest of the capability, so it survives a restart
+  of the same channel. Requests are bound to the loopback origin, so a resume on
+  a different port closes them.
+- Anyone who can read your files as the same OS user can copy either file. This
+  is the accepted v1 limit, not something the files prevent.
+
+Every local channel starts `private` with an empty allowlist, so no agent can
+list it until you add one. The owner changes visibility and the explicit
+per-agent allowlist; `public` lists a channel to every discovery agent of this
+local service, and `secret` is never listed. A channel URL
+(`<origin>/channels/<channelId>`) always reaches the owner prompt, whatever the
+visibility, and approving still requires you in the browser.
+
 Launching needs the built internal web bundle in `internal-web/` beside
 `khala-internal.js`. Without it, launch fails with `web_bundle_unavailable`
 before it takes the lock or changes any state. Failures print
@@ -113,7 +152,8 @@ but its server could not start, the failure also includes `channelId` and
 ### Local agent client
 
 An agent session you start yourself reaches the running launcher with a leading
-`--internal-descriptor <absolute-path>` naming `active.json`. The path is the
+`--internal-descriptor <absolute-path>` naming `active.json`, or, for `join`
+before a grant, naming its discovery `descriptor.json`. The path is the
 only thing an installed MCP or plugin entry stores; the port and capabilities
 are never passed in arguments, the environment, or configuration. The option
 selects the local client for `status`, `send`, `read`, `listen`, `mcp-serve`,
@@ -124,13 +164,19 @@ the local client.
   requires a regular file owned by you with mode 0600, version 1, and an exact
   `http://127.0.0.1:<port>` origin. Anything else reports `status` as
   `unavailable` and refuses `send` with `transport_unavailable`.
-- A transport-only descriptor cannot read or send channel content: `status`
-  reports `connected: false`, and `send` is refused with `not_connected`.
-  `join <channel-url>` accepts only `<origin>/channels/<channelId>` for the
-  descriptor's own channel, asks the channel-access journal with the transport
-  capability, and prints `{"ok":true,"kind":"access","outcome":...}` without
-  waiting. The owner approves in the channel-requests inbox, and the launcher
-  then adds the granted binding to the same file.
+- A transport-only or discovery descriptor cannot read or send channel
+  content: `status` reports `connected: false`, and `send` is refused with
+  `not_connected`.
+- `join <channel-url>` accepts only `<origin>/channels/<channelId>` on the
+  running origin. With a discovery descriptor, it files a channel-access request
+  as that agent and prints `{"ok":true,"kind":"access","outcome":...}` without
+  waiting. A retry reads the same request, and `unavailable` never starts a new
+  one. After a `denied`, `expired` or `revoked` answer (Stop revokes), the next
+  `join` files a fresh request instead of repeating the old answer. The
+  launch's transport capability names no agent, so `join` with `active.json`
+  alone is refused with `discovery_required`, unless the file already holds a
+  live grant for that channel. The owner approves in the channel-requests
+  inbox.
 - A granted descriptor sends with its binding capability. The server derives
   the sender from that capability and rechecks the grant for every effect.
   Because the file is reread for every call, a long-lived `mcp-serve` sees Stop
@@ -139,9 +185,9 @@ the local client.
   rotated capability, and reads selected under the prior generation fail closed
   until `mcp-serve` restarts.
 - Local server routes the client uses: `GET /api/v1/agent/binding`,
-  `POST /api/v1/channels/<channelId>/messages`, and
-  `POST /api/agent/channel-access/request`. Until the local server mounts the
-  access journal, `join` fails with `transport_unavailable`.
+  `POST /api/v1/channels/<channelId>/messages`,
+  `POST /api/agent/channel-access/request` and
+  `GET /api/agent/channel-access-requests/<operation>`.
 
 ## Support row
 

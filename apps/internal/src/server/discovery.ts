@@ -109,6 +109,8 @@ export const DISCOVERY_ROUTES = {
   issue: { method: 'POST', path: '/api/internal/discovery/descriptors', admission: 'authenticated' },
   list: { method: 'GET', path: '/api/agent/channels', admission: 'authenticated', allowQuery: true },
   requestAccess: { method: 'POST', path: '/api/agent/channel-access-requests', admission: 'authenticated' },
+  /** The hosted journal's exact path, which `khala join` posts to; same discovery-only handler. */
+  journalRequestAccess: { method: 'POST', path: '/api/agent/channel-access/request', admission: 'authenticated' },
   accessStatus: {
     method: 'GET', path: '/api/agent/channel-access-requests/:operationId', template: '/api/agent/channel-access-requests/:operation',
     admission: 'authenticated',
@@ -135,6 +137,7 @@ const ROLES = new Map<RouteSpec, DiscoveryRole>([
   [DISCOVERY_ROUTES.issue, 'transport'],
   [DISCOVERY_ROUTES.list, 'discovery'],
   [DISCOVERY_ROUTES.requestAccess, 'discovery'],
+  [DISCOVERY_ROUTES.journalRequestAccess, 'discovery'],
   [DISCOVERY_ROUTES.accessStatus, 'discovery'],
   [DISCOVERY_ROUTES.requestCreate, 'discovery'],
   [DISCOVERY_ROUTES.createStatus, 'discovery'],
@@ -452,7 +455,8 @@ export function createDiscoveryRoutes(deps: Readonly<{
       switch (context.route) {
         case DISCOVERY_ROUTES.issue: return issue(context);
         case DISCOVERY_ROUTES.list: return list(context);
-        case DISCOVERY_ROUTES.requestAccess: return requestAccess(context);
+        case DISCOVERY_ROUTES.requestAccess:
+        case DISCOVERY_ROUTES.journalRequestAccess: return requestAccess(context);
         case DISCOVERY_ROUTES.accessStatus: return status(context, 'access');
         case DISCOVERY_ROUTES.requestCreate: return requestCreate(context);
         case DISCOVERY_ROUTES.createStatus: return status(context, 'create');
