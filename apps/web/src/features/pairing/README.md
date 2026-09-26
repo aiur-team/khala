@@ -6,7 +6,7 @@ The owner's approve/deny surface for a hosted pairing claim
 
 - **Verified claim only.** `toDecisionPrompt` shows the harness, session
   fingerprint, session ID, generation, target channel, and service from the
-  control service's claim projection. Nothing is agent-supplied text.
+  control service's claim projection. These facts are connector-verified by the control service, not typed by the agent.
 - **The displayed claim is the decided claim.** A decision carries the
   displayed revision and claim fingerprint. If the claim changes (a new
   generation or session), the held decision is dropped, the dialog moves to

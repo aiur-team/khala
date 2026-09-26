@@ -32,6 +32,13 @@ export function claimIdentity(pairing: PairingOwnerResult): string {
     : [pairing.requestHandle, claim.fingerprint, claim.generation, claim.sessionId, claim.harness, claim.deviceId].join('|');
 }
 
+/** A readable local time for the owner; an unparseable value is shown as received. */
+export function formatExpiry(iso: string): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return iso;
+  return new Date(ms).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 const STATE_LABEL: Readonly<Record<PairingOwnerResult['state'], string>> = {
   issued: 'Waiting for an agent to claim the code',
   claimed: 'Pending',
@@ -73,7 +80,7 @@ export function toDecisionPrompt(pairing: PairingOwnerResult): DecisionPrompt {
     ],
     progress: [
       { label: 'Your decision', value: pairingStateLabel(pairing) },
-      { label: 'Expires', value: pairing.expiresAt },
+      { label: 'Expires', value: formatExpiry(pairing.expiresAt) },
     ],
     approveLabel: 'Approve pairing',
     denyLabel: 'Deny pairing',

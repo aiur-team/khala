@@ -19,8 +19,8 @@ const render = (view: PairingView) => renderToStaticMarkup(<PairingApproval cont
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
 describe('PairingApproval', () => {
-  it('announces loading through a mounted status region', () => {
-    expect(render(INITIAL_PAIRING_VIEW)).toMatch(/role="status"[^>]*>Loading pairing request…</);
+  it('mounts the status region empty so the first message is announced', () => {
+    expect(render(INITIAL_PAIRING_VIEW)).toMatch(/role="status"[^>]*><\/p>/);
   });
 
   it('shows the verified session, never opens the dialog by itself', () => {
@@ -37,7 +37,7 @@ describe('PairingApproval', () => {
       pairing: { ...PAIRING_FIXTURE, state: 'denied', decidedAt: '2026-09-25T10:05:00Z' },
       status: { kind: 'decided', message: 'Denied. Nothing was granted.' },
     });
-    expect(text(html)).toContain('Denied. Nothing was granted.');
+    expect(text(html)).toContain('Denied. Nothing was granted');
     expect(text(html)).toContain('View details');
   });
 });

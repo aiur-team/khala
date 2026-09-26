@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';import { Panel } from '../../shell/Panel';
+import { useEffect, useRef, useState } from 'react';
+import { Panel } from '../../shell/Panel';
 import { DecisionDialog } from '../approval-decision/DecisionDialog';
 import { isDecidable } from '../approval-decision/model';
 import type { PairingApprovalController } from './controller';
@@ -38,14 +39,13 @@ export function PairingApproval({ controller }: PairingApprovalProps) {
   const pairing = view.pairing;
   const prompt = pairing ? toDecisionPrompt(pairing) : null;
   const message = summary(view);
+  // Mounted empty, then filled, so the very first message (loading) is announced.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const canReview = pairing !== null && (isDecidable(view.status) || view.status.kind === 'submitting' || view.status.kind === 'reloading' || view.status.kind === 'retryable');
 
   return (
-    <Panel
-      heading="Pairing request"
-      status={view.phase === 'loading' ? 'busy' : view.phase === 'load_failed' ? 'error' : 'idle'}
-      statusMessage={message}
-    >
+    <Panel heading="Pairing request">
       <div className="pairing">
         <h3 ref={headingRef} tabIndex={-1} className="pairing__heading">
           {pairing?.claim ? `${pairing.claim.harness} session ${pairing.claim.fingerprint}` : 'No agent session yet'}
@@ -56,7 +56,10 @@ export function PairingApproval({ controller }: PairingApprovalProps) {
             <dd>{pairingStateLabel(pairing)}</dd>
           </dl>
         ) : null}
-        <p role="status" aria-live="polite" className="pairing__status">{message}</p>
+        {/* The open dialog announces its own status; keep this text but stop it being read twice. */}
+        <p role="status" aria-live={open ? 'off' : 'polite'} className="pairing__status">
+          {mounted ? message : ''}
+        </p>
         {/* Never disabled: the dialog returns focus here when it closes. */}
         <button type="button" onClick={() => setOpen(true)}>
           {canReview ? 'Review pairing' : 'View details'}
