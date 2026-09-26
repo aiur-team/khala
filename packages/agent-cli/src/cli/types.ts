@@ -28,6 +28,7 @@ const AGENT_ROUTE_MEMBERS = {
   khala_hosted_resume: true,
   native_cli_queue: true,
   agent_installed_listener: true,
+  opencode_plugin: true,
 } as const satisfies Record<AgentRoute, true>;
 export const AGENT_ROUTES = Object.freeze(Object.keys(AGENT_ROUTE_MEMBERS)) as readonly AgentRoute[];
 
