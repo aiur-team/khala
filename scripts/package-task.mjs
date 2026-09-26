@@ -21,12 +21,15 @@ if (errors.length) {
   process.exit(1);
 }
 // Test doubles: `*.test.ts`/`*.spec.ts`, `.d.ts`, `fakes.ts` and anything under a
-// `fixtures/` directory. None of these may reach `dist`, so wildcard `exports`
+// `fixtures/` or `browser-harness/` directory, and `fake-*` modules. None of
+// these may reach `dist`, so wildcard `exports`
 // entries can never resolve to one.
 const isTestDouble = relative => /\.(test|spec)\.[cm]?[jt]sx?$/.test(relative)
   || /\.d\.ts$/.test(relative)
   || /(?:^|[\\/])fakes\.[cm]?[jt]sx?$/.test(relative)
-  || /(?:^|[\\/])fixtures[\\/]/.test(relative);
+  || /(?:^|[\\/])fixtures[\\/]/.test(relative)
+  || /(?:^|[\\/])browser-harness[\\/]/.test(relative)
+  || /(?:^|[\\/])fake-[^\\/]*\.[cm]?[jt]sx?$/.test(relative);
 
 async function filesBelow(root) {
   const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);

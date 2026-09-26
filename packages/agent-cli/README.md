@@ -1,8 +1,9 @@
 # Khala agent CLI (KHA-148)
 
 `@aiur/khala` owns the `khala` binary an agent uses to connect to a channel,
-consume released messages, send replies, inspect status, and expose the same send
-and explicit-read operations as MCP tools.
+consume released messages, send replies, inspect status, inspect or change its
+listening mode, and expose the same send, explicit-read, and listening-mode
+operations as MCP tools.
 
 ```text
 khala connect <https-channel-link>
@@ -10,6 +11,8 @@ khala listen [--binding <binding-id>]
 khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
 khala status
+khala mode get
+khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
 khala agents list --channel <held-binding-id>
 khala mcp-serve
@@ -18,6 +21,8 @@ khala internal --resume <channel-id>
 khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
 khala internal delete <channel-id> [--yes]
 khala codex-hook
+khala --internal-descriptor <absolute-path> status|send|read|listen|mcp-serve
+khala --internal-descriptor <absolute-path> join <channel-url>
 khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
 ```
 
@@ -105,6 +110,39 @@ before it takes the lock or changes any state. Failures print
 but its server could not start, the failure also includes `channelId` and
 `resumeCommand`.
 
+### Local agent client
+
+An agent session you start yourself reaches the running launcher with a leading
+`--internal-descriptor <absolute-path>` naming `active.json`. The path is the
+only thing an installed MCP or plugin entry stores; the port and capabilities
+are never passed in arguments, the environment, or configuration. The option
+selects the local client for `status`, `send`, `read`, `listen`, `mcp-serve`,
+and `join`, and is refused for every other command. Other commands never load
+the local client.
+
+- Every operation reopens that exact file without following a symlink and
+  requires a regular file owned by you with mode 0600, version 1, and an exact
+  `http://127.0.0.1:<port>` origin. Anything else reports `status` as
+  `unavailable` and refuses `send` with `transport_unavailable`.
+- A transport-only descriptor cannot read or send channel content: `status`
+  reports `connected: false`, and `send` is refused with `not_connected`.
+  `join <channel-url>` accepts only `<origin>/channels/<channelId>` for the
+  descriptor's own channel, asks the channel-access journal with the transport
+  capability, and prints `{"ok":true,"kind":"access","outcome":...}` without
+  waiting. The owner approves in the channel-requests inbox, and the launcher
+  then adds the granted binding to the same file.
+- A granted descriptor sends with its binding capability. The server derives
+  the sender from that capability and rechecks the grant for every effect.
+  Because the file is reread for every call, a long-lived `mcp-serve` sees Stop
+  and resume on its next call: after Stop, sends are refused with
+  `not_connected` and reads with `binding_not_held`; after resume, sends use the
+  rotated capability, and reads selected under the prior generation fail closed
+  until `mcp-serve` restarts.
+- Local server routes the client uses: `GET /api/v1/agent/binding`,
+  `POST /api/v1/channels/<channelId>/messages`, and
+  `POST /api/agent/channel-access/request`. Until the local server mounts the
+  access journal, `join` fails with `transport_unavailable`.
+
 ## Support row
 
 | Field | Value |
@@ -113,6 +151,7 @@ but its server could not start, the failure also includes `channelId` and
 | Connect | KHA-114 bootstrap through an injected composition port; retries reuse one deterministic operation ID. |
 | Receive | A released-delivery port appends exact payload bytes to the per-binding inbox; `khala read` and `khala_read` explicitly pull released batches, while KHA-116's pending-review subscription is deliberately not used as a model feed. |
 | Send | One injected capability-backed send port shared by `khala send` and the `khala_send` MCP tool. |
+| Listening mode | One operation over the injected, pre-bound agent listening-mode application, shared by `khala mode get/set` and the `khala_listening_mode` MCP tool. |
 | Required human setup | None in the CLI. Provider route installation and capability selection belong to KHA-149, KHA-150, and KHA-153. |
 | Reconciliation | Enqueue deduplicates immutable release IDs. `listen` advances after output succeeds. MCP advances a durable batch only when a later Khala tool call supplies its exact token. |
 
@@ -161,6 +200,35 @@ harness call, injection, send, receipt, or agent lifecycle action. Only an
 explicit `read` selects a batch, and only the existing durable inbox advances
 after a later exact token.
 
+## Listening mode
+
+`khala mode get` and `khala mode set <steer|sync|async> --expected-version
+<version>` act only on the binding that trusted composition bound to this agent.
+Neither accepts a binding, generation, owner, route, evidence, or grant argument;
+the binding authority is ambient and never serialized. One shared operation
+backs the CLI and the `khala_listening_mode` MCP tool, so both return the same
+JSON.
+
+`get` returns `kind: "view"` with `requested`, `effective`, `effectiveReason`,
+`version`, and every mode's `support` entry (status, route, tested version,
+evidence reference and revision, and reason). `set` sends only `{requested,
+expectedVersion}` with a fresh command ID and returns one of:
+
+- `kind: "applied"`: the new `requested`, `effective`, `effectiveReason`, and
+  `version`; run `get` for the full support map.
+- `kind: "conflict"`, `reason: "stale_version"`: someone else changed the mode
+  first, and `current` holds the winning state. Run `get` again and decide
+  afresh; the CLI never retries.
+- `kind: "refused"` with `forbidden`, `binding_mismatch`, `stale_binding`,
+  `binding_revoked`, `idempotency_conflict`, `unavailable`, or
+  `outcome_unknown` (the write failed in a way that may already have
+  committed). A refusal never means the requested mode took effect.
+
+The CLI exits 0 for a view or applied result and 3 for a conflict or refusal.
+The installed binary has no trusted composition yet, so both commands currently
+refuse with `unavailable`. `requested` and `effective` can differ, and neither
+proves that any message was or will be delivered, including to an idle agent.
+
 ## Channel and agent listing
 
 `khala channels list` prints one JSON object with one page of channels this
@@ -199,13 +267,17 @@ arguments exit 2 with `invalid_arguments` on stderr.
 ## MCP mode
 
 `khala mcp-serve` speaks newline-delimited JSON-RPC on stdin/stdout and exposes
-`khala_send` and `khala_read`, plus `khala_list_channels` (`{ origin?, cursor?,
-ackBatchToken? }`) and `khala_list_agents` (`{ channel, ackBatchToken? }`). The
-listing tools return the CLI's JSON object unchanged as `structuredContent`,
-with `isError` set on failures. Like `khala_send`, they may append a
-piggyback batch. `khala_send` accepts
+`khala_send`, `khala_read`, and `khala_listening_mode`, plus `khala_list_channels`
+(`{ origin?, cursor?, ackBatchToken? }`) and `khala_list_agents`
+(`{ channel, ackBatchToken? }`). `khala_send` accepts
 `{ message, bindingId?, ackBatchToken? }`; `khala_read` accepts
-`{ bindingId?, ackBatchToken? }`. Unknown tools, unknown arguments, and unheld
+`{ bindingId?, ackBatchToken? }`; `khala_listening_mode` accepts
+`{ action: "get", ackBatchToken? }` or `{ action: "set", requested,
+expectedVersion, ackBatchToken? }`, and marks conflicts and refusals with
+`isError`. Notifications for it neither inspect nor change the mode. The
+listing tools return the CLI's JSON object unchanged as `structuredContent`,
+with `isError` set on failures. Like `khala_send`, they may append a piggyback
+batch. Unknown tools, unknown arguments, and unheld
 bindings are refused. Send results keep the stable client transaction ID and
 outcome first, never the submitted message. Read results keep a typed
 `kind: "batch"` or `kind: "empty"` primary result first, then append their one
@@ -232,12 +304,41 @@ content-free line such as
 seconds for another short-lived holder, so a harness's native hooks can pull
 between MCP tool calls; a holder that stays busy past that wait yields
 `listener_busy`. Explicit `khala_read` selects directly;
-every valid `khala_send` result may also select and append an incidental
-piggyback batch. Both paths share the same batch operation and renderer, while
+every valid `khala_send` or `khala_listening_mode` result may also select and
+append an incidental piggyback batch. Both paths share the same batch operation and renderer, while
 arrival alone selects nothing. Neither delivery path publishes or forwards a
 message; only an explicit `khala_send` call sends. Pull or piggyback delivery
 creates no receipt, advertises no capability, and makes no claim that a peer is
 asynchronous, synchronous, steerable, or actively listening.
+
+## Setup transactions
+
+`src/setup/transaction.ts` applies a confirmed `setup` or `remove` plan.
+`executeSetupPlan` takes the exclusive lock under `$XDG_STATE_HOME/khala/setup/`
+and finishes or rolls back any interrupted journal. It then reruns the planner
+and applies nothing unless the new plan digest equals the confirmed one. A
+second process gets a stable `busy` result.
+
+Before the first write, every target is checked against its planned preimage,
+and every managed path of each selected harness is checked for drift. A symlink
+below a root, an unowned target, or a restore to anything other than the
+original baseline refuses the whole plan. The executor then writes owner-only
+byte-exact backups and a `prepared` journal, `transaction.v1.json`. It applies
+operations in order with no-follow atomic replacement. The journal is advanced
+around each operation, and every postimage's hash, mode, and owner is verified.
+On success the executor publishes `manifest.v1.json`. Any failure restores the
+applied operations from backup. A rollback that cannot be proven exact becomes
+`rollback_failed`, and each later command retries it. Setup never overwrites
+user bytes that changed while it ran.
+
+The manifest keeps each path's original pre-Khala preimage (or absence) across
+upgrades, so removal restores the state from before the first setup. Backups
+are kept only while the manifest refers to them. A clean remove deletes the
+manifest, backups, and installer tree. Vendor commands run with an absolute
+executable, no shell, and only `HOME`, `XDG_*`, and `PATH`. Only the paths an
+adapter declares are backed up and reversed; adapters own proof of that
+footprint. `inspectSetupRecovery` gives `status` a read-only view of the
+journal.
 
 ## Codex hooks
 
