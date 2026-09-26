@@ -40,7 +40,9 @@ async function inspectCodex(environment: SetupEnvironment): Promise<Inspection> 
   const hooks = await readText(environment, paths.hooks);
   let hooksJson: unknown = null;
   try { hooksJson = hooks === null ? null : JSON.parse(hooks) as unknown; } catch { hooksJson = null; }
-  const review = codexHookReviewState({ hooksPath: paths.hooks, hooksJson, configToml: await readText(environment, paths.config) });
+  const review = codexHookReviewState({
+    hooksPath: paths.hooks, hooksJson, configToml: await readText(environment, paths.config), launcher: paths.launcher,
+  });
   return {
     capabilities: interactiveCodexCapabilities(version, LOCAL_DELIVERY_LIMITS, review),
     observation: { version, hookReview: review.state },
