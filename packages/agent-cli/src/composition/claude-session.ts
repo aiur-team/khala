@@ -141,7 +141,7 @@ export type ClaudeSendOutcome =
   | ClaudeSessionRefusal;
 export type ClaudeModeOutcome = Readonly<{
   kind: 'mode';
-  requested: ListeningMode;
+  requested: ListeningMode | null;
   effective: ListeningMode | null;
   version: number;
   support: Readonly<Record<ListeningMode, string>>;
@@ -150,7 +150,7 @@ export type ClaudeModeOutcome = Readonly<{
 export type ClaudeModeSetOutcome = (Readonly<{
   kind: 'mode_set';
   outcome: ListeningModeResult['outcome'];
-  requested: ListeningMode;
+  requested: ListeningMode | null;
   effective: ListeningMode | null;
   version: number;
 }> & Piggyback) | ClaudeSessionRefusal;

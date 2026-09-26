@@ -34,5 +34,7 @@ jobs:
       - run: pnpm --filter @aiur/khala test
       # The gate packs the tarball and refuses it before anything is published.
       - run: node scripts/agent-cli-package-gate.mjs --out "$RUNNER_TEMP/khala-package"
+      # Setup acceptance drives that same tarball through setup, status and remove.
+      - run: KHALA_SETUP_TARBALL="$(ls "$RUNNER_TEMP"/khala-package/aiur-khala-*.tgz)" node --test tests/integration/agent-setup/setup-acceptance.test.mjs
       # Publish exactly the gated tarball; publishing a tarball skips prepack.
       - run: npm publish "$RUNNER_TEMP"/khala-package/aiur-khala-*.tgz --provenance --access public

@@ -62,6 +62,16 @@ export function listeningModeStoreConformance(
       });
     });
 
+    it('round-trips a null requested mode', async () => {
+      const fixture = createFixture();
+      const applied = await fixture.store.compareAndSet(write(fixture, 'null-request', null));
+      expect(applied).toMatchObject({ kind: 'applied', control: { requested: null } });
+      await expect(fixture.store.read(fixture.key)).resolves.toMatchObject({
+        kind: 'record',
+        control: { requested: null, version: fixture.initial.version + 1 },
+      });
+    });
+
     it('returns the original result for a retry and rejects changed operation reuse', async () => {
       const fixture = createFixture();
       const firstWrite = write(fixture, 'retry-operation', 'steer');

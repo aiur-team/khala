@@ -125,10 +125,15 @@ describe('initial selection and grant invalidation', () => {
     steer: unknown('codex-steer'), sync, async,
   });
 
-  it('selects sync normally, including for unknown and wrapper-blocked support', () => {
-    expect(initialListeningMode(modes(unknown('codex-sync')))).toEqual({ requested: 'sync', reason: null });
+  it('selects sync when some mode is evidenced', () => {
+    expect(initialListeningMode(modes(proven))).toEqual({ requested: 'sync', reason: null });
+    expect(initialListeningMode(modes(unknown('codex-sync'), proven))).toEqual({ requested: 'sync', reason: null });
+  });
+
+  it('requests no mode when no mode is proven or experimental', () => {
+    expect(initialListeningMode(modes(unknown('codex-sync')))).toEqual({ requested: null, reason: null });
     expect(initialListeningMode(modes({ ...proven, status: 'blocked_without_wrapper', reason: 'Needs wrapper.' })))
-      .toEqual({ requested: 'sync', reason: null });
+      .toEqual({ requested: null, reason: null });
   });
 
   it('selects async only from an evidenced exact-route negative with proven async support', () => {
