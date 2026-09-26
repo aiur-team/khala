@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { discoveryPrincipalPreimage } from '@khala/contracts/internal/discovery-descriptor';
 import {
   type AuthPrincipal, type AuthorizedChannelRef, type ChannelAccessRequesterContext, type ChannelAccessResolutionPort,
   type ChannelCreateAdapterPort, type ChannelCreateReconciliation, type ControlStore, type DeviceId, type DiscoveryRequester,
@@ -72,7 +73,7 @@ function digest(purpose: string, ...fields: readonly string[]): string {
 }
 
 export function discoveryPrincipal(harness: string, sessionId: string): string {
-  return `agent_${digest('principal', harness, sessionId)}`;
+  return `agent_${createHash('sha256').update(discoveryPrincipalPreimage(harness, sessionId)).digest('base64url')}`;
 }
 
 /** What a binding stores as its session: a digest, never the harness's own session ID. */

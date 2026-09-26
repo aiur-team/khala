@@ -14,7 +14,7 @@ import type { AgentClientPort, InboxDelivery } from '../cli/types.js';
 import { postprocessMcpResult, postprocessPreselectedMcpResult } from './result-postprocessor.js';
 import type { ChannelToolsPort } from './channels/tools.js';
 import type { ReadOperationPort } from './read-tool.js';
-import { runMcpServer, type McpServerOptions } from './server.js';
+import { runMcpServer, type McpCallCollaborators } from './server.js';
 
 type Request = Readonly<Record<string, unknown>>;
 type Response = Readonly<{
@@ -430,7 +430,7 @@ describe('MCP server', () => {
   it('runs khala_listening_mode through generic postprocessing for every valid outcome with the stripped token', async () => {
     const fake = fakeModeApplication();
     const listeningMode = new ListeningModeOperation({ application: fake.application });
-    const postprocessResult = vi.fn<McpServerOptions['postprocessResult']>(async input => input.primaryResult);
+    const postprocessResult = vi.fn<McpCallCollaborators['postprocessResult']>(async input => input.primaryResult);
 
     const responses = await exchangeWithOptions(fakeClient(), [
       request(60, 'tools/call', { name: 'khala_listening_mode', arguments: { action: 'get', ackBatchToken: 'token-a' } }),
@@ -647,7 +647,7 @@ async function exchangeChunks(client: AgentClientPort, chunks: readonly (string 
 async function exchangeWithOptions(
   client: AgentClientPort,
   requests: readonly Request[],
-  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
+  options: Partial<Pick<McpCallCollaborators, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
 ): Promise<Response[]> {
   return exchangeChunksWithOptions(client, requests.map(item => `${JSON.stringify(item)}\n`), options);
 }
@@ -655,7 +655,7 @@ async function exchangeWithOptions(
 async function exchangeChunksWithOptions(
   client: AgentClientPort,
   chunks: readonly (string | Buffer)[],
-  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
+  options: Partial<Pick<McpCallCollaborators, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
 ): Promise<Response[]> {
   let stdout = '';
   const output = new Writable({
@@ -688,8 +688,8 @@ function emptyReadOperation(): ReadOperationPort {
   return { async read() { return { kind: 'empty' }; } };
 }
 
-const identityPostprocessor: McpServerOptions['postprocessResult'] = async input => input.primaryResult;
-const identityReadPostprocessor: McpServerOptions['postprocessReadResult'] = async input => ({
+const identityPostprocessor: McpCallCollaborators['postprocessResult'] = async input => input.primaryResult;
+const identityReadPostprocessor: McpCallCollaborators['postprocessReadResult'] = async input => ({
   kind: 'composed', result: input.primaryResult,
 });
 

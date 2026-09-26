@@ -10,6 +10,7 @@ import { bundledInternalRuntime } from './internal.js';
 import { MAX_SEND_BYTES } from './send.js';
 import { isClaudeMcpEntry } from '../composition/claude-mcp.js';
 import { createClaudeSessionClient } from '../composition/claude-session-http.js';
+import { sessionGrants } from '../composition/session-grant.js';
 import { packagedSetupService } from '../composition/setup.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
 import { createNodeSetupProbe } from '../setup/detect.js';
@@ -52,8 +53,9 @@ export function setupExecute(env: NodeJS.ProcessEnv): SetupExecute {
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const stateDirectory = path.resolve(process.env.XDG_STATE_HOME ?? path.join(homedir(), '.local/state'), 'khala');
-  // The internal server's owner-only runtime descriptor; installed entries re-read it on every call.
-  const activeDescriptor = path.join(stateDirectory, 'internal', INTERNAL_ACTIVE_DESCRIPTOR_FILE);
+  const internalRoot = path.join(stateDirectory, 'internal');
+  // The internal server's owner-only runtime descriptor; the Claude entry re-reads it on every call.
+  const activeDescriptor = path.join(internalRoot, INTERNAL_ACTIVE_DESCRIPTOR_FILE);
   const abort = new AbortController();
   const stop = () => abort.abort();
   // Kept installed until the command returns, so a repeated Ctrl+C cannot cut a shutdown short.
@@ -81,9 +83,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),
       // The Claude plugin's hooks and `mcp-serve` reach the running internal server through it.
       claude: createClaudeSessionClient({ descriptorPath: activeDescriptor }),
-      // So do the Codex and OpenCode `mcp-serve` entries, which carry no `--internal-descriptor`.
-      // The Claude entry's `mcp-serve` runs its session server over `claude` instead.
-      ...(isClaudeMcpEntry(process.env) ? {} : { defaultDescriptorPath: activeDescriptor }),
+      // The Codex and OpenCode `mcp-serve` entries carry no `--internal-descriptor`: each call
+      // acts as its own session's `grant.json`. The Claude entry's `mcp-serve` runs its session
+      // server over `claude` instead.
+      ...(isClaudeMcpEntry(process.env) ? {} : { sessionGrants: sessionGrants(internalRoot) }),
       internalClient: async descriptorPath =>
         (await import('../composition/internal.js')).createInternalClient({ descriptorPath }),
       internalDelivery: async descriptorPath =>

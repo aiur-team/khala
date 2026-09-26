@@ -9,6 +9,7 @@ import type { ChannelCreatePort } from './channels/create/types.js';
 import type { ChannelAccessPort, ChannelListingPort } from './channels/types.js';
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { InternalDelivery } from '../composition/internal-delivery.js';
+import type { SessionGrants } from '../composition/session-grant.js';
 import type { BatchInbox } from './inbox.js';
 import type { SetupService } from '../setup/plan.js';
 
@@ -117,12 +118,15 @@ export type CliDependencies = Readonly<{
   listeningMode?: AgentListeningModeApplication | null;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
   internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
-  /** Lazily composes the descriptor-backed local client; called only when `--internal-descriptor` or `defaultDescriptorPath` selects it. */
+  /** Lazily composes the descriptor-backed local client for `--internal-descriptor`, or for a session `sessionGrants` locates. */
   internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
   /** Lazily composes delivery of local-server releases into the held binding's inbox, with `--internal-descriptor`. */
   internalDelivery?: (descriptorPath: string) => Promise<InternalDelivery>;
-  /** The stable `active.json` the installed Codex/OpenCode `mcp-serve` entry re-reads when argv names no descriptor. */
-  defaultDescriptorPath?: string;
+  /**
+   * Locates each calling session's own `grant.json` for the installed Codex/OpenCode `mcp-serve`
+   * entry, which names no descriptor. Absent under `--internal-descriptor` and the Claude entry.
+   */
+  sessionGrants?: SessionGrants | undefined;
   claude?: ClaudeSessionClient;
   /** Setup planning and configuration status. The production composition always supplies it. */
   setup?: SetupService;
