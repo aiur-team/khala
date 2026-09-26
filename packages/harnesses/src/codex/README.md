@@ -31,8 +31,14 @@ step is missing, the value stays `unknown`: queue acceptance, `item/started`, co
 insertion and the batch response never establish it, and no later call stays neutral.
 Evidence holds booleans and labels only, never token bytes. `steer`
 means the next tool boundary, and hard abort is disabled. `immediateNotification`
-stays `unknown`: until `codex-idle-wake` is proven, idle agents receive messages
-only at their next turn.
+is `native_cli_queue` only while the idle wake works (`createCodexIdleWake`): for an
+idle `steer` or `sync` session it runs `codex queue --thread <sessionId> --message
+<constant notice>`, so the same TUI starts a turn and its `UserPromptSubmit` hook does
+the shared pull. The argv holds no body, token or peer name; concurrent wakes for one
+binding coalesce, `async` is never woken, and no wake starts or continues once Stop
+revokes the binding. For an unsupported version or a failed queue command the
+capability stays `unknown` and idle agents receive messages only at their next turn;
+there is no fallback that launches Codex or types into a screen.
 
 The routes below are the earlier Khala-hosted and notification-only adapters.
 
