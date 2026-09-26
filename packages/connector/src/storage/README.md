@@ -32,6 +32,16 @@ const report = await recoverConnectorStorage(storage);
   decoded approval lookup, bounded released-payload reader, effective-policy write
   seam and restart reconciliation IDs. Only trusted controls composition calls
   `applyEffectivePolicy` after authenticating provenance.
+- `createAcknowledgementRecorder(storage)` records agent batch-token
+  acknowledgements. `acceptBatchAcknowledgement(recorder, principal, claim)` is the
+  authenticated-call boundary. `principal` is the binding that the transport
+  resolved from the caller's credential. A claim naming another binding or
+  generation is refused. One call commits one content-free v2 `agent_acknowledged`
+  receipt per release, plus one `receipt_outbox` row per receipt, in a single
+  transaction. All of them share one fresh, non-secret `evidenceRef`. The receipt ID
+  is derived from `['agent', bindingId, generation, releaseId, 'agent_acknowledged']`,
+  so a repeat returns the stored receipts byte for byte. `readReceiptOutbox` pages
+  the outbox by ledger revision. The projection owns its own checkpoint.
 - `persistPending` / `persistUnavailable` → `commitCursor` is the ingestion order. An
   event is durably stored, as content or as an unavailable placeholder, before the
   application cursor may move past it. Both take the `streamId` that observed the event.
@@ -94,6 +104,7 @@ KHA-101 after KHA-142; swapping it touches only this directory.
 | Effective policy is exact and monotonic | Policy writes require the exact current binding generation, reject terminal revocation and stale/conflicting versions, and replay an exact duplicate idempotently | `dispatch.test.ts` |
 | Dispatch intent never rolls back to queued | Records, sequence allocation and causal counters commit in one synchronous transaction; dispatching/unknown records are enumerated for reconciliation only | `dispatch.test.ts` |
 | Only durable approvals and bounded release bytes dispatch | The exact decoded `ApprovalCommand` is journalled with a release; migrated commands return unavailable. Payload reads return at most the requested bound plus one byte | `dispatch.test.ts` |
+| An acknowledgement is authorized before it is looked up | The exact current, unrevoked binding generation is checked first inside the IMMEDIATE transaction, which is the revocation fence. Unknown, stale, revoked and forged callers all get `binding_not_held`, so a replay cannot serve as an oracle. Every release must have been released to that binding generation. A partial overlap with an earlier acknowledgement is refused | `acknowledgements.test.ts` |
 | Unknown outcome stays unknown | Recovery lists a release with any dispatch evidence (`dispatching`, `transport_written`, `harness_queued`, `context_consumed` or `outcome_unknown`, correlated or not) as `outcomeUnknownReleases` (never resubmit), apart from `undispatchedReleases` | `crash.test.ts`, `ledger.test.ts` |
 
 `busy_timeout=0` and `synchronous=FULL` are set explicitly and asserted in `open.test.ts`.
@@ -110,6 +121,9 @@ than proving the statements are needed.
 | Cursor commit outcome unknown | Reopen and `readCursor`; a retried stale compare-and-set reports the durable revision |
 | Release exists, harness acceptance unknown | `outcomeUnknownReleases` in the recovery report; never resubmitted by storage |
 | Owner killed inside an open transaction | Nothing from that transaction is visible after reopen |
+| Batch token returned, receipt not committed | No receipt, and the inbox cursor stays put. The same batch replays |
+| Receipt committed, inbox cursor not advanced | The batch replays. The next authorized acknowledgement returns the same immutable receipts before the cursor advances |
+| Inbox cursor advanced | The inbox never replays the batch. Receipts and outbox rows stay durable for projection |
 
 `crash.test.ts` kills a real child process with SIGKILL. One window is inside an open
 transaction; the others are after commit.

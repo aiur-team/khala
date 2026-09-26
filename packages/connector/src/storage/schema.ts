@@ -7,7 +7,7 @@ import type { OpenMode } from './leases';
 
 /** `PRAGMA application_id`: ASCII "KHLA", so a foreign SQLite file is refused. */
 export const APPLICATION_ID = 0x4b484c41;
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const SCHEMA_V1 = `
 CREATE TABLE meta (
@@ -186,6 +186,20 @@ CREATE TABLE harness_route_selections (
 ) STRICT;
 `;
 
+/**
+ * Agent batch-token acknowledgements: one durable projection-outbox row per receipt,
+ * committed in the same transaction as the receipt it names. The receipt row stays the
+ * authoritative fact; the outbox only tells the projection which facts to carry.
+ */
+const SCHEMA_V4 = `
+CREATE TABLE receipt_outbox (
+  receipt_id TEXT PRIMARY KEY REFERENCES receipts (receipt_id),
+  evidence_ref TEXT NOT NULL,
+  ledger_revision INTEGER NOT NULL
+) STRICT;
+CREATE INDEX receipt_outbox_revision ON receipt_outbox (ledger_revision);
+`;
+
 function pragmaNumber(db: DatabaseSync, name: string): number {
   const row = db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined;
   const value = row ? Object.values(row)[0] : undefined;
@@ -208,6 +222,7 @@ export function prepareSchema(db: DatabaseSync, mode: OpenMode): void {
     db.exec(SCHEMA_V1);
     db.exec(SCHEMA_V2);
     db.exec(SCHEMA_V3);
+    db.exec(SCHEMA_V4);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.prepare("INSERT INTO meta (key, value) VALUES ('ledger_revision', '0')").run();
@@ -223,5 +238,9 @@ export function prepareSchema(db: DatabaseSync, mode: OpenMode): void {
   if (version <= 2) {
     db.exec(SCHEMA_V3);
     db.exec('PRAGMA user_version = 3');
+  }
+  if (version <= 3) {
+    db.exec(SCHEMA_V4);
+    db.exec('PRAGMA user_version = 4');
   }
 }
