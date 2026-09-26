@@ -327,7 +327,7 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
           && body.v === 1 && body.kind === 'ok' && Array.isArray(body.requests)) {
           return { kind: 'ok', value: body.requests };
         }
-        if (response.status === 401 || response.status === 403 || response.status === 404) {
+        if (response.status === 401 || response.status === 403) {
           return rejected('forbidden' satisfies InboxRejection);
         }
         return unavailable();

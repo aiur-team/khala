@@ -28,7 +28,7 @@ export type HumanApplicationScreenProps = Readonly<{
   navigateRoute?: (path: string) => void;
   /** Binds the live room screens; production supplies `renderHumanRoom`. */
   renderRoom: HumanRoomRenderer;
-  channelAccess: ChannelAccessInboxController;
+  createChannelAccess: () => ChannelAccessInboxController;
   capabilities?: readonly HumanCapability[];
 }>;
 
@@ -118,17 +118,22 @@ function ReadyRoute({ context, routes, renderRoom, navigateExternal, navigateRou
   }
 }
 
-function OwnerShell({ controller, routes, path, mode, theme, collapsed, onCollapsedChange, children }: {
-  controller: ChannelAccessInboxController;
+function OwnerShell({ createController, routes, path, mode, theme, collapsed, onCollapsedChange, children }: {
+  createController: () => ChannelAccessInboxController;
   routes: HumanRouteCodec;
   path: string;
   mode: ShellMode;
   theme: Readonly<{ theme: ThemeChoice; onThemeChange(theme: ThemeChoice): void }>;
   collapsed: boolean;
   onCollapsedChange(collapsed: boolean): void;
-  children: ReactNode;
+  children(controller: ChannelAccessInboxController): ReactNode;
 }) {
+  const [controller] = useState(createController);
   const route = routes.parse(path);
+  useEffect(() => {
+    controller.start();
+    return () => controller.dispose();
+  }, [controller]);
   return (
     <AiurShell
       mode={mode}
@@ -152,7 +157,7 @@ function OwnerShell({ controller, routes, path, mode, theme, collapsed, onCollap
       collapsed={collapsed}
       onCollapsedChange={onCollapsedChange}
     >
-      {children}
+      {children(controller)}
     </AiurShell>
   );
 }
@@ -165,7 +170,7 @@ export function HumanApplicationScreen({
   navigateExternal = url => globalThis.location?.assign(url),
   navigateRoute = path => application.navigate(path),
   renderRoom,
-  channelAccess,
+  createChannelAccess,
   capabilities = registerHumanCapabilities(),
 }: HumanApplicationScreenProps) {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
@@ -175,11 +180,6 @@ export function HumanApplicationScreen({
   const [collapsed, setCollapsed] = useState(false);
   const [signInFailed, setSignInFailed] = useState(false);
 
-  useEffect(() => {
-    if (snapshot.phase === 'ready') channelAccess.start();
-  }, [channelAccess, snapshot.phase]);
-  useEffect(() => () => channelAccess.dispose(), [channelAccess]);
-
   async function signIn() {
     setSignInFailed(false);
     const result = await identity.beginSignIn(snapshot.path);
@@ -188,19 +188,7 @@ export function HumanApplicationScreen({
   }
 
   let content: ReactNode;
-  if (snapshot.phase === 'ready') {
-    content = (
-      <ReadyRoute
-        context={snapshot.context}
-        routes={routes}
-        navigateExternal={navigateExternal}
-        navigateRoute={navigateRoute}
-        capabilities={capabilities}
-        renderRoom={renderRoom}
-        channelAccess={channelAccess}
-      />
-    );
-  } else if (snapshot.phase === 'signed_out') {
+  if (snapshot.phase === 'signed_out') {
     content = (
       <KhalaPageFrame model={{ title: 'Sign in to Khala', labelledBy: 'khala-sign-in' }}>
         <Panel heading="Continue with your account">
@@ -219,11 +207,13 @@ export function HumanApplicationScreen({
 
   // The human application's ready state is the credential guard. Removing it
   // would expose owner-only inbox chrome on agent/discovery credential routes.
-  const ownerChannelAccess = snapshot.phase === 'ready' ? channelAccess : null;
+  const ownerChannelAccess = snapshot.phase === 'ready' ? createChannelAccess : null;
   if (ownerChannelAccess !== null) {
+    const context = snapshot.phase === 'ready' ? snapshot.context : null;
     return (
       <OwnerShell
-        controller={ownerChannelAccess}
+        key={context?.principal.ownerId ?? 'non-owner'}
+        createController={ownerChannelAccess}
         routes={routes}
         path={snapshot.path}
         mode={mode}
@@ -231,7 +221,17 @@ export function HumanApplicationScreen({
         collapsed={collapsed}
         onCollapsedChange={setCollapsed}
       >
-        {content}
+        {controller => context === null ? content : (
+          <ReadyRoute
+            context={context}
+            routes={routes}
+            navigateExternal={navigateExternal}
+            navigateRoute={navigateRoute}
+            capabilities={capabilities}
+            renderRoom={renderRoom}
+            channelAccess={controller}
+          />
+        )}
       </OwnerShell>
     );
   }

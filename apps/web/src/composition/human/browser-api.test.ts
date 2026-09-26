@@ -189,4 +189,18 @@ describe('createHumanBrowserApi', () => {
     expect(fetch.mock.calls[3]?.[0]).toBe(`${origin}/api/human/channel-access/mute`);
     expect(new Headers(fetch.mock.calls[2]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
   });
+
+  it('distinguishes inbox authority loss from retryable route failures', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(401, { code: 'signed_out' }))
+      .mockResolvedValueOnce(json(403, { code: 'forbidden' }))
+      .mockResolvedValueOnce(json(404, { code: 'not_found' }))
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'ok', requests: 'malformed' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'unavailable', retryable: true });
+  });
 });

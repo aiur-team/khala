@@ -50,13 +50,13 @@ const application = createHumanApplication({
   limits: decodedLimits.value,
 }, { initialPath: entry.path });
 const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
-const channelAccess = createChannelAccessInboxController({ requests: api.channelAccess });
+const createChannelAccess = () => createChannelAccessInboxController({ requests: api.channelAccess });
 const mounted = mountKhalaContent({
   target,
   application,
   identity: api.identity,
   routes,
-  channelAccess,
+  createChannelAccess,
   mode: entry.mode,
   renderRoom: renderHumanRoom,
   navigateRoute(path) {
