@@ -179,7 +179,7 @@ describe('internal discovery store', () => {
       v: 1 as const, bindingId: 'binding_1' as never, ownerId: owner, agentParticipantId: agent, deviceId: agentDevice,
       harness: 'codex', sessionId: 'session_1', generation: 1,
     };
-    expect(discovery.activate({ operationKey: 'op_1', binding, channelId: 'ch_a', sessionGeneration: 1 }).kind).toBe('activated');
+    expect(discovery.activate({ operationKey: 'op_1', binding, channelId: 'ch_a', sessionGeneration: 1, history: 'none' }).kind).toBe('activated');
     post('after');
     const bodies = (cursor: string | null) => {
       const page = store.readSubscription({ channelId: 'ch_a' as RoomId, binding, cursor, limit: 50 });
@@ -188,7 +188,7 @@ describe('internal discovery store', () => {
     };
     expect(bodies(null)).toEqual(['after']);
     // A replayed activation keeps its recorded start.
-    expect(discovery.activate({ operationKey: 'op_1', binding, channelId: 'ch_a', sessionGeneration: 1 }).kind).toBe('activated');
+    expect(discovery.activate({ operationKey: 'op_1', binding, channelId: 'ch_a', sessionGeneration: 1, history: 'none' }).kind).toBe('activated');
     expect(bodies(null)).toEqual(['after']);
     // A cursor rewound to the channel's beginning still starts after the activation head.
     const forged = encodeSubscriptionCursor({ channelId: 'ch_a' as RoomId, bindingId: 'binding_1', generation: 1, lastCoveredSequence: 0 });

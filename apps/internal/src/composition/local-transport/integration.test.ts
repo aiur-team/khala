@@ -31,6 +31,7 @@ import { createListeningModeService } from '@khala/policy/listening-mode/store';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSqliteListeningModeRepository } from '../../listening-mode-store/sqlite';
 import { createChannelStore, type ChannelStore } from '../../store/channel-store';
+import { admitWithSharedHistory } from '../../store/fixtures/admission';
 import { openChannelStore, type InternalStoreHandle } from '../../store/open';
 import { createLocalChannelSubstrate } from './channel-substrate';
 import { createLocalListeningModeStore } from './listening-mode-store';
@@ -195,6 +196,7 @@ describe('local SQLite transport integration', () => {
     const roomId = created.value.roomId;
     expect(initial.store.setMembership({ channelId: roomId, participantId: bob.participantId, membership: 'joined' }))
       .toMatchObject({ kind: 'done' });
+    admitWithSharedHistory(initial.handle, binding, roomId);
 
     const content = text('restart-safe hello');
     const original = await originalService.send({ roomId, clientTxnId: 'txn-restart', content });
