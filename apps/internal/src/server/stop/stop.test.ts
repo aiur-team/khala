@@ -131,6 +131,7 @@ const bearer = (credential: string) => ({ authorization: `Bearer ${credential}` 
 const message = (body: string) => ({ clientTxnId: `txn-${body.replaceAll(" ", "-")}`, content: { v: 1, kind: 'text', body } });
 const STOP_PATH = `/api/v1/channels/${channelId}/stop`;
 const stopAll = { v: 1, targets: null };
+const bobTarget = { bindingId: 'binding-bob', generation: 1, agentParticipantId: 'participant-bob' };
 
 /** An independently started, user-owned process standing in for the agent CLI. */
 function startUserCli(): ChildProcess {
@@ -181,8 +182,11 @@ describe('binding Stop endpoint admission', () => {
     const port = h.server.port;
     for (const body of [
       {}, { v: 2, targets: null }, { v: 1 }, { v: 1, targets: [] }, { v: 1, targets: 'all' }, { v: 1, targets: null, extra: 1 },
-      { v: 1, targets: [{ bindingId: 'binding-bob' }] }, { v: 1, targets: [{ bindingId: 'binding-bob', generation: -1 }] },
-      { v: 1, targets: [{ bindingId: 'binding-bob', generation: 1 }, { bindingId: 'binding-bob', generation: 1 }] },
+      { v: 1, targets: [{ bindingId: 'binding-bob', agentParticipantId: 'participant-bob' }] },
+      { v: 1, targets: [{ bindingId: 'binding-bob', generation: -1, agentParticipantId: 'participant-bob' }] },
+      { v: 1, targets: [{ bindingId: 'binding-bob', generation: 1 }] },
+      { v: 1, targets: [{ bindingId: 'binding-bob', generation: 1, agentParticipantId: '' }] },
+      { v: 1, targets: [bobTarget, bobTarget] },
     ]) {
       expect((await call(port, { method: 'POST', path: STOP_PATH, headers: human, body })).status, JSON.stringify(body)).toBe(400);
     }
@@ -239,6 +243,28 @@ describe('binding Stop', () => {
     expect(again.json).toEqual({ v: 1, outcome: 'stopped', stopped: [], remaining: [] });
   });
 
+  it('ends release pulls for a stopped binding', async () => {
+    const reads: string[] = [];
+    const h = await start({
+      overrides: {
+        releases: {
+          read: ({ binding }) => {
+            reads.push(binding.bindingId);
+            return { kind: 'page', releases: [], nextCursor: 'cursor-1', caughtUp: true };
+          },
+        },
+      },
+    });
+    const human = await humanSession(h);
+    const port = h.server.port;
+    const releasesPath = `/api/v1/channels/${channelId}/releases`;
+
+    expect((await call(port, { path: releasesPath, headers: bearer(h.fixture.bob.credential) })).status).toBe(200);
+    expect((await call(port, { method: 'POST', path: STOP_PATH, headers: human, body: stopAll })).json.outcome).toBe('stopped');
+    expect((await call(port, { path: releasesPath, headers: bearer(h.fixture.bob.credential) })).status).toBe(401);
+    expect(reads).toEqual(['binding-bob']);
+  });
+
   it('removes the granted binding fields from the runtime descriptor and keeps discovery', async () => {
     const h = await start();
     const human = await humanSession(h);
@@ -256,20 +282,31 @@ describe('binding Stop', () => {
     expect(text).not.toContain(h.fixture.bob.credential);
   });
 
-  it('stops only exact recorded targets and refuses a stale or unknown one', async () => {
+  it('stops only exact recorded targets and refuses a stale, unknown or wrong-participant one', async () => {
     const h = await start({ carolInChannelOne: true });
     const human = await humanSession(h);
     const port = h.server.port;
 
-    for (const targets of [[{ bindingId: 'binding-bob', generation: 2 }], [{ bindingId: 'binding-nobody', generation: 1 }]]) {
+    for (const targets of [
+      [{ ...bobTarget, generation: 2 }],
+      [{ ...bobTarget, bindingId: 'binding-nobody' }],
+      [{ ...bobTarget, agentParticipantId: carolBinding.agentParticipantId }],
+      // A mismatch anywhere in the list refuses the whole Stop, including the valid Bob target.
+      [bobTarget, { bindingId: 'binding-carol', generation: 1, agentParticipantId: 'participant-bob' }],
+    ]) {
       const refused = await call(port, { method: 'POST', path: STOP_PATH, headers: human, body: { v: 1, targets } });
-      expect(refused.status).toBe(409);
+      expect(refused.status, JSON.stringify(targets)).toBe(409);
     }
-    expect((await call(port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(h.fixture.bob.credential) })).status)
-      .toBe(200);
+    for (const credential of [h.fixture.bob.credential, h.fixture.carol.credential]) {
+      expect((await call(port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(credential) })).status).toBe(200);
+    }
+    for (const binding of [bobBinding, carolBinding]) {
+      const row = h.fixture.store.binding(binding);
+      expect(row.kind === 'done' && row.binding.status).toBe('active');
+    }
 
     const reply = await call(port, {
-      method: 'POST', path: STOP_PATH, headers: human, body: { v: 1, targets: [{ bindingId: 'binding-bob', generation: 1 }] },
+      method: 'POST', path: STOP_PATH, headers: human, body: { v: 1, targets: [bobTarget] },
     });
     expect(reply.json.stopped.map((entry: { bindingId: string }) => entry.bindingId)).toEqual(['binding-bob']);
     expect((await call(port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(h.fixture.bob.credential) })).status)

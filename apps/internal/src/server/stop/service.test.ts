@@ -94,8 +94,19 @@ describe('binding Stop service', () => {
 
   it('refuses a target that is not the newest generation', async () => {
     const service = createBindingStopService(ports({ candidates: [{ binding: bobBinding, status: 'active', latest: false }] }));
-    expect(await service.stop('channel-one', [{ bindingId: 'binding-bob', generation: 1 }]))
+    expect(await service.stop('channel-one', [{ bindingId: 'binding-bob', generation: 1, agentParticipantId: 'participant-bob' }]))
       .toEqual({ kind: 'rejected', code: 'stale_target' });
+  });
+
+  it('refuses a target recorded for another participant before barring or revoking anything', async () => {
+    const calls: Calls = [];
+    const service = createBindingStopService(ports({ candidates: [active(bobBinding), active(carolBinding)] }, calls));
+    const result = await service.stop('channel-one', [
+      { bindingId: 'binding-bob', generation: 1, agentParticipantId: 'participant-bob' },
+      { bindingId: 'binding-carol', generation: 1, agentParticipantId: 'participant-bob' },
+    ]);
+    expect(result).toEqual({ kind: 'rejected', code: 'participant_mismatch' });
+    expect(calls).toEqual([]);
   });
 
   it('never reports a binding as stopped while the descriptor may still grant it', async () => {

@@ -2,8 +2,7 @@ import type { ServerResponse } from 'node:http';
 import { readJsonObject, sendError, sendJson } from '../http';
 import type { RouteContext, RouteSpec } from '../server';
 import type { Principal } from '../credentials';
-import type { BindingKey } from './barrier';
-import type { BindingStopService } from './service';
+import type { BindingStopService, StopTarget } from './service';
 
 /**
  * Human-only: the route requires the browser session cookie, its request secret
@@ -18,30 +17,34 @@ export const STOP_ROUTE = {
 
 /** Largest explicit target list; the acceptance script names at most a pair. */
 export const MAX_STOP_TARGETS = 16;
-const MAX_BINDING_ID_BYTES = 512;
+const MAX_ID_BYTES = 512;
 
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actual = Object.keys(value);
   return actual.length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 
-/** `null` for every active binding, a bounded list of exact generations, or `undefined` when malformed. */
-export function decodeStopTargets(value: unknown): readonly BindingKey[] | null | undefined {
+function validId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value, 'utf8') <= MAX_ID_BYTES
+    && !/[\p{Cc}]/u.test(value);
+}
+
+/** `null` for every active binding, a bounded list of exact recorded targets, or `undefined` when malformed. */
+export function decodeStopTargets(value: unknown): readonly StopTarget[] | null | undefined {
   if (value === null) return null;
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_STOP_TARGETS) return undefined;
-  const targets: BindingKey[] = [];
+  const targets: StopTarget[] = [];
   const seen = new Set<string>();
   for (const entry of value as unknown[]) {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return undefined;
     const record = entry as Record<string, unknown>;
-    const { bindingId, generation } = record;
-    if (!exactKeys(record, ['bindingId', 'generation']) || typeof bindingId !== 'string' || bindingId.length === 0
-      || Buffer.byteLength(bindingId, 'utf8') > MAX_BINDING_ID_BYTES || /[\p{Cc}]/u.test(bindingId)
-      || !Number.isSafeInteger(generation) || (generation as number) < 0) return undefined;
+    const { bindingId, generation, agentParticipantId } = record;
+    if (!exactKeys(record, ['bindingId', 'generation', 'agentParticipantId']) || !validId(bindingId)
+      || !validId(agentParticipantId) || !Number.isSafeInteger(generation) || (generation as number) < 0) return undefined;
     const key = JSON.stringify([bindingId, generation]);
     if (seen.has(key)) return undefined;
     seen.add(key);
-    targets.push({ bindingId, generation: generation as number });
+    targets.push({ bindingId, generation: generation as number, agentParticipantId });
   }
   return targets;
 }

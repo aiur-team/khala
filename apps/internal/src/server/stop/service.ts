@@ -28,6 +28,9 @@ export type StopCandidate = Readonly<{
   latest: boolean;
 }>;
 
+/** An exact recorded target: one binding generation and the agent participant it was recorded for. */
+export type StopTarget = BindingKey & Readonly<{ agentParticipantId: string }>;
+
 export type StopRemainingReason = 'revoke_failed' | 'descriptor_pending';
 
 export type StopResult =
@@ -37,7 +40,7 @@ export type StopResult =
     stopped: readonly StopBindingView[];
     remaining: readonly (StopBindingView & Readonly<{ reason: StopRemainingReason }>)[];
   }>
-  | Readonly<{ kind: 'rejected'; code: 'stale_target' }>
+  | Readonly<{ kind: 'rejected'; code: 'stale_target' | 'participant_mismatch' }>
   | Readonly<{ kind: 'unavailable' }>;
 
 export type GrantClearing = 'cleared' | 'absent' | 'failed';
@@ -56,7 +59,7 @@ export type BindingStopPorts = Readonly<{
 
 export type BindingStopService = Readonly<{
   /** `targets: null` stops every active binding of the channel. */
-  stop(channelId: string, targets: readonly BindingKey[] | null): Promise<StopResult>;
+  stop(channelId: string, targets: readonly StopTarget[] | null): Promise<StopResult>;
 }>;
 
 function view(binding: SessionBinding): StopBindingView {
@@ -72,7 +75,7 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
   // Stops of one channel run one at a time; a retry never interleaves with the first attempt.
   const queues = new Map<string, Promise<unknown>>();
 
-  async function stopNow(channelId: string, targets: readonly BindingKey[] | null): Promise<StopResult> {
+  async function stopNow(channelId: string, targets: readonly StopTarget[] | null): Promise<StopResult> {
     let candidates: readonly StopCandidate[] | 'unavailable';
     try {
       candidates = ports.candidates(channelId);
@@ -83,12 +86,16 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
 
     let selected = candidates;
     if (targets !== null) {
-      // A recorded target must still be the newest generation of a binding in this channel.
+      // A recorded target must still be the newest generation of a binding in this channel, held by the
+      // same agent participant. Every target is checked before anything is barred or revoked.
       const matched: StopCandidate[] = [];
       for (const target of targets) {
         const found = candidates.find(candidate => candidate.binding.bindingId === target.bindingId
           && candidate.binding.generation === target.generation);
         if (!found || !found.latest) return { kind: 'rejected', code: 'stale_target' };
+        if (found.binding.agentParticipantId !== target.agentParticipantId) {
+          return { kind: 'rejected', code: 'participant_mismatch' };
+        }
         matched.push(found);
       }
       selected = matched;
