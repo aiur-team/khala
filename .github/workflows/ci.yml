@@ -32,6 +32,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      # The setup release gate: packs @aiur/khala and drives the installed tarball.
+      - run: node --test tests/integration/agent-setup/setup-acceptance.test.mjs
       - name: Install Chromium for browser tests
         run: pnpm exec playwright install --with-deps chromium
       - name: Browser tests
