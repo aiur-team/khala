@@ -206,6 +206,38 @@ describe('Claude session adapter', () => {
     expect(inbox.log).toEqual([{ token: 'fresh-token-1', outcome: 'recorded' }]);
   });
 
+  it('reports hook boundary state without acknowledging a retained token', async () => {
+    const { inbox, claude } = inboxAdapter(['{"body":"pulled before a hook check"}']);
+    await claude.pull(A1, { maxBytes: 4096 });
+    await expect(claude.hook(A1)).resolves.toMatchObject({ kind: 'hook' });
+    // A hook that used `mode` here would acknowledge a batch the model may not have seen.
+    expect(inbox.log).toEqual([]);
+  });
+
+  it('gives the effective mode and the fence watcher window, and no window outside steer and sync', async () => {
+    const { adapter: claude, services, state } = adapter();
+    const envelope = vi.spyOn(state, 'envelope');
+    services.services(BINDINGS['s-1']);
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null });
+    services.mode.value = 'sync';
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000 });
+    services.mode.value = 'steer';
+    services.watch.value = null;
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: null });
+    services.watch.value = { seconds: 0 };
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: null });
+    services.watch.value = { seconds: 60 };
+    services.mode.value = 'async';
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: 'async', watchSeconds: null });
+    // Without batch-token handoff every hook pull is refused, so hooks deliver nothing.
+    services.mode.value = 'steer';
+    services.capabilities.value = capabilities('unknown');
+    await expect(claude.hook(A1)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null });
+    expect(envelope).not.toHaveBeenCalled();
+    expect(services.reads.get('binding-1')!.calls).toEqual([]);
+    await expect(claude.hook({ credential: CREDENTIAL_B, sessionId: 's-1' })).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+  });
+
   it('keeps an agent read’s own batch token for the next agent call and keeps no local acknowledgement', async () => {
     const { adapter: claude, services } = adapter();
     services.services(BINDINGS['s-1']);

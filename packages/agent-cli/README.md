@@ -18,7 +18,7 @@ khala internal --resume <channel-id>
 khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
 khala internal delete <channel-id> [--yes]
 khala codex-hook
-khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
+khala claude <pull|read|send|status|mode|pending|hook> --session <claude-session-id>
 ```
 
 Released or model-authored bytes are accepted only through stdin, MCP stdio, or
@@ -281,7 +281,7 @@ inside the shared untrusted-data frame.
 ## Claude session adapter
 
 ```text
-khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
+khala claude <pull|read|send|status|mode|pending|hook> --session <claude-session-id>
 ```
 
 This is the entry point for the Claude plugin's hooks and `/khala` skill. The
@@ -324,6 +324,14 @@ frame without its `batchToken` line. Handoff runs only when
 `pull` and `read` are refused as `unproven`, and mode support without evidence
 reports `unproven`. `pending` returns only `pending` or `idle` from the local
 automation fence's notification signal; it never pulls or acknowledges.
+
+`hook` tells a plugin hook which boundary it owns, as
+`{"ok":true,"kind":"hook","effective":<mode|null>,"watchSeconds":<n|null>}`.
+Unlike `mode`, it is not an agent call. It runs outside the state-port envelope
+and acknowledges nothing. `effective` is `null` without batch-token handoff,
+because every hook pull would be refused. `watchSeconds` is the local automation
+fence's idle-watcher window. It is present only for `steer` and `sync`, and
+`null` when the fence grants none.
 
 For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
 (`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the

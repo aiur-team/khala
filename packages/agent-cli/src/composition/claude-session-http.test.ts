@@ -158,6 +158,18 @@ describe('Claude session adapter over the loopback server', () => {
     expect(launched.logs).toEqual([`POST ${CLAUDE_SESSION_PATH}`, 'status 200']);
   });
 
+  it('round-trips hook boundary state over the loopback route', async () => {
+    const root = workspace();
+    const services = fakeServices();
+    services.mode.value = 'steer';
+    const launched = await launch(path.join(root, 'state'), services, 'J'.repeat(43));
+    const descriptor = path.join(root, 'active.json');
+    writeDescriptor(descriptor, launched);
+    const client = createClaudeSessionClient({ descriptorPath: descriptor });
+    await expect(client.hook('s-1')).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: 3000 });
+    await expect(client.hook('s-3')).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+  });
+
   it('resolves a rotated descriptor on the next call of a long-lived client', async () => {
     const root = workspace();
     const services = fakeServices();
