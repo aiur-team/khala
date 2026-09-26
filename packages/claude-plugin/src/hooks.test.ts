@@ -154,29 +154,48 @@ describe('mode boundaries', () => {
 describe('idle watcher', () => {
   // Wrong-implementation test: a busy wake, a second live watcher, or a watcher that pulls fails it.
   it('replaces the watcher on a new prompt, never wakes before Stop marks idle, then wakes once and pulls once', async () => {
-    const { khala, stop, watcher, prompt, clock } = setup();
+    const { khala, stop, watcher, prompt, clock, watcherState } = setup();
     khala.bind(A, 'sync');
     await stop(A);
-    const first = watcher(A);
-    await until(() => clock.now > 1_000_000);
+    let firstDone = false;
+    const first = watcher(A).then(result => { firstDone = true; return result; });
+    await until(() => khala.ops(A).includes('pending'));
 
-    // A second prompt makes the session busy and cancels the old watcher.
+    // A second prompt makes the session busy and cancels the old watcher at its next poll.
     await prompt(A);
+    expect(watcherState(A)?.state).toBe('cancelled');
+    const cancelledAt = clock.now;
+    await until(() => firstDone, 500);
+    expect(clock.now - cancelledAt).toBeLessThanOrEqual(2_000);
     await expect(first).resolves.toEqual(silent);
-    khala.release(A, 'arrives mid-turn');
-    await new Promise(resolve => setTimeout(resolve, 30));
 
-    // The turn's Stop delivers it, so no wake was needed.
-    expect(reason(await stop(A))).toContain('arrives mid-turn');
+    // A watcher armed while the turn is still busy stays silent with a release pending.
     const second = watcher(A);
+    let secondDone = false;
+    void second.then(() => { secondDone = true; });
+    khala.release(A, 'arrives mid-turn');
+    const busyFrom = clock.now;
+    await until(() => clock.now > busyFrom + 10_000);
+    expect(secondDone).toBe(false);
+    expect(watcherState(A)?.state).toBe('armed');
+
+    // The turn's Stop delivers it, so no wake is needed.
+    expect(reason(await stop(A))).toContain('arrives mid-turn');
     khala.agentCall(A);
+    const third = watcher(A, true);
+    await expect(second).resolves.toEqual(silent);
     await stop(A, true);
+
+    const beforeRelease = khala.calls.length;
     khala.release(A, 'arrives while idle');
-    expect(await second).toEqual({ stdout: '', stderr: `${WAKE_NOTICE}\n`, exitCode: 2 });
-    // The watcher read only the pending signal.
-    const pullsBeforeClaim = khala.ops(A).filter(op => op === 'pull').length;
+    expect(await third).toEqual({ stdout: '', stderr: `${WAKE_NOTICE}\n`, exitCode: 2 });
+    // Between the release and the wake the watcher read only the pending signal.
+    expect(new Set(khala.calls.slice(beforeRelease).map(call => call.op))).toEqual(new Set(['pending']));
+    expect(khala.session(A).delivered).toHaveLength(1);
+
+    const beforeClaim = khala.calls.length;
     expect(context(await prompt(A))).toContain('arrives while idle');
-    expect(khala.ops(A).filter(op => op === 'pull').length).toBe(pullsBeforeClaim + 1);
+    expect(khala.calls.slice(beforeClaim).map(call => call.op)).toEqual(['hook', 'pull']);
     await expect(prompt(A)).resolves.toEqual(silent);
   });
 
