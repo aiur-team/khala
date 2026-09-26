@@ -182,6 +182,8 @@ export type SetupEnvironment = Readonly<{
   xdgConfigHome: string;
   xdgDataHome: string;
   xdgStateHome: string;
+  /** `$CODEX_HOME`, when set; the Codex adapter otherwise uses `$HOME/.codex`. */
+  codexHome?: string;
   probe: SetupProbe;
 }>;
 

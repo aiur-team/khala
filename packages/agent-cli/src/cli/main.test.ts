@@ -39,7 +39,9 @@ describe('bundled CLI entrypoint', () => {
   });
 
   it('runs standalone status through a symlink', () => {
-    const result = spawnSync(process.execPath, [linkedEntrypoint, 'status'], { encoding: 'utf8' });
+    const home = path.join(temporaryDirectory, 'home');
+    fs.mkdirSync(home);
+    const result = spawnSync(process.execPath, [linkedEntrypoint, 'status'], { encoding: 'utf8', env: { HOME: home, PATH: '' } });
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
@@ -50,7 +52,12 @@ describe('bundled CLI entrypoint', () => {
       route: 'unavailable',
       sourceCursor: null,
       inbox: null,
+      configuration: {
+        v: 1, command: 'status', ok: true, changed: false, state: 'no_harness', planDigest: null,
+        confirmation: { required: false, confirmed: false }, harnesses: [], operations: [], diagnostics: [],
+      },
     });
+    expect(fs.readdirSync(home)).toEqual([]);
   });
 
   it('keeps the internal runtime out of the main bundle and loads it only for internal', () => {
