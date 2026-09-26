@@ -45,7 +45,7 @@ It refuses tracked or untracked changes, packs through the release package gate 
 { "tarball": "/abs/path/aiur-khala-0.1.0.tgz", "sha256": "<64 hex>", "commit": "<full commit id>" }
 ```
 
-Before starting any process, the runner copies the tarball into a private directory under `$XDG_STATE_HOME/khala-acceptance/packages/` and hashes the copy. It refuses the run when that digest, or the provenance record's commit and digest, differ from the profile. `npx` then runs only that copy. A directory, a relative path or a workspace tree is never run. The report's `khalaPackage` field records the build that ran: the npm pin, or the tarball's source path, measured sha256 and commit.
+Before starting any process, the runner copies the tarball into a private directory under `$XDG_STATE_HOME/khala-acceptance/packages/` and hashes the copy. It refuses the run when that digest, or the provenance record's commit and digest, differ from the profile. `npx --yes --package <copy> khala …` then runs only that copy. A directory, a relative path or a workspace tree is never run. The report's `khalaPackage` field records the build that ran: the npm pin, or the tarball's source path, measured sha256 and commit.
 
 A mode runs only when `listeningModeView` makes it effective for both routes. Every other mode is reported as skipped and is never replaced by another.
 
