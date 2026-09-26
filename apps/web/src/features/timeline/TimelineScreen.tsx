@@ -22,6 +22,23 @@ export interface TimelineScreenProps {
   viewer: ParticipantView;
   /** Rendered per row, outside the message-content renderer, keyed by exact `EventRef`. */
   renderReviewAction?: (ref: EventRef) => ReactNode;
+  /**
+   * Why sending is paused (for example, the transport is reconnecting). The draft
+   * stays editable; Send and Retry stay disabled until this is `null` again.
+   */
+  sendBlockedReason?: string | null;
+  /** Keeps unreconciled sends across a reload so a retry reuses the same `clientTxnId`. */
+  pendingStore?: PendingSendStore;
+}
+
+export interface PendingSendStore {
+  load(): readonly PendingSend[];
+  save(pending: readonly PendingSend[]): void;
+}
+
+/** A send interrupted by a reload may have landed; only a retry of the same transaction can tell. */
+function restored(entry: PendingSend): PendingSend {
+  return entry.phase === 'pending' ? { ...entry, phase: 'outcome_unknown' } : entry;
 }
 
 const NEAR_BOTTOM_PX = 24;
@@ -57,18 +74,25 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
   return item.content.kind === 'text';
 }
 
-export function TimelineScreen({ controller, roomPort, roomId, viewer, renderReviewAction }: TimelineScreenProps) {
+export function TimelineScreen({
+  controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore,
+}: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [draft, setDraft] = useState('');
   // Every send keeps its own row by `clientTxnId` until reconciled: a later
   // send never silently replaces an earlier failed/outcome_unknown one (R3).
-  const [pendingList, setPendingList] = useState<readonly PendingSend[]>([]);
+  const [pendingList, setPendingList] = useState<readonly PendingSend[]>(() => pendingStore?.load().map(restored) ?? []);
   const [atLatest, setAtLatest] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const listRef = useRef<HTMLOListElement | null>(null);
   const anchorRef = useRef<ReaderAnchor>({ atLatest: true });
 
   const canCompose = data.membership === null || CAN_COMPOSE.has(data.membership);
+  const sendBlocked = sendBlockedReason !== null;
+
+  useEffect(() => {
+    pendingStore?.save(pendingList);
+  }, [pendingList, pendingStore]);
 
   useEffect(() => {
     controller.setReaderAtLatest(atLatest);
@@ -121,7 +145,7 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
 
   async function handleSend(): Promise<void> {
     const body = draft.trim();
-    if (!body || !canCompose) return;
+    if (!body || !canCompose || sendBlocked) return;
     const content = { v: 1 as const, kind: 'text' as const, body };
     const clientTxnId = newClientTxnId();
     setPendingList(list => [...list, { clientTxnId, content, phase: 'pending' }]);
@@ -130,7 +154,7 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
   }
 
   async function handleRetry(entry: PendingSend): Promise<void> {
-    if (entry.phase !== 'failed' && entry.phase !== 'outcome_unknown') return;
+    if ((entry.phase !== 'failed' && entry.phase !== 'outcome_unknown') || sendBlocked) return;
     setPendingList(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? { ...item, phase: 'pending' } : item)));
     const result = await retrySend(roomPort as ChannelPort, roomId, entry);
     setPendingList(list => list.map(item => (item.clientTxnId === entry.clientTxnId ? result : item)));
@@ -216,12 +240,12 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
             </header>
             <div className="timeline__body">{renderMessageContent(entry.content)}</div>
             {entry.phase === 'outcome_unknown' ? (
-              <button type="button" onClick={() => void handleRetry(entry)}>
+              <button type="button" disabled={sendBlocked} onClick={() => void handleRetry(entry)}>
                 Check delivery
               </button>
             ) : null}
             {entry.phase === 'failed' ? (
-              <button type="button" onClick={() => void handleRetry(entry)}>
+              <button type="button" disabled={sendBlocked} onClick={() => void handleRetry(entry)}>
                 Retry
               </button>
             ) : null}
@@ -258,9 +282,18 @@ export function TimelineScreen({ controller, roomPort, roomId, viewer, renderRev
           onChange={event => setDraft(event.currentTarget.value)}
           disabled={!canCompose}
         />
-        <button type="submit" disabled={!canCompose || !draft.trim() || anySendUnresolved}>
+        <button
+          type="submit"
+          disabled={!canCompose || !draft.trim() || anySendUnresolved || sendBlocked}
+          aria-describedby={sendBlocked ? 'timeline-send-blocked' : undefined}
+        >
           Send
         </button>
+        {sendBlocked ? (
+          <p id="timeline-send-blocked" className="timeline__status">
+            {sendBlockedReason}
+          </p>
+        ) : null}
       </form>
     </section>
   );
