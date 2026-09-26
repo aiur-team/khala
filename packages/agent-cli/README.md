@@ -942,7 +942,10 @@ roster tools:
 - `khala_mode_get {}`: the same mode read, for the get-then-set flow. It returns
   `requested`, `effective`, `effectiveReason`, `version` and `support`. While the
   requested route is unproven, `effective` is `null` and `effectiveReason` says
-  why (decisions 34 and 37), for example `support_unknown`.
+  why (decisions 34 and 37), for example `support_unknown`. An installed Claude
+  Code outside the proven list reports every mode `experimental`: the mode takes
+  effect only under the owner's experimental-route grant, and until then
+  `effective` is `null` with `experimental_grant_required`.
 - `khala_mode_set { requested, expectedVersion }`: the session's own mode change
   (decision 42: the owner and the agent may both change it; last change wins).
   It applies `khala mode set`'s rules: the result is `applied` with the new
