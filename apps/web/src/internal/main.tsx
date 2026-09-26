@@ -7,6 +7,7 @@ import { MAX_CHANNEL_TITLE_BYTES, decodeContentLimits } from '@khala/contracts/m
 import { createHumanApplication } from '../composition/human/application';
 import { KhalaPageFrame } from '../shell/KhalaPageFrame';
 import { createLocalPorts, readRequestSecret } from './composition/ports';
+import { createHttpStopPort } from './composition/stop-http';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
 import { mountLocalApplication } from './composition/screen';
@@ -18,6 +19,7 @@ import '../features/timeline/timeline.css';
 import '../features/channel/channel.css';
 import '../main.css';
 import './internal.css';
+import './controls/stop-control.css';
 
 const target = document.querySelector('#app');
 if (!target) throw new Error('missing Khala application mount');
@@ -51,7 +53,11 @@ if (requestSecret === null) {
     history.pushState(null, '', path);
     application.navigate(path);
   };
-  const mounted = mountLocalApplication(target, { application, routes, transport: ports.substrate.transport, navigateRoute });
+  const stop = {
+    port: createHttpStopPort({ origin: location.origin, requestSecret }),
+    channelUrl: (roomId: string) => `${location.origin}${routes.roomPath(roomId)}`,
+  };
+  const mounted = mountLocalApplication(target, { application, routes, transport: ports.substrate.transport, navigateRoute, stop });
 
   const onPopState = () => application.navigate(`${location.pathname}${location.search}`);
   addEventListener('popstate', onPopState);

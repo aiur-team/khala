@@ -6,7 +6,7 @@ import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ShellMode } from '../../shell/types';
 import type { HumanApplicationHandle, HumanRouteContext } from '../../composition/human/application';
 import { HumanScreen } from '../../composition/human/screen';
-import { LocalRoom, SessionEnded } from './room';
+import { LocalRoom, type LocalStopCapability, SessionEnded } from './room';
 import type { LocalRoute, LocalRouteCodec } from './routes';
 
 export type LocalApplicationScreenProps = Readonly<{
@@ -15,6 +15,8 @@ export type LocalApplicationScreenProps = Readonly<{
   transport: LocalTransport;
   navigateRoute: (path: string) => void;
   mode?: ShellMode;
+  /** The binding Stop control; absent means the channel page shows no Stop. */
+  stop?: LocalStopCapability;
 }>;
 
 /** Moves focus to a route's heading so a screen-reader user hears the new page. */
@@ -38,7 +40,7 @@ function channelIdIn(path: string, routes: LocalRouteCodec): string | null {
  * has no sign-in, share, join or recovery route, and a refused session is a
  * terminal relaunch instruction rather than a sign-in prompt.
  */
-export function LocalApplicationScreen({ application, routes, transport, navigateRoute, mode = 'standalone' }: LocalApplicationScreenProps) {
+export function LocalApplicationScreen({ application, routes, transport, navigateRoute, mode = 'standalone', stop }: LocalApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: LocalRoute): ReactNode => {
     switch (route.kind) {
       case 'create':
@@ -48,7 +50,7 @@ export function LocalApplicationScreen({ application, routes, transport, navigat
           </KhalaPageFrame>
         );
       case 'channel':
-        return <LocalRoom context={context} roomId={route.roomId} transport={transport} />;
+        return <LocalRoom context={context} roomId={route.roomId} transport={transport} {...(stop ? { stop } : {})} />;
       case 'not_found':
         return <NotFound />;
     }

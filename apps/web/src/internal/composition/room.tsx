@@ -8,10 +8,19 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRouteContext } from '../../composition/human/application';
+import { StopControl } from '../controls/StopControl';
+import { createStopController } from '../controls/stop-controller';
+import type { BindingStopPort } from '../controls/stop-port';
 import { createPendingSendStore } from './pending-store';
 
-// Agent presence, listening mode and Stop belong to their own tickets; they
-// arrive here as injected capabilities, never as UI built by this entry.
+/** The binding Stop control's port and the channel URL a replacement agent joins with. */
+export type LocalStopCapability = Readonly<{
+  port: BindingStopPort;
+  channelUrl(roomId: string): string;
+}>;
+
+// Agent presence and listening mode belong to their own tickets; they arrive
+// here as injected capabilities, never as UI built by this entry.
 const unavailablePresence: ChannelUiPort = {
   async agents() { throw new Error('agent presence unavailable'); },
   subscribeAgents: () => () => undefined,
@@ -109,10 +118,11 @@ export function SessionEnded({ roomId, headingRef }: {
   );
 }
 
-export function LocalRoom({ context, roomId, transport }: {
+export function LocalRoom({ context, roomId, transport, stop }: {
   context: HumanRouteContext;
   roomId: RoomId;
   transport: LocalTransport;
+  stop?: LocalStopCapability;
 }) {
   const state = useSyncExternalStore(transport.subscribe, transport.current, transport.current);
   const timeline = useMemo(
@@ -123,6 +133,8 @@ export function LocalRoom({ context, roomId, transport }: {
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
   );
+  const stopController = useMemo(() => (stop ? createStopController(stop.port, roomId) : null), [stop, roomId]);
+  useEffect(() => () => stopController?.dispose(), [stopController]);
   const pendingStore = useMemo(() => createPendingSendStore(context.principal.ownerId, roomId), [context.principal.ownerId, roomId]);
   useEffect(() => () => {
     timeline.dispose();
@@ -163,7 +175,9 @@ export function LocalRoom({ context, roomId, transport }: {
         </>
       )}
       renderReview={() => null}
-      renderControls={() => null}
+      renderControls={() => (stop && stopController
+        ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} />
+        : null)}
     />
   );
 }

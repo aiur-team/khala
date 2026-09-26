@@ -18,6 +18,9 @@ import { type InternalDiscoveryPort, createDiscoveryRoutes, discoveryRole } from
 import {
   BodyError, type ErrorCode, applySecurityHeaders, headerValues, readJsonObject, sendBytes, sendError, sendJson,
 } from './http';
+import { type BindingKey, createRevocationBarrier } from './stop/barrier';
+import { STOP_ROUTE, handleStop } from './stop/route';
+import { type GrantClearing, type StopCandidate, createBindingStopService } from './stop/service';
 import {
   type AuthOutcome, DEFAULT_LIMITS, type LogEvent, type LoopbackServer, type RouteContext, type RouteSpec, isRouteSegment,
   type ServerLimits, startLoopbackServer,
@@ -71,6 +74,14 @@ export type AgentReleaseFeed = Readonly<{
   read(input: Readonly<{ binding: SessionBinding; channelId: RoomId; cursor: string | null; limit: number }>): AgentReleaseRead;
 }>;
 
+/** Composition-supplied parts of the binding Stop control. */
+export type BindingStopOptions = Readonly<{
+  /** Binding generations activated for the channel through channel access. */
+  activatedBindings?(channelId: RoomId): readonly SessionBinding[] | 'unavailable';
+  /** Removes granted binding fields from the runtime descriptor when they name one of `bindingIds`. */
+  clearGrant?(bindingIds: ReadonlySet<string>): GrantClearing;
+}>;
+
 export type ChannelServerOptions = Readonly<{
   store: ChannelStore;
   bootstrap: readonly BootstrapCredential[];
@@ -81,6 +92,8 @@ export type ChannelServerOptions = Readonly<{
   transportCapability?: string;
   /** Channel discovery, access requests and the connector exchange. Absent means those routes do not exist. */
   discovery?: InternalDiscoveryPort;
+  /** Serves the human-only binding Stop endpoint; the route is absent without it. */
+  stop?: BindingStopOptions;
   assets?: AssetManifest;
   newId: () => string;
   clock: () => number;
@@ -174,7 +187,7 @@ function actor(principal: Principal): Readonly<{ participantId: ParticipantId; d
 function admits(route: RouteSpec, principal: Principal): boolean {
   const role = discoveryRole(route);
   if (role !== null) return role === principal.kind;
-  if (route === ROUTES.create) return principal.kind === 'human';
+  if (route === ROUTES.create || route === STOP_ROUTE) return principal.kind === 'human';
   return principal.kind === 'human' || principal.kind === 'binding';
 }
 
@@ -216,6 +229,9 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     ROUTES.session, ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
   ];
   if (options.releases) routes.push(ROUTES.releases);
+  if (options.stop) routes.push(STOP_ROUTE);
+  // Every binding effect commits through this barrier; Stop raises it before revoking durably.
+  const barrier = createRevocationBarrier();
   let origin = '';
   const discovery = options.discovery
     ? createDiscoveryRoutes({
@@ -241,6 +257,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
    */
   function bindingLive(principal: Principal): 'live' | 'revoked' | 'unavailable' {
     if (principal.kind !== 'binding') return 'live';
+    if (barrier.barred(principal.binding)) return 'revoked';
     const result = store.binding(principal.binding);
     const latest = store.latestBindingGeneration(principal.binding.bindingId);
     if (result.kind === 'unavailable' || latest.kind === 'unavailable') return 'unavailable';
@@ -255,6 +272,53 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     if (live === 'live') return true;
     fail(context.response, live === 'unavailable' ? failure(503, 'unavailable') : failure(401, 'unauthenticated'));
     return false;
+  }
+
+  /**
+   * The commit point of every authorized write: authority is rechecked here, after
+   * the body arrived, never only when the request was authenticated. A binding
+   * effect commits through the revocation barrier so Stop can drain it. `null`
+   * means the reply was already sent.
+   */
+  function commitAuthorized<T>(context: RouteContext<Principal>, effect: () => T): T | null {
+    const principal = context.principal!;
+    const guarded = () => (stillLive(context) ? effect() : null);
+    if (principal.kind !== 'binding') return guarded();
+    const ran = barrier.run(principal.binding, guarded);
+    if (ran.kind === 'ran') return ran.value;
+    fail(context.response, failure(401, 'unauthenticated'));
+    return null;
+  }
+
+  const stopService = createBindingStopService({
+    barrier,
+    candidates(channelId) {
+      const activated = options.stop?.activatedBindings?.(channelId as RoomId) ?? [];
+      if (activated === 'unavailable') return 'unavailable';
+      const unique = new Map<string, SessionBinding>();
+      for (const binding of [...activated, ...authority.scopedBindings(channelId as RoomId)]) {
+        unique.set(JSON.stringify([binding.bindingId, binding.generation]), binding);
+      }
+      const candidates: StopCandidate[] = [];
+      for (const binding of unique.values()) {
+        const row = store.binding(binding);
+        const latest = store.latestBindingGeneration(binding.bindingId);
+        if (row.kind === 'unavailable' || latest.kind === 'unavailable') return 'unavailable';
+        if (row.kind !== 'done') continue;
+        candidates.push({ binding, status: row.binding.status, latest: latest.generation === binding.generation });
+      }
+      return candidates;
+    },
+    revoke: (key: BindingKey) => (store.revokeBinding(key).kind === 'done' ? 'revoked' : 'failed'),
+    dropCapability: key => authority.revokeBinding(key),
+    ...(options.stop?.clearGrant ? { clearGrant: options.stop.clearGrant } : {}),
+  });
+
+  function humanMayStop(channelId: string, principal: Principal): 'allowed' | 'not_found' | 'forbidden' | 'unavailable' {
+    const read = store.channel({ channelId: channelId as RoomId, participantId: actor(principal).participantId });
+    if (read.kind === 'done') return 'allowed';
+    if (read.kind === 'unavailable') return 'unavailable';
+    return read.code === 'not_joined' ? 'forbidden' : 'not_found';
   }
 
   async function authenticate(
@@ -447,7 +511,13 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       return;
     }
     const held = principal.binding;
-    const result = options.releases.read({ binding: held, channelId: params.channelId as RoomId, ...page });
+    const feed = options.releases;
+    const read = barrier.run(held, () => feed.read({ binding: held, channelId: params.channelId as RoomId, ...page }));
+    if (read.kind === 'barred') {
+      fail(response, failure(401, 'unauthenticated'));
+      return;
+    }
+    const result = read.value;
     const identity = { bindingId: held.bindingId, generation: held.generation };
     switch (result.kind) {
       case 'page':
@@ -488,17 +558,19 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       fail(response, failure(400, 'invalid_request'));
       return;
     }
-    if (!stillLive(context)) return;
     const author = actor(principal!);
-    const result = store.send({
+    const clientTxnId = body.clientTxnId;
+    // A send blocked on its body while Stop ran can never commit once Stop has reported success.
+    const result = commitAuthorized(context, () => store.send({
       channelId: params.channelId as RoomId,
       eventId: options.newId() as EventId,
       authorParticipantId: author.participantId,
       authorDeviceId: author.deviceId,
-      clientTxnId: body.clientTxnId,
+      clientTxnId,
       content: content.value,
       receivedAt: new Date(options.clock()).toISOString(),
-    });
+    }));
+    if (result === null) return;
     if (result.kind === 'stored' || result.kind === 'replayed') {
       sendJson(response, result.kind === 'stored' ? 201 : 200, { state: result.kind, event: eventView(result.event) });
     } else if (result.kind === 'rejected') {
@@ -528,12 +600,14 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
 
     let open = true;
     let unsubscribe = () => {};
+    let unregisterStop = () => {};
     let keepalive: NodeJS.Timeout | undefined;
     // Registered before anything can throw, so the stream slot is always released.
     const cleanup = () => {
       if (!open) return;
       open = false;
       unsubscribe();
+      unregisterStop();
       clearInterval(keepalive);
       signal.removeEventListener('abort', cleanup);
       totalStreams -= 1;
@@ -555,6 +629,8 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       return false;
     };
     try {
+      // Stop ends a binding's stream at once rather than at its next frame.
+      if (who.kind === 'binding') unregisterStop = barrier.onRaise(who.binding, cleanup);
       unsubscribe = store.subscribeHints(channelId, () => {
         if (open && stillAuthorized()) response.write('event: hint\ndata: {}\n\n');
       });
@@ -608,6 +684,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.hints: return hints(context);
           case ROUTES.binding: return binding(context);
           case ROUTES.releases: return releases(context);
+          case STOP_ROUTE: return await handleStop(context, { service: stopService, maxBodyBytes: limits.maxBodyBytes, humanMayStop });
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
             return staticAsset(context);
