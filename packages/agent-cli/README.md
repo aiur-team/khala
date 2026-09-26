@@ -10,11 +10,13 @@ khala connect <https-channel-link>
 khala listen [--binding <binding-id>]
 khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
-khala status
+khala status [--check]
 khala mode get
 khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
 khala agents list --channel <held-binding-id>
+khala setup [--dry-run | --confirm <sha256:digest>]
+khala remove [--dry-run | --confirm <sha256:digest>]
 khala mcp-serve
 khala internal
 khala internal --resume <channel-id>
@@ -434,6 +436,52 @@ it into `mcp-serve` belongs to the plugin dispatch work.
 
 The installed binary does not compose this client yet, so `khala claude`
 fails closed with `transport_unavailable`.
+
+## Setup planning and configuration status
+
+`setup` and `remove` each print one versioned JSON result (`src/setup/types.ts`).
+Each run discovers the Claude Code, Codex, and OpenCode executables on `PATH`,
+inspects them read-only, and builds one plan. The plan is sorted by harness,
+component, and path, and its `planDigest` covers the planner identity, the
+command, every detected harness fact, and each operation's pre/post hashes.
+Identical state produces byte-identical output.
+
+The agent runs the command and relays the plan to the person; the person never
+installs anything by hand. A non-empty plan without confirmation exits 5 with
+`state: "confirmation_required"`. Its `confirmation` object names the harnesses,
+component actions, affected paths, the backup/restore promise, the session
+effect, the CLI fallback, the digest, and an approval request. After the person
+approves, the agent reruns the command with `--confirm <digest>`. That run
+inspects fresh state and plans again. If the new digest differs, it prints the
+replacement plan and exits 5 without executing anything. `--dry-run` prints the
+same plan and exit code but can never execute. An empty plan succeeds without
+confirmation.
+
+This release only plans. A matching confirmation reaches the executor seam, and
+the production executor refuses with `execution_unavailable` (exit 3,
+`changed: false`). Transactional apply, backups, and harness adapters land
+separately. Until an adapter lands, a detected harness reports `unsupported`.
+Discovery can prove presence and a version string, never support or delivery.
+
+`status` keeps its connection fields and adds a `configuration` result. Bare
+`status` always exits 0. `status --check` exits 0 for `no_harness` or `ready`, 3
+for hook review, restart required, unproven effect, drift, conflict, or
+unsupported, and 4 for recovery required. A detected harness that still needs
+setup reports `drifted` with a `setup_required` diagnostic, because the frozen
+state vocabulary has no separate member for it. Configured components alone
+never mean ready: a native route must be evidenced. Until then, status names the
+installed `khala read`/`khala send` fallback when one is on `PATH`.
+
+HOME, XDG, and PATH come only from the environment passed in. Empty XDG values
+fall back below HOME, relative roots are invalid, and empty or relative `PATH`
+entries are ignored, so the working directory is never searched. Status, dry
+runs, unconfirmed runs, and stale confirmations write nothing Khala controls.
+The one external action is each harness's `--version` probe. It is a
+user-selected executable, run by absolute path with no shell, ignored stdin, only
+HOME/XDG/PATH in its environment, a 5 s deadline, and a 16 KiB output cap. Its
+whole process group is killed on overflow or timeout. Only the parsed version
+survives: results never carry raw output, config contents, descriptor values,
+or credentials. Khala never launches, hosts, or stops an agent.
 
 ## Composition boundary
 

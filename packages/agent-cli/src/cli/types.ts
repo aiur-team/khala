@@ -8,6 +8,7 @@ import type { AgentListeningModeApplication } from '../composition/listening-mod
 import type { ChannelListingPort } from './channels/types.js';
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { BatchInbox } from './inbox.js';
+import type { SetupService } from '../setup/plan.js';
 
 export const CLI_ERROR_CODES = [
   'invalid_arguments', 'invalid_link', 'invalid_input', 'not_connected', 'binding_not_held',
@@ -95,6 +96,8 @@ export type CliDependencies = Readonly<{
   /** Lazily composes the descriptor-backed local client; called only when `--internal-descriptor` is given. */
   internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
   claude?: ClaudeSessionClient;
+  /** Setup planning and configuration status. The production composition always supplies it. */
+  setup?: SetupService;
 }>;
 /** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
 export type CliCommand = Readonly<{

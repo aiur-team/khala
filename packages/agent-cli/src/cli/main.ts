@@ -8,6 +8,23 @@ import { openInbox } from './inbox.js';
 import { bundledInternalRuntime } from './internal.js';
 import { MAX_SEND_BYTES } from './send.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
+import { createDiscoveryOnlyAdapter, createNodeSetupProbe } from '../setup/detect.js';
+import { resolveSetupPaths } from '../setup/paths.js';
+import { createSetupService, unavailableSetupExecutor } from '../setup/plan.js';
+import { HARNESS_IDS, type SetupEnvironment } from '../setup/types.js';
+
+/** Builds the setup environment from explicit HOME/XDG/PATH values only; nothing else is inherited. */
+export function setupEnvironment(env: NodeJS.ProcessEnv): SetupEnvironment {
+  const paths = resolveSetupPaths(env);
+  const probeEnvironment = {
+    HOME: paths.home, XDG_CONFIG_HOME: paths.configHome, XDG_DATA_HOME: paths.dataHome,
+    XDG_STATE_HOME: paths.stateHome, PATH: paths.pathEntries.join(path.delimiter),
+  };
+  return {
+    home: paths.home, xdgConfigHome: paths.configHome, xdgDataHome: paths.dataHome, xdgStateHome: paths.stateHome,
+    probe: createNodeSetupProbe({ pathEntries: paths.pathEntries, environment: probeEnvironment }),
+  };
+}
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const stateDirectory = path.resolve(process.env.XDG_STATE_HOME ?? path.join(homedir(), '.local/state'), 'khala');
@@ -22,6 +39,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       listeningMode: null,
       inbox: (bindingId, generation) => openInbox({
         stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
+      }),
+      setup: createSetupService({
+        environment: () => setupEnvironment(process.env),
+        // Real harness adapters replace these one by one; until then a detected harness is unsupported.
+        adapters: HARNESS_IDS.map(createDiscoveryOnlyAdapter),
+        executor: unavailableSetupExecutor,
       }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),

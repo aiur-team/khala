@@ -8,6 +8,7 @@ import { listenCommand } from './commands/listen.js';
 import { mcpServeCommand } from './commands/mcp-serve.js';
 import { modeCommand } from './commands/mode.js';
 import { readCommand } from './commands/read.js';
+import { removeCommand, setupCommand } from './commands/setup.js';
 import { sendCommand } from './commands/send.js';
 import { statusCommand } from './commands/status.js';
 import type { CliCommand } from './types.js';
@@ -57,6 +58,8 @@ export const CLI_COMMANDS: readonly CliCommand[] = Object.freeze([
   codexHookCommand,
   joinCommand,
   claudeCommand,
+  setupCommand,
+  removeCommand,
 ]);
 
 export const commandRegistry: CommandRegistry = createCommandRegistry(CLI_COMMANDS);
