@@ -256,4 +256,24 @@ describe('internal inbox delivery', () => {
     expect(JSON.stringify(h.logs)).not.toContain(BODY);
     expect(h.logs.some(event => 'route' in event && event.route === '/api/v1/channels/:channelId/releases')).toBe(true);
   });
+
+  it('placeholders an escape-heavy message over the record limit and keeps delivering', async () => {
+    const h = await start();
+    // 16 KiB of control characters escapes to ~96 KiB of JSON.
+    const big = say(h, '\u0001'.repeat(16 * 1024));
+    const after = say(h, 'still arriving');
+    const outcome = await delivery(h).pull(held, inboxFor(h));
+    expect(outcome).toBe('caught_up');
+    const ids = await records(inboxFor(h));
+    expect(ids).toEqual([internalReleaseId(bobBinding, big), internalReleaseId(bobBinding, after)]);
+    const inbox = await inboxFor(h)();
+    const listener = await inbox.acquireListener();
+    try {
+      const batch = await listener.readBatch({ maxBytes: 1024 * 1024 });
+      const text = Buffer.from(batch!.items[0]!.payload).toString('utf8');
+      expect(text).toContain('oversized');
+      expect(text).not.toContain('\\u0001');
+    } finally { await listener.release(); }
+    expect(JSON.stringify(h.logs)).not.toContain('u0001');
+  });
 });

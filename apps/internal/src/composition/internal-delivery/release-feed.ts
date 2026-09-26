@@ -19,6 +19,10 @@ import type { ChannelStore, StoredEvent } from '../../store/channel-store';
 const RELEASE_ID_DOMAIN = 'khala.internal.release.v1';
 /** The internal channel has no trust-policy versions; its releases are all version 0. */
 const INTERNAL_POLICY_VERSION = 0;
+/** The inbox's record limit. A release whose encoded payload exceeds it could never be enqueued. */
+export const MAX_RELEASE_PAYLOAD_BYTES = 64 * 1024;
+/** The whole body of an oversized placeholder; the real body is never carried. */
+export const OVERSIZED_PLACEHOLDER_BODY = 'oversized: message body withheld; read it from the channel timeline by event';
 
 export type PauseRead = boolean | 'unavailable';
 
@@ -27,6 +31,8 @@ export type InternalReleaseFeedInput = Readonly<{
   listeningModes: Pick<SqliteListeningModeRepository, 'read'>;
   /** Whether the binding generation is paused. Absent means no pause source is composed. */
   paused?: (binding: SessionBinding) => PauseRead;
+  /** Encoded release payload bound; larger releases become placeholders. Defaults to the inbox limit. */
+  maxPayloadBytes?: number;
 }>;
 
 /** Deterministic per binding generation and event, never random or time-derived. */
@@ -48,17 +54,24 @@ function eventRef(event: StoredEvent): EventRef {
   };
 }
 
-function release(binding: SessionBinding, event: StoredEvent, modeWakes: boolean): AgentRelease | null {
+function release(
+  binding: SessionBinding, event: StoredEvent, modeWakes: boolean, maxPayloadBytes: number,
+): AgentRelease | null {
   const releaseId = internalReleaseId(binding, event.eventId);
   const ref = eventRef(event);
-  const encoded = encodeReleasePayload({
+  const encode = (content: StoredEvent['content']) => encodeReleasePayload({
     releaseId,
     bindingId: binding.bindingId as BindingId,
     generation: binding.generation,
     policyVersion: INTERNAL_POLICY_VERSION,
-    items: [{ ref, content: event.content }],
+    items: [{ ref, content }],
   });
-  if (!encoded.ok) return null;
+  let encoded = encode(event.content);
+  // Measured on the escaped bytes, not the body: control characters expand sixfold.
+  if (encoded.ok && encoded.bytes.byteLength > maxPayloadBytes) {
+    encoded = encode({ v: 1, kind: 'text', body: OVERSIZED_PLACEHOLDER_BODY });
+  }
+  if (!encoded.ok || encoded.bytes.byteLength > maxPayloadBytes) return null;
   return {
     releaseId,
     events: [ref],
@@ -70,6 +83,7 @@ function release(binding: SessionBinding, event: StoredEvent, modeWakes: boolean
 }
 
 export function createInternalReleaseFeed(input: InternalReleaseFeedInput): AgentReleaseFeed {
+  const maxPayloadBytes = input.maxPayloadBytes ?? MAX_RELEASE_PAYLOAD_BYTES;
   return {
     read({ binding, channelId, cursor, limit }): AgentReleaseRead {
       try {
@@ -85,7 +99,7 @@ export function createInternalReleaseFeed(input: InternalReleaseFeedInput): Agen
         if (page.kind !== 'page') return { kind: 'unavailable' };
         const releases: AgentRelease[] = [];
         for (const event of page.events) {
-          const next = release(binding, event, modeWakes);
+          const next = release(binding, event, modeWakes, maxPayloadBytes);
           // An event that cannot be encoded must not be skipped past silently.
           if (next === null) return { kind: 'unavailable' };
           releases.push(next);
