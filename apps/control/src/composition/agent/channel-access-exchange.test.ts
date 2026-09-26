@@ -87,8 +87,16 @@ async function setup() {
       };
       const minted = await issuer.mint({ binding: bound, expiresAt: new Date(journal.clock() + 60_000).toISOString() });
       if (minted.kind !== 'minted') throw new Error('mint failed');
-      const { ownerId: _owner, channelRef: _channel, ...tuple } = bound;
-      expect((await issuer.redeem({ grant: minted.grant, ...tuple })).kind).toBe('redeemed');
+      const redeemed = await issuer.redeem({
+        grant: minted.grant,
+        operationId: bound.operationId,
+        requester: bound.requester,
+        origin: bound.origin,
+        sessionGeneration: bound.sessionGeneration,
+        deviceId: bound.deviceId,
+        proofKeyThumbprint: bound.proofKeyThumbprint,
+      });
+      expect(redeemed.kind).toBe('redeemed');
     },
     resume: (overrides: Record<string, unknown> = {}) => route('/api/agent/channel-access/resume').handle(new Request(
       `${requester.origin}/api/agent/channel-access/resume?operation=op_access_1`,
