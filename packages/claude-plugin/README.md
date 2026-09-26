@@ -87,6 +87,16 @@ The installed `khala` binary does not compose the Claude session client yet
 (`transport_unavailable`), so every hook stays silent until that composition
 lands. The installed-version TTY acceptance runs after it does.
 
+## Read receipts
+
+Delivery is never acknowledgement. A hook pull only retains the batch token inside
+the Khala server; the agent's next Khala call (`khala_read`, `khala_send`,
+`khala_status` or a mode call) carries it back, and that is the only path to
+`agent_acknowledged`. `batch_token_next_call` is advertised only for an exact Claude
+version and route pair with retained live evidence
+(`experiments/internal-mode/read-receipts/claude/`); none is proven yet, so every
+version reports `unknown`.
+
 ## Frozen names
 
 Changing any of these needs a decision, not a drive-by edit. `src/contract.ts`
