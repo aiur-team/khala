@@ -4,6 +4,8 @@ import { MAX_SEND_BYTES } from '../cli/send.js';
 import { validIdentifier } from '../cli/validation.js';
 import type { ClaudeSessionClient } from './claude-session-http.js';
 
+export const CLAUDE_COMMAND_OPS = ['pull', 'read', 'send', 'status', 'mode', 'pending'] as const;
+
 export type ClaudeCommandDependencies = Readonly<{
   /** Absent until the live local-server composition exists: the command fails closed. */
   claude?: ClaudeSessionClient | undefined;
@@ -12,23 +14,27 @@ export type ClaudeCommandDependencies = Readonly<{
 }>;
 
 /**
- * `khala claude <read|send|mode|pending> --session <claude-session-id>`, the entry
- * point Claude hooks and the `/khala` skill call. The session ID is a selector only;
- * the loopback server authenticates the installation. Output never carries a token.
+ * `khala claude <op> --session <claude-session-id>`, the entry point Claude hooks and
+ * the `/khala` skill call. Hooks use `pull` (never acknowledges) and `pending`; the
+ * agent's own calls, `read`, `send`, `status` and `mode`, acknowledge what hooks
+ * delivered. The session ID is a selector only; the loopback server authenticates
+ * the installation. Output never carries a token.
  */
 export async function runClaudeCommand(args: readonly string[], deps: ClaudeCommandDependencies): Promise<number> {
   const [op, flag, sessionId, ...rest] = args;
   if (flag !== '--session' || !validIdentifier(sessionId) || rest.length !== 0) throw new CliError('invalid_arguments');
-  if (op !== 'read' && op !== 'send' && op !== 'mode' && op !== 'pending') throw new CliError('invalid_arguments');
+  if (!(CLAUDE_COMMAND_OPS as readonly unknown[]).includes(op)) throw new CliError('invalid_arguments');
   if (deps.claude === undefined) throw new CliError('transport_unavailable');
   const client = deps.claude;
   let outcome: Readonly<Record<string, unknown>>;
-  if (op === 'read') {
-    const result = await client.read(sessionId, deps.signal);
+  if (op === 'pull' || op === 'read') {
+    const result = await client[op](sessionId, deps.signal);
     if (result.kind === 'batch') { await write(deps.stdout, `${result.text}\n`); return 0; }
     outcome = result;
   } else if (op === 'send') {
     outcome = await client.send(sessionId, await deps.readStdin(deps.stdin, MAX_SEND_BYTES), deps.signal);
+  } else if (op === 'status') {
+    outcome = await client.status(sessionId, deps.signal);
   } else if (op === 'mode') {
     outcome = await client.mode(sessionId, deps.signal);
   } else {

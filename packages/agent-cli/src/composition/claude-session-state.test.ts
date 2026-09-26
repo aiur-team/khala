@@ -13,28 +13,43 @@ function root(): string {
 }
 afterEach(() => { for (const dir of roots.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
-const SCOPE = { principalId: 'principal-a', bindingId: 'binding-1' as BindingId, generation: 1 };
+const SCOPE = { principalId: 'principal-a', bindingId: 'binding-1' as BindingId };
+const token = (value: string, generation = 1) => ({ generation, token: value });
+const keep = (value: unknown = null) => ({ value, committed: [], retain: null });
+const deliver = (value: string, generation = 1) => ({ value: null, committed: [], retain: token(value, generation) });
 
 describe('durable Claude session state port', () => {
-  it('retains a token across a server restart and attaches it to exactly one next call', async () => {
+  it('keeps retained tokens across a server restart until a call reports them committed', async () => {
     const directory = root();
     const before = await openClaudeSessionState(directory);
-    await before.envelope(SCOPE, async () => ({ value: null, batchToken: 'durable-token' }));
+    await before.envelope(SCOPE, async () => deliver('durable-token'));
 
     const after = await openClaudeSessionState(directory);
-    const seen: Array<string | undefined> = [];
-    await after.envelope(SCOPE, async retained => { seen.push(retained); return { value: null, batchToken: null }; });
-    await after.envelope(SCOPE, async retained => { seen.push(retained); return { value: null, batchToken: null }; });
-    expect(seen).toEqual(['durable-token', undefined]);
+    const seen: Array<readonly unknown[]> = [];
+    await after.envelope(SCOPE, async retained => { seen.push(retained); return keep(); });
+    await after.envelope(SCOPE, async retained => { seen.push(retained); return { value: null, committed: retained, retain: null }; });
+    await after.envelope(SCOPE, async retained => { seen.push(retained); return keep(); });
+    expect(seen).toEqual([[token('durable-token')], [token('durable-token')], []]);
+    expect(fs.readdirSync(directory)).toEqual([]);
   });
 
-  it('consumes the token even when the call fails, and never replays it', async () => {
+  it('keeps every token when the call fails, so the next agent call carries them again', async () => {
     const state = await openClaudeSessionState(root());
-    await state.envelope(SCOPE, async () => ({ value: null, batchToken: 'once' }));
+    await state.envelope(SCOPE, async () => deliver('kept'));
     await expect(state.envelope(SCOPE, async () => { throw new Error('call failed'); })).rejects.toThrow('call failed');
-    const seen: Array<string | undefined> = [];
-    await state.envelope(SCOPE, async retained => { seen.push(retained); return { value: null, batchToken: null }; });
-    expect(seen).toEqual([undefined]);
+    const seen: Array<readonly unknown[]> = [];
+    await state.envelope(SCOPE, async retained => { seen.push(retained); return keep(); });
+    expect(seen).toEqual([[token('kept')]]);
+  });
+
+  it('holds one token per generation: a delivery replaces its own generation only', async () => {
+    const state = await openClaudeSessionState(root());
+    await state.envelope(SCOPE, async () => deliver('g1-a', 1));
+    await state.envelope(SCOPE, async () => deliver('g2', 2));
+    await state.envelope(SCOPE, async () => deliver('g1-b', 1));
+    let seen: readonly unknown[] = [];
+    await state.envelope(SCOPE, async retained => { seen = retained; return keep(); });
+    expect(seen).toEqual([token('g1-b', 1), token('g2', 2)]);
   });
 
   it('returns a completed call’s result even when its token cannot be persisted', async () => {
@@ -42,34 +57,30 @@ describe('durable Claude session state port', () => {
     const state = await openClaudeSessionState(directory);
     fs.chmodSync(directory, 0o500);
     try {
-      await expect(state.envelope(SCOPE, async () => ({ value: 'accepted', batchToken: 'unpersisted' }))).resolves.toBe('accepted');
+      await expect(state.envelope(SCOPE, async () => ({ ...deliver('unpersisted'), value: 'accepted' }))).resolves.toBe('accepted');
     } finally {
       fs.chmodSync(directory, 0o700);
     }
-    await state.envelope(SCOPE, async retained => { expect(retained).toBeUndefined(); return { value: null, batchToken: null }; });
+    await state.envelope(SCOPE, async retained => { expect(retained).toEqual([]); return keep(); });
   });
 
   it('linearizes concurrent calls so each sees the previous call’s token', async () => {
     const state = await openClaudeSessionState(root());
-    const seen: Array<string | undefined> = [];
+    const seen: Array<readonly unknown[]> = [];
     await Promise.all(['t1', 't2', 't3', 't4'].map(next => state.envelope(SCOPE, async retained => {
       seen.push(retained);
       await new Promise(resolve => setTimeout(resolve, 5));
-      return { value: null, batchToken: next };
+      return deliver(next);
     })));
-    expect(seen).toEqual([undefined, 't1', 't2', 't3']);
+    expect(seen).toEqual([[], [token('t1')], [token('t2')], [token('t3')]]);
   });
 
-  it('isolates principal, binding, and generation, and stores owner-only files', async () => {
+  it('isolates principal and binding, and stores owner-only files', async () => {
     const directory = root();
     const state = await openClaudeSessionState(directory);
-    await state.envelope(SCOPE, async () => ({ value: null, batchToken: 'scoped' }));
-    for (const other of [
-      { ...SCOPE, principalId: 'principal-b' },
-      { ...SCOPE, bindingId: 'binding-2' as BindingId },
-      { ...SCOPE, generation: 2 },
-    ]) {
-      await state.envelope(other, async retained => { expect(retained).toBeUndefined(); return { value: null, batchToken: null }; });
+    await state.envelope(SCOPE, async () => deliver('scoped'));
+    for (const other of [{ ...SCOPE, principalId: 'principal-b' }, { ...SCOPE, bindingId: 'binding-2' as BindingId }]) {
+      await state.envelope(other, async retained => { expect(retained).toEqual([]); return keep(); });
     }
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
     const files = fs.readdirSync(directory);
@@ -81,10 +92,10 @@ describe('durable Claude session state port', () => {
   it('treats a record for another scope as no token', async () => {
     const directory = root();
     const state = await openClaudeSessionState(directory);
-    await state.envelope(SCOPE, async () => ({ value: null, batchToken: 'mine' }));
+    await state.envelope(SCOPE, async () => deliver('mine'));
     const [file] = fs.readdirSync(directory);
     const record = JSON.parse(fs.readFileSync(path.join(directory, file!), 'utf8'));
     fs.writeFileSync(path.join(directory, file!), JSON.stringify({ ...record, principalId: 'principal-b' }), { mode: 0o600 });
-    await state.envelope(SCOPE, async retained => { expect(retained).toBeUndefined(); return { value: null, batchToken: null }; });
+    await state.envelope(SCOPE, async retained => { expect(retained).toEqual([]); return keep(); });
   });
 });

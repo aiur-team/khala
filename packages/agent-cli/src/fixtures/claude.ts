@@ -3,11 +3,12 @@ import {
   decodeHarnessCapabilities, decodeSessionBinding, unknownModeSupportMap,
   type AcknowledgementSupport, type HarnessCapabilities, type SessionBinding,
 } from '@khala/contracts/delivery/index';
+import { CliError } from '../cli/errors.js';
 import type { InboxBatch } from '../cli/inbox.js';
 import type { ReadInput, ReadResult } from '../composition/read.js';
-import type {
-  BatchTokenScope, ClaudeBindingServices, ClaudeInstallationAuthenticator, ClaudeSessionDirectory,
-  ClaudeSessionStatePort, EnvelopeStep,
+import {
+  nextRetained, type ClaudeBindingServices, type ClaudeInstallationAuthenticator, type ClaudeSessionDirectory,
+  type ClaudeSessionStatePort, type EnvelopeStep, type RetainedToken, type SessionScope,
 } from '../composition/claude-session.js';
 
 export const CREDENTIAL_A = 'A'.repeat(43);
@@ -138,24 +139,84 @@ export function fakeServices(): FakeServices {
   };
 }
 
-/** An in-memory state port with the same linearization contract, for adapter tests. */
-export function memoryState(): ClaudeSessionStatePort & { tokens: Map<string, string> } {
-  const tokens = new Map<string, string>();
+/** An in-memory state port with the same linearization and commit contract, for adapter tests. */
+export function memoryState(): ClaudeSessionStatePort & { tokens: Map<string, readonly RetainedToken[]>; key(scope: SessionScope): string } {
+  const tokens = new Map<string, readonly RetainedToken[]>();
   let tail: Promise<unknown> = Promise.resolve();
-  const key = (scope: BatchTokenScope) => JSON.stringify([scope.principalId, scope.bindingId, scope.generation]);
+  const key = (scope: SessionScope) => JSON.stringify([scope.principalId, scope.bindingId]);
   return {
     tokens,
-    envelope<T>(scope: BatchTokenScope, call: (retained: string | undefined) => Promise<EnvelopeStep<T>>) {
+    key,
+    envelope<T>(scope: SessionScope, call: (retained: readonly RetainedToken[]) => Promise<EnvelopeStep<T>>) {
       const run = async () => {
-        const retained = tokens.get(key(scope));
-        tokens.delete(key(scope));
+        const retained = tokens.get(key(scope)) ?? [];
         const step = await call(retained);
-        if (step.batchToken !== null) tokens.set(key(scope), step.batchToken);
+        const next = nextRetained(retained, step);
+        if (next.length === 0) tokens.delete(key(scope)); else tokens.set(key(scope), next);
         return step.value;
       };
       const next = tail.then(run, run);
       tail = next.catch(() => undefined);
       return next;
+    },
+  };
+}
+
+export type AcknowledgementOutcome = 'recorded' | 'duplicate' | 'stale_generation';
+
+/**
+ * Models the shared inbox's batch-token contract for one binding: at most one
+ * outstanding batch per generation, replayed until acknowledged; a replaced
+ * generation fences its token and requeues its release; a replayed acknowledgement
+ * is `duplicate`. `log` is every acknowledgement the inbox saw, in order.
+ */
+export function fakeInbox(bodies: readonly string[]) {
+  const queue = [...bodies];
+  const acknowledged = new Set<string>();
+  const log: Array<Readonly<{ token: string; outcome: AcknowledgementOutcome }>> = [];
+  const calls: Array<ReadInput & { generation: number }> = [];
+  let generation = 1;
+  let issued = 0;
+  let outstanding: { token: string; body: string } | null = null;
+
+  function acknowledge(bound: number, token: string): void {
+    if (bound !== generation) {
+      log.push({ token, outcome: 'stale_generation' });
+      throw new CliError('binding_not_held');
+    }
+    if (acknowledged.has(token)) { log.push({ token, outcome: 'duplicate' }); return; }
+    if (outstanding?.token !== token) return;
+    acknowledged.add(token);
+    outstanding = null;
+    log.push({ token, outcome: 'recorded' });
+  }
+
+  return {
+    log,
+    calls,
+    get generation() { return generation; },
+    /** The session was replaced: a new generation, and the unacknowledged release requeues. */
+    replace() {
+      generation += 1;
+      if (outstanding !== null) queue.unshift(outstanding.body);
+      outstanding = null;
+    },
+    acknowledge,
+    port(bound: number): ClaudeBindingServices['read'] {
+      return {
+        read: async input => {
+          calls.push({ ...input, generation: bound });
+          if (input.acknowledgeToken !== undefined) acknowledge(bound, input.acknowledgeToken);
+          if (bound !== generation) throw new CliError('binding_not_held');
+          if (outstanding === null) {
+            const body = queue.shift();
+            if (body === undefined) return { kind: 'empty' };
+            issued += 1;
+            outstanding = { token: `fresh-token-${issued}`, body };
+          }
+          return { kind: 'batch', batch: batch(outstanding.token, outstanding.body) };
+        },
+      };
     },
   };
 }

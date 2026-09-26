@@ -86,7 +86,7 @@ function assertNoRuntimeSecrets(values: readonly unknown[], launches: readonly L
 }
 
 describe('Claude session adapter over the loopback server', () => {
-  it('hands a retained token from a hook process to one slash-command call across a server restart', async () => {
+  it('retains a hook pull’s token across a server restart until the agent’s next Khala call acknowledges it', async () => {
     const root = workspace();
     const stateDirectory = path.join(root, 'server-state');
     const descriptor = path.join(root, 'active.json');
@@ -98,33 +98,40 @@ describe('Claude session adapter over the loopback server', () => {
 
     const first = await launch(stateDirectory, services, 'F'.repeat(43));
     writeDescriptor(descriptor, first);
-    const hook = await claudeProcess(descriptor, ['read', '--session', 's-1']);
+    const hook = await claudeProcess(descriptor, ['pull', '--session', 's-1']);
     expect(hook.code).toBe(0);
     expect(hook.stdout).toContain('first release');
     expect(hook.stdout).not.toContain('restart-token');
+    const secondHook = await claudeProcess(descriptor, ['pull', '--session', 's-1']);
+    expect(JSON.parse(secondHook.stdout)).toEqual({ ok: true, kind: 'empty' });
 
     // Restart: new port and credential, the same durable server-side state.
     await new Promise(resolve => first.server.close(resolve));
-    const stale = await claudeProcess(descriptor, ['read', '--session', 's-1']);
+    const stale = await claudeProcess(descriptor, ['status', '--session', 's-1']);
     expect(stale.code).toBe(3);
     expect(JSON.parse(stale.stdout)).toEqual({ ok: false, kind: 'refused', code: 'unavailable' });
 
     const second = await launch(stateDirectory, services, 'S'.repeat(43));
     writeDescriptor(descriptor, { origin: second.origin, credential: first.credential });
-    const rotated = await claudeProcess(descriptor, ['read', '--session', 's-1']);
+    const rotated = await claudeProcess(descriptor, ['status', '--session', 's-1']);
     expect(JSON.parse(rotated.stdout)).toEqual({ ok: false, kind: 'refused', code: 'unauthorized' });
     writeDescriptor(descriptor, second);
 
     const otherSession = await claudeProcess(descriptor, ['read', '--session', 's-2']);
-    const command = await claudeProcess(descriptor, ['read', '--session', 's-1']);
+    const command = await claudeProcess(descriptor, ['status', '--session', 's-1']);
     const after = await claudeProcess(descriptor, ['read', '--session', 's-1']);
-    expect(JSON.parse(command.stdout)).toEqual({ ok: true, kind: 'empty' });
+    expect(JSON.parse(command.stdout)).toEqual({ ok: true, kind: 'status', acknowledged: 1 });
     expect(JSON.parse(after.stdout)).toEqual({ ok: true, kind: 'empty' });
 
-    // Exactly one call carried the token: no loss, replay, or leak to session two.
-    expect(read.calls.map(call => call.acknowledgeToken)).toEqual([undefined, 'restart-token', undefined]);
+    // Neither hook pull acknowledged; the agent's call did, exactly once; nothing leaked to session two.
+    expect(read.calls).toEqual([
+      { bindingId: 'binding-1', maxBytes: 4096 },
+      { bindingId: 'binding-1', maxBytes: 4096 },
+      { bindingId: 'binding-1', maxBytes: 0, acknowledgeToken: 'restart-token' },
+      { bindingId: 'binding-1', maxBytes: 4096 },
+    ]);
     expect(services.reads.get('binding-2')!.calls).toEqual([{ bindingId: 'binding-2', maxBytes: 4096 }]);
-    const processes = [hook, stale, rotated, otherSession, command, after];
+    const processes = [hook, secondHook, stale, rotated, otherSession, command, after];
     assertNoRuntimeSecrets(processes.map(result => [result.stdout, result.stderr, result.argv, result.env]), [first, second]);
     assertNoRuntimeSecrets([first.logs, second.logs], [first, second]);
     expect(JSON.stringify(processes.map(result => [result.stdout, result.stderr]))).not.toContain('restart-token');

@@ -11,7 +11,7 @@ khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
 khala status
 khala mcp-serve
-khala claude <read|send|mode|pending> --session <claude-session-id>
+khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
 ```
 
 Released or model-authored bytes are accepted only through stdin, MCP stdio, or
@@ -148,7 +148,7 @@ asynchronous, synchronous, steerable, or actively listening.
 ## Claude session adapter
 
 ```text
-khala claude <read|send|mode|pending> --session <claude-session-id>
+khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
 ```
 
 This is the entry point for the Claude plugin's hooks and `/khala` skill. The
@@ -167,18 +167,36 @@ Server-side, `createClaudeSessionAdapter` authenticates the installation
 credential and treats the Claude session ID only as a selector among that
 principal's verified bindings, at their active generation. Cwd is never used,
 and a foreign session is refused exactly like an unknown one
-(`session_not_bound`). Reads call the single `khala_read` operation. The
-server's `ClaudeSessionStatePort` durably keeps the returned batch token and
-attaches it to exactly one next send, pull, or mode-control call for the same
-principal, binding, and generation, including across a server restart. A token
-is retained only when its batch was rendered into the result; a batch that
-cannot be delivered replays instead. The token never reaches the hook or
-command process: `read` prints the shared
-`<khala-channel-batch-v1>` frame without its `batchToken` line. Handoff runs only
-when `HarnessCapabilities.acknowledgement` is `batch_token_next_call`;
-otherwise `read` is refused as `unproven`, and mode support without evidence
+(`session_not_bound`). Reads call the single `khala_read` operation.
+
+There are two kinds of call. A hook pull (`pull`, used by `PostToolUse`, `Stop`,
+and the watcher) never acknowledges: it reads with no token and retains the
+returned batch token. The shared inbox has at most one outstanding batch per
+binding and generation and replays it until it is acknowledged, so a repeated
+pull shows the same batch again. An agent-initiated call (`read`, `send`,
+`status`, `mode`, or a mode change) acknowledges every retained token. The
+current generation's token rides on the call itself; each other generation gets
+one `readBatch` call of its own, and a replaced generation's token is fenced
+and dropped so its release is redelivered. The server's `ClaudeSessionStatePort`
+durably keeps retained tokens per principal and binding. It clears them only
+after the call that carried them resolves, including across a server restart. A
+replay after a crash is answered as `duplicate`. `status` is content-free: it
+reports only how many retained tokens it acknowledged.
+
+A token is retained only when its batch was rendered into the result; a batch
+that cannot be delivered replays instead. The token never reaches the hook or
+command process: `pull` and `read` print the shared `<khala-channel-batch-v1>`
+frame without its `batchToken` line. Handoff runs only when
+`HarnessCapabilities.acknowledgement` is `batch_token_next_call`; otherwise
+`pull` and `read` are refused as `unproven`, and mode support without evidence
 reports `unproven`. `pending` returns only `pending` or `idle` from the local
 automation fence's notification signal; it never pulls or acknowledges.
+
+For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
+(`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the
+MCP server's own `CLAUDE_CODE_SESSION_ID`, so a tool call cannot name another
+session. It has no pull. A missing ID fails closed as `session_missing`. Wiring
+it into `mcp-serve` belongs to the plugin dispatch work.
 
 The installed binary does not compose this client yet, so `khala claude`
 fails closed with `transport_unavailable`.

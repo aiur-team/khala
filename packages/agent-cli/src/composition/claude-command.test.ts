@@ -23,7 +23,10 @@ async function run(argv: string[], claude?: ClaudeSessionClient, stdin = '') {
 
 function client(overrides: Partial<ClaudeSessionClient> = {}): ClaudeSessionClient {
   return {
+    pull: vi.fn(async () => ({ kind: 'empty' as const })),
     read: vi.fn(async () => ({ kind: 'empty' as const })),
+    status: vi.fn(async () => ({ kind: 'status' as const, acknowledged: 2 })),
+    setMode: vi.fn(async () => ({ kind: 'refused' as const, code: 'unproven' as const })),
     send: vi.fn(async () => ({ kind: 'accepted' as const, clientTxnId: 'txn-12345678', eventId: null })),
     mode: vi.fn(async () => ({ kind: 'refused' as const, code: 'unproven' as const })),
     pending: vi.fn(async () => ({ kind: 'pending' as const })),
@@ -47,6 +50,7 @@ describe('khala claude command registration', () => {
       await expect(run(argv, composed)).resolves.toMatchObject({ code: 2, err: '{"ok":false,"error":"invalid_arguments"}\n' });
     }
     expect(composed.read).not.toHaveBeenCalled();
+    expect(composed.pull).not.toHaveBeenCalled();
   });
 
   it('writes the token-free batch frame, sends stdin bytes, and reports refusals', async () => {
@@ -54,6 +58,15 @@ describe('khala claude command registration', () => {
     await expect(run(['claude', 'read', '--session', 's-1'], composed)).resolves.toEqual({
       code: 0, out: '<khala-channel-batch-v1>\n</khala-channel-batch-v1>\n', err: '',
     });
+    await expect(run(['claude', 'pull', '--session', 's-1'], composed)).resolves.toEqual({
+      code: 0, out: '{"ok":true,"kind":"empty"}\n', err: '',
+    });
+    await expect(run(['claude', 'status', '--session', 's-1'], composed)).resolves.toEqual({
+      code: 0, out: '{"ok":true,"kind":"status","acknowledged":2}\n', err: '',
+    });
+    // Hooks pull; the agent's read is a separate, acknowledging call.
+    expect(composed.pull).toHaveBeenCalledTimes(1);
+    expect(composed.read).toHaveBeenCalledTimes(1);
     await expect(run(['claude', 'send', '--session', 's-1'], composed, 'hello')).resolves.toMatchObject({ code: 0 });
     expect(composed.send).toHaveBeenCalledWith('s-1', 'hello', undefined);
     await expect(run(['claude', 'mode', '--session', 's-1'], composed)).resolves.toEqual({
@@ -72,14 +85,17 @@ describe('khala claude command registration', () => {
   });
 
   it('touches the shared registration files only to register the command', () => {
-    const app = fs.readFileSync(new URL('../cli/app.ts', import.meta.url), 'utf8');
-    const server = fs.readFileSync(new URL('../mcp/server.ts', import.meta.url), 'utf8');
-    expect(app.split('\n').filter(line => /claude/i.test(line))).toEqual([
-      "import { runClaudeCommand } from '../composition/claude-command.js';",
+    const source = (file: string) => fs.readFileSync(new URL(file, import.meta.url), 'utf8');
+    const claudeLines = (file: string) => source(file).split('\n').filter(line => /claude/i.test(line));
+    expect(claudeLines('../cli/app.ts')).toEqual([]);
+    expect(claudeLines('../cli/registry.ts')).toEqual([
+      "import { claudeCommand } from './commands/claude.js';",
+      '  claudeCommand,',
+    ]);
+    expect(claudeLines('../cli/types.ts')).toEqual([
       "import type { ClaudeSessionClient } from '../composition/claude-session-http.js';",
       '  claude?: ClaudeSessionClient;',
-      "      case 'claude': return await runClaudeCommand(args, { ...deps, readStdin });",
     ]);
-    expect(server).not.toMatch(/claude/i);
+    expect(source('../mcp/server.ts')).not.toMatch(/claude/i);
   });
 });

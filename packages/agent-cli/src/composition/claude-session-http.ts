@@ -1,10 +1,11 @@
-import { LISTENING_MODES, type ListeningMode } from '@khala/contracts/delivery/index';
+import { LISTENING_MODE_RESULT_OUTCOMES, LISTENING_MODES, type ListeningMode } from '@khala/contracts/delivery/index';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import { plainObject, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { readRuntimeDescriptor, type RuntimeDescriptorFailure } from './claude-descriptor.js';
 import {
-  CLAUDE_SESSION_REFUSALS, type ClaudeModeOutcome, type ClaudePendingOutcome,
+  CLAUDE_SESSION_REFUSALS, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome,
   type ClaudeReadOutcome, type ClaudeSendOutcome, type ClaudeSessionAdapter, type ClaudeSessionRefusal,
+  type ClaudeStatusOutcome, type ModeSetInput,
 } from './claude-session.js';
 
 /** The local server route that mounts `handleClaudeSessionRequest`. */
@@ -14,7 +15,7 @@ const MAX_RESPONSE_BYTES = MAX_SEND_BYTES * 6 + 65_536;
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
 
 export type ClaudeSessionRequest =
-  | Readonly<{ v: 1; op: 'read'; sessionId: string }>
+  | Readonly<{ v: 1; op: 'pull' | 'read' | 'status'; sessionId: string }>
   | Readonly<{ v: 1; op: 'send'; sessionId: string; body: string }>
   | Readonly<{ v: 1; op: 'mode'; sessionId: string }>
   | Readonly<{
@@ -41,7 +42,9 @@ export async function handleClaudeSessionRequest(
   const call = { credential: bearer[1]!, sessionId: request.sessionId };
   let outcome: Readonly<Record<string, unknown>>;
   switch (request.op) {
+    case 'pull': outcome = await adapter.pull(call, { maxBytes: Math.min(input.readBudgetBytes, MAX_SEND_BYTES) }); break;
     case 'read': outcome = await adapter.read(call, { maxBytes: Math.min(input.readBudgetBytes, MAX_SEND_BYTES) }); break;
+    case 'status': outcome = await adapter.status(call); break;
     case 'send': outcome = await adapter.send(call, { body: request.body }); break;
     case 'mode': outcome = await adapter.mode(call); break;
     case 'mode_set': outcome = await adapter.setMode(call, {
@@ -58,7 +61,7 @@ function decodeRequest(value: unknown): ClaudeSessionRequest | null {
   const only = (...extra: string[]) => keys.every(key => ['v', 'op', 'sessionId', ...extra].includes(key));
   const sessionId = value.sessionId;
   switch (value.op) {
-    case 'read': case 'mode': case 'pending':
+    case 'pull': case 'read': case 'status': case 'mode': case 'pending':
       return only() ? { v: 1, op: value.op, sessionId } : null;
     case 'send':
       return only('body') && typeof value.body === 'string' ? { v: 1, op: 'send', sessionId, body: value.body } : null;
@@ -81,10 +84,17 @@ export type ClaudeClientRefusal =
 
 type Result<T> = Exclude<T, ClaudeSessionRefusal> | ClaudeClientRefusal;
 
+export type ClaudeModeSetRequest = Omit<ModeSetInput, 'acknowledgeToken'>;
+
 export interface ClaudeSessionClient {
+  /** Hook pull: delivers a batch and never acknowledges. */
+  pull(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeReadOutcome>>;
+  /** Agent-initiated: each of these acknowledges every retained token server-side. */
   read(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeReadOutcome>>;
   send(sessionId: string, body: string, signal?: AbortSignal): Promise<Result<ClaudeSendOutcome>>;
+  status(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeStatusOutcome>>;
   mode(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeModeOutcome>>;
+  setMode(sessionId: string, input: ClaudeModeSetRequest, signal?: AbortSignal): Promise<Result<ClaudeModeSetOutcome>>;
   pending(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudePendingOutcome>>;
 }
 
@@ -131,14 +141,32 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
     }
   }
 
+  async function batchCall(op: 'pull' | 'read', sessionId: string, signal: AbortSignal | undefined) {
+    const value = await call({ v: 1, op, sessionId }, signal);
+    if (plainObject(value) && value.kind === 'empty' && Object.keys(value).length === 1) return { kind: 'empty' } as const;
+    if (plainObject(value) && value.kind === 'batch' && typeof value.text === 'string' && Object.keys(value).length === 2) {
+      return { kind: 'batch', text: value.text } as const;
+    }
+    return refusal(value);
+  }
+
   return {
-    async read(sessionId, signal) {
-      const value = await call({ v: 1, op: 'read', sessionId }, signal);
-      if (plainObject(value) && value.kind === 'empty' && Object.keys(value).length === 1) return { kind: 'empty' };
-      if (plainObject(value) && value.kind === 'batch' && typeof value.text === 'string' && Object.keys(value).length === 2) {
-        return { kind: 'batch', text: value.text };
+    pull: (sessionId, signal) => batchCall('pull', sessionId, signal),
+    read: (sessionId, signal) => batchCall('read', sessionId, signal),
+    async status(sessionId, signal) {
+      const value = await call({ v: 1, op: 'status', sessionId }, signal);
+      if (plainObject(value) && value.kind === 'status' && Number.isSafeInteger(value.acknowledged)
+        && (value.acknowledged as number) >= 0 && Object.keys(value).length === 2) {
+        return { kind: 'status', acknowledged: value.acknowledged as number };
       }
       return refusal(value);
+    },
+    async setMode(sessionId, input, signal) {
+      const value = await call({
+        v: 1, op: 'mode_set', sessionId,
+        commandId: input.commandId, expectedVersion: input.expectedVersion, requested: input.requested, issuedAt: input.issuedAt,
+      }, signal);
+      return publicModeSet(value) ?? refusal(value);
     },
     async send(sessionId, body, signal) {
       const value = await call({ v: 1, op: 'send', sessionId, body }, signal);
@@ -190,6 +218,24 @@ function publicMode(value: unknown): Exclude<ClaudeModeOutcome, ClaudeSessionRef
     version: value.version as number,
     support: { steer: support.steer as string, sync: support.sync as string, async: support.async as string },
     acknowledgement: value.acknowledgement as (typeof ACKNOWLEDGEMENT)[number],
+  };
+}
+
+/** Rebuilds a mode-set outcome, and any token-free piggyback batch, from exactly its closed fields. */
+function publicModeSet(value: unknown): Exclude<ClaudeModeSetOutcome, ClaudeSessionRefusal> | null {
+  if (!plainObject(value) || value.kind !== 'mode_set') return null;
+  const mode = (candidate: unknown): candidate is ListeningMode => (LISTENING_MODES as readonly unknown[]).includes(candidate);
+  if (!(LISTENING_MODE_RESULT_OUTCOMES as readonly unknown[]).includes(value.outcome) || !mode(value.requested)
+    || !(value.effective === null || mode(value.effective))
+    || !Number.isSafeInteger(value.version) || (value.version as number) < 0
+    || !(value.batch === undefined || typeof value.batch === 'string')) return null;
+  return {
+    kind: 'mode_set',
+    outcome: value.outcome as (typeof LISTENING_MODE_RESULT_OUTCOMES)[number],
+    requested: value.requested,
+    effective: value.effective,
+    version: value.version as number,
+    ...(typeof value.batch === 'string' ? { batch: value.batch } : {}),
   };
 }
 

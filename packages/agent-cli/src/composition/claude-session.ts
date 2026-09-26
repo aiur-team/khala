@@ -30,21 +30,38 @@ export interface ClaudeSessionDirectory {
   resolve(principal: ClaudePrincipal, claim: ClaudeSessionClaim): Promise<SessionBinding | null>;
 }
 
-/** Retained batch tokens are scoped to exactly this triple. */
-export type BatchTokenScope = Readonly<{ principalId: string; bindingId: BindingId; generation: number }>;
+/** Retained batch tokens belong to one principal's binding; each is scoped to one generation. */
+export type SessionScope = Readonly<{ principalId: string; bindingId: BindingId }>;
 
-/** A trusted Khala call's result and the batch token it returned, if any. */
-export type EnvelopeStep<T> = Readonly<{ value: T; batchToken: string | null }>;
+/** A token a hook pull or agent read delivered and no agent call has acknowledged yet. */
+export type RetainedToken = Readonly<{ generation: number; token: string }>;
+
+/**
+ * A trusted Khala call's result, the retained tokens it committed (acknowledged or
+ * fenced), and the token of a batch it delivered, if any.
+ */
+export type EnvelopeStep<T> = Readonly<{ value: T; committed: readonly RetainedToken[]; retain: RetainedToken | null }>;
+
+/** At most this many generations keep a token; older ones are fenced anyway. */
+export const MAX_RETAINED = 8;
 
 /**
  * Implemented by the authenticated local Khala server, never by a hook or command
- * process. `envelope` linearizes calls per scope: it takes the retained token (so it
- * is attached to exactly one call), runs the call with it, and durably stores any
- * token the call returned. A failed call attaches the token once and stores none;
- * the shared batch contract then replays the batch.
+ * process. `envelope` linearizes calls per scope and hands each call every retained
+ * token. It clears only the tokens the call reports committed, and only after the
+ * call resolves, then retains the token of any batch the call delivered. A call
+ * that throws changes nothing, so its tokens are carried again next time.
  */
 export interface ClaudeSessionStatePort {
-  envelope<T>(scope: BatchTokenScope, call: (retained: string | undefined) => Promise<EnvelopeStep<T>>): Promise<T>;
+  envelope<T>(scope: SessionScope, call: (retained: readonly RetainedToken[]) => Promise<EnvelopeStep<T>>): Promise<T>;
+}
+
+/** The retained set after a call: committed tokens removed, a delivered token replacing its generation's. */
+export function nextRetained(retained: readonly RetainedToken[], step: EnvelopeStep<unknown>): readonly RetainedToken[] {
+  const kept = retained.filter(entry => !step.committed.some(done => done.generation === entry.generation && done.token === entry.token));
+  if (step.retain === null) return kept;
+  const merged = [...kept.filter(entry => entry.generation !== step.retain!.generation), step.retain];
+  return merged.sort((x, y) => x.generation - y.generation).slice(-MAX_RETAINED);
 }
 
 export type ModeSetInput = Readonly<{
@@ -110,16 +127,29 @@ export type ClaudeModeSetOutcome = (Readonly<{
   version: number;
 }> & Piggyback) | ClaudeSessionRefusal;
 export type ClaudePendingOutcome = Readonly<{ kind: 'pending' | 'idle' }> | ClaudeSessionRefusal;
+/** Content-free: how many retained batch tokens this call committed, and nothing else. */
+export type ClaudeStatusOutcome = Readonly<{ kind: 'status'; acknowledged: number }> | ClaudeSessionRefusal;
 
+/**
+ * Two kinds of caller. Hook pulls (`PostToolUse`, `Stop`, the watcher) deliver a
+ * batch and retain its token but never acknowledge. Agent-initiated calls
+ * (`khala_read`, `khala_send`, `khala_status`, mode calls) acknowledge every
+ * retained token. `pending` is notification only and does neither.
+ */
 export interface ClaudeSessionAdapter {
+  pull(call: ClaudeSessionCall, input: Readonly<{ maxBytes: number }>): Promise<ClaudeReadOutcome>;
   read(call: ClaudeSessionCall, input: Readonly<{ maxBytes: number }>): Promise<ClaudeReadOutcome>;
   send(call: ClaudeSessionCall, input: Readonly<{ body: string }>): Promise<ClaudeSendOutcome>;
+  status(call: ClaudeSessionCall): Promise<ClaudeStatusOutcome>;
   mode(call: ClaudeSessionCall): Promise<ClaudeModeOutcome>;
   setMode(call: ClaudeSessionCall, input: Omit<ModeSetInput, 'acknowledgeToken'>): Promise<ClaudeModeSetOutcome>;
   pending(call: ClaudeSessionCall): Promise<ClaudePendingOutcome>;
 }
 
-type Resolved = Readonly<{ binding: SessionBinding; scope: BatchTokenScope; services: ClaudeBindingServices }>;
+type Resolved = Readonly<{ binding: SessionBinding; scope: SessionScope; services: ClaudeBindingServices }>;
+
+/** What an agent call did with the current generation's retained token. */
+type AgentStep<T> = Readonly<{ value: T; carried: boolean; delivered: string | null }>;
 
 const refused = (code: ClaudeSessionRefusal['code']): ClaudeSessionRefusal => ({ kind: 'refused', code });
 
@@ -130,6 +160,10 @@ const refused = (code: ClaudeSessionRefusal['code']): ClaudeSessionRefusal => ({
  * `khala_read` operation, and every token-bearing call runs inside the state port's
  * envelope. Tokens never leave this adapter: outcomes carry no token, and refusals
  * carry only a closed code.
+ *
+ * The shared inbox keeps at most one outstanding batch per binding and generation
+ * and replays it until acknowledged, so a hook pull that repeats before the agent
+ * acts simply sees the same batch again.
  */
 export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions): ClaudeSessionAdapter {
   async function resolve(call: ClaudeSessionCall): Promise<Resolved | ClaudeSessionRefusal> {
@@ -143,7 +177,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
     }
     return {
       binding,
-      scope: { principalId: principal.principalId, bindingId: binding.bindingId, generation: binding.generation },
+      scope: { principalId: principal.principalId, bindingId: binding.bindingId },
       services: options.services(binding),
     };
   }
@@ -153,24 +187,82 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
     return capabilities.harness === CLAUDE_SESSION_HARNESS && capabilities.acknowledgement === 'batch_token_next_call';
   }
 
+  /** One `readBatch` call that carries `token`; any batch it selects stays outstanding and replays. */
+  async function acknowledgeOnly(services: ClaudeBindingServices, bindingId: BindingId, token: string): Promise<void> {
+    await services.read.read({ bindingId, maxBytes: 0, acknowledgeToken: token });
+  }
+
+  /**
+   * Runs an agent-initiated call. Every retained token from another generation is
+   * acknowledged by its own `readBatch` call first; one whose generation was
+   * replaced is fenced and dropped, and its release requeues upstream. The current
+   * generation's token rides on the call itself. Tokens are committed only after
+   * their call resolves.
+   */
+  async function agentCall<T>(
+    resolved: Resolved,
+    run: (current: string | undefined) => Promise<AgentStep<T>>,
+  ): Promise<Readonly<{ value: T; acknowledged: number }>> {
+    const generation = resolved.binding.generation;
+    return options.state.envelope(resolved.scope, async retained => {
+      const committed: RetainedToken[] = [];
+      for (const entry of retained) {
+        if (entry.generation === generation) continue;
+        try {
+          await acknowledgeOnly(options.services({ ...resolved.binding, generation: entry.generation }), resolved.binding.bindingId, entry.token);
+          committed.push(entry);
+        } catch (error) {
+          if (error instanceof CliError && error.code === 'binding_not_held') committed.push(entry);
+          // Anything else keeps the token for the next agent call.
+        }
+      }
+      const current = retained.find(entry => entry.generation === generation);
+      const step = await run(current?.token);
+      if (current !== undefined && step.carried) committed.push(current);
+      return {
+        value: { value: step.value, acknowledged: committed.length },
+        committed,
+        retain: step.delivered === null ? null : { generation, token: step.delivered },
+      };
+    });
+  }
+
   return {
-    async read(call, input) {
+    async pull(call, input) {
       if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 0) return refused('invalid_request');
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
         // Without batch-token handoff a pulled batch could never be acknowledged.
         if (!await handoff(resolved)) return refused('unproven');
-        return options.state.envelope<ClaudeReadOutcome>(resolved.scope, async retained => {
+        const generation = resolved.binding.generation;
+        return options.state.envelope<ClaudeReadOutcome>(resolved.scope, async () => {
+          // A hook pull never acknowledges: no token rides on it, whatever is retained.
+          const read = await resolved.services.read.read({ bindingId: resolved.binding.bindingId, maxBytes: input.maxBytes });
+          if (read.kind === 'empty') return { value: { kind: 'empty' } as const, committed: [], retain: null };
+          // Render before the token is retained: a batch that cannot be delivered is never retained.
+          const text = renderInboxBatchWithoutToken(read.batch);
+          return { value: { kind: 'batch', text } as const, committed: [], retain: { generation, token: read.batch.token } };
+        });
+      });
+    },
+
+    async read(call, input) {
+      if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 0) return refused('invalid_request');
+      return guarded(async () => {
+        const resolved = await resolve(call);
+        if ('kind' in resolved) return resolved;
+        if (!await handoff(resolved)) return refused('unproven');
+        const { value } = await agentCall<ClaudeReadOutcome>(resolved, async current => {
           const read = await resolved.services.read.read({
             bindingId: resolved.binding.bindingId,
             maxBytes: input.maxBytes,
-            ...(retained === undefined ? {} : { acknowledgeToken: retained }),
+            ...(current === undefined ? {} : { acknowledgeToken: current }),
           });
-          if (read.kind === 'empty') return { value: { kind: 'empty' } as const, batchToken: null };
-          // Render before the token is stored: a batch that cannot be delivered is never retained.
-          return { value: { kind: 'batch', text: renderInboxBatchWithoutToken(read.batch) } as const, batchToken: read.batch.token };
+          if (read.kind === 'empty') return { value: { kind: 'empty' }, carried: true, delivered: null };
+          return { value: { kind: 'batch', text: renderInboxBatchWithoutToken(read.batch) }, carried: true, delivered: read.batch.token };
         });
+        return value;
       });
     },
 
@@ -178,13 +270,23 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        const { value: result, batch } = await tokenBearing(resolved, retained => resolved.services.send({
-          body: input.body, ...(retained === undefined ? {} : { acknowledgeToken: retained }),
-        }));
+        const { value: result, batch } = await tokenBearing(resolved, current => resolved.services.send({
+          body: input.body, ...(current === undefined ? {} : { acknowledgeToken: current }),
+        }), result => result.kind === 'accepted');
         const piggyback = batch === null ? {} : { batch };
         if (result.kind === 'accepted') return { kind: 'accepted', clientTxnId: result.clientTxnId, eventId: result.eventId, ...piggyback };
         if (result.kind === 'refused') return { kind: 'refused', code: result.code, clientTxnId: result.clientTxnId, ...piggyback };
         return { kind: 'outcome_unknown', clientTxnId: result.clientTxnId, ...piggyback };
+      });
+    },
+
+    async status(call) {
+      return guarded(async () => {
+        const resolved = await resolve(call);
+        if ('kind' in resolved) return resolved;
+        if (!await handoff(resolved)) return { kind: 'status', acknowledged: 0 };
+        const { acknowledged } = await agentCall(resolved, acknowledgeCurrent(resolved));
+        return { kind: 'status', acknowledged };
       });
     },
 
@@ -194,6 +296,10 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
         if ('kind' in resolved) return resolved;
         const [view, capabilities] = await Promise.all([resolved.services.readMode(), resolved.services.capabilities()]);
         if (!view.ok) return refused(view.code === 'unavailable' ? 'unavailable' : 'binding_not_held');
+        // A mode read is agent-initiated too, so it acknowledges what hooks delivered.
+        if (capabilities.harness === CLAUDE_SESSION_HARNESS && capabilities.acknowledgement === 'batch_token_next_call') {
+          await agentCall(resolved, acknowledgeCurrent(resolved));
+        }
         // Effective support comes from HarnessCapabilities; anything unevidenced stays unproven.
         const support = Object.fromEntries((['steer', 'sync', 'async'] as const).map(mode => [
           mode, capabilities.harness === CLAUDE_SESSION_HARNESS ? publicSupport(capabilities.modes[mode].status) : 'unproven',
@@ -213,13 +319,13 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        const { value: result, batch } = await tokenBearing(resolved, retained => resolved.services.setMode({
+        const { value: result, batch } = await tokenBearing(resolved, current => resolved.services.setMode({
           commandId: input.commandId,
           expectedVersion: input.expectedVersion,
           requested: input.requested,
           issuedAt: input.issuedAt,
-          ...(retained === undefined ? {} : { acknowledgeToken: retained }),
-        }));
+          ...(current === undefined ? {} : { acknowledgeToken: current }),
+        }), () => true);
         return {
           kind: 'mode_set', outcome: result.outcome, requested: result.requested, effective: result.effective, version: result.version,
           ...(batch === null ? {} : { batch }),
@@ -238,20 +344,33 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
     },
   };
 
+  function acknowledgeCurrent(resolved: Resolved) {
+    return async (current: string | undefined): Promise<AgentStep<null>> => {
+      if (current !== undefined) await acknowledgeOnly(resolved.services, resolved.binding.bindingId, current);
+      return { value: null, carried: true, delivered: null };
+    };
+  }
+
   async function tokenBearing<T>(
     resolved: Resolved,
-    call: (retained: string | undefined) => Promise<PiggybackStep<T>>,
+    call: (current: string | undefined) => Promise<PiggybackStep<T>>,
+    committedBy: (value: T) => boolean,
   ): Promise<Readonly<{ value: T; batch: string | null }>> {
     // Only `batch_token_next_call` permits retained-token handoff; otherwise the call
     // runs bare and its piggyback batch is neither shown nor retained, so it replays.
     if (!await handoff(resolved)) return { value: (await call(undefined)).value, batch: null };
-    return options.state.envelope(resolved.scope, async retained => {
-      const step = await call(retained);
+    const { value } = await agentCall(resolved, async current => {
+      const step = await call(current);
       const text = step.batch === null ? null : renderOrNull(step.batch);
       // The token is retained only when its batch is actually delivered with the result;
       // an unrenderable batch is dropped without hiding the call's own outcome.
-      return { value: { value: step.value, batch: text }, batchToken: text === null ? null : step.batch!.token };
+      return {
+        value: { value: step.value, batch: text },
+        carried: committedBy(step.value),
+        delivered: text === null ? null : step.batch!.token,
+      };
     });
+    return value;
   }
 }
 
