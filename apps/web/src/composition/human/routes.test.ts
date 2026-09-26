@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import type { ChannelAccessRequestHandle } from '@khala/contracts/messaging/index';
 import { createHumanRouteCodec } from './routes';
 
 describe('createHumanRouteCodec', () => {
@@ -9,6 +10,18 @@ describe('createHumanRouteCodec', () => {
     expect(codec.parse('https://khala.aiur.team/')).toEqual({ kind: 'not_found', path: '/' });
     expect(codec.parse('/join?invite=invite_1')).toEqual({ kind: 'join', path: '/join?invite=invite_1', inviteRef: 'invite_1' });
     expect(codec.parse('/channels/room_1')).toEqual({ kind: 'channel', path: '/channels/room_1', roomId: 'room_1' });
+  });
+
+  test('maps the owner inbox and request deep links to the same route', () => {
+    const handle = 'careq_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq' as ChannelAccessRequestHandle;
+    expect(codec.channelRequestsPath()).toBe('/channel-requests');
+    expect(codec.channelRequestsPath(handle)).toBe(`/channel-requests/${handle}`);
+    expect(codec.parse('/channel-requests')).toEqual({
+      kind: 'channel_requests', path: '/channel-requests', selectedHandle: null,
+    });
+    expect(codec.parse(`/channel-requests/${handle}`)).toEqual({
+      kind: 'channel_requests', path: `/channel-requests/${handle}`, selectedHandle: handle,
+    });
   });
 
   test('accepts the canonical /join/<inviteRef> share-link form', () => {
@@ -25,6 +38,7 @@ describe('createHumanRouteCodec', () => {
     expect(based.createPath()).toBe('/khala/new');
     expect(based.joinPath('invite 1')).toBe('/khala/join?invite=invite%201');
     expect(based.roomPath('room_1')).toBe('/khala/channels/room_1');
+    expect(based.channelRequestsPath()).toBe('/khala/channel-requests');
     expect(based.parse('/khala/channels/room_1')).toEqual({ kind: 'channel', path: '/khala/channels/room_1', roomId: 'room_1' });
   });
 
@@ -33,6 +47,7 @@ describe('createHumanRouteCodec', () => {
     expect(codec.parse('/api/human/auth/callback')).toEqual({ kind: 'not_found', path: '/api/human/auth/callback' });
     expect(codec.parse('/join?invite=')).toEqual({ kind: 'not_found', path: '/join?invite=' });
     expect(codec.parse('/channels/%00')).toEqual({ kind: 'not_found', path: '/channels/%00' });
+    expect(codec.parse('/channel-requests/not-a-handle')).toEqual({ kind: 'not_found', path: '/channel-requests/not-a-handle' });
   });
 
   test('validates the injected origin and base path', () => {

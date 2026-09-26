@@ -19,6 +19,11 @@ import {
   type ParticipantView,
 } from '@khala/contracts/messaging/index';
 import type { CredentialSource } from '@khala/messaging/browser-device/index';
+import type {
+  ChannelAccessInboxPort,
+  InboxRejection,
+  MuteRejection,
+} from '../../features/channel-access/ports';
 
 const ME_PATH = '/api/human/me';
 const LOGIN_PATH = '/api/human/auth/login';
@@ -28,6 +33,9 @@ const INSPECT_PATH = '/api/human/invitations/inspect';
 const ADMIT_PATH = '/api/human/invitations/admit';
 const MATRIX_SESSION_PATH = '/api/human/messaging/session';
 const MATRIX_PARTICIPANTS_PATH = '/api/human/messaging/participants';
+const CHANNEL_ACCESS_INBOX_PATH = '/api/human/channel-access/inbox';
+const CHANNEL_ACCESS_DECISION_PATH = '/api/human/channel-access/decision';
+const CHANNEL_ACCESS_MUTE_PATH = '/api/human/channel-access/mute';
 
 type Fetch = typeof globalThis.fetch;
 
@@ -47,6 +55,7 @@ export type HumanBrowserApi = Readonly<{
   participants: Readonly<{
     resolve(userIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, ParticipantView> | null>;
   }>;
+  channelAccess: ChannelAccessInboxPort;
 }>;
 
 function exactHttpsOrigin(value: string): string {
@@ -300,5 +309,69 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     },
   };
 
-  return { identity, admission, credentials, participants };
+  function rejectedCode(body: Record<string, unknown> | null): string | null {
+    return typeof body?.code === 'string' ? body.code : null;
+  }
+
+  const channelAccess: ChannelAccessInboxPort = {
+    async inbox(callOptions) {
+      try {
+        const response = await request(`${origin}${CHANNEL_ACCESS_INBOX_PATH}`, {
+          method: 'GET',
+          credentials: 'same-origin',
+          headers: { accept: 'application/json' },
+          signal: requestSignal(callOptions?.signal),
+        });
+        const body = await jsonObject(response);
+        if (response.status === 200 && body !== null && hasExactKeys(body, ['v', 'kind', 'requests'])
+          && body.v === 1 && body.kind === 'ok' && Array.isArray(body.requests)) {
+          return { kind: 'ok', value: body.requests };
+        }
+        if (response.status === 401 || response.status === 403) {
+          return rejected('forbidden' satisfies InboxRejection);
+        }
+        return unavailable();
+      } catch {
+        return unavailable();
+      }
+    },
+
+    async decide(input, callOptions) {
+      const response = await mutation(CHANNEL_ACCESS_DECISION_PATH, input, callOptions?.signal);
+      if (response === null) return unavailable();
+      const body = await jsonObject(response);
+      if (response.status === 200 && body !== null) return { kind: 'ok', value: body };
+      const code = rejectedCode(body);
+      if (code === 'not_found' || code === 'stale_revision' || code === 'decision_conflict'
+        || code === 'expired' || code === 'revoked' || code === 'operation_mismatch' || code === 'forbidden') {
+        return rejected(code);
+      }
+      return unavailable();
+    },
+
+    async setMute(input, callOptions) {
+      const response = await mutation(CHANNEL_ACCESS_MUTE_PATH, input, callOptions?.signal);
+      if (response === null) return unavailable();
+      const body = await jsonObject(response);
+      if (response.status === 200 && body !== null && hasExactKeys(body, ['v', 'operationKind', 'muted', 'revision'])
+        && body.v === 1 && (body.operationKind === 'access' || body.operationKind === 'create')
+        && typeof body.muted === 'boolean' && typeof body.revision === 'string') {
+        return { kind: 'ok', value: {
+          v: 1, operationKind: body.operationKind, muted: body.muted, revision: body.revision,
+        } };
+      }
+      const code = rejectedCode(body);
+      if (code === 'forbidden' || code === 'not_found' || code === 'stale_revision' || code === 'operation_mismatch') {
+        return rejected(code satisfies MuteRejection);
+      }
+      return unavailable();
+    },
+
+    // Hosted notification delivery supplies deep links to the route codec.
+    // The finite HTTP surface has no streaming endpoint, so this adapter has
+    // no ambient subscription of its own.
+    subscribe: () => () => undefined,
+  };
+
+  return { identity, admission, credentials, participants, channelAccess };
 }

@@ -5,6 +5,9 @@
 // `khala internal` runs a second self-contained file, `khala-internal.js`, built
 // from the internal application's composition entry. The bin loads it only for
 // that command, so no other command loads the store, the server or node:sqlite.
+//
+// `opencode.js` is the self-contained OpenCode plugin (`@aiur/khala/opencode`). OpenCode
+// imports it in its own process, so it too carries its whole closure.
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -42,6 +45,7 @@ export async function bundle({
 } = {}) {
   await fs.rm(path.dirname(outfile), { recursive: true, force: true });
   const metafile = await buildOne({ entryPoint, outfile, absWorkingDir });
+  await buildOne({ entryPoint: path.join(absWorkingDir, 'src/opencode/index.ts'), outfile: path.join(path.dirname(outfile), 'opencode.js'), absWorkingDir });
   // A detached copy of this package (as the package gate's fixtures make) has no
   // internal application beside it; the gate's file allowlist then refuses it.
   if (internalEntryPoint && existsSync(internalEntryPoint)) {

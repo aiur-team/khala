@@ -94,7 +94,7 @@ export function hostedSession(argv: string[]) {
 function optionValues(argv: string[], option: string) {
   const short = /^-[a-z]$/.test(option);
   return argv.flatMap((token, index) => {
-    if (token === option) return index + 1 < argv.length ? [argv[index + 1]] : [];
+    if (token === option) return index + 1 < argv.length ? [argv[index + 1]!] : [];
     if (token.startsWith(`${option}=`)) return [token.slice(option.length + 1)];
     if (short && token.startsWith(option) && token.length > 2) return [token.slice(2)];
     return [];
