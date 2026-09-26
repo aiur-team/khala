@@ -6,7 +6,8 @@ import type {
   Clock, DeliveryReceipt, ReceiptErrorCode, ReceiptId, ReleasedJob,
 } from '@khala/contracts/delivery/index';
 
-export type OpenCodeReceiptKind = 'transport_written' | 'outcome_unknown' | 'failed';
+/** Exactly the `receiptEvidence` of `openCodePluginCapabilities`. */
+export type OpenCodeReceiptKind = 'harness_queued' | 'outcome_unknown' | 'failed';
 
 export function openCodeReceipt(
   job: ReleasedJob,

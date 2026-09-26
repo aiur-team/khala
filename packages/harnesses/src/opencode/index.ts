@@ -3,22 +3,22 @@
 // store a release and send the plugin a content-free wake.
 
 import {
-  type BindingId, type Clock, type DeliveryLimits, type DeliveryReceipt, type HarnessPort, type ReleaseId,
-  type SessionBinding, sameSessionBinding,
+  type BindingId, type Clock, type DeliveryLimits, type DeliveryReceipt, type HarnessPort, OPENCODE_HARNESS,
+  type ReleaseId, type SessionBinding, sameSessionBinding,
 } from '@khala/contracts/delivery/index';
-import { OPENCODE_HARNESS, openCodeCapabilities } from './capabilities';
+import { openCodeCapabilities } from './capabilities';
 import { openCodeReceipt } from './receipts';
-import { type OpenCodeInboxPort, submitRelease } from './transport';
+import { type OpenCodeHintReason, type OpenCodeInboxPort, submitRelease } from './transport';
 
-export {
-  OPENCODE_ADAPTER_VERSION, OPENCODE_HARNESS, OPENCODE_RECEIPT_EVIDENCE, openCodeCapabilities,
-} from './capabilities';
-export type { OpenCodeInboxDelivery, OpenCodeInboxPort } from './transport';
+export { openCodeCapabilities } from './capabilities';
+export type { OpenCodeHintReason, OpenCodeInboxDelivery, OpenCodeInboxPort } from './transport';
 
 export type OpenCodePluginInspection = Readonly<{
   version: string | null;
   bindingId: string | null;
   generation: number | null;
+  /** Route evidence keys the plugin implements; credited only for the exact binding generation. */
+  claims: readonly unknown[];
 }>;
 
 /** Reports what the user-started plugin says it is bound to. It never starts OpenCode. */
@@ -37,7 +37,7 @@ export type OpenCodeHarnessDeps = Readonly<{
 
 export interface OpenCodeHarness extends HarnessPort {
   /**
-   * Sends one content-free wake to the exactly inspected binding generation, so a
+   * Sends one `catch_up` hint to the exactly inspected binding generation, so a
    * plugin that stayed idle across a connector restart re-reads its durable batch.
    */
   catchUp(binding: SessionBinding): Promise<void>;
@@ -77,10 +77,12 @@ export function createOpenCodeHarness(deps: OpenCodeHarnessDeps): OpenCodeHarnes
     return current !== undefined && sameSessionBinding(current, binding);
   };
 
-  async function catchUp(binding: SessionBinding): Promise<void> {
+  async function hint(binding: SessionBinding, reason: OpenCodeHintReason): Promise<void> {
     if (closed || !exactlyInspected(binding)) return;
-    await track(inboxFor(binding).then(port => port.notifyListener())).catch(() => undefined);
+    await track(inboxFor(binding).then(port => port.notifyListener(reason))).catch(() => undefined);
   }
+
+  const catchUp = (binding: SessionBinding) => hint(binding, 'catch_up');
 
   return {
     async inspect(binding) {
@@ -88,16 +90,16 @@ export function createOpenCodeHarness(deps: OpenCodeHarnessDeps): OpenCodeHarnes
       if (binding.harness !== OPENCODE_HARNESS) throw new Error('opencode adapter: binding names another harness');
       inspected.delete(binding.bindingId);
       const plugin = await track(probe.inspect(binding.sessionId));
-      if (!closed && plugin.bindingId === binding.bindingId && plugin.generation === binding.generation) {
-        inspected.set(binding.bindingId, binding);
-      }
-      return openCodeCapabilities(typeof plugin.version === 'string' ? plugin.version : null, limits);
+      const bound = plugin.bindingId === binding.bindingId && plugin.generation === binding.generation;
+      if (!closed && bound) inspected.set(binding.bindingId, binding);
+      const claims = bound && Array.isArray(plugin.claims) ? plugin.claims : [];
+      return openCodeCapabilities(typeof plugin.version === 'string' ? plugin.version : null, claims, limits);
     },
 
-    // The hint's release ID is deliberately unused: the wake carries nothing, and
-    // the plugin finds the release by re-reading its durable batch.
+    // The hint's release ID is deliberately unused: the wire hint names only the
+    // binding generation, and the plugin finds the release by re-reading its batch.
     async notify(binding) {
-      await catchUp(binding);
+      await hint(binding, 'released');
     },
 
     catchUp,

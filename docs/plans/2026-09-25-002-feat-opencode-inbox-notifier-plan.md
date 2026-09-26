@@ -83,6 +83,7 @@ Out of scope:
 
 - KTD1. **Keep addressing inside `openInbox`.** The inbox instance already binds `{bindingId, generation}` to a private socket path, so neither the harness nor plugin receives filesystem addressing data.
 - KTD2. **Use a zero-byte level-triggered hint.** Connection and EOF are the complete wire protocol; the consumer keeps at most one pending wake and always re-reads the durable batch.
+  - *Superseded in review of #306:* the wire format is #254's hint line (`encodeOpenCodeInboxHint`: `{v, kind, bindingId, generation, reason}`, at most 1024 bytes). The notifier sends `released` after a durable append and `catch_up` after route selection; the listener wakes only on a valid line for its own binding generation. Coalescing and re-reading are unchanged.
 - KTD3. **Treat duplicate storage as catch-up eligible.** `enqueue` already rejects conflicting same-release content, so an identical duplicate proves durable state and may safely retrigger a wake after the append-to-hint crash window.
 - KTD4. **Keep prompt idempotence downstream.** Coalescing reduces redundant work, but stable batch-token and bridge state remain the authority that prevents a second prompt.
 - KTD5. **Do not upgrade notification evidence.** A socket connection proves only that the listener accepted a hint; receipt kinds and capability claims must come from issue #254's merged delivery contract.
@@ -114,7 +115,7 @@ Notification failures do not roll back or delete the release, and notification s
 ### Sequencing and Dependencies
 
 1. U1 may proceed against the merged `mcp-inbox-batch` implementation because it extends the existing socket owner without touching capability or setup unions.
-2. Decision 44 removed the start-order dependency on #254 and #257, and this ticket adds no GitHub dependency. U2 therefore ships with fail-closed capabilities (`support: unsupported`, route fields `unknown`, no evidence reference) and claims only `transport_written` for a durable write. When #254 publishes the `opencode_plugin` vocabulary, it replaces only `opencode/capabilities.ts`.
+2. Decision 44 removed the start-order dependency on #254 and #257, and this ticket adds no GitHub dependency. U2 therefore ships with fail-closed capabilities (`support: unsupported`, route fields `unknown`, no evidence reference) and claims only `transport_written` for a durable write. When #254 publishes the `opencode_plugin` vocabulary, it replaces only `opencode/capabilities.ts`. *Done in review of #306:* the adapter now returns `openCodePluginCapabilities` for the claims a plugin bound to the exact generation reports, and receipts use its `harness_queued` evidence.
 3. U3 adds only an optional per-candidate `catchUp` seam, because `apps/connector/src/composition/agent/harnesses.ts` is a shared route-selection surface. The route id itself belongs to #254.
 
 ### Risks and Mitigations

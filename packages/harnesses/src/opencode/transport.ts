@@ -1,12 +1,12 @@
 // Make a verified release durable in the binding generation's local inbox, then
-// wake the OpenCode plugin with a content-free hint. The released bytes travel
-// only into the inbox; the hint carries nothing, so the plugin always re-reads
-// the canonical batch and its stable token.
+// wake the OpenCode plugin with a `released` hint. The released bytes travel only
+// into the inbox; the hint names only the binding generation and a reason, so the
+// plugin always re-reads the canonical batch and its stable token.
 
 import { createHash } from 'node:crypto';
 import {
-  type Clock, type DeliveryLimits, type DeliveryReceipt, type ReceiptErrorCode, type ReleasedJob, type SessionBinding,
-  sameSessionBinding, validatePayloadBytes,
+  type Clock, type DeliveryLimits, type DeliveryReceipt, type OpenCodeInboxHint, type ReceiptErrorCode,
+  type ReleasedJob, type SessionBinding, sameSessionBinding, validatePayloadBytes,
 } from '@khala/contracts/delivery/index';
 import { openCodeReceipt } from './receipts';
 
@@ -22,14 +22,16 @@ export type OpenCodeInboxDelivery = Readonly<{
   receivedAt: string;
 }>;
 
+export type OpenCodeHintReason = OpenCodeInboxHint['reason'];
+
 /**
  * One binding generation's inbox. `enqueue` resolves only after the record is
  * synced; `duplicate` means the identical record is already durable.
- * `notifyListener` addresses that generation's listener alone and sends zero bytes.
+ * `notifyListener` sends that generation's listener alone one encoded hint line.
  */
 export interface OpenCodeInboxPort {
   enqueue(delivery: OpenCodeInboxDelivery): Promise<'appended' | 'duplicate'>;
-  notifyListener(): Promise<'notified' | 'unavailable'>;
+  notifyListener(reason: OpenCodeHintReason): Promise<'notified' | 'unavailable'>;
 }
 
 export type OpenCodeSubmitDeps = Readonly<{
@@ -72,9 +74,10 @@ export async function submitRelease(
   }
 
   // A missing or dead listener leaves the release durable; the next listener start
-  // wakes once and reads it. Either way the receipt claims only the durable write.
-  await port.notifyListener().catch(() => 'unavailable' as const);
-  return openCodeReceipt(job, 'transport_written', deps.clock);
+  // wakes once and reads it. Either way the receipt is a queued claim only: the
+  // plugin holds the batch, and nothing here observes consumption.
+  await port.notifyListener('released').catch(() => 'unavailable' as const);
+  return openCodeReceipt(job, 'harness_queued', deps.clock);
 }
 
 function sha256(bytes: Uint8Array): string {

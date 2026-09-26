@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
-  type DeliveryReceipt, type ReleasedJob, type SessionBinding, decodeApprovalCommand, decodeDeliveryLimits,
-  decodeDeliveryReceipt, decodeHarnessCapabilities, decodeSessionBinding, releaseFromApproval,
+  type DeliveryReceipt, OPENCODE_HARNESS, OPENCODE_ROUTE_EVIDENCE, type ReleasedJob, type SessionBinding,
+  decodeApprovalCommand, decodeDeliveryLimits, decodeDeliveryReceipt, decodeHarnessCapabilities, decodeSessionBinding,
+  openCodePluginCapabilities, releaseFromApproval,
 } from '@khala/contracts/delivery/index';
 import exact from '../../../contracts/fixtures/delivery/exact-release.json';
 import {
-  OPENCODE_HARNESS, type OpenCodeInboxDelivery, type OpenCodeInboxPort, type OpenCodePluginInspection,
-  createOpenCodeHarness, openCodeCapabilities,
+  type OpenCodeInboxDelivery, type OpenCodeInboxPort, type OpenCodePluginInspection, createOpenCodeHarness,
+  openCodeCapabilities,
 } from './index';
 
 const unwrap = <T>(decoded: { ok: true; value: T } | { ok: false; field: string }): T => {
@@ -103,14 +104,18 @@ function durableStore() {
   };
 }
 
-function probeFor(target: SessionBinding | null, version: string | null = '1.17.10') {
+function probeFor(
+  target: SessionBinding | null,
+  version: string | null = '1.17.10',
+  claims: readonly unknown[] = OPENCODE_ROUTE_EVIDENCE,
+) {
   const calls: string[] = [];
   return {
     calls,
     probe: {
       async inspect(sessionId: string): Promise<OpenCodePluginInspection> {
         calls.push(sessionId);
-        return { version, bindingId: target?.bindingId ?? null, generation: target?.generation ?? null };
+        return { version, bindingId: target?.bindingId ?? null, generation: target?.generation ?? null, claims };
       },
     },
   };
@@ -123,24 +128,40 @@ async function inspectedHarness(store: ReturnType<typeof durableStore>, generati
 }
 
 describe('openCodeCapabilities', () => {
-  it('claims no deliverable route until the delivery contract names one', () => {
-    const report = openCodeCapabilities('1.17.10', limits);
+  it('is the delivery contract report for the claims the plugin makes', () => {
+    const report = openCodeCapabilities('1.17.10', OPENCODE_ROUTE_EVIDENCE, limits);
+    expect(report).toEqual(openCodePluginCapabilities({ version: '1.17.10', limits, claims: OPENCODE_ROUTE_EVIDENCE }));
     expect(unwrap(decodeHarnessCapabilities(report))).toEqual(report);
-    expect(report).toMatchObject({
-      harness: OPENCODE_HARNESS,
-      support: 'unsupported',
-      existingSession: 'unknown',
-      immediateNotification: 'unknown',
-      evidenceRef: null,
-      acknowledgement: 'unknown',
-    });
-    expect(Object.values(report.modes).map(mode => mode.status)).toEqual(['unknown', 'unknown', 'unknown']);
-    expect(report.receiptEvidence).not.toContain('context_consumed');
+    expect(report).toMatchObject({ support: 'tested', existingSession: 'opencode_plugin' });
+    expect(report.receiptEvidence).toEqual(['harness_queued', 'outcome_unknown', 'failed']);
+  });
+
+  it('credits no claim that does not decode or is not recorded', () => {
+    const forged = { ...OPENCODE_ROUTE_EVIDENCE[0], surface: 'server_session' };
+    for (const claims of [[], ['steer'], [forged]]) {
+      expect(openCodeCapabilities('1.17.10', claims, limits)).toMatchObject({
+        harness: OPENCODE_HARNESS, support: 'unsupported', existingSession: 'unknown', acknowledgement: 'unknown',
+      });
+    }
   });
 
   it('reports an absent or malformed version as unknown without echoing it', () => {
-    expect(openCodeCapabilities(null, limits).version).toBe('unknown');
-    expect(openCodeCapabilities('1.17.10\nsecret', limits).version).toBe('unknown');
+    expect(openCodeCapabilities(null, OPENCODE_ROUTE_EVIDENCE, limits))
+      .toMatchObject({ version: 'unknown', support: 'unsupported' });
+    expect(openCodeCapabilities('1.17.10\nsecret', OPENCODE_ROUTE_EVIDENCE, limits).version).toBe('unknown');
+  });
+});
+
+describe('createOpenCodeHarness inspect', () => {
+  it('credits the plugin claims only for the exact binding generation', async () => {
+    const store = durableStore();
+    const bound = createOpenCodeHarness({ probe: probeFor(binding(1)).probe, inbox: store.inbox, clock, limits });
+    expect((await bound.inspect(binding(1))).support).toBe('tested');
+
+    for (const target of [binding(0), null]) {
+      const other = createOpenCodeHarness({ probe: probeFor(target).probe, inbox: store.inbox, clock, limits });
+      expect((await other.inspect(binding(1))).support).toBe('unsupported');
+    }
   });
 });
 
@@ -155,7 +176,7 @@ describe('createOpenCodeHarness', () => {
     expect(store.log).toEqual(['enqueue:0']);
     gate.resolve();
 
-    expect((await receipt).kind).toBe('transport_written');
+    expect((await receipt).kind).toBe('harness_queued');
     expect(store.log).toEqual(['enqueue:0', 'synced', 'notify:0']);
   });
 
@@ -232,7 +253,7 @@ describe('createOpenCodeHarness', () => {
     store.setNotification('unavailable');
 
     const receipt = await harness.submit({ job: releasedJob(), payload });
-    expect(receipt).toMatchObject({ kind: 'transport_written', source: 'connector', evidenceRef: null });
+    expect(receipt).toMatchObject({ kind: 'harness_queued', source: 'connector', evidenceRef: null });
     expect(unwrap(decodeDeliveryReceipt(receipt))).toEqual(receipt);
     expect(store.records.size).toBe(1);
   });
@@ -242,7 +263,7 @@ describe('createOpenCodeHarness', () => {
     const harness = await inspectedHarness(store);
 
     const receipt = await harness.submit({ job: releasedJob(), payload });
-    expect(store.notifyArgs).toEqual([[]]);
+    expect(store.notifyArgs).toEqual([['released']]);
     expect(store.stored[0]?.payload).toEqual(payload);
     const serialized = JSON.stringify(receipt);
     expect(serialized).not.toContain('release-nonce-7');
@@ -259,13 +280,15 @@ describe('createOpenCodeHarness', () => {
     expect(store.log).toEqual([]);
 
     await harness.catchUp(binding(1));
-    expect(store.log).toEqual(['notify:1']);
+    await harness.notify(binding(1), { v: 1, releaseId: releasedJob().releaseId });
+    expect(store.log).toEqual(['notify:1', 'notify:1']);
+    expect(store.notifyArgs).toEqual([['catch_up'], ['released']]);
     expect(store.opened.map(opened => opened.generation)).toEqual([1]);
 
     const mismatched = createOpenCodeHarness({ probe: probeFor(binding(0)).probe, inbox: store.inbox, clock, limits });
     await mismatched.inspect(binding(1));
     await mismatched.catchUp(binding(1));
-    expect(store.log).toEqual(['notify:1']);
+    expect(store.log).toEqual(['notify:1', 'notify:1']);
   });
 
   it('lets an in-flight submission finish on close, then revokes every later wake', async () => {
@@ -278,7 +301,7 @@ describe('createOpenCodeHarness', () => {
     const joined = harness.submit({ job: releasedJob(), payload });
     gate.resolve();
     await closing;
-    expect((await receipt).kind).toBe('transport_written');
+    expect((await receipt).kind).toBe('harness_queued');
     expect(await joined).toBe(await receipt);
 
     store.log.length = 0;

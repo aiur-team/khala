@@ -404,7 +404,7 @@ describe('runCli', () => {
               release: async () => { released = true; await consumer.release(); },
             };
           },
-          notifyListener: () => durable.notifyListener(),
+          notifyListener: reason => durable.notifyListener(reason),
           readNext: () => durable.readNext(),
           acknowledge: item => durable.acknowledge(item),
           status: () => durable.status(),

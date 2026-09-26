@@ -4,7 +4,10 @@ import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { BindingId, EventRef } from '@khala/contracts/delivery/index';
+import {
+  type BindingId, type EventRef, OPENCODE_HINT_MAX_BYTES, type OpenCodeInboxHint, decodeOpenCodeInboxHint,
+  encodeOpenCodeInboxHint,
+} from '@khala/contracts/delivery/index';
 import { CliError } from './errors.js';
 import type { InboxCursor, InboxDelivery, InboxRecord } from './types.js';
 import { plainObject, validDigest, validEventRef, validIdentifier, validUtcTimestamp } from './validation.js';
@@ -47,16 +50,19 @@ export type InboxConsumer = Readonly<{
 
 /**
  * A listener that can wait for content-free wakes. A wake only says "re-read the
- * durable batch": it carries nothing, and any number of pending wakes coalesce into
- * one. The first wait after acquisition resolves at once, so a release stored while
+ * durable batch": the hint names its binding generation and a reason, never a message,
+ * body, token or release ID, and any number of pending wakes coalesce into one. The first wait after acquisition resolves at once, so a release stored while
  * no listener was running, or whose hint was lost to a crash, is caught up on start.
  */
 export type WakeableInboxConsumer = InboxConsumer & Readonly<{
   nextWake(): Promise<void>;
 }>;
 
+/** Why a hint was sent: a release became durable, or a restarted sender is catching up. */
+export type ListenerHintReason = OpenCodeInboxHint['reason'];
+
 /**
- * `notified`: this binding generation's live listener accepted a zero-byte hint.
+ * `notified`: this binding generation's live listener received the hint.
  * `unavailable`: no live listener accepted it. The durable batch is untouched and is
  * caught up when a listener next starts.
  */
@@ -73,7 +79,7 @@ export interface Inbox {
 export interface BatchInbox extends Inbox {
   acquireListener(): Promise<WakeableInboxConsumer>;
   /** Wakes only this binding generation's listener; the socket path never leaves the inbox. */
-  notifyListener(): Promise<ListenerNotification>;
+  notifyListener(reason: ListenerHintReason): Promise<ListenerNotification>;
 }
 
 /**
@@ -209,11 +215,11 @@ class FileInbox implements BatchInbox {
     };
     let server: ListenerSocket | null = null;
     try {
-      server = await listen(this.#socketPath, wake);
+      server = await listen(this.#socketPath, this.#ownsHint, wake);
       if (server === null) {
         if (await socketIsLive(this.#socketPath)) throw new CliError('listener_busy');
         await removeStaleSocket(this.#socketPath);
-        server = await listen(this.#socketPath, wake);
+        server = await listen(this.#socketPath, this.#ownsHint, wake);
         if (server === null) throw new CliError('listener_busy');
       }
     } catch (error) {
@@ -259,9 +265,17 @@ class FileInbox implements BatchInbox {
     };
   }
 
-  async notifyListener(): Promise<ListenerNotification> {
-    return notifySocket(this.#socketPath);
+  async notifyListener(reason: ListenerHintReason): Promise<ListenerNotification> {
+    const { bindingId, generation } = this.#options;
+    return notifySocket(
+      this.#socketPath,
+      encodeOpenCodeInboxHint({ v: 1, kind: 'khala.inbox.hint', bindingId, generation, reason }),
+    );
   }
+
+  // Only a hint for exactly this binding generation wakes its listener.
+  readonly #ownsHint = (hint: OpenCodeInboxHint): boolean =>
+    hint.bindingId === this.#options.bindingId && hint.generation === this.#options.generation;
 
   async readNext(): Promise<InboxItem | null> {
     const cursor = await readCursor(this.#cursorPath);
@@ -864,10 +878,12 @@ async function listenerSocketPath(bindingDirectory: string): Promise<string> {
 }
 
 /**
- * The whole hint protocol is connect, half-close, then wait for the listener's EOF.
- * No application byte is ever written, so a hint cannot carry content.
+ * The hint protocol: connect, write one `\n`-terminated hint line in the
+ * `encodeOpenCodeInboxHint` wire format, half-close, then wait for the listener's EOF.
+ * The listener never writes. It wakes only for a valid hint naming its own binding
+ * generation, so `notified` means a live listener received the line, not that it woke.
  */
-async function notifySocket(socketPath: string): Promise<ListenerNotification> {
+async function notifySocket(socketPath: string, line: string): Promise<ListenerNotification> {
   return new Promise(resolve => {
     const socket = net.createConnection({ path: socketPath, allowHalfOpen: true });
     const settle = (outcome: ListenerNotification) => {
@@ -876,7 +892,7 @@ async function notifySocket(socketPath: string): Promise<ListenerNotification> {
       resolve(outcome);
     };
     const timer = setTimeout(() => settle('unavailable'), NOTIFY_DEADLINE_MS);
-    socket.once('connect', () => socket.end());
+    socket.once('connect', () => socket.end(line));
     socket.on('data', () => settle('unavailable'));
     socket.once('end', () => settle('notified'));
     socket.once('error', () => settle('unavailable'));
@@ -886,16 +902,30 @@ async function notifySocket(socketPath: string): Promise<ListenerNotification> {
 
 type ListenerSocket = Readonly<{ close(): Promise<void> }>;
 
-async function listen(socketPath: string, onWake: () => void): Promise<ListenerSocket | null> {
+async function listen(
+  socketPath: string,
+  owns: (hint: OpenCodeInboxHint) => boolean,
+  onWake: () => void,
+): Promise<ListenerSocket | null> {
   const connections = new Set<net.Socket>();
   const server = net.createServer({ allowHalfOpen: true }, socket => {
     connections.add(socket);
     socket.once('close', () => connections.delete(socket));
     socket.on('error', () => undefined);
-    // A peer that writes anything is not speaking the hint protocol; destroying its
-    // socket suppresses `end`, so it wakes nothing.
-    socket.on('data', () => socket.destroy());
+    const chunks: Buffer[] = [];
+    let size = 0;
+    // Anything but one valid hint line for this binding generation wakes nothing.
+    socket.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > OPENCODE_HINT_MAX_BYTES) socket.destroy();
+      else chunks.push(chunk);
+    });
     socket.once('end', () => {
+      const hint = readHintLine(Buffer.concat(chunks));
+      if (hint === null || !owns(hint)) {
+        socket.destroy();
+        return;
+      }
       onWake();
       socket.end();
     });
@@ -919,6 +949,19 @@ async function listen(socketPath: string, onWake: () => void): Promise<ListenerS
       });
     });
   });
+}
+
+/** Exactly one `\n`-terminated, valid UTF-8 hint line, or nothing. */
+function readHintLine(bytes: Buffer): OpenCodeInboxHint | null {
+  let line: string;
+  try {
+    line = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  if (!line.endsWith('\n')) return null;
+  const hint = decodeOpenCodeInboxHint(line);
+  return hint.ok ? hint.value : null;
 }
 
 async function socketIsLive(socketPath: string): Promise<boolean> {
