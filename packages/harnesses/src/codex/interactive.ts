@@ -5,6 +5,7 @@ import {
   type DeliveryLimits, type HarnessCapabilities, type ModeSupport, unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import { CODEX_HARNESS } from './capabilities';
+import { type CodexReceiptProof, NO_CODEX_RECEIPT_PROOF } from './receipt-conformance';
 
 export const CODEX_INTERACTIVE_ADAPTER_VERSION = 'native-hooks-1';
 export const CODEX_INTERACTIVE_EVIDENCE_REF = 'docs/product/internal-mode/interactive-codex.md#mode-matrix';
@@ -30,6 +31,7 @@ export function interactiveCodexCapabilities(
   version: string,
   limits: DeliveryLimits,
   review: CodexInteractiveHookReview,
+  receiptProof: CodexReceiptProof = NO_CODEX_RECEIPT_PROOF,
 ): HarnessCapabilities {
   if (!CODEX_INTERACTIVE_VERSIONS.includes(version)) {
     return closed(version, limits, `Codex ${version} has no interactive hook proof; proven versions are `
@@ -70,7 +72,11 @@ export function interactiveCodexCapabilities(
         + `tool boundaries stay silent. ${IDLE}`),
       async: proven('codex-khala-read', 'Delivered only when the agent calls khala_read; hooks inject nothing.'),
     },
-    acknowledgement: 'batch_token_next_call',
+    // Only the exact hook route and version a conformance run proved; delivery alone is not
+    // acknowledgement, and a missing later call stays neutral.
+    acknowledgement: receiptProof.proven && receiptProof.route === 'hook' && receiptProof.version === version
+      ? 'batch_token_next_call'
+      : 'unknown',
   };
 }
 
