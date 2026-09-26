@@ -19,13 +19,16 @@ afterEach(() => {
 
 const owner = { ownerId: human.ownerId, participantId: human.participantId };
 
+type Distribute<T> = T extends unknown ? Omit<T, 'operationId'> & Partial<Pick<MakeExternalAction, 'operationId'>> : never;
+type ActionInput = Distribute<MakeExternalAction>;
+
 type Setup = Readonly<{
   channel: SeededChannel;
   provider: FakeHostedProvider;
   composed: () => ComposedMakeExternal;
   /** A restarted server: a new journey over the same store and ledger. */
   restart: () => void;
-  act: (action: Omit<MakeExternalAction, 'operationId'> & Partial<Pick<MakeExternalAction, 'operationId'>>) =>
+  act: (action: ActionInput) =>
     Promise<Readonly<{ view: MakeExternalJourneyView; rejection: MakeExternalRejection | null }>>;
   view: () => Promise<MakeExternalJourneyView>;
   signIn: () => Promise<MakeExternalJourneyView>;

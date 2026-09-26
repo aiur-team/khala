@@ -131,7 +131,7 @@ implements HostedChannelPort, ConversionAccessPort, ConversionBindingPort, Conve
   }
 
   // Hosted sign-in.
-  async begin(input: Readonly<{ journeyId: string; operationId: string }>) {
+  async begin() {
     this.signInSequence += 1;
     return ok({ attempt: `signin-${this.signInSequence}`, verificationUrl: `${this.origin}/sign-in/${this.signInSequence}` });
   }
