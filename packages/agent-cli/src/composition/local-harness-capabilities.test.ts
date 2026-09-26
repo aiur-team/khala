@@ -12,7 +12,9 @@ const TRUST = ['pre_tool_use', 'post_tool_use', 'user_prompt_submit', 'stop']
 
 const binding = (harness: string) => ({ harness } as SessionBinding);
 
-function environment(input: Readonly<{ version?: string | null; config?: string | null; runs?: string[] }>): SetupEnvironment {
+function environment(input: Readonly<{
+  version?: string | null; config?: string | null; runs?: string[]; claude?: string | null;
+}>): SetupEnvironment {
   const files: Record<string, string | null> = {
     [HOOKS_PATH]: JSON.stringify(codexHooksFragment('/home/user/.local/share/khala/bin/khala')),
     [`${CODEX_HOME}/config.toml`]: input.config ?? null,
@@ -21,9 +23,13 @@ function environment(input: Readonly<{ version?: string | null; config?: string 
     home: '/home/user', xdgConfigHome: '/home/user/.config', xdgDataHome: '/home/user/.local/share',
     xdgStateHome: '/home/user/.local/state', codexHome: CODEX_HOME,
     probe: {
-      resolveExecutable: async name => (name === 'codex' && input.version !== null ? '/usr/bin/codex' : null),
+      resolveExecutable: async name => {
+        if (name === 'claude') return input.claude === undefined || input.claude === null ? null : '/usr/bin/claude';
+        return name === 'codex' && input.version !== null ? '/usr/bin/codex' : null;
+      },
       runVersion: async (executable, args) => {
         input.runs?.push([executable, ...args].join(' '));
+        if (executable === '/usr/bin/claude') return `${input.claude} (Claude Code)\n`;
         return `codex-cli ${input.version ?? '0.156.1'}\n`;
       },
       readFile: async file => (files[file] === null || files[file] === undefined ? null : new TextEncoder().encode(files[file]!)),
@@ -55,9 +61,23 @@ describe('local harness capabilities', () => {
     expect(await localHarnessCapabilities(() => environment({}))(binding('opencode'))).toBeNull();
   });
 
-  it('keeps every Claude mode unproven', async () => {
-    const claude = await localHarnessCapabilities(() => environment({}))(binding('claude'));
-    expect(claude!.harness).toBe('claude');
-    expect(Object.values(claude!.modes).some(mode => mode.status === 'proven')).toBe(false);
+  it('labels an inspected but unproven Claude version experimental, never proven', async () => {
+    const runs: string[] = [];
+    const claude = await localHarnessCapabilities(() => environment({ claude: '2.1.283', runs }))(binding('claude'));
+    expect(claude).toMatchObject({
+      harness: 'claude', version: '2.1.283', support: 'experimental', acknowledgement: 'batch_token_next_call',
+    });
+    expect(Object.values(claude!.modes).map(mode => mode.status)).toEqual(['experimental', 'experimental', 'experimental']);
+    expect(runs).toEqual(['/usr/bin/claude --version']);
+  });
+
+  it('keeps Claude unproven when its version cannot be inspected', async () => {
+    for (const input of [{}, { claude: 'unparseable' }]) {
+      const claude = await localHarnessCapabilities(() => environment(input))(binding('claude'));
+      expect(claude).toMatchObject({ harness: 'claude', version: 'unknown', support: 'unsupported', acknowledgement: 'unknown' });
+      expect(Object.values(claude!.modes).map(mode => mode.status)).toEqual(['unknown', 'unknown', 'unknown']);
+    }
+    const failing = await localHarnessCapabilities(() => { throw new Error('no environment'); })(binding('claude'));
+    expect(failing).toMatchObject({ version: 'unknown', acknowledgement: 'unknown' });
   });
 });

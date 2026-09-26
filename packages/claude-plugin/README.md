@@ -105,9 +105,14 @@ output and a content-free code on stderr, and it never fails the user's turn.
 The installed `khala` binary reaches the Claude session route of the running
 `khala internal` server through its owner-only
 `$XDG_STATE_HOME/khala/internal/active.json`, re-read on every call. With no server
-running, calls answer `descriptor_missing` and hooks stay silent. Hook pulls and
-`khala_read` answer `unproven` until Claude's acknowledgement route is proven (see
-Read receipts). The installed-version TTY acceptance still has to run.
+running, calls answer `descriptor_missing` and hooks stay silent. The server
+inspects the installed Claude Code at launch. An exactly proven version is tested,
+and any other inspected version is `experimental`. On either one, hook pulls and
+`khala_read` deliver with batch-token acknowledgement (see Read receipts). An
+uninspectable version stays `unproven`, and hook pulls and `khala_read` answer
+`unproven`. Hooks pull on their own only under an effective mode, and an
+experimental mode needs the owner's experimental-route grant. The
+installed-version TTY acceptance still has to run.
 
 ## Read receipts
 

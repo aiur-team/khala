@@ -14,7 +14,7 @@ export {
   CLAUDE_ADAPTER_VERSION, CLAUDE_EVIDENCE_REF, CLAUDE_HARNESS, CLAUDE_TESTED_VERSION, claudeCapabilities,
 } from './capabilities';
 export {
-  CLAUDE_INTERACTIVE_PROVEN, CLAUDE_INTERACTIVE_ROUTE, interactiveClaudeCapabilities,
+  CLAUDE_INTERACTIVE_PROVEN, CLAUDE_INTERACTIVE_ROUTE, installedClaudeCapabilities, interactiveClaudeCapabilities,
 } from './interactive';
 export type { ClaudeProvenRoute } from './interactive';
 export type {

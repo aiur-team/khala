@@ -79,6 +79,8 @@ export function khala(profile: KhalaProfile, argv: readonly string[], options: K
       bundleDirectory: FIXTURE_BUNDLE,
       startPort: profile.port,
       openBrowser: async () => ({ opened: false, reason: 'acceptance runs never open a browser' }),
+      // As for the agent CLI: an acceptance run has no real harness installed, so none is inspected.
+      claudeVersion: async () => null,
     }),
     env: { XDG_STATE_HOME: profile.stateHome },
     cwd: profile.stateHome,

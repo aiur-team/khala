@@ -3,13 +3,15 @@
 Proof for `claude-read-receipts` (`docs/product/internal-mode/read-receipts.md`): in an
 ordinary user-started interactive Claude CLI, the plugin's hooks deliver the shared batch,
 the token stays inside the local Khala server, and the agent's **next** authenticated Khala
-call returns it. Only then may `interactiveClaudeCapabilities` advertise
-`batch_token_next_call`, and only for the exact version/route pair in `evidence.json`
-`provenPairs` (mirrored in `CLAUDE_INTERACTIVE_PROVEN`).
+call returns it. Only then may `interactiveClaudeCapabilities` report the route `tested`,
+and only for the exact version/route pair in `evidence.json` `provenPairs` (mirrored in
+`CLAUDE_INTERACTIVE_PROVEN`).
 
 **Status: unproven.** The 2026-09-26 Executor live run (Claude Code 2.1.283, `evidence.json`) failed:
-the shipped internal server composes the Claude session route as unproven, so every hook pull and
-`khala_read` is refused before a batch or token exists. Nothing is advertised.
+the internal server then composed the Claude session route as unproven, so every hook pull and
+`khala_read` was refused before a batch or token existed. Since #418 every inspected version is
+`experimental`: it delivers with `batch_token_next_call` so a live run can exercise it, and it is
+labelled experimental rather than proven (decisions 34 and 37).
 
 ```sh
 node --test experiments/internal-mode/read-receipts/claude/scan.test.mjs
