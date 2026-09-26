@@ -78,9 +78,52 @@ describe('@aiur/khala/opencode entry', () => {
 });
 
 describe('OpenCode version and session client', () => {
+  const noFiles = () => null;
+  const packages = (files: Record<string, unknown>) => (file: string) =>
+    Object.hasOwn(files, file) ? JSON.stringify(files[file]) : null;
+
   it('reads the version from the executable path the way the retained proof did', () => {
-    expect(openCodeVersionFromExecPath('/home/u/.local/share/mise/installs/opencode/1.17.10/opencode')).toBe('1.17.10');
-    expect(openCodeVersionFromExecPath('/usr/bin/opencode')).toBeNull();
+    expect(openCodeVersionFromExecPath('/home/u/.local/share/mise/installs/opencode/1.17.10/opencode', noFiles)).toBe('1.17.10');
+    expect(openCodeVersionFromExecPath('/usr/bin/opencode', noFiles)).toBeNull();
+  });
+
+  it('reads a plain npm install from its package metadata, as `opencode --version` reports it', () => {
+    const modules = '/home/u/.local/lib/node_modules';
+    const read = packages({
+      [`${modules}/opencode-ai/package.json`]: { name: 'opencode-ai', version: '1.17.10' },
+      [`${modules}/opencode-ai/node_modules/opencode-linux-x64/package.json`]: { name: 'opencode-linux-x64', version: '1.17.10' },
+    });
+    // `postinstall` places the binary in `opencode-ai/bin`; without it the platform package's runs.
+    expect(openCodeVersionFromExecPath(`${modules}/opencode-ai/bin/opencode.exe`, read)).toBe('1.17.10');
+    expect(openCodeVersionFromExecPath(`${modules}/opencode-ai/node_modules/opencode-linux-x64/bin/opencode`, read)).toBe('1.17.10');
+    expect(openCodeVersionFromExecPath('C:\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe', packages({
+      'C:\\npm\\node_modules\\opencode-ai\\package.json': { name: 'opencode-ai', version: '1.17.10' },
+    }))).toBe('1.17.10');
+  });
+
+  it('keeps an unparseable or foreign version unknown', () => {
+    const exec = '/lib/node_modules/opencode-ai/bin/opencode.exe';
+    const at = (metadata: unknown) => openCodeVersionFromExecPath(exec, () => JSON.stringify(metadata));
+    expect(at({ name: 'opencode-ai', version: '1.17' })).toBeNull();
+    expect(at({ name: 'opencode-ai', version: 'latest' })).toBeNull();
+    expect(at({ name: 'opencode-ai' })).toBeNull();
+    expect(at(null)).toBeNull();
+    expect(openCodeVersionFromExecPath(exec, () => '{not json')).toBeNull();
+    // Another package's bin directory says nothing about OpenCode.
+    expect(openCodeVersionFromExecPath('/lib/node_modules/bun/bin/bun', () => JSON.stringify({ name: 'bun', version: '1.17.10' }))).toBeNull();
+  });
+
+  it('reads the real npm layout from disk', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-opencode-npm-'));
+    try {
+      const pkg = path.join(root, 'node_modules', 'opencode-ai');
+      fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
+      fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name: 'opencode-ai', version: '1.17.10' }));
+      expect(openCodeVersionFromExecPath(path.join(pkg, 'bin', 'opencode.exe'))).toBe('1.17.10');
+      expect(openCodeVersionFromExecPath(path.join(root, 'bin', 'opencode'))).toBeNull();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('addresses every call to the bound session and directory', async () => {
