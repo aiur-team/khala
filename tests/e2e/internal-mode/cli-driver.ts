@@ -79,7 +79,7 @@ type Options = Readonly<{
   record(kind: string, subject: Readonly<{ ownerId: string; operationId: string }>): void;
 }>;
 
-function parseBatch(text: string): ReadView {
+export function parseBatch(text: string): ReadView {
   const lines = text.split('\n');
   const token = lines.find(line => line.startsWith('batchToken: '))?.slice('batchToken: '.length);
   if (!lines[0]?.startsWith('<khala-channel-batch-v1>') || token === undefined) throw new Error('unexpected read output');
