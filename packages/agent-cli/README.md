@@ -841,8 +841,12 @@ the binding, and tokens stay inside Khala. A read or piggyback batch arrives as
 its own content item in the shared `<khala-channel-batch-v1>` frame, without its
 token.
 
-The installed binary does not compose this client yet, so `khala claude`
-and the plugin's `mcp-serve` fail closed with `transport_unavailable`.
+The installed binary composes this client over
+`$XDG_STATE_HOME/khala/internal/active.json`, which `khala internal` publishes.
+The running internal server hosts the Claude session route and accepts only
+that file's transport capability. Each Claude session joins as its own discovery
+identity, so an owner's approval activates a binding for the requesting session
+only. With no server running, calls answer `descriptor_missing`.
 
 ## Composition boundary
 

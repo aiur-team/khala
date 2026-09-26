@@ -53,6 +53,10 @@ export type BindingReadResult =
   | Readonly<{ kind: 'rejected'; code: 'binding_mismatch' }>
   | Readonly<{ kind: 'unavailable' }>;
 
+export type SessionBindingResult =
+  | Readonly<{ kind: 'done'; binding: StoredBinding | null }>
+  | Readonly<{ kind: 'unavailable' }>;
+
 export type LatestGenerationResult =
   | Readonly<{ kind: 'done'; generation: number | null }>
   | Readonly<{ kind: 'unavailable' }>;
@@ -330,6 +334,11 @@ export interface ChannelStore {
   binding(binding: TrustedBinding): BindingReadResult;
   /** Newest registered generation for a binding ID, or null when none exists. */
   latestBindingGeneration(bindingId: string): LatestGenerationResult;
+  /**
+   * The active binding that names exactly this harness session, at the newest
+   * generation of its binding ID, or null. A revoked or superseded row never answers.
+   */
+  sessionBinding(key: Readonly<{ harness: string; sessionId: string }>): SessionBindingResult;
   setMembership(input: Readonly<{ channelId: RoomId; participantId: ParticipantId; membership: ChannelMembership }>): MembershipResult;
   createChannel(input: Readonly<{
     operationId: string;
@@ -483,6 +492,22 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           return sameBinding(row, binding)
             ? { kind: 'done', binding: bindingFromRow(row) } as const
             : { kind: 'rejected', code: 'binding_mismatch' } as const;
+        });
+      } catch { return unavailable(); }
+    },
+
+    sessionBinding(key) {
+      if (![key.harness, key.sessionId].every(isIdentifier)) return { kind: 'done', binding: null };
+      try {
+        return handle.read(db => {
+          const row = db.prepare(`
+            SELECT b.* FROM bindings b
+            WHERE b.harness = ? AND b.session_id = ? AND b.status = 'active'
+              AND b.generation = (SELECT max(generation) FROM bindings WHERE binding_id = b.binding_id)
+            ORDER BY b.generation DESC, b.binding_id DESC
+            LIMIT 1
+          `).get(key.harness, key.sessionId) as BindingRow | undefined;
+          return { kind: 'done', binding: row ? bindingFromRow(row) : null } as const;
         });
       } catch { return unavailable(); }
     },

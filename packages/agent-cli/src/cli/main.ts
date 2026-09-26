@@ -3,10 +3,12 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { INTERNAL_ACTIVE_DESCRIPTOR_FILE } from '@khala/contracts/internal/descriptor';
 import { runCli } from './app.js';
 import { openInbox } from './inbox.js';
 import { bundledInternalRuntime } from './internal.js';
 import { MAX_SEND_BYTES } from './send.js';
+import { createClaudeSessionClient } from '../composition/claude-session-http.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
@@ -25,6 +27,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),
+      // The Claude plugin's hooks and `mcp-serve` reach the running internal server through
+      // its owner-only `active.json`, re-read on every call.
+      claude: createClaudeSessionClient({ descriptorPath: path.join(stateDirectory, 'internal', INTERNAL_ACTIVE_DESCRIPTOR_FILE) }),
       internalClient: async descriptorPath =>
         (await import('../composition/internal.js')).createInternalClient({ descriptorPath }),
       internalDelivery: async descriptorPath =>

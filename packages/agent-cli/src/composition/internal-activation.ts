@@ -49,6 +49,11 @@ export type InternalActivationOptions = Readonly<{
   descriptor: InternalDiscoveryDescriptor;
   origin: string;
   operationId: string;
+  /**
+   * The granted descriptor to write instead of the shared `active.json`. It must already
+   * hold the launch's transport descriptor. The Claude session route keeps one per session.
+   */
+  activePath?: string | undefined;
   /** `repair_required` from the service: resume the same operation with its device and recovery key. */
   repair?: boolean;
   fetch?: typeof fetch | undefined;
@@ -74,7 +79,8 @@ export function activationPaths(descriptorPath: string) {
 
 /** Runs one journaled activation of `operationId` as far as it goes. Never throws. */
 export async function activateInternalAccess(options: InternalActivationOptions): Promise<InternalActivationOutcome> {
-  const paths = activationPaths(options.descriptorPath);
+  const derived = activationPaths(options.descriptorPath);
+  const paths = options.activePath === undefined ? derived : { ...derived, activePath: options.activePath };
   const signer = loadSigner(paths.keyFile, options.descriptor, options.clock);
   if (signer === null) return 'unavailable';
   let lock: Readonly<{ release(): Promise<void> }>;

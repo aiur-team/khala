@@ -30,12 +30,16 @@ describe('bundled CLI entrypoint', () => {
     expect(JSON.parse(result.stderr)).toEqual({ ok: false, error: 'invalid_arguments' });
   });
 
-  it('keeps the registered Claude session command fail-closed until live composition exists', () => {
-    const result = spawnSync(process.execPath, [linkedEntrypoint, 'claude', 'read', '--session', 'session-1'], { encoding: 'utf8' });
+  it('composes the Claude session client over the internal runtime descriptor', () => {
+    // No internal server has published `active.json` under this state root.
+    const state = fs.mkdtempSync(path.join(temporaryDirectory, 'state-'));
+    const result = spawnSync(process.execPath, [linkedEntrypoint, 'claude', 'read', '--session', 'session-1'], {
+      encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: state },
+    });
 
-    expect(result.status).toBe(2);
-    expect(result.stdout).toBe('');
-    expect(JSON.parse(result.stderr)).toEqual({ ok: false, error: 'transport_unavailable' });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({ ok: false, kind: 'refused', code: 'descriptor_missing' });
   });
 
   it('runs standalone status through a symlink', () => {

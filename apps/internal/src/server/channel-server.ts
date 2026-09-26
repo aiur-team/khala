@@ -71,6 +71,18 @@ export type AgentReleaseFeed = Readonly<{
   read(input: Readonly<{ binding: SessionBinding; channelId: RoomId; cursor: string | null; limit: number }>): AgentReleaseRead;
 }>;
 
+/**
+ * One composition-supplied agent route, admitted only for the launch's transport
+ * capability. The server authenticates and bounds the body; the handler rechecks the
+ * bearer itself and owns everything else, including its status and closed body.
+ */
+export type AgentSessionRoute = Readonly<{
+  path: string;
+  handle(input: Readonly<{ authorization: string; body: Record<string, unknown> }>): Promise<Readonly<{
+    status: 200 | 400 | 401; body: Readonly<Record<string, unknown>>;
+  }>>;
+}>;
+
 export type ChannelServerOptions = Readonly<{
   store: ChannelStore;
   bootstrap: readonly BootstrapCredential[];
@@ -81,6 +93,8 @@ export type ChannelServerOptions = Readonly<{
   transportCapability?: string;
   /** Channel discovery, access requests and the connector exchange. Absent means those routes do not exist. */
   discovery?: InternalDiscoveryPort;
+  /** The Claude session route. Absent means the route does not exist. */
+  agentSession?: AgentSessionRoute;
   assets?: AssetManifest;
   newId: () => string;
   clock: () => number;
@@ -232,6 +246,10 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     })
     : null;
   if (discovery) routes.push(...discovery.routes);
+  const agentSession: RouteSpec | null = options.agentSession
+    ? { method: 'POST', path: options.agentSession.path, admission: 'authenticated' }
+    : null;
+  if (agentSession) routes.push(agentSession);
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
@@ -287,7 +305,10 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       principal = authority.authenticateSession(cookie, secrets[0]!);
     }
     if (!principal) return { ok: false, status: 401, code: 'unauthenticated' };
-    if (!admits(route, principal)) return { ok: false, status: 403, code: 'forbidden' };
+    // The agent-session route belongs to the installation's transport capability alone.
+    if (route === agentSession ? principal.kind !== 'transport' : !admits(route, principal)) {
+      return { ok: false, status: 403, code: 'forbidden' };
+    }
     try {
       const live = bindingLive(principal);
       if (live === 'unavailable') return { ok: false, status: 503, code: 'unavailable' };
@@ -575,6 +596,12 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     }
   }
 
+  async function agentSessionCall(context: RouteContext<Principal>): Promise<void> {
+    const body = await readJsonObject(context, limits.maxBodyBytes);
+    const reply = await options.agentSession!.handle({ authorization: headerValues(context.request, 'authorization')[0]!, body });
+    sendJson(context.response, reply.status, reply.body);
+  }
+
   function staticAsset({ route, response }: RouteContext<Principal>): void {
     const asset = route === ROUTES.channelDocument ? assets?.channelDocument : assets?.get(route.path);
     if (!asset) {
@@ -608,6 +635,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.hints: return hints(context);
           case ROUTES.binding: return binding(context);
           case ROUTES.releases: return releases(context);
+          case agentSession: return await agentSessionCall(context);
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
             return staticAsset(context);

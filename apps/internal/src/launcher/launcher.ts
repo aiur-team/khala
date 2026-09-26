@@ -9,6 +9,7 @@ import {
 } from '../descriptor/write';
 import { createInternalReleaseFeed } from '../composition/internal-delivery/release-feed';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
+import { composeClaudeSession } from '../composition/claude-session/compose';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
 import { createSqliteListeningModeRepository } from '../listening-mode-store/sqlite';
 import { resumeInternalChannel } from '../lifecycle/resume';
@@ -276,6 +277,10 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         clock,
         newChannelId: () => `ch_${token()}`,
       });
+      // Claude sessions present the transport capability from `active.json` and join as themselves.
+      const claude = await composeClaudeSession({
+        root, store: channel.store, channelId: channel.channelId as RoomId, transportCapability, clock,
+      });
       server = await startChannelServer({
         store: channel.store,
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
@@ -289,6 +294,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         // The transport capability may only obtain a discovery-only descriptor.
         transportCapability,
         discovery: discovery.port,
+        agentSession: claude.route,
         assets: options.assets,
         newId: randomUUID,
         clock,
