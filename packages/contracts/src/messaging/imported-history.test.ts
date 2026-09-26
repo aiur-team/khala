@@ -4,6 +4,8 @@ import intro from '../../fixtures/messaging/exact-intro.json';
 import vectors from '../../fixtures/messaging/imported-history.json';
 import { decodeEventRef as decodeDeliveryEventRef, decodeEventSelection } from '../delivery/events';
 import { decodeApprovalCommand } from '../delivery/commands';
+import { decodeReleasedJob } from '../delivery/jobs';
+import exactRelease from '../../fixtures/delivery/exact-release.json';
 import { decodeDeliveryLimits } from '../delivery/decode';
 import { decodeContentLimits } from './decode';
 import { type EventRef, decodeEventRef, decodeTimelineItem } from './events';
@@ -67,7 +69,7 @@ describe('imported history limits', () => {
   it('decodes positive limits and refuses zero, unknown fields and a page smaller than one body', () => {
     expect(limits.maxChunkBytes).toBe(vectors.limits.maxChunkBytes);
     expect(decodeImportedHistoryLimits({ ...vectors.limits, maxChunks: 0 })).toEqual({ ok: false, error: { path: 'maxChunks', code: 'invalid_value' } });
-    expect(decodeImportedHistoryLimits({ ...vectors.limits, extra: 1 })).toMatchObject({ ok: false, error: { code: 'unknown_field' } });
+    expect(decodeImportedHistoryLimits({ ...vectors.limits, extra: 1 })).toEqual({ ok: false, error: { path: 'extra', code: 'unknown_field' } });
     expect(decodeImportedHistoryLimits({ ...vectors.limits, maxPageBytes: vectors.limits.maxBodyBytes - 1 }))
       .toEqual({ ok: false, error: { path: 'maxPageBytes', code: 'invalid_limits' } });
   });
@@ -217,6 +219,15 @@ describe('digest verification', () => {
       .toEqual({ ok: false, error: { path: 'chunks[1].chunkDigest', code: 'mismatch' } });
   });
 
+  it('refuses a source record repeated in another chunk even when every digest is consistent', async () => {
+    const sealed = await seal(records.slice(0, 4), tight);
+    const repeated = { ...sealed.chunks[1]!.records[0]!, sourceRecordId: 'msg-1' };
+    const redigested = { ...repeated, recordDigest: sha256(encodeImportedRecord(sealed.manifest.source.channelId, repeated)) };
+    const tampered = reseal(sealed, 1, { ...sealed.chunks[1]!, records: [redigested, sealed.chunks[1]!.records[1]!] });
+    expect(await openImportedHistory(tampered.manifest, tampered.chunks, tight))
+      .toEqual({ ok: false, error: { path: 'chunks[1].records', code: 'duplicate' } });
+  });
+
   it('refuses records moved to another source channel', async () => {
     const sealed = await seal(records, tight);
     const moved = { ...sealed.manifest, source: { ...sealed.manifest.source, channelId: 'internal-other' } };
@@ -292,7 +303,7 @@ describe('imported records are not native events', () => {
     return decoded.value;
   })();
   const deliveryLimits = (() => {
-    const decoded = decodeDeliveryLimits({ maxSelectionEvents: 10, maxPayloadBytes: 65_536 });
+    const decoded = decodeDeliveryLimits(exactRelease.limits);
     if (!decoded.ok) throw new Error('delivery limits must decode');
     return decoded.value;
   })();
@@ -303,6 +314,9 @@ describe('imported records are not native events', () => {
     expect(decodeEventRef(imported).ok).toBe(false);
     expect(decodeDeliveryEventRef(imported).ok).toBe(false);
     expect(decodeEventSelection([imported], deliveryLimits).ok).toBe(false);
+    // A real released job decodes; the same job carrying an imported record as its event does not.
+    expect(decodeReleasedJob(exactRelease.releasedJob, deliveryLimits).ok).toBe(true);
+    expect(decodeReleasedJob({ ...exactRelease.releasedJob, events: [imported] }, deliveryLimits)).toMatchObject({ ok: false, field: 'events[0].kind' });
     expect(decodeApprovalCommand({
       v: 1, commandId: 'command-1', roomId: '!room:example.org', bindingId: 'binding-1', expectedPolicyVersion: 1,
       expectedBindingGeneration: 1, selection: [imported], issuedAt: '2026-09-25T12:00:00Z',
