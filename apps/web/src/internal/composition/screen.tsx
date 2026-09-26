@@ -11,7 +11,7 @@ import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ShellMode } from '../../shell/types';
 import type { HumanApplicationHandle, HumanRouteContext } from '../../composition/human/application';
 import { HumanScreen } from '../../composition/human/screen';
-import { LocalRoom, SessionEnded } from './room';
+import { LocalRoom, type LocalStopCapability, SessionEnded } from './room';
 import type { LocalRoute, LocalRouteCodec } from './routes';
 
 export type LocalApplicationScreenProps = Readonly<{
@@ -27,6 +27,8 @@ export type LocalApplicationScreenProps = Readonly<{
     settings: ChannelSettingsPort;
   }>;
   mode?: ShellMode;
+  /** The binding Stop control; absent means the channel page shows no Stop. */
+  stop?: LocalStopCapability;
 }>;
 
 /** Moves focus to a route's heading so a screen-reader user hears the new page. */
@@ -76,7 +78,7 @@ function RouteLinks({ routes, navigateRoute, children }: {
  * terminal relaunch instruction rather than a sign-in prompt.
  */
 export function LocalApplicationScreen({
-  application, routes, transport, navigateRoute, owner, mode = 'standalone', evidencePort,
+  application, routes, transport, navigateRoute, owner, mode = 'standalone', evidencePort, stop,
 }: LocalApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: LocalRoute): ReactNode => {
     switch (route.kind) {
@@ -90,7 +92,13 @@ export function LocalApplicationScreen({
         return (
           <>
             <p><a className="internal-owner-link" href={routes.settingsPath(route.roomId)}>Channel discovery settings</a></p>
-            <LocalRoom context={context} roomId={route.roomId} transport={transport} {...(evidencePort ? { evidencePort } : {})} />
+            <LocalRoom
+              context={context}
+              roomId={route.roomId}
+              transport={transport}
+              {...(evidencePort ? { evidencePort } : {})}
+              {...(stop ? { stop } : {})}
+            />
           </>
         );
       case 'channel_settings':

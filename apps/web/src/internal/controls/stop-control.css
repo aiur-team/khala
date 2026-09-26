@@ -1,0 +1,37 @@
+/* Binding Stop control: the in-flight and outcome states stay visible next to the action. */
+.stop-control__status:empty {
+  display: none;
+}
+
+.stop-control__confirm,
+.stop-control__result {
+  margin: var(--space-3, 0.75rem) 0 0;
+  padding: var(--space-3, 0.75rem);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+}
+
+.stop-control h3 {
+  margin: 0 0 var(--space-2, 0.5rem);
+  font-size: 1rem;
+}
+
+.stop-control h3:focus {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.stop-control__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 0.5rem);
+}
+
+.stop-control code {
+  overflow-wrap: anywhere;
+}
+
+.stop-control button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
