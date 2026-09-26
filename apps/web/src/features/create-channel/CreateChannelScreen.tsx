@@ -9,6 +9,7 @@ export interface CreateChannelScreenProps {
   ports: CreateChannelPorts;
   /** Injected for tests and for hosts that supply their own clipboard bridge. */
   onCopyShareLink?: (shareUrl: string) => Promise<CopyResult>;
+  onOpenRoom?: (roomId: string) => void;
   /** Test-only seam: a pre-built controller (for example one already driven to a target phase). */
   controller?: CreateChannelController;
 }
@@ -28,7 +29,7 @@ const BUSY_MESSAGE: Partial<Record<CreateChannelView['phase'], string>> = {
   resolving: RESOLVING_MESSAGE,
 };
 
-export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, controller: injectedController }: CreateChannelScreenProps) {
+export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, onOpenRoom, controller: injectedController }: CreateChannelScreenProps) {
   const ownController = useMemo(() => createCreateChannelController(ports), [ports]);
   const controller = injectedController ?? ownController;
   const [view, setView] = useState<CreateChannelView>(() => controller.getView());
@@ -287,6 +288,11 @@ export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, co
           <button type="button" onClick={handleCopy}>
             Copy link
           </button>
+          {view.roomId && onOpenRoom ? (
+            <button type="button" onClick={() => onOpenRoom(view.roomId!)}>
+              Open channel
+            </button>
+          ) : null}
           <p role="status">
             {copyStatus === 'copied' ? 'Link copied.' : copyStatus === 'denied' ? 'Copy failed — select and copy the link above.' : ''}
           </p>

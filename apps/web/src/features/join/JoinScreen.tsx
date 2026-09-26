@@ -13,6 +13,7 @@ export interface JoinScreenProps {
   view: JoinView;
   onSignIn: () => void;
   onRetry: () => void;
+  onOpenRoom?: (roomId: string) => void;
 }
 
 const BUSY_PHASES: readonly JoinPhase[] = ['checking_identity', 'checking_invitation', 'initializing_device', 'joining'];
@@ -31,7 +32,7 @@ const OUTCOME_COPY: Partial<Record<JoinPhase, { heading: string; body: string }>
   unavailable: { heading: 'Something did not load', body: 'This did not complete. You can try again.' },
 };
 
-export function JoinScreen({ view, onSignIn, onRetry }: JoinScreenProps) {
+export function JoinScreen({ view, onSignIn, onRetry, onOpenRoom }: JoinScreenProps) {
   const banner = view.email ? <span>Signed in as {view.email}</span> : null;
 
   const statusMessage = BUSY_COPY[view.phase];
@@ -44,7 +45,7 @@ export function JoinScreen({ view, onSignIn, onRetry }: JoinScreenProps) {
         {...(statusMessage !== undefined ? { statusMessage } : {})}
       >
         {view.phase === 'sign_in' ? <SignIn onSignIn={onSignIn} /> : null}
-        {view.phase === 'joined' ? <Joined roomId={view.roomId} /> : null}
+        {view.phase === 'joined' ? <Joined roomId={view.roomId} {...(onOpenRoom ? { onOpenRoom } : {})} /> : null}
         {OUTCOME_COPY[view.phase] ? (
           <Outcome
             heading={OUTCOME_COPY[view.phase]!.heading}
@@ -69,12 +70,13 @@ function SignIn({ onSignIn }: { onSignIn: () => void }) {
   );
 }
 
-function Joined({ roomId }: { roomId: string | null }) {
+function Joined({ roomId, onOpenRoom }: { roomId: string | null; onOpenRoom?: (roomId: string) => void }) {
   return (
     <div className="join-joined" role="status">
       <StatusBadge tone="positive" label="Joined" />
       <p>You&apos;re in.</p>
       {roomId ? <p className="join-joined__room-id">Channel: {roomId}</p> : null}
+      {roomId && onOpenRoom ? <button type="button" onClick={() => onOpenRoom(roomId)}>Open channel</button> : null}
     </div>
   );
 }
