@@ -9,7 +9,7 @@ import {
   type ReleasedJob, type UnverifiedReleasedJob, decodeHarnessCapabilities, validatePayloadBytes, verifyReleasedJob,
 } from '@khala/contracts/delivery/index';
 import { assertDispatchLimits } from './budget';
-import { claim, precheck, promote, queuedRecord, requeue, sameRelease, wakeable } from './claim';
+import { claim, precheck, promote, queuedRecord, requeue, sameRelease, wakeMode } from './claim';
 import { abandonUnknown, applyReceipt, decodeReceipt, markUnknown } from './reconcile';
 import type {
   AttemptSnapshot, BlockCode, BoundaryObservation, DispatchDeps, Dispatcher, EnqueueResult, QuarantineCode,
@@ -262,16 +262,21 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
   }
 
   async function enqueue(job: UnverifiedReleasedJob): Promise<EnqueueResult> {
-    const result = await ledger.transact((tx): Readonly<{ result: EnqueueResult; wake: boolean }> => {
+    const result = await ledger.transact((tx): Readonly<{ result: EnqueueResult; wake: 'steer' | 'sync' | null }> => {
       const existing = tx.record(job.releaseId);
-      if (existing !== null) return { result: sameRelease(existing.job, job) ? 'duplicate' : 'conflict', wake: false };
+      if (existing !== null) return { result: sameRelease(existing.job, job) ? 'duplicate' : 'conflict', wake: null };
       // One approval releases once; a new release ID cannot re-send it under a fresh causal root.
-      if (tx.releaseFor(job.approval.commandId) !== null) return { result: 'conflict', wake: false };
+      if (tx.releaseFor(job.approval.commandId) !== null) return { result: 'conflict', wake: null };
       tx.put(queuedRecord(job, tx.nextSeq()));
       // An `async` or paused arrival only persists: it wakes no pass and reaches no harness.
-      return { result: 'queued', wake: wakeable(tx, job) };
+      return { result: 'queued', wake: wakeMode(tx, job) };
     });
-    if (result.wake) wake();
+    if (result.wake !== null) {
+      wake();
+      // Best effort and content-free; the release is already stored and is never retried by this.
+      const mode = result.wake;
+      void Promise.resolve().then(() => deps.idleWake?.wake(job.binding, mode)).catch(report);
+    }
     return result.result;
   }
 

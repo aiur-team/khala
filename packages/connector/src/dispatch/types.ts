@@ -209,12 +209,24 @@ export interface DeliveryBoundary {
   }>): Promise<BoundaryObservation | null>;
 }
 
+/**
+ * A content-free wake for an idle session, supplied by the route's trusted integration. It is given
+ * only the binding and the mode the ledger's controls allow; it never receives the release or its
+ * payload, and a failure changes nothing about the persisted release (the agent still receives it at
+ * its next turn).
+ */
+export interface IdleWake {
+  wake(binding: SessionBinding, mode: 'steer' | 'sync'): Promise<void>;
+}
+
 export type DispatchDeps = Readonly<{
   ledger: DispatchLedger;
   /** The approved local profile's job, concurrency and busy limits. Invalid limits refuse construction. */
   limits: DispatchLimits;
   harness: HarnessPort;
   boundary: DeliveryBoundary;
+  /** Called once per arrival that passes the wake controls, after the release is stored. Optional. */
+  idleWake?: IdleWake;
   /** The approval a release names, from the owner connector's own ledger. */
   approvals: Readonly<{ get(commandId: CommandId): Promise<ApprovalCommand | null> }>;
   /**

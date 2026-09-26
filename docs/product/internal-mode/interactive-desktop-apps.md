@@ -99,6 +99,14 @@ candidate text is the recommended first route to test, not a support claim.
 - `async`: expose exactly one bounded, ordered `khala_read` operation through local or
   remote MCP. This is the portable app route and the only recommended Claude route.
 
+**Claude app adapter status (2026-09-25).** The adapter
+([`packages/harnesses/src/claude-app/`](../../../packages/harnesses/src/claude-app/README.md))
+ships fail-closed, as the Executor ruled. It has separate desktop-extension,
+remote-connector, and browser records, and every mode is `unknown`. No route can be
+selected until a graded exact-tuple proof lands. Setup detects Claude Desktop and
+reports it as `claude-app` with its entry `unsupported`. Setup, status, and remove
+say that delivery is unproven, and setup writes no Claude app config.
+
 There is no approved PTY or UI-automation fallback for apps. Screen scraping and
 synthetic keystrokes are fragile, can corrupt user input, and cannot prove context
 consumption. If a native hook is absent, the cell stays Blocked instead of silently

@@ -19,7 +19,7 @@ import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/excha
 import { createChannelStore } from '../../store/channel-store';
 import { createSqliteControlStore } from '../../store/control-store';
 import { ROOM_DATABASE_FILE } from '../../store/path';
-import { createDiscoveryStore } from '../../store/discovery-store';
+import { type DiscoveryStore, createDiscoveryStore } from '../../store/discovery-store';
 import { type InternalStoreHandle, openChannelStore } from '../../store/open';
 import { issueDiscoveryDescriptor } from '../discovery-descriptor';
 import { type InternalChannelDiscovery, composeInternalChannelDiscovery } from './service';
@@ -81,10 +81,13 @@ type World = {
   human: Record<string, string>;
 };
 
-async function boot(fixture: ChannelFixture, handle: InternalStoreHandle, clock: { now: number }, startPort = 0): Promise<World> {
+async function boot(
+  fixture: ChannelFixture, handle: InternalStoreHandle, clock: { now: number }, startPort = 0,
+  wrapStore: (store: DiscoveryStore) => DiscoveryStore = store => store,
+): Promise<World> {
   const discovery = await composeInternalChannelDiscovery({
     control: createSqliteControlStore(handle, () => clock.now),
-    store: createDiscoveryStore(handle),
+    store: wrapStore(createDiscoveryStore(handle)),
     human: { ownerId: alice.ownerId, participantId: alice.participantId, deviceId: aliceDevice },
     clock: () => clock.now,
     newChannelId: () => `ch_${randomBytes(8).toString('hex')}`,
@@ -116,10 +119,10 @@ async function boot(fixture: ChannelFixture, handle: InternalStoreHandle, clock:
   return { fixture, handle, discovery, server, transportCapability, clock, human };
 }
 
-async function world(): Promise<World> {
+async function world(wrapStore?: (store: DiscoveryStore) => DiscoveryStore): Promise<World> {
   const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-discovery-'), now: NOW });
   cleanups.push(() => fixture.dispose());
-  return boot(fixture, fixture.handle, { now: NOW });
+  return boot(fixture, fixture.handle, { now: NOW }, 0, wrapStore);
 }
 
 async function issue(w: World, sessionId: string, label: string | null = null): Promise<Agent> {
@@ -706,5 +709,109 @@ describe('internal channel discovery', () => {
     expect(await w.discovery.admission.reconcile(input)).toEqual({ kind: 'admitted', membership: 'joined' });
     // A stale generation is never admitted.
     expect(await w.discovery.admission.admit({ ...input, providerOperationId: 'padmit-2', sessionGeneration: 2 })).toEqual({ kind: 'rejected' });
+  });
+
+  describe('human-confirmed channel creation', () => {
+    const channelCount = (w: World) => (w.handle.read(db => db.prepare('SELECT count(*) AS n FROM channels').get()) as { n: number }).n;
+    const membersOf = (w: World, channel: string) => w.handle.read(db => db.prepare(
+      'SELECT participant_id FROM memberships WHERE channel_id = ? ORDER BY participant_id',
+    ).all(channel)) as Array<{ participant_id: string }>;
+    const pendingCreate = async (w: World) => (await inbox(w)).find(entry => entry.operationKind === 'create' && entry.outcome === 'pending_owner')!;
+    const createExchange = async (w: World, agent: Agent, operationId: string, recovery: Recovery, requester = agent) => {
+      const body = await exchangeRequest(w, requester, operationId, `device_${operationId}`, recovery);
+      const url = `${w.server.origin}/api/connector/channel-access-requests/${operationId}/exchange`;
+      return { body, reply: await exchangeCall(w, agent, operationId, { ...body, requester: agent.principal }, proof(w, agent, url)) };
+    };
+
+    it('approval creates exactly one secret channel and admits only the requesting session', async () => {
+      const w = await world();
+      const agent = await issue(w, 'session-create');
+      const other = await issue(w, 'session-other');
+      const before = channelCount(w);
+      expect((await requestCreate(w, agent, 'op-new', 'Agent proposal')).json.outcome).toBe('pending_owner');
+      expect(channelCount(w)).toBe(before);
+
+      const pending = await pendingCreate(w);
+      const approved = await decide(w, pending.requestHandle, pending.revision, 'approve', w.human, 'create');
+      expect(approved.status).toBe(200);
+      expect(channelCount(w)).toBe(before + 1);
+      const created = w.handle.read(db => db.prepare(
+        "SELECT c.channel_id, c.title, v.visibility FROM channels c JOIN discovery_visibility v USING (channel_id) WHERE c.title = 'Agent proposal'",
+      ).all()) as Array<{ channel_id: string; title: string; visibility: string }>;
+      expect(created).toHaveLength(1);
+      expect(created[0]!.visibility).toBe('secret');
+      const channel = created[0]!.channel_id;
+      // The human owns it; no agent is a member until the requester exchanges.
+      expect(membersOf(w, channel)).toEqual([{ participant_id: alice.participantId }]);
+      // Re-reading the inbox and retrying the decision never create a second channel.
+      await inbox(w);
+      await decide(w, pending.requestHandle, pending.revision, 'approve', w.human, 'create');
+      expect(channelCount(w)).toBe(before + 1);
+
+      // Another session cannot redeem this creation.
+      const stolen = await createExchange(w, other, 'op-new', await recoveryKey());
+      expect(stolen.reply.status).not.toBe(200);
+
+      const recovery = await recoveryKey();
+      const { body, reply } = await createExchange(w, agent, 'op-new', recovery);
+      expect(reply.status).toBe(200);
+      const activated = await activateCall(w, agent, 'op-new', { deviceId: body.deviceId, grant: openGrant(reply.json, recovery) });
+      expect(activated.status).toBe(200);
+      expect(activated.json.channelId).toBe(channel);
+      expect(membersOf(w, channel).map(row => row.participant_id).sort())
+        .toEqual([alice.participantId, `participant_${agent.principal}`].sort());
+      const sent = await call(w.server.port, {
+        method: 'POST', path: `/api/v1/channels/${channel}/messages`, headers: bearer(activated.json.capability),
+        body: { clientTxnId: 'txn-created', content: { v: 1, kind: 'text', body: 'hello in the new channel' } },
+      });
+      expect(sent.status).toBe(201);
+      expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(403);
+      expect(channelCount(w)).toBe(before + 1);
+    });
+
+    it('denial creates nothing and the exchange stays closed', async () => {
+      const w = await world();
+      const agent = await issue(w, 'session-deny');
+      const before = channelCount(w);
+      expect((await requestCreate(w, agent, 'op-deny', 'Denied proposal')).json.outcome).toBe('pending_owner');
+      const pending = await pendingCreate(w);
+      const denied = await decide(w, pending.requestHandle, pending.revision, 'deny', w.human, 'create');
+      expect([denied.status, denied.json.outcome]).toEqual([200, 'denied']);
+      await inbox(w);
+      const { reply } = await createExchange(w, agent, 'op-deny', await recoveryKey());
+      expect(reply.status).not.toBe(200);
+      expect(channelCount(w)).toBe(before);
+    });
+
+    it('reconciles a lost create response to the same channel', async () => {
+      let lose = true;
+      const w = await world(store => ({
+        ...store,
+        createSecretChannel(input) {
+          const result = store.createSecretChannel(input);
+          if (!lose) return result;
+          // The channel commits, but its response never reaches the workflow.
+          lose = false;
+          return { kind: 'unavailable' };
+        },
+      }));
+      const agent = await issue(w, 'session-lost');
+      const before = channelCount(w);
+      expect((await requestCreate(w, agent, 'op-lost', 'Lost response')).json.outcome).toBe('pending_owner');
+      const pending = await pendingCreate(w);
+      expect((await decide(w, pending.requestHandle, pending.revision, 'approve', w.human, 'create')).status).toBe(200);
+      expect(lose).toBe(false);
+      expect(channelCount(w)).toBe(before + 1);
+
+      const recovery = await recoveryKey();
+      const { body, reply } = await createExchange(w, agent, 'op-lost', recovery);
+      expect(reply.status).toBe(200);
+      const activated = await activateCall(w, agent, 'op-lost', { deviceId: body.deviceId, grant: openGrant(reply.json, recovery) });
+      expect(activated.status).toBe(200);
+      const created = w.handle.read(db => db.prepare("SELECT channel_id FROM channels WHERE title = 'Lost response'").all()) as Array<{ channel_id: string }>;
+      expect(created).toHaveLength(1);
+      expect(activated.json.channelId).toBe(created[0]!.channel_id);
+      expect(channelCount(w)).toBe(before + 1);
+    });
   });
 });
