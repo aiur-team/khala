@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { createChannelStore, type ChannelStore, type RegisteredParticipant } from '../../store/channel-store';
+import { createDiscoveryStore } from '../../store/discovery-store';
 import { openChannelStore, type InternalStoreHandle } from '../../store/open';
 import { mintCredential, type BindingCredential, type BootstrapCredential } from '../credentials';
 
@@ -67,8 +68,6 @@ export function createChannelFixture(input: Readonly<{ root: string; now: number
   store.registerDevice({ deviceId: aliceDevice, participantId: alice.participantId });
   store.registerDevice({ deviceId: bobDevice, participantId: bob.participantId });
   store.registerDevice({ deviceId: carolDevice, participantId: carol.participantId });
-  store.registerBinding(bobBinding);
-  store.registerBinding(carolBinding);
   for (const [id, title] of [[channelId, 'One'], [otherChannelId, 'Two']] as const) {
     const created = store.createChannel({
       operationId: `create-${id}`, channelId: id, title, creatorOwnerId: alice.ownerId,
@@ -78,6 +77,14 @@ export function createChannelFixture(input: Readonly<{ root: string; now: number
   }
   store.setMembership({ channelId, participantId: bob.participantId, membership: 'joined' });
   store.setMembership({ channelId: otherChannelId, participantId: carol.participantId, membership: 'joined' });
+  // Both agents are admitted with the owner's history shared, so each reads its whole channel.
+  const discovery = createDiscoveryStore(handle);
+  for (const [binding, channel] of [[bobBinding, channelId], [carolBinding, otherChannelId]] as const) {
+    const admitted = discovery.activate({
+      operationKey: `fixture-${binding.bindingId}`, binding, channelId: channel, sessionGeneration: 1, history: 'shared',
+    });
+    if (admitted.kind !== 'activated') throw new Error('fixture binding');
+  }
   return {
     root: input.root,
     handle,

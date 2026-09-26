@@ -17,6 +17,7 @@ import {
 } from '@khala/messaging/channels/history-import';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChannelStore, type ChannelStore, type RegisteredParticipant } from '../store/channel-store';
+import { admitWithSharedHistory } from '../store/fixtures/admission';
 import { openChannelStore, type InternalStoreHandle } from '../store/open';
 import {
   type ConversionTarget, type HistoryDrainCeiling, type HistoryExportLogEntry, type SourceWriteGate, MAX_CATCH_UP_ROUNDS,
@@ -149,6 +150,7 @@ async function harness(ceiling: HistoryDrainCeiling = { maxDrainChunks: 8, drain
     creatorParticipantId: ada.participantId, creatorDeviceId: adaDevice, createdAt: '2026-09-25T10:00:00.000Z',
   });
   store.setMembership({ channelId, participantId: bot.participantId, membership: 'joined' });
+  admitWithSharedHistory(handle, botBinding, channelId);
 
   const journal = createFakeConversionJournal();
   await journal.create({ v: 1, conversionId: 'conversion-1', operationId: 'op-convert', historyMode: 'carry_history' });

@@ -6,7 +6,7 @@ import type {
   SubstrateRead, SubstrateUpdate,
 } from '@khala/messaging/channels/substrate';
 import {
-  type ChannelStore, type StoredChannel, type StoredEvent,
+  type ChannelStore, type HistoryReader, type StoredChannel, type StoredEvent,
 } from '../../store/channel-store';
 
 export type LocalChannelSubstrateInput = Readonly<{
@@ -18,6 +18,12 @@ export type LocalChannelSubstrateInput = Readonly<{
   newId: () => string;
   clock: () => number;
 }>;
+
+/**
+ * The substrate is the channel creator's own transport, never an agent binding's: a binding
+ * reads through its release feed, which starts at its admission.
+ */
+const MEMBER: HistoryReader = { kind: 'member' };
 
 function summary(channel: StoredChannel): ChannelSummary {
   return {
@@ -65,6 +71,7 @@ function initialUpdate(input: LocalChannelSubstrateInput, roomId: RoomId): Subst
     const page = input.store.timeline({
       channelId: roomId,
       participantId: input.participant.participantId,
+      reader: MEMBER,
       cursor,
       limit: 1_000,
     });
@@ -165,6 +172,7 @@ export function createLocalChannelSubstrate(input: LocalChannelSubstrateInput): 
         const result = input.store.timeline({
           channelId: request.roomId,
           participantId: input.participant.participantId,
+          reader: MEMBER,
           cursor: request.cursor,
           limit: request.limit,
         });

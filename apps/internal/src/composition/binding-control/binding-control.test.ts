@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
 import { ensurePrivateDirectory, writeActiveDescriptor, writePrivateFile } from '../../descriptor/write';
 import { mintCredential } from '../../server/credentials';
-import { bobBinding, channelId, createChannelFixture, otherChannelId, type ChannelFixture } from '../../server/fixtures/channel-fixture';
+import { bobBinding, carolBinding, channelId, createChannelFixture, otherChannelId, type ChannelFixture } from '../../server/fixtures/channel-fixture';
 import { clearDescriptorGrant, composeBindingControl, readActivatedBindings } from './index';
 
 const NOW = Date.parse('2026-09-25T00:00:00.000Z');
@@ -96,15 +96,18 @@ describe('descriptor grant clearing', () => {
 
 describe('activated binding reader', () => {
   it('lists every generation activated for exactly that channel', () => {
+    // The fixture admits Bob to channel one and Carol to channel two.
     const fx = fixture();
-    expect(readActivatedBindings(fx.handle, channelId)).toEqual([]);
+    expect(readActivatedBindings(fx.handle, channelId)).toEqual([bobBinding]);
+    const next = { ...bobBinding, generation: 2 };
+    expect(fx.store.registerBinding(next).kind).toBe('done');
     fx.handle.transaction(db => {
       db.prepare(`
         INSERT INTO discovery_activations (operation_key, binding_id, generation, channel_id, session_generation)
-        VALUES ('op-bob', ?, 1, ?, 1)
+        VALUES ('op-bob-2', ?, 2, ?, 1)
       `).run(bobBinding.bindingId, channelId);
     });
-    expect(readActivatedBindings(fx.handle, channelId)).toEqual([bobBinding]);
-    expect(readActivatedBindings(fx.handle, otherChannelId)).toEqual([]);
+    expect(readActivatedBindings(fx.handle, channelId)).toEqual([bobBinding, next]);
+    expect(readActivatedBindings(fx.handle, otherChannelId)).toEqual([carolBinding]);
   });
 });

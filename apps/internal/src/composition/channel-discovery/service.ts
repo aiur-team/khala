@@ -331,6 +331,8 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       operationKey,
       channelId,
       sessionGeneration: agent.generation,
+      // The channel-access contract admits with no earlier history.
+      history: 'none',
       binding: {
         v: 1,
         bindingId: `binding_${operationKey}` as SessionBinding['bindingId'],
