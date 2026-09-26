@@ -163,7 +163,8 @@ describe('pending items', () => {
   it('rolls back a failed write and leaves no partial record', async () => {
     const { storage, state } = await fresh(256 * 1024);
     await seedBinding(storage);
-    const body = 'y'.repeat(60 * 1024);
+    // Small enough that the first write fits beside the schema, large enough that 8 overflow the cap.
+    const body = 'y'.repeat(40 * 1024);
     let failure: unknown;
     for (let i = 0; i < 8 && failure === undefined; i += 1) {
       await storage.persistPending(pendingInput(`event_${i}`, body)).catch(error => { failure = error; });

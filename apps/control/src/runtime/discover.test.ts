@@ -159,6 +159,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/agent/channel-access/create', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-access/status', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/channel-access/exchange', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/channel-access/ready', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channels', methods: ['GET'], domain: 'agent' },
     ]);
