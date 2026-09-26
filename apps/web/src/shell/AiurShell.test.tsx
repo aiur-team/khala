@@ -94,6 +94,14 @@ describe('AiurShell standalone', () => {
     expect(positive).toContain('aiur-shell__count');
     expect(positive).toContain('>3<');
   });
+
+  test('renders feature-owned navigation markup without wrapping it in another link', () => {
+    const html = renderStandalone({
+      navigation: [{ ...navigation[0]!, content: <a href="/requests">Requests <span>0</span></a> }],
+    });
+    expect(html).toContain('<a href="/requests">Requests <span>0</span></a>');
+    expect((html.match(/<a /g) ?? []).length).toBe(1);
+  });
 });
 
 describe('AiurShell hosted-content mode', () => {
