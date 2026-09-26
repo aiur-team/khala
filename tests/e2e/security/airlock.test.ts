@@ -18,7 +18,7 @@ import { closeHostedWorlds } from './hosted-world';
 import {
   type Canary, type SurfaceCapture, createSurfaceCapture, describeLeaks, mintCanary, scanTree,
 } from './fixtures';
-import { surfacesFor } from './inventory';
+import { CLI_UNCOMPOSED, SURFACE_INVENTORY, surfacesFor } from './inventory';
 import { type InternalWorld, bobBinding, channelId, otherChannelId, startInternalWorld } from './internal-world';
 import { runGatedRelease } from './hosted-world';
 
@@ -188,17 +188,15 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
 const hookInput = (event: string) => JSON.stringify({ hook_event_name: event, session_id: bobBinding.sessionId, turn_id: 'turn-1' });
 
 const CLI_PROBES: Readonly<Record<string, Probe>> = {
-  'cli:connect': async s => add(s, 'cli:connect', await s.world.khala(['connect'])),
   'cli:listen': async s => add(s, 'cli:listen', await s.world.khala(['listen'], { descriptor: true, abortAfterMs: 1_000 })),
-  'cli:mode': async s => add(s, 'cli:mode', await s.world.khala(['mode'])),
-  'cli:read': async s => add(s, 'cli:read', await s.world.khala(['read'], { descriptor: true })),
+  'cli:read': async s => {
+    // `listen` has acknowledged the earlier release, so a fresh one gives `read` content to carry.
+    s.world.say(channelId, `for read ${s.approved.text}`);
+    s.world.say(otherChannelId, `for read ${s.pending.text}`);
+    add(s, 'cli:read', await s.world.khala(['read'], { descriptor: true }));
+  },
   'cli:send': async s => add(s, 'cli:send', await s.world.khala(['send'], { descriptor: true, stdin: 'a reply' })),
   'cli:status': async s => add(s, 'cli:status', await s.world.khala(['status'], { descriptor: true })),
-  'cli:channels': async s => add(s, 'cli:channels', await s.world.khala(['channels', 'list'])),
-  'cli:agents': async s => add(s, 'cli:agents', await s.world.khala(['agents', 'list', bobBinding.bindingId])),
-  'cli:join': async s => add(s, 'cli:join', await s.world.khala(['join', `${s.world.server.origin}/channels/${otherChannelId}`], { descriptor: true })),
-  'cli:pair': async s => add(s, 'cli:pair', await s.world.khala(['pair', '7K3QX-9MZ2P'])),
-  'cli:claude': async s => add(s, 'cli:claude', await s.world.khala(['claude'])),
   'cli:codex-hook': async s => add(s, 'cli:codex-hook', await s.world.khala(['codex-hook'], { client: 'internal', stdin: hookInput('Stop') })),
   ...Object.fromEntries(['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop'].map(event => [
     `hook-codex:${event}`,
@@ -262,12 +260,39 @@ describe('agent-facing surfaces never carry content the agent was not released',
     expect(seed.capture.carrying(seed.approved)).toEqual(expect.arrayContaining(['GET timeline own', 'GET releases own']));
   });
 
-  it('agent-cli: every command, claude op and codex hook event as installed', async () => {
+  it('agent-cli: every composed command and codex hook event, against the descriptor', async () => {
     const seed = await seeded();
     await runFamily('agent-cli', CLI_PROBES, seed);
     expectSealed(seed);
-    // `listen` runs first and acknowledges the release, so it is the surface that carries it.
-    expect(seed.capture.carrying(seed.approved)).toContain('cli:listen');
+    // `listen` carries the first release and `read` the one posted after it acknowledged.
+    expect(seed.capture.carrying(seed.approved)).toEqual(expect.arrayContaining(['cli:listen', 'cli:read']));
+  });
+
+  it('agent-cli: commands with no composed transport refuse with valid arguments, as installed and with a descriptor', async () => {
+    const seed = await seeded();
+    const origin = seed.world.server.origin;
+    const commands: Readonly<Record<string, Readonly<{ args: readonly string[]; refusal: string }>>> = {
+      'cli:connect': { args: ['connect', 'https://khala.example/c/kha138'], refusal: '"error":"transport_unavailable"' },
+      'cli:mode': { args: ['mode', 'get'], refusal: '"reason":"unavailable"' },
+      'cli:channels': { args: ['channels', 'list', '--origin', origin], refusal: '"error":"unavailable"' },
+      'cli:agents': { args: ['agents', 'list', '--channel', bobBinding.bindingId], refusal: '"error":"not_connected"' },
+      'cli:pair': { args: ['pair', '7K3QX-9MZ2P'], refusal: '"error":"pairing_unavailable"' },
+    };
+    const reclassified = Object.entries(SURFACE_INVENTORY)
+      .filter(([, coverage]) => coverage.kind === 'not-observed' && coverage.reason === CLI_UNCOMPOSED)
+      .map(([id]) => id);
+    expect(Object.keys(commands).sort()).toEqual(reclassified.sort());
+    for (const [id, { args, refusal }] of Object.entries(commands)) {
+      const installed = await seed.world.khala(args);
+      expect(installed.code, id).not.toBe(0);
+      expect(installed.out + installed.err, id).toContain(refusal);
+      add(seed, `${id} installed`, installed);
+      const described = await seed.world.khala(args, { descriptor: true });
+      expect(described.err, id).toContain('"error":"invalid_arguments"');
+      add(seed, `${id} descriptor`, described);
+    }
+    expectSealed(seed);
+    expect(seed.capture.carrying(seed.approved)).toEqual([]);
   });
 
   it('mcp-serve: tools/list and every registered tool in one session', async () => {

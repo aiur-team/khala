@@ -30,7 +30,7 @@ import { FROZEN_HOOK_EVENTS, FROZEN_MCP_TOOLS } from '../../../packages/claude-p
 export const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 /** Probes implemented in `airlock.test.ts`. */
-export const PROBES = ['internal-http', 'agent-cli', 'mcp-serve', 'claude-session', 'dispatcher-gate'] as const;
+export const PROBES = ['internal-http', 'agent-cli', 'mcp-serve', 'claude-session', 'internal-discovery', 'dispatcher-gate'] as const;
 export type ProbeId = (typeof PROBES)[number];
 
 export type Coverage =
@@ -53,7 +53,14 @@ const OPENCODE_UNCOMPOSED = 'the shipped plugin entry composes no transport (una
 const ADAPTER_UNDRIVEN = 'not driven: the review gate was exercised through the Codex adapter only. The dispatcher hands every adapter the same approved job, but this adapter\'s own behaviour (including any file access) was not observed';
 const HOOK_RENDERS_CLI = 'hook renders what `khala claude`/`khala codex-hook` returns; no live harness session was started, so hook output itself was not captured';
 const SETUP_UNCOMPOSED = 'installs or removes harness configuration from the packaged payload and reads no channel state; the test composition has no payload, so the command was not driven';
-const DISCOVERY_UNMOUNTED = 'internal discovery routes are mounted only with a discovery port; they return channel listings and access state, and were not mounted here';
+/**
+ * Commands whose only transport in the shipped CLI is the hosted client, which
+ * `cli/main.ts` composes as `createUnavailableClient` (or, for `mode`, no listening-mode
+ * application). They refuse `--internal-descriptor` as `invalid_arguments`. With valid
+ * arguments they refuse before any channel state; `airlock.test.ts` asserts each exact
+ * refusal, so composing a transport for one fails the suite until it is probed.
+ */
+export const CLI_UNCOMPOSED = 'the shipped CLI composes no transport for this command (hosted client unavailable; `--internal-descriptor` refused), so it reaches no channel state; its refusal with valid arguments is asserted, not its content path';
 
 /**
  * The checked inventory. Adding a surface to the product without adding it here
@@ -84,22 +91,22 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'opencode-tool:khala_read': notObserved(OPENCODE_UNCOMPOSED),
   'opencode-tool:khala_send': notObserved(OPENCODE_UNCOMPOSED),
   // Agent CLI commands.
-  'cli:connect': probe('agent-cli'),
+  'cli:connect': notObserved(CLI_UNCOMPOSED),
   'cli:listen': probe('agent-cli'),
-  'cli:mode': probe('agent-cli'),
+  'cli:mode': notObserved(CLI_UNCOMPOSED),
   'cli:read': probe('agent-cli'),
   'cli:send': probe('agent-cli'),
   'cli:status': probe('agent-cli'),
   'cli:mcp-serve': probe('mcp-serve'),
-  'cli:channels': probe('agent-cli'),
-  'cli:agents': probe('agent-cli'),
-  'cli:internal': notObserved('launches or deletes a local channel for the human operator; exercised only through its loopback server routes here'),
+  'cli:channels': notObserved(CLI_UNCOMPOSED),
+  'cli:agents': notObserved(CLI_UNCOMPOSED),
+  'cli:internal': notObserved('launches, exports or deletes a local channel for the human operator; its runtime (`create`, `discovery`) runs in `launcher-world.ts`, but the command itself was not driven'),
   'cli:setup': notObserved(SETUP_UNCOMPOSED),
   'cli:remove': notObserved(SETUP_UNCOMPOSED),
   'cli:codex-hook': probe('agent-cli'),
-  'cli:join': probe('agent-cli'),
-  'cli:claude': probe('agent-cli'),
-  'cli:pair': probe('agent-cli'),
+  'cli:join': probe('internal-discovery'),
+  'cli:claude': probe('claude-session'),
+  'cli:pair': notObserved(CLI_UNCOMPOSED),
   'claude-op:pull': probe('claude-session'),
   'claude-op:read': probe('claude-session'),
   'claude-op:send': probe('claude-session'),
@@ -141,12 +148,10 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:GET /channels/:channelId/make-external': probe('internal-http'),
   'http-internal:GET /channel-requests': probe('internal-http'),
   'http-internal:GET /channel-requests/:handle': probe('internal-http'),
-  // Internal discovery routes.
+  // Internal discovery routes, mounted by the real launcher. Human routes are probed with
+  // the agent's transport and discovery capabilities; agent routes with its own.
   ...Object.fromEntries(Object.values(DISCOVERY_ROUTES).map(route => [
-    `http-internal:${route.method} ${route.path}`,
-    route.path.startsWith('/api/human/') || route.path.startsWith('/api/internal/')
-      ? humanOnly('human or launcher route; the agent credential is refused by role')
-      : notObserved(DISCOVERY_UNMOUNTED),
+    `http-internal:${route.method} ${route.path}`, probe('internal-discovery'),
   ])),
   // Hosted control routes (Netlify). Human routes are owner-authenticated; agent routes carry control state only.
   ...Object.fromEntries([
