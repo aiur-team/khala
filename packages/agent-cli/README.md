@@ -219,10 +219,27 @@ and `join`, and is refused for every other command. Other commands never load
 the local client.
 
 The Codex and OpenCode MCP entries that `khala setup` installs run a bare
-`mcp-serve` with no option. Outside Claude mode (`KHALA_MCP_HARNESS=claude`),
-a bare `mcp-serve` uses `$XDG_STATE_HOME/khala/internal/active.json` exactly as
-if that path had been passed, so a relaunch that moves the origin or rotates the
-grant reaches the entry without rewriting it.
+`mcp-serve` with no option, and the installed Codex hook runs a bare
+`codex-hook`. One entry serves every session of its harness, so each call acts
+only as the session that makes it, through that session's own `grant.json`:
+
+- Outside Claude mode (`KHALA_MCP_HARNESS=claude`), a bare `mcp-serve` reads
+  the session from each `tools/call`. Codex sends its thread as
+  `_meta.threadId`, the same ID it exports to the agent's commands as
+  `CODEX_THREAD_ID`, so pass that ID to `khala internal discovery --harness
+  codex --session`. The call then runs against
+  `$XDG_STATE_HOME/khala/internal/discovery/<principal>/grant.json`, the
+  principal that discovery derived from the same harness and session.
+- A bare `codex-hook` reads the session from the hook input's `session_id`,
+  which is the same thread ID.
+- A call that names no session, or a session that holds no grant, is refused
+  with `not_connected`; the hook stays silent. Neither ever acts as another
+  session or reads a grant from `active.json`. OpenCode does not name its
+  session to an MCP server, so its bare entry refuses every call. An OpenCode
+  agent runs `khala --internal-descriptor <its grant.json> send|read|listen`
+  instead.
+- Every call reopens the session's file, so a relaunch that moves the origin or
+  rotates the grant reaches the entry without rewriting it.
 
 - Every operation reopens that exact file without following a symlink and
   requires a regular file owned by you with mode 0600, version 1, and an exact
@@ -250,13 +267,10 @@ grant reaches the entry without rewriting it.
   beside that discovery descriptor, and only then acknowledges readiness.
   `read`, `listen` and `mcp-serve` pointed at `grant.json` pick it up without a
   restart. Each agent session keeps its own `grant.json`, so two sessions of
-  one OS user can both join one channel as separate bindings. The first
-  session to bind also copies its grant into `active.json` while no other
-  live grant holds it, so the bare Codex and OpenCode `mcp-serve` entry, which
-  has no session to choose a `grant.json` by, acts as that session. A later
-  session reaches its binding only through its own `grant.json`. A
+  one OS user can both join one channel as separate bindings. No grant is
+  copied into `active.json`, which stays transport-only. A
   `grant.json` left from an earlier launch is replaced on the next `join`.
-  Stop removes the grant from `active.json` and every `grant.json` whose
+  Stop removes the grant from every `grant.json` whose
   binding it revokes. Progress is
   journaled beside the discovery descriptor, so a `join` after a crash
   resumes the same binding and never mints a second one. No grant or

@@ -3,6 +3,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import { ListeningModeOperation } from '../composition/listening-mode.js';
 import { plainObject } from '../cli/validation.js';
+import { cliErrorCode } from '../cli/errors.js';
 import type { ListeningModeOperationPort } from './listening-mode-tool.js';
 import type { ChannelToolsPort } from './channels/tools.js';
 import { PairingService } from '../cli/pair.js';
@@ -173,7 +174,13 @@ async function callTool(
   }
   const tool = context.tools.resolve(params.name);
   if (tool === undefined) return failure(id, -32602, 'Invalid params');
-  const collaborators = await context.route(meta);
+  let collaborators: McpCallCollaborators | null;
+  try {
+    collaborators = await context.route(meta);
+  } catch (error) {
+    // One session's failure refuses that call only; the server keeps serving every other session.
+    return success(id, readToolFailure(cliErrorCode(error)).primaryResult);
+  }
   if (collaborators === null) return success(id, readToolFailure('not_connected').primaryResult);
   const toolContext: McpToolContext = {
     id,

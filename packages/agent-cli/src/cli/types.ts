@@ -124,7 +124,7 @@ export type CliDependencies = Readonly<{
   internalDelivery?: (descriptorPath: string) => Promise<InternalDelivery>;
   /**
    * Locates each calling session's own `grant.json` for the installed Codex/OpenCode `mcp-serve`
-   * entry, which names no descriptor. Absent under `--internal-descriptor` and the Claude entry.
+   * entry, which names no descriptor. Absent under `--internal-descriptor` and the plugin MCP entry.
    */
   sessionGrants?: SessionGrants | undefined;
   claude?: ClaudeSessionClient;

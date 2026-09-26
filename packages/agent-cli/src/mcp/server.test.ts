@@ -102,6 +102,40 @@ describe('MCP server', () => {
     expect(responses[3]).toMatchObject({ id: 4, result: { structuredContent: { kind: 'accepted', eventId: 'event-1' } } });
   });
 
+  it('routes each tool call by its _meta, refusing one without a route and surviving a failed one', async () => {
+    const client = fakeClient();
+    const seen: unknown[] = [];
+    const route = async (meta: Readonly<Record<string, unknown>> | undefined) => {
+      seen.push(meta);
+      if (meta?.threadId === 'broken') throw new Error('inbox storage failed');
+      return meta?.threadId === 'thread-a' ? {
+        send: new SendService(client), read: emptyReadOperation(), channels: unusedChannels(),
+        postprocessResult: identityPostprocessor, postprocessReadResult: identityReadPostprocessor,
+      } : null;
+    };
+    const send = (id: number, meta?: Record<string, unknown>) => `${JSON.stringify(request(id, 'tools/call', {
+      ...(meta === undefined ? {} : { _meta: meta }), name: 'khala_send', arguments: { message: `m-${id}` },
+    }))}\n`;
+    let stdout = '';
+    const output = new Writable({ write(chunk, _encoding, callback) { stdout += chunk.toString(); callback(); } });
+    await runMcpServer({
+      input: Readable.from([`${JSON.stringify(request(1, 'tools/list', { _meta: { progressToken: 0 } }))}\n`,
+        send(2), send(3, { threadId: 'broken' }), send(4, { threadId: 'thread-a' })]),
+      output, route,
+    });
+    const responses = stdout.trim().split('\n').map(line => JSON.parse(line) as Response);
+
+    // Only tool calls consult the route, each with its own metadata.
+    expect(seen).toEqual([undefined, { threadId: 'broken' }, { threadId: 'thread-a' }]);
+    expect(responses[0]!.result?.tools?.length).toBeGreaterThan(0);
+    expect(responses.slice(1).map(response => response.result?.structuredContent)).toEqual([
+      { kind: 'refused', code: 'not_connected' },
+      { kind: 'refused', code: 'internal_error' },
+      expect.objectContaining({ kind: 'accepted' }),
+    ]);
+    expect(client.sent).toEqual([{ bindingId: null, body: 'm-4' }]);
+  });
+
   it('reports a held-binding refusal without echoing message content', async () => {
     const secret = 'do not repeat this secret';
     const client = fakeClient();
