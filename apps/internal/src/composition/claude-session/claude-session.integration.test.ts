@@ -53,14 +53,21 @@ function call(origin: string, input: Readonly<{ method?: string; path: string; h
 
 type ToolResponse = { id: number; result?: { structuredContent: Record<string, unknown>; isError?: boolean }; error?: unknown };
 
+/** The Claude Code version the tests' launcher inspects: installed, and not in the proven list. */
+const INSTALLED_CLAUDE = '2.1.283';
+
 /** A fresh launch, or with `resume` the same root and channel relaunched on the same port. */
-async function launched(resume?: Readonly<{ parent: string; channelId: string; port: number }>, clock?: () => number) {
+async function launched(
+  resume?: Readonly<{ parent: string; channelId: string; port: number }>,
+  options: Readonly<{ clock?: () => number; claudeVersion?: () => Promise<string | null> }> = {},
+) {
+  const { clock, claudeVersion = async () => INSTALLED_CLAUDE } = options;
   const parent = resume?.parent ?? fs.mkdtempSync('/tmp/khala-claude-');
   if (resume === undefined) cleanups.push(() => fs.rmSync(parent, { recursive: true, force: true }));
   const outcome = await launchInternal({
     root: path.join(parent, 'internal'), assets: webBundleManifest(fixtureBundle),
     request: resume === undefined ? { kind: 'create' } : { kind: 'resume', channelId: resume.channelId },
-    startPort: resume?.port ?? 0,
+    startPort: resume?.port ?? 0, claudeVersion,
     ...(clock === undefined ? {} : { clock }),
   });
   if (outcome.kind !== 'running') throw new Error(`launch failed: ${outcome.code}`);
@@ -98,6 +105,20 @@ async function serve(descriptorPath: string, sessionId: string, calls: ReadonlyA
   expect(code).toBe(0);
   const responses = out.split('\n').filter(Boolean).map(line => JSON.parse(line) as ToolResponse);
   return responses.map(response => response.result!.structuredContent);
+}
+
+/** `khala claude <op> --session <id>`, exactly as the plugin's hooks and `/khala` skill run it. */
+async function claude(descriptorPath: string, op: string, sessionId: string): Promise<string> {
+  const stdout = new PassThrough();
+  let out = '';
+  stdout.on('data', chunk => { out += chunk; });
+  await runCli(['claude', op, '--session', sessionId], {
+    client: createUnavailableClient(),
+    inbox: vi.fn(async () => { throw new Error('the Claude command never opens inbox storage'); }),
+    claude: createClaudeSessionClient({ descriptorPath }),
+    stdin: Readable.from([]), stdout, stderr: new PassThrough(),
+  });
+  return out;
 }
 
 async function approvePending(origin: string, owner: Record<string, string>): Promise<void> {
@@ -263,7 +284,7 @@ describe('Claude mcp-serve against the internal launcher', () => {
   // `khala_channel_access_status` leaves the next hook boundary refused as unbound.
   it('wrong implementation: after approval the next hook boundary reports connected with no retry', async () => {
     let skew = 0;
-    const { report, owner, channelUrl } = await launched(undefined, () => Date.now() + skew);
+    const { report, owner, channelUrl } = await launched(undefined, { clock: () => Date.now() + skew });
     const granted = 'session-hook-granted';
     const bystander = 'session-hook-bystander';
     const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
@@ -299,7 +320,7 @@ describe('Claude mcp-serve against the internal launcher', () => {
   // session idle unbound after the owner approved it.
   it('settles at the turn-ending Stop boundary whatever the settle interval', async () => {
     const frozen = Date.now();
-    const { report, owner, channelUrl } = await launched(undefined, () => frozen);
+    const { report, owner, channelUrl } = await launched(undefined, { clock: () => frozen });
     const session = 'session-hook-stop';
     const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
     const [requested] = await serve(report.descriptorPath, session, [['khala_request_channel_access', { target: channelUrl }]]);
@@ -373,5 +394,80 @@ describe('Claude mcp-serve against the internal launcher', () => {
     const bodies = JSON.stringify(timeline.json);
     expect(bodies).toContain('after the restart');
     expect(bodies).not.toContain('stale grant');
+  });
+});
+
+describe('Claude delivery through the internal launcher', () => {
+  /** Binds `sessionId` to the launch channel through request, owner approval and activation. */
+  async function bound(sessionId: string, claudeVersion?: () => Promise<string | null>) {
+    const launch = await launched(undefined, claudeVersion === undefined ? {} : { claudeVersion });
+    const [requested] = await serve(launch.report.descriptorPath, sessionId, [['khala_request_channel_access', { target: launch.channelUrl }]]);
+    await approvePending(launch.report.origin, launch.owner);
+    const [status] = await serve(launch.report.descriptorPath, sessionId, [
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+    ]);
+    expect(status).toMatchObject({ outcome: 'connected' });
+    let posted = 0;
+    const post = async (body: string) => {
+      posted += 1;
+      const sent = await call(launch.report.origin, {
+        method: 'POST', path: `/api/v1/channels/${encodeURIComponent(launch.report.channelId)}/messages`, headers: launch.owner,
+        body: { clientTxnId: `txn-${posted}`, content: { v: 1, kind: 'text', body } },
+      });
+      expect(sent.status).toBe(201);
+    };
+    return { ...launch, post, run: (op: string) => claude(launch.report.descriptorPath, op, sessionId) };
+  }
+
+  it('delivers to a bound session on an experimental route: hook pull, then read, then next-call acknowledgement', async () => {
+    const session = await bound('session-delivered');
+
+    // The route is labelled experimental for the inspected version, never proven.
+    const mode = JSON.parse(await session.run('mode'));
+    expect(mode).toMatchObject({
+      ok: true, acknowledgement: 'batch_token_next_call',
+      support: { steer: 'experimental', sync: 'experimental', async: 'experimental' },
+    });
+    // The owner's view projects the binding through the same inspected claim.
+    const listed = await call(session.report.origin, {
+      path: `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`, headers: session.owner,
+    });
+    expect(listed.status).toBe(200);
+    expect(listed.json.bindings).toMatchObject([{
+      harnessVersion: INSTALLED_CLAUDE, view: { support: { sync: { status: 'experimental', testedVersion: INSTALLED_CLAUDE } } },
+    }]);
+
+    await session.post('first from the owner');
+    // A hook pull delivers the batch but never acknowledges it: a second pull replays it.
+    const pulled = await session.run('pull');
+    expect(pulled).toContain('first from the owner');
+    expect(await session.run('pull')).toBe(pulled);
+
+    // The agent's own read acknowledges the pulled batch and delivers what arrived since.
+    await session.post('second from the owner');
+    const read = await session.run('read');
+    expect(read).toContain('second from the owner');
+    expect(read).not.toContain('first from the owner');
+
+    // The next Khala call acknowledges the read's batch; nothing is left to pull.
+    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 1 });
+    expect(JSON.parse(await session.run('pull'))).toEqual({ ok: true, kind: 'empty' });
+
+    // A reply acknowledges too: a pulled batch is not replayed after the agent sends.
+    await session.post('third from the owner');
+    expect(await session.run('pull')).toContain('third from the owner');
+    const [sent] = await serve(session.report.descriptorPath, 'session-delivered', [['khala_send', { message: 'thanks' }]]);
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    expect(JSON.parse(await session.run('pull'))).toEqual({ ok: true, kind: 'empty' });
+  });
+
+  it('keeps a Claude whose version cannot be inspected unproven: nothing is pulled or read', async () => {
+    const session = await bound('session-uninspected', async () => null);
+    expect(JSON.parse(await session.run('mode'))).toMatchObject({
+      ok: true, acknowledgement: 'unknown', support: { steer: 'unproven', sync: 'unproven', async: 'unproven' },
+    });
+    await session.post('never delivered');
+    expect(JSON.parse(await session.run('pull'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
+    expect(JSON.parse(await session.run('read'))).toEqual({ ok: false, kind: 'refused', code: 'unproven' });
   });
 });

@@ -1,3 +1,4 @@
+import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
 import { createListeningModeService } from '@khala/policy/listening-mode/store';
 import { type SqliteListeningModeRepository, createSqliteListeningModeRepository } from '../../listening-mode-store/sqlite';
 import type { BindingModeOptions } from '../../server/binding-mode';
@@ -23,10 +24,15 @@ export type BindingModesComposition = Readonly<{
   control: BindingModeOptions;
 }>;
 
-export function composeBindingModes(input: Readonly<{ handle: InternalStoreHandle; store: ChannelStore }>): BindingModesComposition {
+export function composeBindingModes(input: Readonly<{
+  handle: InternalStoreHandle;
+  store: ChannelStore;
+  /** The launch's Claude route claim; absent, Claude is unproven. */
+  claude?: HarnessCapabilities;
+}>): BindingModesComposition {
   const listeningModes = createSqliteListeningModeRepository(input.handle);
   const pause = createBindingPauseStore(input.handle);
-  const harnesses = createServerHarnessCapabilities();
+  const harnesses = createServerHarnessCapabilities(input.claude);
   return {
     listeningModes,
     pause,

@@ -9,15 +9,15 @@
 // channel no Claude session is granted; the `approved` canary sits in the granted
 // session's own channel. An unbound bystander session must carry neither.
 //
-// In this build the Claude adapter refuses every `pull` and `read` as `unproven`: no
-// acknowledgement route is proven, and the listening-mode store internal mode composes
-// holds no requested mode for Claude, whose routes are all unproven, so no mode is
-// effective (#382, #392, `composition/claude-session/compose.ts`). So no message body
-// reaches a Claude session at all, and the approved canary cannot serve as a positive control. The
-// suite asserts that refusal exactly: the day reads are enabled it fails, and the
-// approved-canary control must be switched on here. Until then the proof that the
-// probes reached a real binding is that the granted session's own sends land in its
-// channel, and only there.
+// This world's launcher claims an installed Claude Code that is not in the proven list,
+// so the route is experimental (#418): `pull` and `read` deliver with batch-token
+// acknowledgement, and every mode is labelled experimental. The default `sync` request
+// is not effective without the owner's experimental-route grant, so hooks deliver
+// nothing on their own. The approved canary is the
+// positive control: it reaches the granted session's own delivery surfaces, and only
+// those. The pending canary reaches nothing, and the bystander carries neither. The
+// granted session's own sends landing in its channel, and only there, show the probes
+// reached a real binding.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { CLAUDE_SESSION_PATH } from '../../../packages/agent-cli/src/composition/claude-session-http';
@@ -112,31 +112,35 @@ describe('Claude session surfaces never carry content the session was not releas
     // The launcher process's own output is a server log.
     seed.capture.add('launcher-output', seed.world.output());
 
-    const leaks = seed.capture.leaks([seed.pending, seed.approved]);
+    const leaks = seed.capture.leaks([seed.pending]);
     expect(leaks, describeLeaks(leaks)).toEqual([]);
-    // Why the approved canary is absent too: reads are refused, not filtered.
+    // The released message reaches the granted session's delivery surfaces and nothing else:
+    // no send, status, mode or roster result, no bystander surface, and no server log.
+    const delivering = ['claude-op:pull', 'claude-op:read', 'claude-mcp-tool:khala_read'].map(surface => `${surface} ${GRANTED}`);
+    const carrying = seed.capture.carrying(seed.approved);
+    expect(carrying.filter(where => !delivering.includes(where))).toEqual([]);
+    // The hook pull runs first and delivers it; the agent's own read then acknowledges it.
+    expect(carrying).toContain(`claude-op:pull ${GRANTED}`);
     const granted = (surface: string) => seed.capture.text(`${surface} ${GRANTED}`);
-    for (const surface of ['claude-op:pull', 'claude-op:read', 'claude-mcp-tool:khala_read']) {
-      expect(granted(surface), surface).toContain('"code":"unproven"');
-    }
-    // The mode is read from the composed store, but Claude has no evidenced mode: nothing is
-    // requested, nothing is effective, and hooks therefore deliver nothing.
+    // Every mode is labelled experimental: the default `sync` request needs the owner's
+    // experimental-route grant, so nothing is effective and hooks deliver nothing.
     for (const surface of ['claude-op:hook', 'claude-op:watch']) {
       expect(granted(surface), surface).toContain('"kind":"hook","effective":null');
     }
     // Surfaces are driven in sorted order, so `khala_mode_get` reads before `khala_mode_set` writes.
     for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_mode_get']) {
       const text = granted(surface).replaceAll('\\"', '"');
-      expect(text, surface).toContain('"kind":"mode","requested":null,"effective":null,"effectiveReason":"no_requested_mode"');
-      expect(text, surface).toContain('"support":{"steer":"unproven","sync":"unproven","async":"unproven"}');
+      expect(text, surface).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
+      expect(text, surface).toContain('"support":{"steer":"experimental","sync":"experimental","async":"experimental"}');
+      expect(text, surface).toContain('"acknowledgement":"batch_token_next_call"');
     }
-    // The agent may request a mode on its own (decision 42), but an unproven route never becomes
-    // effective: it stays null, with the honest reason (decisions 34 and 37).
+    // The agent may request a mode on its own (decision 42), but an experimental route never becomes
+    // effective without the owner's grant: it stays null, with the honest reason (decisions 34 and 37).
     const set = granted('claude-mcp-tool:khala_mode_set').replaceAll('\\"', '"');
-    expect(set).toContain('"kind":"applied","requested":"sync","effective":null,"effectiveReason":"support_unknown","version":2');
+    expect(set).toContain('"kind":"applied","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required","version":2');
     const status = granted('claude-mcp-tool:khala_status').replaceAll('\\"', '"');
-    expect(status).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"support_unknown"');
-    expect(status).toContain('"support":{"steer":"unproven","sync":"unproven","async":"unproven"}');
+    expect(status).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
+    expect(status).toContain('"support":{"steer":"experimental","sync":"experimental","async":"experimental"}');
   });
 
   it('the granted binding is real: its sends reach its own channel only, and the bystander\'s reach nothing', async () => {

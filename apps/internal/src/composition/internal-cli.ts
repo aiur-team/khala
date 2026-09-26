@@ -25,6 +25,8 @@ export type InternalRuntimeOptions = Readonly<{
   openBrowser?: (input: Pick<OpenBootstrapInput, 'bootstrapUrl' | 'credential' | 'handoffParent'> & Readonly<{
     env: InternalCommandIo['env'];
   }>) => Promise<OpenOutcome>;
+  /** The installed Claude Code version a launch claims its Claude route for; defaults to setup's inspection. */
+  claudeVersion?: () => Promise<string | null>;
 }>;
 
 type Failure = Readonly<{ ok: false; error: string; channelId?: string; resumeCommand?: string }>;
@@ -89,6 +91,7 @@ export function createInternalRuntime(options: InternalRuntimeOptions = {}): Int
       assets,
       startPort: options.startPort ?? DEFAULT_START_PORT,
       openBrowser: input => open({ ...input, env: io.env }),
+      ...(options.claudeVersion === undefined ? {} : { claudeVersion: options.claudeVersion }),
     });
     if (outcome.kind === 'failed') {
       return fail(io, {
