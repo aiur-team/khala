@@ -16,7 +16,8 @@ const LOCAL_AUTOMATION_MARKER = 'khala:local-automation-authority';
 const localAutomation = /^(?:apps\/internal\/src\/composition\/local-automation\/|packages\/policy\/src\/listening-mode\/limits\.[cm]?[jt]sx?$)/;
 const hostedRoot = /^apps\/(?:web|control|connector)\//;
 // Shared web primitives other features may import. They may not import features themselves.
-const sharedFeatures = new Set(['approval-decision']);
+// `channel-create` is the creation operation adapter the channel-request inbox renders.
+const sharedFeatures = new Set(['approval-decision', 'channel-create']);
 
 function filesBelow(directory) {
   if (!fs.existsSync(directory)) return [];
