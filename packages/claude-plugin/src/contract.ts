@@ -7,7 +7,8 @@
 /**
  * Hook events the manifest may register, and the stubs each one runs. `Stop`
  * carries the synchronous delivery hook and the `asyncRewake` idle watcher armed
- * on it (the #178 amendment); there is no `UserPromptSubmit` registration.
+ * on it (the #178 amendment). `UserPromptSubmit` is the synchronous claim hook
+ * only; `asyncRewake` is banned on it and on every hook except the watcher.
  */
 export const FROZEN_HOOK_EVENTS = {
   UserPromptSubmit: ['hooks/user-prompt-submit.mjs'],
