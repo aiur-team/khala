@@ -44,7 +44,11 @@ read them. Use it only for work you would already let those agents see.
    browser. The label and workspace the agent reports are marked untrusted.
    Nothing is granted until you approve.
 4. **Talk.** After approval, the agent runs `join` once more to finish binding.
-   From then on, what you and the agent send appears in one timeline. The agent
+   Khala writes the agent's grant to `grant.json` beside its discovery
+   descriptor, and the agent points `--internal-descriptor` at that file from
+   then on. Each agent session gets its own `grant.json`, so two agents of one
+   OS user can join the same channel as separate bindings. From then on, what
+   you and the agent send appears in one timeline. The agent
    reads with `khala read` or `khala listen`, or through the `khala_read` MCP
    tool, and sends with `khala send` or `khala_send`.
 5. **Stop an agent.** **Stop** in the channel revokes that agent's delivery. It
@@ -57,7 +61,9 @@ read them. Use it only for work you would already let those agents see.
 
 ### Known gaps in internal mode
 
-- Only one agent session per OS user can be bound at a time (#391).
+- A bare `mcp-serve` entry (installed Codex and OpenCode) has no session to
+  choose a `grant.json` by, so it acts as the first agent that bound. A later
+  agent reaches its own binding only through its `grant.json` (#407).
 - Internal mode has no pause and no listening-mode control yet. `khala mode get`
   and `khala mode set` answer `unavailable`, and native hooks deliver nothing to
   an agent bound only through internal mode (#392).
@@ -124,7 +130,6 @@ problem. Do not paste them into issues or chat. Useful, safe details are:
 | `not_running` from discovery | No launcher is running | Start `khala internal` |
 | `join` answers `pending_owner` | Your approval is waiting | Approve in the requests inbox, then have the agent `join` again |
 | `discovery_required` | The agent's discovery descriptor was rotated or is missing | Run `khala internal discovery` again |
-| `repair_required` on a second agent | Only one bound session per user (#391) | Stop the first agent's binding |
 | `unavailable` from `khala mode` | Internal mode has no mode control yet (#392) | None yet |
 | `recovery_required` from setup | An interrupted setup left a journal (#385) | Report it; do not delete files by hand |
 | A message shows **outcome unknown** | Khala cannot tell whether the agent received it | Check the agent's session; resend only if it is missing |

@@ -138,7 +138,6 @@ ticket does not fix them.
 | Codex is required (P15, decisions 23 and 37) but unproven. It is parked on a broken Codex API key (operational), not deferred by decision | #230, #266 | R07, R08 |
 | OpenCode and cross-harness read receipts are not proven. Acknowledgement is core to decision 3 | #232, #233 | R02, R03, R07 |
 | Internal mode has no pause or listening-mode control. Decisions 23 and 42 require mode control | #392 | R05, R07 |
-| Only one agent session per user can bind, which gates the internal-mode flow | #391 | R1 |
 
 ### Contained rework (owned elsewhere, not blocking this record's scope)
 
@@ -148,6 +147,9 @@ ticket does not fix them.
 
 - #384 (flaky listing-ref tamper test): fixed on `main` by #397 (`a8bee18`),
   which changes one test only. The next rerun of this record covers it.
+- #391 (only one agent session per user could bind): fixed by #401, which gives
+  each agent session its own `grant.json`. The next rerun of this record covers
+  it.
 - #380 (the recovery view missed dispatcher evidence, which made the KHA-138
   "delivery ambiguity" row fail): fixed on `main` by #395 (`08c3b10`). The
   `security: fail (#380)` result stays, because it is scoped to this
