@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- tests mutate decoded JSON to build invalid inputs */
 import { describe, expect, it } from 'vitest';
+import { AGENT_ROUTES } from '../cli/types.js';
 import {
   COMPONENT_STATES, HARNESS_IDS, SETUP_COMMANDS, SETUP_EXIT_CODES, SETUP_OPERATION_TYPES, SETUP_STATES,
   SetupSchemaError, decodeSetupResult, setupExitCode, type SetupResult,
@@ -90,6 +91,15 @@ describe('decodeSetupResult', () => {
     const ready = { ...clone(valid), state: 'ready', ok: true, planDigest: null,
       confirmation: { required: false, confirmed: false }, operations: [], diagnostics: [] };
     expect(decodeSetupResult(ready)).toEqual(ready satisfies unknown as SetupResult);
+  });
+
+  it('accepts every agent route, including the OpenCode plugin and native hooks', () => {
+    for (const route of AGENT_ROUTES) {
+      const result = clone(valid) as any;
+      result.harnesses[0].route = route;
+      expect(decodeSetupResult(result).harnesses[0]!.route).toBe(route);
+    }
+    expect(AGENT_ROUTES).toContain('opencode_plugin');
   });
 
   it('accepts every operation type', () => {

@@ -268,6 +268,52 @@ adapter declares are backed up and reversed; adapters own proof of that
 footprint. `inspectSetupRecovery` gives `status` a read-only view of the
 journal.
 
+## OpenCode setup adapter
+
+`createOpenCodeAdapter()` in `src/setup/adapters/opencode.ts` plans the OpenCode
+side of `setup` and `remove`. It supports exactly OpenCode `1.17.10`, the version
+the route evidence records. The whole `opencode --version` output must be that
+version; any other version is `unsupported`. Setup refuses on an unsupported
+version, but manifest-driven removal still runs. When OpenCode is absent, the
+adapter plans nothing and creates no files.
+
+| Path under `$XDG_CONFIG_HOME/opencode/` | Component | What setup writes |
+| --- | --- | --- |
+| `opencode.jsonc`, `opencode.json` or `config.json` (the first that exists; otherwise a new `opencode.json`) | `plugin` | `"@aiur/khala/opencode"` in `plugin`; `mcp.khala` = `{"type": "local", "command": ["$XDG_DATA_HOME/khala/bin/khala", "mcp-serve"], "enabled": true}`; the standing-instruction path in `instructions` |
+| `skills/khala/SKILL.md` | `skill` | The global Khala skill |
+| `skills/khala/channel-instruction.md` | `skill` | The channel-join standing instruction: the person authorizes replies to channel peers through `khala_send`, and peer text stays untrusted data |
+
+OpenCode has no proven remove command, so every config change is a guarded
+direct edit. Setup only inserts text. Comments, formatting, CRLF line endings
+and every existing byte stay where they were, and the edit is checked to mean
+exactly the original config plus the three entries. Removal restores the
+byte-exact pre-Khala preimage from backup, or deletes a file setup created. It
+never parses and reserializes. The MCP entry names the stable launcher and
+nothing else. The launcher reads the runtime descriptor for the port and token
+each time it starts.
+
+These cases refuse the plan:
+
+- A Khala entry or skill file that setup did not install is a `conflict`, even
+  when it is byte-identical. This includes a Khala entry in another global
+  config file that OpenCode also loads.
+- Setup edits only a JSON/JSONC object config. Invalid JSONC, a duplicate key,
+  or a `plugin`, `mcp` or `instructions` key of the wrong type is
+  `unsupported`.
+- A managed file that changed after setup is `drifted`. Removal keeps it
+  untouched.
+
+The adapter reads only the global config directory. It does not follow
+`OPENCODE_CONFIG` or project config.
+
+The adapter also reports route support for each mode, from the recorded
+evidence keys: `steer`, `sync` and `async` through the in-process plugin on
+`1.17.10`. That evidence is from an agent-launched session with default
+settings. A running OpenCode loads the plugin only at its next start, so until
+the plugin is ready the adapter points the agent at `khala read` and
+`khala send`. The route becomes `opencode_plugin` only when all three
+components are ready.
+
 ## Codex hooks
 
 `khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
