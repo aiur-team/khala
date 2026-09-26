@@ -1,8 +1,9 @@
-import type {
-  DeliveryReceipt,
-  HarnessCapabilities,
-  ParticipantId,
-  SessionBinding,
+import {
+  type DeliveryReceipt,
+  type HarnessCapabilities,
+  OPENCODE_PLUGIN_ROUTE_LABEL,
+  type ParticipantId,
+  type SessionBinding,
 } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/ids';
 import type { ConnectorRuntime } from '../../runtime/create';
@@ -64,6 +65,7 @@ function routeLabel(capabilities: HarnessCapabilities | null, harnessReady: bool
     case 'native_cli_queue': return capabilities.harness === 'codex' ? 'Codex CLI' : `${capabilities.harness} CLI`;
     case 'khala_hosted_resume': return capabilities.harness === 'codex' ? 'Codex app-server' : 'Khala-hosted session';
     case 'agent_installed_listener': return 'Khala skill';
+    case 'opencode_plugin': return OPENCODE_PLUGIN_ROUTE_LABEL;
     default: return 'Unsupported';
   }
 }

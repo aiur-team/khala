@@ -1,0 +1,55 @@
+{
+  "_comment": "OpenCode plugin route fixtures. `capabilities` is the exact record the plugin reports for OpenCode 1.17.10 with all five recorded route keys. `nextTurnOnly` omits both idle keys. `wrongCapabilities` start from `capabilities`, apply `set` (dot path -> value), and must resolve every listed mode to unproven and be refused. `wrongKeys` start from the named recorded key and must not match. `hints` are notifier wire lines.",
+  "limits": { "maxSelectionEvents": 50, "maxPayloadBytes": 1048576 },
+  "capabilities": {
+    "v": 3, "harness": "opencode", "version": "1.17.10", "adapterVersion": "opencode-plugin-1", "support": "tested",
+    "existingSession": "opencode_plugin", "immediateNotification": "opencode_plugin", "busy": "queue",
+    "receiptEvidence": ["harness_queued", "outcome_unknown", "failed"], "reconcileByReleaseId": "unsupported",
+    "limits": { "maxSelectionEvents": 50, "maxPayloadBytes": 1048576 },
+    "evidenceRef": "experiments/interactive-cli/opencode/evidence/results.md",
+    "modes": {
+      "steer": { "status": "proven", "route": "opencode-plugin-steer", "testedVersion": "1.17.10", "evidenceRef": "experiments/interactive-cli/opencode/evidence/results.md", "evidenceRevision": "0ae3e4c9bea92cc652224bebb78b23c6bfdbd58c", "reason": null },
+      "sync": { "status": "proven", "route": "opencode-plugin-sync", "testedVersion": "1.17.10", "evidenceRef": "experiments/interactive-cli/opencode/evidence/results.md", "evidenceRevision": "0ae3e4c9bea92cc652224bebb78b23c6bfdbd58c", "reason": null },
+      "async": { "status": "proven", "route": "opencode-plugin-async", "testedVersion": "1.17.10", "evidenceRef": "experiments/interactive-cli/opencode/evidence/results.md", "evidenceRevision": "0ae3e4c9bea92cc652224bebb78b23c6bfdbd58c", "reason": null }
+    },
+    "acknowledgement": "batch_token_next_call"
+  },
+  "nextTurnOnly": {
+    "steer": { "status": "proven", "route": "opencode-plugin-steer-busy", "testedVersion": "1.17.10", "evidenceRef": "experiments/interactive-cli/opencode/evidence/results.md", "evidenceRevision": "0ae3e4c9bea92cc652224bebb78b23c6bfdbd58c", "reason": "Idle agents receive messages only at their next turn until the OpenCode idle route matches its evidence key." },
+    "sync": { "status": "proven", "route": "opencode-plugin-sync-busy", "testedVersion": "1.17.10", "evidenceRef": "experiments/interactive-cli/opencode/evidence/results.md", "evidenceRevision": "0ae3e4c9bea92cc652224bebb78b23c6bfdbd58c", "reason": "Idle agents receive messages only at their next turn until the OpenCode idle route matches its evidence key." }
+  },
+  "wrongCapabilities": [
+    { "name": "steer claimed from server-session busy promptAsync evidence", "modes": ["steer"], "set": { "modes.steer": { "status": "proven", "route": "opencode-server-session-busy-prompt-async", "testedVersion": "1.17.10", "evidenceRef": "experiments/internal-mode/opencode-bridge/evidence.md", "evidenceRevision": "opencode-bridge-2026-09-24", "reason": null } } },
+    { "name": "steer claimed on the recorded route but an unretained proof revision", "modes": ["steer"], "set": { "modes.steer.evidenceRevision": "unretained-local-run" } },
+    { "name": "sync claimed as experimental without a recorded key", "modes": ["sync"], "set": { "modes.sync.status": "experimental" } },
+    { "name": "busy-only steer that hides the next-turn caveat", "modes": ["steer"], "set": { "modes.steer.route": "opencode-plugin-steer-busy" } },
+    { "name": "unrecorded OpenCode version", "modes": ["steer", "sync", "async"], "set": { "version": "1.17.11", "modes.steer.testedVersion": "1.17.11", "modes.sync.testedVersion": "1.17.11", "modes.async.testedVersion": "1.17.11" } },
+    { "name": "acknowledgement unknown", "modes": ["steer", "sync", "async"], "set": { "acknowledgement": "unknown" } },
+    { "name": "acknowledgement unsupported", "modes": ["steer", "sync", "async"], "set": { "acknowledgement": "unsupported" } }
+  ],
+  "wrongKeys": [
+    { "name": "steer from a server session", "base": 0, "set": { "surface": "server_session" } },
+    { "name": "steer through the TUI endpoints", "base": 0, "set": { "surface": "tui_endpoint" } },
+    { "name": "steer with no retained interactive commands", "base": 0, "set": { "retainedCommandsRef": null } },
+    { "name": "steer from a server-created session", "base": 0, "set": { "sessionOrigin": "server_created" } },
+    { "name": "steer by busy promptAsync", "base": 0, "set": { "route": "opencode-plugin-busy-prompt-async" } },
+    { "name": "sync idle on another OpenCode version", "base": 3, "set": { "harnessVersion": "1.18.0" } },
+    { "name": "async on another plugin API version", "base": 4, "set": { "pluginApiVersion": "1.17.9" } },
+    { "name": "async with another proof revision", "base": 4, "set": { "evidenceRevision": "unretained-local-run" } }
+  ],
+  "hints": {
+    "valid": [
+      "{\"v\":1,\"kind\":\"khala.inbox.hint\",\"bindingId\":\"binding-1\",\"generation\":3,\"reason\":\"released\"}\n",
+      "{\"v\":1,\"kind\":\"khala.inbox.hint\",\"bindingId\":\"binding-1\",\"generation\":3,\"reason\":\"catch_up\"}"
+    ],
+    "invalid": [
+      { "name": "carries a message body", "line": "{\"v\":1,\"kind\":\"khala.inbox.hint\",\"bindingId\":\"binding-1\",\"generation\":3,\"reason\":\"released\",\"body\":\"hello\"}\n" },
+      { "name": "carries a batch token", "line": "{\"v\":1,\"kind\":\"khala.inbox.hint\",\"bindingId\":\"binding-1\",\"generation\":3,\"reason\":\"released\",\"batchToken\":\"batch-1\"}\n" },
+      { "name": "carries a release id", "line": "{\"v\":1,\"kind\":\"khala.inbox.hint\",\"bindingId\":\"binding-1\",\"generation\":3,\"reason\":\"released\",\"releaseId\":\"release-1\"}\n" },
+      { "name": "two hints in one line", "line": "{\"v\":1,\"kind\":\"khala.inbox.hint\",\"bindingId\":\"binding-1\",\"generation\":3,\"reason\":\"released\"}\n{}\n" },
+      { "name": "unknown reason", "line": "{\"v\":1,\"kind\":\"khala.inbox.hint\",\"bindingId\":\"binding-1\",\"generation\":3,\"reason\":\"message\"}\n" },
+      { "name": "future version", "line": "{\"v\":2,\"kind\":\"khala.inbox.hint\",\"bindingId\":\"binding-1\",\"generation\":3,\"reason\":\"released\"}\n" },
+      { "name": "not JSON", "line": "wake\n" }
+    ]
+  }
+}
