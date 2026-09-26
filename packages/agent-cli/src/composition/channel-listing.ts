@@ -101,7 +101,7 @@ export function createHttpChannelListing(options: HttpChannelListingOptions): Ch
   };
 }
 
-function redirectsOffOrigin(response: Response, target: URL): boolean {
+export function redirectsOffOrigin(response: Response, target: URL): boolean {
   const location = response.headers.get('location');
   if (location === null) return false;
   try {
@@ -116,6 +116,6 @@ function refused(code: ChannelListRefusalCode): ChannelListResult {
   return { kind: 'refused', code };
 }
 
-async function discard(response: Response): Promise<void> {
+export async function discard(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => undefined);
 }

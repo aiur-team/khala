@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { FROZEN_HOOK_EVENTS, FROZEN_MCP_SERVER, FROZEN_PLUGIN_NAME, FROZEN_WATCHER_SCRIPT } from './contract';
+import {
+  CLAUDE_MCP_ENV, FROZEN_HOOK_EVENTS, FROZEN_MCP_SERVER, FROZEN_PLUGIN_NAME, FROZEN_SKILL_NAME, FROZEN_WATCHER_SCRIPT, SKILL_FILE,
+} from './contract';
 
 type Json = Record<string, unknown>;
 
@@ -43,6 +45,16 @@ export function validatePlugin(root: string): string[] {
   if (server && (server.command !== FROZEN_MCP_SERVER.command
     || JSON.stringify(server.args) !== JSON.stringify(FROZEN_MCP_SERVER.args))) {
     errors.push(`MCP entry ${FROZEN_MCP_SERVER.name} must run ${FROZEN_MCP_SERVER.command} ${FROZEN_MCP_SERVER.args.join(' ')}`);
+  }
+  if (server && JSON.stringify(server.env) !== JSON.stringify(CLAUDE_MCP_ENV)) {
+    errors.push(`MCP entry ${FROZEN_MCP_SERVER.name} must set only ${Object.keys(CLAUDE_MCP_ENV).join(', ')}`);
+  }
+
+  const skillPath = path.join(root, SKILL_FILE);
+  if (!fs.existsSync(skillPath)) {
+    errors.push(`missing bundled skill ${SKILL_FILE}`);
+  } else if (/^name:\s*(\S+)\s*$/m.exec(fs.readFileSync(skillPath, 'utf8').split(/^---$/m)[1] ?? '')?.[1] !== FROZEN_SKILL_NAME) {
+    errors.push(`bundled skill must be named ${FROZEN_SKILL_NAME}`);
   }
   return errors;
 }
