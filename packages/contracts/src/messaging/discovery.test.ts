@@ -22,6 +22,7 @@ import {
   type ValidatedGrantExchangeRequest,
   classifyGrantExchangeBinding,
   decodeAccessRequestStatus,
+  decodeChannelAccessReadiness,
   decodeChannelAccessRequest,
   decodeChannelCreateIntent,
   decodeChannelCreateReconciliation,
@@ -472,6 +473,24 @@ describe('discovery credentials and grant exchange', () => {
     expect(refuses(ciphertext.subarray(0, ciphertext.length - 1))).toBeNull();
     const other = sodium.crypto_box_keypair();
     expect(refuses(ciphertext, other.publicKey, other.privateKey)).toBeNull();
+  });
+
+  it('decodes a grant-free readiness acknowledgement and nothing more', () => {
+    const readiness = {
+      v: 1, operationId: 'op_access_1', requester: 'principal_1', origin: 'https://khala.example', sessionGeneration: 3,
+      deviceId: 'device_1', proofKeyThumbprint: 'A'.repeat(43), recipientKeyThumbprint: 'Q'.repeat(42) + 'A',
+    };
+    expect(decodeChannelAccessReadiness(readiness)).toEqual({ ok: true, value: readiness });
+    for (const bad of [
+      { ...readiness, grant: 'cagrant_x' },
+      { ...readiness, connected: true },
+      { ...readiness, v: 2 },
+      { ...readiness, origin: 'https://khala.example/path' },
+      { ...readiness, recipientKeyThumbprint: readiness.proofKeyThumbprint },
+      { ...readiness, recipientKeyThumbprint: 'short' },
+    ]) {
+      expect(decodeChannelAccessReadiness(bad).ok).toBe(false);
+    }
   });
 });
 
