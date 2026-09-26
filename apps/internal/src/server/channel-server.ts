@@ -575,6 +575,8 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     const result = store.timeline({
       channelId: params.channelId as RoomId,
       participantId: actor(principal!).participantId,
+      // A bound agent reads only what was said after its admission; humans read everything.
+      ...(principal!.kind === 'binding' ? { binding: principal!.binding } : {}),
       cursor: page.cursor,
       limit: page.limit,
     });

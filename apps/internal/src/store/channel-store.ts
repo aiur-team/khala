@@ -313,6 +313,16 @@ function channelFor(db: DatabaseSync, channelId: string, participantId: string):
   return snapshot;
 }
 
+/**
+ * The channel head when this binding generation was admitted. Admission shares no history,
+ * so the binding's feed and timeline reads both start after it, whatever cursor it presents.
+ */
+function admissionStart(db: DatabaseSync, binding: TrustedBinding, channelId: string): number {
+  return (db.prepare(`
+    SELECT start_sequence FROM discovery_activations WHERE binding_id = ? AND generation = ? AND channel_id = ?
+  `).get(binding.bindingId, binding.generation, channelId) as { start_sequence: number } | undefined)?.start_sequence ?? 0;
+}
+
 function allEvents(db: DatabaseSync, channelId: string): readonly StoredEvent[] | null {
   const rows = db.prepare('SELECT * FROM events WHERE channel_id = ? ORDER BY sequence').all(channelId) as unknown as EventRow[];
   return storedEvents(db, rows);
@@ -372,6 +382,8 @@ export interface ChannelStore {
   timeline(input: Readonly<{
     channelId: RoomId;
     participantId: ParticipantId;
+    /** A bound agent's read: it sees only what was said after its admission to the channel. */
+    binding?: TrustedBinding;
     cursor: string | null;
     limit: number;
   }>): TimelineResult;
@@ -751,11 +763,12 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
             || cursor.snapshotRevision > currentRevision || cursor.beforeSequence > cursor.snapshotHighWater + 1) {
             return { kind: 'rejected', code: 'invalid_cursor' } as const;
           }
+          const start = input.binding ? admissionStart(db, input.binding, input.channelId) : 0;
           const rows = db.prepare(`
             SELECT * FROM events
-            WHERE channel_id = ? AND sequence <= ? AND sequence < ?
+            WHERE channel_id = ? AND sequence <= ? AND sequence < ? AND sequence > ?
             ORDER BY sequence DESC LIMIT ?
-          `).all(input.channelId, cursor.snapshotHighWater, cursor.beforeSequence, input.limit + 1) as unknown as EventRow[];
+          `).all(input.channelId, cursor.snapshotHighWater, cursor.beforeSequence, start, input.limit + 1) as unknown as EventRow[];
           const selected = rows.slice(0, input.limit);
           const decoded = storedEvents(db, selected);
           if (!decoded) return { kind: 'unavailable' } as const;
@@ -786,11 +799,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           }
           const maximum = (db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM events WHERE channel_id = ?')
             .get(input.channelId) as { value: number }).value;
-          // An admitted binding's feed starts after the channel head at its activation, so it
-          // never receives what was said before it was admitted, whatever cursor it presents.
-          const start = (db.prepare(`
-            SELECT start_sequence FROM discovery_activations WHERE binding_id = ? AND generation = ? AND channel_id = ?
-          `).get(row.binding_id, row.generation, input.channelId) as { start_sequence: number } | undefined)?.start_sequence ?? 0;
+          const start = admissionStart(db, input.binding, input.channelId);
           const cursor = input.cursor === null
             ? { channelId: input.channelId, bindingId: row.binding_id, generation: row.generation, lastCoveredSequence: start }
             : decodeSubscriptionCursor(input.cursor);

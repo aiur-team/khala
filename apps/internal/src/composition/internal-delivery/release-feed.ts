@@ -30,7 +30,7 @@ export const MAX_PAGE_PAYLOAD_BYTES = 2 * 1024 * 1024;
 /** Per-release JSON overhead counted against the page budget on top of the payload. */
 const RELEASE_OVERHEAD_BYTES = 1024;
 /** The whole body of an oversized placeholder; the real body is never carried. */
-export const OVERSIZED_PLACEHOLDER_BODY = 'oversized: message body withheld; read it from the channel timeline by event';
+export const OVERSIZED_PLACEHOLDER_BODY = 'oversized: message body withheld; read it by event from the channel timeline, which shows you what was said since your admission';
 
 export type PauseRead = boolean | 'unavailable';
 
