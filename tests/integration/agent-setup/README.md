@@ -30,9 +30,9 @@ Unit coverage and per-mutation fault injection stay beside the setup modules
 | Packaged install | The tarball installs and runs outside the repository; CI asserts the pinned Node from `.node-version`. |
 | Clean lifecycle | A plan, a repeated plan, and a dry run are byte-identical and zero-write (bytes, modes, and mtimes). The confirmation carries harnesses, actions, paths, backup, digest, and request. Confirmed setup applies. A second setup changes and writes nothing. Bare `status` exits 0 and `status --check` exits 3 while Codex hooks await review. Confirmed remove restores every pre-Khala byte and absence. |
 | Native hook approval | After a simulated Codex approval, status is `configured_effect_unknown` (`ok: true`) and `--check` still exits 3, because Claude and Codex routes stay `unknown` until a live proof. Removal leaves the trust records intact. |
-| Mixed harness states | No harness is a zero-write `no_harness` (exit 0). With a supported Claude, an unsupported Codex, and no OpenCode, setup refuses (exit 3) before any write. A failed version probe differs from absence. Without the unsupported harness, only Claude is planned, and no absent harness gets a config root. |
+| Mixed harness states | No harness is a zero-write `no_harness` (exit 0). With a supported Claude, an old Codex, and no OpenCode, setup plans and applies only Claude and reports Codex `unsupported`; no skipped or absent harness gets a config root. Claude plus an untested OpenCode (1.15.6) sets up Claude and reports OpenCode `unsupported` (#419). With only unsupported harnesses detected, setup refuses (exit 3) before any write. A failed version probe differs from absence. |
 | Absent harnesses are reported | `status` and `setup` report every absent harness with `executable.present: false`, no detected version, and no components. Absent harnesses are never planned and create no config root. |
-| Unsupported upgrade | An unsupported version refuses setup, but manifest-driven removal still restores the baseline. |
+| Unsupported upgrade | Setup leaves a harness upgraded to an unsupported version unchanged and writes nothing, and manifest-driven removal still restores the baseline. |
 | Stale confirmation | After an observed target changes, the old digest returns the replacement plan (exit 5) and writes nothing. |
 | Drift-safe removal | A user edit to a managed file refuses the whole removal (exit 3) with no partial writes. Once the bytes match again, removal completes. |
 | Upgrade | Setup with the package, upgrade to a repacked `0.2.0-acceptance.1`, then remove. The result is the pre-Khala bytes, not the v1 postimage. |
@@ -55,6 +55,7 @@ source). The named test then failed:
 | `transaction.ts` `acquireLock`: treat a live holder as stale | `a second mutation while one holds the lock gets a stable busy result …` |
 | `plan.ts` `refusalState` and `transaction.ts` drift check: allow removal over drift | `drift refuses the whole removal …` |
 | `plan.ts` `observe`: skip a harness with no executable instead of reporting it absent | `absent harnesses are reported without creating their config roots` |
+| `plan.ts` and `transaction.ts`: let one unsupported harness refuse setup for all (pre-#419), or only the executor guard | `Claude plus an untested OpenCode sets up Claude …` |
 | `plan.ts` `prepare`: ignore an existing journal | `a crash mid-transaction leaves no torn file …` |
 | `transaction.ts` `rollback`: skip `restoreTarget`, so recovery restores nothing | `a crash mid-transaction is recovered by the next confirmed command` |
 | `cli/main.ts`: read the Claude descriptor from `$XDG_DATA_HOME` instead of `$XDG_STATE_HOME` | `the Claude hook entry re-reads a moved runtime descriptor …` |

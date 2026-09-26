@@ -323,6 +323,35 @@ describe('setup planning', () => {
     expect((await setup.lifecycle('remove', noConfirm)).state).toBe('confirmation_required');
   });
 
+  it('sets up the supported harnesses and reports an untested one as unsupported (#419)', async () => {
+    const machine = world();
+    install(machine, 'claude');
+    install(machine, 'opencode', '1.15.6');
+    const executor = countingExecutor();
+    const adapters = [fakeAdapter('claude'), fakeAdapter('opencode', { supported: false })];
+    const setup = service(machine, adapters, executor);
+    const planned = await setup.lifecycle('setup', noConfirm);
+    expect(planned.state).toBe('confirmation_required');
+    expect(planned.confirmation).toMatchObject({ harnesses: ['claude'] });
+    expect(planned.operations.every(operation => operation.harness === 'claude')).toBe(true);
+    const opencode = planned.harnesses.find(report => report.harness === 'opencode');
+    expect(opencode?.version).toEqual({ detected: '1.15.6', supported: false });
+    expect(planned.diagnostics).toContainEqual(expect.objectContaining({ code: 'harness_unsupported', harness: 'opencode' }));
+
+    const applied = await setup.lifecycle('setup', { dryRun: false, confirm: planned.planDigest });
+    expect(executor.plans[0]!.unsupportedHarnesses).toEqual(['opencode']);
+    expect(executor.plans[0]!.operations.every(operation => operation.harness === 'claude')).toBe(true);
+    // The fake executor writes nothing, so Claude still reads as not configured, never unsupported.
+    expect(applied).toMatchObject({ changed: true, state: 'drifted' });
+    expect(applied.diagnostics).toContainEqual(expect.objectContaining({ code: 'harness_unsupported', harness: 'opencode' }));
+
+    // Readiness follows the configurable harness; the untested one gates nothing.
+    const ready = [{ component: 'mcp_entry', state: 'ready' }] as const;
+    const status = await service(machine, [fakeAdapter('claude', { components: ready, route: 'native_cli_queue' }),
+      fakeAdapter('opencode', { supported: false })]).configuration();
+    expect(status).toMatchObject({ state: 'ready', ok: true });
+  });
+
   it.each(['drifted', 'conflict'] as const)('refuses setup and removal when a component is %s', async state => {
     const machine = world();
     install(machine, 'codex');

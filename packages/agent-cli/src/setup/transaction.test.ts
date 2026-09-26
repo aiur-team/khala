@@ -140,6 +140,12 @@ describe('setup transaction', () => {
     expect(await read(targets().config)).toBe(new TextDecoder().decode(ORIGINAL));
   });
 
+  it('applies setup for the supported harnesses while another detected harness is unsupported', async () => {
+    await seedConfig();
+    expectKind(await run({ ...setupV1(), unsupportedHarnesses: ['opencode'] }), 'committed');
+    expect((await manifest())!.entries.every(entry => entry.harness === 'claude')).toBe(true);
+  });
+
   it('upgrade retains the original pre-Khala baseline so removal restores the user bytes, not v1', async () => {
     await seedConfig();
     const t = targets();
