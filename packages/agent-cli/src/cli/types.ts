@@ -1,5 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
-import type { BindingId, EventRef, HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
+import type {
+  BindingId, EventRef, HarnessCapabilities, ListeningMode, SessionBinding,
+} from '@khala/contracts/delivery/index';
 import type { InternalRuntime } from '@khala/contracts/internal/command';
 import type { AccessRequestOutcome } from '@khala/contracts/messaging/discovery';
 import type { ChannelListingPort } from './channels/types.js';
@@ -35,6 +37,7 @@ const AGENT_ROUTE_MEMBERS = {
   native_cli_queue: true,
   agent_installed_listener: true,
   opencode_plugin: true,
+  native_hooks: true,
 } as const satisfies Record<AgentRoute, true>;
 export const AGENT_ROUTES = Object.freeze(Object.keys(AGENT_ROUTE_MEMBERS)) as readonly AgentRoute[];
 
@@ -53,12 +56,18 @@ export type AccessRequestResult =
   | Readonly<{ kind: 'status'; outcome: AccessRequestOutcome }>
   | Readonly<{ kind: 'refused'; code: 'invalid_link' }>
   | Readonly<{ kind: 'unavailable' }>;
+/** The held binding's effective listening mode; `effective` is null when no mode is currently usable. */
+export type AgentListeningModeStatus = Readonly<{
+  v: 1; bindingId: BindingId; generation: number; effective: ListeningMode | null;
+}>;
 export interface AgentClientPort {
   connect(link: string, signal?: AbortSignal): Promise<ConnectResult>;
   /** Present only on a descriptor-backed local client; asks the channel-access journal for a human grant. */
   requestAccess?(channelUrl: string, signal?: AbortSignal): Promise<AccessRequestResult>;
   send(input: Readonly<{ bindingId: BindingId | null; clientTxnId: string; body: string }>, signal?: AbortSignal): Promise<SendResult>;
   status(signal?: AbortSignal): Promise<AgentStatus>;
+  /** Absent until live composition supplies the listening-mode store; native hooks then deliver nothing. */
+  listeningMode?(signal?: AbortSignal): Promise<AgentListeningModeStatus>;
   listChannels: ChannelListingPort['listChannels'];
   listAgents: ChannelListingPort['listAgents'];
 }

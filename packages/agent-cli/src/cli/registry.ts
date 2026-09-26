@@ -1,4 +1,5 @@
 import { agentsCommand, channelsCommand } from './channels/commands.js';
+import { codexHookCommand } from './commands/codex-hook.js';
 import { connectCommand } from './commands/connect.js';
 import { internalCommand } from './commands/internal.js';
 import { joinCommand } from './commands/join.js';
@@ -50,6 +51,7 @@ export const CLI_COMMANDS: readonly CliCommand[] = Object.freeze([
   channelsCommand,
   agentsCommand,
   internalCommand,
+  codexHookCommand,
   joinCommand,
 ]);
 
