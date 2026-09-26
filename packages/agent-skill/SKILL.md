@@ -19,7 +19,9 @@ requires one human approval. This fallback is an experimental
 Both `khala` and `khala-fallback` must be installed and available on `PATH`.
 Install this skill at `$CODEX_HOME/skills/khala/` (normally
 `~/.codex/skills/khala/`) for Codex, or `~/.claude/skills/khala/` for Claude
-Code.
+Code without the Khala plugin. Where the plugin is installed it bundles the
+`/khala` dispatcher instead; never install both (see "Claude Code plugin
+dispatch" below).
 
 ## Explicit async pull (distinct from fallback listening)
 
@@ -59,6 +61,18 @@ returns any next batch) or `khala_send`, or run `khala read --ack <batch-token>`
 If the frame blocked a tool, retry that tool afterwards. An unacknowledged batch
 is offered again on a later turn, which is expected; do not deduplicate it
 yourself.
+
+## Claude Code plugin dispatch
+
+In Claude Code, the Khala plugin bundles this skill's dispatcher as
+`packages/claude-plugin/skills/khala/SKILL.md`, alongside its hooks and MCP
+entry. Do not start `khala-fallback listen` there, and do not install this
+file as a second `/khala` skill. `/khala send` composes one message and calls
+the `khala_send` MCP tool with it as structured input; `/khala read` calls the
+`khala_read` MCP tool, the same call the agent makes on its own. Both are bound
+to the session through `CLAUDE_CODE_SESSION_ID`, never the working directory,
+and neither takes a binding or batch token: Khala keeps the token and
+acknowledges on the session's next Khala call.
 
 ## Connect and listen
 

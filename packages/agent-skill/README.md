@@ -7,7 +7,9 @@ through `khala send` with message bytes on stdin.
 
 Install this directory at `$CODEX_HOME/skills/khala/` (by default
 `~/.codex/skills/khala/`) for Codex, or `~/.claude/skills/khala/` for Claude
-Code. Both the package-provided `khala-fallback` executable and the underlying
+Code without the Khala plugin. The plugin bundles its own `/khala send` and
+`/khala read` dispatcher (`packages/claude-plugin/skills/khala/SKILL.md`), so
+never install both. Both the package-provided `khala-fallback` executable and the underlying
 `khala` executable must be available on `PATH`.
 
 The package is deliberately a lifecycle around `@aiur/khala`, not a second

@@ -1,3 +1,4 @@
+import { isClaudeMcpEntry, runClaudeMcpServer } from '../../composition/claude-mcp.js';
 import { ReadOperation, sameHeldBinding } from '../../composition/read.js';
 import {
   postprocessMcpResult, postprocessPreselectedMcpResult, type McpPostprocessSuppression,
@@ -14,6 +15,10 @@ export const mcpServeCommand: CliCommand = {
   name: 'mcp-serve',
   async run(args, deps) {
     if (args.length !== 0) throw new CliError('invalid_arguments');
+    if (isClaudeMcpEntry(deps.env)) {
+      await runClaudeMcpServer({ claude: deps.claude, env: deps.env ?? {}, input: deps.stdin, output: deps.stdout, signal: deps.signal });
+      return 0;
+    }
     const current = publicStatus(await deps.client.status(deps.signal));
     if (!current.connected || current.binding === null) throw new CliError('not_connected');
     const heldBinding = current.binding;
