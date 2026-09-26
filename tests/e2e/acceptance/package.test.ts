@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PROVENANCE_SUFFIX, packageStager } from '../../../scripts/acceptance/adapters/package';
-import { checkCommand } from '../../../scripts/acceptance/guard';
+import { checkCommand, npxArgv } from '../../../scripts/acceptance/guard';
 import { decodeProfile } from '../../../scripts/acceptance/profile';
 import { runAcceptance } from '../../../scripts/acceptance/runner';
 import type { KhalaPackage, PackagePort } from '../../../scripts/acceptance/types';
@@ -170,10 +170,18 @@ describe('live acceptance runner: build under test', () => {
 describe('runner command guard: package specs', () => {
   const copy = '/state/khala-acceptance/packages/package-x1/aiur-khala.tgz';
 
+  it('runs a tarball through --package and an npm pin directly', () => {
+    expect(npxArgv(copy, ['status'])).toEqual(['npx', '--yes', '--package', copy, 'khala', 'status']);
+    expect(npxArgv('@aiur/khala@0.4.0', ['internal'])).toEqual(['npx', '--yes', '@aiur/khala@0.4.0', 'internal']);
+  });
+
   it('allows exactly the staged tarball copy', () => {
-    expect(checkCommand(['npx', '--yes', copy, 'status'], copy)).toEqual({ ok: true });
-    expect(checkCommand(['npx', '--yes', copy, 'internal'], copy)).toEqual({ ok: true });
-    expect(checkCommand(['npx', '--yes', '/elsewhere/aiur-khala.tgz', 'status'], copy).ok).toBe(false);
+    expect(checkCommand(npxArgv(copy, ['status']), copy)).toEqual({ ok: true });
+    expect(checkCommand(npxArgv(copy, ['internal', '--resume', 'channel_abc']), copy)).toEqual({ ok: true });
+    expect(checkCommand(npxArgv('/elsewhere/aiur-khala.tgz', ['status']), copy).ok).toBe(false);
+    // npx runs a bare path as a command, never as the package.
+    expect(checkCommand(['npx', '--yes', copy, 'status'], copy).ok).toBe(false);
+    expect(checkCommand(['npx', '--yes', '--package', copy, 'khala', 'run', 'claude'], copy).ok).toBe(false);
   });
 
   it.each([

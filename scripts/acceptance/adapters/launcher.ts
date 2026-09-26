@@ -4,7 +4,7 @@
 // starts and the only one it closes; agent CLIs are never touched.
 
 import { spawn } from 'node:child_process';
-import { assertCommand } from '../guard';
+import { assertCommand, npxArgv } from '../guard';
 import type {
   AccessRequest, LaunchedServer, LauncherPort, ModeRequest, OwnerSession, StopReply, StopTarget, TimelineEvent,
 } from '../types';
@@ -150,7 +150,7 @@ export async function reachable(origin: string): Promise<boolean> {
 export function npxLauncher(env: NodeJS.ProcessEnv = process.env): LauncherPort {
   return {
     async start(khalaPackage, resume) {
-      const argv = ['npx', '--yes', khalaPackage, 'internal', ...(resume === null ? [] : ['--resume', resume])];
+      const argv = npxArgv(khalaPackage, ['internal', ...(resume === null ? [] : ['--resume', resume])]);
       assertCommand(argv, khalaPackage);
       const child = spawn(argv[0]!, argv.slice(1), { env, stdio: ['ignore', 'pipe', 'inherit'] });
       let stdout = '';

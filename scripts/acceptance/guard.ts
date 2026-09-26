@@ -44,11 +44,21 @@ export function checkCommand(argv: readonly string[], khalaPackage: string | nul
     if (khalaPackage === null || !(NPM_PIN.test(khalaPackage) || TARBALL_PATH.test(khalaPackage))) {
       return { ok: false, reason: 'npx runs only an exact npm pin or a digest-checked tarball, never a live-built tree' };
     }
-    const [flag, spec, ...rest] = args;
-    if (flag !== '--yes' || spec !== khalaPackage) return { ok: false, reason: `npx must run exactly ${khalaPackage}` };
-    return khalaArguments(rest);
+    const prefix = npxArgv(khalaPackage, []).slice(1);
+    if (prefix.some((part, index) => args[index] !== part)) return { ok: false, reason: `npx must run exactly ${khalaPackage}` };
+    return khalaArguments(args.slice(prefix.length));
   }
   return { ok: false, reason: `${name} is not a runner command` };
+}
+
+/**
+ * `npx` for the staged spec. An npm pin is the package argument itself; a tarball
+ * must go through `--package`, because npx runs a bare path as a command.
+ */
+export function npxArgv(khalaPackage: string, args: readonly string[]): string[] {
+  return TARBALL_PATH.test(khalaPackage)
+    ? ['npx', '--yes', '--package', khalaPackage, 'khala', ...args]
+    : ['npx', '--yes', khalaPackage, ...args];
 }
 
 export function assertCommand(argv: readonly string[], khalaPackage: string | null): void {
