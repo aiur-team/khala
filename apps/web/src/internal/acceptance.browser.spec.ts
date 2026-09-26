@@ -173,7 +173,7 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     assert.match(await stopStatus.innerText(), /Agent delivery stopped\. 2 agent bindings were revoked\./);
 
     // Stop revoked delivery, not the server: bindings can no longer read or write,
-    await assert.doesNotReject(async () => assert.equal(await reachable(origin), true, 'the server is still running after Stop'));
+    assert.equal(await reachable(origin), true, 'the server is still running after Stop');
     assert.equal((await pullReleases(ada, origin)).status, 401, 'a revoked binding receives no delivery');
     assert.equal((await pullReleases(bea, origin)).status, 401, 'a revoked binding receives no delivery');
     assert.notEqual((await bea.send('Bea: after Stop')).code, 0, 'a revoked binding cannot post');
