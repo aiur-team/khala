@@ -3,9 +3,12 @@ import type { Readable, Writable } from 'node:stream';
 import { ChannelAccessService, defaultOperationId } from '../cli/channels/access.js';
 import { ChannelListingService, decodeRoster } from '../cli/channels/service.js';
 import type { AccessRequestInput, AccessStatusInput, ChannelListInput } from '../cli/channels/types.js';
+import { ChannelCreateService } from '../cli/channels/create/service.js';
+import type { CreateRequestInput } from '../cli/channels/create/types.js';
 import type { AgentClientPort } from '../cli/types.js';
 import { CliError } from '../cli/errors.js';
 import { channelAccessStatusTool, requestChannelAccessTool } from '../mcp/channels/access-tools.js';
+import { createChannelTool } from '../mcp/channels/create/tools.js';
 import { LIST_AGENTS_TOOL_NAME, listChannelsTool, type ChannelToolsPort } from '../mcp/channels/tools.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import { plainObject } from '../cli/validation.js';
@@ -119,7 +122,10 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry): ToolRegistry 
 
   return createToolRegistry([
     sendTool, readTool, statusTool, listAgentsTool,
-    ...[listChannelsTool, requestChannelAccessTool, channelAccessStatusTool].map(tool => sessionBound(withoutBatchToken(tool), entry)),
+    // A create retry under the same operation ID reads that request's current state, so the
+    // plugin's frozen tool set needs no separate create-status tool.
+    ...[listChannelsTool, requestChannelAccessTool, channelAccessStatusTool, createChannelTool]
+      .map(tool => sessionBound(withoutBatchToken(tool), entry)),
   ]);
 }
 
@@ -143,7 +149,7 @@ function withoutBatchToken(tool: McpTool): McpTool {
 }
 
 /**
- * Discovery and access run against this Claude session and nothing else: the entry's
+ * Discovery, access and create run against this Claude session and nothing else: the entry's
  * `CLAUDE_CODE_SESSION_ID` is carried on every call, so a request is filed for this
  * session and a grant can bind no other. Without a valid session ID the call is
  * refused before any port runs. No argument can name a session or a binding.
@@ -172,9 +178,11 @@ function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
     listChannels: (input: ChannelListInput) => raw(() => entry.listChannels(input)),
     requestChannelAccess: (input: AccessRequestInput) => raw(() => entry.requestAccess(input)),
     channelAccessStatus: (input: AccessStatusInput) => raw(() => entry.accessStatus(input)),
+    requestChannelCreate: (input: CreateRequestInput) => raw(() => entry.requestCreate(input)),
   } as unknown as AgentClientPort;
   const listing = new ChannelListingService(port);
   const access = new ChannelAccessService(port);
+  const create = new ChannelCreateService(port);
   return {
     listChannels: input => listing.listChannels(input),
     listAgents: async () => { throw new CliError('internal_error'); },
@@ -183,9 +191,10 @@ function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
     request: input => access.request(input.operationId === defaultOperationId(input.target)
       ? { ...input, operationId: sessionOperationId(entry.session, input.operationId) } : input),
     status: input => access.status(input),
-    // Claude-mode `khala_create_channel` is wired by #377; until then create reports unavailable.
-    createChannel: async () => { throw new CliError('transport_unavailable'); },
-    createChannelStatus: async () => { throw new CliError('transport_unavailable'); },
+    // A create intent names no target, so the caller's operation ID is used as given.
+    createChannel: input => create.request(input),
+    // Not registered here: a create retry under the same operation ID reads its state.
+    createChannelStatus: async () => { throw new CliError('internal_error'); },
   };
 }
 

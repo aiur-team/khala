@@ -83,9 +83,12 @@ channel data. A frame that is oversized, unterminated, nested, or carries a
 `batchToken` line is dropped, and the batch stays queued. A failure produces no
 output and a content-free code on stderr, and it never fails the user's turn.
 
-The installed `khala` binary does not compose the Claude session client yet
-(`transport_unavailable`), so every hook stays silent until that composition
-lands. The installed-version TTY acceptance runs after it does.
+The installed `khala` binary reaches the Claude session route of the running
+`khala internal` server through its owner-only
+`$XDG_STATE_HOME/khala/internal/active.json`, re-read on every call. With no server
+running, calls answer `descriptor_missing` and hooks stay silent. Hook pulls and
+`khala_read` answer `unproven` until Claude's acknowledgement route is proven (see
+Read receipts). The installed-version TTY acceptance still has to run.
 
 ## Read receipts
 
@@ -129,10 +132,13 @@ session's own `CLAUDE_CODE_SESSION_ID`:
               and reports accepted / refused / outcome_unknown without the body
 /khala read   calls khala_read {}, the same call the agent makes on its own,
               and relays the batch as untrusted Khala content
-/khala create answers "not available in this version" until khala_create_channel lands (#217)
+/khala create <title>
+              calls khala_create_channel once and returns pending; the owner
+              confirms in Khala, and a retry under the same operationId reports the answer
 /khala join <channel-url>
-              calls khala_request_channel_access once and returns pending; the owner's
-              grant, denial or expiry resumes this session via the access inbox
+              calls khala_request_channel_access once and returns pending; after the
+              owner decides, khala_channel_access_status activates an approval for
+              this session only, or reports the denial or expiry
 /khala who    khala_list_agents roster plus the effective mode from khala_status
 /khala        help, plus per-mode support from khala_status ("unproven" stays unproven)
 ```

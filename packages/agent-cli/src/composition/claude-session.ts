@@ -5,6 +5,7 @@ import type { AgentListeningModeReadResult } from '@khala/connector/agent/listen
 import { CliError } from '../cli/errors.js';
 import type { InboxBatch } from '../cli/inbox.js';
 import type { AccessRequestInput, AccessStatusInput, ChannelListInput } from '../cli/channels/types.js';
+import type { CreateRequestInput } from '../cli/channels/create/types.js';
 import type { SendResult } from '../cli/types.js';
 import { plainObject, validIdentifier } from '../cli/validation.js';
 import type { ReadOperationPort } from '../mcp/read-tool.js';
@@ -110,6 +111,8 @@ export interface ClaudeSessionAccess {
   listChannels(principal: ClaudePrincipal, sessionId: string, input: ChannelListInput): Promise<unknown>;
   request(principal: ClaudePrincipal, sessionId: string, input: AccessRequestInput): Promise<unknown>;
   status(principal: ClaudePrincipal, sessionId: string, input: AccessStatusInput): Promise<unknown>;
+  /** A create intent filed for this session; it only asks, and admits nothing. */
+  create(principal: ClaudePrincipal, sessionId: string, input: CreateRequestInput): Promise<unknown>;
 }
 
 export type ClaudeSessionAdapterOptions = Readonly<{
@@ -187,6 +190,7 @@ export interface ClaudeSessionAdapter {
   listChannels(call: ClaudeSessionCall, input: ChannelListInput): Promise<ClaudeAccessOutcome>;
   requestAccess(call: ClaudeSessionCall, input: AccessRequestInput): Promise<ClaudeAccessOutcome>;
   accessStatus(call: ClaudeSessionCall, input: AccessStatusInput): Promise<ClaudeAccessOutcome>;
+  requestCreate(call: ClaudeSessionCall, input: CreateRequestInput): Promise<ClaudeAccessOutcome>;
 }
 
 type Resolved = Readonly<{ binding: SessionBinding; scope: SessionScope; services: ClaudeBindingServices }>;
@@ -393,6 +397,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
     listChannels: (call, input) => access(call, (port, principal) => port.listChannels(principal, call.sessionId, input)),
     requestAccess: (call, input) => access(call, (port, principal) => port.request(principal, call.sessionId, input)),
     accessStatus: (call, input) => access(call, (port, principal) => port.status(principal, call.sessionId, input)),
+    requestCreate: (call, input) => access(call, (port, principal) => port.create(principal, call.sessionId, input)),
 
     async roster(call) {
       return guarded(async () => {
