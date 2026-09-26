@@ -107,6 +107,55 @@ restarting the connector starts without discovery authority and requires fresh o
 The trusted-origin list is injected explicitly, so a syntactically valid but unconfigured HTTPS
 origin is rejected before browser launch.
 
+## Channel access activation
+
+`channel-access-activation.ts` recovers an owner-approved channel-access request (RD5B). It picks up where
+`channel-discovery` hands off: the agent has already requested access with an operation ID.
+
+1. **Journal.** Call `journalChannelAccessRequest` before sending the request. The operation, requester,
+   origin, session generation and proof-key thumbprint are durable, so `resumeChannelAccessActivations`
+   continues after a restart.
+2. **Poll.** `activateChannelAccess` polls requester status. The backoff ceiling doubles from 1 s to a
+   60 s cap, the delay is jittered in the ceiling's upper half, and each call makes at most `maxAttempts`
+   tries. `pending_owner` returns `pending`. Unknown status stays `unavailable`, and nothing is reserved.
+3. **Key before exchange.** On approval, the connector reserves a device and generates a distinct X25519
+   recovery keypair with libsodium. The record and the private key commit together before the first
+   exchange call.
+4. **Open and validate.** The envelope's version, algorithm and recipient thumbprint are checked, and the
+   box is opened. `validateSealedGrantPayload` then checks the sealed operation, requester, origin,
+   generation, device and both thumbprints. A lost response re-fetches the same stored envelope.
+5. **Activate.** The grant is redeemed once. The binding and capability are checked like bootstrap
+   admission, the device is activated, and the `review`, unpaused trust baseline is required. After
+   admission the record keeps the binding and a recovery window: seven days from sealing. A crash or
+   repair from here resumes by operation ID (`redeem.resume`) with the same device and generation, and
+   needs no unexpired grant. Once the window has passed, the operation closes as `expired`.
+6. **Readiness.** Only an acknowledged readiness moves the record to `connected`. The service then reports
+   `connected` and deletes its envelope. The local private key is cleared.
+
+| Result | Meaning |
+|---|---|
+| `connected` | Readiness was acknowledged. `reused: true` means an earlier call already finished |
+| `pending` | The owner has not decided; call again later |
+| `unavailable` | Nothing conclusive happened; call again with the same operation |
+| `repair_required` | A known local failure. `activateChannelAccess(id, ports, { repair: true })` resumes the same operation and device without a new owner prompt. The exception is `recovery_key_lost` or `grant_expired` before admission: these need a new grant, and the connector never requests one |
+| `closed` | Denied, expired, revoked or closed by the service |
+
+A private key lost **before** a result was sealed is rotated, and the service supersedes the old one. After
+consumption, the service refuses a new key (`encryption_key_mismatch`) and the operation becomes
+`repair_required: recovery_key_lost`. Private key material lives only in the owner-only ledger
+(`storage/channel-access.ts`, in its own column). It never enters a record, result or log.
+
+| Port | Supplied by |
+|---|---|
+| `journal` | `createChannelAccessActivationStore(storage)` |
+| `status` | `createHttpChannelAccessStatus({ signer, trustedOrigins, credential })`, using the live discovery credential |
+| `exchange` | `createHttpChannelAccessClient({ signer, trustedOrigins })`: exchange and readiness routes with DPoP proofs |
+| `redeem` | Grant redemption, and `resume` of an admitted operation by ID without the grant. The hosted routes are not built yet; both must be idempotent per operation, like `BootstrapAdmissionPort` |
+| `devices` | The same `ConnectorDevicePort` bootstrap uses |
+| `trust` | Trust initialization for the new binding (`@khala/policy` `initialTrustState` gives the review baseline) |
+
+Khala never launches or terminates the user's agent process in this flow.
+
 ## Not proven here
 
 Tests use injected doubles plus a real loopback listener and real Ed25519 signatures, so

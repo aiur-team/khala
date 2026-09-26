@@ -46,6 +46,15 @@ export interface GrantExchangeAuthorityPort {
     input: Readonly<{ authorization: ChannelAccessAuthorization; operationId: string }>,
     options?: CallOptions,
   ): Promise<'closed' | 'unavailable'>;
+  /**
+   * Moves the requester's journal row to `connected`. Called only for a sealed
+   * exchange whose connector acknowledged local activation; idempotent per
+   * `readyOperationId`, and `connected` again when the row already is.
+   */
+  markConnected(
+    input: GrantExchangeAuthorityInput & Readonly<{ readyOperationId: string }>,
+    options?: CallOptions,
+  ): Promise<'connected' | 'closed' | 'unavailable'>;
 }
 
 export type ChannelAdmissionRequest = Readonly<{
