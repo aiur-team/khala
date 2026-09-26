@@ -10,6 +10,7 @@
  * on it (the #178 amendment); there is no `UserPromptSubmit` registration.
  */
 export const FROZEN_HOOK_EVENTS = {
+  UserPromptSubmit: ['hooks/user-prompt-submit.mjs'],
   PostToolUse: ['hooks/post-tool-use.mjs'],
   Stop: ['hooks/stop.mjs', 'hooks/stop-watcher.mjs'],
   SessionEnd: ['hooks/session-end.mjs'],

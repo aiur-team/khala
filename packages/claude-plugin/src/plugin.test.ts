@@ -37,17 +37,25 @@ describe('claude plugin scaffold', () => {
     expect(validatePlugin(copy)).toContain('hook event PreToolUse is not in the frozen list');
   });
 
-  it('fails validation when UserPromptSubmit is registered or the watcher loses asyncRewake', () => {
+  it('fails validation when a hook other than the Stop watcher sets asyncRewake, or the watcher loses it', () => {
     const copy = copyPlugin();
     const file = path.join(copy, 'hooks/hooks.json');
     const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
-    manifest.hooks.UserPromptSubmit = manifest.hooks.PostToolUse;
+    manifest.hooks.UserPromptSubmit[0].hooks[0].asyncRewake = true;
     delete manifest.hooks.Stop[0].hooks[1].asyncRewake;
     fs.writeFileSync(file, JSON.stringify(manifest));
-    expect(validatePlugin(copy)).toEqual(expect.arrayContaining([
-      'hook event UserPromptSubmit is not in the frozen list',
-      'hooks/stop-watcher.mjs must set asyncRewake',
-    ]));
+    const errors = validatePlugin(copy);
+    expect(errors.some(e => e.includes('user-prompt-submit.mjs') && e.includes('asyncRewake'))).toBe(true);
+    expect(errors).toEqual(expect.arrayContaining(['hooks/stop-watcher.mjs must set asyncRewake']));
+  });
+
+  it('fails validation when a hook event outside the frozen list is registered', () => {
+    const copy = copyPlugin();
+    const file = path.join(copy, 'hooks/hooks.json');
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    manifest.hooks.PreToolUse = manifest.hooks.PostToolUse;
+    fs.writeFileSync(file, JSON.stringify(manifest));
+    expect(validatePlugin(copy)).toEqual(expect.arrayContaining(['hook event PreToolUse is not in the frozen list']));
   });
 
   it('fails validation when a frozen hook event is dropped or the MCP entry is renamed', () => {

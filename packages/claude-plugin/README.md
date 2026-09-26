@@ -23,7 +23,7 @@ is the source; `validatePlugin` enforces it.
 | Surface | Frozen names |
 |---|---|
 | Plugin | `khala` |
-| Hook events | `PostToolUse`, `Stop`, `SessionEnd`; the idle watcher is a second `Stop` entry with `asyncRewake` (#178 amendment, no `UserPromptSubmit`) |
+| Hook events | synchronous `UserPromptSubmit` (claim hook), `PostToolUse`, `Stop`, `SessionEnd`; the idle watcher is a second `Stop` entry and the only hook allowed `asyncRewake` (#178 amendment) |
 | Hook commands | `hooks/post-tool-use.mjs`, `hooks/stop.mjs`, `hooks/stop-watcher.mjs`, `hooks/session-end.mjs` |
 | Skill and commands | skill `khala`; exact forms `/khala send`, `/khala read`, `/khala create`, `/khala join <channel-url>`, `/khala who` |
 | MCP entry | server `khala`, launched as `khala mcp-serve`; tools `khala_send`, `khala_read`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_list_agents` |
