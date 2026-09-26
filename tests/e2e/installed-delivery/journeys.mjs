@@ -1,10 +1,13 @@
 // One delivery journey per harness Khala installs an entry for. Each sets up a fresh
 // machine with the packed package, starts the installed `khala internal`, and drives
 // only that harness's installed entry, read back from its harness config: join, the
-// owner's approval, one delivered message, `khala_read`, the acknowledgement on the next
-// call, and the owner's Stop ending delivery. A harness whose route is intentionally
-// unproven must refuse honestly instead. Every failure is a `DeliveryFailure` naming
-// the harness, so a broken entry fails the suite under that harness's name.
+// owner's approval, one delivered message, `khala_read`, the next call advancing the
+// agent's read cursor, and the owner's Stop ending delivery. A harness whose route is
+// intentionally unproven must refuse honestly instead. Every failure is a
+// `DeliveryFailure` naming the harness, so a broken entry fails the suite under that
+// harness's name. A delivering journey resolves to whether the owner's receipts show
+// the agent acknowledged the delivered message, which the suite asserts as todo until
+// internal mode records acknowledgements (#442).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,6 +33,20 @@ function join(install, machine, harness, sessionId, channelUrl) {
   return { first: joined(), again: joined };
 }
 
+/**
+ * Whether the owner's receipts show `agent_acknowledged` for the delivered message,
+ * given a moment to project. Returned rather than asserted, so the suite can mark it
+ * todo until #442 lands without skipping the rest of the journey.
+ */
+async function ownerAcknowledgement(launch, eventId) {
+  const deadline = Date.now() + 3_000;
+  for (;;) {
+    if ((await launch.owner.acknowledgedEvents()).includes(eventId)) return { eventId, acknowledged: true };
+    if (Date.now() > deadline) return { eventId, acknowledged: false };
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
 /** The installed MCP entry answers as Khala and serves its read and send tools. */
 async function assertKhalaServer(mcp) {
   const initialized = await mcp.initialize();
@@ -44,7 +61,7 @@ async function assertKhalaServer(mcp) {
  * Claude Code: the plugin's `.mcp.json` server, launched with the session in
  * `CLAUDE_CODE_SESSION_ID`, and its hooks run through `sh -c` with `CLAUDE_PLUGIN_ROOT`.
  * The session asks through `khala_request_channel_access`; the grant settles at the
- * installed Stop hook. `khala_read` delivers and the next Khala call acknowledges.
+ * installed Stop hook. `khala_read` delivers and the next Khala call advances the cursor.
  */
 async function claude({ machine, launch }) {
   const h = 'claude';
@@ -69,15 +86,16 @@ async function claude({ machine, launch }) {
       const status = (await mcp.call('khala_channel_access_status', { operationId })).structuredContent;
       assert.equal(status?.outcome, 'connected', JSON.stringify(status));
     });
-    await launch.owner.say('installed delivery for claude');
+    const deliveredId = await launch.owner.say('installed delivery for claude');
     await step(h, 'khala_read delivers the message', async () => {
       const read = resultText(await mcp.call(READ_TOOL));
       assert.match(read, /installed delivery for claude/, read);
     });
-    await step(h, 'the next Khala call acknowledges the read batch', async () => {
+    await step(h, "the next Khala call advances the agent's read cursor", async () => {
       await mcp.call('khala_status');
       assert.deepEqual((await mcp.call(READ_TOOL)).structuredContent, { kind: 'empty' });
     });
+    const acknowledgement = await step(h, "the owner's receipts are read", () => ownerAcknowledgement(launch, deliveredId));
     await step(h, 'the reply reaches the channel', async () => {
       assert.equal((await mcp.call(SEND_TOOL, { message: 'claude replies' })).structuredContent?.kind, 'accepted');
       assert.match(await launch.owner.timeline(), /claude replies/);
@@ -90,6 +108,7 @@ async function claude({ machine, launch }) {
       const after = await hook('PostToolUse', { tool_name: 'Bash' });
       assert.equal(after.stdout, '', `a hook delivered after Stop: ${after.stdout}`);
     });
+    return acknowledgement;
   } finally {
     await mcp.close();
   }
@@ -118,7 +137,7 @@ async function codex({ install, machine, launch }) {
     });
     await step(h, 'the owner approves the request', () => launch.owner.approve(h));
     await step(h, 'the approved join connects', () => assert.equal(joined.again()?.outcome, 'connected'));
-    await launch.owner.say('installed delivery for codex');
+    const deliveredId = await launch.owner.say('installed delivery for codex');
     await step(h, 'the installed UserPromptSubmit hook delivers the message', async () => {
       const delivered = await hook('UserPromptSubmit', { prompt: 'continue' });
       assert.equal(delivered.code, 0, delivered.stderr);
@@ -132,12 +151,13 @@ async function codex({ install, machine, launch }) {
       assert.equal(batchToken(resultText(await mcp.call(READ_TOOL, {}, meta))), first, 'an unacknowledged batch is offered again');
       return first;
     });
-    await step(h, 'the next call acknowledges the batch', async () => {
+    await step(h, "the next call advances the agent's read cursor", async () => {
       const sent = (await mcp.call(SEND_TOOL, { message: 'codex replies', ackBatchToken: token }, meta)).structuredContent;
       assert.equal(sent?.kind, 'accepted', JSON.stringify(sent));
       assert.deepEqual((await mcp.call(READ_TOOL, {}, meta)).structuredContent, { kind: 'empty' });
       assert.match(await launch.owner.timeline(), /codex replies/);
     });
+    const acknowledgement = await step(h, "the owner's receipts are read", () => ownerAcknowledgement(launch, deliveredId));
     await step(h, 'Stop ends delivery', async () => {
       const stopped = await launch.owner.stopAll();
       assert.deepEqual(stopped.stopped.map(entry => entry.harness), [h]);
@@ -146,6 +166,7 @@ async function codex({ install, machine, launch }) {
       const after = await hook('UserPromptSubmit', { prompt: 'continue' });
       assert.doesNotMatch(after.stdout, /after Stop/, 'a hook delivered after Stop');
     });
+    return acknowledgement;
   } finally {
     await mcp.close();
   }
@@ -176,7 +197,7 @@ async function opencode({ install, machine, launch }) {
     await step(h, 'the approved join connects', () => assert.equal(joined.again()?.outcome, 'connected'));
     // The `join` ran in the agent's bash tool: the first hook the plugin sees after it.
     await session.afterTool('bash');
-    await launch.owner.say('installed delivery for opencode');
+    const deliveredId = await launch.owner.say('installed delivery for opencode');
     const delivered = await step(h, 'the plugin delivers the message to the idle session', async () => {
       const prompts = await eventually(() => session.prompts, list => list.length > 0, { what: 'promptAsync' });
       assert.equal(prompts.length, 1);
@@ -191,12 +212,13 @@ async function opencode({ install, machine, launch }) {
       assert.equal(readToken, /"batchToken":"([^"]+)"/.exec(delivered)?.[1], 'khala_read returns the batch the plugin delivered');
       return readToken;
     });
-    await step(h, 'the next call acknowledges the batch', async () => {
+    await step(h, "the next call advances the agent's read cursor", async () => {
       const sent = JSON.parse(await session.tool(SEND_TOOL, { message: 'opencode replies', ackBatchToken: token }));
       assert.equal(sent.kind, 'accepted', JSON.stringify(sent));
       assert.deepEqual(JSON.parse(await session.tool(READ_TOOL)), { kind: 'empty' });
       assert.match(await launch.owner.timeline(), /opencode replies/);
     });
+    const acknowledgement = await step(h, "the owner's receipts are read", () => ownerAcknowledgement(launch, deliveredId));
     await step(h, 'Stop ends delivery', async () => {
       const stopped = await launch.owner.stopAll();
       assert.deepEqual(stopped.stopped.map(entry => entry.harness), [h]);
@@ -206,6 +228,7 @@ async function opencode({ install, machine, launch }) {
       await new Promise(resolve => setTimeout(resolve, 1_500));
       assert.equal(session.prompts.length, 1, 'the plugin prompted after Stop');
     });
+    return acknowledgement;
   } finally {
     await session.close();
   }
@@ -266,7 +289,8 @@ async function cursor({ install, machine, launch, status }) {
 export const JOURNEYS = Object.freeze({ claude, codex, opencode, cursor });
 
 /**
- * Runs one harness's journey on a fresh machine and launch. With `stub`, that harness's
+ * Runs one harness's journey on a fresh machine and launch. A delivering journey
+ * resolves to the owner's acknowledgement evidence; Cursor's resolves to nothing. With `stub`, that harness's
  * installed entries are first rewritten, in its own config, to ones that bind nothing:
  * the wrong-implementation check.
  */
@@ -276,7 +300,7 @@ export async function runJourney(install, harness, { stub = false } = {}) {
   const launch = await step(harness, 'khala internal starts', () => startInternal(install, machine));
   try {
     // Any failure outside a named step still names the harness.
-    await step(harness, 'journey', () => JOURNEYS[harness]({ install, machine, launch, status }));
+    return await step(harness, 'journey', () => JOURNEYS[harness]({ install, machine, launch, status }));
   } finally {
     await launch.stop();
   }

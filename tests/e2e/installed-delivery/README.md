@@ -27,10 +27,17 @@ tarball it publishes. `KHALA_SETUP_KEEP=1` keeps the scratch machines.
 
 | Harness | Entry, as read from its config | Journey |
 | --- | --- | --- |
-| Claude | `~/.claude/settings.json` → marketplace → plugin `.mcp.json` (spawned with `CLAUDE_CODE_SESSION_ID`) and `hooks/hooks.json` (run through `sh -c` with `CLAUDE_PLUGIN_ROOT`) | `khala_request_channel_access` → owner approves → the installed Stop hook settles the grant → `khala_read` delivers → the next call (`khala_status`) acknowledges, so the next read is empty → `khala_send` reaches the timeline → Stop: read refused `session_not_bound`, hooks silent |
-| Codex | `~/.codex/config.toml` `mcp_servers.khala` (each call names its thread in `_meta.threadId`) and `~/.codex/hooks.json`, trusted as Codex's review dialog records it | `khala internal discovery` + `join` under the thread ID, as the skill says → owner approves → `join` connects → the installed UserPromptSubmit hook delivers → `khala_read` returns the batch again until it is acknowledged → `khala_send` with `ackBatchToken` → read is empty → Stop: read refused `not_connected`, hook silent |
-| OpenCode | `~/.config/opencode/opencode.json` `plugin` URL, imported by `opencode-host.mjs` running as OpenCode 1.17.10. Only OpenCode's in-process client is a fake | discovery + `join` → owner approves → the plugin wakes the idle session with one `promptAsync` → `khala_read` returns that batch → `khala_send` with `ackBatchToken` → read is empty → Stop: read refused `not_connected`, no further prompt |
+| Claude | `~/.claude/settings.json` → marketplace → plugin `.mcp.json` (spawned with `CLAUDE_CODE_SESSION_ID`) and `hooks/hooks.json` (run through `sh -c` with `CLAUDE_PLUGIN_ROOT`) | `khala_request_channel_access` → owner approves → the installed Stop hook settles the grant → `khala_read` delivers → the next call (`khala_status`) advances the agent's read cursor, so the next read is empty → `khala_send` reaches the timeline → Stop: read refused `session_not_bound`, hooks silent |
+| Codex | `~/.codex/config.toml` `mcp_servers.khala` (each call names its thread in `_meta.threadId`) and `~/.codex/hooks.json`, trusted as Codex's review dialog records it | `khala internal discovery` + `join` under the thread ID, as the skill says → owner approves → `join` connects → the installed UserPromptSubmit hook delivers → `khala_read` returns the batch again until the next call acknowledges it → `khala_send` with `ackBatchToken` advances the read cursor, so the read is empty → Stop: read refused `not_connected`, hook silent |
+| OpenCode | `~/.config/opencode/opencode.json` `plugin` URL, imported by `opencode-host.mjs` running as OpenCode 1.17.10. Only OpenCode's in-process client is a fake | discovery + `join` → owner approves → the plugin wakes the idle session with one `promptAsync` → `khala_read` returns that batch → `khala_send` with `ackBatchToken` advances the read cursor, so the read is empty → Stop: read refused `not_connected`, no further prompt |
 | Cursor | `~/.cursor/mcp.json` `khala` | Every route is unproven (decisions 34 and 37), so the journey asserts the honest refusal, not a delivery. Setup reports route `unknown` and "idle agents receive messages only at their next turn". The approved binding shows `idleDelivery: unproven` and no proven mode to the owner. The entry refuses `khala_read` and `khala_send` with `not_connected` and never delivers the message. |
+
+An empty next read only shows that the agent's local cursor moved. The owner sees the
+acknowledgement only as an `agent_acknowledged` receipt for the delivered message. So
+each delivering journey then reads the owner's `GET /api/v1/channels/:id/receipts`. The
+suite asserts that receipt in a `todo` subtest because internal mode records no
+acknowledgement yet (#442). Node reports the subtest as a failing todo until #442 lands.
+Then remove the `todo` so a missing receipt fails the journey.
 
 Two more checks keep the suite honest:
 

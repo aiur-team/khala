@@ -164,6 +164,14 @@ async function ownerSession(report) {
     async timeline() {
       return JSON.stringify((await call(`${channel}/timeline`)).json);
     },
+    /** The channel events the owner's receipts show an agent acknowledged. */
+    async acknowledgedEvents() {
+      const receipts = await call(`${channel}/receipts`);
+      if (receipts.status !== 200) throw new Error(`owner receipts answered ${receipts.status}: ${receipts.text}`);
+      return receipts.json.facts
+        .filter(fact => fact.receipt.kind === 'agent_acknowledged')
+        .flatMap(fact => fact.events.map(event => event.eventId));
+    },
     /** The owner's Stop: revokes every binding and ends delivery. */
     async stopAll() {
       const stopped = await call(`${channel}/stop`, { method: 'POST', body: { v: 1, targets: null } });
