@@ -52,7 +52,7 @@ describe('MCP server', () => {
 
     expect(responses[0]).toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26' } });
     expect(responses[1]).toEqual({ jsonrpc: '2.0', id: 2, result: {} });
-    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status']);
+    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status', 'khala_pair']);
     expect(responses[2]).toMatchObject({
       result: { tools: [ {
         name: 'khala_send',
@@ -87,6 +87,9 @@ describe('MCP server', () => {
       }, {
         name: 'khala_channel_access_status',
         inputSchema: { additionalProperties: false, required: ['operationId'] },
+      }, {
+        name: 'khala_pair',
+        inputSchema: { additionalProperties: false, required: ['code'] },
       }] },
     });
     expect(client.sent).toEqual([{ bindingId: 'binding-1', body: 'hello' }]);
@@ -225,7 +228,7 @@ describe('MCP server', () => {
       request(6, 'tools/list', { ...meta, cursor: 'next' }),
     ]);
 
-    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status']);
+    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status', 'khala_pair']);
     expect(responses.map(response => response.error?.code ?? 'ok')).toEqual(['ok', 'ok', 'ok', 'ok', -32602, -32602]);
     expect(client.sent).toEqual([{ bindingId: null, body: 'hello' }]);
   });
