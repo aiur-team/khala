@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { StoreErrorCode } from './errors';
 import { ROOM_DATABASE_FILE } from './path';
 import { openChannelStore } from './open';
-import { APPLICATION_ID, CORE_SCHEMA_V1_SQL, MODE_SCHEMA_V2_SQL, MODE_SCHEMA_V3_SQL, SCHEMA_VERSION } from './schema';
+import {
+  APPLICATION_ID, CORE_SCHEMA_V1_SQL, MODE_SCHEMA_V2_SQL, MODE_SCHEMA_V3_SQL, RECEIPT_SCHEMA_V4_SQL, SCHEMA_VERSION,
+} from './schema';
 
 const roots: string[] = [];
 const handles: Array<{ close(): void }> = [];
@@ -66,7 +68,7 @@ function snapshot(directory: string): ReadonlyArray<readonly [string, string, nu
   });
 }
 
-function createV1(directory: string, version: 1 | 2 | 3 = 1): string {
+function createV1(directory: string, version: 1 | 2 | 3 | 4 = 1): string {
   fs.mkdirSync(directory, { mode: 0o700 });
   const target = file(directory);
   const db = new DatabaseSync(target);
@@ -74,6 +76,7 @@ function createV1(directory: string, version: 1 | 2 | 3 = 1): string {
   db.exec(CORE_SCHEMA_V1_SQL);
   if (version >= 2) db.exec(MODE_SCHEMA_V2_SQL);
   if (version >= 3) db.exec(MODE_SCHEMA_V3_SQL);
+  if (version >= 4) db.exec(RECEIPT_SCHEMA_V4_SQL);
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
   db.exec(`PRAGMA user_version = ${version}`);
   db.exec("INSERT INTO participants (participant_id, owner_id, kind, display_name) VALUES ('p1', 'o1', 'agent', 'Agent')");
@@ -104,8 +107,9 @@ describe('openChannelStore', () => {
     const second = open(directory, 'existing');
     expect(second.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all()
       .map(row => (row as { name: string }).name))).toEqual([
-      'bindings', 'channel_operations', 'channels', 'devices', 'events', 'memberships',
-      'meta', 'mode_controls', 'mode_operations', 'participants', 'receipt_fact_events', 'receipt_facts',
+      'admission_operations', 'bindings', 'channel_operations', 'channels', 'control_operations', 'control_records',
+      'devices', 'discovery_agents', 'discovery_allowlist', 'discovery_operations', 'discovery_visibility', 'events',
+      'memberships', 'meta', 'mode_controls', 'mode_operations', 'participants', 'receipt_fact_events', 'receipt_facts',
       'receipt_projection_checkpoints', 'sqlite_sequence',
     ]);
   });
@@ -143,9 +147,28 @@ describe('openChannelStore', () => {
       expect(raw.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'receipt_%'").all()).toEqual([]);
       raw.close();
       const handle = open(directory, 'existing');
-      expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: 4 });
+      expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: SCHEMA_VERSION });
       expect(handle.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE name = 'receipt_facts'").get()))
         .toEqual({ name: 'receipt_facts' });
+      expect(handle.read(db => db.prepare('SELECT participant_id FROM participants').get())).toEqual({ participant_id: 'p1' });
+    }
+  });
+
+  it('migrates a v4 database to the discovery schema and rolls every injected failure back to intact v4', () => {
+    for (const stage of ['after_discovery_tables', 'before_discovery_user_version'] as const) {
+      const directory = scratchDirectory();
+      const target = createV1(directory, 4);
+      expect(() => openChannelStore({ directory, mode: 'existing', migrationFault: current => {
+        if (current === stage) throw new Error('injected');
+      } })).toThrow(expect.objectContaining({ code: 'transaction_aborted' }));
+      const raw = new DatabaseSync(target, { readOnly: true });
+      expect(raw.prepare('PRAGMA user_version').get()).toEqual({ user_version: 4 });
+      expect(raw.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'discovery_%' OR name LIKE 'control_%'").all()).toEqual([]);
+      raw.close();
+      const handle = open(directory, 'existing');
+      expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: 5 });
+      expect(handle.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE name = 'discovery_visibility'").get()))
+        .toEqual({ name: 'discovery_visibility' });
       expect(handle.read(db => db.prepare('SELECT participant_id FROM participants').get())).toEqual({ participant_id: 'p1' });
     }
   });

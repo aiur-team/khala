@@ -3,7 +3,7 @@ import { StoreError } from './errors';
 
 /** `PRAGMA application_id`: ASCII "KHCH" (Khala channel), distinct from connector storage. */
 export const APPLICATION_ID = 0x4b484348;
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const CORE_SCHEMA_V1_SQL = `
 CREATE TABLE meta (
@@ -151,9 +151,74 @@ CREATE TABLE receipt_projection_checkpoints (
 ) STRICT;
 `;
 
+/**
+ * Channel discovery. `control_records`/`control_operations` back the shared
+ * `ControlStore` used by the channel-access journal, grant exchange and grant
+ * issuer. The discovery tables hold owner visibility, the explicit per-principal
+ * allowlist, issued discovery agents (capability digests only) and admission
+ * operations. A channel without a visibility row is `private` with no allowlist.
+ */
+export const DISCOVERY_SCHEMA_V5_SQL = `
+CREATE TABLE control_records (
+  record_key TEXT PRIMARY KEY,
+  revision TEXT NOT NULL UNIQUE,
+  operation_id TEXT NOT NULL,
+  value TEXT NOT NULL,
+  expires_at TEXT
+) STRICT;
+
+CREATE TABLE control_operations (
+  operation_id TEXT PRIMARY KEY,
+  record_key TEXT NOT NULL,
+  revision TEXT NOT NULL,
+  value TEXT NOT NULL,
+  expires_at TEXT
+) STRICT;
+
+CREATE TABLE discovery_agents (
+  principal TEXT PRIMARY KEY,
+  harness TEXT NOT NULL,
+  session_digest TEXT NOT NULL,
+  display_label TEXT,
+  workspace_label TEXT,
+  generation INTEGER NOT NULL CHECK (generation >= 1),
+  capability_digest TEXT NOT NULL UNIQUE,
+  proof_public_key TEXT NOT NULL,
+  proof_thumbprint TEXT NOT NULL,
+  issued_at TEXT NOT NULL,
+  UNIQUE (harness, session_digest)
+) STRICT;
+
+CREATE TABLE discovery_visibility (
+  channel_id TEXT PRIMARY KEY REFERENCES channels (channel_id) ON DELETE RESTRICT,
+  visibility TEXT NOT NULL CHECK (visibility IN ('public', 'private', 'secret')),
+  visibility_epoch INTEGER NOT NULL CHECK (visibility_epoch >= 0),
+  revision INTEGER NOT NULL CHECK (revision >= 1)
+) STRICT;
+
+CREATE TABLE discovery_allowlist (
+  channel_id TEXT NOT NULL REFERENCES channels (channel_id) ON DELETE RESTRICT,
+  principal TEXT NOT NULL REFERENCES discovery_agents (principal) ON DELETE RESTRICT,
+  PRIMARY KEY (channel_id, principal)
+) STRICT;
+
+CREATE TABLE discovery_operations (
+  operation_id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  revision INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE admission_operations (
+  provider_operation_id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  membership TEXT NOT NULL CHECK (membership IN ('joined', 'already_joined'))
+) STRICT;
+`;
+
 export type MigrationStage =
   | 'after_mode_controls' | 'after_mode_operations' | 'before_user_version' | 'after_user_version'
-  | 'after_receipt_tables' | 'before_receipt_user_version';
+  | 'after_receipt_tables' | 'before_receipt_user_version'
+  | 'after_discovery_tables' | 'before_discovery_user_version';
 export type MigrationFault = (stage: MigrationStage) => void;
 
 function pragmaNumber(db: DatabaseSync, name: 'application_id' | 'user_version'): number {
@@ -200,6 +265,7 @@ function expectedManifest(version: number): readonly SchemaRow[] {
     if (version >= 2) expected.exec(MODE_SCHEMA_V2_SQL);
     if (version >= 3) expected.exec(MODE_SCHEMA_V3_SQL);
     if (version >= 4) expected.exec(RECEIPT_SCHEMA_V4_SQL);
+    if (version >= 5) expected.exec(DISCOVERY_SCHEMA_V5_SQL);
     const rows = schemaRows(expected).map(row => ({ ...row, sql: normalizeSql(row.sql) }));
     expectedManifests.set(version, rows);
     return rows;
@@ -241,6 +307,7 @@ export function prepareSchema(
     db.exec(MODE_OPERATIONS_SQL);
     db.exec(MODE_SCHEMA_V3_SQL);
     db.exec(RECEIPT_SCHEMA_V4_SQL);
+    db.exec(DISCOVERY_SCHEMA_V5_SQL);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     assertManifest(db, SCHEMA_VERSION);
     assertIntegrity(db);
@@ -283,5 +350,14 @@ export function prepareSchema(
     assertIntegrity(db);
     migrationFault?.('before_receipt_user_version');
     db.exec('PRAGMA user_version = 4');
+  }
+
+  if (version <= 4) {
+    db.exec(DISCOVERY_SCHEMA_V5_SQL);
+    migrationFault?.('after_discovery_tables');
+    assertManifest(db, 5);
+    assertIntegrity(db);
+    migrationFault?.('before_discovery_user_version');
+    db.exec('PRAGMA user_version = 5');
   }
 }
