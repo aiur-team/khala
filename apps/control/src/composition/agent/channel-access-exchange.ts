@@ -9,7 +9,7 @@ import type {
 } from '@khala/contracts/messaging/index';
 import { exchangeJournal } from '@khala/messaging/channel-access/exchange/journal';
 import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-access/exchange/ports';
-import { createGrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
+import { type GrantExchangeAuthority, createGrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
 import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import { createGrantExchangeService } from '@khala/messaging/channel-access/exchange/service';
 import type { ChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
@@ -32,8 +32,11 @@ export function composeChannelAccessExchange(deps: Readonly<{
   bindings: Pick<AdapterCapabilities, 'resumeAdapterCapability'>;
   authenticateConnector: GrantExchangeHandlerDependencies['authenticateConnector'];
   clock: TrustedClock;
+  /** Wraps the access authority; `composeChannelCreate` supplies one for created channels. */
+  authority?: (access: GrantExchangeAuthority) => GrantExchangeAuthority;
 }>): readonly RouteRegistration[] {
-  const authority = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: deps.clock });
+  const access = createGrantExchangeAuthority({ store: deps.journal, fulfillment: deps.fulfillment, clock: deps.clock });
+  const authority = deps.authority ? deps.authority(access) : access;
   const issuer = createExchangeGrantIssuer({ store: deps.store, clock: deps.clock });
   const service = createGrantExchangeService({
     store: deps.store,

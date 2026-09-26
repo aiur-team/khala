@@ -13,6 +13,7 @@ import { createGrantExchangeService } from '@khala/messaging/channel-access/exch
 import { createChannelAccessPolicy } from '@khala/messaging/channel-access/journal/policy';
 import { createChannelAccessService } from '@khala/messaging/channel-access/journal/service';
 import { createChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
+import { composeChannelCreate } from '@khala/messaging/channel-create/compose';
 import type { HumanAuthority } from '../../server/credentials';
 import {
   type DiscoveryAgentContext, type DiscoveryAgentView, type DiscoverySettingsView, type InternalDiscoveryPort,
@@ -24,8 +25,9 @@ import { createInternalListing } from './listing';
 // Internal-mode composition of channel discovery. The shared channel-access
 // journal, grant exchange and grant issuer run unchanged over the channel
 // store's SQLite `ControlStore`; this module supplies only the local adapters:
-// catalog resolution, admission, the human-workflow-only create adapter,
-// descriptor issuance and binding activation. The single local human owns every
+// catalog resolution, admission, the human-workflow-only create adapter (run by
+// the shared creation workflow on owner approval), descriptor issuance and
+// binding activation. The single local human owns every
 // channel. Agents never
 // receive a channel ID, owner, roster or grant from any of these surfaces.
 
@@ -48,7 +50,7 @@ function channelOf(channelRef: string): Readonly<{ channelId: string; listed: bo
 
 export type InternalChannelDiscovery = Readonly<{
   port: InternalDiscoveryPort;
-  /** Human-workflow-only; consumed by `channel-create-workflow`, never reachable from an agent route. */
+  /** Human-workflow-only; run by the composed creation workflow, never reachable from an agent route. */
   createAdapter: ChannelCreateAdapterPort;
   admission: ChannelAdmissionProviderPort;
 }>;
@@ -184,6 +186,39 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
   const journal = createChannelAccessStore({ store: deps.control, policy, clock });
   const access = createChannelAccessService({ store: journal, resolver, policy });
 
+  const createAdapter: ChannelCreateAdapterPort = {
+    async create(input) {
+      const { workflow } = input;
+      if (workflow.kind !== 'human_authorized_channel_create' || workflow.ownerId !== human.ownerId
+        || clock() >= Date.parse(workflow.expiresAt)) {
+        return { v: 1, idempotencyKey: input.idempotencyKey, outcome: 'unavailable', channelRef: null };
+      }
+      const created = store.createSecretChannel({
+        idempotencyKey: input.idempotencyKey,
+        channelId: deps.newChannelId(),
+        title: input.intent.proposedTitle,
+        ownerId: human.ownerId,
+        creatorParticipantId: human.participantId,
+        creatorDeviceId: human.deviceId,
+        createdAt: new Date(clock()).toISOString(),
+      });
+      return reconciliation(input.idempotencyKey, created);
+    },
+    async reconcile(input) {
+      if (input.workflow.ownerId !== human.ownerId) {
+        return { v: 1, idempotencyKey: input.idempotencyKey, outcome: 'unavailable', channelRef: null };
+      }
+      const found = store.findSecretChannel(input.idempotencyKey);
+      return found.kind === 'absent'
+        ? { v: 1, idempotencyKey: input.idempotencyKey, outcome: 'pending', channelRef: null }
+        : reconciliation(input.idempotencyKey, found);
+    },
+  };
+
+  // Approval runs the creation workflow; the exchange admits only the requesting session into what it created.
+  const create = composeChannelCreate({ store: deps.control, journal, service: access, adapter: createAdapter, clock });
+  const decisions = create.decisions;
+
   const admission: ChannelAdmissionProviderPort = {
     async admit(input) {
       const request = admissionInput(input);
@@ -214,7 +249,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
   const issuer = createExchangeGrantIssuer({ store: deps.control, clock });
   const exchange = createGrantExchangeService({
     store: deps.control,
-    authority: createGrantExchangeAuthority({ store: journal, fulfillment: access.fulfillment, clock }),
+    authority: create.exchangeAuthority(createGrantExchangeAuthority({ store: journal, fulfillment: access.fulfillment, clock })),
     provider: admission,
     issuer,
     clock,
@@ -291,35 +326,6 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
     if (activated.kind === 'rejected') return { kind: 'rejected', code: 'closed' };
     return { kind: 'ok', value: { binding: activated.activation.binding, channelId: activated.activation.channelId } };
   }
-
-  const createAdapter: ChannelCreateAdapterPort = {
-    async create(input) {
-      const { workflow } = input;
-      if (workflow.kind !== 'human_authorized_channel_create' || workflow.ownerId !== human.ownerId
-        || clock() >= Date.parse(workflow.expiresAt)) {
-        return { v: 1, idempotencyKey: input.idempotencyKey, outcome: 'unavailable', channelRef: null };
-      }
-      const created = store.createSecretChannel({
-        idempotencyKey: input.idempotencyKey,
-        channelId: deps.newChannelId(),
-        title: input.intent.proposedTitle,
-        ownerId: human.ownerId,
-        creatorParticipantId: human.participantId,
-        creatorDeviceId: human.deviceId,
-        createdAt: new Date(clock()).toISOString(),
-      });
-      return reconciliation(input.idempotencyKey, created);
-    },
-    async reconcile(input) {
-      if (input.workflow.ownerId !== human.ownerId) {
-        return { v: 1, idempotencyKey: input.idempotencyKey, outcome: 'unavailable', channelRef: null };
-      }
-      const found = store.findSecretChannel(input.idempotencyKey);
-      return found.kind === 'absent'
-        ? { v: 1, idempotencyKey: input.idempotencyKey, outcome: 'pending', channelRef: null }
-        : reconciliation(input.idempotencyKey, found);
-    },
-  };
 
   function requesterOf(agent: DiscoveryAgentContext, stored: DiscoveryAgent): DiscoveryRequester {
     return {
@@ -435,23 +441,23 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
 
     async inbox(principal) {
       if (!isOwner(principal)) return [];
-      const result = await access.decisions.inbox(owner);
+      const result = await decisions.inbox(owner);
       return result.kind === 'ok' ? result.value : 'unavailable';
     },
 
     async decide(principal, command, kind) {
       if (!isOwner(principal)) return { kind: 'rejected', code: 'forbidden' };
-      const listed = await access.decisions.inbox(owner);
+      const listed = await decisions.inbox(owner);
       if (listed.kind !== 'ok') return { kind: 'unavailable', retryable: true };
       const request = listed.value.find(entry => entry.requestHandle === command.requestHandle);
       // The route names the operation kind; a mismatched handle is simply not found there.
       if (request && request.operationKind !== kind) return { kind: 'rejected', code: 'not_found' };
-      return access.decisions.decide(command, owner);
+      return decisions.decide(command, owner);
     },
 
     async mute(principal, command) {
       if (!isOwner(principal)) return { kind: 'rejected', code: 'forbidden' };
-      return access.decisions.setMute(command, owner);
+      return decisions.setMute(command, owner);
     },
 
     async settings(principal, channelId) {

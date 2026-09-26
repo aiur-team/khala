@@ -9,7 +9,7 @@
 // code and follows the same state machine: verified inspection, one reserved
 // device, owner approval, the same admission checks, then activation.
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { type SessionBinding, decodeSessionBinding, readCanonicalCode, sameSessionBinding } from '@khala/contracts/messaging/index';
 import { LINK_OWNERSHIP_METHODS, PAIRING_METHOD, type OwnershipMethod } from './descriptor';
 import { sessionEvidenceDigest } from './pairing';
@@ -78,6 +78,15 @@ const OPERATION_ID = /^[A-Za-z0-9_-]{8,64}$/;
 const HARNESS = /^[a-z][a-z0-9-]{0,31}$/;
 const MAX_FIELD_BYTES = 512;
 const MAX_WORKDIR_BYTES = 4096;
+
+/**
+ * Stands in for the pairing code inside the persisted fingerprint. A plain SHA-256
+ * of a 50-bit code is a precomputable lookup table; keying it with the operation ID
+ * makes every record's mark unique, and the code itself is never stored.
+ */
+function codeMark(pairingCode: string, operationId: string): string {
+  return createHmac('sha256', `khala.pairing.code-mark.v1\0${operationId}`).update(pairingCode).digest('base64url');
+}
 
 /** Stable digest of everything a retry must repeat exactly. */
 export function operationFingerprint(input: BootstrapInput): string {
@@ -207,7 +216,7 @@ async function pairAgent(input: PairingBootstrapInput, ports: BootstrapPorts, op
 
   const fingerprint = createHash('sha256').update(JSON.stringify([
     'khala.pairing.bootstrap.v1', discovered.origin, descriptor.id,
-    createHash('sha256').update(pairingCode).digest('base64url'),
+    codeMark(pairingCode, operationId),
     input.session.harness, input.session.sessionId, input.session.workdir,
     session.generation, pairing.jkt,
   ])).digest('base64url');
