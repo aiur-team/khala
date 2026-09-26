@@ -4,6 +4,7 @@ import type {
 } from '@khala/contracts/delivery/index';
 import type { InternalRuntime } from '@khala/contracts/internal/command';
 import type { ChannelListingPort } from './channels/types.js';
+import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { BatchInbox } from './inbox.js';
 
 export const CLI_ERROR_CODES = [
@@ -81,6 +82,7 @@ export type CliDependencies = Readonly<{
   inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
   internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
+  claude?: ClaudeSessionClient;
 }>;
 /** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
 export type CliCommand = Readonly<{
