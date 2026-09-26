@@ -120,7 +120,9 @@ describe('Claude session surfaces never carry content the session was not releas
     }
     // The mode is read from the composed store, but Claude has no evidenced mode: nothing is
     // requested, nothing is effective, and hooks therefore deliver nothing.
-    expect(granted('claude-op:hook')).toContain('"kind":"hook","effective":null');
+    for (const surface of ['claude-op:hook', 'claude-op:watch']) {
+      expect(granted(surface), surface).toContain('"kind":"hook","effective":null');
+    }
     for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_status']) {
       const text = granted(surface).replaceAll('\\"', '"');
       expect(text, surface).toContain('"kind":"mode","requested":null,"effective":null');
