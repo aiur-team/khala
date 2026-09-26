@@ -34,6 +34,8 @@ export type ChannelCreateWorkflow = Readonly<{
   fulfill(requestHandle: string, options?: CallOptions): Promise<ChannelCreateFulfillment>;
   /** A cheap read: `true` while creation for this request is not yet created or closed. */
   unsettled(requestHandle: string, options?: CallOptions): Promise<boolean>;
+  /** The channel this request created, `null` while none is created, or `unavailable`. */
+  createdChannel(requestHandle: string, options?: CallOptions): Promise<string | null | 'unavailable'>;
 }>;
 
 type CreatePhase = 'creating' | 'created' | 'closed';
@@ -248,7 +250,13 @@ export function createChannelCreateWorkflow(deps: Readonly<{
     return loaded === 'absent' || (loaded !== 'unavailable' && loaded.record.phase === 'creating');
   }
 
-  return Object.freeze({ fulfill, unsettled });
+  async function createdChannel(requestHandle: string, options?: CallOptions): Promise<string | null | 'unavailable'> {
+    const loaded = await load(recordKey(requestHandle), options);
+    if (loaded === 'unavailable') return 'unavailable';
+    return loaded !== 'absent' && loaded.record.phase === 'created' ? loaded.record.channelRef : null;
+  }
+
+  return Object.freeze({ fulfill, unsettled, createdChannel });
 }
 
 export function channelCreateRecordKey(requestHandle: string): string {
