@@ -541,7 +541,8 @@ describe('Claude delivery through the internal launcher', () => {
     };
     const root = path.join(launch.parent, 'internal');
     return {
-      ...launch, post, run: (op: string) => claude(launch.report.descriptorPath, op, sessionId),
+      ...launch, post, operationId: requested!.operationId as string,
+      run: (op: string) => claude(launch.report.descriptorPath, op, sessionId),
       /** The session's own granted descriptor, which a descriptor client presents as that binding. */
       grantPath: path.join(root, INTERNAL_DISCOVERY_DIRECTORY, discoveryPrincipal('claude', sessionId), CLAUDE_GRANT_FILE),
       receiptLog: path.join(channelDirectory(root, launch.report.channelId)!, RECEIPT_LOG_FILE),
@@ -709,6 +710,26 @@ describe('Claude delivery through the internal launcher', () => {
     // The cursor moves as if acknowledged, yet the owner has no evidence: the check above catches it.
     expect(JSON.parse(await descriptorRead(session.grantPath, state, ['--ack', token], true))).toEqual({ ok: true, kind: 'empty' });
     expect(await session.facts()).toEqual([]);
+  });
+
+  it('after a launcher resume, a pending message arrives once and an acknowledged batch is never offered again', async () => {
+    const session = await bound('session-resumed');
+    await session.post('read and acknowledged before the restart');
+    expect(await session.run('read')).toContain('read and acknowledged before the restart');
+    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 1 });
+    await session.post('pending at the restart');
+    await session.shutdown();
+
+    const resumed = await launched({ parent: session.parent, channelId: session.report.channelId, port: session.report.port });
+    const [status] = await serve(resumed.report.descriptorPath, 'session-resumed', [
+      ['khala_channel_access_status', { operationId: session.operationId }],
+    ]);
+    expect(status).toMatchObject({ outcome: 'connected' });
+    const read = await claude(resumed.report.descriptorPath, 'read', 'session-resumed');
+    expect(read).toContain('pending at the restart');
+    expect(read).not.toContain('read and acknowledged before the restart');
+    expect(JSON.parse(await claude(resumed.report.descriptorPath, 'status', 'session-resumed'))).toEqual({ ok: true, kind: 'status', acknowledged: 1 });
+    expect(JSON.parse(await claude(resumed.report.descriptorPath, 'pull', 'session-resumed'))).toEqual({ ok: true, kind: 'empty' });
   });
 
   it('delivers to a bound session on an experimental route: hook pull, then read, then next-call acknowledgement', async () => {
