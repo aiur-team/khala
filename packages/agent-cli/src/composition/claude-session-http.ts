@@ -302,7 +302,7 @@ function publicMode(value: unknown): Exclude<ClaudeModeOutcome, ClaudeSessionRef
   if (!plainObject(value) || value.kind !== 'mode' || !plainObject(value.support)) return null;
   const mode = (candidate: unknown): candidate is ListeningMode => (LISTENING_MODES as readonly unknown[]).includes(candidate);
   const support = value.support;
-  if (!mode(value.requested) || !(value.effective === null || mode(value.effective))
+  if (!(value.requested === null || mode(value.requested)) || !(value.effective === null || mode(value.effective))
     || !Number.isSafeInteger(value.version) || (value.version as number) < 0
     || !(ACKNOWLEDGEMENT as readonly unknown[]).includes(value.acknowledgement)
     || !LISTENING_MODES.every(name => validIdentifier(support[name]))) return null;
@@ -320,7 +320,8 @@ function publicMode(value: unknown): Exclude<ClaudeModeOutcome, ClaudeSessionRef
 function publicModeSet(value: unknown): Exclude<ClaudeModeSetOutcome, ClaudeSessionRefusal> | null {
   if (!plainObject(value) || value.kind !== 'mode_set') return null;
   const mode = (candidate: unknown): candidate is ListeningMode => (LISTENING_MODES as readonly unknown[]).includes(candidate);
-  if (!(LISTENING_MODE_RESULT_OUTCOMES as readonly unknown[]).includes(value.outcome) || !mode(value.requested)
+  if (!(LISTENING_MODE_RESULT_OUTCOMES as readonly unknown[]).includes(value.outcome)
+    || !(value.requested === null || mode(value.requested))
     || !(value.effective === null || mode(value.effective))
     || !Number.isSafeInteger(value.version) || (value.version as number) < 0
     || !(value.batch === undefined || typeof value.batch === 'string')) return null;

@@ -8,6 +8,7 @@
 //
 // `opencode.js` is the self-contained OpenCode plugin (`@aiur/khala/opencode`). OpenCode
 // imports it in its own process, so it too carries its whole closure.
+import { spawnSync } from 'node:child_process';
 //
 // `payload/` carries the reviewed harness assets `khala setup` installs: the Claude plugin's
 // shipped files and the Codex skill.
@@ -18,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const packageDirectory = fileURLToPath(new URL('..', import.meta.url));
+
+export const INTERNAL_WEB_SOURCE = path.resolve(packageDirectory, '../../apps/web/dist/internal-web');
 
 export const INTERNAL_ENTRY_POINT = path.resolve(packageDirectory, '../../apps/internal/src/composition/internal-cli.ts');
 /** Top-level Claude plugin entries that ship; sources, tests, and package metadata do not. */
@@ -59,6 +62,7 @@ export async function bundle({
   outfile = path.join(packageDirectory, 'dist/khala.js'),
   absWorkingDir = packageDirectory,
   internalEntryPoint = INTERNAL_ENTRY_POINT,
+  internalWebSource = INTERNAL_WEB_SOURCE,
 } = {}) {
   await fs.rm(path.dirname(outfile), { recursive: true, force: true });
   const metafile = await buildOne({ entryPoint, outfile, absWorkingDir });
@@ -67,6 +71,15 @@ export async function bundle({
   // internal application beside it; the gate's file allowlist then refuses it.
   if (internalEntryPoint && existsSync(internalEntryPoint)) {
     await buildOne({ entryPoint: internalEntryPoint, outfile: path.join(path.dirname(outfile), 'khala-internal.js'), absWorkingDir });
+  }
+  // `khala internal` serves `internal-web/` beside `khala-internal.js`. Build it from the
+  // web workspace when no earlier `pnpm --filter @khala/web build` left one behind.
+  if (internalEntryPoint && existsSync(internalEntryPoint)) {
+    if (!existsSync(path.join(internalWebSource, 'index.html'))) {
+      const web = spawnSync('pnpm', ['--filter', '@khala/web', 'build:internal'], { cwd: packageDirectory, stdio: ['ignore', 2, 2] });
+      if (web.status !== 0 || !existsSync(path.join(internalWebSource, 'index.html'))) throw new Error(`internal web bundle missing at ${internalWebSource} and "pnpm --filter @khala/web build:internal" did not produce it`);
+    }
+    await fs.cp(internalWebSource, path.join(path.dirname(outfile), 'internal-web'), { recursive: true });
   }
   await copyPayload(absWorkingDir, path.dirname(outfile));
   return metafile;
