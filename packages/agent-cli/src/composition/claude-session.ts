@@ -143,6 +143,8 @@ export type ClaudeModeOutcome = Readonly<{
   kind: 'mode';
   requested: ListeningMode | null;
   effective: ListeningMode | null;
+  /** Why nothing is effective (for example `support_unknown` on an unproven route), else `null`. */
+  effectiveReason: string | null;
   version: number;
   support: Readonly<Record<ListeningMode, string>>;
   acknowledgement: HarnessCapabilities['acknowledgement'];
@@ -152,6 +154,8 @@ export type ClaudeModeSetOutcome = (Readonly<{
   outcome: ListeningModeResult['outcome'];
   requested: ListeningMode | null;
   effective: ListeningMode | null;
+  /** The refusal reason when `outcome` is `refused`; otherwise why nothing is effective, or `null`. */
+  reason: string | null;
   version: number;
 }> & Piggyback) | ClaudeSessionRefusal;
 /** The channel roster for the session's own binding, undecoded; the client applies the closed roster decoder. */
@@ -369,6 +373,7 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
           kind: 'mode',
           requested: view.view.requested,
           effective: view.view.effective,
+          effectiveReason: view.view.effectiveReason,
           version: view.view.version,
           support,
           acknowledgement: capabilities.acknowledgement,
@@ -388,7 +393,8 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
           ...(current === undefined ? {} : { acknowledgeToken: current }),
         }), () => true);
         return {
-          kind: 'mode_set', outcome: result.outcome, requested: result.requested, effective: result.effective, version: result.version,
+          kind: 'mode_set', outcome: result.outcome, requested: result.requested, effective: result.effective, reason: result.reason,
+          version: result.version,
           ...(batch === null ? {} : { batch }),
         };
       });

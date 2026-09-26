@@ -66,7 +66,8 @@ function toolArguments(tool: string, seed: Seeded, sessionId: string): Record<st
     case 'khala_request_channel_access': return { target: other };
     case 'khala_channel_access_status': return { operationId: seed.operationId };
     case 'khala_create_channel': return { title: 'Probe', operationId: 'create-13800000' };
-    case 'khala_read': case 'khala_status': case 'khala_list_channels': case 'khala_list_agents': return {};
+    case 'khala_mode_set': return { requested: 'sync', expectedVersion: 1 };
+    case 'khala_read': case 'khala_status': case 'khala_mode_get': case 'khala_list_channels': case 'khala_list_agents': return {};
     default: throw new Error(`claude-session: no arguments defined for ${tool}; add a probe for it`);
   }
 }
@@ -124,12 +125,20 @@ describe('Claude session surfaces never carry content the session was not releas
     // Every mode is labelled experimental: the default `sync` request needs the owner's
     // experimental-route grant, so nothing is effective and hooks deliver nothing.
     expect(granted('claude-op:hook')).toContain('"kind":"hook","effective":null');
-    for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_status']) {
+    // Surfaces are driven in sorted order, so `khala_mode_get` reads before `khala_mode_set` writes.
+    for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_mode_get']) {
       const text = granted(surface).replaceAll('\\"', '"');
-      expect(text, surface).toContain('"kind":"mode","requested":"sync","effective":null');
+      expect(text, surface).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
       expect(text, surface).toContain('"support":{"steer":"experimental","sync":"experimental","async":"experimental"}');
       expect(text, surface).toContain('"acknowledgement":"batch_token_next_call"');
     }
+    // The agent may request a mode on its own (decision 42), but an experimental route never becomes
+    // effective without the owner's grant: it stays null, with the honest reason (decisions 34 and 37).
+    const set = granted('claude-mcp-tool:khala_mode_set').replaceAll('\\"', '"');
+    expect(set).toContain('"kind":"applied","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required","version":2');
+    const status = granted('claude-mcp-tool:khala_status').replaceAll('\\"', '"');
+    expect(status).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
+    expect(status).toContain('"support":{"steer":"experimental","sync":"experimental","async":"experimental"}');
   });
 
   it('the granted binding is real: its sends reach its own channel only, and the bystander\'s reach nothing', async () => {
