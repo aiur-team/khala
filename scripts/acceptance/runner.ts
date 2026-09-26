@@ -12,7 +12,7 @@ import { controllerLine, markersFor, ownershipLine, ticketPrompt, ticketTitle } 
 import {
   ACCEPTANCE_LABEL, type AccessRequest, type ChannelSnapshot, type IssueRecord, type LaunchedServer, type Markers,
   type ModeRequest, type OwnerSession, type Profile, type ProfileRole, type RoleName, type RoleRecord, type RunReport,
-  type RunnerDeps, type StopRecord, type StopTarget, type TimelineEvent,
+  type RunnerDeps, type StagedPackage, type StopRecord, type StopTarget, type TimelineEvent,
 } from './types';
 import { verdictOf, verifyRun } from './verify';
 
@@ -75,10 +75,11 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
   const issues: IssueRecord[] = [];
   let pullRequests: number[] = [];
   let refused: string | null = null;
+  let staged: StagedPackage | null = null;
   const startedAt = new Date(clock.now()).toISOString();
 
   const report = (verdict: RunReport['verdict'], checks: RunReport['checks']): RunReport => ({
-    profile: profile.name, repository: profile.repository, verdict, checks, modes: plan,
+    profile: profile.name, repository: profile.repository, khalaPackage: staged?.record ?? null, verdict, checks, modes: plan,
     roles: roles.map(({ role, ticket, session, target }) => ({ role, ticket, session, target })),
     stop, launcherClosed, cleanup, unexpectedPullRequests: pullRequests, errors, status,
   });
@@ -100,14 +101,16 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
     };
 
     try {
-      status = (await deps.status.status(profile.khalaPackage)).output;
+      // Before any process starts: a tarball whose digest does not match refuses the run.
+      staged = await deps.package.stage(profile.khalaPackage);
+      status = (await deps.status.status(staged.spec)).output;
       const labels = [ACCEPTANCE_LABEL, profile.dispatchLabel, ...profile.roles.flatMap(role => role.labels)];
       await deps.github.preflight(profile.repository, [...new Set(labels)]);
     } catch (error) {
       throw new Refused(`preflight failed: ${(error as Error).message}`);
     }
 
-    const server: LaunchedServer = await deps.launcher.start(options.resume);
+    const server: LaunchedServer = await deps.launcher.start(staged.spec, options.resume);
     let owner: OwnerSession | null = null;
     try {
       owner = await server.owner();
@@ -185,6 +188,7 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
   } finally {
     try {
       await closeTickets(deps, profile, markers, roles, startedAt, cleanup);
+      await staged?.release().catch((error: Error) => { errors.push(`package release: ${error.message}`); });
     } finally {
       await lock.release();
     }

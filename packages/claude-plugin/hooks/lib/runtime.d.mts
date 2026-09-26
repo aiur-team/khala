@@ -3,6 +3,8 @@ export type KhalaOp = 'pull' | 'hook' | 'pending';
 export type KhalaResult = Readonly<{ code: number; stdout: string }>;
 
 export type HookDependencies = Readonly<{
+  /** The cheap local check that this session holds a Khala grant; no other dependency is used without it. */
+  bound(sessionId: string): Promise<boolean>;
   /** One `khala claude <op> --session <id>` call. */
   khala(op: KhalaOp, sessionId: string): Promise<KhalaResult>;
   stateRoot: string;
@@ -34,6 +36,8 @@ export function describeDelivery(input: Readonly<{
 }>): Readonly<Record<'steer' | 'sync' | 'async' | 'idle' | 'acknowledgement', string>>;
 export function readWatcher(deps: HookDependencies, sessionId: string): Promise<string | null>;
 export function defaultDependencies(env?: Readonly<Record<string, string | undefined>>, command?: string): HookDependencies;
+export function claudeGrantPath(internalRoot: string, sessionId: string): string;
+export function sessionGranted(internalRoot: string, sessionId: string): Promise<boolean>;
 export function launcherArgument(value: unknown): string;
 export function runHook(role: HookRole, raw: string, deps: HookDependencies): Promise<HookResult>;
 export function main(role: HookRole): Promise<void>;
