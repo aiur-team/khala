@@ -24,10 +24,10 @@ describe('HarnessCapabilities', () => {
       expect(values.slice(0, 2)).toEqual(['unknown', 'unsupported']);
     }
     expect(EXISTING_SESSION_SUPPORT).toEqual([
-      'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener',
+      'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener', 'opencode_plugin',
     ]);
     expect(IMMEDIATE_NOTIFICATION_SUPPORT).toEqual([
-      'unknown', 'unsupported', 'khala_hosted_idle', 'native_cli_queue', 'agent_installed_listener',
+      'unknown', 'unsupported', 'khala_hosted_idle', 'native_cli_queue', 'agent_installed_listener', 'opencode_plugin',
     ]);
     expect(RECONCILE_SUPPORT).toEqual(['unknown', 'unsupported', 'while_queued']);
   });

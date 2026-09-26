@@ -1,4 +1,6 @@
+import type { Readable, Writable } from 'node:stream';
 import type { BindingId, EventRef, HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
+import type { BatchInbox } from './inbox.js';
 
 export const CLI_ERROR_CODES = [
   'invalid_arguments', 'invalid_link', 'invalid_input', 'not_connected', 'binding_not_held',
@@ -28,6 +30,7 @@ const AGENT_ROUTE_MEMBERS = {
   khala_hosted_resume: true,
   native_cli_queue: true,
   agent_installed_listener: true,
+  opencode_plugin: true,
 } as const satisfies Record<AgentRoute, true>;
 export const AGENT_ROUTES = Object.freeze(Object.keys(AGENT_ROUTE_MEMBERS)) as readonly AgentRoute[];
 
@@ -56,3 +59,14 @@ export type InboxRecord = Readonly<{
   payloadDigest: string; payloadBase64: string; receivedAt: string;
 }>;
 export type InboxCursor = Readonly<{ v: 1; offset: number; releaseId: string | null }>;
+
+export type CliDependencies = Readonly<{
+  client: AgentClientPort;
+  inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
+  stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
+}>;
+/** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
+export type CliCommand = Readonly<{
+  name: string;
+  run(args: readonly string[], deps: CliDependencies): Promise<number>;
+}>;

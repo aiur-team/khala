@@ -1,7 +1,10 @@
 # Desktop and browser agent app support
 
 Status: research complete on 2026-09-24; every app-mode cell is **Blocked** pending
-empirical proof in a real, user-started app session.
+empirical proof in a real, user-started app session. The Cursor proof run on 2026-09-25
+([`cursor-app`](../../../experiments/interactive-cli/cursor-app/README.md)) kept every
+Cursor cell Blocked. It added a runnable trial kit and a verifier that grades live
+evidence.
 
 This document applies the [internal-mode requirements](./requirements.md) to Cursor,
 Claude Desktop, claude.ai, the Codex desktop surface, and Codex cloud. It does not
@@ -44,13 +47,13 @@ whose exact-version experiment shows the boundary is absent.
 
 | App shape | Documented native surfaces | What the surface can establish | Local result |
 | --- | --- | --- | --- |
-| Cursor local Agent Chat | [Hooks](https://cursor.com/docs/hooks) (`postToolUse`, `stop`), [plugins](https://cursor.com/docs/plugins), local stdio or remote HTTP MCP, and [MCP install links](https://cursor.com/docs/mcp/install-links) | `postToolUse` can return model-visible additional context; `stop` can return a follow-up message; MCP can expose `khala_read` | **Blocked:** Cursor is not installed, so no exact version, live session, hook timing, or restart behavior was tested |
-| Cursor cloud/background agent | Project/team hooks and remote MCP; [background-agent API](https://cursor.com/docs/background-agent) supports follow-up prompts | A hook deployed with the cloud environment may expose boundaries | **Blocked:** no authenticated cloud test; creating or prompting a background agent would also violate the same-session rule for an existing local session |
+| Cursor local Agent Chat | [Hooks](https://cursor.com/docs/hooks) (`postToolUse`, `stop`), [plugins](https://cursor.com/docs/plugins), local stdio or remote HTTP MCP, and [MCP install links](https://cursor.com/docs/mcp/install-links) | `postToolUse` can return model-visible additional context; `stop` can return a follow-up message; MCP can expose `khala_read` | **Blocked (2026-09-25):** Cursor is not installed and no Cursor account is signed in, so no exact version/tier/policy tuple exists to key a trial. The [cursor-app kit](../../../experiments/interactive-cli/cursor-app/README.md) is ready for a person's own Agent Chat |
+| Cursor cloud/background agent | Project/team hooks and remote MCP; [background-agent API](https://cursor.com/docs/background-agent) supports follow-up prompts | A hook deployed with the cloud environment may expose boundaries | **Blocked (2026-09-25):** no Cursor account and no existing cloud agent; creating or prompting a new one would violate the same-session rule. Cloud agents run no `sessionStart` or user-level hooks, so a trial needs project hooks committed to that agent's repository |
 | Claude Desktop, local extension | Local stdio MCP packaged as a [desktop extension](https://support.anthropic.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) | Explicit MCP tool calls can implement `khala_read` | **Blocked:** the official desktop app is documented for macOS/Windows and was unavailable on this Linux host; no documented prompt-injection hook was found |
 | Claude Desktop, remote connector | [Remote custom connector](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) | Explicit remote MCP tool calls can implement `khala_read` | **Blocked:** no installed/authenticated app and no live tool-result/context proof |
 | claude.ai | Remote custom connector/MCP | Explicit remote MCP tool calls can implement `khala_read` | **Blocked:** no authenticated browser session; no documented active-tool or end-turn injection boundary was found |
-| Codex desktop surface | [Hooks](https://learn.chatgpt.com/docs/hooks), [plugins](https://learn.chatgpt.com/docs/plugins), and [MCP](https://learn.chatgpt.com/docs/extend/mcp) | `PostToolUse` may return model-visible output; `Stop` may block stopping with a continuation reason; MCP can expose `khala_read` | **Blocked:** no native desktop app or authenticated app session was installed; hook semantics were not tested with Khala |
-| Codex cloud task | Environment-provided hooks/plugins and remote MCP; [cloud tasks](https://learn.chatgpt.com/docs/cloud) | A task environment may run a Khala hook or invoke `khala_read` | **Blocked:** no authenticated cloud task; starting a new task is not attachment to an existing user session |
+| Codex desktop surface | [Hooks](https://learn.chatgpt.com/docs/hooks), [plugins](https://learn.chatgpt.com/docs/plugins), and [MCP](https://learn.chatgpt.com/docs/extend/mcp) | `PostToolUse` may return model-visible output; `Stop` may block stopping with a continuation reason; MCP can expose `khala_read` | **Blocked** ([2026-09-25 record](../../../experiments/interactive-cli/codex-app/README.md)): no native Codex desktop app is installed on the Linux host, and `ChatGPT.desktop` is a browser launcher. There is no exact version, user-started session, or hook timing to observe |
+| Codex cloud task | Environment-provided hooks/plugins and remote MCP; [cloud tasks](https://learn.chatgpt.com/docs/cloud) | A task environment may run a Khala hook or invoke `khala_read` | **Blocked** ([2026-09-25 record](../../../experiments/interactive-cli/codex-app/README.md)): the logged-in account has no existing task (`codex cloud list`: `No tasks found.`). The CLI cannot install hooks into a task environment, and `codex cloud exec` would submit a new task, which is not the user's session |
 
 The remaining requested native-surface categories do not produce an additional route:
 
@@ -76,13 +79,13 @@ candidate text is the recommended first route to test, not a support claim.
 
 | App shape | `steer` — next tool boundary | `sync` — after tool/turn | `async` — agent pulls |
 | --- | --- | --- | --- |
-| Cursor local Agent Chat | **Blocked.** Candidate: `postToolUse` returns one `mcp-inbox-batch`; no local app proof | **Blocked.** Candidate: `stop.followup_message`; no local app proof or idle-loop proof | **Blocked.** Candidate: explicit MCP `khala_read`; no tool-result/context and ack proof |
-| Cursor cloud/background agent | **Blocked.** Candidate: project hook in the existing cloud task; no account or same-task proof | **Blocked.** Candidate: cloud `stop` hook; no same-task or restart proof | **Blocked.** Candidate: remote MCP `khala_read`; no authenticated cloud proof |
+| Cursor local Agent Chat | **Blocked.** Candidate: `postToolUse` `additional_context` with one `mcp-inbox-batch`. Cursor is not installed on the proof host and has no version/tier/policy tuple | **Blocked.** Candidate: `stop.followup_message`, one per human turn and never after an aborted turn. Same install blocker; no idle wake is claimed | **Blocked.** Candidate: MCP `khala_read`, bound through the `beforeMCPExecution` caller record. Same install blocker |
+| Cursor cloud/background agent | **Blocked.** Candidate: project `postToolUse` hook in the existing cloud agent. No account and no existing cloud agent | **Blocked.** Candidate: cloud `stop` hook. No account and no existing cloud agent | **Blocked.** Candidate: remote MCP `khala_read`. No account and no existing cloud agent |
 | Claude Desktop, local extension | **Blocked.** No documented injection boundary and no installed app | **Blocked.** No documented end-turn continuation hook and no installed app | **Blocked.** Candidate: local MCP extension `khala_read`; no app proof |
 | Claude Desktop, remote connector | **Blocked.** No documented injection boundary and no authenticated app | **Blocked.** No documented end-turn continuation hook and no authenticated app | **Blocked.** Candidate: remote MCP `khala_read`; no app proof |
 | claude.ai | **Blocked.** No documented injection boundary and no authenticated session | **Blocked.** No documented end-turn continuation hook and no authenticated session | **Blocked.** Candidate: remote MCP `khala_read`; no browser-session proof |
-| Codex desktop surface | **Blocked.** Candidate: `PostToolUse` returns one batch; no installed-app proof | **Blocked.** Candidate: `Stop` continuation; no installed-app or loop proof | **Blocked.** Candidate: MCP `khala_read`; no app proof |
-| Codex cloud task | **Blocked.** Candidate: task-environment `PostToolUse`; no same-task proof | **Blocked.** Candidate: task-environment `Stop`; no same-task proof | **Blocked.** Candidate: remote MCP `khala_read`; no authenticated task proof |
+| Codex desktop surface | **Blocked.** Candidate: `PostToolUse` returns one batch; no native app on the proof host | **Blocked.** Candidate: `Stop` continuation; no native app on the proof host, so no loop proof | **Blocked.** Candidate: MCP `khala_read`; no native app on the proof host |
+| Codex cloud task | **Blocked.** Candidate: task-environment `PostToolUse`; the account has no existing task | **Blocked.** Candidate: task-environment `Stop`; the account has no existing task | **Blocked.** Candidate: remote MCP `khala_read`; the account has no existing task |
 
 ### Recommended route by mode
 
@@ -141,6 +144,32 @@ For each exact app shape, capture a fresh evidence directory under
 
 The current record of uninspected, Blocked cells is at
 [`experiments/interactive-cli/desktop-apps/`](../../../experiments/interactive-cli/desktop-apps/README.md).
+The Codex desktop and cloud cells were rechecked on 2026-09-25 in
+[`experiments/interactive-cli/codex-app/`](../../../experiments/interactive-cli/codex-app/README.md).
+That directory's verifier also rejects any Khala-started `codex` process (decision 24),
+hosted sessions the desktop app did not start, Agents API runs, and new cloud tasks as
+delivery. It rejects trust-bypass flags and their equivalents, including `--yolo`,
+`danger-full-access`, and `never` approvals (decision 33), and it requires an idle-session trial for `steer` and `sync`
+(decisions 34 and 37). It derives every trial fact from the raw trial file.
+
+For Cursor, [`experiments/interactive-cli/cursor-app/`](../../../experiments/interactive-cli/cursor-app/README.md)
+contains the trial kit. Its `verify.mjs` grades trial directories into `matrix.json`.
+A cell becomes `proven` only when a single trial shows all of the following:
+
+- same-session model context;
+- the mode's boundary;
+- acknowledgement on a later agent call;
+- replay across a restart;
+- no delivery after acknowledgement;
+- a recorded launch of the running Cursor desktop app, with normal trust settings (decision 33). A `cursor-agent` CLI session never proves the app cell;
+- for `steer` and `sync`, delivery to an idle chat (decisions 34 and 37).
+
+The census comes from a raw process list, never from typed counts. A background
+agent, any Cursor or `cursor-agent` process (matched anywhere in argv) with a Khala
+ancestor or a parent missing from the census, a headless agent run, a bypass flag
+(combined short flags such as `-pf` are split first) or "Run Everything" auto-run, a hook firing without a
+model-context sighting, or a duplicate after restart leaves the cell `unknown`. The
+kit has no idle wake, so it cannot prove Cursor `steer` or `sync`.
 
 ## Risks
 
