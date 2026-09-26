@@ -12,6 +12,7 @@ import { createLocalChannelSettingsPort } from './channel-settings/ports';
 import { createHumanClient } from './composition/human-client';
 import { createHttpMakeExternalPort } from './composition/make-external-port';
 import { createLocalEvidencePort, createLocalPorts, readRequestSecret } from './composition/ports';
+import { createHttpListeningPort } from './composition/listening-http';
 import { createHttpStopPort } from './composition/stop-http';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
@@ -28,6 +29,7 @@ import '../features/channel-access/channel-access.css';
 import '../features/channel-settings/channel-settings.css';
 import '../main.css';
 import './internal.css';
+import './controls/listening-control.css';
 import './controls/stop-control.css';
 import './make-external/make-external.css';
 
@@ -82,6 +84,7 @@ if (requestSecret === null) {
     evidencePort: createLocalEvidencePort(ports.substrate),
     owner,
     stop,
+    listening: createHttpListeningPort({ origin: location.origin, requestSecret }),
     makeExternal: createHttpMakeExternalPort({ origin: location.origin, requestSecret }),
   });
 

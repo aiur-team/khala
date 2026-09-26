@@ -9,6 +9,9 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRouteContext } from '../../composition/human/application';
+import { ListeningControl } from '../controls/ListeningControl';
+import { createListeningController } from '../controls/listening-controller';
+import type { ListeningPort } from '../controls/listening-port';
 import { StopControl } from '../controls/StopControl';
 import { createStopController } from '../controls/stop-controller';
 import type { BindingStopPort } from '../controls/stop-port';
@@ -125,7 +128,8 @@ export function SessionEnded({ roomId, headingRef }: {
 export const EVIDENCE_POLL_MS = 5_000;
 
 export function LocalRoom({
-  context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, makeExternal = null, onMakeExternal = () => undefined,
+  context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, listening, makeExternal = null,
+  onMakeExternal = () => undefined,
 }: {
   context: HumanRouteContext;
   roomId: RoomId;
@@ -133,6 +137,8 @@ export function LocalRoom({
   evidencePort?: ReceiptEvidencePort;
   evidencePollMs?: number;
   stop?: LocalStopCapability;
+  /** Owner listening-mode and pause control; absent means the page shows none. */
+  listening?: ListeningPort;
   /** The Make-external journey port; without it the page offers no such action. */
   makeExternal?: MakeExternalPort | null;
   onMakeExternal?: () => void;
@@ -161,6 +167,17 @@ export function LocalRoom({
   );
   const stopController = useMemo(() => (stop ? createStopController(stop.port, roomId) : null), [stop, roomId]);
   useEffect(() => () => stopController?.dispose(), [stopController]);
+  const listeningController = useMemo(() => (listening ? createListeningController(listening, roomId) : null), [listening, roomId]);
+  // An agent can change its own mode, and Stop removes agents, so the owner's view is reread on the evidence interval.
+  useEffect(() => {
+    if (!listeningController) return undefined;
+    void listeningController.refresh();
+    const timer = setInterval(() => void listeningController.refresh(), evidencePollMs);
+    return () => {
+      clearInterval(timer);
+      listeningController.dispose();
+    };
+  }, [evidencePollMs, listeningController]);
   const pendingStore = useMemo(() => createPendingSendStore(context.principal.ownerId, roomId), [context.principal.ownerId, roomId]);
   useEffect(() => () => {
     timeline.dispose();
@@ -209,6 +226,7 @@ export function LocalRoom({
       renderReview={() => null}
       renderControls={() => (
         <>
+          {listeningController ? <ListeningControl controller={listeningController} /> : null}
           {stop && stopController ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /> : null}
           <MakeExternalEntry summary={journey} onOpen={onMakeExternal} />
         </>

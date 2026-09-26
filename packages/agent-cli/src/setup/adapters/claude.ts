@@ -16,6 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sha256 } from '../filesystem.js';
 import { ManifestSchemaError, parseManifest, type ManifestEntry } from '../manifest.js';
+import { shellWord } from '../paths.js';
 import { setupStatePaths } from '../transaction.js';
 import type {
   ComponentState, HarnessDetection, HarnessObservation, SetupAdapter, SetupComponent, SetupDiagnostic,
@@ -42,6 +43,8 @@ export type ClaudeAdapterOptions = Readonly<{
   version: string;
   /** Plugin files keyed by their path relative to the plugin root, e.g. `.claude-plugin/plugin.json`. */
   assets: ReadonlyMap<string, Uint8Array>;
+  /** The absolute Node that runs setup; the installed hook commands run it, never a `node` from PATH. */
+  nodePath: string;
   /** Folder whose Claude trust is reported; omitted means folder trust is not reported. */
   cwd?: string;
 }>;
@@ -57,6 +60,8 @@ export type ClaudePaths = Readonly<{
   marketplaceRoot: string;
   catalog: string;
   pluginRoot: string;
+  /** The staged launcher the installed MCP entry and hooks run by absolute path. */
+  launcher: string;
   manifest: string;
 }>;
 
@@ -71,6 +76,7 @@ export function claudePaths(environment: Pick<SetupEnvironment, 'home' | 'xdgCon
     marketplaceRoot,
     catalog: path.join(marketplaceRoot, '.claude-plugin', 'marketplace.json'),
     pluginRoot: path.join(marketplaceRoot, 'plugins', CLAUDE_PLUGIN_NAME),
+    launcher: path.join(environment.xdgDataHome, 'khala', 'bin', 'khala'),
     manifest: setupStatePaths(environment).manifest,
   };
 }
@@ -211,6 +217,40 @@ export async function readClaudePluginAssets(pluginPackage: string): Promise<Map
   return assets;
 }
 
+/** A packaged hook command: the plugin's own `node "${CLAUDE_PLUGIN_ROOT}/hooks/<role>.mjs"`. */
+const PACKAGED_HOOK_COMMAND = /^node ("\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/[a-z-]+\.mjs")$/;
+
+/**
+ * The plugin files as installed. The packaged `.mcp.json` and hooks name a bare `khala`
+ * and `node`, which Claude would resolve from the person's PATH. Setup never puts either on
+ * PATH, so the installed MCP entry runs the staged launcher by absolute path, and every hook
+ * runs the Node that ran setup with the launcher as its argument. Both paths are fixed
+ * across upgrades. Any other packaged form fails closed rather than install a PATH lookup.
+ */
+export function installedPluginAssets(
+  assets: ReadonlyMap<string, Uint8Array>, runtime: Readonly<{ launcher: string; nodePath: string }>,
+): Map<string, Uint8Array> {
+  const installed = new Map(assets);
+  const mcp = parseJson(assets.get('.mcp.json') ?? new Uint8Array());
+  const server = isObject(mcp) && isObject(mcp.mcpServers) ? mcp.mcpServers[CLAUDE_PLUGIN_NAME] : undefined;
+  if (!isObject(mcp) || !isObject(server) || server.command !== 'khala') throw new Error('claude plugin .mcp.json must run khala');
+  const servers = { ...mcp.mcpServers as Json, [CLAUDE_PLUGIN_NAME]: { ...server, command: runtime.launcher } };
+  installed.set('.mcp.json', encodeJson({ ...mcp, mcpServers: servers }));
+
+  const hooks = parseJson(assets.get('hooks/hooks.json') ?? new Uint8Array());
+  if (!isObject(hooks) || !isObject(hooks.hooks)) throw new Error('claude plugin hooks/hooks.json is not hook configuration');
+  const rendered = Object.fromEntries(Object.entries(hooks.hooks).map(([event, groups]) => [event, (groups as Json[]).map(group => ({
+    ...group,
+    hooks: (group.hooks as Json[]).map(handler => {
+      const script = PACKAGED_HOOK_COMMAND.exec(String(handler.command))?.[1];
+      if (script === undefined) throw new Error(`claude plugin hook ${String(handler.command)} is not a packaged hook script`);
+      return { ...handler, command: `${shellWord(runtime.nodePath)} ${script} ${shellWord(runtime.launcher)}` };
+    }),
+  }))]));
+  installed.set('hooks/hooks.json', encodeJson({ ...hooks, hooks: rendered }));
+  return installed;
+}
+
 export class ClaudeSetupAdapter implements SetupAdapter {
   readonly harness = 'claude' as const;
   readonly #options: ClaudeAdapterOptions;
@@ -219,6 +259,7 @@ export class ClaudeSetupAdapter implements SetupAdapter {
   constructor(options: ClaudeAdapterOptions) {
     if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(options.version)) throw new Error('invalid khala payload version');
     validateAssets(options.assets);
+    if (!path.isAbsolute(options.nodePath)) throw new Error('claude hook node path must be absolute');
     this.#options = options;
   }
 
@@ -319,7 +360,8 @@ export class ClaudeSetupAdapter implements SetupAdapter {
 
     const desired: { path: string; component: SetupComponent; bytes: Uint8Array }[] = [
       { path: paths.catalog, component: 'marketplace', bytes: claudeCatalog() },
-      ...[...this.#options.assets].map(([name, bytes]) => ({ path: path.join(paths.pluginRoot, ...name.split('/')), component: 'plugin' as const, bytes })),
+      ...[...installedPluginAssets(this.#options.assets, { launcher: paths.launcher, nodePath: this.#options.nodePath })]
+        .map(([name, bytes]) => ({ path: path.join(paths.pluginRoot, ...name.split('/')), component: 'plugin' as const, bytes })),
     ];
     const current = new Map<string, Sha256Digest | null>();
     const targets: Target[] = [];

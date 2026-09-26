@@ -10,8 +10,8 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { EventId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
-import { createSqliteListeningModeRepository } from '../../../apps/internal/src/listening-mode-store/sqlite';
 import { composeBindingControl } from '../../../apps/internal/src/composition/binding-control/index';
+import { composeBindingModes } from '../../../apps/internal/src/composition/binding-modes/index';
 import { FakeHostedProvider } from '../../../apps/internal/src/composition/fixtures/make-external-provider';
 import { composeMakeExternal } from '../../../apps/internal/src/composition/make-external';
 import { createInternalReleaseFeed } from '../../../apps/internal/src/composition/internal-delivery/release-feed';
@@ -65,6 +65,7 @@ export async function startInternalWorld(): Promise<InternalWorld> {
   const fixture = createChannelFixture({ root, now: NOW });
   const logs: LogEvent[] = [];
   const pause = { value: false };
+  const modes = composeBindingModes({ handle: fixture.handle, store: fixture.store });
   const agentState = path.join(root, 'agent-state');
   const descriptorPath = path.join(root, 'descriptor.json');
   let id = 0;
@@ -72,11 +73,13 @@ export async function startInternalWorld(): Promise<InternalWorld> {
     store: fixture.store,
     bootstrap: [fixture.bootstrap],
     bindings: [fixture.bob],
+    // Composed as the launcher composes it (`composeBindingModes`), plus this world's own pause switch.
     releases: createInternalReleaseFeed({
       store: fixture.store,
-      listeningModes: createSqliteListeningModeRepository(fixture.handle),
-      paused: () => pause.value,
+      listeningModes: modes.listeningModes,
+      paused: binding => (pause.value ? true : modes.pause.read(binding)),
     }),
+    bindingModes: modes.control,
     newId: () => `id-${++id}`,
     clock: () => NOW,
     log: event => logs.push(event),

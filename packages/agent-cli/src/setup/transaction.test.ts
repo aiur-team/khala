@@ -316,7 +316,10 @@ describe('setup transaction', () => {
       },
     });
     expect(outcome.kind).toBe('recovery_required');
-    expectKind(await run(plan('setup', [])), 'committed');
+    // Past `journal_removed` only unreferenced backups remain, which the next command collects.
+    const next = await run(plan('setup', []));
+    if (boundary === 'journal_removed') expectKind(next, 'committed');
+    else expect(expectKind(next, 'recovered').resolution).toBe('finalized');
     expect((await manifest())!.entries).toHaveLength(4);
     expect(await read(targets().config)).toBe(new TextDecoder().decode(V1_CONFIG));
     await expectNoTransactionLeftovers();
@@ -338,7 +341,7 @@ describe('setup transaction', () => {
     // Every later command retries the bounded recovery and keeps refusing until it can be proven.
     expectKind(await run(plan('setup', [])), 'recovery_required');
     await fsp.writeFile(t.config, V1_CONFIG);
-    expectKind(await run(plan('setup', [])), 'committed');
+    expect(expectKind(await run(plan('setup', [])), 'recovered').resolution).toBe('rolled_back');
     expect(await read(t.config)).toBe(new TextDecoder().decode(ORIGINAL));
     expect(await inspectSetupRecovery(roots)).toBe('clean');
   });
@@ -479,7 +482,8 @@ describe('setup transaction crash recovery', () => {
     '--conditions=khala-source', '--import', 'tsx', child,
     JSON.stringify({ roots, killAt, plan: { ...current, contents: [...current.contents].map(([key, value]) => [key, Buffer.from(value).toString('base64')]) } }),
   ], { cwd: repository, encoding: 'utf8' });
-  const recoverOnly = () => run(plan('setup', []), { confirmedDigest: `sha256:${'f'.repeat(64)}` });
+  // The replan stands for the planner's recovery plan, whose digest the person approved.
+  const recoverOnly = () => run(plan('setup', []));
 
   it.each([
     ...['prepared', 'applying:0', 'applied:0', 'recorded:0', 'applying:2', 'applied:2', 'recorded:3'].map(at => [at, 'rolled back'] as const),
@@ -491,7 +495,9 @@ describe('setup transaction crash recovery', () => {
     expect(result.signal).toBe('SIGKILL');
     expect(await exists(state.lock)).toBe(true);
 
-    expect(expectKind(await recoverOnly(), 'replanned').plan.operations).toEqual([]);
+    const outcome = await recoverOnly();
+    if (killAt === 'journal_removed') expectKind(outcome, 'committed');
+    else expect(expectKind(outcome, 'recovered').resolution).toBe(expected === 'rolled back' ? 'rolled_back' : 'finalized');
     const recovered = await userState();
     if (expected === 'rolled back') {
       expect(recovered).toEqual(pristine);
@@ -503,8 +509,40 @@ describe('setup transaction crash recovery', () => {
     }
     await expectNoTransactionLeftovers();
     // Recovery is idempotent: a second pass changes nothing.
-    await recoverOnly();
+    expectKind(await recoverOnly(), 'committed');
     expect(await userState()).toEqual(recovered);
+  }, 20_000);
+
+  it('recovers nothing unless the confirmed digest is the recovery plan for this journal (wrong-implementation killer)', async () => {
+    await seedConfig();
+    const result = crash(setupV1(), 'recorded:0');
+    expect(result.signal).toBe('SIGKILL');
+    const journal = await fsp.readFile(state.journal);
+    const touched = await userState();
+    const recovery = plan('setup', []);
+    // The original setup's digest, or any other approval, only gets the recovery plan back.
+    for (const confirmedDigest of [setupV1().planDigest, `sha256:${'f'.repeat(64)}` as const]) {
+      expect(expectKind(await run(recovery, { confirmedDigest }), 'replanned').plan.planDigest).toBe(recovery.planDigest);
+    }
+    expect(await fsp.readFile(state.journal)).toEqual(journal);
+    expect(await userState()).toEqual(touched);
+    expectKind(await run(recovery), 'recovered');
+    expect(await exists(state.journal)).toBe(false);
+  }, 20_000);
+
+  it('recovery deletes the temporaries a killed write left, and nothing else', async () => {
+    await seedConfig();
+    const pristine = await userState();
+    expect(crash(setupV1(), 'applying:2').signal).toBe('SIGKILL');
+    const temporary = (directory: string) => path.join(directory, `.khala-${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}.tmp`);
+    const beside = temporary(path.dirname(targets().config));
+    const user = path.join(path.dirname(targets().config), '.khala-mine.tmp');
+    for (const file of [beside, temporary(state.stateDirectory), user]) await fsp.writeFile(file, 'partial');
+    expectKind(await recoverOnly(), 'recovered');
+    expect(await exists(beside)).toBe(false);
+    expect(await exists(temporary(state.stateDirectory))).toBe(false);
+    await fsp.rm(user);
+    expect(await userState()).toEqual(pristine);
   }, 20_000);
 
   it('a crash inside a vendor command cannot be attributed later, so recovery preserves the path', async () => {

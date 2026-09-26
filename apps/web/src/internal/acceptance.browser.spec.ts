@@ -2,7 +2,8 @@
 // served by the real `khala internal` runtime, driven in Chromium. The owner
 // works only in the browser; the agents are externally started CLI sessions
 // (see fixtures/acceptance.ts). Covers create and confirm, grants, agent
-// exchange, the human message, listening-mode delivery, Stop and the view it
+// exchange, the human message, listening-mode delivery, the owner's mode and pause
+// controls, Stop and the view it
 // leaves, launcher close and `khala internal --resume`, with keyboard, focus and
 // announcement checks along the way.
 
@@ -159,6 +160,74 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     assert.equal(pulled.status, 200);
     const wakes = pulled.body!.releases.map(release => release.wake);
     assert.deepEqual(wakes, [false, true], 'Bea’s message does not wake Ada; the owner’s does');
+
+    // Listening modes in the owner's panel. Ada's Codex CLI reports its installed version and
+    // hook trust, exactly the observation its `khala` calls send; the server derives the
+    // released claim from it. Bea's Claude has no proven route, so nothing is offered for her.
+    const ada$ = ada.granted();
+    const reported = await fetch(`${origin}/api/v1/agent/harness`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ada$.bindingCapability}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ v: 1, version: '0.156.1', hookReview: 'trusted' }),
+    });
+    assert.equal(reported.status, 200);
+    await page.reload();
+    await page.getByRole('heading', { name: 'Listening modes' }).waitFor();
+    const modeStatus = page.locator('.listening-control__status[role="status"]');
+
+    // Supported: Ada's sync is in effect; the owner moves her to steer by keyboard and hears it.
+    const adaModes = page.getByRole('group', { name: 'Listening mode for Ada' });
+    await adaModes.waitFor();
+    const adaAgent = page.locator('.listening-control__agent', { has: adaModes });
+    await adaAgent.getByText('In effect: Sync.').waitFor();
+    const adaSync = adaModes.getByRole('radio', { name: 'Sync', exact: true });
+    assert.equal(await adaSync.isChecked(), true);
+    await adaSync.focus();
+    await page.keyboard.press('ArrowUp');
+    await page.getByText('Ada: Steer requested.').waitFor();
+    assert.equal(await adaModes.getByRole('radio', { name: 'Steer', exact: true }).isChecked(), true);
+    await adaAgent.getByText('In effect: Steer.').waitFor();
+    await adaAgent.getByText('Last changed by you (owner) (v2)').waitFor();
+    assert.equal(await adaModes.getByRole('radio', { name: 'Async (not proven for this agent)', exact: true }).isDisabled(), true,
+      'async stays unproven without a receipt proof');
+
+    // Ada moves herself back to sync with `khala mode set`; the owner's panel names her as the one who changed it.
+    const agentSet = await ada.mode(['set', 'sync', '--expected-version', '2']);
+    assert.equal(agentSet.code, 0, `khala mode set: ${agentSet.out}${agentSet.err}`);
+    await page.reload();
+    await adaAgent.getByText('In effect: Sync.').waitFor();
+    assert.match(await adaAgent.innerText(), /Last changed by the agent \(Codex CLI 0\.156\.1 · [0-9a-f]+\) \(v3\)/);
+
+    // Unproven: every Bea mode is shown, disabled, unclaimed, with the idle-delivery reason.
+    const beaModes = page.getByRole('group', { name: 'Listening mode for Bea' });
+    for (const mode of ['Steer', 'Sync', 'Async']) {
+      const radio = beaModes.getByRole('radio', { name: `${mode} (not proven for this agent)`, exact: true });
+      assert.equal(await radio.isDisabled(), true, `${mode} is disabled for Bea`);
+      assert.equal(await radio.isChecked(), false, `${mode} is not claimed for Bea`);
+    }
+    const beaAgent = page.locator('.listening-control__agent', { has: beaModes });
+    assert.match(await beaAgent.innerText(), /Idle agents receive messages only at their next turn\./);
+    await beaAgent.getByText(/Requested: none\. Not in effect/).waitFor();
+
+    // Pause: announced, and the owner's next message is held before Ada can claim it; resume releases it once.
+    const pauseAda = page.getByRole('button', { name: 'Pause delivery to Ada' });
+    await pauseAda.focus();
+    await page.keyboard.press('Enter');
+    await page.getByText('Delivery to Ada is paused. New messages wait until you resume.').waitFor();
+    assert.match(await modeStatus.innerText(), /Delivery to Ada is paused\./);
+    await composer.fill('Owner: held for Ada');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await rowWith(page, 'Owner: held for Ada').waitFor();
+    const heldResponse = await fetch(`${origin}/api/v1/channels/${ada$.channelId}/releases`, { headers: { authorization: `Bearer ${ada$.bindingCapability}` } });
+    assert.equal(heldResponse.status, 200);
+    assert.deepEqual(await heldResponse.json().then(body => [body.held, body.releases.length]), ['paused', 0], 'nothing reaches Ada while paused');
+    assert.deepEqual(await ada.readAll(), [], 'Ada cannot read a held message');
+    const resumeAda = page.getByRole('button', { name: 'Resume delivery to Ada' });
+    await resumeAda.focus();
+    await page.keyboard.press('Enter');
+    await page.getByText('Delivery to Ada resumed.').waitFor();
+    assert.deepEqual(await ada.readAll(), ['Owner: held for Ada'], 'resume releases the held message');
+    assert.deepEqual(await bea.readAll(), ['Owner: held for Ada'], 'Bea was never paused');
 
     // Stop: keyboard only, confirmed, announced, and focus lands on the outcome.
     const stopButton = page.getByRole('button', { name: 'Stop agent delivery' });

@@ -38,18 +38,10 @@ Unit coverage and per-mutation fault injection stay beside the setup modules
 | Upgrade | Setup with the package, upgrade to a repacked `0.2.0-acceptance.1`, then remove. The result is the pre-Khala bytes, not the v1 postimage. |
 | Concurrency | A fake `codex --version` holds the first setup inside its lock (the executor replans there). A second confirmed setup gets `conflict`/`setup_busy` (exit 3) and writes nothing. |
 | Kill while locked | A setup SIGKILLed while holding the lock leaves no half-done harness. The next confirmed setup reclaims the dead holder's lock and applies. |
-| Kill mid-transaction | A setup SIGKILLed once its journal exists leaves no torn file: every planned path is its preimage or its postimage. `status --check`, `setup`, `remove`, and a confirmed setup all refuse with `recovery_required` (exit 4) and write nothing. |
+| Kill mid-transaction | A setup SIGKILLed after its journal records an applied operation, before the commit point, leaves no torn file: every planned path is its preimage or its postimage. `status --check` exits 4 with `recovery_required`. `setup`, `remove`, a dry run, and a setup confirmed with the interrupted digest each return a recovery plan (exit 5, `recovery_available`) and write nothing. At least one planned path already holds its postimage. Confirming the recovery plan rolls every write back in one command (exit 0, `recovered`), leaving every pre-Khala byte and absence with no journal. |
 | Descriptor discovery | The Claude hook entry (`khala claude <op>`) and the Codex/OpenCode MCP entry (bare `mcp-serve`), each run through the staged launcher, reach whichever loopback server the current `$XDG_STATE_HOME/khala/internal/active.json` names after the descriptor moves. The hook presents that launch's transport credential. The MCP entry, given a granted launch, presents that launch's binding credential. No entry is rewritten. |
+| Installed entries | On a machine whose PATH holds neither `khala` nor `node`, every installed entry runs exactly as its harness config writes it. That covers the Claude plugin's `.mcp.json` entry and its five hook commands, the Codex `config.toml` MCP entry and its four `hooks.json` handlers, and the OpenCode `mcp.khala` entry. MCP entries are spawned directly and hooks run through `sh -c`. Each MCP entry and each hook that asks Khala reaches the stand-in launch. This runs for all three harnesses and for a Claude-only setup, which must stage the launcher itself. The Claude MCP entry answers `initialize` and never presents the granted launch's binding credential (#402). Its unit twin, `packages/agent-cli/src/cli/main-claude-mcp.test.ts`, proves that `main()` never composes the default-descriptor client or delivery for it. |
 | Secret redaction | Sentinel descriptor ports and tokens are rotated mid-run. They never appear in harness config, fake-harness argv, plans, the manifest, backups, or any output. Seeded user secrets never appear in output. Rotating the descriptor plans nothing and rewrites no entry. |
-
-One case is `todo`. It runs and reports, but it does not fail the suite until
-its fix lands:
-
-| Case | Gap |
-| --- | --- |
-| A crash mid-transaction is recovered | [#385](https://github.com/aiur-team/khala/issues/385): with a journal present, no command offers a plan, so the executor's recovery never runs. |
-
-When a fix lands, remove the `todo` option so the case gates the release.
 
 ## Wrong-implementation checks
 
@@ -63,9 +55,15 @@ source). The named test then failed:
 | `transaction.ts` `acquireLock`: treat a live holder as stale | `a second mutation while one holds the lock gets a stable busy result …` |
 | `plan.ts` `refusalState` and `transaction.ts` drift check: allow removal over drift | `drift refuses the whole removal …` |
 | `plan.ts` `observe`: skip a harness with no executable instead of reporting it absent | `absent harnesses are reported without creating their config roots` |
-| `plan.ts` `prepare`: ignore an existing journal | `a crash mid-transaction safely refuses …` |
+| `plan.ts` `prepare`: ignore an existing journal | `a crash mid-transaction leaves no torn file …` |
+| `transaction.ts` `rollback`: skip `restoreTarget`, so recovery restores nothing | `a crash mid-transaction is recovered by the next confirmed command` |
 | `cli/main.ts`: read the Claude descriptor from `$XDG_DATA_HOME` instead of `$XDG_STATE_HOME` | `the Claude hook entry re-reads a moved runtime descriptor …` |
 | `cli/main.ts`: drop `defaultDescriptorPath`, so a bare `mcp-serve` composes no local client | `the Codex and OpenCode MCP entry resolves a moved runtime descriptor` |
+| `payload.ts`: drop `claude` from `LAUNCHER_HARNESSES` | `a Claude-only setup stages the launcher its MCP entry and hooks run` |
+| `adapters/claude.ts`: install the packaged plugin files unrendered (bare `khala` and `node`) | both `installed entries` cases |
+| `codex/hooks-config.ts`: install the bare `khala codex-hook` command | `every installed MCP entry and hook resolves the Khala runtime …` |
+| `claude-plugin/hooks/lib/runtime.mjs`: ignore the launcher argument and run `khala` from PATH | both `installed entries` cases |
+| `cli/main.ts`: compose `defaultDescriptorPath` for the Claude MCP entry too | `serves without composing the default-descriptor internal client or delivery`, the vitest case in `packages/agent-cli/src/cli/main-claude-mcp.test.ts`; the black-box entry cannot observe it, because both factories load lazily |
 
 Reproduce any row by making the edit and running
 `node --test --test-name-pattern='<test name>' tests/integration/agent-setup/setup-acceptance.test.mjs`.

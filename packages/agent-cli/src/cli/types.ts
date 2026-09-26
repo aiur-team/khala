@@ -89,6 +89,10 @@ export interface AgentClientPort {
   status(signal?: AbortSignal): Promise<AgentStatus>;
   /** Absent until live composition supplies the listening-mode store; native hooks then deliver nothing. */
   listeningMode?(signal?: AbortSignal): Promise<AgentListeningModeStatus>;
+  /** How a binding this client holds records a harness's own session ID; absent means verbatim. */
+  storedSessionId?(harness: string, sessionId: string): string;
+  /** Present only on a descriptor-backed local client: `mode get/set` for the binding its descriptor holds. */
+  listeningModeControl?: AgentListeningModeApplication;
   /** Absent until composition supplies the discovery-credentialed access client; both operations then report `unavailable`. */
   requestChannelAccess?: ChannelAccessPort['requestChannelAccess'];
   channelAccessStatus?: ChannelAccessPort['channelAccessStatus'];
@@ -121,7 +125,7 @@ export type CliDependencies = Readonly<{
   internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
   /** Lazily composes delivery of local-server releases into the held binding's inbox, with `--internal-descriptor`. */
   internalDelivery?: (descriptorPath: string) => Promise<InternalDelivery>;
-  /** The stable `active.json` the installed Codex/OpenCode `mcp-serve` entry re-reads when argv names no descriptor. */
+  /** The stable `active.json` the installed Codex/OpenCode `mcp-serve` entry and `codex-hook` re-read when argv names no descriptor. */
   defaultDescriptorPath?: string;
   claude?: ClaudeSessionClient;
   /** Setup planning and configuration status. The production composition always supplies it. */

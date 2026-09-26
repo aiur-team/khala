@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverRoutes } from '../../../apps/control/src/runtime/discover';
+import { BINDING_MODE_ROUTES } from '../../../apps/internal/src/server/binding-mode';
 import { DISCOVERY_ROUTES } from '../../../apps/internal/src/server/discovery';
 import { MAKE_EXTERNAL_ROUTES } from '../../../apps/internal/src/server/make-external';
 import { STOP_ROUTE } from '../../../apps/internal/src/server/stop/route';
@@ -55,8 +56,8 @@ const HOOK_RENDERS_CLI = 'hook renders what `khala claude`/`khala codex-hook` re
 const SETUP_UNCOMPOSED = 'installs or removes harness configuration from the packaged payload and reads no channel state; the test composition has no payload, so the command was not driven';
 /**
  * Commands whose only transport in the shipped CLI is the hosted client, which
- * `cli/main.ts` composes as `createUnavailableClient` (or, for `mode`, no listening-mode
- * application). They refuse `--internal-descriptor` as `invalid_arguments`. With valid
+ * `cli/main.ts` composes as `createUnavailableClient`. They refuse `--internal-descriptor`
+ * as `invalid_arguments`. With valid
  * arguments they refuse before any channel state; `airlock.test.ts` asserts each exact
  * refusal, so composing a transport for one fails the suite until it is probed.
  */
@@ -93,7 +94,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   // Agent CLI commands.
   'cli:connect': notObserved(CLI_UNCOMPOSED),
   'cli:listen': probe('agent-cli'),
-  'cli:mode': notObserved(CLI_UNCOMPOSED),
+  'cli:mode': probe('agent-cli'),
   'cli:read': probe('agent-cli'),
   'cli:send': probe('agent-cli'),
   'cli:status': probe('agent-cli'),
@@ -141,6 +142,9 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:POST /api/v1/channels/:channelId/stop': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/make-external': probe('internal-http'),
   'http-internal:POST /api/v1/channels/:channelId/make-external': probe('internal-http'),
+  // Listening-mode control and pause: mode state only. The owner routes refuse a binding by role;
+  // the agent routes act on the bearer's own binding and carry no message body.
+  ...Object.fromEntries(BINDING_MODE_ROUTES.map(route => [`http-internal:${route.method} ${route.path}`, probe('internal-http')])),
   // Claude session route: the launch's transport capability only, driven through the launcher.
   'http-internal:POST /api/agent/claude/session': probe('claude-session'),
   'http-internal:GET /channels/:channelId': probe('internal-http'),
@@ -199,6 +203,8 @@ const KNOWN_ROUTE_PUSHES: ReadonlySet<string> = new Set([
   '...discovery.routes',
   // Make-external journey routes are enumerated from `MAKE_EXTERNAL_ROUTES`.
   '...makeExternal.routes',
+  // Listening-mode control and pause routes are enumerated from `BINDING_MODE_ROUTES`.
+  '...BINDING_MODE_ROUTES',
   // App-shell documents are `ROUTES` entries.
   '...APP_DOCUMENT_ROUTES',
   // Static assets from a built manifest: public files, no channel state.
@@ -229,6 +235,7 @@ export function internalServerRoutes(
   const routes: string[] = [
     `${STOP_ROUTE.method} ${STOP_ROUTE.path}`, `POST ${CLAUDE_SESSION_PATH}`,
     ...Object.values(MAKE_EXTERNAL_ROUTES).map(route => `${route.method} ${route.path}`),
+    ...BINDING_MODE_ROUTES.map(route => `${route.method} ${route.path}`),
   ];
   for (const match of table.matchAll(/method: '(GET|POST)', path: ('([^']+)'|[A-Z_]+)/g)) {
     const routePath = match[3] ?? constants[match[2]!];

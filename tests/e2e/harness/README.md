@@ -82,9 +82,10 @@ Acceptance 1 of `docs/product/internal-mode/acceptance.md`.
   externally started fake CLI sessions (`cli-driver.ts`) take part. The flow covers
   grants, two-way deliberate sends, a human message, batch-token acknowledgement,
   Stop, launcher close and `--resume`.
-- `modes.test.ts` covers steer, sync, async and pause. It uses the same internal
-  pieces plus the real `khala codex-hook`, because the launcher does not compose
-  modes or pause yet (#392).
+- `modes.test.ts` covers steer, sync, async and pause over the same real launcher.
+  The owner sets the mode and pauses through the owner API. A granted fake Codex
+  session fires the exact installed `khala codex-hook` and states its
+  released capability claim, because no real Codex is installed.
 
 ## Conformance (`tests/conformance/`)
 

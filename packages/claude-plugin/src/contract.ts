@@ -23,7 +23,10 @@ export const FROZEN_WATCHER_SCRIPT = 'hooks/stop-watcher.mjs';
 export const FROZEN_SKILL_NAME = 'khala';
 export const FROZEN_COMMAND_VERBS = ['send', 'read', 'create', 'join', 'who'] as const;
 
-/** The one MCP server entry, launched as `khala mcp-serve`, and its tools. */
+/**
+ * The one MCP server entry, launched as `khala mcp-serve`, and its tools. This is the
+ * packaged form; setup installs the command as the staged launcher's absolute path.
+ */
 export const FROZEN_MCP_SERVER = { name: 'khala', command: 'khala', args: ['mcp-serve'] } as const;
 /**
  * Marks the plugin's own MCP entry so `mcp-serve` binds to the Claude session. The

@@ -2,7 +2,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CODEX_HOOK_COMMAND } from '../../codex/hooks-config.js';
+import { codexHookCommand } from '../../codex/hooks-config.js';
 import { ConfinedFilesystem, sha256 } from '../filesystem.js';
 import { bytes, snapshot, syntheticHome } from '../fixtures/setup-home.js';
 import { executeSetupPlan, type ExecutablePlan, type ExecutionOutcome, type SetupRoots } from '../transaction.js';
@@ -58,6 +58,7 @@ const probe: SetupProbe = {
 };
 const environment = (): SetupEnvironment => ({ ...roots, probe });
 const paths = () => codexPaths(roots);
+const hookCommand = () => codexHookCommand(paths().launcher);
 const read = (target: string) => fsp.readFile(target, 'utf8');
 const exists = (target: string) => fsp.lstat(target).then(() => true, () => false);
 
@@ -103,7 +104,7 @@ async function approveNatively() {
   for (const [name, spelled] of Object.entries(event)) {
     for (const [group, entry] of hooks.hooks[name]!.entries()) {
       for (const [handler, candidate] of entry.hooks.entries()) {
-        if (candidate.command !== CODEX_HOOK_COMMAND) continue;
+        if (candidate.command !== hookCommand()) continue;
         tables += `\n[hooks.state."${paths().hooks}:${spelled}:${group}:${handler}"]\ntrusted_hash = "sha256:${'cd'.repeat(32)}"\n`;
       }
     }
@@ -200,7 +201,9 @@ describe('Codex setup on 0.154.0', () => {
     // The person's hook keeps its trust position; Khala's groups come after it.
     const hooks = JSON.parse(installedHooks) as { hooks: Record<string, { hooks: { command: string }[] }[]>; note: string };
     expect(hooks.note).toBe('user');
-    expect(hooks.hooks.Stop!.map(group => group.hooks[0]!.command)).toEqual(['say done', CODEX_HOOK_COMMAND]);
+    expect(hooks.hooks.Stop!.map(group => group.hooks[0]!.command)).toEqual(['say done', hookCommand()]);
+    // The hook runs the staged launcher by absolute path; it never looks `khala` up on PATH.
+    expect(hookCommand()).toBe(`'${path.join(roots.xdgDataHome, 'khala', 'bin', 'khala')}' codex-hook`);
 
     const trust = await approveNatively();
 
@@ -251,7 +254,7 @@ describe('Codex setup on 0.154.0', () => {
     expect(hooks).toMatchObject({ type: 'file_restore', restored: sha256(bytes(USER_HOOKS)) });
     expect((await run('remove')).kind).toBe('committed');
     expect(await read(paths().hooks)).toBe(USER_HOOKS);
-    expect(await read(paths().hooks)).not.toContain(CODEX_HOOK_COMMAND);
+    expect(await read(paths().hooks)).not.toContain(hookCommand());
   });
 
   it('fails and rolls back when a write reports success without the MCP postimage', async () => {
@@ -280,7 +283,7 @@ describe('Codex conflicts and drift', () => {
     expect(adapter.plan({ desired: 'present', observation })).toEqual([]);
 
     await fsp.rm(paths().config);
-    await fsp.writeFile(paths().hooks, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: CODEX_HOOK_COMMAND }] }] } }));
+    await fsp.writeFile(paths().hooks, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: hookCommand() }] }] } }));
     ({ adapter, observation } = await observe());
     expect(states(observation).hooks).toBe('conflict');
 

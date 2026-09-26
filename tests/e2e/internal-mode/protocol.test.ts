@@ -191,12 +191,16 @@ describe('internal protocol acceptance', () => {
     const h1 = await humanSays(human, 'H1 from the owner', 'txn-human-0001');
     for (const agent of [w.a, w.b]) expect((await receive(agent, [h1]))[0]!.body).toBe('H1 from the owner');
 
-    // Listening modes as internal mode composes them today: no mode control is wired,
-    // so `khala mode` refuses honestly instead of claiming a mode; the server's default
-    // (`sync`) marks human releases as wake-eligible and never lets an agent wake an agent.
+    // Listening modes: without a descriptor `khala mode` holds no binding and refuses; with the
+    // session's descriptor it reads that binding's server-held mode. Codex starts in `sync`; the
+    // server knows Claude has no evidenced mode, so nothing is requested for it. This lane injects
+    // no harness claim, so no mode is effective (`modes.test.ts` covers the proven routes). Human
+    // releases stay wake-eligible either way, and an agent never wakes an agent.
     const mode = await khalaOnce(w.launcherProfile, ['mode', 'get']);
     expect(mode.code).not.toBe(0);
     expect(JSON.parse(mode.stdout)).toMatchObject({ ok: false, kind: 'refused', reason: 'unavailable' });
+    expect(await w.a.mode(['get'])).toMatchObject({ ok: true, kind: 'view', requested: 'sync', version: 1, effective: null });
+    expect(await w.b.mode(['get'])).toMatchObject({ ok: true, kind: 'view', requested: null, version: 1, effective: null });
     const wakes = await releasesFor(human, grantedCapability(w.b));
     expect(wakes.status).toBe(200);
     expect(wakes.json!.releases.map(release => [release.events[0]!.eventId, release.wake])).toEqual([[e1.eventId, false], [h1, true]]);
