@@ -4,6 +4,7 @@ import type { AgentClientPort } from '../cli/types.js';
 
 export type ConnectorBootstrapClientOptions = Readonly<{
   ports: BootstrapPorts; session: SessionClaim; send: AgentClientPort['send']; status: AgentClientPort['status'];
+  listChannels: AgentClientPort['listChannels']; listAgents: AgentClientPort['listAgents'];
 }>;
 export function createConnectorBootstrapClient(options: ConnectorBootstrapClientOptions): AgentClientPort {
   return {
@@ -18,5 +19,7 @@ export function createConnectorBootstrapClient(options: ConnectorBootstrapClient
     },
     send: options.send,
     status: options.status,
+    listChannels: options.listChannels,
+    listAgents: options.listAgents,
   };
 }

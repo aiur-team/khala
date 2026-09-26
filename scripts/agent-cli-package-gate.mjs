@@ -15,7 +15,9 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 export const PACKAGE_NAME = '@aiur/khala';
 // Spelled in parts so this file does not itself count as a live reference.
 export const OLD_PACKAGE_NAME = ['@khala', 'agent-cli'].join('/');
-export const PACKED_FILES = ['README.md', 'dist/khala.js', 'package.json'];
+// `khala-internal.js` is the separately loaded `khala internal` runtime.
+export const PACKED_FILES = ['README.md', 'dist/khala-internal.js', 'dist/khala.js', 'package.json'];
+export const BUNDLES = ['dist/khala.js', 'dist/khala-internal.js'];
 export const REPOSITORY_URL = 'git+https://github.com/aiur-team/khala.git';
 // Scripts npm (or git-dependency preparation) runs on a consumer's machine.
 export const CONSUMER_HOOKS = ['preinstall', 'install', 'postinstall', 'prepublish', 'preprepare', 'prepare', 'postprepare'];
@@ -153,9 +155,11 @@ export function gatePackage({ packageDirectory = path.join(root, 'packages/agent
   execFileSync('tar', ['-xzf', tarball, '-C', extracted]);
   errors.push(...manifestErrors(JSON.parse(fs.readFileSync(path.join(extracted, 'package/package.json'), 'utf8'))));
 
-  const metafilePath = path.join(packageDirectory, 'dist/khala.js.meta.json');
-  if (fs.existsSync(metafilePath)) errors.push(...closureErrors(JSON.parse(fs.readFileSync(metafilePath, 'utf8')), packageDirectory));
-  else errors.push('prepack produced no bundle metafile; the runtime closure cannot be audited');
+  for (const bundled of BUNDLES) {
+    const metafilePath = path.join(packageDirectory, `${bundled}.meta.json`);
+    if (fs.existsSync(metafilePath)) errors.push(...closureErrors(JSON.parse(fs.readFileSync(metafilePath, 'utf8')), packageDirectory));
+    else errors.push(`prepack produced no metafile for ${bundled}; the runtime closure cannot be audited`);
+  }
   if (errors.length) return { errors, tarball, work };
 
   // A fresh prefix with no network: the tarball must install and run on its own.
