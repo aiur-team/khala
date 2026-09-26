@@ -128,7 +128,8 @@ function withoutBatchToken(tool: McpTool): McpTool {
     name: tool.name,
     definition() {
       const definition = tool.definition();
-      const { ackBatchToken: _dropped, ...properties } = definition.inputSchema.properties as Record<string, unknown>;
+      const properties = { ...(definition.inputSchema.properties as Record<string, unknown>) };
+      delete properties.ackBatchToken;
       return { ...definition, inputSchema: { ...definition.inputSchema, properties } };
     },
     call: (args, context) => Object.hasOwn(args, 'ackBatchToken') && !context.notification

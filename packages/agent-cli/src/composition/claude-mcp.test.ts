@@ -276,7 +276,7 @@ describe('Claude plugin channel tools', () => {
   describe('join', () => {
     /** Session s-9 is unbound until the owner grants; a grant is modelled by binding it. */
     function joinable() {
-      const { services, adapter: _unused } = server();
+      const { services } = server();
       const bound = new Set<string>();
       const base = directory();
       const sessions = { resolve: async (principal: never, claim: { sessionId: string }) =>
