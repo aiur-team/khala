@@ -135,7 +135,10 @@ async function restoreConnected(
   if (binding === null || deviceId === null) return null;
   const held = readInternalDescriptor(activePath);
   if (!held.ok) return 'unavailable';
-  if (isGrantedDescriptor(held.value)) return null;
+  if (isGrantedDescriptor(held.value)) {
+    // Another grant holds the descriptor: leave both it and this journal untouched.
+    return held.value.bindingId === binding.bindingId ? null : 'unavailable';
+  }
   const redeemed = await ports.redeem.resume({ operationId, deviceId, origin, bindingId: binding.bindingId });
   // A binding Stop revoked is never resumed.
   if (redeemed.kind === 'refused') return redeemed.code === 'binding_revoked' ? 'revoked' : 'unavailable';
