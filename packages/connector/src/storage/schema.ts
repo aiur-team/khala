@@ -7,7 +7,7 @@ import type { OpenMode } from './leases';
 
 /** `PRAGMA application_id`: ASCII "KHLA", so a foreign SQLite file is refused. */
 export const APPLICATION_ID = 0x4b484c41;
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const SCHEMA_V1 = `
 CREATE TABLE meta (
@@ -200,6 +200,21 @@ CREATE TABLE receipt_outbox (
 CREATE INDEX receipt_outbox_revision ON receipt_outbox (ledger_revision);
 `;
 
+/**
+ * Channel-access activation journal (RD5B). The X25519 recovery private key sits in its
+ * own column inside the owner-only ledger, so the record JSON never carries it and a
+ * row's record and key commit in one transaction.
+ */
+const SCHEMA_V5 = `
+CREATE TABLE channel_access_activations (
+  operation_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  phase TEXT NOT NULL,
+  record TEXT NOT NULL,
+  recovery_key BLOB
+) STRICT, WITHOUT ROWID;
+`;
+
 function pragmaNumber(db: DatabaseSync, name: string): number {
   const row = db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined;
   const value = row ? Object.values(row)[0] : undefined;
@@ -223,6 +238,7 @@ export function prepareSchema(db: DatabaseSync, mode: OpenMode): void {
     db.exec(SCHEMA_V2);
     db.exec(SCHEMA_V3);
     db.exec(SCHEMA_V4);
+    db.exec(SCHEMA_V5);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.prepare("INSERT INTO meta (key, value) VALUES ('ledger_revision', '0')").run();
@@ -242,5 +258,9 @@ export function prepareSchema(db: DatabaseSync, mode: OpenMode): void {
   if (version <= 3) {
     db.exec(SCHEMA_V4);
     db.exec('PRAGMA user_version = 4');
+  }
+  if (version <= 4) {
+    db.exec(SCHEMA_V5);
+    db.exec('PRAGMA user_version = 5');
   }
 }
