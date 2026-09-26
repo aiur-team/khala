@@ -13,7 +13,8 @@
     "./recovery/*": "./src/recovery/*.ts",
     "./channel-access/exchange/*": "./src/channel-access/exchange/*.ts",
     "./local/http/*": "./src/local/http/*.ts",
-    "./channel-access/journal/*": "./src/channel-access/journal/*.ts"
+    "./channel-access/journal/*": "./src/channel-access/journal/*.ts",
+    "./channel-create/*": "./src/channel-create/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",

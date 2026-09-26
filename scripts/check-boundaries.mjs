@@ -23,7 +23,8 @@ const localTransport = /^packages\/messaging\/src\/local\//;
 const hostedOnlyWeb = /^(?:apps\/web\/src\/composition\/(?:recovery\/|human\/(?:matrix-browser|browser-api|mount|capabilities|routes|entry)\.)|apps\/web\/src\/features\/(?:join|pairing|recovery)\/|packages\/messaging\/src\/(?:browser-device|recovery)\/)/;
 const hostedOnlyDependency = /^matrix-js-sdk(?:\/|$)/;
 // Shared web primitives other features may import. They may not import features themselves.
-const sharedFeatures = new Set(['approval-decision']);
+// `channel-create` is the creation operation adapter the channel-request inbox renders.
+const sharedFeatures = new Set(['approval-decision', 'channel-create']);
 
 function filesBelow(directory) {
   if (!fs.existsSync(directory)) return [];

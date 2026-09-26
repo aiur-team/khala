@@ -105,6 +105,13 @@ test('features may import the shared decision shell, which may not import featur
   });
   assert(errors.some(error => error.includes('sibling feature') && error.includes('../channel-access/index')));
 });
+test('the channel-request inbox may import the shared creation adapter', t => {
+  assert.deepEqual(fixture(t, {
+    'apps/web/src/features/channel-access/model.ts': "import '../channel-create/model';",
+    'apps/web/src/features/channel-create/model.ts': "import '../approval-decision/model';",
+    'apps/web/src/features/approval-decision/model.ts': 'export {};',
+  }), []);
+});
 test('loopback server imports only built-ins, the internal store and contracts', t => {
   assert.deepEqual(fixture(t, {
     'apps/internal/src/server/server.ts': "import http from 'node:http'; import { store } from '../store/channel-store'; import type { Room } from '../../../../packages/contracts/src/messaging/room';",
