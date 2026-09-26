@@ -13,6 +13,7 @@ import { openInbox } from '../cli/inbox.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import type { CliDependencies } from '../cli/types.js';
 import { ReadOperation } from './read.js';
+import { type SessionGrants, sessionGrants } from './session-grant.js';
 import { createUnavailableClient } from './unavailable.js';
 import {
   AGENT_CHANNEL_ACCESS_REQUEST_PATH, AGENT_CHANNEL_ACCESS_STATUS_PATH, createInternalClient, localChannelId, readInternalDescriptor,
@@ -252,6 +253,31 @@ function issueDiscovery(launched: Awaited<ReturnType<typeof launch>>, generation
   }), { mode: 0o600 });
   fs.chmodSync(file, 0o600);
   return file;
+}
+
+/** Binds one Codex session as `join` does: its own `grant.json` below its discovery principal. */
+function sessionGrant(
+  launched: Awaited<ReturnType<typeof launch>>, grants: SessionGrants, thread: string, participant: string,
+): string {
+  const file = grants({ harness: 'codex', sessionId: thread });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const bindingCapability = capability();
+  launched.server.grants.set(bindingCapability, binding(1, { bindingId: `binding-${thread}`, agentParticipantId: participant }));
+  publish(file, { ...launched.transportOnly, grantRef: `grant-${thread}`, bindingId: `binding-${thread}`, bindingCapability });
+  return file;
+}
+
+/** A `khala_send` call as Codex 0.154.0 sends it, naming its thread in `_meta`. */
+function codexSend(id: number, thread: string): string {
+  return JSON.stringify({
+    jsonrpc: '2.0', id, method: 'tools/call',
+    params: { _meta: { threadId: thread, progressToken: id }, name: 'khala_send', arguments: { message: `m-${id}` } },
+  });
+}
+
+/** The installed entry's composition: a local client and a delivery per descriptor. */
+function routedDeps(io: ReturnType<typeof streams>, stateDirectory: string, loads: string[] = []): CliDependencies {
+  return { ...cliDeps(io, stateDirectory, loads), internalDelivery: async () => ({ async pull() { return 'caught_up' as const; } }) };
 }
 
 describe('createInternalClient', () => {
@@ -509,29 +535,89 @@ describe('--internal-descriptor through the CLI and MCP', () => {
     expect(server.authors).toEqual(['agent-local']);
   });
 
-  it('serves the installed argv-less mcp-serve entry from the default descriptor, following each rotation', async () => {
-    const { server, file, grant, resume } = await launch();
-    const state = temporaryDirectory();
+  it('serves each installed Codex entry as its own session, never the grant in active.json', async () => {
+    const launched = await launch();
+    const { server, directory } = launched;
+    // The first session's grant also sits in active.json, where #401 mirrored it.
+    launched.grant(1);
+    const grants = sessionGrants(directory);
+    const a = sessionGrant(launched, grants, 'thread-a', 'agent-a');
+    const b = sessionGrant(launched, grants, 'thread-b', 'agent-b');
+    expect(path.basename(path.dirname(a))).toBe('agent_YG_M2xayccGs_VhHoWWJry3F7eXPGAHA30zODavNjXA');
     const loads: string[] = [];
-    const call = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'khala_send', arguments: { message: 'm' } } });
-    for (const rotate of [() => grant(1), () => resume(2)]) {
-      const bindingCapability = rotate();
-      const from = server.log.length;
-      const io = streams(`${call}\n`);
-      expect(await runCli(['mcp-serve'], { ...cliDeps(io, state, loads), defaultDescriptorPath: file })).toBe(0);
+    for (const thread of ['thread-b', 'thread-a']) {
+      const io = streams(`${codexSend(1, thread)}\n`);
+      expect(await runCli(['mcp-serve'], { ...routedDeps(io, temporaryDirectory(), loads), sessionGrants: grants })).toBe(0);
       expect(io.output()).toContain('accepted');
-      expect(server.capabilitiesSince(from).every(value => value === bindingCapability)).toBe(true);
     }
-    expect(loads).toEqual([file, file]);
-    expect(server.authors).toEqual(['agent-local', 'agent-local']);
+    expect(loads).toEqual([b, a]);
+    expect(server.authors).toEqual(['agent-b', 'agent-a']);
   });
 
-  it('applies the default descriptor to mcp-serve only', async () => {
+  it('routes every call of one entry by its own session', async () => {
+    const launched = await launch();
+    const grants = sessionGrants(launched.directory);
+    sessionGrant(launched, grants, 'thread-a', 'agent-a');
+    sessionGrant(launched, grants, 'thread-b', 'agent-b');
+    const io = streams(`${codexSend(1, 'thread-a')}\n${codexSend(2, 'thread-b')}\n${codexSend(3, 'thread-a')}\n`);
+    expect(await runCli(['mcp-serve'], { ...routedDeps(io, temporaryDirectory()), sessionGrants: grants })).toBe(0);
+    expect(launched.server.authors).toEqual(['agent-a', 'agent-b', 'agent-a']);
+  });
+
+  it('refuses not_connected when a call names no session or an unjoined one, even with a grant in active.json', async () => {
+    const launched = await launch();
+    launched.grant(1);
+    const grants = sessionGrants(launched.directory);
+    const bare = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'khala_send', arguments: { message: 'm' } } });
+    const io = streams(`${bare}\n${codexSend(2, 'thread-unjoined')}\n`);
+    expect(await runCli(['mcp-serve'], { ...routedDeps(io, temporaryDirectory()), sessionGrants: grants })).toBe(0);
+    const responses = io.output().trim().split('\n').map(line => JSON.parse(line) as { result: { structuredContent: unknown } });
+    expect(responses.map(response => response.result.structuredContent)).toEqual([
+      { kind: 'refused', code: 'not_connected' }, { kind: 'refused', code: 'not_connected' },
+    ]);
+    expect(launched.server.authors).toEqual([]);
+  });
+
+  it('runs the installed codex-hook as the session its input names, and as nobody without one', async () => {
+    const launched = await launch();
+    launched.grant(1);
+    const grants = sessionGrants(launched.directory);
+    const a = sessionGrant(launched, grants, 'thread-a', 'agent-a');
+    const b = sessionGrant(launched, grants, 'thread-b', 'agent-b');
+    const loads: string[] = [];
+    const hook = async (input: unknown) => {
+      const io = streams(JSON.stringify(input));
+      expect(await runCli(['codex-hook'], { ...routedDeps(io, temporaryDirectory(), loads), sessionGrants: grants })).toBe(0);
+      expect(io.output()).toBe('');
+    };
+    for (const thread of ['thread-b', 'thread-a']) {
+      await hook({ hook_event_name: 'UserPromptSubmit', session_id: thread, turn_id: 'turn-1' });
+    }
+    await hook({ hook_event_name: 'UserPromptSubmit', turn_id: 'turn-1' });
+    await hook({ hook_event_name: 'SessionStart', session_id: 'thread-a', turn_id: 'turn-1' });
+    expect(loads).toEqual([b, a]);
+    // Pinned apart from `sessionGrants`, which the launcher's principal must match.
+    expect([a, b].map(file => path.relative(launched.directory, file))).toEqual([
+      'discovery/agent_YG_M2xayccGs_VhHoWWJry3F7eXPGAHA30zODavNjXA/grant.json',
+      'discovery/agent_ZL_zNYs4UAOkhewV9FJuU0oV8Jk9Ktf8g1h3zxSBEAs/grant.json',
+    ]);
+  });
+
+  it('routes by session for the argv-less mcp-serve only', async () => {
+    const { server, file, grant } = await launch();
+    const bindingCapability = grant(1);
     const loads: string[] = [];
     const io = streams('x');
-    const deps = { ...cliDeps(io, temporaryDirectory(), loads), defaultDescriptorPath: '/x/active.json', client: createUnavailableClient() };
+    const deps = { ...routedDeps(io, temporaryDirectory(), loads), sessionGrants: sessionGrants('/x'), client: createUnavailableClient() };
     for (const argv of [['status'], ['send'], ['read']]) await runCli(argv, deps);
     expect(loads).toEqual([]);
+    // A named descriptor wins over session routing.
+    const from = server.log.length;
+    const named = streams(`${codexSend(1, 'thread-a')}\n`);
+    expect(await runCli(['--internal-descriptor', file, 'mcp-serve'], { ...routedDeps(named, temporaryDirectory(), loads), sessionGrants: sessionGrants('/x') })).toBe(0);
+    expect(named.output()).toContain('accepted');
+    expect(server.capabilitiesSince(from).every(value => value === bindingCapability)).toBe(true);
+    expect(loads).toEqual([file]);
   });
 
   it('joins through the access journal without an inbox or channel content', async () => {
@@ -570,16 +656,18 @@ describe('--internal-descriptor through the CLI and MCP', () => {
     expect(transcript).not.toContain(file);
   });
 
-  it('runs the byte-stable installed `khala codex-hook` against the runtime descriptor, and nothing else', async () => {
+  it('runs the byte-stable installed `khala codex-hook` against its own session\'s grant, and nothing else', async () => {
     const loads: string[] = [];
-    const deps = { ...cliDeps(streams(), temporaryDirectory(), loads), defaultDescriptorPath: '/x/internal/active.json' };
+    const grants = sessionGrants('/x/internal');
+    const deps = { ...routedDeps(streams(), temporaryDirectory(), loads), sessionGrants: grants };
     const hook = streams(JSON.stringify({ hook_event_name: 'Stop', session_id: 's', turn_id: 't', stop_hook_active: false }));
     expect(await runCli(['codex-hook'], { ...deps, stdin: hook.stdin, stdout: hook.stdout, stderr: hook.stderr })).toBe(0);
-    expect(loads).toEqual(['/x/internal/active.json']);
+    const own = grants({ harness: 'codex', sessionId: 's' });
+    expect(loads).toEqual([own]);
     // Every other command still needs the explicit option.
     const status = streams();
     expect(await runCli(['status'], { ...deps, stdout: status.stdout, stderr: status.stderr })).toBe(2);
-    expect(loads).toEqual(['/x/internal/active.json']);
+    expect(loads).toEqual([own]);
   });
 
   it('does not load the local composition for unrelated commands or without the option', async () => {

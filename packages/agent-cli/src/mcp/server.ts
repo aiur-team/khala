@@ -3,11 +3,12 @@ import { StringDecoder } from 'node:string_decoder';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import { ListeningModeOperation } from '../composition/listening-mode.js';
 import { plainObject } from '../cli/validation.js';
+import { cliErrorCode } from '../cli/errors.js';
 import type { ListeningModeOperationPort } from './listening-mode-tool.js';
 import type { ChannelToolsPort } from './channels/tools.js';
 import { PairingService } from '../cli/pair.js';
 import type { PairToolPort } from './pair.js';
-import type { ReadOperationPort } from './read-tool.js';
+import { type ReadOperationPort, readToolFailure } from './read-tool.js';
 import { toolRegistry, type ToolRegistry } from './registry.js';
 import {
   JSON_RPC_VERSION, failure, hasOnly, success,
@@ -20,9 +21,8 @@ export type { McpServerReadResultPostprocessor, McpServerResultPostprocessor } f
 const MCP_PROTOCOL_VERSION = '2025-03-26';
 const MAX_FRAME_BYTES = MAX_SEND_BYTES + 16_384;
 
-export type McpServerOptions = Readonly<{
-  input: Readable;
-  output: Writable;
+/** The collaborators one tool call runs against. */
+export type McpCallCollaborators = Readonly<{
   send: SendService;
   read: ReadOperationPort;
   /** Absent means no mode control is composed; the tool then refuses with `unavailable`. */
@@ -32,18 +32,24 @@ export type McpServerOptions = Readonly<{
   pair?: PairToolPort | undefined;
   postprocessResult: McpServerResultPostprocessor;
   postprocessReadResult: McpServerReadResultPostprocessor;
-  signal?: AbortSignal | undefined;
-  tools?: ToolRegistry | undefined;
 }>;
 
+/**
+ * Picks the collaborators for one `tools/call` from the request's `_meta`, or `null`
+ * when the call names no session this server can act as; that call is then refused
+ * `not_connected`.
+ */
+export type McpSessionRoute = (meta: Readonly<Record<string, unknown>> | undefined) => Promise<McpCallCollaborators | null>;
+
+export type McpServerOptions = Readonly<{
+  input: Readable;
+  output: Writable;
+  signal?: AbortSignal | undefined;
+  tools?: ToolRegistry | undefined;
+}> & (McpCallCollaborators | Readonly<{ route: McpSessionRoute }>);
+
 type ServerContext = Readonly<{
-  send: SendService;
-  read: ReadOperationPort;
-  listeningMode: ListeningModeOperationPort;
-  channels: ChannelToolsPort;
-  pair: PairToolPort;
-  postprocessResult: McpServerResultPostprocessor | undefined;
-  postprocessReadResult: McpServerReadResultPostprocessor | undefined;
+  route: McpSessionRoute;
   tools: ToolRegistry;
 }>;
 
@@ -52,15 +58,10 @@ type ServerContext = Readonly<{
  * message and each response is one JSON line. The caller owns the streams.
  */
 export async function runMcpServer(options: McpServerOptions): Promise<void> {
-  const { input, output, send, read, channels, postprocessResult, postprocessReadResult, signal } = options;
+  const { input, output, signal } = options;
+  const fixed = 'route' in options ? null : options;
   const context: ServerContext = {
-    send,
-    read,
-    channels,
-    pair: options.pair ?? new PairingService({}),
-    listeningMode: options.listeningMode ?? new ListeningModeOperation({ application: null }),
-    postprocessResult,
-    postprocessReadResult,
+    route: fixed === null ? (options as Readonly<{ route: McpSessionRoute }>).route : async () => fixed,
     tools: options.tools ?? toolRegistry,
   };
   const decoder = new StringDecoder('utf8');
@@ -119,13 +120,7 @@ async function processLine(
   }
 
   const notification = plainObject(message) && !Object.hasOwn(message, 'id');
-  const response = await handleMessage(
-    message,
-    notification
-      ? { ...context, postprocessResult: undefined, postprocessReadResult: undefined }
-      : context,
-    notification,
-  );
+  const response = await handleMessage(message, context, notification);
   if (!notification) await writeResponse(output, response, signal);
 }
 
@@ -141,8 +136,9 @@ async function handleMessage(
 
   const id = requestId(message);
   if (Object.hasOwn(message, 'id') && !validId(message.id)) return failure(null, -32600, 'Invalid Request');
-  const params = withoutMeta(message.params);
-  if (params === INVALID_META) return failure(id, -32602, 'Invalid params');
+  const split = splitMeta(message.params);
+  if (split === INVALID_META) return failure(id, -32602, 'Invalid params');
+  const { params, meta } = split;
 
   switch (message.method) {
     case 'initialize':
@@ -159,7 +155,7 @@ async function handleMessage(
         ? success(id, { tools: context.tools.definitions() })
         : failure(id, -32602, 'Invalid params');
     case 'tools/call':
-      return callTool(id, params, context, notification);
+      return callTool(id, params, meta, context, notification);
     default:
       return failure(id, -32601, 'Method not found');
   }
@@ -168,6 +164,7 @@ async function handleMessage(
 async function callTool(
   id: JsonRpcId,
   params: unknown,
+  meta: Readonly<Record<string, unknown>> | undefined,
   context: ServerContext,
   notification: boolean,
 ): Promise<JsonRpcResponse> {
@@ -177,16 +174,25 @@ async function callTool(
   }
   const tool = context.tools.resolve(params.name);
   if (tool === undefined) return failure(id, -32602, 'Invalid params');
+  let collaborators: McpCallCollaborators | null;
+  try {
+    collaborators = await context.route(meta);
+  } catch (error) {
+    // One session's failure refuses that call only; the server keeps serving every other session.
+    return success(id, readToolFailure(cliErrorCode(error)).primaryResult);
+  }
+  if (collaborators === null) return success(id, readToolFailure('not_connected').primaryResult);
   const toolContext: McpToolContext = {
     id,
     notification,
-    send: context.send,
-    read: context.read,
-    listeningMode: context.listeningMode,
-    channels: context.channels,
-    pair: context.pair,
-    postprocessResult: context.postprocessResult,
-    postprocessReadResult: context.postprocessReadResult,
+    send: collaborators.send,
+    read: collaborators.read,
+    listeningMode: collaborators.listeningMode ?? new ListeningModeOperation({ application: null }),
+    channels: collaborators.channels,
+    pair: collaborators.pair ?? new PairingService({}),
+    // A notification has no response on which a batch could be delivered.
+    postprocessResult: notification ? undefined : collaborators.postprocessResult,
+    postprocessReadResult: notification ? undefined : collaborators.postprocessReadResult,
   };
   return tool.call(params.arguments, toolContext);
 }
@@ -202,12 +208,13 @@ function validInitializeParams(value: unknown): value is { protocolVersion?: str
 const INVALID_META = Symbol('invalid _meta');
 
 // MCP reserves `_meta` on every request's params; Codex 0.154.0 sends
-// `{ _meta: { progressToken } }` on `tools/list`. Accept and ignore an object
-// `_meta` so the strict per-method checks below see only method parameters.
-function withoutMeta(value: unknown): unknown {
-  if (!plainObject(value) || !Object.hasOwn(value, '_meta')) return value;
+// `{ _meta: { progressToken } }` on `tools/list` and its thread on `tools/call`.
+// Split an object `_meta` off so the strict per-method checks below see only
+// method parameters, and a call's session route sees the metadata.
+function splitMeta(value: unknown): Readonly<{ params: unknown; meta: Readonly<Record<string, unknown>> | undefined }> | typeof INVALID_META {
+  if (!plainObject(value) || !Object.hasOwn(value, '_meta')) return { params: value, meta: undefined };
   const { _meta: meta, ...rest } = value;
-  return plainObject(meta) ? rest : INVALID_META;
+  return plainObject(meta) ? { params: rest, meta } : INVALID_META;
 }
 
 function emptyParams(value: unknown): boolean {

@@ -203,11 +203,12 @@ export function createExternalCli(options: Options): ExternalCli {
       return JSON.parse(result.stdout || result.stderr) as Record<string, unknown>;
     },
 
-    // The exact installed command: `khala codex-hook`, with no descriptor option.
-    // It reads the launcher's `active.json`, which the first grant mirrors into (#401; per-session hook identity is #407).
+    // The exact installed command: `khala codex-hook`, with no descriptor option. It acts as
+    // the session its input's `session_id` names, through that session's own `grant.json` (#407).
     codexHook: (input, claim, observation) => khalaOnce(profile(), ['codex-hook'], JSON.stringify(input), {
       ...(claim ? { capabilities: claim } : {}), ...(observation ? { observation } : {}),
-      defaultDescriptorPath: path.join(path.dirname(discoveryPath!), '..', '..', 'active.json'),
+      // This CLI keeps its own state home; the launcher's root holds the session's grant.
+      internalRoot: path.resolve(path.dirname(discoveryPath!), '..', '..'),
     }),
 
     async endTurnWithProse() {
