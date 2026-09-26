@@ -102,7 +102,15 @@ const ROUTES = {
   binding: { method: 'GET', path: '/api/v1/agent/binding', admission: 'authenticated' },
   releases: { method: 'GET', path: '/api/v1/channels/:channelId/releases', admission: 'authenticated', allowQuery: true },
   channelDocument: { method: 'GET', path: '/channels/:channelId', admission: 'public' },
+  settingsDocument: { method: 'GET', path: '/channels/:channelId/settings', admission: 'public' },
+  requestsDocument: { method: 'GET', path: '/channel-requests', admission: 'public' },
+  requestDocument: { method: 'GET', path: '/channel-requests/:handle', admission: 'public' },
 } as const satisfies Record<string, RouteSpec>;
+
+/** Every application route answered with the app shell; the client router decides what it shows. */
+const APP_DOCUMENT_ROUTES: readonly RouteSpec[] = [
+  ROUTES.channelDocument, ROUTES.settingsDocument, ROUTES.requestsDocument, ROUTES.requestDocument,
+];
 
 const TOKEN = /^[\x21-\x7e]+$/;
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
@@ -232,7 +240,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     })
     : null;
   if (discovery) routes.push(...discovery.routes);
-  if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
+  if (assets?.channelDocument) routes.push(...APP_DOCUMENT_ROUTES);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
   /**
@@ -576,7 +584,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   }
 
   function staticAsset({ route, response }: RouteContext<Principal>): void {
-    const asset = route === ROUTES.channelDocument ? assets?.channelDocument : assets?.get(route.path);
+    const asset = APP_DOCUMENT_ROUTES.includes(route) ? assets?.channelDocument : assets?.get(route.path);
     if (!asset) {
       fail(response, failure(404, 'not_found'));
       return;

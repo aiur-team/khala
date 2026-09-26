@@ -28,7 +28,7 @@ export function ChannelSettingsRoute({ settings, roomId, channelHref }: {
   const ports = useMemo(() => ({ settings }), [settings]);
   return (
     <KhalaPageFrame model={{ title: 'Channel discovery settings', labelledBy: 'khala-channel-settings-title' }}>
-      <p><a href={channelHref}>Back to channel</a></p>
+      <p><a className="internal-owner-link" href={channelHref}>Back to channel</a></p>
       <ChannelSettingsPanel ports={ports} roomId={roomId} pickerEmptyHelp={<PickerEmptyHelp />} />
     </KhalaPageFrame>
   );
