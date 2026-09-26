@@ -460,14 +460,15 @@ async function acknowledge(loaded: Loaded, ports: ChannelAccessActivationPorts):
 
 type Opened =
   | Readonly<{ kind: 'opened'; grant: string }>
-  | Readonly<{ kind: 'rejected'; reason: 'recovery_key_lost' | 'grant_expired' | 'envelope_rejected' }>;
+  | Readonly<{ kind: 'rejected'; reason: 'grant_expired' | 'envelope_rejected' }>;
 
 /** Opens the sealed result and checks version, algorithm, both thumbprints and the sealed context. */
 async function openEnvelope(input: unknown, record: ActivationRecord, privateKey: Uint8Array, nowMs: number): Promise<Opened> {
   const envelope = decodeSealedGrantEnvelope(input);
   if (!envelope.ok) return { kind: 'rejected', reason: 'envelope_rejected' };
-  // Sealed to another key: the one it names is not the one this connector holds.
-  if (envelope.value.recipientKeyThumbprint !== record.recoveryKeyThumbprint) return { kind: 'rejected', reason: 'recovery_key_lost' };
+  // The service refuses a key it did not seal to (`encryption_key_mismatch`), so an envelope naming
+  // another key is corrupt, not proof of key loss; a repair re-fetches the stored bytes.
+  if (envelope.value.recipientKeyThumbprint !== record.recoveryKeyThumbprint) return { kind: 'rejected', reason: 'envelope_rejected' };
   let plaintext: string;
   try {
     await sodium.ready;

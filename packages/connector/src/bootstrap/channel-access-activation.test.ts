@@ -498,7 +498,7 @@ describe('channel-access activation', () => {
       ['unknown version', { tamper: e => ({ ...e, v: 2 }) }, 'envelope_rejected'],
       ['unknown algorithm', { tamper: e => ({ ...e, algorithm: 'hpke_x25519' }) }, 'envelope_rejected'],
       ['extra envelope field', { tamper: e => ({ ...e, grant: 'cagrant_x' }) }, 'envelope_rejected'],
-      ['other recipient thumbprint', { tamper: e => ({ ...e, recipientKeyThumbprint: 'A'.repeat(43) }) }, 'recovery_key_lost'],
+      ['other recipient thumbprint', { tamper: e => ({ ...e, recipientKeyThumbprint: 'A'.repeat(43) }) }, 'envelope_rejected'],
       ['other operation', { payload: { operationId: 'op_access_2' } }, 'envelope_rejected'],
       ['other requester', { payload: { requester: 'principal_2' } }, 'envelope_rejected'],
       ['other origin', { payload: { origin: 'https://other.example' } }, 'envelope_rejected'],
