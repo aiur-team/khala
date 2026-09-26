@@ -36,7 +36,10 @@ durable trust store are stand-ins. The trust store is a serialized in-memory sto
 | Hosted `auto` never becomes effective | `control-handler.test.ts` |
 | Two tabs with the same expected version: exactly one wins, and the other gets `stale_policy` without overwriting (AE1) | `control-handler.test.ts` |
 | A failed ledger write answers `pending`/`outcome_unknown`, and status shows it as requested, not effective. A retry with the same command ID enforces it once, and changed input is `idempotency_conflict` (AE2) | `control-handler.test.ts` |
-| A request accepted before a crash is enforced by `reconcile` before new commands are served | `control-handler.test.ts`, `register.test.ts` |
+| A request accepted before a crash is enforced by `reconcile` before new commands are served. While it cannot be enforced, a newer command is refused without a write | `control-handler.test.ts`, `register.test.ts` |
+| A retry of a command that was enforced and then superseded answers `effective`. A command enforced first by a concurrent caller is not reported as rejected | `control-handler.test.ts` |
+| A trust store behind the ledger starts again from what the ledger enforces | `control-handler.test.ts` |
+| A lost submit publishes nothing, so the panel's same-command retry survives. A refused read shows offline, and a hung read is abandoned | `apps/web/src/composition/controls/browser-port.test.ts` |
 | A command from an older binding generation replayed after a rebind is `stale_binding`. The new generation starts from what the ledger enforces | `control-handler.test.ts` |
 | The capability handle exposes no policy entry point. The handler is served only on the protected transport, once, and a stop during reconciliation keeps it closed | `register.test.ts` |
 | The browser reads only a strictly decoded status for its own binding. It keeps null versions null, keeps the last enforced values labelled offline when the connector is unreachable, and drops an older generation | `apps/web/src/composition/controls/browser-port.test.ts` |
@@ -56,6 +59,9 @@ No `*.spec.ts` lives here yet. A skipped or fixture-backed spec must not count a
   keep KHA-120's command journal across restarts, or a retried command could be
   refused `stale_policy` after it was actually enforced. The connector capability
   stays `unavailable` until one is injected.
+- **Policy for a new generation.** Nothing in production applies the first dispatch
+  policy for a binding generation, including its listening projection. Until that owner
+  does, controls for that generation answer `unavailable`.
 - **Route mount and binding lookup.** Same gaps as review (`tests/integration/review/README.md`):
   no render slot for `AgentControlsPanel`, and no contract gives the browser its
   binding ID or peer participant for a room.

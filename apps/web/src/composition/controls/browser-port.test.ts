@@ -205,6 +205,45 @@ describe('browser agent controls port', () => {
     port.dispose();
   });
 
+  it('publishes nothing after a lost submit, so the same-command retry survives', async () => {
+    const script = scripted();
+    const port = createBrowserAgentControlsPort({ client: script.client, bindingId, refreshMs: 0 });
+    const controller = createAgentControlsController({ agentControls: port }, {
+      bindingId, roomId, peerParticipantId: peer, viewerOwnerId: viewer, agentLabel: 'agent-b', roomLabel: 'room',
+    }, { createId: () => 'pause-1' });
+    await tick();
+    script.onPolicy(() => ({ kind: 'lost' }));
+    controller.requestPause(true);
+    await tick();
+    await tick();
+    expect(controller.getView().retryAvailable).toBe(true);
+
+    script.onPolicy(next => ({ kind: 'answered', body: ack(next) }));
+    controller.retry();
+    await tick();
+    expect(script.commands.map(sent => [sent.commandId, sent.expectedPolicyVersion]))
+      .toEqual([['pause-1', 3], ['pause-1', 3]]);
+    controller.dispose();
+    port.dispose();
+  });
+
+  it('marks a refused read offline for subscribers and abandons a hung read', async () => {
+    const script = scripted();
+    const port = createBrowserAgentControlsPort({ client: script.client, bindingId, refreshMs: 0, statusTimeoutMs: 5 });
+    const seen: string[] = [];
+    port.subscribe(bindingId, snapshot => seen.push(snapshot.connection));
+    await port.readSnapshot(bindingId);
+    script.onStatus(() => ({ kind: 'refused', code: 'unavailable' }));
+    await expect(port.readSnapshot(bindingId)).rejects.toMatchObject({ code: 'unavailable' });
+    expect(seen).toEqual(['connected', 'offline']);
+
+    script.onStatus(() => new Promise<StatusAnswer>(() => undefined));
+    expect(await port.readSnapshot(bindingId)).toMatchObject({ connection: 'offline' });
+    script.onStatus(() => ({ kind: 'ok', body: statusBody() }));
+    expect(await port.readSnapshot(bindingId)).toMatchObject({ connection: 'connected' });
+    port.dispose();
+  });
+
   it('drops a status from an older binding generation', async () => {
     const script = scripted();
     script.onStatus(() => ({ kind: 'ok', body: statusBody({ generation: 1, version: 5 }) }));

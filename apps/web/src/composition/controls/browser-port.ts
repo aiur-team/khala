@@ -35,6 +35,8 @@ export type BrowserAgentControlsPortOptions = Readonly<{
   bindingId: BindingId;
   /** Status refresh interval while observed. Defaults to 5 s; 0 disables polling. */
   refreshMs?: number;
+  /** A status read unanswered after this long is treated as lost. Defaults to 10 s. */
+  statusTimeoutMs?: number;
 }>;
 
 export type BrowserAgentControlsPort = AgentControlsUiPort & Readonly<{
@@ -52,6 +54,7 @@ export class ControlsUnavailableError extends Error {
 
 export function createBrowserAgentControlsPort(options: BrowserAgentControlsPortOptions): BrowserAgentControlsPort {
   const { client, bindingId } = options;
+  const statusTimeoutMs = options.statusTimeoutMs ?? 10_000;
   const listeners = new Set<(snapshot: AgentControlsSnapshot) => void>();
   let status: ControlsStatus | null = null;
   let connection: AgentControlsSnapshot['connection'] = 'unknown';
@@ -73,7 +76,19 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
     inFlight?.abort();
     const controller = new AbortController();
     inFlight = controller;
-    const answer = await client.status(bindingId, controller.signal).catch(() => ({ kind: 'lost' as const }));
+    // A hung read would hold `inFlight` and stop polling for good, so it is abandoned as lost.
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<{ kind: 'lost' }>(resolve => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        resolve({ kind: 'lost' });
+      }, statusTimeoutMs);
+    });
+    const answer = await Promise.race([
+      client.status(bindingId, controller.signal).catch(() => ({ kind: 'lost' as const })),
+      expired,
+    ]);
+    clearTimeout(timeout);
     if (token === request) inFlight = null;
     if (disposed) throw new ControlsUnavailableError('unavailable');
     if (token !== request) {
@@ -92,9 +107,13 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
       connection = 'connected';
       return publish()!;
     }
-    if (answer.kind === 'refused') throw new ControlsUnavailableError(answer.code);
-    // Unreachable connector: the last enforced values stay, labelled offline, never refreshed by guess.
+    // Refused or unreachable: the last enforced values stay, labelled offline, never refreshed
+    // by guess, and subscribers stop showing the connection as live.
     connection = 'offline';
+    if (answer.kind === 'refused') {
+      publish();
+      throw new ControlsUnavailableError(answer.code);
+    }
     const kept = publish();
     if (kept === null) throw new ControlsUnavailableError('lost');
     return kept;
@@ -109,9 +128,11 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
   async function submitPolicy(command: PolicySetCommand): Promise<PolicyAck> {
     if (disposed || command.bindingId !== bindingId) throw new ControlsUnavailableError('unavailable');
     const answer = await client.setPolicy(command).catch(() => ({ kind: 'lost' as const }));
-    // Settled answers refresh the authoritative status even if nobody waits for them.
-    void read().catch(() => undefined);
+    // A lost answer publishes nothing: a fresh snapshot would clear the panel's
+    // same-command retry, which is the only safe next step for an unknown outcome.
     if (answer.kind === 'lost') throw new ControlsUnavailableError('lost');
+    // Answered commands refresh the authoritative status even if nobody waits for them.
+    void read().catch(() => undefined);
     const decoded = decodePolicyAck(answer.body);
     // A malformed or mismatched answer may still follow a write: unknown, never success.
     if (!decoded.ok) throw new ControlsUnavailableError('lost');

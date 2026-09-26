@@ -115,9 +115,17 @@ export function createPolicyControlHandler(deps: PolicyControlDependencies): Pol
    * Trust state for the ledger's current generation. A missing state, or one for an
    * older generation, starts again from what the ledger enforces: trust is never
    * inherited across generations, and the ledger version stays the compare-and-set value.
+   * So does a state the ledger has moved past, for example a restored trust store. Its
+   * journal is dropped then, because its entries no longer say what was enforced.
    */
   function baseline(current: TrustState | null, ledger: LedgerView & { policy: DispatchPolicy }): TrustState {
-    if (current !== null && current.generation === ledger.binding.generation) return current;
+    if (current !== null && current.generation === ledger.binding.generation) {
+      const { requested } = current;
+      const overtaken = ledger.policy.version > requested.version
+        || (ledger.policy.version === requested.version && current.effective?.version !== requested.version
+          && ledger.policy.paused !== requested.paused);
+      if (!overtaken) return current;
+    }
     const fresh = initialTrustState({
       roomId: deps.roomId,
       bindingId: ledger.binding.bindingId,
@@ -235,8 +243,15 @@ export function createPolicyControlHandler(deps: PolicyControlDependencies): Pol
     const usable = { ...ledger, policy: ledger.policy };
 
     try {
-      // An earlier accepted request is enforced before this one is compared against it.
-      await settle(usable);
+      // Invariant: an accepted request is enforced before any newer one is accepted. So a
+      // journalled revision older than the effective one was itself enforced once.
+      const settled = await settle(usable);
+      const pending = settled.requested;
+      if (pending.commandId !== null && pending.commandId !== command.commandId
+        && settled.effective?.version !== pending.version) {
+        // The earlier request is still unenforced. Accepting this one would skip it.
+        return refused('unavailable', ledger.binding.generation, settled.effective?.version ?? null);
+      }
       const change = await trust.update(command.bindingId, current => {
         const evaluated = evaluateHostedPolicyChange(baseline(current, usable), { kind: 'owner', authority }, command, 'active');
         return { next: evaluated.state, result: evaluated };
@@ -245,20 +260,26 @@ export function createPolicyControlHandler(deps: PolicyControlDependencies): Pol
         return refused(REJECTIONS[change.outcome.code], ledger.binding.generation, change.state.effective?.version ?? null);
       }
       const revision = change.outcome.requested;
-      if (change.state.effective?.version === revision.version) {
-        // A retry of a command that is already enforced.
+      const enforcedSince = (state: TrustState | null) =>
+        state !== null && state.generation === revision.generation && (state.effective?.version ?? -1) >= revision.version;
+      if (enforcedSince(change.state)) {
+        // A retry of a command that is enforced, possibly superseded since.
         return { ok: true, ack: ackFor(ledger.binding, revision, { kind: 'effective' }) };
       }
       if (revision.version !== change.state.requested.version) {
-        // A retry of a command a newer request superseded before it was enforced.
-        return { ok: true, ack: ackFor(ledger.binding, revision, { kind: 'rejected', code: 'stale_policy' }) };
+        // Superseded without being enforced breaks the invariant: never claim either way.
+        return { ok: true, ack: ackFor(ledger.binding, revision, { kind: 'unknown' }) };
       }
       // Re-read: `settle` may have moved the ledger since the first read.
       const current = await usableLedger(command.bindingId);
       if (current === null || current.binding.generation !== revision.generation) {
         return { ok: true, ack: ackFor(ledger.binding, revision, { kind: 'rejected', code: 'stale_binding' }) };
       }
-      const enforcement = await enforce(current, change.state, revision);
+      let enforcement = await enforce(current, change.state, revision);
+      if (enforcement.kind === 'rejected' && enforcedSince(await trust.read(command.bindingId))) {
+        // A concurrent command enforced this revision first, then moved the ledger past it.
+        enforcement = { kind: 'effective' };
+      }
       const ack = ackFor(current.binding, revision, enforcement);
       await record(command.bindingId, ack).catch(() => undefined);
       return { ok: true, ack };

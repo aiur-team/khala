@@ -13,6 +13,16 @@ protected human transport. `registerControls` replaces KHA-133's placeholder.
   records the outcome. A request accepted but not committed, for example after a crash
   or a failed write, is enforced first by the next command, by a retry of the same
   command ID, or by `reconcile` on start.
+- **Invariant.** An accepted request is enforced before any newer one is accepted. While
+  it cannot be enforced, a new command is refused `unavailable` with nothing written.
+  So a retried command whose revision is older than the effective one was enforced, and
+  answers `effective` even though a newer request has superseded it since. A trust store
+  the ledger has moved past, for example one restored from backup, starts again from the
+  ledger and drops its journal.
+- **New generation.** The handler writes only revisions for a generation the ledger
+  already has a policy for. It does not seed that policy, because the listening
+  projection belongs to its own owner. Until something applies one, commands answer
+  `unavailable` and the status reports null values.
 - **Automation.** Hosted evaluation injects `CLOSED_AUTOMATION` (`automation.ts`), so
   `auto` is refused and acknowledged as rejected with `unavailable`.
 - **Pause.** Pause and resume bump the policy version but not `armedAt`, so approved

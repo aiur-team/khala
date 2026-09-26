@@ -253,6 +253,10 @@ describe('policy control handler', () => {
       ok: true, ack: { connectorState: 'pending', errorCode: 'outcome_unknown', requestedVersion: 4, effectiveVersion: null },
     });
     expect(await enforced()).toMatchObject({ version: 3, paused: false });
+    // A newer command cannot skip the unenforced one; nothing is written for it.
+    expect(await flaky.setPolicy(authority, policyCommand('resume-2', { paused: false }))).toMatchObject({
+      ok: true, ack: { commandId: 'resume-2', connectorState: 'rejected', errorCode: 'unavailable', requestedVersion: null },
+    });
     expect(await handler.status(authority, { bindingId })).toMatchObject({
       ok: true,
       status: {
@@ -318,6 +322,69 @@ describe('policy control handler', () => {
     expect(await handler.setPolicy(authority, policyCommand('pause-g1', { expectedBindingGeneration: 1, expectedPolicyVersion: 5 })))
       .toMatchObject({ ok: true, ack: { generation: 1, effectiveVersion: 6, connectorState: 'effective' } });
     expect(await enforced()).toMatchObject({ version: 6, paused: true });
+  });
+
+  it('answers a retry of an enforced command as effective after a newer one superseded it', async () => {
+    const { handler, enforced } = await harness();
+    await handler.setPolicy(authority, policyCommand('pause-1'));
+    await handler.setPolicy(authority, policyCommand('resume-2', { expectedPolicyVersion: 4, paused: false }));
+    expect(await handler.setPolicy(authority, policyCommand('pause-1'))).toMatchObject({
+      ok: true, ack: { commandId: 'pause-1', effectiveVersion: 4, connectorState: 'effective', errorCode: null },
+    });
+    expect(await enforced()).toMatchObject({ version: 5, paused: false });
+  });
+
+  it('reports the command enforced when a concurrent command enforced it and moved the ledger on', async () => {
+    const { dispatchStorage, trust, handler, enforced } = await harness();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    // The first write waits until another command has enforced it and committed a newer one.
+    let held = true;
+    const slow = createPolicyControlHandler({
+      dispatchStorage: {
+        ledger: dispatchStorage.ledger,
+        applyEffectivePolicy: async input => {
+          if (held) {
+            held = false;
+            await gate;
+          }
+          return dispatchStorage.applyEffectivePolicy(input);
+        },
+      },
+      trust, roomId, bindingId,
+    });
+    const first = slow.setPolicy(authority, policyCommand('pause-1'));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    // This command's settle enforces pause-1, then it commits version 5.
+    expect(await handler.setPolicy(authority, policyCommand('resume-2', { expectedPolicyVersion: 4, paused: false })))
+      .toMatchObject({ ok: true, ack: { effectiveVersion: 5, connectorState: 'effective' } });
+    release();
+    expect(await first).toMatchObject({ ok: true, ack: { commandId: 'pause-1', effectiveVersion: 4, connectorState: 'effective' } });
+    expect(await enforced()).toMatchObject({ version: 5, paused: false });
+  });
+
+  it('starts again from the ledger when the trust store fell behind it', async () => {
+    const { dispatchStorage, trust, handler, enforced } = await harness();
+    await handler.setPolicy(authority, policyCommand('pause-1'));
+    const stale = await trust.read(bindingId);
+    await handler.setPolicy(authority, policyCommand('resume-2', { expectedPolicyVersion: 4, paused: false }));
+    // A restored store at version 4 sees the ledger at version 5.
+    await trust.update(bindingId, () => ({ next: stale!, result: undefined }));
+    const restored = createPolicyControlHandler({ dispatchStorage, trust, roomId, bindingId });
+    expect(await restored.setPolicy(authority, policyCommand('pause-3', { expectedPolicyVersion: 5 })))
+      .toMatchObject({ ok: true, ack: { effectiveVersion: 6, connectorState: 'effective' } });
+    expect(await enforced()).toMatchObject({ version: 6, paused: true });
+  });
+
+  it('stays unavailable for a generation the ledger has no policy for', async () => {
+    const { storage, handler } = await harness();
+    await storage.ledger.transaction(tx => tx.putBinding(binding(1)));
+    expect(await handler.setPolicy(authority, policyCommand('pause-g1', { expectedBindingGeneration: 1 }))).toMatchObject({
+      ok: true, ack: { connectorState: 'rejected', errorCode: 'unavailable', generation: 1 },
+    });
+    expect(await handler.status(authority, { bindingId })).toMatchObject({
+      ok: true, status: { policy: { generation: 1, effectiveVersion: null, effectiveMode: null, paused: null } },
+    });
   });
 
   it('carries no pending message content in the status', async () => {
