@@ -158,11 +158,15 @@ test('receipt evidence: truthful, grouped, navigable and announced once over rea
     await page.getByText('solo message').waitFor();
     assert.equal(await page.getByText('No token-return fact').count(), 0);
     assert.equal(await page.getByText('Batch token returned').count(), 0);
+    // The evidence poll can already have a read in flight; Retry then joins it
+    // instead of starting another, so click again until a fresh read lands.
     const before = evidenceReads;
-    await Promise.all([
-      page.waitForResponse(response => response.url().endsWith('/receipts')),
-      page.getByRole('button', { name: 'Retry' }).click(),
-    ]);
+    for (let attempt = 0; attempt < 3 && evidenceReads === before; attempt += 1) {
+      await Promise.all([
+        page.waitForResponse(response => response.url().endsWith('/receipts')),
+        page.getByRole('button', { name: 'Retry' }).click(),
+      ]);
+    }
     assert.ok(evidenceReads > before, 'Retry rereads the evidence');
     await page.getByText('Delivery evidence unavailable').waitFor();
     failing = false;
