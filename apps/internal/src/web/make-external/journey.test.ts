@@ -167,6 +167,20 @@ describe('start fresh', () => {
 describe('carry history', () => {
   const MESSAGES = Array.from({ length: 6 }, (_, index) => `message ${index + 1}: <b>bold</b>\n\`\`\`\ncode\n\`\`\``);
 
+  /**
+   * A producer that exactly keeps pace with the transfer: each put lets three messages
+   * in, so every two-chunk step leaves a two-chunk backlog and catch-up never converges.
+   * The backlog stays constant instead of growing each round, so the number of durable
+   * writes is small and fixed rather than bounded only by how fast the runner is.
+   */
+  function steadyProducer(s: Setup) {
+    let written = 0;
+    s.provider.beforePut = () => {
+      for (let index = 0; index < 3; index += 1) if (s.channel.send(`live ${written + 1}`)) written += 1;
+    };
+    return { written: () => written };
+  }
+
   it('imports every record once despite lost acknowledgements, and never touches the live timeline', async () => {
     const s = setup({ messages: MESSAGES });
     await s.signIn();
@@ -203,11 +217,7 @@ describe('carry history', () => {
   it('asks for a paused drain when catch-up cannot converge, then finishes it', async () => {
     const s = setup({ messages: MESSAGES });
     await s.signIn();
-    let written = 0;
-    // A producer faster than the transfer: every put lets two chunks' worth of messages in.
-    s.provider.beforePut = () => {
-      for (let index = 0; index < 9; index += 1) if (s.channel.send(`live ${++written}`)) continue;
-    };
+    const producer = steadyProducer(s);
     const started = await s.act({ kind: 'start', historyMode: 'carry_history', visibility: 'private', agents: allAgents });
     expect(started.view.conversion).toMatchObject({ state: 'drain_required', history: { phase: 'catch_up', round: 3, outcome: 'drain_required' } });
     expect(started.view.sourceWrite).toBe('open');
@@ -222,15 +232,15 @@ describe('carry history', () => {
       manifestDigest: history.manifestDigest!, limits: IMPORT_LIMITS,
     });
     expect(archive.ok && archive.view.records.length).toBe(s.channel.count());
+    // The workload is fixed, not paced by the runner: copy, three rounds and the drain move two chunks each.
+    expect(producer.written()).toBe(24);
+    expect(history.chunkCount).toBe(10);
   });
 
   it('a drain beyond its ceiling fails, resumes the internal channel and reports the orphan', async () => {
     const s = setup({ messages: MESSAGES, ceiling: { maxDrainChunks: 1, drainDeadlineMs: 60_000 } });
     await s.signIn();
-    let written = 0;
-    s.provider.beforePut = () => {
-      for (let index = 0; index < 9; index += 1) s.channel.send(`live ${++written}`);
-    };
+    steadyProducer(s);
     await s.act({ kind: 'start', historyMode: 'carry_history', visibility: 'secret', agents: allAgents });
     s.provider.beforePut = () => {};
     const blocked = await s.act({ kind: 'drain' });
