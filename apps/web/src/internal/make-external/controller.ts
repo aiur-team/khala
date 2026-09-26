@@ -58,6 +58,8 @@ export function createMakeExternalController(
   let timer: unknown = null;
   let pending: MakeExternalAction | null = null;
   let polling = false;
+  /** Bumped by every human action, so a poll that raced one never overwrites its result. */
+  let actions = 0;
 
   function set(next: MakeExternalState): void {
     if (disposed) return;
@@ -96,15 +98,18 @@ export function createMakeExternalController(
   async function poll(): Promise<void> {
     if (disposed || polling || state.view === null) return;
     polling = true;
+    const started = actions;
     try {
       if (stepOf(state.view) === 'signing_in') {
         const read = await port.view(channelId);
+        if (started !== actions) return;
         if (read.kind === 'ok') show(read.view);
         else if (read.kind === 'session_ended') set({ ...state, phase: 'session_ended' });
         else schedule();
         return;
       }
       const written = await port.act(channelId, { kind: 'resume', operationId: createId() });
+      if (started !== actions) return;
       if (written.kind === 'ok') show(written.view);
       else if (written.kind === 'session_ended') set({ ...state, phase: 'session_ended' });
       else schedule();
@@ -115,6 +120,7 @@ export function createMakeExternalController(
 
   async function send(action: MakeExternalAction): Promise<void> {
     pending = action;
+    actions += 1;
     set({ ...state, busy: action.kind, error: null, retryable: false });
     const written = await port.act(channelId, action);
     if (disposed) return;
