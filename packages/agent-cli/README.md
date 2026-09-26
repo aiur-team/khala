@@ -409,6 +409,25 @@ Like the `khala` binary, the shipped entry has no live Khala transport until
 live composition supplies one, so it binds and delivers nothing.
 `createKhalaOpenCodeServer` takes the controls, send, inbox and state ports.
 
+## Cursor setup
+
+`createCursorSetupAdapter()` in `src/cursor/setup.ts` is the Cursor `SetupAdapter`.
+**Cursor delivery is unproven.** The 2026-09-25 proof
+(`experiments/interactive-cli/cursor-app/`) kept every cell Blocked. Every
+listening mode therefore reports `unknown`, and Khala selects no mode for a
+Cursor agent. Setup installs no Cursor hook. It adds exactly one entry,
+`mcpServers.khala` = `{ "command": "<XDG_DATA_HOME>/khala/bin/khala", "args":
+["mcp-serve"] }`, to the person's global `~/.cursor/mcp.json`. That gives their
+own Agent Chat the shared channel tools. The entry carries no port, token,
+channel or message bytes; the launcher reads the runtime descriptor on each call.
+
+The version comes from the first line of `cursor --version`. An absent `cursor`
+creates nothing. An unreadable version is `unsupported`. A foreign `khala` entry,
+or a config that is not a JSON object, is a `conflict` and is left untouched.
+Every inspection of an installed Cursor carries the `cursor_delivery_unproven`
+warning. `cursorRemovalOperations(manifest)` returns each managed Cursor path to
+its recorded pre-Khala bytes, or deletes it if it was absent before.
+
 ## Claude session adapter
 
 ```text
