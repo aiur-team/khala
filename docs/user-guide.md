@@ -12,7 +12,7 @@ guide says something is not available, it is not available.
 | --- | --- |
 | **Internal mode** (`khala internal`): one person, one machine, a local channel in the browser, agents you started yourself | Available from a source build. CI proves the protocol flow (#237). Known gaps are listed below |
 | **Hosted channels** at `https://khala.aiur.team`: OAuth sign-in, share link, a coworker and their agent, end-to-end encryption, review before release | **Not available.** The parts are built and tested separately, but no production entry point starts the owner connector. No live two-owner run has been recorded |
-| `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available. It installs the harness entries it can prove and reports the rest as unsupported |
+| `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available with known defects. It installs the harness entries it can prove and reports the rest as unsupported. Installed entries cannot find the launcher (#386), a crash mid-setup blocks later runs (#385), and absent harnesses are not reported (#388) |
 
 `@aiur/khala` is not published to npm yet. Build it from a checkout, using Node
 22.23.2 and pnpm 10.34.5:

@@ -16,7 +16,7 @@ Documentation alone never promotes a route to `support: "tested"`.
 | --- | --- | --- | --- |
 | OpenCode, `@aiur/khala/opencode` plugin (`opencode_plugin`) | 1.17.10 | `tested`; acknowledgement `batch_token_next_call`; five recorded mode keys | [`fixtures/delivery/opencode.json`](../packages/contracts/fixtures/delivery/opencode.json), #180 proof |
 | Claude Code CLI, native hooks (`claude-session-adapter-1`) | none proven | Route approved for collaboration (G-HARNESSES). `CLAUDE_INTERACTIVE_PROVEN` is empty, so every mode is unproven and acknowledgement is not claimed. #231 is the receipt proof | [`claude-native-cli.md`](evidence/claude-native-cli.md) |
-| Codex CLI, native queue (`native_cli_queue`) | 0.154.0 | `tested` for notification only; no release-ID reconciliation. Excluded from collaboration while #230 and #266 are parked | [`codex-native-cli.md`](evidence/codex-native-cli.md) |
+| Codex CLI, native queue (`native_cli_queue`) | 0.154.0 | `tested` for notification only; no release-ID reconciliation. Excluded from collaboration until #230 and #266 land. Both are parked on a broken Codex API key and block root acceptance | [`codex-native-cli.md`](evidence/codex-native-cli.md) |
 | Codex app-server, Khala-hosted resume | 0.154.0 | `tested` only for a dormant thread Khala resumed itself | [`codex.md`](evidence/codex.md) |
 | Claude Code SDK streaming | 2.1.276 | `unsupported` for the no-setup contract | [`claude.md`](evidence/claude.md) |
 | Cursor, Claude Desktop and claude.ai, Codex desktop and cloud apps | — | Fail closed: every mode `unknown`. #244 and #245 are parked | [`app-harness.json`](../packages/contracts/fixtures/delivery/app-harness.json) |

@@ -86,7 +86,7 @@ These are the IDs from [requirements coverage](requirements-coverage.md).
 | R04 | Recipient controls what enters their agent | unknown | Review gate **pass** in local composition (`forgery.test.ts`, `airlock.test.ts`). A live existing-session receipt is not observed |
 | R05 | Disable review for a trusted peer and re-arm it | unknown | Pause/resume across a restart passes locally. A reconnect with an unacknowledged re-arm is not observed. Hosted `auto` is closed (G-AUTOMATION) |
 | R06 | End-to-end encryption | unknown | Relay confidentiality is **not observed**: no disposable Synapse with database and log access. The crypto experiments are feasibility evidence only |
-| R07 | Attach to the existing session | unknown | OpenCode plugin 1.17.10 tested. Claude Code hooks: no proven version. Codex routes parked |
+| R07 | Attach to the existing session | unknown | OpenCode plugin 1.17.10 tested. Claude Code hooks: no proven version. Codex routes blocked on #230 and #266 |
 | R08 | Agent sets up pub/sub itself | unknown | `khala setup` passes the packaged gate. Installed entries cannot find the runtime descriptor (#386) |
 | R09 | Any model, cross-owner | unknown | Conformance passes in `fake-contract` mode. No `live-harness` report has been accepted |
 | R10 | TypeScript and OSS reuse | pass | Product source is TypeScript. The exceptions are the Claude plugin's hook entry points and runtime, which ship as `.mjs` with a `.d.mts` declaration so that Claude Code can run them unbuilt, plus build configuration and one landing-page script. Synapse and `matrix-js-sdk` are reused (`client-reuse.md`, `backend.md`) |
@@ -130,23 +130,31 @@ ticket does not fix them.
 | Finding | Owner | Needed for |
 | --- | --- | --- |
 | #380: the recovery view misses dispatcher evidence, which makes the KHA-138 "delivery ambiguity" row fail | KHA-136 (in CI) | Security report |
-| No live collaboration run. The case needs a pinned harness version, a registered live driver and a disposable environment | #239, #240, #241 | R1, R01–R03, R15, AE1 |
+| No live collaboration run. The case needs a pinned harness version, a registered live driver and a disposable environment | #239, #240, #241. Under decision 43 the Executor owes the Claude and OpenCode live runs (#240, #241) | R1, R01–R03, R15, AE1 |
+| No disposable preview environment exists for the live human proof | #134 (Executor-owned) | R1, R01–R03, R06, R15 |
 | No production composition of the hosted connector, and no protected human control transport | KHA-133/134/135/136 integration owners | R04, R05, R07, R15 |
 | Relay confidentiality not observed: needs a disposable Synapse with database and log access | KHA-138 live rows | R06 |
 | No hosted deployment is provisioned (P16 credentials are operator-supplied) | Executor / operator | R11 in practice, R15 |
 | No Claude Code version is proven for the approved hook route | #231 | R07, R08 |
+| Codex is required (P15, decisions 23 and 37) but unproven. It is parked on a broken Codex API key (operational), not deferred by decision | #230, #266 | R07, R08 |
+| OpenCode and cross-harness read receipts are not proven. Acknowledgement is core to decision 3 | #232, #233 | R02, R03, R07 |
+| Internal mode has no pause or listening-mode control. Decisions 23 and 42 require mode control | #392 | R05, R07 |
+| Installed harness entries cannot find the runtime descriptor, and only one agent session per user can bind. Both gate the internal-mode flow | #386, #391 | R08, R1 |
 | Browser acceptance (desktop, mobile, keyboard) is not recorded | #238 | R12 |
 
 ### Contained rework (owned elsewhere, not blocking this record's scope)
 
-#386 (installed entries cannot find the descriptor), #391 (one bound session per
-user), #392 (no pause or mode control in internal mode), #385 (setup crash recovery), #388 (absent harnesses not reported),
-#384 (flaky tamper test), and #232/#233 (OpenCode and cross-harness receipts).
+#385 (setup crash recovery) and #388 (absent harnesses not reported).
+
+### Fixed after this candidate
+
+- #384 (flaky listing-ref tamper test): fixed on `main` by #397 (`a8bee18`),
+  which changes one test only. The next rerun of this record covers it.
 
 ### Deferred, nonblocking by decision
 
-- Codex routes (#230, #266) and the desktop and cloud apps (#244, #245): parked.
-  G-HARNESSES approved only the Claude Code hooks and the OpenCode plugin.
+- The desktop and cloud apps (#244, #245): parked. Codex is not deferred; see
+  [Acceptance blockers](#acceptance-blockers).
 - Automatic release: closed by the G-AUTOMATION ruling.
 - Attachments (P07) and automatic conversation control (P08): never asked, and
   not added here.
