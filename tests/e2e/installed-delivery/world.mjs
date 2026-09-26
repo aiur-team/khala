@@ -65,10 +65,12 @@ const LAUNCH_TIMEOUT_MS = 20_000;
 /**
  * `khala internal` from the installed package, as a person runs it: the owner server for
  * one new channel, running until stopped. The machine's PATH holds no browser opener,
- * so the launch prints its URL and opens nothing.
+ * so the launch prints its URL and opens nothing. With `resume`, it runs
+ * `khala internal --resume <channel-id>` against the same machine's state.
  */
-export async function startInternal(install, machine) {
-  const child = spawn(process.execPath, [install.bin, 'internal'], {
+export async function startInternal(install, machine, { resume } = {}) {
+  const args = resume === undefined ? ['internal'] : ['internal', '--resume', resume];
+  const child = spawn(process.execPath, [install.bin, ...args], {
     cwd: machine.cwd, env: machineEnvironment(machine), stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -105,6 +107,9 @@ async function reply(response) {
   return { status: response.status, text, json };
 }
 
+// Counted across launches: a resumed launch keeps the channel's earlier transaction IDs.
+let posted = 0;
+
 /** Redeems the printed bootstrap URL exactly as the owner's browser does. */
 async function ownerSession(report) {
   const { origin, channelId } = report;
@@ -126,7 +131,6 @@ async function ownerSession(report) {
     ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   }));
   const channel = `/api/v1/channels/${encodeURIComponent(channelId)}`;
-  let posted = 0;
   return {
     call,
     /** The owner's pending access requests, as their inbox lists them. */

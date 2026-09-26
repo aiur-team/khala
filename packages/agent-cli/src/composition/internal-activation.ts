@@ -22,6 +22,7 @@ import {
 import { acquireProcessLock } from '../cli/inbox.js';
 import { plainObject } from '../cli/validation.js';
 import { readInternalDescriptor } from './internal.js';
+import { selectInternalDiscovery } from './internal-discovery.js';
 
 // Finishes an owner-approved channel-access request against the local internal
 // server: exchange with a fresh DPoP proof from the discovery `connector-key.json`,
@@ -125,6 +126,57 @@ export async function activateInternalAccess(options: InternalActivationOptions)
   } finally {
     await lock.release().catch(() => undefined);
   }
+}
+
+export type InternalGrantRestoreOptions = Readonly<{
+  /** The agent's discovery `descriptor.json`; its `grant.json` and journal live beside it. */
+  descriptorPath: string;
+  /** The binding the agent held, whose capability was refused. */
+  bindingId: string;
+  fetch?: typeof fetch | undefined;
+  signal?: AbortSignal | undefined;
+  clock?: (() => number) | undefined;
+}>;
+
+/**
+ * Restores a binding whose launch-scoped capability was refused, without the agent joining
+ * again: the restore a later `join` runs after `khala internal --resume`. Only the journaled
+ * operation that connected exactly `bindingId` is resumed, so nothing new is ever requested.
+ * A grant from this launch was refused for real, and a binding Stop revoked stays revoked:
+ * both answer `revoked`. `unavailable` is worth retrying, for example while no launcher runs.
+ */
+export async function restoreInternalGrant(options: InternalGrantRestoreOptions): Promise<InternalActivationOutcome> {
+  const paths = activationPaths(options.descriptorPath);
+  const launch = readInternalDescriptor(paths.launchPath);
+  const held = readInternalDescriptor(paths.grantPath);
+  if (!launch.ok || !held.ok) return 'unavailable';
+  if (isGrantedDescriptor(held.value) && (held.value.bindingId !== options.bindingId
+    || held.value.transportCapability === launch.value.transportCapability)) return 'revoked';
+  const discovery = selectInternalDiscovery({ descriptorPath: options.descriptorPath, activePath: paths.launchPath });
+  if (discovery.kind !== 'selected') return 'unavailable';
+  const operationId = await connectedOperation(paths.journalDirectory, options.bindingId);
+  if (operationId === 'unavailable') return 'unavailable';
+  if (operationId === null) return 'revoked';
+  return activateInternalAccess({
+    descriptorPath: options.descriptorPath, descriptor: discovery.selection.descriptor, origin: discovery.selection.origin,
+    operationId, fetch: options.fetch, signal: options.signal, clock: options.clock,
+  });
+}
+
+/** The journaled operation that connected `bindingId`, if any. */
+async function connectedOperation(journalDirectory: string, bindingId: string): Promise<string | null | 'unavailable'> {
+  const journal = createFileJournal(journalDirectory);
+  let names: string[];
+  try { names = await fsp.readdir(journalDirectory); } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unavailable';
+  }
+  for (const name of names.filter(each => each.endsWith('.json'))) {
+    const read = await journal.load(name.slice(0, -'.json'.length));
+    if (read.kind === 'record' && read.record.phase === 'connected' && read.record.binding?.bindingId === bindingId) {
+      return read.record.operationId;
+    }
+  }
+  return null;
 }
 
 /**

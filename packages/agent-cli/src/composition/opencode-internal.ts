@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { OPENCODE_HARNESS, type SessionBinding } from '@khala/contracts/delivery/index';
 import { isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
+import { INTERNAL_DISCOVERY_DESCRIPTOR_FILE } from '@khala/contracts/internal/discovery-descriptor';
 import { installedOpenCodeCapabilities } from '@khala/harnesses/opencode/interactive';
 import { openInbox } from '../cli/inbox.js';
 import { MAX_SEND_BYTES, SendService } from '../cli/send.js';
@@ -11,7 +12,8 @@ import { type KhalaOpenCodeDependencies, openCodeVersionFromExecPath } from '../
 import { openOpenCodeBridgeStore } from '../opencode/store.js';
 import { deliveringInbox } from './delivering-inbox.js';
 import { createInternalClient, readInternalDescriptor } from './internal.js';
-import { createInternalDelivery } from './internal-delivery.js';
+import { type InternalActivationOutcome, restoreInternalGrant } from './internal-activation.js';
+import { type InternalDelivery, createInternalDelivery } from './internal-delivery.js';
 import { internalSessionDigest } from './internal-session.js';
 import { LOCAL_DELIVERY_LIMITS } from './local-harness-capabilities.js';
 import { sessionGrants } from './session-grant.js';
@@ -26,6 +28,11 @@ import { sessionGrants } from './session-grant.js';
 // While a binding generation is held, releases are pulled from the internal server into
 // that generation's inbox, and the plugin holds the inbox's listener. The owner sees the
 // same route claim the plugin projects its mode through, derived from the OpenCode version.
+//
+// Capabilities are launch-scoped, and OpenCode outlives `khala internal --resume`. When the
+// held binding's capability is refused, the plugin restores that same binding from the
+// session's activation journal, as a later `join` would, and keeps pulling. A binding the
+// server refuses to restore, such as one Stop revoked, is never tried again.
 
 export type InternalOpenCodeOptions = Readonly<{
   /** The private Khala state root: `internal/` and every inbox live below it. */
@@ -39,6 +46,9 @@ export type InternalOpenCodeOptions = Readonly<{
 
 const UNBOUND: OpenCodeControls = { binding: null, paused: false, mode: null };
 
+/** Restore outcomes the server will not change: the binding ended, so pulling ends too. */
+const FINAL: ReadonlySet<InternalActivationOutcome> = new Set(['revoked', 'denied', 'expired']);
+
 /** `$XDG_STATE_HOME/khala`, the root the `khala` CLI and the internal launcher use. */
 export function khalaStateDirectory(env: NodeJS.ProcessEnv): string {
   return path.resolve(env.XDG_STATE_HOME ?? path.join(homedir(), '.local/state'), 'khala');
@@ -50,6 +60,10 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
   const grants = sessionGrants(path.join(stateDirectory, 'internal'));
   const clients = new Map<string, AgentClientPort>();
   let selected: string | null = null;
+  /** The binding each session last held, and every binding the server refused to restore. */
+  const lastHeld = new Map<string, string>();
+  const unrestorable = new Set<string>();
+  const restoring = new Map<string, Promise<InternalActivationOutcome>>();
 
   /** The session's own granted descriptor, or null when it holds no live grant. */
   const grantOf = (sessionID: string): string | null => {
@@ -74,6 +88,35 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
     }
     return client;
   };
+
+  /** Restores `bindingId` for the session after its capability was refused; one attempt at a time. */
+  const restore = (sessionID: string, bindingId: string): Promise<InternalActivationOutcome> => {
+    if (unrestorable.has(bindingId)) return Promise.resolve('revoked');
+    let running = restoring.get(bindingId);
+    if (running === undefined) {
+      running = restoreInternalGrant({
+        descriptorPath: path.join(path.dirname(grants({ harness: OPENCODE_HARNESS, sessionId: sessionID })), INTERNAL_DISCOVERY_DESCRIPTOR_FILE),
+        bindingId,
+        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+      }).catch(() => 'unavailable' as const).then(outcome => {
+        if (FINAL.has(outcome)) unrestorable.add(bindingId);
+        return outcome;
+      }).finally(() => restoring.delete(bindingId));
+      restoring.set(bindingId, running);
+    }
+    return running;
+  };
+
+  /** Pulls as `delivery` does, restoring the binding once when its capability is refused. */
+  const restoringDelivery = (sessionID: string, delivery: InternalDelivery): InternalDelivery => ({
+    async pull(held, open, signal) {
+      const pulled = await delivery.pull(held, open, signal);
+      if (pulled !== 'revoked') return pulled;
+      const restored = await restore(sessionID, held.bindingId);
+      if (restored === 'connected') return delivery.pull(held, open, signal);
+      return FINAL.has(restored) ? 'revoked' : 'unavailable';
+    },
+  });
 
   const selectedClient = (): AgentClientPort | null => {
     const file = selected === null ? null : grantOf(selected);
@@ -103,13 +146,22 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
     controls: {
       async read() {
         const sessionID = selected;
-        const client = selectedClient();
-        if (sessionID === null || client === null) return UNBOUND;
-        const status = await client.status();
-        const held = status.connected ? status.binding : null;
-        // The server binds the session's digest; only this session's own binding is served.
-        if (held === null || held.harness !== OPENCODE_HARNESS
-          || held.sessionId !== internalSessionDigest(OPENCODE_HARNESS, sessionID)) return UNBOUND;
+        if (sessionID === null) return UNBOUND;
+        const heldBinding = async () => {
+          const client = selectedClient();
+          if (client === null) return null;
+          const status = await client.status();
+          const held = status.connected ? status.binding : null;
+          // The server binds the session's digest; only this session's own binding is served.
+          return held === null || held.harness !== OPENCODE_HARNESS
+            || held.sessionId !== internalSessionDigest(OPENCODE_HARNESS, sessionID) ? null : { client, held };
+        };
+        let bound = await heldBinding();
+        const last = lastHeld.get(sessionID);
+        if (bound === null && last !== undefined && await restore(sessionID, last) === 'connected') bound = await heldBinding();
+        if (bound === null) return UNBOUND;
+        const { client, held } = bound;
+        lastHeld.set(sessionID, held.bindingId);
         let mode: OpenCodeControls['mode'] = null;
         try {
           const current = await client.listeningMode?.();
@@ -124,11 +176,11 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
     },
     send,
     async openBatch(binding) {
-      const delivering = deliveringInbox(openGeneration, createInternalDelivery({
+      const delivering = deliveringInbox(openGeneration, restoringDelivery(binding.sessionId, createInternalDelivery({
         descriptorPath: grants({ harness: OPENCODE_HARNESS, sessionId: binding.sessionId }),
         stateDirectory,
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-      }), options.pullIntervalMs === undefined ? {} : { intervalMs: options.pullIntervalMs });
+      })), options.pullIntervalMs === undefined ? {} : { intervalMs: options.pullIntervalMs });
       try {
         const listener = await (await delivering.inbox(binding.bindingId, binding.generation)).acquireListener();
         return {

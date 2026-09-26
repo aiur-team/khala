@@ -7,7 +7,7 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installTarball, packedTarball, removeScratch } from '../../integration/agent-setup/harness.mjs';
-import { JOURNEYS, runJourney } from './journeys.mjs';
+import { JOURNEYS, opencodeAcrossResume, runJourney } from './journeys.mjs';
 import { DeliveryFailure, setUpMachine } from './world.mjs';
 
 const HARNESSES = Object.keys(JOURNEYS);
@@ -53,6 +53,10 @@ describe('each installed entry delivers end to end', () => {
     });
   }
 });
+
+// A launcher restart must not end delivery to a harness that outlives it (#456).
+test('opencode: the running plugin restores its binding and delivers after khala internal --resume, and Stop still ends it', () =>
+  opencodeAcrossResume(install));
 
 // Wrong-implementation check: with one harness's installed entry rewritten, in its own
 // config, to a stub that binds nothing, that harness's journey fails and names it.
