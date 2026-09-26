@@ -457,6 +457,7 @@ export function createChannelAccessStore(deps: Readonly<{
       }
       const cooldownKey = scopeKey(policy, 'cooldown', input);
       if (Object.values(aggregate.requests).some(request => request.cooldownKey === cooldownKey
+        && !admittedByOwner(request.outcome)
         && now < Date.parse(request.createdAt) + CHANNEL_ACCESS_COOLDOWN_MS)) {
         return unchanged({ kind: 'unavailable' as const });
       }
@@ -1043,6 +1044,14 @@ function findHandle(aggregate: JournalAggregate, handle: string): StoredRequest 
 
 function activeForCapacity(outcome: ChannelAccessOutcome): boolean {
   return outcome === 'pending_owner' || outcome === 'approved';
+}
+
+/**
+ * A request the owner admitted and that has since ended, as the owner's Stop ends it, does not
+ * cool its requester down: asking again after it is a fresh request for the owner to decide.
+ */
+function admittedByOwner(outcome: ChannelAccessOutcome): boolean {
+  return outcome === 'connected' || outcome === 'revoked';
 }
 
 function terminal(outcome: ChannelAccessOutcome): boolean {

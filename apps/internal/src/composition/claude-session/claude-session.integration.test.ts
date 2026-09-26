@@ -407,6 +407,65 @@ describe('Claude mcp-serve against the internal launcher', () => {
     await expect(sessionGranted(path.join(parent, 'internal'), sessionId)).resolves.toBe(false);
   });
 
+  // Wrong-implementation test (#437): answering the repeat request with the revoked
+  // operation leaves the owner nothing to approve and the session unbound.
+  it('after Stop, the same session asks again as a new request the owner approves', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const sessionId = 'session-asks-again';
+    const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
+    const [requested] = await serve(report.descriptorPath, sessionId, [['khala_request_channel_access', { target: channelUrl }]]);
+    expect(requested).toMatchObject({ outcome: 'pending_owner' });
+    await approvePending(report.origin, owner);
+    await expect(hooks.hook(sessionId, { stop: true })).resolves.toMatchObject({ kind: 'hook', access: 'connected' });
+    const stopped = await call(report.origin, {
+      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/stop`, headers: owner,
+      body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+    await expect(hooks.hook(sessionId)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+
+    // Asking again is a new operation awaiting the owner; it admits nothing by itself.
+    const [again, repeated] = await serve(report.descriptorPath, sessionId, [
+      ['khala_request_channel_access', { target: channelUrl }],
+      ['khala_request_channel_access', { target: channelUrl }],
+    ]);
+    expect(again).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    expect(again!.operationId).not.toBe(requested!.operationId);
+    // Repeating a live request stays idempotent.
+    expect(repeated).toMatchObject({ ok: true, operationId: again!.operationId, outcome: 'pending_owner' });
+    await expect(hooks.hook(sessionId, { stop: true })).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+
+    await approvePending(report.origin, owner);
+    await expect(hooks.hook(sessionId, { stop: true })).resolves.toMatchObject({ kind: 'hook', access: 'connected' });
+    const [send, status] = await serve(report.descriptorPath, sessionId, [
+      ['khala_send', { message: 'back after Stop' }],
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+    ]);
+    expect(send).toMatchObject({ kind: 'accepted' });
+    // The Stopped operation itself never reads as connected again.
+    expect(status).toMatchObject({ operationId: requested!.operationId });
+    expect(status!.outcome).not.toBe('connected');
+  });
+
+  it('after Stop cancels an unactivated approval, the same session asks again as a new request', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const sessionId = 'session-asks-again-approved';
+    const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
+    const [requested] = await serve(report.descriptorPath, sessionId, [['khala_request_channel_access', { target: channelUrl }]]);
+    await approvePending(report.origin, owner);
+    const stopped = await call(report.origin, {
+      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/stop`, headers: owner,
+      body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+
+    const [again] = await serve(report.descriptorPath, sessionId, [['khala_request_channel_access', { target: channelUrl }]]);
+    expect(again).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    expect(again!.operationId).not.toBe(requested!.operationId);
+    await approvePending(report.origin, owner);
+    await expect(hooks.hook(sessionId, { stop: true })).resolves.toMatchObject({ kind: 'hook', access: 'connected' });
+  });
+
   it('re-activates a granted session after the launcher resumes, with the same binding', async () => {
     const first = await launched();
     const sessionId = 'session-restart';
