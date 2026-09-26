@@ -140,6 +140,8 @@ export function fakeAuthority() {
   const calls: GrantExchangeAuthorityInput[] = [];
   const closes: string[] = [];
   const closeResults: ('closed' | 'unavailable')[] = [];
+  const marks: (GrantExchangeAuthorityInput & { readyOperationId: string })[] = [];
+  const markResults: ('connected' | 'closed' | 'unavailable')[] = [];
   const state: { next: (input: GrantExchangeAuthorityInput, call: number) => GrantExchangeAuthorityResult } = {
     next: input => ({ kind: 'authorized', authorization: authorization({ operationId: input.operationId }) }),
   };
@@ -152,8 +154,12 @@ export function fakeAuthority() {
       closes.push(input.operationId);
       return closeResults.shift() ?? 'closed';
     },
+    async markConnected(input) {
+      marks.push(input);
+      return markResults.shift() ?? 'connected';
+    },
   };
-  return { port, calls, closes, closeResults, state };
+  return { port, calls, closes, closeResults, marks, markResults, state };
 }
 
 export type ProviderBehavior = 'ok' | 'reject' | 'unavailable' | 'crash_before' | 'commit_then_lose' | 'unknown';

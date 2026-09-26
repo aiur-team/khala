@@ -13,6 +13,7 @@ describe('registerAgentHandlers', () => {
       { path: '/api/agent/channel-access/create', methods: ['POST'] },
       { path: '/api/agent/channel-access/status', methods: ['GET'] },
       { path: '/api/agent/channel-access/exchange', methods: ['POST'] },
+      { path: '/api/agent/channel-access/ready', methods: ['POST'] },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'] },
       { path: '/api/agent/channels', methods: ['GET'] },
     ]);
@@ -23,7 +24,7 @@ describe('registerAgentHandlers', () => {
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
       expect(await response.json()).toEqual(index === 0
         ? { code: 'feature_unavailable' }
-        : index < 7
+        : index < 8
           ? { v: 1, kind: 'rejected', code: 'feature_unavailable' }
           : { error: 'feature_unavailable' });
     }

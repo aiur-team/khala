@@ -31,6 +31,10 @@ export function validEventRef(value: unknown): value is EventRef {
     && validIdentifier(value.authorParticipantId) && validIdentifier(value.authorDeviceId)
     && validDigest(value.contentDigest);
 }
+/** True when `value` has exactly these own keys, no more and no fewer. */
+export function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+}
 export function plainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);

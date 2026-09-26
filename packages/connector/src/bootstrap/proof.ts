@@ -8,6 +8,8 @@ import { type KeyObject, createHash, createPublicKey, randomBytes, sign } from '
 export type ProofSigner = Readonly<{
   /** RFC 7638 thumbprint of the public key, base64url. */
   jkt: string;
+  /** The raw 32-byte Ed25519 public key (`x`), unpadded base64url. Never secret. */
+  publicKey: string;
   /** A fresh single-use proof for exactly this method and URL. */
   proof(method: string, url: string, accessToken?: string): string;
 }>;
@@ -24,6 +26,7 @@ export function createProofSigner(privateKey: KeyObject, clock: () => number = D
   const header = encode({ alg: 'EdDSA', typ: 'dpop+jwt', jwk });
   return {
     jkt: thumbprint(jwk),
+    publicKey: jwk.x,
     proof(method, url, accessToken) {
       const claims: Record<string, string | number> = {
         htm: method,

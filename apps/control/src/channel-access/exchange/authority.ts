@@ -32,6 +32,10 @@ export type GrantExchangeAuthority = Readonly<{
     input: Readonly<{ authorization: ChannelAccessAuthorization; operationId: string }>,
     options?: CallOptions,
   ): Promise<'closed' | 'unavailable'>;
+  markConnected(
+    input: ExchangeAuthorityInput & Readonly<{ readyOperationId: string }>,
+    options?: CallOptions,
+  ): Promise<'connected' | 'closed' | 'unavailable'>;
 }>;
 
 export function createGrantExchangeAuthority(deps: Readonly<{
@@ -84,7 +88,37 @@ export function createGrantExchangeAuthority(deps: Readonly<{
     return updated?.kind === 'ok' ? 'closed' : 'unavailable';
   }
 
-  return Object.freeze({ authorize, close });
+  async function markConnected(
+    input: ExchangeAuthorityInput & Readonly<{ readyOperationId: string }>,
+    options?: CallOptions,
+  ): Promise<'connected' | 'closed' | 'unavailable'> {
+    const located = await safe(() => deps.store.inspectRequester({
+      requester: input.requester,
+      sessionFingerprint: input.sessionFingerprint,
+      sessionGeneration: input.sessionGeneration,
+      origin: input.origin,
+      kind: 'access',
+      operationId: input.operationId,
+    }, options));
+    if (located === null || located.kind !== 'found') return 'unavailable';
+    // A lost acknowledgement response: the row is already connected.
+    if (located.status.outcome === 'connected') return 'connected';
+    const authorized = await authorize(input, options);
+    if (authorized.kind === 'unavailable') return 'unavailable';
+    if (authorized.kind === 'closed') return 'closed';
+    const updated = await safe(() => deps.fulfillment.updateAccess({
+      v: 1,
+      requestHandle: authorized.authorization.requestHandle,
+      expectedRevision: authorized.authorization.requestRevision,
+      operationId: input.readyOperationId,
+      outcome: 'connected',
+    }, options));
+    if (updated === null || updated.kind === 'unavailable' || updated.kind === 'outcome_unknown') return 'unavailable';
+    if (updated.kind === 'ok') return updated.value.outcome === 'connected' ? 'connected' : 'closed';
+    return updated.code === 'stale_revision' ? 'unavailable' : 'closed';
+  }
+
+  return Object.freeze({ authorize, close, markConnected });
 }
 
 async function safe<T>(operation: () => Promise<T>): Promise<T | null> {
