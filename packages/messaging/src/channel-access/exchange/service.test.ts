@@ -206,6 +206,38 @@ describe('channel-access grant exchange', () => {
     }
   });
 
+  it('stays resumable until the journal request is closed after a provider refusal', async () => {
+    const h = await harness();
+    h.provider.behavior.admit.push('reject', 'reject');
+    h.authority.closeResults.push('unavailable');
+    expect(await h.exchange()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await h.exchange()).toEqual({ kind: 'rejected', code: 'closed' });
+    expect(new Set(h.authority.closes).size).toBe(1);
+    expect(await h.exchange()).toEqual({ kind: 'rejected', code: 'closed' });
+    expect(h.authority.closes).toHaveLength(2);
+    expect(h.issuer.minted).toHaveLength(0);
+  });
+
+  it('reseals after a ledger-backed store spent the sealing write ID without writing', async () => {
+    const h = await harness();
+    h.issuer.state.unavailable = true;
+    expect((await h.exchange()).kind).toBe('unavailable');
+    h.issuer.state.unavailable = false;
+    h.backing.inject('compareAndSet', 'claim_then_fail');
+    expect((await h.exchange()).kind).toBe('unavailable');
+    const envelope = envelopeOf(await h.exchange());
+    expect(JSON.stringify(envelopeOf(await h.exchange()))).toBe(JSON.stringify(envelope));
+    expect(h.provider.admits).toHaveLength(1);
+  });
+
+  it('retries a first key claim whose write ID was spent without reporting key reuse', async () => {
+    const h = await harness();
+    h.backing.inject('compareAndSet', 'claim_then_fail');
+    expect((await h.exchange()).kind).toBe('unavailable');
+    h.setNow(T0 + 1);
+    envelopeOf(await h.exchange());
+  });
+
   it('closes the journal request when the provider refuses admission', async () => {
     const h = await harness();
     h.provider.behavior.admit.push('reject');
@@ -308,9 +340,10 @@ describe('channel-access grant exchange', () => {
     expect(await h.exchange()).toEqual({ kind: 'unavailable', retryable: true });
     h.issuer.state.unavailable = false;
     h.backing.inject('compareAndSet', 'lose_response');
-    const settled = await h.exchange();
-    expect(settled.kind === 'ok' || settled.kind === 'unavailable').toBe(true);
-    envelopeOf(await h.exchange());
+    // The lost response lands on the sealing write; resolution proves it applied.
+    const settled = envelopeOf(await h.exchange());
+    expect(JSON.stringify(envelopeOf(await h.exchange()))).toBe(JSON.stringify(settled));
     expect(h.provider.applied.size).toBe(1);
+    expect(h.issuer.minted).toHaveLength(1);
   });
 });

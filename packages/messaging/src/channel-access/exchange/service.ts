@@ -194,7 +194,10 @@ export function createGrantExchangeService(deps: Readonly<{
     if (result?.kind === 'not_applied') result = await safe(() => deps.provider.admit(request, options));
     if (result === null || result.kind !== 'admitted') {
       if (result?.kind !== 'rejected') return done(unavailable());
-      await safe(() => deps.authority.close({ authorization, operationId: `${stored.key}#close` }, options));
+      // Stay resumable until the journal request is closed too; the next retry reconciles
+      // the same rejection and repeats the same idempotent close.
+      const closed = await safe(() => deps.authority.close({ authorization, operationId: `${stored.key}#close` }, options));
+      if (closed !== 'closed') return done(unavailable());
       return close(stored, 'closed', options);
     }
     const saved = await journal.save(stored, { ...record, phase: 'admitted', membership: result.membership }, options);

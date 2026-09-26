@@ -110,14 +110,18 @@ export function exchangeJournal(store: ControlStore): ExchangeJournal {
     record: ExchangeRecord,
     options?: CallOptions,
   ): Promise<ExchangeSave> {
-    // The write ID names the record generation, position and phase, so a retry of one
-    // transition can be resolved and a record recreated after expiry never reuses one.
-    const writeId = `${recordKey}#${Date.parse(record.createdAt)}.${record.seq}.${record.phase}`;
+    // The write ID names the exact bytes as well as the position: a retry of the same write
+    // resolves idempotently, while a fresh seal (new envelope) or a record recreated after
+    // expiry never collides with an ID a ledger-backed store already claimed.
+    const value = encodeRecord(record);
+    const digest = await sha256Hex([JSON.stringify(value), record.expiresAt]);
+    if (digest === null) return { kind: 'unavailable' };
+    const writeId = `${recordKey}#${record.seq}.${record.phase}.${digest}`;
     const result: WriteResult | null = await safe(() => store.compareAndSet({
       key: recordKey,
       expectedRevision,
       operationId: writeId,
-      next: { value: encodeRecord(record), expiresAt: record.expiresAt },
+      next: { value, expiresAt: record.expiresAt },
     }, options));
     let applied: ControlRecord | null = null;
     if (result === null || result.kind === 'unavailable') return { kind: 'unavailable' };
@@ -139,20 +143,22 @@ export function exchangeJournal(store: ControlStore): ExchangeJournal {
     if (digest === null) return 'unavailable';
     const indexKey = `${KEY_PREFIX}${digest}`;
     const value = { v: 1, recordKey: input.recordKey };
+    const operationId = `${indexKey}#${input.recordKey}#${input.expiresAt}`;
     const result = await safe(() => store.compareAndSet({
       key: indexKey,
       expectedRevision: null,
-      operationId: `${indexKey}#${input.recordKey}`,
+      operationId,
       next: { value, expiresAt: input.expiresAt },
     }, options));
     if (result === null || result.kind === 'unavailable') return 'unavailable';
     if (result.kind === 'applied') return 'claimed';
     if (result.kind === 'conflict' || result.kind === 'operation_mismatch') {
       const current = result.kind === 'conflict' ? result.current : await readRecord(indexKey);
-      if (current === undefined) return 'unavailable';
-      return (current?.value as { recordKey?: unknown } | undefined)?.recordKey === input.recordKey ? 'claimed' : 'key_reuse';
+      // No live claim means an earlier attempt never landed: retry later, never report reuse.
+      if (current === undefined || current === null) return 'unavailable';
+      return (current.value as { recordKey?: unknown }).recordKey === input.recordKey ? 'claimed' : 'key_reuse';
     }
-    const resolved = await safe(() => store.resolve({ key: indexKey, operationId: `${indexKey}#${input.recordKey}` }, options));
+    const resolved = await safe(() => store.resolve({ key: indexKey, operationId }, options));
     return resolved?.kind === 'applied' ? 'claimed' : 'unavailable';
 
     /** `undefined` means the read failed; `null` means no live claim. */

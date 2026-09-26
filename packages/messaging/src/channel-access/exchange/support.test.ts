@@ -36,11 +36,15 @@ export const FINGERPRINT = 'f'.repeat(43);
 export const DEVICE = 'device_agent_1' as DeviceId;
 export const DEADLINE = new Date(T0 + 3 * 24 * 60 * 60_000).toISOString();
 
-type Fault = 'unavailable' | 'throw' | 'lose_response';
+/**
+ * `claim_then_fail` models a per-key provider whose adapter claims the operation ID in a
+ * ledger before writing the record (see `ControlStore`): the ID is spent, nothing lands.
+ */
+type Fault = 'unavailable' | 'throw' | 'lose_response' | 'claim_then_fail';
 
 export function fakeControlStore() {
   const records = new Map<string, ControlRecord>();
-  const operations = new Map<string, { key: string; next: CompareAndSetInput['next']; record: ControlRecord }>();
+  const operations = new Map<string, { key: string; next: CompareAndSetInput['next']; record: ControlRecord | null }>();
   const faults: Partial<Record<'read' | 'compareAndSet' | 'resolve', Fault[]>> = {};
   let revision = 0;
   let now = () => T0;
@@ -60,7 +64,15 @@ export function fakeControlStore() {
       if (fault === 'throw') throw new Error('secret provider detail');
       if (fault === 'unavailable') return { kind: 'unavailable' as const };
       const previous = operations.get(input.operationId);
-      if (previous) {
+      if (fault === 'claim_then_fail') {
+        if (!previous) operations.set(input.operationId, { key: input.key, next: structuredClone(input.next), record: null });
+        return { kind: 'unavailable' as const };
+      }
+      if (previous && previous.record === null) {
+        if (previous.key !== input.key || previous.next.expiresAt !== input.next.expiresAt
+          || !sameJsonValue(previous.next.value, input.next.value)) return { kind: 'operation_mismatch' as const };
+        operations.delete(input.operationId);
+      } else if (previous) {
         return previous.key === input.key
           && previous.next.expiresAt === input.next.expiresAt
           && sameJsonValue(previous.next.value, input.next.value)
@@ -90,7 +102,7 @@ export function fakeControlStore() {
       if (fault === 'throw') throw new Error('secret provider detail');
       if (fault) return { kind: 'unavailable' as const };
       const operation = operations.get(input.operationId);
-      return operation?.key === input.key
+      return operation?.key === input.key && operation.record !== null
         ? { kind: 'applied' as const, record: operation.record as ControlRecord<T> }
         : { kind: 'not_applied' as const };
     },
@@ -127,6 +139,7 @@ export function authorization(overrides: Partial<ChannelAccessAuthorization> = {
 export function fakeAuthority() {
   const calls: GrantExchangeAuthorityInput[] = [];
   const closes: string[] = [];
+  const closeResults: ('closed' | 'unavailable')[] = [];
   const state: { next: (input: GrantExchangeAuthorityInput, call: number) => GrantExchangeAuthorityResult } = {
     next: input => ({ kind: 'authorized', authorization: authorization({ operationId: input.operationId }) }),
   };
@@ -137,10 +150,10 @@ export function fakeAuthority() {
     },
     async close(input) {
       closes.push(input.operationId);
-      return 'closed';
+      return closeResults.shift() ?? 'closed';
     },
   };
-  return { port, calls, closes, state };
+  return { port, calls, closes, closeResults, state };
 }
 
 export type ProviderBehavior = 'ok' | 'reject' | 'unavailable' | 'crash_before' | 'commit_then_lose' | 'unknown';
