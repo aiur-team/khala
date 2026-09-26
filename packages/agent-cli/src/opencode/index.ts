@@ -2,8 +2,13 @@
 // default export is an OpenCode v1 plugin module (`{ id, server }`), so OpenCode loads
 // only `server` and ignores the named exports: the delivery contract, the session
 // bridge and its composition, which setup and live composition build against.
+//
+// `server` composes the live internal-mode dependencies when OpenCode loads it, from the
+// same `$XDG_STATE_HOME/khala` the `khala` CLI uses: each OpenCode session is served
+// through its own grant, and nothing is bound until that session joins a channel.
 
-import { createKhalaOpenCodeServer, unavailableOpenCodeDependencies } from './plugin';
+import { internalOpenCodeDependencies, khalaStateDirectory } from '../composition/opencode-internal';
+import { type KhalaOpenCodeServer, createKhalaOpenCodeServer } from './plugin';
 
 export {
   type OpenCodeInboxHint, type OpenCodeRouteEvidenceKey,
@@ -33,4 +38,10 @@ export {
   memoryOpenCodeBridgeStore, openOpenCodeBridgeStore,
 } from './store';
 
-export default { id: 'khala', server: createKhalaOpenCodeServer(unavailableOpenCodeDependencies()) };
+export { internalOpenCodeDependencies } from '../composition/opencode-internal';
+
+const server: KhalaOpenCodeServer = input => createKhalaOpenCodeServer(
+  internalOpenCodeDependencies({ stateDirectory: khalaStateDirectory(process.env) }),
+)(input);
+
+export default { id: 'khala', server };

@@ -56,6 +56,14 @@ async function buildOne({ entryPoint, outfile, absWorkingDir }) {
   return result.metafile;
 }
 
+/** Builds only `opencode.js`, exactly as `bundle` ships it; the plugin's integration test loads this. */
+export async function bundleOpenCodePlugin({
+  outfile = path.join(packageDirectory, 'dist/opencode.js'),
+  absWorkingDir = packageDirectory,
+} = {}) {
+  return buildOne({ entryPoint: path.join(absWorkingDir, 'src/opencode/index.ts'), outfile, absWorkingDir });
+}
+
 /** Returns the esbuild metafile so the package gate can audit the bundled closure. */
 export async function bundle({
   entryPoint = path.join(packageDirectory, 'src/cli/main.ts'),
@@ -66,7 +74,7 @@ export async function bundle({
 } = {}) {
   await fs.rm(path.dirname(outfile), { recursive: true, force: true });
   const metafile = await buildOne({ entryPoint, outfile, absWorkingDir });
-  await buildOne({ entryPoint: path.join(absWorkingDir, 'src/opencode/index.ts'), outfile: path.join(path.dirname(outfile), 'opencode.js'), absWorkingDir });
+  await bundleOpenCodePlugin({ outfile: path.join(path.dirname(outfile), 'opencode.js'), absWorkingDir });
   // A detached copy of this package (as the package gate's fixtures make) has no
   // internal application beside it; the gate's file allowlist then refuses it.
   if (internalEntryPoint && existsSync(internalEntryPoint)) {

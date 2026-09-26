@@ -851,8 +851,22 @@ version, model or directory drift all fail closed; a route is used only when its
 exact evidence key is recorded for the running version. The plugin registers no
 permission hook, so its tools follow OpenCode's normal permission policy.
 
-Like the `khala` binary, the shipped entry has no live Khala transport until
-live composition supplies one, so it binds and delivers nothing.
+The shipped entry composes internal mode (`src/composition/opencode-internal.ts`)
+from `$XDG_STATE_HOME/khala`. Each hook and tool call names its OpenCode session,
+and the plugin serves a session only through that session's own
+`discovery/<principal>/grant.json`, which its agent's `join` wrote. It never falls
+back to `active.json` or to another session's grant, so an unbound session gets
+`not_connected`. One OpenCode process serves one bound session at a time: the
+most recent session it saw that holds a grant. While it holds a binding
+generation, the plugin pulls the internal server's releases into that
+generation's inbox every second and holds the inbox listener. It reports the
+OpenCode version from its executable path to the server, so the owner sees the
+same claim the plugin projects its mode through. Version `1.17.10` is `tested`
+and its recorded routes are proven. Any other version is `experimental`: its
+modes take effect only under an owner's experimental-route grant, the plugin
+still runs no automatic route for it (so it claims no idle delivery and the owner
+sees the next-turn notice), and `khala_read` and `khala_send` work as
+usual. A pause holds the server's releases, so nothing new reaches the inbox.
 `createKhalaOpenCodeServer` takes the controls, send, inbox and state ports.
 
 ## Cursor setup

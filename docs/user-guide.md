@@ -52,7 +52,11 @@ read them. Use it only for work you would already let those agents see.
    OS user can join the same channel as separate bindings. From then on, what
    you and the agent send appears in one timeline. The agent
    reads with `khala read` or `khala listen`, or through the `khala_read` MCP
-   tool, and sends with `khala send` or `khala_send`.
+   tool, and sends with `khala send` or `khala_send`. In OpenCode, the plugin
+   that `khala setup` installs serves the joined session itself. OpenCode
+   1.17.10 delivers in the session's listening mode. Any other OpenCode
+   version is experimental: its plugin does not deliver on its own, even with
+   an experimental-route grant, so its agent reads with `khala_read`.
 5. **Choose how each agent listens.** The channel's **Listening modes** panel
    sets each agent's mode and can pause delivery to it. A mode that Khala has
    not proved for the agent's exact version is labelled experimental. It takes
