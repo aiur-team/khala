@@ -1,4 +1,6 @@
+import type { BindingId } from '@khala/contracts/delivery/index';
 import { useId, useSyncExternalStore } from 'react';
+import { agentLabelFor, lastChangeLabelFor } from '../../features/agent-controls/model';
 import { Panel } from '../../shell/Panel';
 import { FAILURE_TEXT, type ListeningController } from './listening-controller';
 import { LISTENING_MODE_NAMES, type ListeningBinding, type ListeningModeName, modeOffered } from './listening-port';
@@ -32,12 +34,24 @@ function effectiveText(binding: ListeningBinding): string {
   }
 }
 
-function AgentRow({ binding, controller, busy }: Readonly<{ binding: ListeningBinding; controller: ListeningController; busy: boolean }>) {
+type AgentRowProps = Readonly<{
+  binding: ListeningBinding;
+  siblings: readonly BindingId[];
+  controller: ListeningController;
+  busy: boolean;
+}>;
+
+function AgentRow({ binding, siblings, controller, busy }: AgentRowProps) {
   const id = useId();
   const name = binding.displayName;
+  // The hosted panel's label and last-change wording, so both surfaces name agents and actors alike.
+  const agentLabel = agentLabelFor(binding.harness, binding.harnessVersion, binding.bindingId as BindingId, siblings);
+  const lastChange = lastChangeLabelFor(
+    { view: { version: binding.version, lastChangedBy: binding.lastChangedBy }, lastChange: null }, binding.ownedByViewer, agentLabel,
+  );
   return (
     <section className="listening-control__agent" aria-labelledby={`${id}-name`}>
-      <h3 id={`${id}-name`}>{name} <span className="listening-control__harness">({binding.harness})</span></h3>
+      <h3 id={`${id}-name`}>{name} <span className="listening-control__harness">({agentLabel})</span></h3>
       <p className="listening-control__delivery">
         {binding.paused
           ? 'Paused. Khala holds new messages for this agent until you resume.'
@@ -49,6 +63,7 @@ function AgentRow({ binding, controller, busy }: Readonly<{ binding: ListeningBi
       <p className="listening-control__effective">
         {binding.requested === null ? 'Requested: none.' : `Requested: ${MODES[binding.requested].label}.`} {effectiveText(binding)}
       </p>
+      <p className="listening-control__last-change">{lastChange}</p>
       <fieldset disabled={busy}>
         <legend>Listening mode for {name}</legend>
         {LISTENING_MODE_NAMES.map(mode => {
@@ -84,6 +99,7 @@ function AgentRow({ binding, controller, busy }: Readonly<{ binding: ListeningBi
 
 export function ListeningControl({ controller }: ListeningControlProps) {
   const view = useSyncExternalStore(controller.subscribe, controller.getView, controller.getView);
+  const siblings = view.bindings.map(binding => binding.bindingId as BindingId);
   return (
     <Panel heading="Listening modes">
       <div className="listening-control" aria-busy={view.phase === 'loading' || view.busy !== null}>
@@ -95,7 +111,7 @@ export function ListeningControl({ controller }: ListeningControlProps) {
         {view.phase === 'failed' && view.failure ? <p role="alert">{FAILURE_TEXT[view.failure]}</p> : null}
         {view.phase === 'ready' && view.bindings.length === 0 ? <p>No agent is connected to this channel.</p> : null}
         {view.bindings.map(binding => (
-          <AgentRow key={`${binding.bindingId}:${binding.generation}`} binding={binding} controller={controller} busy={view.busy === binding.bindingId} />
+          <AgentRow key={`${binding.bindingId}:${binding.generation}`} binding={binding} siblings={siblings} controller={controller} busy={view.busy === binding.bindingId} />
         ))}
         <p className="listening-control__status" role="status">{view.notice}</p>
       </div>

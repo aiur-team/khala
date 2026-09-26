@@ -4,6 +4,8 @@
 // the server's projection through the released claim for each agent's harness, so
 // a mode the harness has not proven is never presented as usable.
 
+import { type ListeningModeLastChangedBy, readListeningModeActor } from '@khala/contracts/delivery/index';
+
 export const LISTENING_MODE_NAMES = ['steer', 'sync', 'async'] as const;
 export type ListeningModeName = (typeof LISTENING_MODE_NAMES)[number];
 
@@ -13,12 +15,18 @@ export type ListeningBinding = Readonly<{
   bindingId: string;
   generation: number;
   harness: string;
+  /** The harness version the agent last reported, or `null` before any report. */
+  harnessVersion: string | null;
+  /** Whether the signed-in human owns this binding, so the last change can say "you". */
+  ownedByViewer: boolean;
   displayName: string;
   /** `null` when the harness has no evidenced mode to request. */
   requested: ListeningModeName | null;
   effective: ListeningModeName | null;
   effectiveReason: string | null;
   version: number;
+  /** Who made the change that produced `version`; `unknown` for records written before actors were stored. */
+  lastChangedBy: ListeningModeLastChangedBy;
   paused: boolean;
   support: Readonly<Record<ListeningModeName, ModeSupportView>>;
   /** Whether an idle agent is proven to receive a message before its next turn (decisions 34 and 37). */
@@ -59,22 +67,33 @@ function decodeSupport(value: unknown): Record<ListeningModeName, ModeSupportVie
   return support;
 }
 
+function decodeActor(value: unknown): ListeningModeLastChangedBy | null {
+  try {
+    return value === undefined ? null : readListeningModeActor(value, 'lastChangedBy');
+  } catch {
+    return null;
+  }
+}
+
 /** The server's `{v, bindings}` list, or null when any entry is malformed: a partial list is never shown as complete. */
 export function decodeBindingList(value: unknown): ListeningBinding[] | null {
   if (!plain(value) || value.v !== 1 || !Array.isArray(value.bindings)) return null;
   const bindings: ListeningBinding[] = [];
   for (const entry of value.bindings as unknown[]) {
     if (!plain(entry) || !plain(entry.binding) || !plain(entry.view) || typeof entry.paused !== 'boolean' || !text(entry.displayName)
+      || typeof entry.ownedByViewer !== 'boolean' || !(entry.harnessVersion === null || text(entry.harnessVersion))
       || (entry.idleDelivery !== 'proven' && entry.idleDelivery !== 'unproven')) return null;
     const { binding, view } = entry;
     const support = decodeSupport(view.support);
+    const lastChangedBy = decodeActor(view.lastChangedBy);
     if (!text(binding.bindingId) || !count(binding.generation) || !text(binding.harness) || support === null
       || !(view.requested === null || modeName(view.requested)) || !(view.effective === null || modeName(view.effective))
-      || !(view.effectiveReason === null || text(view.effectiveReason)) || !count(view.version)) return null;
+      || !(view.effectiveReason === null || text(view.effectiveReason)) || !count(view.version) || lastChangedBy === null) return null;
     bindings.push({
-      bindingId: binding.bindingId, generation: binding.generation, harness: binding.harness, displayName: entry.displayName,
+      bindingId: binding.bindingId, generation: binding.generation, harness: binding.harness,
+      harnessVersion: entry.harnessVersion as string | null, ownedByViewer: entry.ownedByViewer, displayName: entry.displayName,
       requested: view.requested, effective: view.effective, effectiveReason: view.effectiveReason as string | null,
-      version: view.version, paused: entry.paused, support, idleDelivery: entry.idleDelivery,
+      version: view.version, lastChangedBy, paused: entry.paused, support, idleDelivery: entry.idleDelivery,
     });
   }
   return bindings;

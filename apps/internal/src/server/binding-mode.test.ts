@@ -180,7 +180,8 @@ describe('owner binding list and the agent\'s harness report', () => {
     // Carol is bound to the other channel only.
     expect(listed.json.bindings.map((entry: { binding: { bindingId: string } }) => entry.binding.bindingId)).toEqual([bobBinding.bindingId]);
     expect(listed.json.bindings[0]).toMatchObject({
-      displayName: 'Bob', paused: false, idleDelivery: 'unproven', binding: bobBinding, view: { requested: 'sync', effective: null, effectiveReason: 'capabilities_unavailable' },
+      displayName: 'Bob', paused: false, idleDelivery: 'unproven', binding: bobBinding, harnessVersion: null, ownedByViewer: true,
+      view: { requested: 'sync', effective: null, effectiveReason: 'capabilities_unavailable', lastChangedBy: { kind: 'unknown' } },
     });
     expect((await call(h, `/api/v1/channels/${channelId}/bindings`, { headers: bearer(h.fixture.bob.credential) })).status).toBe(403);
     await call(h, `/api/v1/channels/${channelId}/stop`, { method: 'POST', headers: owner, body: { v: 1, targets: null } });
@@ -196,6 +197,8 @@ describe('owner binding list and the agent\'s harness report', () => {
 
     expect((await report({ v: 1, version: '0.156.1', hookReview: 'trusted' })).status).toBe(200);
     expect(await view()).toMatchObject({ requested: 'sync', effective: 'sync', support: { sync: { status: 'proven' }, async: { status: 'unknown' } } });
+    // The owner's list labels the agent with the version it reported.
+    expect((await call(h, `/api/v1/channels/${channelId}/bindings`, { headers: owner })).json.bindings[0].harnessVersion).toBe('0.156.1');
     // Untrusted hooks or an unproven version claim nothing, whatever mode was requested.
     await report({ v: 1, version: '0.156.1', hookReview: 'awaiting_hook_review' });
     expect(await view()).toMatchObject({ effective: null, effectiveReason: 'support_unknown' });

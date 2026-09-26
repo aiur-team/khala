@@ -3,15 +3,22 @@
 const IDLE = 'Idle agents receive messages only at their next turn.';
 
 /** A Codex agent whose installed version and trusted hooks prove steer and sync; async awaits a receipt proof. */
-export function provenCodexEntry(overrides: Readonly<{ requested?: string | null; effective?: string | null; version?: number; paused?: boolean }> = {}) {
+export function provenCodexEntry(overrides: Readonly<{
+  requested?: string | null; effective?: string | null; version?: number; paused?: boolean; changedBy?: 'owner' | 'agent';
+}> = {}) {
   const requested = overrides.requested === undefined ? 'sync' : overrides.requested;
   return {
     binding: { v: 1, bindingId: 'binding-ada', ownerId: 'owner-1', agentParticipantId: 'participant-ada', deviceId: 'device-ada', harness: 'codex', sessionId: 'digest-ada', generation: 1 },
     displayName: 'Ada',
+    harnessVersion: '0.156.1',
+    ownedByViewer: true,
     paused: overrides.paused ?? false,
     idleDelivery: 'unproven',
     view: {
       bindingId: 'binding-ada', generation: 1, requested, version: overrides.version ?? 1,
+      lastChangedBy: overrides.changedBy === undefined
+        ? { kind: 'unknown' }
+        : { kind: overrides.changedBy, participantId: overrides.changedBy === 'owner' ? 'owner-1' : 'participant-ada' },
       effective: overrides.effective === undefined ? requested : overrides.effective,
       effectiveReason: null,
       support: {
@@ -30,10 +37,13 @@ export function unprovenClaudeEntry(overrides: Readonly<{ paused?: boolean }> = 
   return {
     binding: { v: 1, bindingId: 'binding-bea', ownerId: 'owner-1', agentParticipantId: 'participant-bea', deviceId: 'device-bea', harness: 'claude', sessionId: 'digest-bea', generation: 1 },
     displayName: 'Bea',
+    harnessVersion: null,
+    ownedByViewer: true,
     paused: overrides.paused ?? false,
     idleDelivery: 'unproven',
     view: {
       bindingId: 'binding-bea', generation: 1, requested: null, version: 1, effective: null, effectiveReason: 'no_requested_mode',
+      lastChangedBy: { kind: 'unknown' },
       support: { steer: unknown, sync: unknown, async: unknown },
     },
   };

@@ -176,7 +176,11 @@ async function ownerRoute(context: RouteContext<Principal>, deps: BindingModeDep
       // Decisions 34 and 37: an idle agent is reached before its next turn only on a proven wake route.
       const idle = capabilities?.immediateNotification;
       const idleDelivery = idle === undefined || idle === 'unknown' || idle === 'unsupported' ? 'unproven' : 'proven';
-      bindings.push({ binding: publicBinding(binding), displayName, view: read.view, paused, idleDelivery });
+      // The version and ownership let the panel label who made the last change as the hosted panel does.
+      bindings.push({
+        binding: publicBinding(binding), displayName, harnessVersion: capabilities?.version ?? null,
+        ownedByViewer: binding.ownerId === authority.ownerId, view: read.view, paused, idleDelivery,
+      });
     }
     sendJson(response, 200, { v: 1, bindings });
     return;

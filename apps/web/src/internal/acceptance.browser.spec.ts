@@ -187,8 +187,16 @@ test('internal channel acceptance: create, grants, exchange, human message, mode
     await page.getByText('Ada: Steer requested.').waitFor();
     assert.equal(await adaModes.getByRole('radio', { name: 'Steer', exact: true }).isChecked(), true);
     await adaAgent.getByText('In effect: Steer.').waitFor();
+    await adaAgent.getByText('Last changed by you (owner) (v2)').waitFor();
     assert.equal(await adaModes.getByRole('radio', { name: 'Async (not proven for this agent)', exact: true }).isDisabled(), true,
       'async stays unproven without a receipt proof');
+
+    // Ada moves herself back to sync with `khala mode set`; the owner's panel names her as the one who changed it.
+    const agentSet = await ada.mode(['set', 'sync', '--expected-version', '2']);
+    assert.equal(agentSet.code, 0, `khala mode set: ${agentSet.out}${agentSet.err}`);
+    await page.reload();
+    await adaAgent.getByText('In effect: Sync.').waitFor();
+    assert.match(await adaAgent.innerText(), /Last changed by the agent \(Codex CLI 0\.156\.1 · [0-9a-f]+\) \(v3\)/);
 
     // Unproven: every Bea mode is shown, disabled, unclaimed, with the idle-delivery reason.
     const beaModes = page.getByRole('group', { name: 'Listening mode for Bea' });
