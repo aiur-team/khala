@@ -6,6 +6,10 @@ import { createRoot } from 'react-dom/client';
 import { MAX_CHANNEL_TITLE_BYTES, decodeContentLimits } from '@khala/contracts/messaging/index';
 import { createHumanApplication } from '../composition/human/application';
 import { KhalaPageFrame } from '../shell/KhalaPageFrame';
+import { createChannelAccessInboxController } from '../features/channel-access/controller';
+import { createLocalChannelAccessPort } from './channel-requests/ports';
+import { createLocalChannelSettingsPort } from './channel-settings/ports';
+import { createHumanClient } from './composition/human-client';
 import { createLocalEvidencePort, createLocalPorts, readRequestSecret } from './composition/ports';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
@@ -17,6 +21,9 @@ import '../features/create-channel/create-channel.css';
 import '../features/timeline/timeline.css';
 import '../features/receipt-evidence/receipt-evidence.css';
 import '../features/channel/channel.css';
+import '../features/approval-decision/approval-decision.css';
+import '../features/channel-access/channel-access.css';
+import '../features/channel-settings/channel-settings.css';
 import '../main.css';
 import './internal.css';
 
@@ -54,12 +61,18 @@ if (requestSecret === null) {
     routedPath = path;
     application.navigate(path);
   };
+  const humanClient = createHumanClient({ origin: location.origin, requestSecret });
+  const owner = {
+    createChannelAccess: () => createChannelAccessInboxController({ requests: createLocalChannelAccessPort(humanClient) }),
+    settings: createLocalChannelSettingsPort(humanClient),
+  };
   const mounted = mountLocalApplication(target, {
     application,
     routes,
     transport: ports.substrate.transport,
     navigateRoute,
     evidencePort: createLocalEvidencePort(ports.substrate),
+    owner,
   });
 
   // A hash-only history step (evidence navigation) stays on the mounted route.

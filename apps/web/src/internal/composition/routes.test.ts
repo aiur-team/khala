@@ -19,6 +19,18 @@ describe('local route codec', () => {
     expect(routes.createPath()).toBe('/');
   });
 
+  it('routes channel settings and the channel-requests inbox', () => {
+    const handle = `careq_${'A'.repeat(43)}`;
+    expect(routes.parse('/channels/ch_abc/settings')).toEqual({ kind: 'channel_settings', path: '/channels/ch_abc/settings', roomId: 'ch_abc' });
+    expect(routes.settingsPath('ch_abc')).toBe('/channels/ch_abc/settings');
+    expect(routes.parse('/channel-requests')).toEqual({ kind: 'channel_requests', path: '/channel-requests', selectedHandle: null });
+    expect(routes.parse(`/channel-requests/${handle}`)).toMatchObject({ kind: 'channel_requests', selectedHandle: handle });
+    expect(routes.channelRequestsPath(handle as never)).toBe(`/channel-requests/${handle}`);
+    for (const path of ['/channel-requests/nope', '/channel-requests/', `/channel-requests/${handle}/x`, '/channels/ch_abc/settings/x', '/channels//settings', '/channel-requests?x=1']) {
+      expect(routes.parse(path).kind, path).toBe('not_found');
+    }
+  });
+
   it('has no join, share, sign-in, recovery or hosted create route', () => {
     for (const path of [
       '/join?invite=abc', '/join/abc', '/new', '/recovery', '/api/human/auth/login', '/?mount=hosted-content',
