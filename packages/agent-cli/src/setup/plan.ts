@@ -115,6 +115,11 @@ type InstallerTarget = Readonly<{ file: InstallerFile; operation: SetupOperation
 type Snapshot = Readonly<{
   environment: SetupEnvironment;
   observed: readonly Observed[];
+  /**
+   * Harnesses with no executable. They are reported, but never inspected or planned and never
+   * inputs to readiness or the plan digest, so their config roots stay untouched.
+   */
+  absent: readonly HarnessReport[];
   diagnostics: readonly SetupDiagnostic[];
   recovery: boolean;
   /** The interrupted transaction's journal bytes; only a recovery digest and summary use them. */
@@ -297,6 +302,7 @@ async function observe(
   const journal = await environment.probe.readFile(paths.transactionPath);
   const recovery = journal !== null;
   const observed: Observed[] = [];
+  const absent: HarnessReport[] = [];
   let diagnostics: SetupDiagnostic[] = [];
   for (const adapter of adapters) {
     const harness = adapter.harness;
@@ -304,7 +310,10 @@ async function observe(
     let observation: HarnessObservation;
     try {
       detection = projectDetection(await adapter.detect(environment));
-      if (detection.executable === null) continue;
+      if (detection.executable === null) {
+        absent.push(absentReport(harness));
+        continue;
+      }
       observation = await adapter.inspect(environment, detection);
     } catch {
       diagnostics.push(inspectionFailed(harness));
@@ -348,9 +357,14 @@ async function observe(
   diagnostics = withDiagnostics(diagnostics, installer.diagnostics);
   const khala = await environment.probe.resolveExecutable('khala');
   return {
-    environment, observed: installer.observed, diagnostics, recovery, journal, fallbackRoute: khala === null ? null : 'khala read',
+    environment, observed: installer.observed, absent, diagnostics, recovery, journal, fallbackRoute: khala === null ? null : 'khala read',
     installer: installer.targets, installerEntries: installer.entries, installerCurrent: installer.current,
   };
+}
+
+function absentReport(harness: HarnessId): HarnessReport {
+  return { harness, executable: { present: false, path: null }, version: { detected: null, supported: false },
+    components: [], route: 'unavailable' };
 }
 
 function inspectionFailed(harness: HarnessId): SetupDiagnostic {
@@ -847,7 +861,9 @@ function result(
     state,
     planDigest: digest,
     confirmation,
-    harnesses: snapshot.observed.map(entry => entry.report),
+    // Absent harnesses are reported here only; readiness and the digest see detected ones.
+    harnesses: [...snapshot.observed.map(entry => entry.report), ...snapshot.absent]
+      .sort((a, b) => HARNESS_IDS.indexOf(a.harness) - HARNESS_IDS.indexOf(b.harness)),
     operations: operations.map(operation => ({ ...operation, status: 'planned' as const })),
     diagnostics: command === 'status' ? [...diagnostics, ...setupRequiredDiagnostics(snapshot)] : diagnostics,
   };
