@@ -1,8 +1,11 @@
 import {
   type ConversionAccessPort, type ConversionAgentBlock, type ConversionAgentState, type ConversionBindingPort,
-  type ConversionOwner, type ConversionSessionPort, type ConversionState, type ConversionVisibility, type HostedChannelCreated,
-  type HostedChannelPort, decodeConversionStart,
+  type ConversionOwner, type ConversionSessionPort, type ConversionState, type ConversionVisibility, type HistoryMode,
+  type HistoryTransferPhase, type HistoryTransferPort, type HostedChannelCreated, type HostedChannelPort, decodeConversionStart,
 } from '@khala/contracts/messaging/externalization';
+import {
+  type ConversionFailure, type ConversionHistoryProgress, EMPTY_HISTORY_PROGRESS,
+} from '@khala/contracts/messaging/make-external';
 import { type OperationResult, ok, rejected, unavailable } from '@khala/contracts/messaging/outcomes';
 import type { ConversionChange, ConversionEntry, ConversionJournal } from './journal';
 
@@ -23,6 +26,14 @@ import type { ConversionChange, ConversionEntry, ConversionJournal } from './jou
 // one link transaction makes the source read-only and journals the activation intent.
 // A failure before that link resumes the source; after it, recovery only releases the
 // remaining paused bindings forward. Start-fresh copies no message.
+//
+// Carry-history copies the source history into the destination before any access
+// request exists: one copy, at most three catch-up rounds while the internal channel
+// keeps working, then a final delta under a short write pause. When catch-up does not
+// converge the conversion waits in `drain_required` until the human confirms a paused
+// drain. The write pause the final step takes holds until the link commit or until a
+// cancel or failure resumes the internal channel. A drain that exceeds its ceiling, or
+// a source that no longer matches what was copied, fails the conversion.
 
 export type ConversionView = Readonly<{
   conversionId: string;
@@ -30,6 +41,7 @@ export type ConversionView = Readonly<{
   sourceChannelId: string;
   state: ConversionState;
   revision: number;
+  historyMode: HistoryMode;
   visibility: ConversionVisibility;
   destinationChannelId: string | null;
   agents: readonly ConversionAgentState[];
@@ -37,6 +49,10 @@ export type ConversionView = Readonly<{
   canCommit: boolean;
   /** A created destination left behind by a cancelled or failed conversion, for cleanup. */
   orphanDestinationChannelId: string | null;
+  /** Carry-history progress; null for start-fresh. */
+  history: ConversionHistoryProgress | null;
+  /** Why a `failed` conversion stopped; the internal channel is writable again. */
+  failure: ConversionFailure | null;
 }>;
 
 export type ConversionServiceRejection =
@@ -61,6 +77,8 @@ export type ConversionServiceDeps = Readonly<{
   sessions: ConversionSessionPort;
   access: ConversionAccessPort;
   bindings: ConversionBindingPort;
+  /** History transfer for carry-history; without it only start-fresh is supported. */
+  history?: HistoryTransferPort;
   /** Test seam, run after the write pause and before the link; throwing here fails the commit. */
   beforeLink?: () => void | Promise<void>;
 }>;
@@ -80,30 +98,46 @@ export interface ConversionService {
   retry(owner: ConversionOwner, conversionId: string, participantId: string): Result<ConversionView>;
   /** Withdraws the agent's request, if any, and leaves it out of the destination. */
   skip(owner: ConversionOwner, conversionId: string, participantId: string): Result<ConversionView>;
+  /** The human's confirmation, in `drain_required`, to pause the internal channel and drain the rest of its history. */
+  confirmDrain(owner: ConversionOwner, conversionId: string): Result<ConversionView>;
   commit(owner: ConversionOwner, conversionId: string): Result<ConversionView>;
   cancel(owner: ConversionOwner, conversionId: string): Result<ConversionView>;
   view(owner: ConversionOwner, conversionId: string): Result<ConversionView>;
 }
 
-const PRE_COMMIT: readonly ConversionState[] = ['preparing', 'external_created', 'agents_pending'];
+const PRE_COMMIT: readonly ConversionState[] = [
+  'preparing', 'external_created', 'history_copying', 'history_catching_up', 'drain_required', 'agents_pending',
+];
 
 const settled = (agent: ConversionAgentState): boolean => agent.status === 'ready' || agent.status === 'skipped';
 
 function viewOf(entry: ConversionEntry): ConversionView {
   const state = entry.record.state;
   const destinationChannelId = entry.destination?.destinationChannelId ?? null;
+  const carry = entry.record.historyMode === 'carry_history';
   return {
     conversionId: entry.record.conversionId,
     owner: entry.snapshot.owner,
     sourceChannelId: entry.snapshot.sourceChannelId,
     state,
     revision: entry.record.revision,
+    historyMode: entry.record.historyMode,
     visibility: entry.snapshot.visibility,
     destinationChannelId,
     agents: entry.agents,
     canCommit: state === 'agents_pending' && entry.agents.every(settled),
     orphanDestinationChannelId: state === 'cancelled' || state === 'failed' ? destinationChannelId : null,
+    history: carry ? entry.history ?? EMPTY_HISTORY_PROGRESS : null,
+    failure: state === 'failed' ? entry.history?.blocked ?? 'commit_failed' : null,
   };
+}
+
+/** The history step after the last completed one: copy, up to three catch-up rounds, then the final drain. */
+function nextHistoryStep(progress: ConversionHistoryProgress): Readonly<{ phase: HistoryTransferPhase; round: number }> {
+  if (progress.phase === null) return { phase: 'copy', round: 0 };
+  if (progress.phase === 'copy') return { phase: 'catch_up', round: 1 };
+  if (progress.phase === 'catch_up' && progress.outcome === 'more') return { phase: 'catch_up', round: progress.round + 1 };
+  return { phase: 'final_drain', round: 0 };
 }
 
 const withAgent = (
@@ -224,6 +258,38 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
     return record(current, 'externalized', { to: 'externalized' });
   }
 
+  /**
+   * Runs the next history step and journals its progress. A lost or unavailable step
+   * changes nothing, so the next resume repeats it; the transfer's own acknowledgements
+   * keep that repeat from copying anything twice.
+   */
+  async function transfer(entry: ConversionEntry): Promise<ConversionEntry> {
+    const progress = entry.history ?? EMPTY_HISTORY_PROGRESS;
+    if (entry.record.state === 'drain_required' && !progress.drainConfirmed) return entry;
+    const { phase, round } = nextHistoryStep(progress);
+    const stepped = await deps.history!.step({
+      v: 1, conversionId: entry.record.conversionId, operationId: entry.record.operationId, phase, round,
+      afterChunk: progress.acknowledgedChunks,
+    });
+    if (stepped.kind === 'rejected') {
+      if (stepped.code === 'ceiling_exceeded' || stepped.code === 'source_changed') {
+        return record(entry, 'history_blocked', { to: 'failed', history: { ...progress, blocked: stepped.code } });
+      }
+      throw new Halt(rejected(stepped.code === 'forbidden' ? 'forbidden' : 'conflict'));
+    }
+    if (stepped.kind !== 'ok') return entry;
+    const step = stepped.value;
+    const history: ConversionHistoryProgress = {
+      ...progress, phase, round, outcome: step.outcome, acknowledgedChunks: step.lastAckChunk, chunkCount: step.chunkCount,
+      manifestDigest: phase === 'final_drain' ? step.manifestDigest : null,
+    };
+    const label = `history.${phase}.${round}`;
+    if (phase === 'copy') return record(entry, label, { to: 'history_catching_up', history });
+    if (phase === 'catch_up' && step.outcome === 'drain_required') return record(entry, label, { to: 'drain_required', history });
+    if (phase === 'final_drain') return record(entry, label, { to: 'agents_pending', history, agents: await request(entry) });
+    return record(entry, label, { history });
+  }
+
   async function fail(entry: ConversionEntry): Promise<ConversionEntry> {
     return record(entry, 'failed', { to: 'failed' });
   }
@@ -244,7 +310,14 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
       const before = entry.record.revision;
       switch (entry.record.state) {
         case 'preparing': entry = await preparing(entry); break;
-        case 'external_created': entry = await record(entry, 'agents_pending', { to: 'agents_pending', agents: await request(entry) }); break;
+        case 'external_created':
+          entry = entry.record.historyMode === 'carry_history'
+            ? await record(entry, 'history_copying', { to: 'history_copying', history: EMPTY_HISTORY_PROGRESS })
+            : await record(entry, 'agents_pending', { to: 'agents_pending', agents: await request(entry) });
+          break;
+        case 'history_copying':
+        case 'history_catching_up':
+        case 'drain_required': entry = await transfer(entry); break;
         case 'agents_pending': entry = await pending(entry); break;
         // A commit that stopped between the write pause and the link never linked: resume the source.
         // One still running in this process is left to finish.
@@ -290,7 +363,7 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
       return guarded(async () => {
         const decoded = decodeConversionStart(input);
         if (!decoded.ok) throw new Halt(rejected('invalid_request'));
-        if (decoded.value.historyMode !== 'start_fresh') throw new Halt(rejected('unsupported'));
+        if (decoded.value.historyMode === 'carry_history' && !deps.history) throw new Halt(rejected('unsupported'));
         const started = await deps.journal.start(owner, decoded.value);
         if (started.kind === 'rejected') {
           throw new Halt(rejected(started.code === 'operation_mismatch' ? 'conflict' : started.code));
@@ -348,6 +421,16 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
         return record(entry, `skip.${participantId}`, {
           agents: withAgent(entry.agents, participantId, { status: 'skipped', block: null, requestHandle: null }),
         });
+      });
+    },
+
+    confirmDrain(owner, conversionId) {
+      return guarded(async () => {
+        const entry = await load(owner, conversionId);
+        if (entry.record.state !== 'drain_required') wrongState();
+        const progress = entry.history ?? EMPTY_HISTORY_PROGRESS;
+        const confirmed = progress.drainConfirmed ? entry : await record(entry, 'drain_confirmed', { history: { ...progress, drainConfirmed: true } });
+        return viewOf(await drive(confirmed));
       });
     },
 

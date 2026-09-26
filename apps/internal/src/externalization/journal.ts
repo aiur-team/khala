@@ -10,6 +10,7 @@ import {
   type Decoded, type Reader, array, decodeWith, elementPath, fail, identifier, literal, nullable, object, safeInteger, version,
 } from '@khala/contracts/messaging/decode';
 import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
+import { type ConversionHistoryProgress, decodeConversionHistoryProgress } from '@khala/contracts/messaging/make-external';
 import { type OperationResult, ok, rejected, unavailable } from '@khala/contracts/messaging/outcomes';
 import { type ChannelConversionLock, channelConversionKey, readChannelConversionLock } from '../store/conversion-lock';
 import type { InternalStoreHandle } from '../store/open';
@@ -37,6 +38,8 @@ export type ConversionEntry = Readonly<{
   snapshot: ConversionSnapshot;
   destination: HostedChannelCreated | null;
   agents: readonly ConversionAgentState[];
+  /** Carry-history transfer progress; null for start-fresh and before the first history step. */
+  history: ConversionHistoryProgress | null;
 }>;
 
 export type ConversionStartRejection = 'not_found' | 'forbidden' | 'invalid_selection' | 'conflict' | 'operation_mismatch';
@@ -51,6 +54,7 @@ export type ConversionChange = Readonly<{
   to?: ConversionState;
   destination?: HostedChannelCreated;
   agents?: readonly ConversionAgentState[];
+  history?: ConversionHistoryProgress;
 }>;
 
 export type ConversionChangeRejection = ConversionJournalRejection | 'invalid_change';
@@ -72,7 +76,9 @@ const identity = (r: Reader): ConversionAgentIdentity => ({
 
 function decodeEntry(input: unknown): Decoded<ConversionEntry> {
   return decodeWith(() => {
-    const r = object(input, '', ['v', 'record', 'snapshot', 'destination', 'agents']);
+    // Entries journaled before history progress existed carry no `history` key.
+    const keyed = typeof input === 'object' && input !== null && Object.hasOwn(input, 'history');
+    const r = object(input, '', ['v', 'record', 'snapshot', 'destination', 'agents', ...(keyed ? ['history'] : [])]);
     const record = decodeConversionRecord(r.field('record'));
     if (!record.ok) fail(r.at('record'), 'invalid_value');
     const s = object(r.field('snapshot'), r.at('snapshot'), [
@@ -113,7 +119,13 @@ function decodeEntry(input: unknown): Decoded<ConversionEntry> {
         released: a.field('released') === true,
       };
     });
-    return { v: version(r.field('v'), r.at('v')), record: record.value, snapshot, destination, agents };
+    let history: ConversionHistoryProgress | null = null;
+    if (keyed && r.field('history') !== null) {
+      const decoded = decodeConversionHistoryProgress(r.field('history'));
+      if (!decoded.ok) fail(r.at('history'), 'invalid_value');
+      history = decoded.value;
+    }
+    return { v: version(r.field('v'), r.at('v')), record: record.value, snapshot, destination, agents, history };
   });
 }
 
@@ -244,7 +256,7 @@ export function createConversionJournal(handle: InternalStoreHandle): Conversion
 
   function applyChange(input: ConversionChange): OperationResult<ConversionEntry, ConversionChangeRejection> {
     const fingerprint = JSON.stringify(['change', input.conversionId, input.expectedRevision, input.from ?? null, input.to ?? null,
-      input.destination ?? null, input.agents ?? null]);
+      input.destination ?? null, input.agents ?? null, input.history ?? null]);
     return handle.transaction(db => {
       const previous = claimed(db, input.operationId);
       if (previous) {
@@ -265,6 +277,7 @@ export function createConversionJournal(handle: InternalStoreHandle): Conversion
         record: { ...current.record, state: to, revision: current.record.revision + 1 },
         destination: input.destination ?? current.destination,
         agents: input.agents ?? current.agents,
+        history: input.history ?? current.history,
       };
       if (input.to !== undefined && !moveSource(db, next, input.to, input.operationId)) return rejected('invalid_transition');
       writeRecord(db, conversionKey(input.conversionId), input.operationId, next);
@@ -299,6 +312,7 @@ export function createConversionJournal(handle: InternalStoreHandle): Conversion
           agents: snapshot.agents.map(agent => ({
             participantId: agent.participantId, status: 'verifying', requestHandle: null, block: null, attempt: 0, released: false,
           })),
+          history: null,
         };
         writeRecord(db, conversionKey(input.conversionId), input.operationId, entry);
         writeRecord(db, channelConversionKey(input.sourceChannelId), input.operationId, {

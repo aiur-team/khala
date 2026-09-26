@@ -5,6 +5,7 @@ import {
   decodeContentLimits, decodeMessageContent,
 } from '@khala/contracts/messaging/index';
 import type { ChannelStore, StoredChannel, StoredEvent } from '../store/channel-store';
+import { type MakeExternalJourneyPort, createMakeExternalRoutes, isMakeExternalRoute } from './make-external';
 import { type AssetLimits, type AssetManifest, type AssetTable, DEFAULT_ASSET_LIMITS, loadAssets } from './assets';
 import {
   BOOTSTRAP_DOCUMENT, BOOTSTRAP_DOCUMENT_ROUTE, BOOTSTRAP_SCRIPT, BOOTSTRAP_SCRIPT_ROUTE, REQUEST_SECRET_HEADER,
@@ -81,6 +82,8 @@ export type ChannelServerOptions = Readonly<{
   transportCapability?: string;
   /** Channel discovery, access requests and the connector exchange. Absent means those routes do not exist. */
   discovery?: InternalDiscoveryPort;
+  /** The human's Make-external journey. Absent means its routes do not exist and the browser offers no action. */
+  makeExternal?: MakeExternalJourneyPort;
   assets?: AssetManifest;
   newId: () => string;
   clock: () => number;
@@ -175,7 +178,7 @@ function actor(principal: Principal): Readonly<{ participantId: ParticipantId; d
 function admits(route: RouteSpec, principal: Principal): boolean {
   const role = discoveryRole(route);
   if (role !== null) return role === principal.kind;
-  if (route === ROUTES.create) return principal.kind === 'human';
+  if (route === ROUTES.create || isMakeExternalRoute(route)) return principal.kind === 'human';
   return principal.kind === 'human' || principal.kind === 'binding';
 }
 
@@ -233,6 +236,10 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     })
     : null;
   if (discovery) routes.push(...discovery.routes);
+  const makeExternal = options.makeExternal
+    ? createMakeExternalRoutes({ journey: options.makeExternal, maxBodyBytes: limits.maxBodyBytes })
+    : null;
+  if (makeExternal) routes.push(...makeExternal.routes);
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
@@ -611,6 +618,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.releases: return releases(context);
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
+            if (makeExternal && isMakeExternalRoute(context.route)) return await makeExternal.handle(context);
             return staticAsset(context);
         }
       } catch (error) {
