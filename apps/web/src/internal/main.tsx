@@ -12,6 +12,7 @@ import { createLocalChannelSettingsPort } from './channel-settings/ports';
 import { createHumanClient } from './composition/human-client';
 import { createHttpMakeExternalPort } from './composition/make-external-port';
 import { createLocalEvidencePort, createLocalPorts, readRequestSecret } from './composition/ports';
+import { createHttpStopPort } from './composition/stop-http';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
 import { mountLocalApplication } from './composition/screen';
@@ -27,6 +28,7 @@ import '../features/channel-access/channel-access.css';
 import '../features/channel-settings/channel-settings.css';
 import '../main.css';
 import './internal.css';
+import './controls/stop-control.css';
 import './make-external/make-external.css';
 
 const target = document.querySelector('#app');
@@ -63,6 +65,10 @@ if (requestSecret === null) {
     routedPath = path;
     application.navigate(path);
   };
+  const stop = {
+    port: createHttpStopPort({ origin: location.origin, requestSecret }),
+    channelUrl: (roomId: string) => `${location.origin}${routes.roomPath(roomId)}`,
+  };
   const humanClient = createHumanClient({ origin: location.origin, requestSecret });
   const owner = {
     createChannelAccess: () => createChannelAccessInboxController({ requests: createLocalChannelAccessPort(humanClient) }),
@@ -75,6 +81,7 @@ if (requestSecret === null) {
     navigateRoute,
     evidencePort: createLocalEvidencePort(ports.substrate),
     owner,
+    stop,
     makeExternal: createHttpMakeExternalPort({ origin: location.origin, requestSecret }),
   });
 

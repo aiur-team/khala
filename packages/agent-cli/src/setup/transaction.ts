@@ -27,7 +27,11 @@ const LOCK_FILE = 'lock';
 const BACKUPS = 'backups';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export type SetupRoots = Readonly<{ home: string; xdgConfigHome: string; xdgDataHome: string; xdgStateHome: string }>;
+export type SetupRoots = Readonly<{
+  home: string; xdgConfigHome: string; xdgDataHome: string; xdgStateHome: string;
+  /** `$CODEX_HOME`, which may sit outside HOME; Codex config below it is foreign, like any harness root. */
+  codexHome?: string;
+}>;
 
 export type SetupStatePaths = Readonly<{
   /** `$XDG_STATE_HOME/khala/setup`: manifest, journal, lock, and backups. */
@@ -283,8 +287,8 @@ class Executor {
   readonly paths: SetupStatePaths;
 
   constructor(readonly options: ExecuteOptions) {
-    const { home, xdgConfigHome, xdgDataHome, xdgStateHome } = options.roots;
-    this.fs = new ConfinedFilesystem([...new Set([home, xdgConfigHome, xdgDataHome, xdgStateHome])]);
+    const { home, xdgConfigHome, xdgDataHome, xdgStateHome, codexHome } = options.roots;
+    this.fs = new ConfinedFilesystem([...new Set([home, xdgConfigHome, xdgDataHome, xdgStateHome, ...(codexHome === undefined ? [] : [codexHome])])]);
     this.paths = setupStatePaths(options.roots);
   }
 
@@ -742,13 +746,11 @@ class Executor {
     }
     try {
       // A parent shared by several managed files (such as `~/.codex`) empties only once the
-      // last of them is gone, whichever operation created it.
+      // last of them is gone, whichever operation created it, so every directory the removed
+      // entries created is pruned together, innermost first.
       const created = new Map((manifest?.entries ?? []).map(entry => [entry.path, entry.createdDirectories]));
-      for (const { operation } of journal.operations) {
-        if (operation.type === 'file_delete' || operation.type === 'file_restore') {
-          await this.fs.removeEmptyDirectories(created.get(operation.path) ?? []);
-        }
-      }
+      await this.fs.removeEmptyDirectories([...new Set(journal.operations.flatMap(({ operation }) =>
+        operation.type === 'file_delete' || operation.type === 'file_restore' ? created.get(operation.path) ?? [] : []))]);
       journal.manifest = await this.nextManifest(plan, manifest, journal);
       journal.state = 'committed';
       await this.writeJournal(journal);

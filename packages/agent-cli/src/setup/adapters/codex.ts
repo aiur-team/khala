@@ -39,8 +39,8 @@ export type CodexPaths = Readonly<{
   launcher: string;
 }>;
 
-export function codexPaths(environment: Pick<SetupEnvironment, 'home' | 'xdgDataHome'>): CodexPaths {
-  const codexHome = path.join(environment.home, '.codex');
+export function codexPaths(environment: Pick<SetupEnvironment, 'home' | 'xdgDataHome' | 'codexHome'>): CodexPaths {
+  const codexHome = environment.codexHome ?? path.join(environment.home, '.codex');
   return {
     codexHome,
     skill: path.join(codexHome, 'skills', 'khala', 'SKILL.md'),

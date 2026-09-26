@@ -9,12 +9,21 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRouteContext } from '../../composition/human/application';
+import { StopControl } from '../controls/StopControl';
+import { createStopController } from '../controls/stop-controller';
+import type { BindingStopPort } from '../controls/stop-port';
 import { MakeExternalEntry, linkedSendReason, useJourneySummary } from '../make-external/ChannelEntry';
 import type { MakeExternalPort } from '../make-external/port';
 import { createPendingSendStore } from './pending-store';
 
-// Agent presence, listening mode and Stop belong to their own tickets; they
-// arrive here as injected capabilities, never as UI built by this entry.
+/** The binding Stop control's port and the channel URL a replacement agent joins with. */
+export type LocalStopCapability = Readonly<{
+  port: BindingStopPort;
+  channelUrl(roomId: string): string;
+}>;
+
+// Agent presence and listening mode belong to their own tickets; they arrive
+// here as injected capabilities, never as UI built by this entry.
 const unavailablePresence: ChannelUiPort = {
   async agents() { throw new Error('agent presence unavailable'); },
   subscribeAgents: () => () => undefined,
@@ -116,13 +125,14 @@ export function SessionEnded({ roomId, headingRef }: {
 export const EVIDENCE_POLL_MS = 5_000;
 
 export function LocalRoom({
-  context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, makeExternal = null, onMakeExternal = () => undefined,
+  context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, makeExternal = null, onMakeExternal = () => undefined,
 }: {
   context: HumanRouteContext;
   roomId: RoomId;
   transport: LocalTransport;
   evidencePort?: ReceiptEvidencePort;
   evidencePollMs?: number;
+  stop?: LocalStopCapability;
   /** The Make-external journey port; without it the page offers no such action. */
   makeExternal?: MakeExternalPort | null;
   onMakeExternal?: () => void;
@@ -149,6 +159,8 @@ export function LocalRoom({
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
   );
+  const stopController = useMemo(() => (stop ? createStopController(stop.port, roomId) : null), [stop, roomId]);
+  useEffect(() => () => stopController?.dispose(), [stopController]);
   const pendingStore = useMemo(() => createPendingSendStore(context.principal.ownerId, roomId), [context.principal.ownerId, roomId]);
   useEffect(() => () => {
     timeline.dispose();
@@ -195,7 +207,12 @@ export function LocalRoom({
         </>
       )}
       renderReview={() => null}
-      renderControls={() => <MakeExternalEntry summary={journey} onOpen={onMakeExternal} />}
+      renderControls={() => (
+        <>
+          {stop && stopController ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /> : null}
+          <MakeExternalEntry summary={journey} onOpen={onMakeExternal} />
+        </>
+      )}
     />
   );
 }
