@@ -181,20 +181,21 @@ describe('mixed harness states', () => {
     assert.deepEqual(snapshot(machine.home), {});
   });
 
-  test('installed, absent, and unsupported harnesses are reported apart; unsupported refuses before any write', () => {
+  test('installed, absent, and unsupported harnesses are reported apart; an old Codex is skipped, not refused for all', () => {
     const machine = createMachine({ claude: SUPPORTED.claude, codex: 'codex-cli 0.1.0' });
     const pristine = snapshot(machine.home, { mtimes: true });
-    const refused = khala(v1, machine, ['setup']);
-    assert.equal(refused.status, 3, refused.stdout);
-    assert.equal(refused.json.state, 'unsupported');
-    assert.equal(refused.json.planDigest, null);
+    const plan = khala(v1, machine, ['setup']);
+    assert.equal(plan.status, 5, plan.stdout);
+    assert.equal(plan.json.state, 'confirmation_required');
+    assert.deepEqual(plan.json.confirmation.harnesses, ['claude'], 'only the supported harness is planned');
+    assert.ok(plan.json.operations.every(operation => operation.harness === 'claude'));
+    assert.ok(plan.json.diagnostics.some(entry => entry.code === 'harness_unsupported' && entry.harness === 'codex'));
     assert.deepEqual(snapshot(machine.home, { mtimes: true }), pristine);
 
-    assert.deepEqual(harness(refused, 'claude').version, { detected: '2.1.283', supported: true });
-    assert.deepEqual(harness(refused, 'codex').executable.present, true);
-    assert.deepEqual(harness(refused, 'codex').version, { detected: '0.1.0', supported: false });
-    assert.deepEqual(harness(refused, 'opencode')?.executable, { present: false, path: null }, 'absent OpenCode is reported absent');
-    assert.equal(khala(v1, machine, ['status', '--check']).status, 3);
+    assert.deepEqual(harness(plan, 'claude').version, { detected: '2.1.283', supported: true });
+    assert.deepEqual(harness(plan, 'codex').executable.present, true);
+    assert.deepEqual(harness(plan, 'codex').version, { detected: '0.1.0', supported: false });
+    assert.deepEqual(harness(plan, 'opencode')?.executable, { present: false, path: null }, 'absent OpenCode is reported absent');
 
     // A version probe that fails is distinct from absence.
     fs.writeFileSync(path.join(machine.bin, 'opencode'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
@@ -203,15 +204,41 @@ describe('mixed harness states', () => {
     assert.equal(harness(probed, 'opencode').version.detected, null);
     removeHarness(machine, 'opencode');
 
-    // Without the unsupported harness, setup configures exactly the supported one.
-    removeHarness(machine, 'codex');
-    const plan = khala(v1, machine, ['setup']);
-    assert.deepEqual(plan.json.confirmation.harnesses, ['claude']);
     const applied = khala(v1, machine, ['setup', '--confirm', plan.json.planDigest]);
     assert.equal(applied.status, 0, applied.stdout);
     assert.equal(applied.json.ok, true);
     assert.equal(applied.json.state, 'configured_effect_unknown');
-    for (const absent of ['.codex', '.config/opencode']) assert.equal(fs.existsSync(path.join(machine.home, absent)), false, `${absent} is never created`);
+    assert.deepEqual(harness(applied, 'codex').version, { detected: '0.1.0', supported: false });
+    for (const untouched of ['.codex', '.config/opencode']) assert.equal(fs.existsSync(path.join(machine.home, untouched)), false, `${untouched} is never created`);
+    assert.equal(khala(v1, machine, ['status', '--check']).status, 3);
+  });
+
+  test('Claude plus an untested OpenCode sets up Claude and reports OpenCode as unsupported (#419)', () => {
+    const machine = createMachine({ claude: SUPPORTED.claude, opencode: '1.15.6' });
+    const { plan, applied } = confirmed(v1, machine, 'setup');
+    assert.equal(plan.status, 5, plan.stdout);
+    assert.deepEqual(plan.json.confirmation.harnesses, ['claude']);
+    assert.equal(applied?.status, 0, applied?.stdout ?? plan.stdout);
+    assert.equal(applied.json.changed, true);
+    assert.equal(applied.json.state, 'configured_effect_unknown');
+    assert.deepEqual(harness(applied, 'opencode').version, { detected: '1.15.6', supported: false });
+    assert.ok(harness(applied, 'opencode').components.every(entry => entry.state === 'unsupported'));
+    assert.ok(applied.json.diagnostics.some(entry => entry.code === 'harness_unsupported' && entry.harness === 'opencode'));
+    assert.ok(fs.existsSync(path.join(machine.home, '.claude', 'settings.json')), 'Claude is configured');
+    assert.equal(fs.existsSync(path.join(machine.home, '.config', 'opencode')), false, 'OpenCode is left untouched');
+    const again = khala(v1, machine, ['setup']);
+    assert.equal(again.status, 0, again.stdout);
+    assert.equal(again.json.changed, false);
+  });
+
+  test('with every detected harness unsupported, setup refuses before any write', () => {
+    const machine = createMachine({ opencode: '1.15.6', codex: 'codex-cli 0.1.0' });
+    const pristine = snapshot(machine.home, { mtimes: true });
+    const refused = khala(v1, machine, ['setup']);
+    assert.equal(refused.status, 3, refused.stdout);
+    assert.equal(refused.json.state, 'unsupported');
+    assert.equal(refused.json.planDigest, null);
+    assert.deepEqual(snapshot(machine.home, { mtimes: true }), pristine);
     assert.equal(khala(v1, machine, ['status', '--check']).status, 3);
   });
 
@@ -237,7 +264,7 @@ describe('mixed harness states', () => {
     assert.deepEqual(snapshot(machine.home), {});
   });
 
-  test('an unsupported version blocks upgrade, but manifest-driven removal still restores the baseline', () => {
+  test('an unsupported version is left unchanged by setup, and manifest-driven removal still restores the baseline', () => {
     const machine = createMachine(ALL);
     seed(machine);
     const baseline = snapshot(machine.home);
@@ -245,9 +272,11 @@ describe('mixed harness states', () => {
     installHarness(machine, 'codex', 'codex-cli 9.9.9');
     const installed = snapshot(machine.home, { mtimes: true });
 
-    const refused = khala(v1, machine, ['setup']);
-    assert.equal(refused.status, 3);
-    assert.equal(refused.json.state, 'unsupported');
+    const skipped = khala(v1, machine, ['setup']);
+    assert.equal(skipped.json.changed, false, skipped.stdout);
+    assert.deepEqual(skipped.json.operations, []);
+    assert.deepEqual(harness(skipped, 'codex').version, { detected: '9.9.9', supported: false });
+    assert.ok(skipped.json.diagnostics.some(entry => entry.code === 'harness_unsupported' && entry.harness === 'codex'));
     assert.deepEqual(snapshot(machine.home, { mtimes: true }), installed);
 
     const removed = confirmed(v1, machine, 'remove');
