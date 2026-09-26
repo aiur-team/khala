@@ -28,6 +28,20 @@ describe('claude plugin scaffold', () => {
     for (const tool of FROZEN_MCP_TOOLS) expect(readme).toContain(`\`${tool}\``);
   });
 
+  it('lists the full frozen MCP tool set', () => {
+    expect([...FROZEN_MCP_TOOLS]).toEqual([
+      'khala_send',
+      'khala_read',
+      'khala_status',
+      'khala_listening_mode',
+      'khala_create_channel',
+      'khala_list_channels',
+      'khala_request_channel_access',
+      'khala_channel_access_status',
+      'khala_list_agents',
+    ]);
+  });
+
   it('fails validation when the manifest registers a hook event outside the frozen list', () => {
     const copy = copyPlugin();
     const file = path.join(copy, 'hooks/hooks.json');
