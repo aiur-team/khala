@@ -39,7 +39,8 @@ export class ChannelCreateService {
   async #settle(operationId: string, call: (() => Promise<ChannelAccessResult>) | null): Promise<CreateOutput> {
     if (call === null) return failure('unavailable', operationId);
     let result: unknown;
-    try { result = await call(); } catch { return failure('unavailable', operationId); }    if (!plainObject(result)) return failure('unavailable', operationId);
+    try { result = await call(); } catch { return failure('unavailable', operationId); }
+    if (!plainObject(result)) return failure('unavailable', operationId);
     if (result.kind === 'refused' && typeof result.code === 'string'
       && (ACCESS_REFUSAL_CODES as readonly string[]).includes(result.code)) {
       return failure(result.code as AccessRefusalCode, operationId);
