@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-26T15:20:00Z",
+  "startedBy": "agent-launched-default-settings",
+  "launchedBy": "Khala Executor (decisions 33 and 43), in tmux session k232-opencode, driven with tmux send-keys and capture-pane",
+  "sessionId": "ses_f21c37fafffexS9eUt0B9Zs1r2",
+  "secondSession": "used only for wrongBinding; see that case",
+  "openCodeVersion": "1.17.10",
+  "openCodeInstall": "npm i --prefix ~/.cache/khala-live/232/opencode/1.17.10 opencode-ai@1.17.10 (private prefix, global opencode 1.15.6 untouched)",
+  "provider": "deepseek/deepseek-flash",
+  "providerNote": "The operator asked for deepseek/deepseek-v4-flash. OpenCode 1.17.10 does not list that model (only deepseek-flash, shown as DeepSeek V4.1 Flash, and deepseek-v4-pro) and started on v4-pro, so DeepSeek V4.1 Flash was selected with /models before the first prompt. The bridge recorded providerID deepseek, modelID deepseek-flash.",
+  "route": "opencode-plugin-idle-watcher-prompt",
+  "surface": "in_process_plugin",
+  "trustSettings": "default",
+  "trustBypassFlagsUsed": [],
+  "launches": [
+    {
+      "label": "tui-first-launch",
+      "cwd": "scratch directory under ~/.cache/khala-live/232",
+      "command": "opencode",
+      "environment": "isolated XDG_CONFIG_HOME, XDG_DATA_HOME and XDG_STATE_HOME under ~/.cache/khala-live/232/xdg; private opencode 1.17.10 and khala bins first on PATH; codex hidden from PATH"
+    },
+    {
+      "label": "tui-relaunch-after-exit",
+      "cwd": "scratch directory under ~/.cache/khala-live/232",
+      "command": "opencode --session ses_f21c37fafffexS9eUt0B9Zs1r2",
+      "environment": "same as tui-first-launch; used for reconnect"
+    },
+    {
+      "label": "tui-relaunch-after-stop",
+      "cwd": "scratch directory under ~/.cache/khala-live/232",
+      "command": "opencode --session ses_f21c37fafffexS9eUt0B9Zs1r2",
+      "environment": "same as tui-first-launch; used for the Stop and rejoin attempt"
+    }
+  ],
+  "configNote": "The isolated OpenCode config carries only model and the DeepSeek provider block copied from the user config, plus what khala setup added (plugin, mcp.khala, instructions). The user config's permission allow was not copied, so OpenCode ran with its default permissions.",
+  "khalaServer": "khala internal on 127.0.0.1:4871, disposable channel ch_WjxUt8ZZnUfKafaqnb6EVA, owner actions through the owner HTTP routes with the bootstrap session",
+  "listeningModes": "sync for the idle cases, steer (owner-set) for the busy case",
+  "hostedSubstitute": false,
+  "hostSideLedger": false,
+  "capabilityCeiling": "unknown",
+  "receiptObservation": "Receipts were read from the owner route GET /api/v1/channels/<channel>/receipts after every step. It returned no facts for the whole run. Local acknowledgement was observed separately through the binding inbox cursor: it advanced only on a next Khala call that echoed the exact token.",
+  "blockingFinding": "No agent_acknowledged receipt can be recorded in this build. The OpenCode plugin opens its inbox without recordAcknowledgement (packages/agent-cli/src/composition/opencode-internal.ts openGeneration), so the inbox skips recording (packages/agent-cli/src/cli/inbox.ts #recordAcknowledgement returns when no recorder is set). The internal launcher also runs no receipt projector (createInternalReceiptProjector is used only by tests). Every receiptRecorded true case therefore fails, and every receiptRecorded false case is non-discriminating for the receipt ledger.",
+  "caseStatus": {
+    "idleBatchNoAcknowledgement": "observed; receipt check non-discriminating",
+    "busyBatchNoAcknowledgement": "observed; receipt check non-discriminating",
+    "noLaterCall": "observed; receipt check non-discriminating",
+    "nextCallAcknowledges": "failed: token echoed and inbox acknowledged, no receipt recorded",
+    "missingToken": "observed; receipt check non-discriminating",
+    "duplicateToken": "failed: no receipt recorded for the first acknowledgement",
+    "wrongToken": "observed; receipt check non-discriminating",
+    "wrongBinding": "observed by Executor CLI call, not by the agent; receipt check non-discriminating",
+    "wrongGeneration": "not observed: rejoin after Stop ended repair_required, so no second generation existed",
+    "reconnect": "failed: token retained across restart and inbox acknowledged once, no receipt recorded"
+  },
+  "cases": {
+    "idleBatchNoAcknowledgement": {
+      "batchLabel": "idle-batch-1",
+      "tokenReturned": false,
+      "receiptRecorded": false,
+      "note": "sync mode, session idle: the idle watcher stored the envelope with one session-addressed promptAsync. The agent answered in text only. The inbox cursor did not move and the receipts route had no fact."
+    },
+    "busyBatchNoAcknowledgement": {
+      "batchLabel": "busy-batch-3",
+      "tokenReturned": false,
+      "receiptRecorded": false,
+      "note": "steer mode, session busy running three sleep tool calls: tool.execute.after marked the batch and the messages transform placed it (bridge state steer delivered, one steer record). The agent saw the body and made no Khala call. Cursor unchanged, no receipt."
+    },
+    "noLaterCall": {
+      "batchLabel": "busy-batch-3",
+      "tokenReturned": false,
+      "receiptRecorded": false,
+      "note": "After busy-batch-3 was delivered the agent made no Khala call for over 60 seconds. The batch stayed outstanding: cursor unchanged, request still delivered, no resubmission, no receipt."
+    },
+    "nextCallAcknowledges": {
+      "batchLabel": "idle-batch-1",
+      "tokenReturned": true,
+      "tokenEquality": "equal",
+      "receiptRecorded": false,
+      "note": "The agent's next khala_send echoed the exact idle-batch-1 token as ackBatchToken. The inbox cursor advanced past the batch and the bridge cleared its request, but the receipts route recorded no agent_acknowledged fact (see blockingFinding)."
+    },
+    "missingToken": {
+      "batchLabel": "idle-batch-1",
+      "tokenReturned": false,
+      "receiptRecorded": false,
+      "conformanceFailure": true,
+      "note": "khala_read with no ackBatchToken re-returned the same idle-batch-1 batch and token. Cursor unchanged, no receipt."
+    },
+    "duplicateToken": {
+      "batchLabel": "idle-batch-1",
+      "tokenReturned": true,
+      "tokenEquality": "equal",
+      "receiptRecorded": false,
+      "receiptCount": 0,
+      "note": "After the acknowledgement, khala_read echoed the same idle-batch-1 token again and got kind empty. No second acknowledgement happened (cursor unchanged), but there was no first receipt either, so receiptCount is 0."
+    },
+    "wrongToken": {
+      "batchLabel": "batch-2",
+      "tokenReturned": true,
+      "tokenEquality": "unequal",
+      "receiptRecorded": false,
+      "note": "khala_read echoed the batch-2 token with its last character changed. The same batch-2 batch was re-returned. Cursor unchanged, no receipt."
+    },
+    "wrongBinding": {
+      "batchLabel": "busy-batch-3",
+      "tokenReturned": true,
+      "tokenEquality": "equal",
+      "receiptRecorded": false,
+      "note": "A second OpenCode session joined as a second binding. Its agent refused twice to echo another binding's token. With the TUI closed, the Executor ran khala read --ack with the second binding's grant and the exact busy-batch-3 token of the first binding. Neither binding's inbox cursor moved, and no receipt was recorded."
+    },
+    "reconnect": {
+      "batchLabel": "batch-2",
+      "tokenReturned": true,
+      "tokenEquality": "equal",
+      "receiptRecorded": false,
+      "receiptCount": 0,
+      "note": "batch-2 was stored by an idle prompt, then the TUI exited (listener released) and was relaunched on the same session. The agent's first Khala call after the restart, khala_send, echoed the exact batch-2 token. The inbox cursor advanced once. No receipt was recorded."
+    }
+  },
+  "notObservedCases": {
+    "wrongGeneration": "Owner Stop revoked the first binding while busy-batch-3 was outstanding. The agent ran discovery again (discovery generation 2) and join; the owner approved; the follow-up join returned repair_required twice and no grant was written, although the owner view listed a new opencode-232 binding. After the restart the steer envelope was no longer in the model context, so the agent had no stale token to echo. A token from an older binding generation against a newer held generation was therefore never exercised."
+  },
+  "otherFindings": [
+    "The second binding's first delivered batch carried the channel's earlier messages, including ones sent before it joined, although its access request showed history none.",
+    "The plugin reads the OpenCode version only from an executable path containing opencode/<x.y.z>/ (packages/agent-cli/src/opencode/plugin.ts openCodeVersionFromExecPath). A plain npm install of opencode-ai puts the binary at node_modules/opencode-ai/bin, which yields an unknown version and no automatic delivery. This run installed into a prefix named opencode/1.17.10 so that detection matched what setup detected with opencode --version."
+  ]
+}
