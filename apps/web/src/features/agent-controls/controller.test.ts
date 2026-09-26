@@ -247,7 +247,7 @@ describe('createAgentControlsController — initial state', () => {
         errorCode: null,
       },
     }));
-    expect(controller.getView().receiptDetail).toBe('Received by the model');
+    expect(controller.getView().receiptDetail).toBe('Added to agent context');
     controller.dispose();
   });
 
@@ -813,7 +813,7 @@ describe('createAgentControlsController — requestPause', () => {
         errorCode: null,
       },
     }));
-    expect(controller.getView().receiptDetail).toBe('Received by the model');
+    expect(controller.getView().receiptDetail).toBe('Added to agent context');
 
     emit(snapshot({ policy: policy({ generation: 1, effectiveVersion: 1, paused: false }) }));
     expect(controller.getView().receiptDetail).toBeNull();

@@ -12,6 +12,7 @@ import { PassThrough } from 'node:stream';
 import { runCli } from '@aiur/khala/cli/app';
 import { openInbox } from '@aiur/khala/cli/inbox';
 import { createInternalClient, readInternalDescriptor } from '@aiur/khala/composition/internal';
+import { ChannelCreateService } from '@aiur/khala/cli/channels/create/service';
 import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import sodium from 'libsodium-wrappers';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -702,6 +703,57 @@ describe('internal channel discovery', () => {
     w.clock.now += 120_000;
     expect((await w.discovery.createAdapter.create({ intent, workflow, idempotencyKey: 'create-3' })).outcome).toBe('unavailable');
     expect(w.handle.read(db => db.prepare('SELECT count(*) AS n FROM channels').get())).toEqual({ n: 3 });
+  });
+
+  // Wrong-implementation test: a create path that makes the channel at submission,
+  // or on a denial or expiry, leaves rows behind that these counts catch.
+  it('creates nothing for a rejected or expired confirmation, and exactly one secret channel on approval', async () => {
+    const w = await world();
+    // Each scenario is its own agent session: one session holds one create request.
+    const serviceFor = async (session: string) =>
+      new ChannelCreateService(createInternalClient({ descriptorPath: (await issue(w, session)).descriptorPath }));
+    const counts = () => ({
+      channels: w.handle.read(db => db.prepare('SELECT count(*) AS n FROM channels').get()),
+      memberships: w.handle.read(db => db.prepare('SELECT count(*) AS n FROM memberships').get()),
+      bindings: w.handle.read(db => db.prepare('SELECT count(*) AS n FROM bindings').get()),
+      grants: controlKeys(w).filter(key => key.includes('grant')),
+    });
+    const before = counts();
+    const pendingFor = async (title: string) => (await inbox(w)).find(entry =>
+      entry.operationKind === 'create' && entry.outcome === 'pending_owner'
+      && (entry as unknown as { detail: { proposedTitle: string } }).detail.proposedTitle === title)!;
+
+    // Submission alone creates nothing; a rejected confirmation creates nothing.
+    const rejecting = await serviceFor('session-reject');
+    expect(await rejecting.request({ title: 'Rejected', operationId: 'op-reject', origin: null }))
+      .toMatchObject({ ok: true, outcome: 'pending_owner' });
+    expect(counts()).toEqual(before);
+    const rejected = await pendingFor('Rejected');
+    expect((await decide(w, rejected.requestHandle, rejected.revision, 'deny', w.human, 'create')).status).toBe(200);
+    expect(await rejecting.status({ operationId: 'op-reject', origin: null })).toMatchObject({ ok: true, outcome: 'denied' });
+    expect(counts()).toEqual(before);
+
+    // An unanswered confirmation that outlives its deadline creates nothing either.
+    const expiring = await serviceFor('session-expire');
+    expect(await expiring.request({ title: 'Expired', operationId: 'op-expire', origin: null }))
+      .toMatchObject({ ok: true, outcome: 'pending_owner' });
+    w.clock.now += 8 * 24 * 60 * 60_000;
+    const expired = await expiring.status({ operationId: 'op-expire', origin: null });
+    expect(expired.ok && expired.outcome).not.toBe('connected');
+    expect(counts()).toEqual(before);
+
+    // Approval creates exactly one secret channel, still with no binding or grant.
+    w.clock.now = NOW;
+    const approving = await serviceFor('session-approve');
+    await approving.request({ title: 'Approved', operationId: 'op-approve', origin: null });
+    const approved = await pendingFor('Approved');
+    expect((await decide(w, approved.requestHandle, approved.revision, 'approve', w.human, 'create')).status).toBe(200);
+    await approving.status({ operationId: 'op-approve', origin: null });
+    await approving.status({ operationId: 'op-approve', origin: null });
+    const after = counts();
+    expect(after.channels).toEqual({ n: (before.channels as { n: number }).n + 1 });
+    expect(after.bindings).toEqual(before.bindings);
+    expect(after.grants).toEqual(before.grants);
   });
 
   it('keeps the admission adapter idempotent per provider operation', async () => {

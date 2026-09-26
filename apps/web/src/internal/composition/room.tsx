@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useSyncExternalStore, type Ref } from 'reac
 import type { RoomId } from '@khala/contracts/messaging/index';
 import type { LocalTransport, LocalTransportState } from '@khala/messaging/local/http/index';
 import { createChannelController } from '../../features/channel/controller';
+import { type ReceiptEvidencePort, createReceiptEvidenceController } from '../../features/receipt-evidence/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
@@ -111,15 +112,34 @@ export function SessionEnded({ roomId, headingRef }: {
   );
 }
 
-export function LocalRoom({ context, roomId, transport, makeExternal = null, onMakeExternal = () => undefined }: {
+/** Receipt projections do not raise channel hints, so evidence is also reread on this interval. */
+export const EVIDENCE_POLL_MS = 5_000;
+
+export function LocalRoom({
+  context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, makeExternal = null, onMakeExternal = () => undefined,
+}: {
   context: HumanRouteContext;
   roomId: RoomId;
   transport: LocalTransport;
+  evidencePort?: ReceiptEvidencePort;
+  evidencePollMs?: number;
   /** The Make-external journey port; without it the page offers no such action. */
   makeExternal?: MakeExternalPort | null;
   onMakeExternal?: () => void;
 }) {
   const journey = useJourneySummary(makeExternal, roomId);
+  const evidence = useMemo(
+    () => (evidencePort ? createReceiptEvidenceController(evidencePort, roomId) : undefined),
+    [evidencePort, roomId],
+  );
+  useEffect(() => {
+    if (!evidence) return undefined;
+    const timer = setInterval(() => void evidence.refresh(), evidencePollMs);
+    return () => {
+      clearInterval(timer);
+      evidence.dispose();
+    };
+  }, [evidence, evidencePollMs]);
   const state = useSyncExternalStore(transport.subscribe, transport.current, transport.current);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -141,6 +161,11 @@ export function LocalRoom({ context, roomId, transport, makeExternal = null, onM
   useEffect(() => {
     if (state.kind === 'live' && (phase === 'unavailable' || phase === 'partial')) void timeline.loadOlder();
   }, [phase, state.kind, timeline]);
+  // New or older rows may carry evidence already projected: reread with them.
+  const items = useSyncExternalStore(timeline.subscribe, () => timeline.getSnapshot().items, () => timeline.getSnapshot().items);
+  useEffect(() => {
+    void evidence?.refresh();
+  }, [evidence, items]);
   const viewer = context.participant?.() ?? null;
   if (viewer === null) {
     return (
@@ -165,6 +190,7 @@ export function LocalRoom({ context, roomId, transport, makeExternal = null, onM
             viewer={viewer}
             sendBlockedReason={linkedSendReason(journey) ?? sendBlockedReason(state)}
             pendingStore={pendingStore}
+            {...(evidence ? { evidence } : {})}
           />
         </>
       )}
