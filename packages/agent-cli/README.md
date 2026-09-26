@@ -545,6 +545,17 @@ itself rewrites the rest of that file. Khala then owns only the named
 still checks its preimage, and a later plan may only edit that same entry.
 `config_entry_remove` releases the path and leaves every other byte in place.
 
+## Claude Desktop setup
+
+`src/setup/adapters/claude-app.ts` is the `claude-app` setup adapter. The
+`claude-app` id reports Claude Desktop separately from Claude Code (`claude`).
+It detects the macOS bundle or the Windows per-user install and reads the
+version when it can. It always reports `supported: false`, the `mcp_entry`
+component as `unsupported` (or `absent`), and the route as `unavailable`.
+Each Claude app shape gets its own `claude_app_delivery_unproven`
+diagnostic. It plans no writes, because no Claude app route has exact-version
+evidence. See `packages/harnesses/src/claude-app/README.md`.
+
 ## Codex setup adapter
 
 `src/setup/adapters/codex.ts` detects `codex --version` and plans three guarded
