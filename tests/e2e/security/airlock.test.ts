@@ -180,10 +180,6 @@ const CLI_PROBES: Readonly<Record<string, Probe>> = {
   'cli:pair': async s => add(s, 'cli:pair', await s.world.khala(['pair', '7K3QX-9MZ2P'])),
   'cli:claude': async s => add(s, 'cli:claude', await s.world.khala(['claude'])),
   'cli:codex-hook': async s => add(s, 'cli:codex-hook', await s.world.khala(['codex-hook'], { client: 'internal', stdin: hookInput('Stop') })),
-  ...Object.fromEntries(['pull', 'read', 'send', 'status', 'mode', 'pending', 'hook'].map(op => [
-    `claude-op:${op}`,
-    (async s => add(s, `claude-op:${op}`, await s.world.khala(['claude', op], { stdin: hookInput('Stop') }))) as Probe,
-  ])),
   ...Object.fromEntries(['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop'].map(event => [
     `hook-codex:${event}`,
     (async s => add(s, `hook-codex:${event}`, await s.world.khala(['codex-hook'], { client: 'internal', stdin: hookInput(event) }))) as Probe,

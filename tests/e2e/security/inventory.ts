@@ -19,6 +19,7 @@ import { STOP_ROUTE } from '../../../apps/internal/src/server/stop/route';
 import { CLI_COMMANDS } from '../../../packages/agent-cli/src/cli/registry';
 import { CODEX_APP_HOOK_EVENTS } from '../../../packages/agent-cli/src/codex-app/hook';
 import { CODEX_HOOK_EVENTS } from '../../../packages/agent-cli/src/codex/hook';
+import { CLAUDE_SESSION_PATH } from '../../../packages/agent-cli/src/composition/claude-session-http';
 import { CLAUDE_COMMAND_OPS } from '../../../packages/agent-cli/src/composition/claude-command';
 import { createClaudeToolRegistry } from '../../../packages/agent-cli/src/composition/claude-mcp';
 import { MCP_TOOLS } from '../../../packages/agent-cli/src/mcp/registry';
@@ -28,7 +29,7 @@ import { FROZEN_HOOK_EVENTS, FROZEN_MCP_TOOLS } from '../../../packages/claude-p
 export const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 /** Probes implemented in `airlock.test.ts`. */
-export const PROBES = ['internal-http', 'agent-cli', 'mcp-serve', 'dispatcher-gate'] as const;
+export const PROBES = ['internal-http', 'agent-cli', 'mcp-serve', 'claude-session', 'dispatcher-gate'] as const;
 export type ProbeId = (typeof PROBES)[number];
 
 export type Coverage =
@@ -47,7 +48,6 @@ const humanOnly = (reason: string): Coverage => ({ kind: 'human-only', reason })
 // messaging relay and never enter a control request in any wired flow, so a canary
 // scan of these routes is vacuous rather than evidence.
 const CONTROL_NO_CONTENT = 'hosted control state only; no wired flow carries a message body through control, and no disposable Netlify deployment was available';
-const CLAUDE_UNCOMPOSED = 'the shipped CLI composes no Claude session client (cli/main.ts), so these tools answer only through a Claude session this suite cannot start';
 const OPENCODE_UNCOMPOSED = 'the shipped plugin entry composes no transport (unavailableOpenCodeDependencies), so it can reach no content to test';
 const ADAPTER_UNDRIVEN = 'not driven: the review gate was exercised through the Codex adapter only. The dispatcher hands every adapter the same approved job, but this adapter\'s own behaviour (including any file access) was not observed';
 const HOOK_RENDERS_CLI = 'hook renders what `khala claude`/`khala codex-hook` returns; no live harness session was started, so hook output itself was not captured';
@@ -71,13 +71,14 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'mcp-tool:khala_create_channel': probe('mcp-serve'),
   'mcp-tool:khala_channel_create_status': probe('mcp-serve'),
   // Claude-bound MCP server (`KHALA_MCP_HARNESS=claude`).
-  'claude-mcp-tool:khala_send': notObserved(CLAUDE_UNCOMPOSED),
-  'claude-mcp-tool:khala_read': notObserved(CLAUDE_UNCOMPOSED),
-  'claude-mcp-tool:khala_status': notObserved(CLAUDE_UNCOMPOSED),
-  'claude-mcp-tool:khala_list_channels': notObserved(CLAUDE_UNCOMPOSED),
-  'claude-mcp-tool:khala_list_agents': notObserved(CLAUDE_UNCOMPOSED),
-  'claude-mcp-tool:khala_request_channel_access': notObserved(CLAUDE_UNCOMPOSED),
-  'claude-mcp-tool:khala_channel_access_status': notObserved(CLAUDE_UNCOMPOSED),
+  'claude-mcp-tool:khala_send': probe('claude-session'),
+  'claude-mcp-tool:khala_read': probe('claude-session'),
+  'claude-mcp-tool:khala_status': probe('claude-session'),
+  'claude-mcp-tool:khala_list_channels': probe('claude-session'),
+  'claude-mcp-tool:khala_list_agents': probe('claude-session'),
+  'claude-mcp-tool:khala_request_channel_access': probe('claude-session'),
+  'claude-mcp-tool:khala_channel_access_status': probe('claude-session'),
+  'claude-mcp-tool:khala_create_channel': probe('claude-session'),
   // OpenCode plugin tools, as shipped.
   'opencode-tool:khala_read': notObserved(OPENCODE_UNCOMPOSED),
   'opencode-tool:khala_send': notObserved(OPENCODE_UNCOMPOSED),
@@ -98,13 +99,13 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'cli:join': probe('agent-cli'),
   'cli:claude': probe('agent-cli'),
   'cli:pair': probe('agent-cli'),
-  'claude-op:pull': probe('agent-cli'),
-  'claude-op:read': probe('agent-cli'),
-  'claude-op:send': probe('agent-cli'),
-  'claude-op:status': probe('agent-cli'),
-  'claude-op:mode': probe('agent-cli'),
-  'claude-op:pending': probe('agent-cli'),
-  'claude-op:hook': probe('agent-cli'),
+  'claude-op:pull': probe('claude-session'),
+  'claude-op:read': probe('claude-session'),
+  'claude-op:send': probe('claude-session'),
+  'claude-op:status': probe('claude-session'),
+  'claude-op:mode': probe('claude-session'),
+  'claude-op:pending': probe('claude-session'),
+  'claude-op:hook': probe('claude-session'),
   // Native hook events.
   'hook-claude:UserPromptSubmit': notObserved(HOOK_RENDERS_CLI),
   'hook-claude:PostToolUse': notObserved(HOOK_RENDERS_CLI),
@@ -130,6 +131,8 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:GET /api/v1/channels/:channelId/releases': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/receipts': probe('internal-http'),
   'http-internal:POST /api/v1/channels/:channelId/stop': probe('internal-http'),
+  // Claude session route: the launch's transport capability only, driven through the launcher.
+  'http-internal:POST /api/agent/claude/session': probe('claude-session'),
   'http-internal:GET /channels/:channelId': probe('internal-http'),
   'http-internal:GET /channels/:channelId/settings': probe('internal-http'),
   'http-internal:GET /channel-requests': probe('internal-http'),
@@ -181,6 +184,8 @@ export const DECLARED_UNREGISTERED_TOOLS: Readonly<Record<string, string>> = {};
  */
 const KNOWN_ROUTE_PUSHES: ReadonlySet<string> = new Set([
   'STOP_ROUTE',
+  // The launcher mounts the Claude session route at `CLAUDE_SESSION_PATH`.
+  'agentSession',
   // Discovery routes are enumerated from `DISCOVERY_ROUTES`.
   '...discovery.routes',
   // App-shell documents are `ROUTES` entries.
@@ -210,7 +215,7 @@ export function internalServerRoutes(
       throw new Error(`internal server registers an unaccounted route: routes.push(${pushed}); update the inventory scan`);
     }
   }
-  const routes: string[] = [`${STOP_ROUTE.method} ${STOP_ROUTE.path}`];
+  const routes: string[] = [`${STOP_ROUTE.method} ${STOP_ROUTE.path}`, `POST ${CLAUDE_SESSION_PATH}`];
   for (const match of table.matchAll(/method: '(GET|POST)', path: ('([^']+)'|[A-Z_]+)/g)) {
     const routePath = match[3] ?? constants[match[2]!];
     if (routePath === undefined) throw new Error(`internal server route constant ${match[2]} not found`);

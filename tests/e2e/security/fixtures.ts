@@ -108,6 +108,8 @@ export interface SurfaceCapture {
   /** Surfaces whose output carried `canary`. */
   carrying(canary: Canary): string[];
   surfaces(): string[];
+  /** Everything captured under `where`, as UTF-8, for asserting a refusal. */
+  text(where: string): string;
 }
 
 export function createSurfaceCapture(): SurfaceCapture {
@@ -119,5 +121,6 @@ export function createSurfaceCapture(): SurfaceCapture {
     leaks: canaries => captured.flatMap(({ where, bytes }) => findLeaks(bytes, canaries, where)),
     carrying: canary => [...new Set(captured.filter(({ bytes }) => findLeaks(bytes, [canary], '').length > 0).map(c => c.where))],
     surfaces: () => [...new Set(captured.map(c => c.where))],
+    text: where => captured.filter(c => c.where === where).map(c => c.bytes.toString('utf8')).join('\n'),
   };
 }
