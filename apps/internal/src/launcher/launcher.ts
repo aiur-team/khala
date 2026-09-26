@@ -7,7 +7,10 @@ import {
   activeDescriptorPath, ensurePrivateDirectory, removeActiveDescriptor, removeLaunchRecord,
   writeActiveDescriptor, writeLaunchRecord,
 } from '../descriptor/write';
+import { createInternalReleaseFeed } from '../composition/internal-delivery/release-feed';
+import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
+import { createSqliteListeningModeRepository } from '../listening-mode-store/sqlite';
 import { resumeInternalChannel } from '../lifecycle/resume';
 import type { AssetManifest } from '../server/assets';
 import { BOOTSTRAP_DOCUMENT_ROUTE } from '../server/bootstrap';
@@ -15,6 +18,8 @@ import { startChannelServer } from '../server/channel-server';
 import { type HumanAuthority, mintCredential } from '../server/credentials';
 import type { LoopbackServer } from '../server/server';
 import { type ChannelStore, createChannelStore } from '../store/channel-store';
+import { createSqliteControlStore } from '../store/control-store';
+import { createDiscoveryStore } from '../store/discovery-store';
 import { bindLifecycleChannel } from '../store/lifecycle-snapshot';
 import { type InternalStoreHandle, openChannelStore } from '../store/open';
 import type { OpenBootstrapInput, OpenOutcome } from './browser-handoff';
@@ -264,11 +269,26 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
     const expiresAt = now + BOOTSTRAP_TTL_MS;
     const requestedPort = options.startPort;
     try {
+      const discovery = await composeInternalChannelDiscovery({
+        control: createSqliteControlStore(channel.handle, clock),
+        store: createDiscoveryStore(channel.handle),
+        human: channel.human,
+        clock,
+        newChannelId: () => `ch_${token()}`,
+      });
       server = await startChannelServer({
         store: channel.store,
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
         // Agent bindings are granted later through channel access, never at launch.
         bindings: [],
+        // A granted binding pulls its releases into its own inbox; nothing is pushed.
+        releases: createInternalReleaseFeed({
+          store: channel.store,
+          listeningModes: createSqliteListeningModeRepository(channel.handle),
+        }),
+        // The transport capability may only obtain a discovery-only descriptor.
+        transportCapability,
+        discovery: discovery.port,
         assets: options.assets,
         newId: randomUUID,
         clock,

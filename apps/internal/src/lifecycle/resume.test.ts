@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LIFECYCLE_CHANNEL_META_KEY, bindLifecycleChannel } from '../store/lifecycle-snapshot';
-import { openChannelStore } from '../store/open';
+import { type InternalStoreHandle, openChannelStore } from '../store/open';
 import { ROOM_DATABASE_FILE } from '../store/path';
 import { directoryFor, makeRoot, seedChannel, tree } from './fixtures/channel';
 import { CHANNELS_DIRECTORY, channelDirectory, channelDirectorySegment } from './paths';
@@ -111,17 +111,19 @@ describe('resumeInternalChannel', () => {
     expect(resume(root, 'channel-foreign')).toEqual({ kind: 'failed', code: 'missing_state' });
   });
 
-  it('refuses ambiguous multi-channel state and a mismatched bound identity', () => {
+  it('refuses ambiguous unbound multi-channel state and a mismatched bound identity', () => {
     const root = makeRoot(roots);
-    seedChannel(root, 'channel-one', [], {
-      extra: handle => handle.transaction(db => {
-        db.prepare(`
-          INSERT INTO channels (channel_id, title, creator_participant_id, creator_device_id, revision, created_at)
-          VALUES ('channel-two', NULL, 'participant-alice', 'device-alice', 0, '2026-09-24T20:00:00.000Z')
-        `).run();
-      }),
+    const extraChannel = (handle: InternalStoreHandle) => handle.transaction(db => {
+      db.prepare(`
+        INSERT INTO channels (channel_id, title, creator_participant_id, creator_device_id, revision, created_at)
+        VALUES ('channel-two', NULL, 'participant-alice', 'device-alice', 0, '2026-09-24T20:00:00.000Z')
+      `).run();
     });
+    seedChannel(root, 'channel-one', [], { bind: false, extra: extraChannel });
     expect(resume(root, 'channel-one')).toEqual({ kind: 'failed', code: 'identity_mismatch' });
+    // A bound store keeps its launch identity when an owner-confirmed create adds a channel to it.
+    seedChannel(root, 'channel-bound', [], { extra: extraChannel });
+    expect(resume(root, 'channel-bound')).toMatchObject({ kind: 'resumed', metadata: { channelId: 'channel-bound' } });
 
     seedChannel(root, 'channel-three', [], {
       extra: handle => handle.transaction(db => {

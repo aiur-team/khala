@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { fakeControlStore } from '../support.test';
+import { fakeControlStore } from '../journal/support.test';
 import { createExchangeGrantIssuer, type ExchangeGrantBinding } from './grants';
-import { CHANNEL_REF, DEVICE, T0, owner, requester } from './support.test';
+import { CHANNEL_REF, DEVICE, T0, owner, requester } from './journal-harness.test';
 
 const binding: ExchangeGrantBinding = {
   operationId: 'op_access_1',
@@ -93,6 +93,21 @@ describe('hosted exchange grant issuer', () => {
     const sealed = await mint(h.issuer);
     expect(await h.issuer.redeem(redemption(sealed))).toEqual({ kind: 'redeemed', binding });
     expect(await h.issuer.redeem(redemption(orphan))).toEqual({ kind: 'rejected', code: 'grant_replayed' });
+  });
+
+  it('reports the tuple a grant already redeemed without consuming anything', async () => {
+    const h = setup();
+    const orphan = await mint(h.issuer);
+    const sealed = await mint(h.issuer);
+    expect(await h.issuer.consumed(redemption(sealed))).toEqual({ kind: 'rejected', code: 'not_consumed' });
+    expect(await h.issuer.redeem(redemption(sealed))).toEqual({ kind: 'redeemed', binding });
+    const records = h.backing.records.size;
+    expect(await h.issuer.consumed(redemption(sealed))).toEqual({ kind: 'consumed', binding });
+    expect(h.backing.records.size).toBe(records);
+    // Another grant for the same operation, or a drifted tuple, never learns the binding.
+    expect(await h.issuer.consumed(redemption(orphan))).toEqual({ kind: 'rejected', code: 'not_consumed' });
+    expect(await h.issuer.consumed(redemption(sealed, { deviceId: 'device_agent_2' as typeof DEVICE })))
+      .toEqual({ kind: 'rejected', code: 'invalid_grant' });
   });
 
   it('reports store failures as unavailable, never as a grant', async () => {

@@ -180,17 +180,29 @@ describe('local channel substrate', () => {
       (_, index) => `event-${String(index + 1).padStart(4, '0')}` as EventId,
     );
 
-    for (const [index, eventId] of eventIds.entries()) {
-      expect(store.send({
-        channelId: roomId,
-        eventId,
-        authorParticipantId: alice.participantId,
-        authorDeviceId: alice.deviceIds[0]!,
-        clientTxnId: `txn-${eventId}`,
-        content: text(eventId),
-        receivedAt: new Date(Date.parse('2026-09-24T20:00:00.000Z') + index).toISOString(),
-      })).toMatchObject({ kind: 'stored' });
-    }
+    // One real send seeds a valid payload; the rest are cloned in a single transaction so the
+    // fixture costs one fsync instead of 1,000 while still spanning more than one timeline page.
+    expect(store.send({
+      channelId: roomId,
+      eventId: eventIds[0]!,
+      authorParticipantId: alice.participantId,
+      authorDeviceId: alice.deviceIds[0]!,
+      clientTxnId: `txn-${eventIds[0]}`,
+      content: text(eventIds[0]!),
+      receivedAt: '2026-09-24T20:00:00.000Z',
+    })).toMatchObject({ kind: 'stored' });
+    handles[0]!.transaction(db => {
+      db.prepare(`
+        WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+        INSERT INTO events (
+          event_id, channel_id, author_participant_id, author_device_id, client_txn_id,
+          canonical_payload, content_digest, received_at
+        )
+        SELECT 'event-' || printf('%04d', n.i), e.channel_id, e.author_participant_id, e.author_device_id,
+          'txn-event-' || printf('%04d', n.i), e.canonical_payload, e.content_digest, e.received_at
+        FROM n, events e WHERE e.event_id = ? ORDER BY n.i
+      `).run(eventIds.length, eventIds[0]!);
+    });
 
     const updates: SubstrateUpdate[] = [];
     const dispose = local.subscribe(roomId, update => updates.push(update));

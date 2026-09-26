@@ -2,22 +2,25 @@
 // real storage, harness adapters and the owner's device; see README.md.
 
 export {
-  type BlockedCode, type BootstrapInput, type BootstrapResult, BLOCKED_CODES, bootstrapAgent, operationFingerprint,
+  type BlockedCode, type BootstrapInput, type BootstrapOptions, type BootstrapResult, type PairingBootstrapInput, BLOCKED_CODES,
+  bootstrapAgent, operationFingerprint,
 } from './orchestrator';
 export { type AdapterAction, type AdapterCapability, ADAPTER_CAPABILITIES } from './ports';
 export type {
   AdmissionOutcome, BootstrapAdmissionPort, BootstrapOperationStore, BootstrapPorts, ConnectorDevicePort, DeviceActivation,
   DeviceReservation, DeviceStatus, DiscoveryPort, OperationRead, OperationRecord, OperationWrite, OwnershipGrant,
-  OwnershipOutcome, OwnershipPort, SessionClaim, SessionInspection, SessionInspectionPort, VerifiedSession,
+  OwnershipOutcome, OwnershipPort, PairingOutcome, PairingOwnershipPort, PairingRefusal, SessionClaim, SessionInspection,
+  SessionInspectionPort, VerifiedSession,
 } from './ports';
 export {
-  type DiscoveryOptions, type DiscoveryRejection, type DiscoveryResult, createDiscovery,
+  type DiscoveryOptions, type DiscoveryRejection, type DiscoveryResult, type PairingDiscoveryResult, createDiscovery,
 } from './discovery';
 export {
-  type BootstrapDescriptor, type OwnershipMethod, AUTHORIZE_PATH, DESCRIPTOR_PATH, OWNERSHIP_METHODS, REDEEM_PATH, TOKEN_PATH,
-  decodeDescriptor,
+  type BootstrapDescriptor, type OwnershipMethod, type PairingDescriptor, AUTHORIZE_PATH, DESCRIPTOR_PATH, OWNERSHIP_METHODS,
+  PAIRING_CLAIM_PATH, PAIRING_RESULT_PATH, REDEEM_PATH, TOKEN_PATH, decodeDescriptor, decodePairingDescriptor,
 } from './descriptor';
 export { type HttpAdmissionOptions, type LoopbackOwnershipOptions, createHttpAdmission, createLoopbackOwnership } from './loopback';
+export { type PairingOwnershipOptions, createPairingOwnership, sessionEvidenceDigest } from './pairing';
 export { type ProofSigner, createProofSigner } from './proof';
 export {
   type ChannelDiscoveryAuthorizationOutcome,
