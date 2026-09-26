@@ -1,5 +1,6 @@
 import { type SessionBinding, sameSessionBinding } from '@khala/contracts/delivery/index';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
+import { readChannelConversionLock } from './conversion-lock';
 import type { InternalStoreHandle } from './open';
 
 // Durable internal channel discovery. Visibility defaults to `private` with an
@@ -351,12 +352,13 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
 
     eligibleChannels(principal) {
       try {
-        const rows = handle.read(db => db.prepare(`${TARGET_SELECT}
+        const rows = handle.read(db => (db.prepare(`${TARGET_SELECT}
           WHERE v.visibility = 'public'
             OR (COALESCE(v.visibility, 'private') = 'private' AND EXISTS (
               SELECT 1 FROM discovery_allowlist a WHERE a.channel_id = c.channel_id AND a.principal = ?))
           ORDER BY COALESCE(c.title, ''), c.channel_id
-        `).all(principal) as unknown as TargetRow[]);
+        `).all(principal) as unknown as TargetRow[])
+          .filter(row => readChannelConversionLock(db, row.channel_id)?.write !== 'linked'));
         return { kind: 'done', channels: rows.map(targetFromRow) };
       } catch { return unavailable(); }
     },
@@ -372,7 +374,7 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
       try {
         return handle.read(db => {
           const row = db.prepare(`${TARGET_SELECT} WHERE c.channel_id = ?`).get(channelId) as TargetRow | undefined;
-          if (!row) return false;
+          if (!row || readChannelConversionLock(db, channelId)?.write === 'linked') return false;
           const visibility = row.visibility ?? 'private';
           if (visibility === 'public') return true;
           if (visibility === 'secret') return false;

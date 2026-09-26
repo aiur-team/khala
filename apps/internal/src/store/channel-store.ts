@@ -9,6 +9,7 @@ import {
 import {
   decodeSubscriptionCursor, decodeTimelineCursor, encodeSubscriptionCursor, encodeTimelineCursor,
 } from './cursors';
+import { isChannelWritable } from './conversion-lock';
 import type { InternalStoreHandle } from './open';
 
 export type RegisteredParticipant = Omit<ParticipantView, 'deviceIds'>;
@@ -84,7 +85,7 @@ export type ProvenanceResult =
 
 export type SendResult =
   | Readonly<{ kind: 'stored' | 'replayed'; event: StoredEvent }>
-  | Readonly<{ kind: 'rejected'; code: 'identity_mismatch' | 'not_found' | 'not_joined' | 'operation_mismatch' | 'invalid_input' }>
+  | Readonly<{ kind: 'rejected'; code: 'identity_mismatch' | 'not_found' | 'not_joined' | 'operation_mismatch' | 'read_only' | 'invalid_input' }>
   | Readonly<{ kind: 'unavailable' }>;
 
 export type TimelineResult =
@@ -683,6 +684,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           if (device?.participant_id !== input.authorParticipantId) {
             return { kind: 'rejected', code: 'identity_mismatch' } as const;
           }
+          if (!isChannelWritable(db, input.channelId)) return { kind: 'rejected', code: 'read_only' } as const;
           const inserted = db.prepare(`
             INSERT INTO events (
               event_id, channel_id, author_participant_id, author_device_id, client_txn_id,
