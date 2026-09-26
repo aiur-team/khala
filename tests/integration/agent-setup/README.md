@@ -31,6 +31,7 @@ Unit coverage and per-mutation fault injection stay beside the setup modules
 | Clean lifecycle | A plan, a repeated plan, and a dry run are byte-identical and zero-write (bytes, modes, and mtimes). The confirmation carries harnesses, actions, paths, backup, digest, and request. Confirmed setup applies. A second setup changes and writes nothing. Bare `status` exits 0 and `status --check` exits 3 while Codex hooks await review. Confirmed remove restores every pre-Khala byte and absence. |
 | Native hook approval | After a simulated Codex approval, status is `configured_effect_unknown` (`ok: true`) and `--check` still exits 3, because Claude and Codex routes stay `unknown` until a live proof. Removal leaves the trust records intact. |
 | Mixed harness states | No harness is a zero-write `no_harness` (exit 0). With a supported Claude, an unsupported Codex, and no OpenCode, setup refuses (exit 3) before any write. A failed version probe differs from absence. Without the unsupported harness, only Claude is planned, and no absent harness gets a config root. |
+| Absent harnesses are reported | `status` and `setup` report every absent harness with `executable.present: false`, no detected version, and no components. Absent harnesses are never planned and create no config root. |
 | Unsupported upgrade | An unsupported version refuses setup, but manifest-driven removal still restores the baseline. |
 | Stale confirmation | After an observed target changes, the old digest returns the replacement plan (exit 5) and writes nothing. |
 | Drift-safe removal | A user edit to a managed file refuses the whole removal (exit 3) with no partial writes. Once the bytes match again, removal completes. |
@@ -42,12 +43,11 @@ Unit coverage and per-mutation fault injection stay beside the setup modules
 | Installed entries | On a machine whose PATH holds neither `khala` nor `node`, every installed entry runs exactly as its harness config writes it. That covers the Claude plugin's `.mcp.json` entry and its five hook commands, the Codex `config.toml` MCP entry and its four `hooks.json` handlers, and the OpenCode `mcp.khala` entry. MCP entries are spawned directly and hooks run through `sh -c`. Each MCP entry and each hook that asks Khala reaches the stand-in launch. This runs for all three harnesses and for a Claude-only setup, which must stage the launcher itself. The Claude MCP entry answers `initialize` and never presents the granted launch's binding credential (#402). Its unit twin, `packages/agent-cli/src/cli/main-claude-mcp.test.ts`, proves that `main()` never composes the default-descriptor client or delivery for it. |
 | Secret redaction | Sentinel descriptor ports and tokens are rotated mid-run. They never appear in harness config, fake-harness argv, plans, the manifest, backups, or any output. Seeded user secrets never appear in output. Rotating the descriptor plans nothing and rewrites no entry. |
 
-Two cases are `todo`. They run and report, but they do not fail the suite until
-their fixes land:
+One case is `todo`. It runs and reports, but it does not fail the suite until
+its fix lands:
 
 | Case | Gap |
 | --- | --- |
-| Absent harnesses are reported | [#388](https://github.com/aiur-team/khala/issues/388): results omit harnesses with no executable. |
 | A crash mid-transaction is recovered | [#385](https://github.com/aiur-team/khala/issues/385): with a journal present, no command offers a plan, so the executor's recovery never runs. |
 
 When a fix lands, remove the `todo` option so the case gates the release.
@@ -63,6 +63,7 @@ source). The named test then failed:
 | `transaction.ts` `nextManifest`: take the baseline from the current preimage instead of the previous entry | `setup v1 -> upgrade v2 -> remove restores the pre-Khala bytes …` |
 | `transaction.ts` `acquireLock`: treat a live holder as stale | `a second mutation while one holds the lock gets a stable busy result …` |
 | `plan.ts` `refusalState` and `transaction.ts` drift check: allow removal over drift | `drift refuses the whole removal …` |
+| `plan.ts` `observe`: skip a harness with no executable instead of reporting it absent | `absent harnesses are reported without creating their config roots` |
 | `plan.ts` `prepare`: ignore an existing journal | `a crash mid-transaction safely refuses …` |
 | `cli/main.ts`: read the Claude descriptor from `$XDG_DATA_HOME` instead of `$XDG_STATE_HOME` | `the Claude hook entry re-reads a moved runtime descriptor …` |
 | `cli/main.ts`: drop `defaultDescriptorPath`, so a bare `mcp-serve` composes no local client | `the Codex and OpenCode MCP entry resolves a moved runtime descriptor` |

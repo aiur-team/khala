@@ -89,8 +89,8 @@ async function approveCodexHooks(codexHome: string): Promise<string> {
 }
 
 const outsideExecutorState = () => snapshot(root, { exclude: [path.join(roots.xdgStateHome, 'khala')] });
-const ready = (result: SetupResult) => Object.fromEntries(result.harnesses.map(report =>
-  [report.harness, report.components.every(component => component.state === 'ready')]));
+const ready = (result: SetupResult) => Object.fromEntries(result.harnesses.filter(report => report.executable.present).map(report =>
+  [report.harness,report.components.every(component => component.state === 'ready')]));
 const decodes = (result: SetupResult) => expect(decodeSetupResult(JSON.parse(JSON.stringify(result)))).toEqual(result);
 
 describe('composed setup on a fake home', () => {
@@ -108,7 +108,8 @@ describe('composed setup on a fake home', () => {
     decodes(dry);
     expect(dry.state).toBe('confirmation_required');
     expect(dry.confirmation).toMatchObject({ required: true, harnesses: ['claude', 'codex', 'opencode'] });
-    expect(dry.harnesses.map(report => report.harness)).toEqual(['claude', 'codex', 'opencode', 'claude-app']);
+    expect(dry.harnesses.map(report => report.harness)).toEqual(['claude', 'codex', 'opencode', 'cursor', 'claude-app']);
+    expect(dry.harnesses[3]!.executable).toEqual({ present: false, path: null });
     expect(dry.diagnostics.map(diagnostic => diagnostic.code)).toContain('claude_app_delivery_unproven');
     expect(dry.operations.map(operation => operation.path)).toEqual(expect.arrayContaining([launcher, runtime, plugin]));
     expect(await outsideExecutorState()).toEqual(before);

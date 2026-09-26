@@ -193,7 +193,7 @@ describe('mixed harness states', () => {
     assert.deepEqual(harness(refused, 'claude').version, { detected: '2.1.283', supported: true });
     assert.deepEqual(harness(refused, 'codex').executable.present, true);
     assert.deepEqual(harness(refused, 'codex').version, { detected: '0.1.0', supported: false });
-    assert.equal(harness(refused, 'opencode')?.executable.present ?? false, false, 'absent OpenCode is never reported present');
+    assert.deepEqual(harness(refused, 'opencode')?.executable, { present: false, path: null }, 'absent OpenCode is reported absent');
     assert.equal(khala(v1, machine, ['status', '--check']).status, 3);
 
     // A version probe that fails is distinct from absence.
@@ -215,12 +215,25 @@ describe('mixed harness states', () => {
     assert.equal(khala(v1, machine, ['status', '--check']).status, 3);
   });
 
-  test('absent harnesses are reported without creating their config roots', { todo: 'https://github.com/aiur-team/khala/issues/388' }, () => {
+  test('absent harnesses are reported without creating their config roots', () => {
+    const empty = createMachine();
+    const none = khala(v1, empty, ['status']);
+    assert.equal(none.json.configuration.state, 'no_harness');
+    assert.deepEqual(harness(none, 'claude')?.executable, { present: false, path: null }, 'claude is reported absent');
+
     const machine = createMachine({ claude: SUPPORTED.claude });
     const status = khala(v1, machine, ['status']);
-    for (const absent of ['codex', 'opencode']) {
-      assert.deepEqual(harness(status, absent)?.executable, { present: false, path: null }, `${absent} is reported absent`);
+    const plan = khala(v1, machine, ['setup']);
+    for (const result of [status, plan]) {
+      for (const absent of ['codex', 'opencode']) {
+        const report = harness(result, absent);
+        assert.deepEqual(report?.executable, { present: false, path: null }, `${absent} is reported absent`);
+        assert.equal(report.version.detected, null);
+        assert.deepEqual(report.components, [], `absent ${absent} implies no work`);
+      }
     }
+    assert.deepEqual(plan.json.confirmation.harnesses, ['claude'], 'absent harnesses are never planned');
+    assert.deepEqual(snapshot(empty.home), {});
     assert.deepEqual(snapshot(machine.home), {});
   });
 
