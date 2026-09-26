@@ -23,9 +23,17 @@ import { type DeliveredEvent, type ExternalCli, type ReadView, createExternalCli
 type TimelineEvent = Readonly<{ eventId: string; participant: { participantId: string; kind: string }; content: { body: string } }>;
 
 let audit: ProcessAudit | null = null;
-afterEach(() => {
-  audit?.uninstall();
-  audit = null;
+let open: ScenarioHarness | null = null;
+afterEach(async () => {
+  // A failed run still closes its launchers and user CLI stand-ins.
+  const scenario = open;
+  open = null;
+  try {
+    if (scenario) await scenario.close();
+  } finally {
+    audit?.uninstall();
+    audit = null;
+  }
 });
 
 type World = Readonly<{
@@ -48,6 +56,7 @@ async function world(): Promise<World> {
     ],
     sources: [{ component: 'khala-internal', version: '0.0.0' }],
   });
+  open = scenario;
   const stateHome = scenario.stateDir(scenario.owner('h').ownerId);
   const launcherProfile: KhalaProfile = { stateHome, stateDirectory: path.join(stateHome, 'khala'), port: await freePort() };
   const cli = (seed: 'a' | 'b', harness: 'codex' | 'claude') => {
@@ -129,7 +138,7 @@ function grantedCapability(agent: ExternalCli): string {
   return (JSON.parse(fs.readFileSync(agent.descriptorPath(), 'utf8')) as { bindingCapability: string }).bindingCapability;
 }
 
-async function releasesFor(agent: ExternalCli, human: HumanSession, capability: string) {
+async function releasesFor(human: HumanSession, capability: string) {
   const response = await fetch(`${human.origin}/api/v1/channels/${human.channelId}/releases?limit=50`, {
     headers: { authorization: `Bearer ${capability}` },
   });
@@ -188,7 +197,7 @@ describe('internal protocol acceptance', () => {
     const mode = await khalaOnce(w.launcherProfile, ['mode', 'get']);
     expect(mode.code).not.toBe(0);
     expect(JSON.parse(mode.stdout)).toMatchObject({ ok: false, kind: 'refused', reason: 'unavailable' });
-    const wakes = await releasesFor(w.b, human, grantedCapability(w.b));
+    const wakes = await releasesFor(human, grantedCapability(w.b));
     expect(wakes.status).toBe(200);
     expect(wakes.json!.releases.map(release => [release.events[0]!.eventId, release.wake])).toEqual([[e1.eventId, false], [h1, true]]);
 
@@ -213,6 +222,7 @@ describe('internal protocol acceptance', () => {
 
     // Stop: both bindings revoked, delivery ends, and the server, channel and CLIs stay.
     const capabilities = [grantedCapability(w.a), grantedCapability(w.b)];
+    const shown = [new Map(w.a.deliveries()), new Map(w.b.deliveries())];
     const stop = await human.call(`/api/v1/channels/${human.channelId}/stop`, { method: 'POST', body: { v: 1, targets: null } });
     expect(stop.status).toBe(200);
     const stopped = stop.json as { outcome: string; stopped: { bindingId: string }[]; remaining: unknown[] };
@@ -226,12 +236,9 @@ describe('internal protocol acceptance', () => {
       expect((await agent.read()).kind).toBe('refused');
       expect((await agent.send('after stop')).kind).toBe('refused');
     }
-    for (const [index, capability] of capabilities.entries()) {
-      expect((await releasesFor([w.a, w.b][index]!, human, capability)).status).toBe(401);
-    }
-    for (const agent of [w.a, w.b]) {
-      expect([...agent.deliveries().keys()].some(release => release.includes(h3))).toBe(false);
-    }
+    for (const capability of capabilities) expect((await releasesFor(human, capability)).status).toBe(401);
+    // Nothing more was shown to either session after Stop.
+    expect([new Map(w.a.deliveries()), new Map(w.b.deliveries())]).toEqual(shown);
     expect(await reachable(report.origin)).toBe(true);
     expect((await human.call(`/api/v1/channels/${human.channelId}`)).status).toBe(200);
     expect((await fetch(`${report.origin}/channels/${human.channelId}`)).status).toBe(200);
@@ -274,11 +281,12 @@ describe('internal protocol acceptance', () => {
     expect(await resumed.close()).toBe(0);
     expect(await reachable(resumed.report.origin)).toBe(false);
 
+    open = null;
     assertCleanClose(await w.scenario.close());
     expect(w.scenario.evidence().filter(record => record.kind === 'channel.sent')).toHaveLength(2);
   });
 
-  // Blocked by #379: a resumed launcher does not restore authority to agents granted
+  // Blocked by #390: a resumed launcher does not restore authority to agents granted
   // before it closed, so a bound agent cannot re-read or acknowledge across a server
   // restart. Enable once agents keep their binding across `khala internal --resume`.
   it.todo('re-reads and acknowledges a durable release across a launcher restart over the same SQLite files');

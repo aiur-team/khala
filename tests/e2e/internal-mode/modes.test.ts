@@ -1,7 +1,7 @@
 // Acceptance 1, listening modes and pause. The internal launcher composes neither
 // yet: it passes no pause source to the release feed, serves no mode control, and
 // its local client has no `listeningMode()`, so `khala codex-hook` stays silent in
-// internal mode (#381). Until that lands, this lane composes the same internal
+// internal mode (#392). Until that lands, this lane composes the same internal
 // pieces directly — the loopback server, the SQLite channel store, the release
 // feed with a pause source, the SQLite listening-mode store — and supplies the
 // hook's mode status from that store through the released capability projection.

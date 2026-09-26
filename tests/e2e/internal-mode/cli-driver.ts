@@ -107,7 +107,7 @@ export function createExternalCli(options: Options): ExternalCli {
 
   // Khala state private to this session. Today every discovery descriptor resolves
   // its grant to the one root `active.json`, which holds a single agent's grant, so
-  // two sessions of one OS user cannot both bind (#380). Each session therefore keeps
+  // two sessions of one OS user cannot both bind (#391). Each session therefore keeps
   // its discovery files and granted descriptor under its own root, as a session on
   // another profile would. The server, store and grant flow are unchanged.
   const khalaState = privateDirectory(options.stateDirectory, 'khala');
