@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { parse as parseToml } from 'smol-toml';
 import {
   SUPPORTED, approveCodexHooksNatively, confirmed, createMachine, filesBelow, holdProbe, harnessCalls,
@@ -721,6 +722,22 @@ describe('installed entries', () => {
       // A watcher's wake marker, so UserPromptSubmit asks Khala too (the runtime's `sessionState`).
       const session = createHash('sha256').update('acceptance').digest('hex').slice(0, 32);
       const hookState = path.join(machine.home, '.local', 'state', 'khala', 'claude-hooks', session);
+      const hookEnv = { ...env, CLAUDE_PLUGIN_ROOT: entries.pluginRoot };
+      // #422: setup enables the plugin for every Claude session, so a session without a grant
+      // gets no output and makes no call.
+      for (const hook of entries.claudeHooks) {
+        const before = requests.length;
+        const input = JSON.stringify({ hook_event_name: hook.event, session_id: 'acceptance', stop_hook_active: false });
+        const result = await runProcess('/bin/sh', ['-c', hook.command], hookEnv, { input, ms: 2_000 });
+        assert.equal(result.code, 0, `${hook.command} failed unbound: ${result.stderr}`);
+        assert.equal(result.stdout, '', `${hook.command} wrote output in an unbound session`);
+        assert.deepEqual(since(before), [], `${hook.command} reached Khala from an unbound session`);
+      }
+      // The launcher's Claude session route grants this session, as `khala_request_access` would.
+      const { claudeGrantPath } = await import(pathToFileURL(path.join(entries.pluginRoot, 'hooks', 'lib', 'runtime.mjs')).href);
+      const grant = claudeGrantPath(path.join(machine.home, '.local', 'state', 'khala', 'internal'), 'acceptance');
+      fs.mkdirSync(path.dirname(grant), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(grant, JSON.stringify({ v: 1, bindingId: 'binding-0', transportCapability }), { mode: 0o600 });
       for (const hook of entries.claudeHooks) {
         const before = requests.length;
         if (hook.event === 'UserPromptSubmit') {
@@ -728,7 +745,7 @@ describe('installed entries', () => {
           fs.writeFileSync(path.join(hookState, 'wake'), '');
         }
         const input = JSON.stringify({ hook_event_name: hook.event, session_id: 'acceptance', stop_hook_active: false });
-        const result = await runProcess('/bin/sh', ['-c', hook.command], { ...env, CLAUDE_PLUGIN_ROOT: entries.pluginRoot }, { input, ms: 2_000 });
+        const result = await runProcess('/bin/sh', ['-c', hook.command], hookEnv, { input, ms: 2_000 });
         assert.ok(result.code !== 127 && result.code !== 126, `${hook.command} did not run: ${result.stderr}`);
         // SessionEnd only clears the session's hook state; every other hook asks Khala first.
         if (hook.event !== 'SessionEnd') {
