@@ -1,3 +1,4 @@
+import { deliveringInbox } from '../composition/delivering-inbox.js';
 import { INTERNAL_CLIENT_COMMANDS, extractInternalDescriptor } from './descriptor-option.js';
 import { CliError, cliErrorCode } from './errors.js';
 import { commandRegistry, type CommandRegistry } from './registry.js';
@@ -21,7 +22,15 @@ export async function runCli(
     if (!INTERNAL_CLIENT_COMMANDS.has(command.name)) throw new CliError('invalid_arguments');
     if (!deps.internalClient) throw new CliError('internal_unavailable');
     const client = await deps.internalClient(selected.descriptorPath);
-    return await command.run(args, { ...deps, client });
+    if (!deps.internalDelivery) return await command.run(args, { ...deps, client });
+    // Releases reach the inbox only while a command that reads it is running.
+    const delivering = deliveringInbox(deps.inbox, await deps.internalDelivery(selected.descriptorPath),
+      deps.signal ? { signal: deps.signal } : {});
+    try {
+      return await command.run(args, { ...deps, client, inbox: delivering.inbox });
+    } finally {
+      await delivering.stop();
+    }
   } catch (error) {
     await write(deps.stderr, JSON.stringify({ ok: false, error: cliErrorCode(error) }) + '\n');
     return 2;
