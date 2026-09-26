@@ -150,12 +150,32 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     }
     expect((await s.world.http('GET', channelRoute(channelId, '/timeline'))).status).toBe(200);
   },
+  'http-internal:GET /api/v1/channels/:channelId/make-external': async s => {
+    // Human-only Make external: the agent binding cannot read the journey view of either channel.
+    for (const id of [channelId, otherChannelId]) {
+      const view = await s.world.http('GET', channelRoute(id, '/make-external'));
+      expect(view.status).toBe(403);
+      add(s, `GET make-external ${id}`, view);
+    }
+  },
+  'http-internal:POST /api/v1/channels/:channelId/make-external': async s => {
+    // Nor act on it: a well-formed action from the binding is refused by role before it is decoded.
+    for (const id of [channelId, otherChannelId]) {
+      const acted = await s.world.http('POST', channelRoute(id, '/make-external'), { body: { operationId: 'op-agent', kind: 'cancel' } });
+      expect(acted.status).toBe(403);
+      add(s, `POST make-external ${id}`, acted);
+    }
+    expect((await s.world.http('GET', channelRoute(channelId, '/timeline'))).status).toBe(200);
+  },
   'http-internal:GET /channels/:channelId': async s => {
     for (const id of [channelId, otherChannelId]) add(s, `GET page ${id}`, await s.world.http('GET', `/channels/${id}`, { bearer: null }));
   },
   // App-shell documents mount only with a built asset manifest; this world has none, so they answer 404.
   'http-internal:GET /channels/:channelId/settings': async s => {
     for (const id of [channelId, otherChannelId]) add(s, `GET settings page ${id}`, await s.world.http('GET', `/channels/${id}/settings`, { bearer: null }));
+  },
+  'http-internal:GET /channels/:channelId/make-external': async s => {
+    for (const id of [channelId, otherChannelId]) add(s, `GET make-external page ${id}`, await s.world.http('GET', `/channels/${id}/make-external`, { bearer: null }));
   },
   'http-internal:GET /channel-requests': async s => {
     add(s, 'GET requests page', await s.world.http('GET', '/channel-requests', { bearer: null }));

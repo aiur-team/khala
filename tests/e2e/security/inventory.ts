@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverRoutes } from '../../../apps/control/src/runtime/discover';
 import { DISCOVERY_ROUTES } from '../../../apps/internal/src/server/discovery';
+import { MAKE_EXTERNAL_ROUTES } from '../../../apps/internal/src/server/make-external';
 import { STOP_ROUTE } from '../../../apps/internal/src/server/stop/route';
 import { CLI_COMMANDS } from '../../../packages/agent-cli/src/cli/registry';
 import { CODEX_APP_HOOK_EVENTS } from '../../../packages/agent-cli/src/codex-app/hook';
@@ -131,10 +132,13 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:GET /api/v1/channels/:channelId/releases': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/receipts': probe('internal-http'),
   'http-internal:POST /api/v1/channels/:channelId/stop': probe('internal-http'),
+  'http-internal:GET /api/v1/channels/:channelId/make-external': probe('internal-http'),
+  'http-internal:POST /api/v1/channels/:channelId/make-external': probe('internal-http'),
   // Claude session route: the launch's transport capability only, driven through the launcher.
   'http-internal:POST /api/agent/claude/session': probe('claude-session'),
   'http-internal:GET /channels/:channelId': probe('internal-http'),
   'http-internal:GET /channels/:channelId/settings': probe('internal-http'),
+  'http-internal:GET /channels/:channelId/make-external': probe('internal-http'),
   'http-internal:GET /channel-requests': probe('internal-http'),
   'http-internal:GET /channel-requests/:handle': probe('internal-http'),
   // Internal discovery routes.
@@ -188,6 +192,8 @@ const KNOWN_ROUTE_PUSHES: ReadonlySet<string> = new Set([
   'agentSession',
   // Discovery routes are enumerated from `DISCOVERY_ROUTES`.
   '...discovery.routes',
+  // Make-external journey routes are enumerated from `MAKE_EXTERNAL_ROUTES`.
+  '...makeExternal.routes',
   // App-shell documents are `ROUTES` entries.
   '...APP_DOCUMENT_ROUTES',
   // Static assets from a built manifest: public files, no channel state.
@@ -215,7 +221,10 @@ export function internalServerRoutes(
       throw new Error(`internal server registers an unaccounted route: routes.push(${pushed}); update the inventory scan`);
     }
   }
-  const routes: string[] = [`${STOP_ROUTE.method} ${STOP_ROUTE.path}`, `POST ${CLAUDE_SESSION_PATH}`];
+  const routes: string[] = [
+    `${STOP_ROUTE.method} ${STOP_ROUTE.path}`, `POST ${CLAUDE_SESSION_PATH}`,
+    ...Object.values(MAKE_EXTERNAL_ROUTES).map(route => `${route.method} ${route.path}`),
+  ];
   for (const match of table.matchAll(/method: '(GET|POST)', path: ('([^']+)'|[A-Z_]+)/g)) {
     const routePath = match[3] ?? constants[match[2]!];
     if (routePath === undefined) throw new Error(`internal server route constant ${match[2]} not found`);

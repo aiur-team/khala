@@ -12,6 +12,8 @@ import type { EventId, ParticipantId, RoomId } from '@khala/contracts/messaging/
 import { encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
 import { createSqliteListeningModeRepository } from '../../../apps/internal/src/listening-mode-store/sqlite';
 import { composeBindingControl } from '../../../apps/internal/src/composition/binding-control/index';
+import { FakeHostedProvider } from '../../../apps/internal/src/composition/fixtures/make-external-provider';
+import { composeMakeExternal } from '../../../apps/internal/src/composition/make-external';
 import { createInternalReleaseFeed } from '../../../apps/internal/src/composition/internal-delivery/release-feed';
 import { startChannelServer } from '../../../apps/internal/src/server/channel-server';
 import { createReceiptReadModel } from '../../../apps/internal/src/store/receipts';
@@ -81,6 +83,16 @@ export async function startInternalWorld(): Promise<InternalWorld> {
     receipts: createReceiptReadModel(fixture.handle),
     // Composed as the launcher composes it, so the human-only Stop route is mounted and probed.
     stop: composeBindingControl({ handle: fixture.handle, root: path.join(root, 'state') }),
+    // The launcher does not mount Make external yet. The real journey over the real store
+    // is composed here so its human-only routes are mounted and probed; only the hosted
+    // side is the journey's own test provider, which the agent binding never reaches.
+    makeExternal: (() => {
+      const hosted = new FakeHostedProvider();
+      return composeMakeExternal({
+        handle: fixture.handle, hosted, sessions: hosted, access: hosted, bindings: hosted, signIn: hosted,
+        destinationUrl: hosted.destinationUrl,
+      }).journey;
+    })(),
     startPort: 0,
   });
   fs.writeFileSync(descriptorPath, encodeInternalDescriptor({
