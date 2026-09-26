@@ -91,10 +91,10 @@
   [headers.values]
     X-Frame-Options = "DENY"
     Referrer-Policy = "same-origin"
-    # Matrix crypto runs as WASM in a worker. `connect-src https:` permits the
-    # operator-configured Railway homeserver; Netlify cannot interpolate its
-    # per-context PUBLIC_HOMESERVER_ORIGIN into this static header.
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+    # Content-Security-Policy is deliberately absent here: this static file
+    # cannot interpolate the per-context PUBLIC_HOMESERVER_ORIGIN, so the web
+    # build publishes it in apps/web/dist/_headers with connect-src naming
+    # exactly that origin (apps/web/src/composition/human/hosted-config.ts).
 
 [context.production]
   [context.production.environment]

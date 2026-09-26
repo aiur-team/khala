@@ -49,7 +49,9 @@ Two disjoint groups, enforced by `infra/netlify/env.schema.json`:
 Production's `PUBLIC_APP_ORIGIN` is fixed to `https://khala.aiur.team` in
 `netlify.toml`; the OAuth callback is `https://khala.aiur.team/api/human/auth/callback`.
 Set `PUBLIC_HOMESERVER_ORIGIN` to the operator-provisioned Railway Synapse HTTPS
-origin; it is configuration, not an endpoint inferred or embedded by the app.
+origin (a bare origin such as `https://matrix.example.com`, no path); it is
+configuration, not an endpoint inferred or embedded by the app, and it is the
+only non-self origin the CSP's `connect-src` admits.
 Preview and branch deploys get their own Netlify-assigned origin and must use
 separate OAuth client credentials and a separate `CONTROL_STATE_NAMESPACE` —
 Netlify Blobs stores are shared across deploy contexts on a site, so
@@ -91,9 +93,12 @@ validation.
 
 - It does not implement `apps/control/src/composition/agent/handlers.ts`
   (KHA-133 owns that producer).
-- It allows HTTPS connections for the operator-configured Matrix origin because
-  Netlify's static CSP cannot interpolate an environment variable. Keep
-  `PUBLIC_HOMESERVER_ORIGIN` scoped to the reviewed Railway deployment.
+- It does not declare the Content-Security-Policy in `netlify.toml`, which
+  cannot interpolate an environment variable. `pnpm --filter @khala/web build`
+  writes `apps/web/dist/_headers` with `connect-src 'self' <PUBLIC_HOMESERVER_ORIGIN>`
+  (`apps/web/src/composition/human/hosted-config.ts`). A malformed origin fails
+  the build; a missing one keeps `connect-src 'self'`, and the app then shows an
+  explicit "Khala is unavailable" screen instead of a blank page.
 - It does not run `control-store-live-check.ts` against real credentials —
   that requires a provisioned preview Netlify site and Blobs store, which is
   an external deployment gate.
