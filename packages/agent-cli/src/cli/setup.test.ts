@@ -150,7 +150,10 @@ describe('production setup composition', () => {
     const configuration = decodeSetupResult(JSON.parse(status.stdout).configuration);
     expect(configuration).toMatchObject({ state: 'unsupported', ok: false });
     expect(configuration.harnesses).toEqual([{ harness: 'claude', executable: { present: true, path: path.join(bin, 'claude') },
-      version: { detected: '2.1.3', supported: false }, components: [], route: 'unknown' }]);
+      version: { detected: '2.1.3', supported: false }, components: [], route: 'unknown' },
+    ...PATH_HARNESS_IDS.filter(harness => harness !== 'claude').map(harness => ({ harness,
+      executable: { present: false, path: null }, version: { detected: null, supported: false },
+      components: [], route: 'unavailable' }))]);
     for (const argv of [['status'], ['setup'], ['setup', '--dry-run'], ['remove'], ['remove', '--dry-run'],
       ['setup', '--confirm', DIGEST], ['remove', '--confirm', DIGEST]]) {
       const outcome = await run(argv, service);

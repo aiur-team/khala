@@ -16,7 +16,8 @@
     "test:conformance": "node tests/e2e/harness/run.mjs conformance",
     "test:e2e": "node tests/e2e/harness/run.mjs e2e",
     "build": "pnpm check:boundaries && pnpm -r build",
-    "test:browser": "pnpm -r --if-present test:browser"
+    "test:browser": "pnpm -r --if-present test:browser",
+    "acceptance:live": "tsx --conditions=khala-source scripts/acceptance/main.ts"
   },
   "devDependencies": {
     "@netlify/blobs": "11.1.0",

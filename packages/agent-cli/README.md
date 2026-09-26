@@ -913,7 +913,10 @@ Each run discovers the Claude Code, Codex, OpenCode, and Cursor executables on `
 and a Claude Desktop install, inspects them read-only, and builds one plan. The plan is sorted by harness,
 component, and path, and its `planDigest` covers the planner identity, the
 command, every detected harness fact, and each operation's pre/post hashes.
-Identical state produces byte-identical output.
+Identical state produces byte-identical output. `harnesses` lists every known
+harness. One with no executable reports `executable: { present: false, path: null }`,
+no version, no components, and route `unavailable`. It is never inspected or
+planned, creates no config root, and is left out of readiness and the digest.
 
 The agent runs the command and relays the plan to the person; the person never
 installs anything by hand. A non-empty plan without confirmation exits 5 with
