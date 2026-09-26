@@ -7,8 +7,10 @@ import {
   activeDescriptorPath, ensurePrivateDirectory, removeActiveDescriptor, removeLaunchRecord,
   writeActiveDescriptor, writeLaunchRecord,
 } from '../descriptor/write';
+import { createInternalReleaseFeed } from '../composition/internal-delivery/release-feed';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
+import { createSqliteListeningModeRepository } from '../listening-mode-store/sqlite';
 import { resumeInternalChannel } from '../lifecycle/resume';
 import type { AssetManifest } from '../server/assets';
 import { BOOTSTRAP_DOCUMENT_ROUTE } from '../server/bootstrap';
@@ -279,6 +281,11 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
         // Agent bindings are granted later through channel access, never at launch.
         bindings: [],
+        // A granted binding pulls its releases into its own inbox; nothing is pushed.
+        releases: createInternalReleaseFeed({
+          store: channel.store,
+          listeningModes: createSqliteListeningModeRepository(channel.handle),
+        }),
         // The transport capability may only obtain a discovery-only descriptor.
         transportCapability,
         discovery: discovery.port,

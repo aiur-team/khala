@@ -82,6 +82,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/policy
     devDependencies:
+      '@aiur/khala':
+        specifier: workspace:*
+        version: link:../../packages/agent-cli
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0
