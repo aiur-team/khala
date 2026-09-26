@@ -17,6 +17,7 @@ import { openInbox } from '../../../packages/agent-cli/src/cli/inbox';
 import { MAX_SEND_BYTES } from '../../../packages/agent-cli/src/cli/send';
 import { createInternalClient } from '../../../packages/agent-cli/src/composition/internal';
 import { createInternalDelivery } from '../../../packages/agent-cli/src/composition/internal-delivery';
+import { sessionGrants } from '../../../packages/agent-cli/src/composition/session-grant';
 import type {
   LocalHarnessCapabilities, LocalHarnessObservation,
 } from '../../../packages/agent-cli/src/composition/internal-listening-mode';
@@ -53,8 +54,12 @@ export type KhalaOptions = Readonly<{
   capabilities?: LocalHarnessCapabilities;
   /** What that CLI reports about its harness to the server, as `localHarness` reads it in production. */
   observation?: LocalHarnessObservation;
-  /** The runtime descriptor a bare installed entry reads; defaults to this profile's own `internal/active.json`. */
-  defaultDescriptorPath?: string;
+  /**
+   * The internal root whose `discovery/<principal>/grant.json` a bare installed entry resolves
+   * its calling session under; defaults to this profile's own `internal/`. In production the
+   * agent and the launcher share one `XDG_STATE_HOME`.
+   */
+  internalRoot?: string;
 }>;
 
 /** One `khala` CLI process: the production command table with test streams. */
@@ -84,8 +89,9 @@ export function khala(profile: KhalaProfile, argv: readonly string[], options: K
     }),
     env: { XDG_STATE_HOME: profile.stateHome },
     cwd: profile.stateHome,
-    // As in `main.ts`: the installed hook has no option and reads the runtime descriptor.
-    defaultDescriptorPath: options.defaultDescriptorPath ?? path.join(profile.stateDirectory, 'internal', 'active.json'),
+    // As in `main.ts`: the installed hook and MCP entry have no option; each call acts as the
+    // session it names, through that session's own `grant.json` below this profile's root.
+    sessionGrants: sessionGrants(options.internalRoot ?? path.join(profile.stateDirectory, 'internal')),
     internalClient: async descriptorPath => createInternalClient({
       descriptorPath, ...(options.capabilities ? { capabilities: options.capabilities } : {}),
       ...(options.observation ? { observation: options.observation } : {}),

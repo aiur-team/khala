@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { WAKE_NOTICE, claudeGrantPath } from '../hooks/lib/runtime.mjs';
+import { WAKE_NOTICE, claudeGrantPath, claudeOutstandingPath } from '../hooks/lib/runtime.mjs';
 import { frame, hookInput, scratch } from './fakes';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,7 +21,7 @@ function fakeBinary(mode: string, pendingRelease = true) {
     "const fs = require('node:fs');",
     `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), env: process.env }) + '\\n');`,
     "const [, op] = process.argv.slice(2);",
-    `if (op === 'hook') process.stdout.write(JSON.stringify({ ok: true, kind: 'hook', effective: ${JSON.stringify(mode)}, watchSeconds: 60 }) + '\\n');`,
+    `if (op === 'hook' || op === 'watch') process.stdout.write(JSON.stringify({ ok: true, kind: 'hook', effective: ${JSON.stringify(mode)}, watchSeconds: 60, access: null }) + '\\n');`,
     `else if (op === 'pending') process.stdout.write(JSON.stringify({ ok: true, kind: ${pendingRelease ? "'pending'" : "'idle'"} }) + '\\n');`,
     `else if (op === 'pull') process.stdout.write(${JSON.stringify(`${frame([BODY])}\n`)});`,
     'else process.exit(2);',
@@ -104,7 +104,7 @@ describe('hook processes', () => {
     expect(stop).toEqual({ code: 0, stdout: '', stderr: '' });
     const watcher = await runScript('stop-watcher.mjs', hookInput('Stop', 'session-idle', { stop_hook_active: true }), env);
     expect(watcher).toEqual({ code: 2, stdout: '', stderr: `${WAKE_NOTICE}\n` });
-    expect(fake.calls().map(call => call.argv[1])).toEqual(['hook', 'pending']);
+    expect(fake.calls().map(call => call.argv[1])).toEqual(['watch', 'pending']);
 
     const claim = await runScript('user-prompt-submit.mjs', hookInput('UserPromptSubmit', 'session-idle', { prompt: WAKE_NOTICE }), env);
     expect(claim.code).toBe(0);
@@ -145,11 +145,18 @@ describe('hook processes', () => {
     const states: Record<string, (stateHome: string) => void> = {
       'no Khala state at all': () => undefined,
       'another session granted': stateHome => { grant(stateHome, 'session-other'); },
-      'an access request not yet granted': stateHome => {
+      // A discovery identity alone is not a request: the session never asked for access.
+      'a discovery identity with no access request': stateHome => {
         const internal = grant(stateHome);
         const file = claudeGrantPath(internal, unbound);
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, fs.readFileSync(path.join(internal, 'active.json')));
+      },
+      'an access request that has settled': stateHome => {
+        const internal = grant(stateHome);
+        const file = claudeOutstandingPath(internal, unbound);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, '[]');
       },
       'a grant from an earlier launch': stateHome => {
         const internal = grant(stateHome, unbound);
@@ -171,5 +178,26 @@ describe('hook processes', () => {
       expect(fs.existsSync(path.join(fake.dir, 'calls.jsonl')), name).toBe(false);
       expect({ state: tree(env.XDG_STATE_HOME), home: tree(env.HOME) }, name).toEqual(before);
     }
+  });
+
+  // A session that requested access opted in (#420): its hooks run before any grant, so
+  // the boundary after the owner's decision can settle it, and Stop asks for it unthrottled.
+  it('engage a session with an access request outstanding, before any grant', async () => {
+    const fake = fakeBinary('sync', false);
+    const env = { PATH: `${fake.dir}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: scratch(), XDG_STATE_HOME: scratch() };
+    const internal = grant(env.XDG_STATE_HOME);
+    const file = claudeOutstandingPath(internal, 'session-asking');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(['operation-1']));
+    for (const [script, event, extra] of [
+      ['user-prompt-submit.mjs', 'UserPromptSubmit', { prompt: 'hello' }],
+      ['stop.mjs', 'Stop', { stop_hook_active: false }],
+    ] as const) {
+      expect((await runScript(script, hookInput(event, 'session-asking', extra), env)).code).toBe(0);
+    }
+    expect(fake.calls().map(call => call.argv).slice(0, 2)).toEqual([
+      ['claude', 'hook', '--session', 'session-asking'],
+      ['claude', 'hook', '--session', 'session-asking', '--stop'],
+    ]);
   });
 });

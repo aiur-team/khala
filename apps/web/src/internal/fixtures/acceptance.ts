@@ -151,13 +151,18 @@ export class AgentSession {
     return new AgentSession(input.name, input.stateHome, input.bundleDirectory, descriptorPath);
   }
 
-  /** The agent's `active.json`: its granted binding once the owner approved and it joined. */
+  /** The agent's copy of the launcher's transport descriptor, `active.json`. */
   get activePath(): string {
     return path.join(internalRootOf(this.stateHome), 'active.json');
   }
 
+  /** The session's own `grant.json` beside its discovery descriptor: its binding once the owner approved and it joined. */
+  get grantPath(): string {
+    return path.join(path.dirname(this.discoveryDescriptor), 'grant.json');
+  }
+
   granted(): Readonly<{ channelId: string; origin: string; bindingId: string; bindingCapability: string }> {
-    return JSON.parse(fs.readFileSync(this.activePath, 'utf8'));
+    return JSON.parse(fs.readFileSync(this.grantPath, 'utf8'));
   }
 
   private run(argv: readonly string[], stdin?: string): Promise<CliRun> {
@@ -176,16 +181,16 @@ export class AgentSession {
   }
 
   send(body: string): Promise<CliRun> {
-    return this.run(['--internal-descriptor', this.activePath, 'send'], body);
+    return this.run(['--internal-descriptor', this.grantPath, 'send'], body);
   }
 
   /** `khala mode get` / `khala mode set <mode> --expected-version <n>` on this session's own binding. */
   mode(args: readonly string[]): Promise<CliRun> {
-    return this.run(['--internal-descriptor', this.activePath, 'mode', ...args]);
+    return this.run(['--internal-descriptor', this.grantPath, 'mode', ...args]);
   }
 
   read(ack?: string): Promise<CliRun> {
-    return this.run(['--internal-descriptor', this.activePath, 'read', ...(ack === undefined ? [] : ['--ack', ack])]);
+    return this.run(['--internal-descriptor', this.grantPath, 'read', ...(ack === undefined ? [] : ['--ack', ack])]);
   }
 
   /** Reads everything waiting, acknowledges it, and returns the message bodies in order. */

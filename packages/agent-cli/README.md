@@ -233,7 +233,8 @@ commands never load the local client.
   mode; this side projects it through the released claim of the harness
   actually installed here, read as setup reads it. For Codex, that means an
   exactly proven version whose Khala hooks you trusted. `async` stays unproven
-  until a receipt proof ships. For Claude, an inspected version outside the
+  until a receipt proof ships. For Claude, the owner or the session itself
+  (`khala_mode_set`) may request a mode. An inspected version outside the
   proven list is `experimental`, so a mode takes effect only under the owner's
   experimental-route grant; an uninspectable version stays unproven.
 - `codex-hook` is installed as the byte-stable `khala codex-hook`, so without
@@ -245,10 +246,27 @@ commands never load the local client.
   no `read` sees it.
 
 The Codex and OpenCode MCP entries that `khala setup` installs run a bare
-`mcp-serve` with no option. Outside Claude mode (`KHALA_MCP_HARNESS=claude`),
-a bare `mcp-serve` uses `$XDG_STATE_HOME/khala/internal/active.json` exactly as
-if that path had been passed, so a relaunch that moves the origin or rotates the
-grant reaches the entry without rewriting it.
+`mcp-serve` with no option, and the installed Codex hook runs a bare
+`codex-hook`. One entry serves every session of its harness, so each call acts
+only as the session that makes it, through that session's own `grant.json`:
+
+- Outside Claude mode (`KHALA_MCP_HARNESS=claude`), a bare `mcp-serve` reads
+  the session from each `tools/call`. Codex sends its thread as
+  `_meta.threadId`, the same ID it exports to the agent's commands as
+  `CODEX_THREAD_ID`, so pass that ID to `khala internal discovery --harness
+  codex --session`. The call then runs against
+  `$XDG_STATE_HOME/khala/internal/discovery/<principal>/grant.json`, the
+  principal that discovery derived from the same harness and session.
+- A bare `codex-hook` reads the session from the hook input's `session_id`,
+  which is the same thread ID.
+- A call that names no session, or a session that holds no grant, is refused
+  with `not_connected`; the hook stays silent. Neither ever acts as another
+  session or reads a grant from `active.json`. OpenCode does not name its
+  session to an MCP server, so its bare entry refuses every call. An OpenCode
+  agent runs `khala --internal-descriptor <its grant.json> send|read|listen`
+  instead.
+- Every call reopens the session's file, so a relaunch that moves the origin or
+  rotates the grant reaches the entry without rewriting it.
 
 - Every operation reopens that exact file without following a symlink and
   requires a regular file owned by you with mode 0600, version 1, and an exact
@@ -276,13 +294,10 @@ grant reaches the entry without rewriting it.
   beside that discovery descriptor, and only then acknowledges readiness.
   `read`, `listen` and `mcp-serve` pointed at `grant.json` pick it up without a
   restart. Each agent session keeps its own `grant.json`, so two sessions of
-  one OS user can both join one channel as separate bindings. The first
-  session to bind also copies its grant into `active.json` while no other
-  live grant holds it, so the bare Codex and OpenCode `mcp-serve` entry, which
-  has no session to choose a `grant.json` by, acts as that session. A later
-  session reaches its binding only through its own `grant.json`. A
+  one OS user can both join one channel as separate bindings. No grant is
+  copied into `active.json`, which stays transport-only. A
   `grant.json` left from an earlier launch is replaced on the next `join`.
-  Stop removes the grant from `active.json` and every `grant.json` whose
+  Stop removes the grant from every `grant.json` whose
   binding it revokes. Progress is
   journaled beside the discovery descriptor, so a `join` after a crash
   resumes the same binding and never mints a second one. No grant or
@@ -916,12 +931,17 @@ pull could only replay that batch, so a hook watcher must not wake the session
 for it again.
 
 `hook` tells a plugin hook which boundary it owns, as
-`{"ok":true,"kind":"hook","effective":<mode|null>,"watchSeconds":<n|null>}`.
+`{"ok":true,"kind":"hook","effective":<mode|null>,"watchSeconds":<n|null>,"access":<outcome|null>}`.
 Unlike `mode`, it is not an agent call. It runs outside the state-port envelope
 and acknowledges nothing. `effective` is `null` without batch-token handoff,
 because every hook pull would be refused. `watchSeconds` is the local automation
 fence's idle-watcher window. It is present only for `steer` and `sync`, and
-`null` when the fence grants none.
+`null` when the fence grants none. `hook` also settles the session's outstanding
+access requests, at most once every 5 seconds per session, and reports a settled
+`connected`, `denied` or `expired` once in `access`, before any binding exists.
+`hook --stop`, which only the plugin's `Stop` hook passes, settles whatever the
+interval. `watch` is the idle watcher's `hook`: the same answer, but it never
+settles, so its `access` is always `null`.
 
 For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
 (`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the

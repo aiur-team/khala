@@ -290,3 +290,17 @@ export function writeDescriptor(machine, descriptor) {
   fs.writeFileSync(target, JSON.stringify(descriptor) + '\n', { mode: 0o600 });
   return target;
 }
+
+/**
+ * Writes one harness session's own granted descriptor where the launcher keeps it,
+ * `discovery/<principal>/grant.json`, and where the installed `mcp-serve` and
+ * `codex-hook` entries look it up for the session a call names.
+ */
+export function writeSessionGrant(machine, harness, sessionId, descriptor) {
+  const preimage = ['khala.internal.principal.v1', harness, sessionId].join('\0');
+  const principal = `agent_${createHash('sha256').update(preimage).digest('base64url')}`;
+  const target = path.join(machine.home, '.local', 'state', 'khala', 'internal', 'discovery', principal, 'grant.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(target, JSON.stringify(descriptor) + '\n', { mode: 0o600 });
+  return target;
+}

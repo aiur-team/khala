@@ -14,6 +14,7 @@ import { openInbox } from '@aiur/khala/cli/inbox';
 import { createInternalClient, readInternalDescriptor } from '@aiur/khala/composition/internal';
 import { ChannelCreateService } from '@aiur/khala/cli/channels/create/service';
 import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
+import { sessionGrants } from '@aiur/khala/composition/session-grant';
 import sodium from 'libsodium-wrappers';
 import { afterEach, describe, expect, it } from 'vitest';
 import { writeActiveDescriptor } from '../../descriptor/write';
@@ -964,16 +965,60 @@ describe('internal channel discovery', () => {
       const grants = [a.grantPath, secondGrantPath].map(file => JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>);
       expect(grants[0]!.bindingId).not.toBe(grants[1]!.bindingId);
       expect(fs.statSync(secondGrantPath).mode & 0o777).toBe(0o600);
-      // The launch's descriptor, which the session-less Codex and OpenCode entries read, keeps
-      // the first agent's grant; the second binds through its own file alone.
-      const mirrored = JSON.parse(fs.readFileSync(launchPath, 'utf8')) as Record<string, string>;
-      expect(mirrored).toEqual({ ...JSON.parse(launch), ...grants[0] });
-      expect(fs.statSync(launchPath).mode & 0o777).toBe(0o600);
+      // No grant reaches the launch's descriptor: it stays transport-only (#407).
+      expect(fs.readFileSync(launchPath, 'utf8')).toBe(launch);
       // Each session, pointed at its own file, is connected as its own binding.
       for (const [index, file] of [a.grantPath, secondGrantPath].entries()) {
         const status = await createInternalClient({ descriptorPath: file }).status();
         expect(status).toMatchObject({ connected: true, binding: { bindingId: grants[index]!.bindingId } });
       }
+    });
+
+    // Wrong-implementation test (#407): an installed entry that falls back to `active.json`
+    // sends as whichever session bound first, or as nobody.
+    it('lets two installed Codex entries on one host each send as their own participant', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      const second = await issue(a.w, 'session-second');
+      const client = createInternalClient({ descriptorPath: second.descriptorPath, clock: () => NOW });
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      const pending = (await inbox(a.w)).find(entry => entry.outcome === 'pending_owner')!;
+      expect((await decide(a.w, pending.requestHandle, pending.revision, 'approve')).status).toBe(200);
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      // Each Codex session runs the same argv-less `mcp-serve` and names its thread on every call.
+      const entry = async (thread: string, body: string) => {
+        const stdin = new PassThrough();
+        stdin.end(`${JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { _meta: { threadId: thread }, name: 'khala_send', arguments: { message: body } },
+        })}\n`);
+        const stdout = new PassThrough();
+        let out = '';
+        stdout.on('data', chunk => { out += String(chunk); });
+        const stateDirectory = path.join(a.fixture.root, `entry-${thread}`);
+        const code = await runCli(['mcp-serve'], {
+          client: null as never,
+          inbox: (bindingId, generation) => openInbox({
+            stateDirectory, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
+          }),
+          stdin, stdout, stderr: new PassThrough(),
+          sessionGrants: sessionGrants(a.fixture.root),
+          internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
+          internalDelivery: async descriptorPath => createInternalDelivery({ descriptorPath, stateDirectory }),
+        });
+        expect(code).toBe(0);
+        return JSON.parse(out) as { result: { structuredContent: { kind: string } } };
+      };
+      expect((await entry('session-second', 'from the second session')).result.structuredContent.kind).toBe('accepted');
+      expect((await entry('session-local', 'from the first session')).result.structuredContent.kind).toBe('accepted');
+
+      const timeline = await call(a.w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: a.w.human });
+      const authors = Object.fromEntries((timeline.json.events as Array<{ content: { body: string }; participant: { participantId: string } }>)
+        .map(event => [event.content.body, event.participant.participantId]));
+      expect(authors['from the first session']).toBe(`participant_${a.agent.principal}`);
+      expect(authors['from the second session']).toBe(`participant_${second.principal}`);
     });
   });
 

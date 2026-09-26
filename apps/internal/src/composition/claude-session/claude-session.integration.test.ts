@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHook, sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
 import { webBundleManifest } from '../../launcher/bundle';
 import { type LaunchReport, launchInternal } from '../../launcher/launcher';
+import { CLAUDE_SETTLE_INTERVAL_MS } from './compose';
 
 // The Claude plugin's `mcp-serve` against the real internal launcher: the transport
 // capability from `active.json`, the channel-access journal, the owner's decision in
@@ -58,14 +59,16 @@ const INSTALLED_CLAUDE = '2.1.283';
 /** A fresh launch, or with `resume` the same root and channel relaunched on the same port. */
 async function launched(
   resume?: Readonly<{ parent: string; channelId: string; port: number }>,
-  claudeVersion: () => Promise<string | null> = async () => INSTALLED_CLAUDE,
+  options: Readonly<{ clock?: () => number; claudeVersion?: () => Promise<string | null> }> = {},
 ) {
+  const { clock, claudeVersion = async () => INSTALLED_CLAUDE } = options;
   const parent = resume?.parent ?? fs.mkdtempSync('/tmp/khala-claude-');
   if (resume === undefined) cleanups.push(() => fs.rmSync(parent, { recursive: true, force: true }));
   const outcome = await launchInternal({
     root: path.join(parent, 'internal'), assets: webBundleManifest(fixtureBundle),
     request: resume === undefined ? { kind: 'create' } : { kind: 'resume', channelId: resume.channelId },
     startPort: resume?.port ?? 0, claudeVersion,
+    ...(clock === undefined ? {} : { clock }),
   });
   if (outcome.kind !== 'running') throw new Error(`launch failed: ${outcome.code}`);
   cleanups.push(() => outcome.shutdown());
@@ -277,6 +280,78 @@ describe('Claude mcp-serve against the internal launcher', () => {
     expect(bodies).toContain(agents[0]!.participantId);
   });
 
+  // Wrong-implementation test (#420): a grant that activates only when the agent retries
+  // `khala_channel_access_status` leaves the next hook boundary refused as unbound.
+  it('wrong implementation: after approval the next hook boundary reports connected with no retry', async () => {
+    let skew = 0;
+    const { report, owner, channelUrl } = await launched(undefined, { clock: () => Date.now() + skew });
+    const granted = 'session-hook-granted';
+    const bystander = 'session-hook-bystander';
+    const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
+
+    const [requested] = await serve(report.descriptorPath, granted, [['khala_request_channel_access', { target: channelUrl }]]);
+    expect(requested).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    await serve(report.descriptorPath, bystander, [['khala_list_channels']]);
+    // Still pending: the boundary is the same unbound answer as before.
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+
+    // A boundary inside the settle interval does not ask the control plane again.
+    await approvePending(report.origin, owner);
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+    skew += CLAUDE_SETTLE_INTERVAL_MS;
+
+    // The next boundary settles the grant itself; the agent never calls the status tool again.
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
+    // Reported once; the session stays connected.
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
+    const [send, who] = await serve(report.descriptorPath, granted, [
+      ['khala_send', { message: 'hello without a retry' }], ['khala_list_agents'],
+    ]);
+    expect(send).toMatchObject({ kind: 'accepted' });
+    expect((who as { agents: unknown[] }).agents).toHaveLength(1);
+    // The grant bound the requesting session only.
+    await expect(hooks.hook(bystander)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+    // A later explicit status call is harmless and reads the same grant.
+    const [status] = await serve(report.descriptorPath, granted, [['khala_channel_access_status', { operationId: requested!.operationId }]]);
+    expect(status).toMatchObject({ ok: true, outcome: 'connected' });
+  });
+
+  // Wrong-implementation test: a `Stop` boundary held to the settle interval lets the
+  // session idle unbound after the owner approved it.
+  it('settles at the turn-ending Stop boundary whatever the settle interval', async () => {
+    const frozen = Date.now();
+    const { report, owner, channelUrl } = await launched(undefined, { clock: () => frozen });
+    const session = 'session-hook-stop';
+    const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
+    const [requested] = await serve(report.descriptorPath, session, [['khala_request_channel_access', { target: channelUrl }]]);
+    expect(requested).toMatchObject({ outcome: 'pending_owner' });
+    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+
+    // The clock never moves: every other boundary stays inside the interval.
+    await approvePending(report.origin, owner);
+    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+    await expect(hooks.hook(session, { stop: true })).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
+    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
+  });
+
+  it('reports a denial at the next hook boundary, and the session stays unbound', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const session = 'session-hook-denied';
+    const [requested] = await serve(report.descriptorPath, session, [['khala_request_channel_access', { target: channelUrl }]]);
+    expect(requested).toMatchObject({ outcome: 'pending_owner' });
+    const inbox = await call(report.origin, { path: '/api/human/channel-requests', headers: owner });
+    const { requestHandle, revision } = inbox.json.requests[0] as { requestHandle: string; revision: string };
+    const decided = await call(report.origin, {
+      method: 'POST', path: `/api/human/channel-access-requests/${requestHandle}/decision`, headers: owner,
+      body: { v: 1, requestHandle, expectedRevision: revision, decision: 'deny', operationId: 'deny-hook-1' },
+    });
+    expect(decided.status).toBe(200);
+
+    const hooks = createClaudeSessionClient({ descriptorPath: report.descriptorPath });
+    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'denied' });
+    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+  });
+
   it('re-activates a granted session after the launcher resumes, with the same binding', async () => {
     const first = await launched();
     const sessionId = 'session-restart';
@@ -325,7 +400,7 @@ describe('Claude mcp-serve against the internal launcher', () => {
 describe('Claude delivery through the internal launcher', () => {
   /** Binds `sessionId` to the launch channel through request, owner approval and activation. */
   async function bound(sessionId: string, claudeVersion?: () => Promise<string | null>) {
-    const launch = await launched(undefined, claudeVersion);
+    const launch = await launched(undefined, claudeVersion === undefined ? {} : { claudeVersion });
     const [requested] = await serve(launch.report.descriptorPath, sessionId, [['khala_request_channel_access', { target: launch.channelUrl }]]);
     await approvePending(launch.report.origin, launch.owner);
     const [status] = await serve(launch.report.descriptorPath, sessionId, [

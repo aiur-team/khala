@@ -166,7 +166,7 @@ describe('Claude session adapter over the loopback server', () => {
     const descriptor = path.join(root, 'active.json');
     writeDescriptor(descriptor, launched);
     const client = createClaudeSessionClient({ descriptorPath: descriptor });
-    await expect(client.hook('s-1')).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: 3000 });
+    await expect(client.hook('s-1')).resolves.toEqual({ kind: 'hook', effective: 'steer', watchSeconds: 3000, access: null });
     await expect(client.hook('s-3')).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
   });
 
@@ -237,7 +237,7 @@ describe('Claude session adapter over the loopback server', () => {
     servers.push(server);
     writeDescriptor(descriptor, { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, credential: 'V'.repeat(43) });
     const client = createClaudeSessionClient({ descriptorPath: descriptor });
-    const hook = { kind: 'hook', effective: 'steer', watchSeconds: 60 };
+    const hook = { kind: 'hook', effective: 'steer', watchSeconds: 60, access: null };
     answers.push(
       hook,
       { ...hook, bindingId: 'binding-1' },
@@ -246,11 +246,14 @@ describe('Claude session adapter over the loopback server', () => {
       { ...hook, watchSeconds: -1 },
       { ...hook, watchSeconds: 1.5 },
       { kind: 'hook', effective: 'steer' },
+      { ...hook, access: 'approved' },
+      { ...hook, effective: null, watchSeconds: null, access: 'connected' },
     );
     await expect(client.hook('s-1')).resolves.toEqual(hook);
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < 7; index += 1) {
       await expect(client.hook('s-1')).resolves.toEqual({ kind: 'refused', code: 'unavailable' });
     }
+    await expect(client.hook('s-1')).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
   });
 
   it('decodes mode_set requests strictly before reaching the adapter', async () => {
@@ -266,6 +269,15 @@ describe('Claude session adapter over the loopback server', () => {
     await expect(handleClaudeSessionRequest(adapter, { authorization, body: valid, readBudgetBytes: 1 })).resolves.toEqual({
       status: 200, body: { kind: 'mode_set', outcome: 'applied', requested: 'steer', effective: null, reason: 'support_unknown', version: 2 },
     });
+    await expect(handleClaudeSessionRequest(adapter, {
+      authorization, body: { v: 1, op: 'hook', sessionId: 's-1', stop: true }, readBudgetBytes: 1,
+    })).resolves.toMatchObject({ status: 200 });
+    for (const hook of [{ stop: false }, { stop: 'yes' }, { final: true }]) {
+      await expect(handleClaudeSessionRequest(adapter, { authorization, body: { v: 1, op: 'watch', sessionId: 's-1', ...hook }, readBudgetBytes: 1 }))
+        .resolves.toEqual({ status: 400, body: { kind: 'refused', code: 'invalid_request' } });
+      await expect(handleClaudeSessionRequest(adapter, { authorization, body: { v: 1, op: 'hook', sessionId: 's-1', ...hook }, readBudgetBytes: 1 }))
+        .resolves.toEqual({ status: 400, body: { kind: 'refused', code: 'invalid_request' } });
+    }
     for (const invalid of [
       { ...valid, requested: 'loud' }, { ...valid, expectedVersion: -1 }, { ...valid, expectedVersion: 1.5 },
       { ...valid, issuedAt: 'yesterday' }, { ...valid, commandId: '' }, { ...valid, ackBatchToken: 'x' },
