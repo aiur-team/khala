@@ -341,6 +341,8 @@ describe('shared MCP call envelope', () => {
       async connect() { return { kind: 'connected', binding, reused: false }; },
       send,
       async status() { return { v: 1, connected: true, binding, route: 'unknown', sourceCursor: null }; },
+      async listChannels() { throw new Error('listing is not under test'); },
+      async listAgents() { throw new Error('listing is not under test'); },
     };
   }
 

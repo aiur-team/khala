@@ -1,6 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import type { BindingId, EventRef, HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
 import type { InternalRuntime } from '@khala/contracts/internal/command';
+import type { ChannelListingPort } from './channels/types.js';
 import type { BatchInbox } from './inbox.js';
 
 export const CLI_ERROR_CODES = [
@@ -51,6 +52,8 @@ export interface AgentClientPort {
   connect(link: string, signal?: AbortSignal): Promise<ConnectResult>;
   send(input: Readonly<{ bindingId: BindingId | null; clientTxnId: string; body: string }>, signal?: AbortSignal): Promise<SendResult>;
   status(signal?: AbortSignal): Promise<AgentStatus>;
+  listChannels: ChannelListingPort['listChannels'];
+  listAgents: ChannelListingPort['listAgents'];
 }
 export type InboxDelivery = Readonly<{
   v: 1; releaseId: string; bindingId: BindingId; generation: number; events: readonly EventRef[];

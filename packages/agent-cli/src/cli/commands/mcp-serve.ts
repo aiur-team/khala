@@ -3,6 +3,7 @@ import {
   postprocessMcpResult, postprocessPreselectedMcpResult, type McpPostprocessSuppression,
 } from '../../mcp/result-postprocessor.js';
 import { runMcpServer } from '../../mcp/server.js';
+import { ChannelListingService } from '../channels/service.js';
 import { CliError } from '../errors.js';
 import { publicStatus } from '../runtime.js';
 import { SendService } from '../send.js';
@@ -32,6 +33,7 @@ export const mcpServeCommand: CliCommand = {
         output: deps.stdout,
         send: new SendService(deps.client),
         read: new ReadOperation({ heldBinding, consumer, currentBinding }),
+        channels: new ChannelListingService(deps.client),
         postprocessResult: input => postprocessMcpResult({
           ...input,
           consumer,

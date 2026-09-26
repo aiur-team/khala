@@ -23,6 +23,8 @@ const idleClient: AgentClientPort = {
   async connect() { return { kind: 'unavailable' }; },
   async send(input) { return { kind: 'refused', code: 'not_connected', clientTxnId: input.clientTxnId }; },
   async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
+  async listChannels() { throw new Error('internal command tests should not list channels'); },
+  async listAgents() { throw new Error('internal command tests should not list agents'); },
 };
 
 function recordingLoader(exit = 0) {
