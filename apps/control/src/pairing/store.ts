@@ -66,7 +66,15 @@ export type PairingBootstrapAuthorization = Readonly<{
 }>;
 
 export interface PairingGrantPort {
-  redeem(input: Readonly<{ grant: string; operationId: string; jkt: string }>): Promise<
+  redeem(input: Readonly<{
+    grant: string;
+    operationId: string;
+    /** The presenter's proven key. */
+    jkt: string;
+    /** The session and device the presenter names; they must equal the approved claim. */
+    session: Readonly<{ harness: string; sessionId: string; generation: number }>;
+    deviceId: string;
+  }>): Promise<
     | Readonly<{ kind: 'redeemed'; authorization: PairingBootstrapAuthorization }>
     | Readonly<{ kind: 'invalid_grant' }>
     | Readonly<{ kind: 'unavailable' }>
@@ -590,7 +598,11 @@ export function createPairingStore(deps: Readonly<{
         if (located === 'absent') continue;
         let current = located;
         for (;;) {
-          if (current.value.keyId !== candidate.keyId || current.value.binding.jkt !== input.jkt) return { kind: 'invalid_grant' };
+          const bound = current.value.binding;
+          // Checked before any spend: a wrong key, session or device must not burn the grant.
+          if (current.value.keyId !== candidate.keyId || bound.jkt !== input.jkt
+            || bound.harness !== input.session.harness || bound.sessionId !== input.session.sessionId
+            || bound.generation !== input.session.generation || bound.deviceId !== input.deviceId) return { kind: 'invalid_grant' };
           if (current.value.state === 'spent') {
             return current.value.redemption?.operationId === input.operationId
               ? { kind: 'redeemed', authorization: current.value.redemption.authorization }

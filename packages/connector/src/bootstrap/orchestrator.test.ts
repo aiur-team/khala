@@ -1,6 +1,7 @@
 // Port-level tests for the bootstrap choreography. Doubles prove module
 // behaviour only; real ownership, storage and harness proof belongs to KHA-133/139.
 
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/messaging/index';
 import { type HarnessCapabilities, unknownModeSupportMap } from '@khala/contracts/delivery/index';
@@ -444,6 +445,19 @@ describe('bootstrapAgent with pairing-code-v1', () => {
       evidenceDigest: sessionEvidenceDigest(SESSION, CAPABILITIES),
     });
     expect(records.get(PAIR_INPUT.operationId)?.record).toMatchObject({ phase: 'connected', deviceId: 'KHALADEV1' });
+  });
+
+  it('does not persist the old unsalted SHA-256 of the code in the operation fingerprint', async () => {
+    const { ports, records } = pairingHarness();
+    await bootstrapAgent(PAIR_INPUT, ports);
+    const { fingerprint } = records.get(PAIR_INPUT.operationId)!.record;
+    const unsalted = createHash('sha256').update(JSON.stringify([
+      'khala.pairing.bootstrap.v1', ORIGIN, PAIR_DESCRIPTOR.id,
+      createHash('sha256').update(PAIR_CODE).digest('base64url'),
+      PAIR_INPUT.session.harness, PAIR_INPUT.session.sessionId, PAIR_INPUT.session.workdir,
+      SESSION.generation, PAIR_JKT,
+    ])).digest('base64url');
+    expect(fingerprint).not.toBe(unsalted);
   });
 
   it('claims only after inspection and a persisted device reservation', async () => {
