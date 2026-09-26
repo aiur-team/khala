@@ -229,7 +229,8 @@ describe('claude setup adapter: footprint', () => {
       expect(text).not.toContain(SENTINEL_PORT);
     }
     const mcp = JSON.parse(await read(path.join(paths().pluginRoot, '.mcp.json')));
-    expect(mcp.mcpServers.khala).toEqual({ command: 'khala', args: ['mcp-serve'] });
+    // The frozen entry (#316, amended by #333 with the harness marker) carries no port or token.
+    expect(mcp.mcpServers.khala).toEqual({ command: 'khala', args: ['mcp-serve'], env: { KHALA_MCP_HARNESS: 'claude' } });
   });
 });
 

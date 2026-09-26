@@ -87,6 +87,11 @@ export type ClaudeBindingServices = Readonly<{
    * release bytes or token and never pulls, moves a cursor, or acknowledges.
    */
   pending(): Promise<Readonly<{ pending: boolean }>>;
+  /**
+   * `local-automation-fence`'s idle-watcher lifetime for this binding, or `null` when
+   * it grants none. Hooks take the watcher window only from here.
+   */
+  watchWindow(): Promise<Readonly<{ seconds: number }> | null>;
 }>;
 
 export type ClaudeSessionAdapterOptions = Readonly<{
@@ -127,6 +132,14 @@ export type ClaudeModeSetOutcome = (Readonly<{
   version: number;
 }> & Piggyback) | ClaudeSessionRefusal;
 export type ClaudePendingOutcome = Readonly<{ kind: 'pending' | 'idle' }> | ClaudeSessionRefusal;
+/**
+ * What a hook needs to pick its boundary, and nothing else: the effective mode, and
+ * the fence's watcher window in seconds. `effective` is `null` when hook delivery is
+ * off, and `watchSeconds` is `null` when no idle watcher may run.
+ */
+export type ClaudeHookOutcome = Readonly<{
+  kind: 'hook'; effective: ListeningMode | null; watchSeconds: number | null;
+}> | ClaudeSessionRefusal;
 /** Content-free: how many retained batch tokens this call committed, and nothing else. */
 export type ClaudeStatusOutcome = Readonly<{ kind: 'status'; acknowledged: number }> | ClaudeSessionRefusal;
 
@@ -144,6 +157,7 @@ export interface ClaudeSessionAdapter {
   mode(call: ClaudeSessionCall): Promise<ClaudeModeOutcome>;
   setMode(call: ClaudeSessionCall, input: Omit<ModeSetInput, 'acknowledgeToken'>): Promise<ClaudeModeSetOutcome>;
   pending(call: ClaudeSessionCall): Promise<ClaudePendingOutcome>;
+  hook(call: ClaudeSessionCall): Promise<ClaudeHookOutcome>;
 }
 
 type Resolved = Readonly<{ binding: SessionBinding; scope: SessionScope; services: ClaudeBindingServices }>;
@@ -337,9 +351,33 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
       return guarded(async () => {
         const resolved = await resolve(call);
         if ('kind' in resolved) return resolved;
-        // Notification only: no state-port envelope, no read, and nothing but one bit out.
+        // Notification only: no read, no commit, and nothing but one bit out. While a
+        // delivered batch awaits the agent's acknowledgement, a pull could only replay
+        // it, so nothing new is pending; a hook watcher must not wake the session again.
+        const generation = resolved.binding.generation;
+        const awaiting = await options.state.envelope(resolved.scope, async retained => ({
+          value: retained.some(entry => entry.generation === generation), committed: [], retain: null,
+        }));
+        if (awaiting) return { kind: 'idle' };
         const signal = await resolved.services.pending();
         return { kind: signal.pending === true ? 'pending' : 'idle' };
+      });
+    },
+
+    async hook(call) {
+      return guarded(async () => {
+        const resolved = await resolve(call);
+        if ('kind' in resolved) return resolved;
+        // Unlike `mode`, this is not an agent call: no envelope, so nothing is acknowledged.
+        const view = await resolved.services.readMode();
+        if (!view.ok) return refused(view.code === 'unavailable' ? 'unavailable' : 'binding_not_held');
+        // Without batch-token handoff every hook pull is refused, so hook delivery is off.
+        const effective = await handoff(resolved) ? view.view.effective : null;
+        if (effective !== 'steer' && effective !== 'sync') return { kind: 'hook', effective, watchSeconds: null };
+        const window = await resolved.services.watchWindow();
+        const seconds = window?.seconds;
+        const watchSeconds = Number.isSafeInteger(seconds) && (seconds as number) > 0 ? seconds as number : null;
+        return { kind: 'hook', effective, watchSeconds };
       });
     },
   };
