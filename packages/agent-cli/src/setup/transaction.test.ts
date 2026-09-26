@@ -175,6 +175,10 @@ describe('setup transaction', () => {
     expect(refused.state).toBe('drifted');
     expect(await snapshot(root)).toEqual(before);
     expect(await read(t.config)).toBe(new TextDecoder().decode(V1_CONFIG));
+    // Even a plan that never touches the drifted path refuses: the whole harness is checked first.
+    const partial = plan('remove', removal.operations.filter(item => item.path !== t.skill));
+    expect(expectKind(await run(partial), 'refused').state).toBe('drifted');
+    expect(await snapshot(root)).toEqual(before);
   });
 
   it('refuses unowned targets, including a byte-identical Khala-named installer file', async () => {
