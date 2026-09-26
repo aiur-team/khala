@@ -12,8 +12,9 @@ import {
 } from './bootstrap';
 import {
   type BindingCredential, type BootstrapCredential, type CredentialAuthority, CredentialConfigError, type Principal,
-  createCredentialAuthority,
+  createCredentialAuthority, mintCredential,
 } from './credentials';
+import { type InternalDiscoveryPort, createDiscoveryRoutes, discoveryRole } from './discovery';
 import {
   BodyError, type ErrorCode, applySecurityHeaders, headerValues, readJsonObject, sendBytes, sendError, sendJson,
 } from './http';
@@ -76,6 +77,10 @@ export type ChannelServerOptions = Readonly<{
   bindings: readonly BindingCredential[];
   /** Serves `GET .../releases` to binding principals; the route is absent without it. */
   releases?: AgentReleaseFeed;
+  /** The launch's transport capability; with `discovery`, it may only ask for a discovery descriptor. */
+  transportCapability?: string;
+  /** Channel discovery, access requests and the connector exchange. Absent means those routes do not exist. */
+  discovery?: InternalDiscoveryPort;
   assets?: AssetManifest;
   newId: () => string;
   clock: () => number;
@@ -158,9 +163,18 @@ function boundedToken(value: unknown, maxBytes: number): value is string {
 }
 
 function actor(principal: Principal): Readonly<{ participantId: ParticipantId; deviceId: DeviceId }> {
-  return principal.kind === 'human'
-    ? { participantId: principal.human.participantId, deviceId: principal.human.deviceId }
-    : { participantId: principal.binding.agentParticipantId, deviceId: principal.binding.deviceId };
+  if (principal.kind === 'human') return { participantId: principal.human.participantId, deviceId: principal.human.deviceId };
+  if (principal.kind === 'binding') return { participantId: principal.binding.agentParticipantId, deviceId: principal.binding.deviceId };
+  // Channel routes admit only human and binding principals; see `admits`.
+  throw new Error('channel route reached without a channel principal');
+}
+
+/** Channel content routes: the creating human, or the human and bound agents. */
+function admits(route: RouteSpec, principal: Principal): boolean {
+  const role = discoveryRole(route);
+  if (role !== null) return role === principal.kind;
+  if (route === ROUTES.create) return principal.kind === 'human';
+  return principal.kind === 'human' || principal.kind === 'binding';
 }
 
 function parseSessionCookie(request: IncomingMessage): string | null | 'ambiguous' {
@@ -182,6 +196,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   const authority: CredentialAuthority = createCredentialAuthority({
     bootstrap: options.bootstrap,
     bindings: options.bindings,
+    ...(options.transportCapability === undefined ? {} : { transportCapability: options.transportCapability }),
     clock: options.clock,
     maxSessions: limits.maxSessions,
   });
@@ -200,6 +215,22 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
   ];
   if (options.releases) routes.push(ROUTES.releases);
+  let origin = '';
+  const discovery = options.discovery
+    ? createDiscoveryRoutes({
+      port: options.discovery,
+      origin: () => origin,
+      clock: options.clock,
+      maxBodyBytes: limits.maxBodyBytes,
+      // A binding activated through channel access takes effect in this running server.
+      installBinding({ binding, channelId }) {
+        if (!isRouteSegment(channelId)) return null;
+        const credential = mintCredential();
+        return authority.installBinding({ credential, binding, channels: [channelId] }) ? credential : null;
+      },
+    })
+    : null;
+  if (discovery) routes.push(...discovery.routes);
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
@@ -225,7 +256,11 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     return false;
   }
 
-  function authenticate(request: IncomingMessage, params: Readonly<Record<string, string>>): AuthOutcome<Principal> {
+  async function authenticate(
+    request: IncomingMessage,
+    route: RouteSpec,
+    params: Readonly<Record<string, string>>,
+  ): Promise<AuthOutcome<Principal>> {
     const authorization = headerValues(request, 'authorization');
     const cookie = parseSessionCookie(request);
     const secrets = headerValues(request, REQUEST_SECRET_HEADER);
@@ -236,11 +271,22 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     let principal: Principal | null = null;
     if (authorization.length === 1) {
       const token = BEARER.exec(authorization[0]!)?.[1];
-      principal = token ? authority.authenticateBearer(token) : null;
+      principal = token ? authority.authenticateBearer(token) ?? authority.authenticateTransport(token) : null;
+      if (token && !principal && options.discovery) {
+        let agent: Awaited<ReturnType<InternalDiscoveryPort['authenticate']>>;
+        try {
+          agent = await options.discovery.authenticate(token);
+        } catch {
+          agent = 'unavailable';
+        }
+        if (agent === 'unavailable') return { ok: false, status: 503, code: 'unavailable' };
+        if (agent) principal = { kind: 'discovery', sessionKey: `discovery:${agent.principal}:${agent.generation}`, agent };
+      }
     } else if (cookie !== null && secrets.length === 1) {
       principal = authority.authenticateSession(cookie, secrets[0]!);
     }
     if (!principal) return { ok: false, status: 401, code: 'unauthenticated' };
+    if (!admits(route, principal)) return { ok: false, status: 403, code: 'forbidden' };
     try {
       const live = bindingLive(principal);
       if (live === 'unavailable') return { ok: false, status: 503, code: 'unavailable' };
@@ -532,7 +578,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     limits,
     routes,
     ...(options.log ? { log: options.log } : {}),
-    authenticate: ({ request, params }) => authenticate(request, params),
+    authenticate: ({ request, route, params }) => authenticate(request, route, params),
     async handle(context) {
       try {
         switch (context.route) {
@@ -550,7 +596,9 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.hints: return hints(context);
           case ROUTES.binding: return binding(context);
           case ROUTES.releases: return releases(context);
-          default: return staticAsset(context);
+          default:
+            if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
+            return staticAsset(context);
         }
       } catch (error) {
         if (error instanceof BodyError) throw error;
@@ -561,6 +609,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     },
   });
 
+  origin = server.origin;
   return {
     port: server.port,
     origin: server.origin,

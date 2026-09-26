@@ -36,14 +36,16 @@ export function AiurShell({ mode, navigation, actions, theme, collapsed, onColla
         <ul className="aiur-shell__nav-list">
           {navigation.map(item => (
             <li key={item.id}>
-              <a href={item.href} aria-current={item.current ? 'page' : undefined}>
-                <span className="aiur-shell__nav-label">{item.label}</span>
-                {typeof item.count === 'number' && item.count > 0 ? (
-                  <span className="aiur-shell__count" aria-label={`${item.count} pending`}>
-                    {item.count}
-                  </span>
-                ) : null}
-              </a>
+              {item.content ?? (
+                <a href={item.href} aria-current={item.current ? 'page' : undefined}>
+                  <span className="aiur-shell__nav-label">{item.label}</span>
+                  {typeof item.count === 'number' && item.count > 0 ? (
+                    <span className="aiur-shell__count" aria-label={`${item.count} pending`}>
+                      {item.count}
+                    </span>
+                  ) : null}
+                </a>
+              )}
             </li>
           ))}
         </ul>

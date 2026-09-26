@@ -1,7 +1,7 @@
 import type { ChannelAdmissionProviderPort, ChannelAdmissionRequest } from '@khala/messaging/channel-access/exchange/ports';
 import { describe, expect, it } from 'vitest';
 import { createChannelAccessHandlers } from '../../channel-access/handler';
-import { CHANNEL_REF, DEVICE, DIGEST, connectorRequest, context, journalHarness, requester } from '../../channel-access/exchange/support.test';
+import { CHANNEL_REF, DEVICE, DIGEST, connectorRequest, context, journalHarness, requester } from '@khala/messaging/channel-access/exchange/journal-harness.test';
 import { composeChannelAccessExchange } from './channel-access-exchange';
 import { registerAgentHandlers } from './handlers';
 
