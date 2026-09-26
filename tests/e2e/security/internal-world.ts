@@ -13,6 +13,7 @@ import { encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
 import { createSqliteListeningModeRepository } from '../../../apps/internal/src/listening-mode-store/sqlite';
 import { createInternalReleaseFeed } from '../../../apps/internal/src/composition/internal-delivery/release-feed';
 import { startChannelServer } from '../../../apps/internal/src/server/channel-server';
+import { createReceiptReadModel } from '../../../apps/internal/src/store/receipts';
 import { mintCredential } from '../../../apps/internal/src/server/credentials';
 import {
   type ChannelFixture, alice, aliceDevice, bobBinding, channelId, createChannelFixture, otherChannelId,
@@ -76,6 +77,7 @@ export async function startInternalWorld(): Promise<InternalWorld> {
     newId: () => `id-${++id}`,
     clock: () => NOW,
     log: event => logs.push(event),
+    receipts: createReceiptReadModel(fixture.handle),
     startPort: 0,
   });
   fs.writeFileSync(descriptorPath, encodeInternalDescriptor({

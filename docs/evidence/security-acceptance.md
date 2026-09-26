@@ -2,7 +2,7 @@
 
 Scoped, reproducible evidence for the encryption and approval boundaries of the merged KHA-134/135/136/137 system. This is not a blanket security certification. Each row below says what was observed, on what composition, and what is still missing. A row is **pass** only for the paths and encodings the named tests exercise.
 
-Recorded 2026-09-25 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, Vitest 5.0.1, from this branch over base `6bc22b5`. CI runs the same suite on Node 22.23.2. Codex adapter `khala-hosted-queue-1` against the package's fake app-server at Codex 0.154.0.
+Recorded 2026-09-26 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, Vitest 5.0.1, from this branch rebased on base `41856d3`. CI runs the same suite on Node 22.23.2. Codex adapter `khala-hosted-queue-1` against the package's fake app-server at Codex 0.154.0.
 
 ## Commands
 
@@ -45,15 +45,15 @@ A failed row blocks acceptance. Rows marked not observed are gaps, not passes.
 
 | Surfaces | Coverage |
 | --- | --- |
-| 8 default MCP tools and `khala mcp-serve` | Probed in one session. Every inbox-surface tool result carried the approved batch (positive control, asserted per tool); `khala_pair` is not an inbox surface and carries none. None carried the pending canary. |
+| 10 default MCP tools and `khala mcp-serve` | Probed in one session. Every inbox-surface tool result carried the approved batch (positive control, asserted per tool); `khala_pair` is not an inbox surface and carries none. None carried the pending canary. |
 | 14 agent CLI commands, 7 `khala claude` ops, 4 Codex hook events | Probed as installed. Only `listen` and `read` return content. `claude` ops refuse (`invalid_arguments`) because the shipped CLI composes no Claude session. Codex hooks returned no output in this composition, so their silence is weak evidence. |
-| 12 internal server routes | Probed with the agent's binding and without credentials. The pending channel returns 403; traversal and encoded variants, sent unnormalized, return 400/403/404; the hint stream opens (`event: ready`) and stays content-free while new messages arrive. Session exchange with a binding bearer returns 401; channel creation returns 403. |
+| 13 internal server routes | Probed with the agent's binding and without credentials. The pending channel returns 403; traversal and encoded variants, sent unnormalized, return 400/403/404; the hint stream opens (`event: ready`) and stays content-free while new messages arrive. Session exchange with a binding bearer returns 401; channel creation and the owner-only receipts route return 403. |
 | Codex harness adapter | Driven through the review gate over its fake app-server. |
 | 5 other harness adapters, 2 OpenCode tools | **Not observed**. The dispatcher hands every adapter the same approved job, and `@khala/harnesses` depends only on `@khala/contracts` (checked), but these adapters' own behaviour was not driven. The shipped OpenCode entry composes no transport. |
-| 3 Claude MCP tools, 4 Claude plugin hooks, 2 Codex-app hooks | **Not observed**: no Claude or Codex app session could be started here. |
+| 7 Claude MCP tools, 4 Claude plugin hooks, 2 Codex-app hooks | **Not observed**: no Claude or Codex app session could be started here. |
 | 17 internal discovery routes, 31 hosted control routes | Human routes are human-only. Agent routes **not observed**: discovery was not mounted, and control carries no message bodies in any wired flow. |
 
-The frozen Claude plugin contract (`FROZEN_MCP_TOOLS`) names `khala_create_channel`, which no registry serves, and omits the registered `khala_pair`. That is contract drift, not a leak; the inventory records it so that registering the tool forces a coverage decision.
+The frozen Claude plugin contract (`FROZEN_MCP_TOOLS`) omits the registered `khala_pair`. That is contract drift, not a leak. `inventory.test.ts` also fails if the contract names a tool that no registry serves.
 
 ## Documented non-guarantees
 

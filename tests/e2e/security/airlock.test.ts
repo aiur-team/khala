@@ -133,6 +133,14 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     add(s, 'GET releases other', other);
     expect(other.status).toBe(403);
   },
+  'http-internal:GET /api/v1/channels/:channelId/receipts': async s => {
+    // Owner-only receipt evidence: the agent binding is refused by role for either channel.
+    for (const id of [channelId, otherChannelId]) {
+      const receipts = await s.world.http('GET', channelRoute(id, '/receipts'));
+      expect(receipts.status).toBe(403);
+      add(s, `GET receipts ${id}`, receipts);
+    }
+  },
   'http-internal:GET /channels/:channelId': async s => {
     for (const id of [channelId, otherChannelId]) add(s, `GET page ${id}`, await s.world.http('GET', `/channels/${id}`, { bearer: null }));
   },
@@ -172,6 +180,8 @@ const MCP_ARGS: Readonly<Record<string, Record<string, unknown>>> = {
   khala_request_channel_access: { target: `http://127.0.0.1/channels/${otherChannelId}` },
   khala_channel_access_status: { operationId: 'op-probe' },
   khala_pair: { code: '7K3QX-9MZ2P' },
+  khala_create_channel: { title: 'probe', operationId: 'op-probe-create' },
+  khala_channel_create_status: { operationId: 'op-probe-create' },
 };
 
 /** One `khala mcp-serve` session that lists tools and calls each inventoried one. */

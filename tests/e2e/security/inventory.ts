@@ -66,10 +66,16 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'mcp-tool:khala_request_channel_access': probe('mcp-serve'),
   'mcp-tool:khala_channel_access_status': probe('mcp-serve'),
   'mcp-tool:khala_pair': probe('mcp-serve'),
+  'mcp-tool:khala_create_channel': probe('mcp-serve'),
+  'mcp-tool:khala_channel_create_status': probe('mcp-serve'),
   // Claude-bound MCP server (`KHALA_MCP_HARNESS=claude`).
   'claude-mcp-tool:khala_send': notObserved(CLAUDE_UNCOMPOSED),
   'claude-mcp-tool:khala_read': notObserved(CLAUDE_UNCOMPOSED),
   'claude-mcp-tool:khala_status': notObserved(CLAUDE_UNCOMPOSED),
+  'claude-mcp-tool:khala_list_channels': notObserved(CLAUDE_UNCOMPOSED),
+  'claude-mcp-tool:khala_list_agents': notObserved(CLAUDE_UNCOMPOSED),
+  'claude-mcp-tool:khala_request_channel_access': notObserved(CLAUDE_UNCOMPOSED),
+  'claude-mcp-tool:khala_channel_access_status': notObserved(CLAUDE_UNCOMPOSED),
   // OpenCode plugin tools, as shipped.
   'opencode-tool:khala_read': notObserved(OPENCODE_UNCOMPOSED),
   'opencode-tool:khala_send': notObserved(OPENCODE_UNCOMPOSED),
@@ -118,6 +124,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:GET /api/v1/channels/:channelId/hints': probe('internal-http'),
   'http-internal:GET /api/v1/agent/binding': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/releases': probe('internal-http'),
+  'http-internal:GET /api/v1/channels/:channelId/receipts': probe('internal-http'),
   'http-internal:GET /channels/:channelId': probe('internal-http'),
   // Internal discovery routes.
   ...Object.fromEntries(Object.values(DISCOVERY_ROUTES).map(route => [
@@ -157,9 +164,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
  * cannot reach a model today; registering one moves it into the discovered set,
  * where the inventory audit then demands a coverage decision.
  */
-export const DECLARED_UNREGISTERED_TOOLS: Readonly<Record<string, string>> = {
-  khala_create_channel: 'named by FROZEN_MCP_TOOLS but registered by neither the default nor the Claude MCP registry',
-};
+export const DECLARED_UNREGISTERED_TOOLS: Readonly<Record<string, string>> = {};
 
 /**
  * The internal server's route table is module-private, so its entries are read from
