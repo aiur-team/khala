@@ -8,11 +8,10 @@ import {
   writeActiveDescriptor, writeLaunchRecord,
 } from '../descriptor/write';
 import { type BindingControl, composeBindingControl } from '../composition/binding-control/index';
-import { createInternalReleaseFeed } from '../composition/internal-delivery/release-feed';
+import { composeBindingModes } from '../composition/binding-modes/index';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
 import { composeClaudeSession } from '../composition/claude-session/compose';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
-import { createSqliteListeningModeRepository } from '../listening-mode-store/sqlite';
 import { resumeInternalChannel } from '../lifecycle/resume';
 import type { AssetManifest } from '../server/assets';
 import { BOOTSTRAP_DOCUMENT_ROUTE } from '../server/bootstrap';
@@ -286,16 +285,17 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         root, store: channel.store, transportCapability, clock,
       });
       bindingControl = composeBindingControl({ handle: channel.handle, root });
+      const modes = composeBindingModes({ handle: channel.handle, store: channel.store });
       server = await startChannelServer({
         store: channel.store,
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
         // Agent bindings are granted later through channel access, never at launch.
         bindings: [],
-        // A granted binding pulls its releases into its own inbox; nothing is pushed.
-        releases: createInternalReleaseFeed({
-          store: channel.store,
-          listeningModes: createSqliteListeningModeRepository(channel.handle),
-        }),
+        // A granted binding pulls its releases into its own inbox; nothing is pushed. The
+        // owner's pause holds the whole feed before any claim.
+        releases: modes.releases,
+        // Owner and agent mode control over the same SQLite record, plus the owner's pause.
+        bindingModes: modes.control,
         // The owner's projected receipt evidence, read-only; the projector owns writes.
         receipts: createReceiptReadModel(channel.handle),
         // The transport capability may only obtain a discovery-only descriptor.

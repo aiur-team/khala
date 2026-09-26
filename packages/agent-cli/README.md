@@ -27,7 +27,8 @@ khala internal export <channel-id> --format markdown|jsonl --output <path> [--re
 khala internal delete <channel-id> [--yes]
 khala internal discovery --harness <name> --session <id> [--label <text>] [--workspace <text>]
 khala codex-hook
-khala --internal-descriptor <absolute-path> status|send|read|listen|mcp-serve
+khala --internal-descriptor <absolute-path> status|send|read|listen|mcp-serve|codex-hook
+khala --internal-descriptor <absolute-path> mode get|set <steer|sync|async> --expected-version <version>
 khala --internal-descriptor <absolute-path> join <channel-url>
 khala claude <pull|read|send|status|mode|pending|hook> --session <claude-session-id>
 ```
@@ -117,6 +118,15 @@ start yourself connect through the runtime descriptor later.
   duplicates or drops it. Only a human message in `steer` or `sync` mode wakes a
   listener; a revoked or superseded generation receives nothing. The pull cursor
   lives under `$XDG_STATE_HOME/khala/internal-delivery/`.
+- The channel page's **Listening modes** panel lists every connected agent. For
+  each one it shows the requested and effective mode and lets you pick a mode.
+  Only modes that agent's command-line tool has proven can be picked. The
+  others stay visible and disabled, with the reason, including "idle agents
+  receive messages only at their next turn". The panel also pauses or resumes
+  delivery to that agent. A pause holds new messages before the agent receives
+  any, survives a relaunch, and never stops an agent that is working. A Codex
+  claim comes from the version and hook trust that the agent's CLI reports on
+  its next Khala call, so until then no Codex mode shows as proven.
 - Ctrl+C or SIGTERM removes `active.json` and `launch.json`, closes the server so
   the URL stops working, closes the store, and releases the launcher lock. It
   leaves agent processes alone.
@@ -213,8 +223,23 @@ before a grant, naming its discovery `descriptor.json`. The path is the
 only thing an installed MCP or plugin entry stores; the port and capabilities
 are never passed in arguments, the environment, or configuration. The option
 selects the local client for `status`, `send`, `read`, `listen`, `mcp-serve`,
-and `join`, and is refused for every other command. Other commands never load
-the local client.
+`mode`, `codex-hook` and `join`, and is refused for every other command. Other
+commands never load the local client.
+
+- `mode get|set` acts on the binding the descriptor holds, through the
+  launcher's `/api/v1/agent/listening-mode`. The server keeps the requested
+  mode; this side projects it through the released claim of the harness
+  actually installed here, read as setup reads it. For Codex, that means an
+  exactly proven version whose Khala hooks you trusted. `async` stays unproven
+  until a receipt proof ships. Claude's internal routes are unproven, so its
+  effective mode stays `null`.
+- `codex-hook` is installed as the byte-stable `khala codex-hook`, so without
+  the option it uses the runtime `active.json` under the Khala state
+  directory. It recognises its session by the digest the launcher stores for
+  the binding, reads that projected mode, and pulls releases into the inbox
+  only at a boundary the mode delivers at. While the owner has paused the
+  binding, the server holds every release before any claim, so no boundary and
+  no `read` sees it.
 
 The Codex and OpenCode MCP entries that `khala setup` installs run a bare
 `mcp-serve` with no option. Outside Claude mode (`KHALA_MCP_HARNESS=claude`),
@@ -343,8 +368,9 @@ expectedVersion}` with a fresh command ID and returns one of:
   committed). A refusal never means the requested mode took effect.
 
 The CLI exits 0 for a view or applied result and 3 for a conflict or refusal.
-The installed binary has no trusted composition yet, so both commands currently
-refuse with `unavailable`. `requested` and `effective` can differ, and neither
+Without `--internal-descriptor` the installed binary has no trusted
+composition, so both commands refuse with `unavailable`; with it, they act on
+the descriptor's binding (see [Local agent client](#local-agent-client)). `requested` and `effective` can differ, and neither
 proves that any message was or will be delivered, including to an idle agent.
 
 ## Channel and agent listing

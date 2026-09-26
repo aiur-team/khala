@@ -17,6 +17,9 @@ import { openInbox } from '../../../packages/agent-cli/src/cli/inbox';
 import { MAX_SEND_BYTES } from '../../../packages/agent-cli/src/cli/send';
 import { createInternalClient } from '../../../packages/agent-cli/src/composition/internal';
 import { createInternalDelivery } from '../../../packages/agent-cli/src/composition/internal-delivery';
+import type {
+  LocalHarnessCapabilities, LocalHarnessObservation,
+} from '../../../packages/agent-cli/src/composition/internal-listening-mode';
 
 const FIXTURE_BUNDLE = fileURLToPath(new URL('../../../apps/internal/src/launcher/fixtures/internal-web', import.meta.url));
 
@@ -38,11 +41,22 @@ export type KhalaInvocation = Readonly<{
   stderr(): string;
 }>;
 
-/** One `khala` CLI process: the production command table with test streams. */
-export function khala(profile: KhalaProfile, argv: readonly string[], options: Readonly<{
+export type KhalaOptions = Readonly<{
   stdin?: string;
   signal?: AbortSignal;
-}> = {}): KhalaInvocation {
+  /**
+   * The released capability claim of the agent CLI a descriptor command runs under. The
+   * production entry reads it from the installed harness (`localHarnessCapabilities`); an
+   * acceptance run has no real harness installed, so the fake CLI states its own claim.
+   * Absent means no claim: every mode projects as unusable, as with no harness installed.
+   */
+  capabilities?: LocalHarnessCapabilities;
+  /** What that CLI reports about its harness to the server, as `localHarness` reads it in production. */
+  observation?: LocalHarnessObservation;
+}>;
+
+/** One `khala` CLI process: the production command table with test streams. */
+export function khala(profile: KhalaProfile, argv: readonly string[], options: KhalaOptions = {}): KhalaInvocation {
   const stdin = new PassThrough();
   stdin.end(options.stdin ?? '');
   const stdout = new PassThrough();
@@ -52,7 +66,7 @@ export function khala(profile: KhalaProfile, argv: readonly string[], options: R
   stderr.on('data', chunk => { text.err += String(chunk); });
   const result = runCli(argv, {
     client: null as never,
-    // No listening-mode application is composed for internal mode, exactly as in `main.ts`.
+    // As in `main.ts`: only a descriptor client supplies mode control, for its own binding.
     listeningMode: null,
     inbox: (bindingId, generation) => openInbox({
       stateDirectory: profile.stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
@@ -66,15 +80,22 @@ export function khala(profile: KhalaProfile, argv: readonly string[], options: R
     }),
     env: { XDG_STATE_HOME: profile.stateHome },
     cwd: profile.stateHome,
-    internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
+    // As in `main.ts`: the installed hook has no option and reads the runtime descriptor.
+    defaultDescriptorPath: path.join(profile.stateDirectory, 'internal', 'active.json'),
+    internalClient: async descriptorPath => createInternalClient({
+      descriptorPath, ...(options.capabilities ? { capabilities: options.capabilities } : {}),
+      ...(options.observation ? { observation: options.observation } : {}),
+    }),
     internalDelivery: async descriptorPath => createInternalDelivery({ descriptorPath, stateDirectory: profile.stateDirectory }),
   }).then(code => ({ code, stdout: text.out, stderr: text.err }));
   return { result, stdout: () => text.out, stderr: () => text.err };
 }
 
 /** Runs one short `khala` command to completion. */
-export function khalaOnce(profile: KhalaProfile, argv: readonly string[], stdin?: string): Promise<KhalaResult> {
-  return khala(profile, argv, stdin === undefined ? {} : { stdin }).result;
+export function khalaOnce(
+  profile: KhalaProfile, argv: readonly string[], stdin?: string, options: Omit<KhalaOptions, 'stdin'> = {},
+): Promise<KhalaResult> {
+  return khala(profile, argv, { ...options, ...(stdin === undefined ? {} : { stdin }) }).result;
 }
 
 export type LaunchReport = Readonly<{

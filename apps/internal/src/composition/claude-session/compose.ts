@@ -15,7 +15,7 @@ import { activateInternalAccess } from '@aiur/khala/composition/internal-activat
 import {
   type InternalDiscoveryCallResult, createInternalDiscoveryClient, selectInternalDiscovery,
 } from '@aiur/khala/composition/internal-discovery';
-import { type SessionBinding, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
+import { type CommandId, type SessionBinding, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { type GrantedDescriptor, encodeInternalDescriptor, isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
 import {
   INTERNAL_DISCOVERY_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DIRECTORY,
@@ -228,7 +228,9 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     const client = createInternalClient({
       descriptorPath: paths(binding.sessionId).grantPath,
       ...(options.fetch ? { fetch: options.fetch } : {}),
+      capabilities: async () => capabilities,
     });
+    const modes = client.listeningModeControl!;
     const unproven = async (): Promise<never> => { throw new CliError('transport_unavailable'); };
     return {
       // Claude's acknowledgement route is unproven, so the adapter refuses every pull and
@@ -238,9 +240,14 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
         if (input.acknowledgeToken !== undefined) return unproven();
         return { value: await new SendService(client).send(input.body, binding.bindingId), batch: null };
       },
-      setMode: unproven,
-      // No listening-mode application is composed for internal mode yet.
-      readMode: async () => ({ ok: false, code: 'unavailable' }),
+      // The session's own binding mode, through the server's agent mode route. Claude's routes are
+      // unproven, so the mode it reads is recorded but never effective.
+      async setMode(input) {
+        if (input.acknowledgeToken !== undefined) return unproven();
+        const { commandId, expectedVersion, requested, issuedAt } = input;
+        return { value: await modes.set({ commandId: commandId as CommandId, expectedVersion, requested, issuedAt }), batch: null };
+      },
+      readMode: () => modes.read(),
       capabilities: async () => capabilities,
       // No local automation fence is composed: nothing pending, and no idle watcher.
       pending: async () => ({ pending: false }),
