@@ -93,7 +93,9 @@ type Scenario = Readonly<{
   otherInbox?: boolean;
 }>;
 
-async function observe(scenario: Scenario = {}): Promise<CodexReceiptObservation> {
+type Effects = { cursorRelease: string | null; reoffered: boolean };
+
+async function observe(scenario: Scenario = {}, effects?: Effects): Promise<CodexReceiptObservation> {
   const state = newState();
   await (await open(state)).enqueue(delivery('release-1'));
   const issued = await hookToken(state, 'turn-1');
@@ -104,7 +106,6 @@ async function observe(scenario: Scenario = {}): Promise<CodexReceiptObservation
   const sharedInbox = issued !== null && raw?.token === issued;
 
   let authenticatedBinding = false;
-  let tokenReturned = false;
   if (issued !== null) {
     const echoed = (scenario.echo ?? (token => token))(issued);
     try {
@@ -113,12 +114,16 @@ async function observe(scenario: Scenario = {}): Promise<CodexReceiptObservation
     } catch {
       authenticatedBinding = false;
     }
-    tokenReturned = echoed === issued;
   }
 
+  // Outcomes come only from what the inbox did: a returned token is one that advanced the cursor,
+  // and the receipt is correlated only when the hook then stops re-offering the batch.
   const cursor = (await (await open(state)).status()).cursor;
-  const receiptCorrelated = authenticatedBinding && tokenReturned && cursor.releaseId === 'release-1'
-    && await hookToken(state, 'turn-2') === null;
+  const tokenReturned = authenticatedBinding && cursor.releaseId === 'release-1';
+  const pending = await callScopedConsumer(await open(state), { explicitRead: true }).readBatch({ maxBytes: 4096 });
+  const reoffered = issued !== null && pending?.token === issued;
+  const receiptCorrelated = tokenReturned && !reoffered && await hookToken(state, 'turn-2') === null;
+  if (effects !== undefined) Object.assign(effects, { cursorRelease: cursor.releaseId, reoffered });
 
   return {
     subject: 'user_cli', route: 'hook', version: VERSION, sharedInbox, batchDelivered: issued !== null,
@@ -152,7 +157,9 @@ describe('Codex hook route receipt proof, derived from real code', () => {
   });
 
   it('is not proven when the next call omits the token', async () => {
-    const observation = await observe({ echo: () => undefined });
+    const effects = {} as Effects;
+    const observation = await observe({ echo: () => undefined }, effects);
+    expect(effects).toEqual({ cursorRelease: null, reoffered: true });
     expect(observation).toMatchObject({ tokenReturned: false, receiptCorrelated: false });
     expect(assessCodexReceiptConformance(observation, expected)).toMatchObject({
       proven: false, gaps: expect.arrayContaining(['token_not_returned', 'receipt_not_correlated']),
@@ -160,7 +167,9 @@ describe('Codex hook route receipt proof, derived from real code', () => {
   });
 
   it('is not proven when the agent returns a different (stale) token', async () => {
-    const observation = await observe({ echo: () => 'stale-token' });
+    const effects = {} as Effects;
+    const observation = await observe({ echo: () => 'stale-token' }, effects);
+    expect(effects).toEqual({ cursorRelease: null, reoffered: true });
     expect(observation.tokenReturned).toBe(false);
     expect(observation.receiptCorrelated).toBe(false);
     expect(assessCodexReceiptConformance(observation, expected).proven).toBe(false);
