@@ -75,6 +75,7 @@ function snapshot(overrides: Partial<AgentControlsSnapshot> = {}): AgentControls
     policy: policy(),
     connection: 'connected',
     latestReceipt: null,
+    listening: null,
     ...overrides,
   };
 }
@@ -102,6 +103,8 @@ function fakePorts(overrides: Readonly<{
         return disposer;
       },
       submitPolicy,
+      submitListeningMode: () => pendingPromise(),
+      submitRouteGrant: () => pendingPromise(),
     },
   };
   return {

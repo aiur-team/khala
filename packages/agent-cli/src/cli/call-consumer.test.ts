@@ -3,10 +3,11 @@ import { acquireListenerWithin, callScopedConsumer } from './call-consumer.js';
 import { CliError } from './errors.js';
 import type { BatchInbox, InboxConsumer } from './inbox.js';
 
-function inbox(acquireListener: BatchInbox['acquireListener']): BatchInbox {
+function inbox(acquireListener: () => Promise<InboxConsumer>): BatchInbox {
   return {
     async enqueue() { return 'appended'; },
-    acquireListener,
+    async acquireListener() { return { ...await acquireListener(), async nextWake() {} }; },
+    async notifyListener() { return 'unavailable'; },
     async readNext() { return null; },
     async acknowledge() {},
     async status() { throw new Error('unused'); },
@@ -17,7 +18,7 @@ describe('call-scoped listener', () => {
   it('waits for another short-lived consumer and releases after each selection', async () => {
     const release = vi.fn(async () => undefined);
     const readBatch = vi.fn(async () => null);
-    const acquire = vi.fn<BatchInbox['acquireListener']>()
+    const acquire = vi.fn<() => Promise<InboxConsumer>>()
       .mockRejectedValueOnce(new CliError('listener_busy'))
       .mockResolvedValue({ readBatch, release });
     const consumer = callScopedConsumer(inbox(acquire), { waitMs: 1_000 });

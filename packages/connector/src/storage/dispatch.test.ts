@@ -342,6 +342,7 @@ describe('durable dispatch storage', () => {
 
     const db = new DatabaseSync(path.join(state, LEDGER_FILE));
     db.exec(`
+      DROP TABLE receipt_outbox;
       DROP TABLE harness_route_selections;
       DROP TABLE dispatch_sequence;
       DROP TABLE dispatch_causal_counts;

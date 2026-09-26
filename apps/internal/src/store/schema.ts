@@ -3,7 +3,7 @@ import { StoreError } from './errors';
 
 /** `PRAGMA application_id`: ASCII "KHCH" (Khala channel), distinct from connector storage. */
 export const APPLICATION_ID = 0x4b484348;
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const CORE_SCHEMA_V1_SQL = `
 CREATE TABLE meta (
@@ -112,6 +112,9 @@ CREATE TABLE mode_operations (
 
 export const MODE_SCHEMA_V2_SQL = `${MODE_CONTROLS_SQL}\n${MODE_OPERATIONS_SQL}`;
 
+/** v3 records who made the last change; NULL is a pre-actor row and reads as `unknown`. */
+export const MODE_SCHEMA_V3_SQL = 'ALTER TABLE mode_controls ADD COLUMN last_changed_by TEXT;';
+
 export type MigrationStage = 'after_mode_controls' | 'after_mode_operations' | 'before_user_version' | 'after_user_version';
 export type MigrationFault = (stage: MigrationStage) => void;
 
@@ -157,6 +160,7 @@ function expectedManifest(version: number): readonly SchemaRow[] {
   try {
     expected.exec(CORE_SCHEMA_V1_SQL);
     if (version >= 2) expected.exec(MODE_SCHEMA_V2_SQL);
+    if (version >= 3) expected.exec(MODE_SCHEMA_V3_SQL);
     const rows = schemaRows(expected).map(row => ({ ...row, sql: normalizeSql(row.sql) }));
     expectedManifests.set(version, rows);
     return rows;
@@ -196,6 +200,7 @@ export function prepareSchema(
     db.exec(CORE_SCHEMA_V1_SQL);
     db.exec(MODE_CONTROLS_SQL);
     db.exec(MODE_OPERATIONS_SQL);
+    db.exec(MODE_SCHEMA_V3_SQL);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     assertManifest(db, SCHEMA_VERSION);
     assertIntegrity(db);
@@ -214,10 +219,21 @@ export function prepareSchema(
     migrationFault?.('after_mode_controls');
     db.exec(MODE_OPERATIONS_SQL);
     migrationFault?.('after_mode_operations');
-    assertManifest(db, 2);
+    db.exec(MODE_SCHEMA_V3_SQL);
+    assertManifest(db, 3);
     assertIntegrity(db);
     migrationFault?.('before_user_version');
-    db.exec('PRAGMA user_version = 2');
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    migrationFault?.('after_user_version');
+    return;
+  }
+
+  if (version === 2) {
+    db.exec(MODE_SCHEMA_V3_SQL);
+    assertManifest(db, 3);
+    assertIntegrity(db);
+    migrationFault?.('before_user_version');
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     migrationFault?.('after_user_version');
   }
 }

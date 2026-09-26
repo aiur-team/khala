@@ -262,4 +262,49 @@ describe('runtime harness selection', () => {
     expect(first.close).toHaveBeenCalledOnce();
     expect(fallback.close).toHaveBeenCalledOnce();
   });
+
+  it('sends one catch-up wake per startup or reconnect selection of the exact binding', async () => {
+    const catchUp = vi.fn<(target: SessionBinding) => Promise<void>>(async () => undefined);
+    const runtime = createRuntimeHarnessSelection(binding, [
+      { routeId: 'plugin-route', harness: harness(capabilities()), catchUp },
+    ], store());
+
+    await expect(runtime.inspect()).resolves.toMatchObject({ state: 'ready' });
+    expect(catchUp).toHaveBeenCalledOnce();
+    expect(catchUp).toHaveBeenCalledWith(binding);
+    await expect(runtime.inspect()).resolves.toMatchObject({ state: 'ready' });
+    expect(catchUp).toHaveBeenCalledTimes(2);
+
+    await runtime.close();
+    await runtime.inspect();
+    expect(catchUp).toHaveBeenCalledTimes(2);
+  });
+
+  it('never wakes a route that was not selected for this generation', async () => {
+    const unusable = vi.fn(async () => undefined);
+    const stale = vi.fn(async () => undefined);
+    const unsupported = harness(capabilities({
+      support: 'unsupported',
+      existingSession: 'unknown',
+      immediateNotification: 'unknown',
+    }));
+
+    await createRuntimeHarnessSelection(binding, [
+      { routeId: 'plugin-route', harness: unsupported, catchUp: unusable },
+    ], store()).inspect();
+    await expect(createRuntimeHarnessSelection(binding, [
+      { routeId: 'plugin-route', harness: harness(capabilities()), catchUp: stale },
+    ], store('stale_generation')).inspect()).resolves.toMatchObject({ state: 'unknown', reason: 'stale_generation' });
+
+    expect(unusable).not.toHaveBeenCalled();
+    expect(stale).not.toHaveBeenCalled();
+  });
+
+  it('keeps a selected route ready when its catch-up wake fails', async () => {
+    const runtime = createRuntimeHarnessSelection(binding, [
+      { routeId: 'plugin-route', harness: harness(capabilities()), catchUp: async () => { throw new Error('no listener'); } },
+    ], store());
+
+    await expect(runtime.inspect()).resolves.toMatchObject({ state: 'ready', routeId: 'plugin-route' });
+  });
 });

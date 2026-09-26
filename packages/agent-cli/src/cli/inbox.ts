@@ -4,7 +4,10 @@ import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { BindingId, EventRef } from '@khala/contracts/delivery/index';
+import {
+  type BindingId, type EventRef, OPENCODE_HINT_MAX_BYTES, type OpenCodeInboxHint, decodeOpenCodeInboxHint,
+  encodeOpenCodeInboxHint,
+} from '@khala/contracts/delivery/index';
 import { CliError } from './errors.js';
 import type { InboxCursor, InboxDelivery, InboxRecord } from './types.js';
 import { plainObject, validDigest, validEventRef, validIdentifier, validUtcTimestamp } from './validation.js';
@@ -16,6 +19,7 @@ const SOCKET_FILE = 'listener.sock';
 const LISTENER_LOCK_FILE = 'listener.lock';
 const RECORD_OVERHEAD_BYTES = 1024 * 1024;
 const MAX_BATCH_RECORDS = 8;
+const NOTIFY_DEADLINE_MS = 1000;
 
 export type InboxItem = Readonly<{
   record: InboxRecord;
@@ -51,6 +55,26 @@ export type InboxConsumer = Readonly<{
   release(): Promise<void>;
 }>;
 
+/**
+ * A listener that can wait for content-free wakes. A wake only says "re-read the
+ * durable batch": the hint names its binding generation and a reason, never a message,
+ * body, token or release ID, and any number of pending wakes coalesce into one. The first wait after acquisition resolves at once, so a release stored while
+ * no listener was running, or whose hint was lost to a crash, is caught up on start.
+ */
+export type WakeableInboxConsumer = InboxConsumer & Readonly<{
+  nextWake(): Promise<void>;
+}>;
+
+/** Why a hint was sent: a release became durable, or a restarted sender is catching up. */
+export type ListenerHintReason = OpenCodeInboxHint['reason'];
+
+/**
+ * `notified`: this binding generation's live listener received the hint.
+ * `unavailable`: no live listener accepted it. The durable batch is untouched and is
+ * caught up when a listener next starts.
+ */
+export type ListenerNotification = 'notified' | 'unavailable';
+
 export interface Inbox {
   enqueue(delivery: InboxDelivery): Promise<'appended' | 'duplicate'>;
   acquireListener(): Promise<Readonly<{ release(): Promise<void> }>>;
@@ -60,8 +84,26 @@ export interface Inbox {
 }
 
 export interface BatchInbox extends Inbox {
-  acquireListener(): Promise<InboxConsumer>;
+  acquireListener(): Promise<WakeableInboxConsumer>;
+  /** Wakes only this binding generation's listener; the socket path never leaves the inbox. */
+  notifyListener(reason: ListenerHintReason): Promise<ListenerNotification>;
 }
+
+/**
+ * A content-free acknowledgement of one outstanding batch: the held binding and the
+ * release IDs of that batch's committed prefix, in order. It never carries the token.
+ */
+export type BatchAcknowledgement = Readonly<{
+  bindingId: BindingId;
+  generation: number;
+  releaseIds: readonly string[];
+}>;
+
+/**
+ * Consumer hook for the batch-token acknowledgement. It must durably record the
+ * acknowledgement, or throw; the cursor advances only after it resolves.
+ */
+export type BatchAcknowledgementRecorder = (acknowledgement: BatchAcknowledgement) => Promise<void>;
 
 export type OpenInboxOptions = Readonly<{
   stateDirectory: string;
@@ -69,6 +111,7 @@ export type OpenInboxOptions = Readonly<{
   generation: number;
   maxPayloadBytes: number;
   maxSelectionEvents: number;
+  recordAcknowledgement?: BatchAcknowledgementRecorder;
 }>;
 
 type ValidatedOptions = Omit<OpenInboxOptions, 'bindingId'> & Readonly<{ bindingId: BindingId }>;
@@ -160,28 +203,59 @@ class FileInbox implements BatchInbox {
     });
   }
 
-  async acquireListener(): Promise<InboxConsumer> {
+  async acquireListener(): Promise<WakeableInboxConsumer> {
     const lock = await acquireListenerLock(this.#listenerLockPath);
-    let server: net.Server | null = null;
+    // Starting is itself a catch-up wake: a release may have become durable while no
+    // listener ran, or its hint may have been lost between append and notification.
+    let pending = true;
+    let released = false;
+    let waiter: Readonly<{ resolve(): void; reject(error: Error): void }> | null = null;
+    const wake = () => {
+      if (released) return;
+      if (waiter === null) {
+        pending = true;
+        return;
+      }
+      const current = waiter;
+      waiter = null;
+      current.resolve();
+    };
+    let server: ListenerSocket | null = null;
     try {
-      server = await listen(this.#socketPath);
+      server = await listen(this.#socketPath, this.#ownsHint, wake);
       if (server === null) {
         if (await socketIsLive(this.#socketPath)) throw new CliError('listener_busy');
         await removeStaleSocket(this.#socketPath);
-        server = await listen(this.#socketPath);
+        server = await listen(this.#socketPath, this.#ownsHint, wake);
         if (server === null) throw new CliError('listener_busy');
       }
     } catch (error) {
       await lock.release();
       throw error;
     }
-    let released = false;
     return {
       readBatch: input => this.#readBatch(input, () => !released),
+      nextWake: () => {
+        if (released) return Promise.reject(new CliError('listener_busy'));
+        if (waiter !== null) return Promise.reject(new CliError('invalid_input'));
+        if (pending) {
+          pending = false;
+          return Promise.resolve();
+        }
+        return new Promise<void>((resolve, reject) => {
+          waiter = { resolve, reject };
+        });
+      },
       release: async () => {
         if (released) return;
         released = true;
-        await new Promise<void>(resolve => server!.close(() => resolve()));
+        pending = false;
+        if (waiter !== null) {
+          const current = waiter;
+          waiter = null;
+          current.reject(new CliError('listener_busy'));
+        }
+        await server!.close();
         let failed = false;
         try {
           await fsp.unlink(this.#socketPath);
@@ -197,6 +271,18 @@ class FileInbox implements BatchInbox {
       },
     };
   }
+
+  async notifyListener(reason: ListenerHintReason): Promise<ListenerNotification> {
+    const { bindingId, generation } = this.#options;
+    return notifySocket(
+      this.#socketPath,
+      encodeOpenCodeInboxHint({ v: 1, kind: 'khala.inbox.hint', bindingId, generation, reason }),
+    );
+  }
+
+  // Only a hint for exactly this binding generation wakes its listener.
+  readonly #ownsHint = (hint: OpenCodeInboxHint): boolean =>
+    hint.bindingId === this.#options.bindingId && hint.generation === this.#options.generation;
 
   async readNext(): Promise<InboxItem | null> {
     const cursor = await readCursor(this.#cursorPath);
@@ -222,6 +308,10 @@ class FileInbox implements BatchInbox {
         }
       }
       if (outstanding !== null && input.acknowledgeToken === outstanding.state.token) {
+        // The receipt commits before the cursor moves. If recording fails the cursor
+        // stays put and the same batch replays; a replayed acknowledgement returns the
+        // receipts already recorded, so a crash between the two stores loses nothing.
+        await this.#recordAcknowledgement(outstanding.batch);
         await writeCursorAtomic(this.#cursorPath, this.#bindingDirectory, {
           v: 1, offset: outstanding.state.endOffset, releaseId: outstanding.state.releaseId,
         });
@@ -270,6 +360,21 @@ class FileInbox implements BatchInbox {
     });
   }
 
+  async #recordAcknowledgement(batch: InboxBatch): Promise<void> {
+    const record = this.#options.recordAcknowledgement;
+    if (record === undefined) return;
+    try {
+      await record({
+        bindingId: this.#options.bindingId,
+        generation: this.#options.generation,
+        releaseIds: batch.items.map(item => item.record.releaseId),
+      });
+    } catch (error) {
+      if (error instanceof CliError) throw error;
+      throw new CliError('storage_failed');
+    }
+  }
+
   async acknowledge(item: InboxItem): Promise<void> {
     await this.#serial(async () => {
       if (await readBatchState(this.#batchPath, this.#inboxPath, this.#options) !== null) throw new CliError('invalid_input');
@@ -305,7 +410,10 @@ function validateOptions(options: OpenInboxOptions): ValidatedOptions {
     || !Number.isSafeInteger(options.maxPayloadBytes) || options.maxPayloadBytes < 1
     || options.maxPayloadBytes > 64 * 1024 * 1024
     || !Number.isSafeInteger(options.maxSelectionEvents) || options.maxSelectionEvents < 1
-    || options.maxSelectionEvents > 10_000) throw new CliError('invalid_input');
+    || options.maxSelectionEvents > 10_000
+    || !(options.recordAcknowledgement === undefined || typeof options.recordAcknowledgement === 'function')) {
+    throw new CliError('invalid_input');
+  }
   return { ...options, bindingId: options.bindingId as BindingId };
 }
 
@@ -789,8 +897,59 @@ async function listenerSocketPath(bindingDirectory: string): Promise<string> {
   return path.join(root, `${createHash('sha256').update(bindingDirectory).digest('hex').slice(0, 32)}.sock`);
 }
 
-async function listen(socketPath: string): Promise<net.Server | null> {
-  const server = net.createServer(socket => socket.end());
+/**
+ * The hint protocol: connect, write one `\n`-terminated hint line in the
+ * `encodeOpenCodeInboxHint` wire format, half-close, then wait for the listener's EOF.
+ * The listener never writes. It wakes only for a valid hint naming its own binding
+ * generation, so `notified` means a live listener received the line, not that it woke.
+ */
+async function notifySocket(socketPath: string, line: string): Promise<ListenerNotification> {
+  return new Promise(resolve => {
+    const socket = net.createConnection({ path: socketPath, allowHalfOpen: true });
+    const settle = (outcome: ListenerNotification) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(outcome);
+    };
+    const timer = setTimeout(() => settle('unavailable'), NOTIFY_DEADLINE_MS);
+    socket.once('connect', () => socket.end(line));
+    socket.on('data', () => settle('unavailable'));
+    socket.once('end', () => settle('notified'));
+    socket.once('error', () => settle('unavailable'));
+    socket.once('close', () => settle('unavailable'));
+  });
+}
+
+type ListenerSocket = Readonly<{ close(): Promise<void> }>;
+
+async function listen(
+  socketPath: string,
+  owns: (hint: OpenCodeInboxHint) => boolean,
+  onWake: () => void,
+): Promise<ListenerSocket | null> {
+  const connections = new Set<net.Socket>();
+  const server = net.createServer({ allowHalfOpen: true }, socket => {
+    connections.add(socket);
+    socket.once('close', () => connections.delete(socket));
+    socket.on('error', () => undefined);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    // Anything but one valid hint line for this binding generation wakes nothing.
+    socket.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > OPENCODE_HINT_MAX_BYTES) socket.destroy();
+      else chunks.push(chunk);
+    });
+    socket.once('end', () => {
+      const hint = readHintLine(Buffer.concat(chunks));
+      if (hint === null || !owns(hint)) {
+        socket.destroy();
+        return;
+      }
+      onWake();
+      socket.end();
+    });
+  });
   return new Promise((resolve, reject) => {
     const onError = (error: NodeJS.ErrnoException) => {
       server.removeAllListeners();
@@ -801,9 +960,28 @@ async function listen(socketPath: string): Promise<net.Server | null> {
     server.listen(socketPath, () => {
       server.off('error', onError);
       server.on('error', () => undefined);
-      resolve(server);
+      resolve({
+        // A peer that never half-closes must not hold the release open.
+        close: () => new Promise<void>(done => {
+          server.close(() => done());
+          for (const socket of connections) socket.destroy();
+        }),
+      });
     });
   });
+}
+
+/** Exactly one `\n`-terminated, valid UTF-8 hint line, or nothing. */
+function readHintLine(bytes: Buffer): OpenCodeInboxHint | null {
+  let line: string;
+  try {
+    line = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  if (!line.endsWith('\n')) return null;
+  const hint = decodeOpenCodeInboxHint(line);
+  return hint.ok ? hint.value : null;
 }
 
 async function socketIsLive(socketPath: string): Promise<boolean> {

@@ -6,6 +6,10 @@ delivery, and tell requested intent apart from connector-confirmed effective
 state. It is a browser-facing display and request surface over the KHA-106
 delivery contracts — it owns no policy authority itself.
 
+A separate **Listening mode** section shows and changes one binding's
+requested and effective listening mode (`steer`, `sync`, `async`). See
+[Listening mode](#listening-mode) below.
+
 ## Product gate: G-AUTOMATION is not resolved
 
 KHA-126's plan stops short of full launch readiness: `auto` mode, delivery
@@ -56,6 +60,10 @@ product owner resolves P02/P08/G-AUTOMATION.
   (135) attaches `OwnerAuthority` under the current human session outside the
   browser; this port never accepts or exports `OwnerAuthority`, so it cannot
   be used as a general agent tool.
+- `submitListeningMode(command)` — the same versioned `ListeningModeCommand`
+  the bound agent uses; composition attaches `OwnerAuthority`.
+- `submitRouteGrant(command)` — owner-only experimental-route and hard-cancel
+  grant/revoke commands. The panel re-reads the snapshot after every result.
 
 `PolicyAck` (KHA-106) confirms a command's version/connector outcome only —
 it carries no `mode`/`paused` fields. `controller.ts` therefore never derives
@@ -163,7 +171,60 @@ controller is injected through the (test-only) `controller` prop, the panel
 never builds or disposes one of its own — an injected controller is owned by
 its caller.
 
+## Listening mode
+
+Contract: `docs/product/internal-mode/listening-modes.md` ("Honest UI" and
+ticket 5, `listening-mode-ui`). This section is separate from the pause/resume
+policy control and never uses its owner-only policy port.
+
+- **Data.** `AgentControlsSnapshot.listening` carries the store's
+  `ListeningModeView` for the exact binding generation, plus who wrote the
+  current version (`view.lastChangedBy`, recorded by the store from the verified
+  authority; `lastChange` is only a fallback for `unknown`, decision 42), sibling binding IDs, hard-cancel
+  support for the `steer` route, and whether idle delivery is proven. It is
+  `null` until the store answers, and the section then offers no control.
+- **Label.** Every listening surface repeats `<CLI name> <version> ·
+  <short-id>`. The short ID is a digest of the immutable binding ID that
+  widens from four characters until no sibling shares it.
+- **Primary evidence only.** Only `view.support` (the primary
+  interactive-session projection) can make a mode selectable or green. The
+  top-level `HarnessCapabilities.evidenceRef` (for example the hosted Codex
+  app-server proof) appears only inside a "Secondary evidence" disclosure.
+- **Support states.** `proven` is selectable. `experimental` is disabled until
+  the owner confirms a route-specific grant beside it. `unsupported`,
+  `unknown`, and `blocked_without_wrapper` are disabled with their exact
+  reasons. The panel never offers a wrapper action. `async` also needs
+  `batch_token_next_call` acknowledgement.
+- **Evidence links.** `AgentControlsConfig.evidenceRegistry` maps
+  identifier-like references to same-origin paths. Any other reference,
+  including a URL-shaped one, is plain text.
+- **Stopped or disconnected session.** The label and requested mode stay,
+  effective shows `none`, every mode and grant action is disabled, and no badge
+  is green. The copy directs the owner to resume or rejoin the CLI.
+- **Owner mutation.** Choosing a radio only sets a local draft. "Apply
+  listening mode" sends `ListeningModeCommand` with the displayed generation
+  and version. On a conflict the controller re-reads the snapshot, keeps the
+  choice as an unsubmitted draft, announces the change, and moves focus back to
+  the selector. It never retries on its own.
+- **Grants.** Experimental-route and hard-cancel grants use separate
+  `OwnerRouteGrantCommand` kinds and separate confirmations. Enabling one never
+  enables the other, and revoking one never touches the other. A grant whose
+  route, harness version, or evidence revision no longer matches is shown as
+  expired, names what changed, and needs a fresh confirmation against the
+  updated evidence. An open confirmation closes if the evidence changes under
+  it.
+- **Honest claims.** Until idle delivery is proven the section says "Idle
+  agents receive messages only at their next turn." A failed or unknown
+  delivery receipt adds a non-green problem line and never changes the
+  selector.
+
 ## Accessibility
+
+The listening section uses a `fieldset`/`legend` radio group, so arrow keys
+move between enabled modes. Each radio's `aria-describedby` points at its
+support reason. The listening status region (`role="status"`) is always
+mounted and announces requested/effective divergence, conflicts, and grant
+results. A grant confirmation takes focus when it opens.
 
 The requested-status region (`role="status"`) stays mounted at all times,
 even before any request exists, so a later confirmation is actually announced
@@ -203,6 +264,20 @@ reason paragraph so its id is exposed by name, not just adjacent text.
   request → pending → effective round trip verified through the permanently
   mounted `role="status"` live region, with focus retention, and a structural
   check that simulated incoming message text never reaches a policy control.
+  A second test drives the listening section: arrow-key selection, a stale
+  owner write that conflicts, focus returning to the kept choice with no
+  automatic retry, two same-CLI sessions with distinct labels, experimental and
+  hard-cancel grants revoked independently, and no green badge after a
+  disconnect.
+- `controller.listening.test.ts` — the listening projection and commands
+  against a fake port with the store's CAS and grant semantics (unit),
+  including the three wrong-implementation cases: a hosted Codex proof never
+  makes a TUI mode selectable, a disconnected session shows effective `none`,
+  and revoking an experimental route never revokes hard cancel.
+- `AgentControlsPanel.listening.test.tsx` — static markup for the listening
+  section: green only for a proven route on an active session, labels on every
+  surface, allowlisted evidence links, blocked-without-wrapper copy with no
+  wrapper action, expired consent, and independent revoke actions.
 
 This package has no `jsdom`/testing-library dependency, so interactive and
 focus-sensitive behavior is proven in the browser test rather than a

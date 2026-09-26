@@ -5,6 +5,7 @@ import type {
   DeliveryLimits,
   HarnessCapabilities,
   ListeningModeCommand,
+  ParticipantId,
 } from '@khala/contracts/delivery/index';
 import { describe, expect, it } from 'vitest';
 import { listeningModeStoreConformance } from '../../test/fixtures/listening-mode/conformance';
@@ -91,6 +92,7 @@ const storeWrite = (
     requested: 'steer',
     experimentalGrants: state.listeningMode.experimentalGrants,
     hardCancelGrants: state.listeningMode.hardCancelGrants,
+    lastChangedBy: { kind: 'agent', participantId: 'agent-1' as ParticipantId },
   },
 });
 

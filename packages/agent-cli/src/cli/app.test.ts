@@ -253,7 +253,8 @@ describe('runCli', () => {
       events: [], payloadDigest: `sha256:${'0'.repeat(64)}`, payloadBase64: 'cmVsZWFzZWQ=', receivedAt: '2026-09-19T12:00:00Z' },
       payload: new TextEncoder().encode('released'), nextOffset: 10 };
     let first = true;
-    const inbox: BatchInbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async readBatch() { return null; }, async release() {} }; },
+    const inbox: BatchInbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async readBatch() { return null; }, async nextWake() {}, async release() {} }; },
+      async notifyListener() { return 'unavailable' as const; },
       async readNext() { if (first) { first = false; return item; } return null; },
       async acknowledge() { acknowledged = true; },
       async status() { return { bindingId: BINDING.bindingId, generation: 0, cursor: { v: 1 as const, offset: 0, releaseId: null } }; } };
@@ -363,7 +364,7 @@ describe('runCli', () => {
     const io = streams(`${JSON.stringify(mcpReadCall(1))}\n`);
     const readBatch = vi.fn(async () => mcpBatch('batch-token', 'release-1', '["released"]'));
     const release = vi.fn(async () => undefined);
-    const acquireListener = vi.fn<BatchInbox['acquireListener']>()
+    const acquireListener = vi.fn<() => Promise<InboxConsumer>>()
       .mockRejectedValueOnce(new CliError('listener_busy'))
       .mockResolvedValue({ readBatch, release });
 
@@ -403,9 +404,11 @@ describe('runCli', () => {
             const consumer = await durable.acquireListener();
             return {
               readBatch: input => consumer.readBatch(input),
+              nextWake: () => consumer.nextWake(),
               release: async () => { released = true; await consumer.release(); },
             };
           },
+          notifyListener: reason => durable.notifyListener(reason),
           readNext: () => durable.readNext(),
           acknowledge: item => durable.acknowledge(item),
           status: () => durable.status(),
@@ -606,10 +609,11 @@ function replacementBinding(overrides: Record<string, unknown> = { bindingId: 'b
   return decoded.value;
 }
 
-function fakeBatchInbox(acquireListener: BatchInbox['acquireListener']): BatchInbox {
+function fakeBatchInbox(acquireListener: () => Promise<InboxConsumer>): BatchInbox {
   return {
     async enqueue() { return 'appended'; },
-    acquireListener,
+    async acquireListener() { return { ...await acquireListener(), async nextWake() {} }; },
+    async notifyListener() { return 'unavailable'; },
     async readNext() { return null; },
     async acknowledge() {},
     async status() {

@@ -27,22 +27,26 @@ export const BUSY_BEHAVIORS = ['queue', 'steer', 'reject', 'unknown'] as const;
  * did not start through the harness CLI (KHA-146 Codex evidence).
  * `agent_installed_listener` is a listener the agent starts inside its session trust
  * boundary; the capability's support and evidence fields still determine whether a
- * particular adapter may claim it. `native_hooks` pulls into a session Khala did not
- * start through the harness's own user-trusted lifecycle hooks (E09 interactive Codex
- * evidence); the per-mode support says which boundaries it owns.
+ * particular adapter may claim it. `opencode_plugin` is the `@aiur/khala` plugin running
+ * in-process in the person's OpenCode TUI; its modes count only for the exact evidence
+ * keys recorded in `./opencode`. `native_hooks` pulls into a session Khala did not start
+ * through the harness's own user-trusted lifecycle hooks (E09 interactive Codex evidence);
+ * the per-mode support says which boundaries it owns.
  */
 export const EXISTING_SESSION_SUPPORT = [
-  'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener', 'native_hooks',
+  'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener', 'opencode_plugin',
+  'native_hooks',
 ] as const;
 
 /**
  * `khala_hosted_idle`: an idle session in a Khala-started host begins a turn for a
  * queued release without a human prompt. Native queues and agent-installed listeners
- * can accept a notification without a human prompt. Busy handling is described by
- * `busy`; acceptance does not by itself prove immediate model consumption.
+ * can accept a notification without a human prompt; so can the OpenCode plugin through
+ * its content-free notifier hint. Busy handling is described by `busy`; acceptance does
+ * not by itself prove immediate model consumption.
  */
 export const IMMEDIATE_NOTIFICATION_SUPPORT = [
-  'unknown', 'unsupported', 'khala_hosted_idle', 'native_cli_queue', 'agent_installed_listener',
+  'unknown', 'unsupported', 'khala_hosted_idle', 'native_cli_queue', 'agent_installed_listener', 'opencode_plugin',
 ] as const;
 
 /**
