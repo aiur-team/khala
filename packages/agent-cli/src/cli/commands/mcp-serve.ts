@@ -7,6 +7,7 @@ import {
 import { runMcpServer } from '../../mcp/server.js';
 import { callScopedConsumer } from '../call-consumer.js';
 import { composeChannelTools } from '../../mcp/channels/tools.js';
+import { PairingService } from '../pair.js';
 import { CliError } from '../errors.js';
 import { publicStatus } from '../runtime.js';
 import { SendService } from '../send.js';
@@ -43,6 +44,7 @@ export const mcpServeCommand: CliCommand = {
       read: new ReadOperation({ heldBinding, consumer, currentBinding }),
       listeningMode: new ListeningModeOperation({ application: deps.listeningMode ?? null }),
       channels: composeChannelTools(deps.client),
+      pair: new PairingService(deps.client),
       postprocessResult: input => postprocessMcpResult({
         ...input,
         consumer,
