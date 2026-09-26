@@ -1,5 +1,7 @@
+import type { Readable, Writable } from 'node:stream';
 import type { BindingId, EventRef, HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
 import type { InternalRuntime } from '@khala/contracts/internal/command';
+import type { BatchInbox } from './inbox.js';
 
 export const CLI_ERROR_CODES = [
   'invalid_arguments', 'invalid_link', 'invalid_input', 'not_connected', 'binding_not_held',
@@ -61,3 +63,15 @@ export type InboxRecord = Readonly<{
 export type InboxCursor = Readonly<{ v: 1; offset: number; releaseId: string | null }>;
 /** Lazily loads the application-owned `khala internal` runtime; called only for that command. */
 export type InternalRuntimeLoader = () => Promise<InternalRuntime>;
+
+export type CliDependencies = Readonly<{
+  client: AgentClientPort;
+  inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
+  stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
+  internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
+}>;
+/** One CLI subcommand. Adding a command is one file exporting this plus one line in `registry.ts`. */
+export type CliCommand = Readonly<{
+  name: string;
+  run(args: readonly string[], deps: CliDependencies): Promise<number>;
+}>;

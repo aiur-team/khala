@@ -2,17 +2,20 @@ import {
   type AgentBindingAuthority,
   type HarnessCapabilities,
   type ListeningModeCommand,
+  type ListeningModeActor,
   type ListeningModeControl,
   type ListeningModeResult,
   type ListeningModeView,
   type ModeSupportMap,
   type OwnerAuthority,
   type OwnerRouteGrantCommand,
+  type ParticipantId,
   type RouteGrant,
   type SessionBinding,
   initialListeningMode,
   routeGrantMatches,
   unknownModeSupportMap,
+  UNKNOWN_LISTENING_MODE_ACTOR,
 } from '@khala/contracts/delivery/index';
 
 export type ListeningModeStoreKey = Pick<ListeningModeControl, 'bindingId' | 'generation'>;
@@ -24,7 +27,7 @@ export type ListeningModeStoreRead =
 
 export type ListeningModeStoreNext = Pick<
   ListeningModeControl,
-  'requested' | 'experimentalGrants' | 'hardCancelGrants'
+  'requested' | 'experimentalGrants' | 'hardCancelGrants' | 'lastChangedBy'
 >;
 
 export type ListeningModeStoreWrite = Readonly<{
@@ -88,7 +91,15 @@ function nextOf(control: ListeningModeControl): ListeningModeStoreNext {
     requested: control.requested,
     experimentalGrants: control.experimentalGrants,
     hardCancelGrants: control.hardCancelGrants,
+    lastChangedBy: control.lastChangedBy,
   };
+}
+
+/** The actor is derived from verified authority only; commands carry no actor field. */
+function actorOf(authority: ListeningModeAuthority, binding: SessionBinding): ListeningModeActor {
+  return isAgentAuthority(authority)
+    ? { kind: 'agent', participantId: binding.agentParticipantId }
+    : { kind: 'owner', participantId: authority.ownerId as string as ParticipantId };
 }
 
 function modesOf(capabilities: HarnessCapabilities | null): ModeSupportMap {
@@ -106,6 +117,7 @@ export function initialListeningModeControl(
     version: 1,
     experimentalGrants: [],
     hardCancelGrants: [],
+    lastChangedBy: UNKNOWN_LISTENING_MODE_ACTOR,
   };
 }
 
@@ -304,7 +316,11 @@ export function createListeningModeService(store: ListeningModeStore) {
       expectedVersion: command.expectedVersion,
       operationId: command.commandId,
       operationFingerprint: listeningModeCommandFingerprint(command),
-      next: { ...nextOf(current.control), requested: command.requested },
+      next: {
+        ...nextOf(current.control),
+        requested: command.requested,
+        lastChangedBy: actorOf(authority, context.binding),
+      },
     });
     if (result.kind === 'applied') return commandResult(command, 'applied', listeningModeView(result.control, capabilities));
     if (result.kind === 'conflict') {
@@ -360,6 +376,7 @@ export function createListeningModeService(store: ListeningModeStore) {
     const next = {
       ...nextOf(current.control),
       [field]: grants,
+      lastChangedBy: actorOf(authority, context.binding),
     } as ListeningModeStoreNext;
     const result = await store.compareAndSet({
       key: keyFor(context.binding),

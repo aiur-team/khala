@@ -38,6 +38,7 @@ const initial = (): ListeningModeControl => ({
   version: 1,
   experimentalGrants: [],
   hardCancelGrants: [],
+  lastChangedBy: { kind: 'unknown' },
 });
 
 function fresh() {
@@ -76,6 +77,7 @@ function write(
       requested,
       experimentalGrants: [],
       hardCancelGrants: [],
+      lastChangedBy: { kind: 'unknown' },
       ...next,
     },
   };
@@ -173,9 +175,33 @@ describe('sqlite listening-mode repository', () => {
       operation: db.prepare('SELECT * FROM mode_operations WHERE operation_id = ?').get('grants') as Record<string, unknown>,
     }));
     expect(Object.keys(persisted.control).sort()).toEqual([
-      'binding_id', 'experimental_grants', 'generation', 'hard_cancel_grants', 'requested', 'version',
+      'binding_id', 'experimental_grants', 'generation', 'hard_cancel_grants', 'last_changed_by', 'requested', 'version',
     ]);
     expect(JSON.stringify(persisted)).not.toMatch(/effective|support|capabilit/i);
+  });
+
+  it('reads pre-actor rows and journal snapshots as unknown and then records the next actor', async () => {
+    const fixture = fresh();
+    const key = { bindingId: binding.bindingId, generation: binding.generation };
+    expect(fixture.repository.initialize(initial())).toBe(true);
+    const legacy = { ...initial(), version: 2 } as Record<string, unknown>;
+    delete legacy.lastChangedBy;
+    fixture.handle.transaction(db => {
+      db.prepare('UPDATE mode_controls SET last_changed_by = NULL, version = 2').run();
+      db.prepare(`INSERT INTO mode_operations (binding_id, generation, operation_id, fingerprint, result_kind, result_control)
+        VALUES (?, ?, 'legacy-op', 'fp', 'applied', ?)`).run(key.bindingId, key.generation, JSON.stringify(legacy));
+    });
+    await expect(fixture.store.read(key)).resolves.toMatchObject({
+      kind: 'record', control: { version: 2, lastChangedBy: { kind: 'unknown' } },
+    });
+    await expect(fixture.store.compareAndSet({
+      ...write('legacy-op', 1, 'sync'), operationFingerprint: 'fp',
+    })).resolves.toMatchObject({ kind: 'applied', control: { lastChangedBy: { kind: 'unknown' } } });
+
+    const actor = { kind: 'agent' as const, participantId: binding.agentParticipantId };
+    await expect(fixture.store.compareAndSet(write('actor-op', 2, 'async', { lastChangedBy: actor })))
+      .resolves.toMatchObject({ kind: 'applied', control: { version: 3, lastChangedBy: actor } });
+    await expect(fixture.store.read(key)).resolves.toMatchObject({ control: { lastChangedBy: actor } });
   });
 
   it('derives different effective views from unchanged durable intent', async () => {

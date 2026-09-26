@@ -19,6 +19,7 @@
     "./cli/*": { "khala-source": "./src/cli/*.ts" },
     "./composition/*": { "khala-source": "./src/composition/*.ts" },
     "./mcp/*": { "khala-source": "./src/mcp/*.ts" },
+    "./setup/*": { "khala-source": "./src/setup/*.ts" },
     "./opencode": { "khala-source": "./src/opencode/index.ts" },
     "./fixtures/*": null
   },

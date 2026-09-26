@@ -147,6 +147,7 @@ const conformanceInitial = (): ListeningModeControl => ({
   version: 1,
   experimentalGrants: [],
   hardCancelGrants: [],
+  lastChangedBy: { kind: 'unknown' },
 });
 
 listeningModeStoreConformance('memory', () => {
@@ -199,6 +200,32 @@ describe('listening-mode service', () => {
       )).resolves.toMatchObject({ outcome: 'applied', requested: 'async', effective, reason: effectiveReason });
     },
   );
+
+  it('records the actor from the verified authority and ignores a claimed actor in input', async () => {
+    const store = memoryStore();
+    const service = createListeningModeService(store);
+    const context = { binding: binding(), status: 'active' as const };
+    const key = { bindingId: binding().bindingId, generation: 2 };
+
+    const initial = await service.read(owner(), context, capabilities());
+    expect(initial).toMatchObject({ ok: true, view: { lastChangedBy: { kind: 'unknown' } } });
+
+    // Wrong-implementation guard: an agent whose input claims owner must still record agent.
+    const forged = { ...modeCommand({ requested: 'async' }), lastChangedBy: { kind: 'owner', participantId: 'owner-1' } };
+    await expect(service.set(agent(), context, capabilities(), forged as ListeningModeCommand))
+      .resolves.toMatchObject({ outcome: 'applied', version: 2 });
+    await expect(store.read(key)).resolves.toMatchObject({
+      control: { lastChangedBy: { kind: 'agent', participantId: 'agent-1' } },
+    });
+
+    await expect(service.set(owner(), context, capabilities(), modeCommand({
+      commandId: 'mode-command-2' as CommandId, expectedVersion: 2, requested: 'sync',
+    }))).resolves.toMatchObject({ outcome: 'applied', version: 3 });
+    await expect(service.read(agent(), context, capabilities())).resolves.toMatchObject({
+      ok: true,
+      view: { lastChangedBy: { kind: 'owner', participantId: 'owner-1' } },
+    });
+  });
 
   it('rejects stale, cross-binding and revoked agent authority before store access', async () => {
     let reads = 0;

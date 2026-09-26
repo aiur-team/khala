@@ -18,6 +18,12 @@ export type HarnessCandidate = Readonly<{
   harness: HarnessPort;
   /** The generic installed-listener route, considered only after native candidates. */
   fallback?: boolean;
+  /**
+   * One content-free wake after this route is selected at startup or reconnect, so
+   * a listener that stayed idle re-reads its durable batch. It carries no release
+   * and never retries or replaces delivery.
+   */
+  catchUp?: (binding: SessionBinding) => Promise<void>;
 }>;
 
 export interface RuntimeHarnessSelection extends RuntimeHarnessPort {
@@ -86,6 +92,7 @@ export function createRuntimeHarnessSelection(
       };
     }
     selected = candidate.harness;
+    await candidate.catchUp?.(binding).catch(() => undefined);
     return {
       state: 'ready',
       capabilities: decoded.value,
