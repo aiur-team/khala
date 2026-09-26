@@ -286,8 +286,61 @@ describe('internal protocol acceptance', () => {
     expect(w.scenario.evidence().filter(record => record.kind === 'channel.sent')).toHaveLength(2);
   });
 
-  // Blocked by #390: a resumed launcher does not restore authority to agents granted
-  // before it closed, so a bound agent cannot re-read or acknowledge across a server
-  // restart. Enable once agents keep their binding across `khala internal --resume`.
-  it.todo('re-reads and acknowledges a durable release across a launcher restart over the same SQLite files');
+  it('re-reads and acknowledges a durable release across a launcher restart over the same SQLite files', async () => {
+    const w = await world();
+    const launcher = await launch(w);
+    const human = await humanSession(launcher.report);
+    const channelUrl = await grantBoth(w, human);
+    const bindings = [(await w.a.status()).binding, (await w.b.status()).binding];
+    const capabilities = [grantedCapability(w.a), grantedCapability(w.b)];
+
+    // H1 is offered to A, which ends before acknowledging it; then the launcher closes.
+    const h1 = await humanSays(human, 'H1 before the restart', 'txn-human-0101');
+    const offered = batch(await w.a.read());
+    expect(offered.events.map(event => event.eventId)).toEqual([h1]);
+    expect(await launcher.close()).toBe(0);
+
+    // The same channel resumes on the same port over the same SQLite files.
+    const resumed = await launch(w, launcher.report.channelId);
+    expect(resumed.report.origin).toBe(launcher.report.origin);
+    const again = await humanSession(resumed.report);
+    for (const agent of [w.a, w.b]) {
+      agent.relaunched(w.launcherProfile);
+      // Launch-scoped authority ended with the launcher: nothing is held until the agent joins again.
+      expect((await agent.status()).connected).toBe(false);
+      expect((await agent.read()).kind).toBe('refused');
+    }
+    for (const capability of capabilities) expect((await releasesFor(again, capability)).status).toBe(401);
+
+    // Joining again resumes the same binding with fresh authority; no owner prompt is filed.
+    for (const [index, agent] of [w.a, w.b].entries()) {
+      expect(await agent.join(channelUrl)).toBe('connected');
+      const status = await agent.status();
+      expect(status.connected).toBe(true);
+      expect(status.binding).toEqual(bindings[index]);
+      expect(grantedCapability(agent)).not.toBe(capabilities[index]);
+    }
+    const inbox = await again.call('/api/human/channel-requests');
+    expect((inbox.json as { requests: { outcome: string }[] }).requests.filter(request => request.outcome === 'pending_owner')).toEqual([]);
+
+    // A re-reads H1 exactly as offered, acknowledges it through the batch token, and it is never offered again.
+    const reoffered = batch(await w.a.read());
+    expect(reoffered.events.map(event => event.eventId)).toEqual([h1]);
+    expect(await w.a.read(reoffered.token)).toEqual({ kind: 'empty' });
+    expect(await w.a.read()).toEqual({ kind: 'empty' });
+    expect(w.a.deliveries().get(offered.events[0]!.releaseId)).toBe(2);
+
+    // Delivery continues after the restart, and the bound agents can still send.
+    const h2 = await humanSays(again, 'H2 after the restart', 'txn-human-0102');
+    expect(await receive(w.a, [h2])).toHaveLength(1);
+    expect(await receive(w.b, [h1, h2])).toHaveLength(2);
+    const sent = await w.b.send('E3 after the restart');
+    if (sent.kind !== 'accepted') throw new Error(`B could not send: ${JSON.stringify(sent)}`);
+    expect(await receive(w.a, [sent.eventId])).toHaveLength(1);
+    assertUntouched(w);
+
+    expect(await resumed.close()).toBe(0);
+    open = null;
+    assertCleanClose(await w.scenario.close());
+  });
 });
