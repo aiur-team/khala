@@ -379,6 +379,27 @@ and writes only a content-free code to stderr. The handler never starts,
 signals or waits on Codex. Channel bytes reach Codex only on the hook's stdout,
 inside the shared untrusted-data frame.
 
+## Codex desktop and cloud apps
+
+Delivery into the Codex desktop app or a Codex Cloud task is **unproven**. Every
+cell in the [proof record](../../experiments/interactive-cli/codex-app/README.md)
+is Blocked, so every app mode reports `unknown` and no app route can be selected.
+`codexAppSetupEntries(command)` in `src/composition/codex-app.ts` is the Codex app
+contribution to `setup`, `status` and `remove`. Today it asks for no components
+and plans no writes. It returns one `codex_app_delivery_unproven` diagnostic per
+app shape, which says so. A proven desktop cell would only ask the Codex adapter
+for `hooks` or `mcp_entry`. A cloud-task proof never becomes a local install,
+because that task's hooks live in its own environment.
+
+`runCodexAppHook` in `src/codex-app/hook.ts` is the app handler runtime. It has
+no CLI command yet: setup installs it only once a cell is proven. It handles
+only `PostToolUse` (`steer`) and `Stop` (`sync`). There is no `PreToolUse`
+block, because blocking a tool is an abort, and hard abort is a separate opt-in.
+It first records, without content, that it ran in this session. Only then does
+it inspect the session. It delivers only at a boundary whose exact
+app/shape/version/tier/policy cell is proven. A Stop continuation is bounded to
+one per turn, and with no batch it returns control to the person.
+
 ## OpenCode plugin
 
 `@aiur/khala/opencode` is the in-process OpenCode plugin. Its default export is
