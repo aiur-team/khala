@@ -865,7 +865,9 @@ describe('adapter capability', () => {
     const first = (await h.bootstrap()).body;
     const admitted = h.admits.length;
     const { binding } = first;
-    const input = { bindingId: binding.bindingId, ownerId: binding.ownerId, deviceId: binding.deviceId, generation: binding.generation, jkt: h.key.jkt };
+    const input = {
+      bindingId: binding.bindingId, ownerId: binding.ownerId as OwnerId, deviceId: 'KHALADEV1', generation: binding.generation, jkt: h.key.jkt,
+    };
 
     const resumed = await h.handlers.capabilities.resumeAdapterCapability(input);
     expect(resumed).toMatchObject({ kind: 'resumed', binding });
