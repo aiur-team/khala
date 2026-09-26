@@ -4,7 +4,8 @@ Hosted side of agent-operated link bootstrap (KHA-114), following the trust path
 KHA-144 proved. Import `createAgentBootstrapHandlers` from `@khala/control/agent-bootstrap/handler`.
 It returns route registrations for both domains, plus the adapter capability checks. KHA-132
 composes `human`, KHA-133 composes `agent` and the adapter routes, and KHA-136 passes
-`capabilities.revokeAdapterCapability` to the revocation service.
+`capabilities.lookupBinding`, `capabilities.disableBinding` and `capabilities.revokeAdapterCapability` to
+the revocation service.
 
 | Route | Caller | Authority |
 |---|---|---|
@@ -53,10 +54,18 @@ The redeem response is `{ binding, adapter_capability: { token, token_type: 'DPo
   binding ID or losing revocation or current-capability state. Marker, locator or record mismatches fail
   closed. Marker-aware readers must be deployed everywhere before enabling migration writes; recovery after
   the first forwarding marker is roll-forward.
-- **Revocation.** A revoked binding is never revived. Re-bootstrapping at or below the revoked generation is
-  `409 binding_revoked`, before admission. Only the same participant, session and device at a later
-  generation gets a new binding ID with its own capability. Revoking one participant never changes another
-  participant's binding or capability in the same channel.
+- **Revocation.** A revoked binding is never revived. KHA-128 moves a binding at generation `g` to its
+  revoked generation `g + 1`, and that control-plane generation is authoritative. Re-bootstrapping at or
+  below `g` is `409 binding_revoked`, before admission. The same participant, session and device at
+  `g + 1` or later gets a new binding ID with its own capability, so a harness bumps its generation once
+  after a revocation. Revoking one participant never changes another participant's binding or capability
+  in the same channel.
+- **Revocation ports (KHA-136).** `capabilities.lookupBinding(bindingId)` returns the owner, device, status
+  (`active` or `revoked`) and authoritative generation (the revoked generation once revoked) for
+  `RevocationTargets.lookup` and trust policy's `BindingStatus`. A replaced binding is `absent`.
+  `capabilities.disableBinding` is the binding side of `RevocationControlPort.disable`: idempotent at the
+  revoked generation, `stale` otherwise. The messaging device key is not held here; the composition root
+  resolves it from the substrate.
 - **Adapter capability.** 256-bit, stored hashed with a one-hour lifetime and bound to the connector key,
   the binding ID and its generation. Its scope is exactly `publish_own`, `receive_released` and
   `ack_delivery`: nothing approves, releases or sets policy. `capabilities.authorize(request, action)`

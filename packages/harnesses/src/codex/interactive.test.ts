@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { decodeHarnessCapabilities } from '@khala/contracts/delivery/index';
+import { initialListeningModeControl, listeningModeView } from '../../../policy/src/listening-mode/store';
 import { limits } from './fakes';
+import { type CodexReceiptProof } from './receipt-conformance';
 import {
   CODEX_INTERACTIVE_EVIDENCE_REVISION, CODEX_INTERACTIVE_VERSIONS, interactiveCodexCapabilities,
 } from './interactive';
 
 describe('interactive Codex capabilities', () => {
   it.each(CODEX_INTERACTIVE_VERSIONS)('claims every mode for trusted hooks on proven %s', version => {
-    const capabilities = interactiveCodexCapabilities(version, limits, { state: 'trusted' });
+    const proof: CodexReceiptProof = { proven: true, route: 'hook', version };
+    const capabilities = interactiveCodexCapabilities(version, limits, { state: 'trusted' }, proof);
     expect(decodeHarnessCapabilities(capabilities)).toEqual({ ok: true, value: capabilities });
     expect(capabilities).toMatchObject({
       support: 'tested',
@@ -38,6 +41,43 @@ describe('interactive Codex capabilities', () => {
     }
     expect(interactiveCodexCapabilities('0.156.1', limits, { state: 'unknown', reason: 'Hooks are not installed.' })
       .modes.sync.reason).toMatch(/^Hook trust unknown:/);
+  });
+
+  it('delivers steer and sync but claims no acknowledgement or async without a conformance proof', () => {
+    const capabilities = interactiveCodexCapabilities('0.156.1', limits, { state: 'trusted' });
+    expect(decodeHarnessCapabilities(capabilities).ok).toBe(true);
+    expect(capabilities.support).toBe('tested');
+    expect(capabilities.modes.steer.status).toBe('proven');
+    expect(capabilities.modes.sync.status).toBe('proven');
+    expect(capabilities.modes.async.status).toBe('unknown');
+    expect(capabilities.acknowledgement).toBe('unknown');
+  });
+
+  it('never leaves async effective while acknowledgement is unknown', () => {
+    const control = {
+      ...initialListeningModeControl({ bindingId: 'b' as never, generation: 1 }, null), requested: 'async' as const,
+    };
+    const unproven = interactiveCodexCapabilities('0.156.1', limits, { state: 'trusted' });
+    expect(listeningModeView(control, unproven).effective).toBeNull();
+    const proven = interactiveCodexCapabilities('0.156.1', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.156.1' });
+    expect(listeningModeView(control, proven).effective).toBe('async');
+  });
+
+  it.each<[string, CodexReceiptProof]>([
+    ['another route', { proven: true, route: 'native_inbox', version: '0.156.1' }],
+    ['another version', { proven: true, route: 'hook', version: '0.154.0' }],
+    ['a failed proof', { proven: false, gaps: ['token_not_returned'] }],
+  ])('does not advertise acknowledgement from %s', (_name, proof) => {
+    expect(interactiveCodexCapabilities('0.156.1', limits, { state: 'trusted' }, proof).acknowledgement)
+      .toBe('unknown');
+  });
+
+  it('never advertises acknowledgement for an untrusted or unproven-version route, even with a proof', () => {
+    expect(interactiveCodexCapabilities('0.156.1', limits, { state: 'unknown', reason: 'x' },
+      { proven: true, route: 'hook', version: '0.156.1' }).acknowledgement).toBe('unknown');
+    expect(interactiveCodexCapabilities('0.155.0', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.155.0' }).acknowledgement).toBe('unknown');
   });
 
   it('claims nothing for an unproven version even with trusted hooks', () => {
