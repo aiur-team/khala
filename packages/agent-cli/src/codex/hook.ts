@@ -37,6 +37,8 @@ export type CodexHookDependencies = Readonly<{
   stdout: Writable;
   stderr: Writable;
   currentBinding: () => Promise<SessionBinding | null>;
+  /** How the held binding records Codex's own session ID; absent means verbatim. */
+  storedSessionId?: (sessionId: string) => string;
   /** The held binding's listening-mode status, decoded here; `null` when unavailable. */
   listeningMode: () => Promise<unknown>;
   inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
@@ -118,7 +120,8 @@ export async function runCodexHook(deps: CodexHookDependencies): Promise<void> {
     if (input === null) return;
     const binding = await deps.currentBinding();
     // An unbound, revoked or foreign session is a plain Codex session again.
-    if (binding === null || binding.harness !== 'codex' || binding.sessionId !== input.sessionId) return;
+    const session = deps.storedSessionId?.(input.sessionId) ?? input.sessionId;
+    if (binding === null || binding.harness !== 'codex' || binding.sessionId !== session) return;
     const mode = decodeListeningModeStatus(await deps.listeningMode());
     if (mode === null || mode.bindingId !== binding.bindingId || mode.generation !== binding.generation
       || mode.effective === null) return;

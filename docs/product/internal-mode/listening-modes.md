@@ -334,7 +334,13 @@ the exact active binding. Its visible identity is `<CLI name> <version> ·
 human-readable derivation of the immutable binding ID and expands if two active
 bindings would share it. Grant confirmations, evidence detail, runtime
 failures, and delivery receipts repeat the same label so concurrent sessions of
-one CLI cannot be confused.
+one CLI cannot be confused. Each row also says who made the last mode change,
+the owner or the agent, with the version it produced.
+
+In internal mode the owner's supported-mode badge reflects the harness version
+and hook trust the agent's CLI reported; it is evidence, not authority. Delivery
+re-checks the local installation at every hook boundary, so a badge the agent
+over-reported never releases a message the installed harness cannot prove.
 
 | Support state | Control | Copy and detail |
 | --- | --- | --- |

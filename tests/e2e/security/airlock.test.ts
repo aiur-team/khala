@@ -167,6 +167,63 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     }
     expect((await s.world.http('GET', channelRoute(channelId, '/timeline'))).status).toBe(200);
   },
+  // Owner mode control and pause: the agent binding is refused by role for its own and a foreign binding, in either channel.
+  ...Object.fromEntries(([
+    ['GET', '/listening-mode', undefined],
+    ['POST', '/listening-mode', { v: 1, commandId: 'agent-as-owner', generation: 1, expectedVersion: 1, requested: 'async', issuedAt: 'probe' }],
+    ['POST', '/pause', { v: 1, generation: 1, paused: true }],
+  ] as const).map(([method, suffix, body]) => [
+    `http-internal:${method} /api/v1/channels/:channelId/bindings/:bindingId${suffix}`,
+    (async s => {
+      for (const id of [channelId, otherChannelId]) {
+        for (const binding of [bobBinding.bindingId, 'binding-carol']) {
+          const reply = await s.world.http(method, channelRoute(id, `/bindings/${binding}${suffix}`), body === undefined ? {} : { body });
+          expect(reply.status).toBe(403);
+          add(s, `${method} owner ${suffix} ${id} ${binding}`, reply);
+        }
+      }
+      // Nothing was paused: the agent's own releases still flow.
+      expect(JSON.parse((await s.world.http('GET', channelRoute(channelId, '/releases?limit=50'))).body).held).toBeNull();
+    }) as Probe,
+  ])),
+  'http-internal:GET /api/v1/channels/:channelId/bindings': async s => {
+    // The owner's binding list names every agent's mode and pause: refused to the binding in either channel.
+    for (const id of [channelId, otherChannelId]) {
+      const listed = await s.world.http('GET', channelRoute(id, '/bindings'));
+      expect(listed.status).toBe(403);
+      add(s, `GET owner bindings ${id}`, listed);
+    }
+  },
+  'http-internal:POST /api/v1/agent/harness': async s => {
+    // The agent reports only its own harness observation; a target field is refused.
+    const targeted = await s.world.http('POST', '/api/v1/agent/harness', {
+      body: { v: 1, version: '0.156.1', hookReview: 'trusted', bindingId: 'binding-carol' },
+    });
+    expect(targeted.status).toBe(400);
+    add(s, 'POST agent harness targeted', targeted);
+    const own = await s.world.http('POST', '/api/v1/agent/harness', { body: { v: 1, version: '0.156.1', hookReview: 'trusted' } });
+    expect(own.status).toBe(200);
+    add(s, 'POST agent harness own', own);
+  },
+  // The agent's own mode: mode state only, never a message body, and no target field is accepted.
+  'http-internal:GET /api/v1/agent/listening-mode': async s => {
+    const own = await s.world.http('GET', '/api/v1/agent/listening-mode');
+    expect(own.status).toBe(200);
+    add(s, 'GET agent listening-mode', own);
+    add(s, 'GET agent listening-mode unauthenticated', await s.world.http('GET', '/api/v1/agent/listening-mode', { bearer: null }));
+  },
+  'http-internal:POST /api/v1/agent/listening-mode': async s => {
+    const targeted = await s.world.http('POST', '/api/v1/agent/listening-mode', {
+      body: { v: 1, commandId: 'agent-targeted', expectedVersion: 1, requested: 'sync', issuedAt: 'probe', bindingId: 'binding-carol' },
+    });
+    expect(targeted.status).toBe(400);
+    add(s, 'POST agent listening-mode targeted', targeted);
+    const own = await s.world.http('POST', '/api/v1/agent/listening-mode', {
+      body: { v: 1, commandId: 'agent-own', expectedVersion: 1, requested: 'sync', issuedAt: 'probe' },
+    });
+    expect(own.status).toBe(200);
+    add(s, 'POST agent listening-mode own', own);
+  },
   'http-internal:GET /channels/:channelId': async s => {
     for (const id of [channelId, otherChannelId]) add(s, `GET page ${id}`, await s.world.http('GET', `/channels/${id}`, { bearer: null }));
   },
@@ -197,6 +254,15 @@ const CLI_PROBES: Readonly<Record<string, Probe>> = {
   },
   'cli:send': async s => add(s, 'cli:send', await s.world.khala(['send'], { descriptor: true, stdin: 'a reply' })),
   'cli:status': async s => add(s, 'cli:status', await s.world.khala(['status'], { descriptor: true })),
+  'cli:mode': async s => {
+    // Mode state only, for the descriptor's own binding; without the descriptor it holds none.
+    const described = await s.world.khala(['mode', 'get'], { descriptor: true });
+    expect(described.out).toContain('"kind":"view"');
+    add(s, 'cli:mode', described);
+    const installed = await s.world.khala(['mode', 'get']);
+    expect(installed.out).toContain('"reason":"unavailable"');
+    add(s, 'cli:mode installed', installed);
+  },
   'cli:codex-hook': async s => add(s, 'cli:codex-hook', await s.world.khala(['codex-hook'], { client: 'internal', stdin: hookInput('Stop') })),
   ...Object.fromEntries(['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop'].map(event => [
     `hook-codex:${event}`,
@@ -273,7 +339,6 @@ describe('agent-facing surfaces never carry content the agent was not released',
     const origin = seed.world.server.origin;
     const commands: Readonly<Record<string, Readonly<{ args: readonly string[]; refusal: string }>>> = {
       'cli:connect': { args: ['connect', 'https://khala.example/c/kha138'], refusal: '"error":"transport_unavailable"' },
-      'cli:mode': { args: ['mode', 'get'], refusal: '"reason":"unavailable"' },
       'cli:channels': { args: ['channels', 'list', '--origin', origin], refusal: '"error":"unavailable"' },
       'cli:agents': { args: ['agents', 'list', '--channel', bobBinding.bindingId], refusal: '"error":"not_connected"' },
       'cli:pair': { args: ['pair', '7K3QX-9MZ2P'], refusal: '"error":"pairing_unavailable"' },

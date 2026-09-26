@@ -34,6 +34,7 @@
     "@khala/connector": "workspace:*",
     "@khala/contracts": "workspace:*",
     "@khala/harnesses": "workspace:*",
+    "@khala/policy": "workspace:*",
     "esbuild": "0.28.2",
     "zod": "4.1.8"
   }

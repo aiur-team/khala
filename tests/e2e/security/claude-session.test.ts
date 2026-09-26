@@ -10,9 +10,10 @@
 // session's own channel. An unbound bystander session must carry neither.
 //
 // In this build the Claude adapter refuses every `pull` and `read` as `unproven`: no
-// acknowledgement route is proven and internal mode composes no listening-mode store
-// (#382, `composition/claude-session/compose.ts`). So no message body reaches a Claude
-// session at all, and the approved canary cannot serve as a positive control. The
+// acknowledgement route is proven, and the listening-mode store internal mode composes
+// holds no requested mode for Claude, whose routes are all unproven, so no mode is
+// effective (#382, #392, `composition/claude-session/compose.ts`). So no message body
+// reaches a Claude session at all, and the approved canary cannot serve as a positive control. The
 // suite asserts that refusal exactly: the day reads are enabled it fails, and the
 // approved-canary control must be switched on here. Until then the proof that the
 // probes reached a real binding is that the granted session's own sends land in its
@@ -117,8 +118,13 @@ describe('Claude session surfaces never carry content the session was not releas
     for (const surface of ['claude-op:pull', 'claude-op:read', 'claude-mcp-tool:khala_read']) {
       expect(granted(surface), surface).toContain('"code":"unproven"');
     }
-    for (const surface of ['claude-op:hook', 'claude-op:mode', 'claude-mcp-tool:khala_status']) {
-      expect(granted(surface), surface).toContain('"code":"unavailable"');
+    // The mode is read from the composed store, but Claude has no evidenced mode: nothing is
+    // requested, nothing is effective, and hooks therefore deliver nothing.
+    expect(granted('claude-op:hook')).toContain('"kind":"hook","effective":null');
+    for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_status']) {
+      const text = granted(surface).replaceAll('\\"', '"');
+      expect(text, surface).toContain('"kind":"mode","requested":null,"effective":null');
+      expect(text, surface).toContain('"support":{"steer":"unproven","sync":"unproven","async":"unproven"}');
     }
   });
 

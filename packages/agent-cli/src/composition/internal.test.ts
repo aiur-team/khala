@@ -570,6 +570,18 @@ describe('--internal-descriptor through the CLI and MCP', () => {
     expect(transcript).not.toContain(file);
   });
 
+  it('runs the byte-stable installed `khala codex-hook` against the runtime descriptor, and nothing else', async () => {
+    const loads: string[] = [];
+    const deps = { ...cliDeps(streams(), temporaryDirectory(), loads), defaultDescriptorPath: '/x/internal/active.json' };
+    const hook = streams(JSON.stringify({ hook_event_name: 'Stop', session_id: 's', turn_id: 't', stop_hook_active: false }));
+    expect(await runCli(['codex-hook'], { ...deps, stdin: hook.stdin, stdout: hook.stdout, stderr: hook.stderr })).toBe(0);
+    expect(loads).toEqual(['/x/internal/active.json']);
+    // Every other command still needs the explicit option.
+    const status = streams();
+    expect(await runCli(['status'], { ...deps, stdout: status.stdout, stderr: status.stderr })).toBe(2);
+    expect(loads).toEqual(['/x/internal/active.json']);
+  });
+
   it('does not load the local composition for unrelated commands or without the option', async () => {
     const loads: string[] = [];
     const io = streams();
