@@ -219,6 +219,23 @@ describe('Codex setup on 0.154.0', () => {
     expect(await exists(path.join(roots.xdgStateHome, 'khala', 'setup', 'manifest.v1.json'))).toBe(false);
   });
 
+  it('reports Codex app delivery as unproven in setup, status and remove, without planning for it', async () => {
+    const appDiagnostics = async () => (await observe()).observation.diagnostics
+      .filter(item => item.code.startsWith('codex_app_'))
+      .map(item => [item.code, item.severity, item.message.split(':')[0]]);
+    const expected = [
+      ['codex_app_delivery_unproven', 'info', 'Codex desktop app'],
+      ['codex_app_delivery_unproven', 'info', 'Codex Cloud task'],
+    ];
+    expect(await appDiagnostics()).toEqual(expected);
+    expect((await run('setup')).kind).toBe('committed');
+    expect(await appDiagnostics()).toEqual(expected);
+    expect((await run('remove')).kind).toBe('committed');
+    expect(await appDiagnostics()).toEqual(expected);
+    resolvable = false;
+    expect(await appDiagnostics()).toEqual(expected);
+  });
+
   it('removes a clean-home install back to absence', async () => {
     const before = await everythingButExecutorState();
     expect((await run('setup')).kind).toBe('committed');
