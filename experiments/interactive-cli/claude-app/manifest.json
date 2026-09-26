@@ -1,0 +1,29 @@
+{
+  "manifest_version": "0.3",
+  "name": "khala-claude-app-proof",
+  "display_name": "Khala proof (throwaway)",
+  "version": "0.0.1",
+  "description": "Throwaway E09 proof kit: one explicit khala_read tool over a local proof state directory.",
+  "author": { "name": "Khala" },
+  "server": {
+    "type": "node",
+    "entry_point": "server/stdio.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/stdio.mjs"],
+      "env": { "KHALA_PROOF_STATE": "${user_config.state_dir}" }
+    }
+  },
+  "user_config": {
+    "state_dir": {
+      "type": "directory",
+      "title": "Proof state directory",
+      "description": "Directory prepared with khala-admin.mjs init. The server is inert without its run.json.",
+      "required": true
+    }
+  },
+  "tools": [
+    { "name": "khala_read", "description": "Read one Khala channel batch; acknowledge it by presenting its batchToken on the next call." }
+  ],
+  "compatibility": { "platforms": ["darwin", "win32"] }
+}
