@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
-import type { ConversionStart } from '@khala/contracts/messaging/externalization';
+import type { ConversionOwner, ConversionStart } from '@khala/contracts/messaging/externalization';
 import { rejected } from '@khala/contracts/messaging/outcomes';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChannelStore } from '../store/channel-store';
@@ -18,6 +18,7 @@ afterEach(() => {
 });
 
 const owner = 'owner-ada' as OwnerId;
+const ada: ConversionOwner = { ownerId: owner, participantId: 'participant-ada' as ParticipantId };
 const channelId = 'internal-channel' as RoomId;
 const destination = { idempotencyKey: 'conversion-1.destination', destinationChannelId: 'external-1', visibility: 'secret' } as const;
 const start: ConversionStart = {
@@ -65,29 +66,47 @@ describe('conversion journal', () => {
   it('snapshots the exact selected sessions and replays a start by operation ID', async () => {
     const { handle } = fixture();
     const journal = createConversionJournal(handle);
-    const entry = entryOf(await journal.start(start));
+    const entry = entryOf(await journal.start(ada, start));
     expect(entry.snapshot).toMatchObject({
+      owner: ada,
       sourceChannelId: channelId, visibility: 'secret', humans: ['participant-ada'],
       agents: [{ participantId: 'agent-1', harness: 'codex', sessionId: 'session-agent', generation: 3 }],
     });
-    expect(await journal.start(start)).toEqual({ kind: 'ok', value: entry });
-    expect(await journal.start({ ...start, visibility: 'public' })).toEqual(rejected('operation_mismatch'));
-    expect(await journal.start({ ...start, operationId: 'op-other', agents: [] })).toEqual(rejected('conflict'));
-    expect(await journal.start({ ...start, conversionId: 'c2', operationId: 'op-2', agents: ['participant-ada'] })).toEqual(rejected('conflict'));
+    expect(await journal.start(ada, start)).toEqual({ kind: 'ok', value: entry });
+    expect(await journal.start(ada, { ...start, visibility: 'public' })).toEqual(rejected('operation_mismatch'));
+    expect(await journal.start(ada, { ...start, operationId: 'op-other', agents: [] })).toEqual(rejected('conflict'));
+    expect(await journal.start(ada, { ...start, conversionId: 'c2', operationId: 'op-2', agents: ['participant-ada'] })).toEqual(rejected('conflict'));
   });
 
   it('refuses a selection that is not a joined agent with an active session', async () => {
     const { handle } = fixture();
     const journal = createConversionJournal(handle);
-    expect(await journal.start({ ...start, agents: ['participant-ada'] })).toEqual(rejected('invalid_selection'));
-    expect(await journal.start({ ...start, agents: ['agent-unknown'] })).toEqual(rejected('invalid_selection'));
-    expect(await journal.start({ ...start, sourceChannelId: 'missing' })).toEqual(rejected('not_found'));
+    expect(await journal.start(ada, { ...start, agents: ['participant-ada'] })).toEqual(rejected('invalid_selection'));
+    expect(await journal.start(ada, { ...start, agents: ['agent-unknown'] })).toEqual(rejected('invalid_selection'));
+    expect(await journal.start(ada, { ...start, sourceChannelId: 'missing' })).toEqual(rejected('not_found'));
+  });
+
+  it('starts only for a human participant of the owner of the source channel', async () => {
+    const { handle } = fixture();
+    const store = createChannelStore(handle);
+    store.registerParticipant({ participantId: 'participant-mallory' as ParticipantId, ownerId: 'owner-mallory' as OwnerId, kind: 'human', displayName: 'M' });
+    const journal = createConversionJournal(handle);
+    const mallory: ConversionOwner = { ownerId: 'owner-mallory' as OwnerId, participantId: 'participant-mallory' as ParticipantId };
+    expect(await journal.start(mallory, start)).toEqual(rejected('forbidden'));
+    // The right owner with a participant that is not theirs, or is not human, is still not the owner.
+    expect(await journal.start({ ownerId: owner, participantId: mallory.participantId }, start)).toEqual(rejected('forbidden'));
+    expect(await journal.start({ ownerId: owner, participantId: 'agent-1' as ParticipantId }, start)).toEqual(rejected('forbidden'));
+    expect(await journal.start({ ownerId: owner, participantId: 'participant-nobody' as ParticipantId }, start)).toEqual(rejected('forbidden'));
+    expect(await journal.sourceLock(channelId)).toEqual({ kind: 'ok', value: null });
+    entryOf(await journal.start(ada, start));
+    // Replaying the owner's own start is refused too, and never returns the entry.
+    expect(await journal.start(mallory, start)).toEqual(rejected('forbidden'));
   });
 
   it('implements the journal port: idempotent advance, stale writers lose, only listed transitions', async () => {
     const { handle } = fixture();
     const journal = createConversionJournal(handle);
-    entryOf(await journal.start(start));
+    entryOf(await journal.start(ada, start));
     expect(await journal.create({ v: 1, conversionId: 'conversion-1', operationId: 'op-start', historyMode: 'start_fresh' }))
       .toMatchObject({ kind: 'ok', value: { state: 'preparing', revision: 0 } });
     expect(await journal.create({ v: 1, conversionId: 'other', operationId: 'op-new', historyMode: 'start_fresh' })).toEqual(rejected('operation_mismatch'));
@@ -104,7 +123,7 @@ describe('conversion journal', () => {
   it('survives a restart with the same record, destination and source lock', async () => {
     const { directory, handle } = fixture();
     const journal = createConversionJournal(handle);
-    const entry = entryOf(await journal.start(start));
+    const entry = entryOf(await journal.start(ada, start));
     const created = await journal.change({ conversionId: 'conversion-1', operationId: 'op-created', expectedRevision: 0, to: 'external_created', destination });
     expect(created.kind).toBe('ok');
     handle.close();
@@ -119,7 +138,7 @@ describe('conversion journal', () => {
   it('commits the link state and the read-only source lock in one transaction', async () => {
     const { handle } = fixture();
     const journal = createConversionJournal(handle);
-    entryOf(await journal.start(start));
+    entryOf(await journal.start(ada, start));
     let revision = 0;
     for (const to of ['external_created', 'agents_pending', 'committing'] as const) {
       const moved = await journal.change({
@@ -151,7 +170,7 @@ describe('conversion journal', () => {
   it('unfreezes the source when a paused conversion fails before the link', async () => {
     const { handle } = fixture();
     const journal = createConversionJournal(handle);
-    entryOf(await journal.start(start));
+    entryOf(await journal.start(ada, start));
     let revision = 0;
     for (const to of ['external_created', 'agents_pending', 'committing', 'failed'] as const) {
       const moved = await journal.change({

@@ -2,13 +2,14 @@ import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   CONVERSION_AGENT_BLOCKS, CONVERSION_AGENT_STATUSES, CONVERSION_VERSION, type ConversionAgentIdentity,
-  type ConversionAgentState, type ConversionJournalPort, type ConversionJournalRejection, type ConversionRecord,
+  type ConversionAgentState, type ConversionJournalPort, type ConversionOwner, type ConversionJournalRejection, type ConversionRecord,
   type ConversionStart, type ConversionSnapshot, type ConversionState, type HostedChannelCreated, decodeConversionRecord,
   isAllowedTransition,
 } from '@khala/contracts/messaging/externalization';
 import {
   type Decoded, type Reader, array, decodeWith, elementPath, fail, identifier, literal, nullable, object, safeInteger, version,
 } from '@khala/contracts/messaging/decode';
+import type { OwnerId, ParticipantId } from '@khala/contracts/messaging/ids';
 import { type OperationResult, ok, rejected, unavailable } from '@khala/contracts/messaging/outcomes';
 import { type ChannelConversionLock, channelConversionKey, readChannelConversionLock } from '../store/conversion-lock';
 import type { InternalStoreHandle } from '../store/open';
@@ -38,7 +39,7 @@ export type ConversionEntry = Readonly<{
   agents: readonly ConversionAgentState[];
 }>;
 
-export type ConversionStartRejection = 'not_found' | 'invalid_selection' | 'conflict' | 'operation_mismatch';
+export type ConversionStartRejection = 'not_found' | 'forbidden' | 'invalid_selection' | 'conflict' | 'operation_mismatch';
 
 export type ConversionChange = Readonly<{
   conversionId: string;
@@ -55,8 +56,8 @@ export type ConversionChange = Readonly<{
 export type ConversionChangeRejection = ConversionJournalRejection | 'invalid_change';
 
 export interface ConversionJournal extends ConversionJournalPort {
-  /** Snapshots the source channel and journals the conversion in one transaction. */
-  start(input: ConversionStart): Promise<OperationResult<ConversionEntry, ConversionStartRejection>>;
+  /** Verifies that `owner` owns the source channel, then snapshots it and journals the conversion in one transaction. */
+  start(owner: ConversionOwner, input: ConversionStart): Promise<OperationResult<ConversionEntry, ConversionStartRejection>>;
   entry(conversionId: string): Promise<OperationResult<ConversionEntry, 'not_found'>>;
   change(input: ConversionChange): Promise<OperationResult<ConversionEntry, ConversionChangeRejection>>;
   sourceLock(channelId: string): Promise<OperationResult<ChannelConversionLock | null, never>>;
@@ -75,11 +76,16 @@ function decodeEntry(input: unknown): Decoded<ConversionEntry> {
     const record = decodeConversionRecord(r.field('record'));
     if (!record.ok) fail(r.at('record'), 'invalid_value');
     const s = object(r.field('snapshot'), r.at('snapshot'), [
-      'v', 'historyMode', 'sourceChannelId', 'sourceRevision', 'title', 'visibility', 'humans', 'agents',
+      'v', 'historyMode', 'owner', 'sourceChannelId', 'sourceRevision', 'title', 'visibility', 'humans', 'agents',
     ]);
+    const o = object(s.field('owner'), s.at('owner'), ['ownerId', 'participantId']);
     const snapshot: ConversionSnapshot = {
       v: version(s.field('v'), s.at('v')),
       historyMode: literal(s.field('historyMode'), s.at('historyMode'), ['start_fresh', 'carry_history']),
+      owner: {
+        ownerId: identifier(o.field('ownerId'), o.at('ownerId')) as OwnerId,
+        participantId: identifier(o.field('participantId'), o.at('participantId')) as ParticipantId,
+      },
       sourceChannelId: identifier(s.field('sourceChannelId'), s.at('sourceChannelId')),
       sourceRevision: safeInteger(s.field('sourceRevision'), s.at('sourceRevision')),
       title: nullable(s.field('title'), value => typeof value === 'string' ? value : fail(s.at('title'), 'wrong_type')),
@@ -155,10 +161,21 @@ function claim(db: Db, operationId: string, fingerprint: string, entry: Conversi
       JSON.stringify({ fingerprint, conversionId: entry.record.conversionId, entry }));
 }
 
+/** An internal channel belongs to its creator's owner; only a human participant of that owner may convert it. */
+function ownsChannel(db: Db, owner: ConversionOwner, channelId: string): 'owner' | 'not_found' | 'forbidden' {
+  const channel = db.prepare(`
+    SELECT p.owner_id FROM channels c JOIN participants p ON p.participant_id = c.creator_participant_id WHERE c.channel_id = ?
+  `).get(channelId) as { owner_id: string } | undefined;
+  if (!channel) return 'not_found';
+  const actor = db.prepare('SELECT owner_id, kind FROM participants WHERE participant_id = ?')
+    .get(owner.participantId) as { owner_id: string; kind: string } | undefined;
+  return channel.owner_id === owner.ownerId && actor?.owner_id === owner.ownerId && actor.kind === 'human' ? 'owner' : 'forbidden';
+}
+
 type SnapshotRead = ConversionSnapshot | 'not_found' | 'invalid_selection';
 
 /** The source channel as the human confirmed it: its revision, joined humans and each selected agent's active session. */
-function snapshotSource(db: Db, input: ConversionStart): SnapshotRead {
+function snapshotSource(db: Db, owner: ConversionOwner, input: ConversionStart): SnapshotRead {
   const channel = db.prepare('SELECT title, revision FROM channels WHERE channel_id = ?')
     .get(input.sourceChannelId) as { title: string | null; revision: number } | undefined;
   if (!channel) return 'not_found';
@@ -179,6 +196,7 @@ function snapshotSource(db: Db, input: ConversionStart): SnapshotRead {
   return {
     v: 1,
     historyMode: input.historyMode,
+    owner: { ownerId: owner.ownerId, participantId: owner.participantId },
     sourceChannelId: input.sourceChannelId,
     sourceRevision: Number(channel.revision),
     title: channel.title,
@@ -256,16 +274,19 @@ export function createConversionJournal(handle: InternalStoreHandle): Conversion
   }
 
   return {
-    start(input) {
-      const fingerprint = JSON.stringify(['start', input]);
+    start(owner, input) {
+      const fingerprint = JSON.stringify(['start', owner.ownerId, owner.participantId, input]);
       return run(() => handle.transaction(db => {
+        // Ownership first: nobody else learns anything about a conversion, not even by replaying its start.
+        const ownership = ownsChannel(db, owner, input.sourceChannelId);
+        if (ownership !== 'owner') return rejected(ownership);
         const previous = claimed(db, input.operationId);
         if (previous) return previous.fingerprint === fingerprint ? ok(replayed(db, input.operationId)!) : rejected('operation_mismatch');
         // A conversion ID names one confirmed choice; asking again with another choice conflicts.
         if (readEntry(db, input.conversionId)) return rejected('conflict');
         const lock = readChannelConversionLock(db, input.sourceChannelId);
         if (lock) return rejected('conflict');
-        const snapshot = snapshotSource(db, input);
+        const snapshot = snapshotSource(db, owner, input);
         if (typeof snapshot === 'string') return rejected(snapshot);
         const entry: ConversionEntry = {
           v: 1,

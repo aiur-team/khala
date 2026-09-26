@@ -19,6 +19,11 @@ export function readChannelConversionLock(db: DatabaseSync, channelId: string): 
   return row ? JSON.parse(row.value) as ChannelConversionLock : null;
 }
 
+/** True forever after the link commit: the channel is read-only and nobody joins it. */
+export function isChannelLinked(db: DatabaseSync, channelId: string): boolean {
+  return readChannelConversionLock(db, channelId)?.write === 'linked';
+}
+
 /** False while the conversion pauses writes and forever after the link commit. */
 export function isChannelWritable(db: DatabaseSync, channelId: string): boolean {
   const lock = readChannelConversionLock(db, channelId);

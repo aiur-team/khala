@@ -1,12 +1,15 @@
 import {
   type ConversionAccessPort, type ConversionAgentBlock, type ConversionAgentState, type ConversionBindingPort,
-  type ConversionSessionPort, type ConversionState, type ConversionVisibility, type HostedChannelCreated,
+  type ConversionOwner, type ConversionSessionPort, type ConversionState, type ConversionVisibility, type HostedChannelCreated,
   type HostedChannelPort, decodeConversionStart,
 } from '@khala/contracts/messaging/externalization';
 import { type OperationResult, ok, rejected, unavailable } from '@khala/contracts/messaging/outcomes';
 import type { ConversionChange, ConversionEntry, ConversionJournal } from './journal';
 
 // Start-fresh conversion of an internal channel into a fresh external channel.
+//
+// Only the owner of the source channel may start a conversion, and the journal records
+// that owner and acting participant. Every later call must come from the same pair.
 //
 // The human confirms a snapshot (channel, visibility, selected agents). The service
 // creates the hosted channel once, reconciling a lost create response by its
@@ -23,6 +26,8 @@ import type { ConversionChange, ConversionEntry, ConversionJournal } from './jou
 
 export type ConversionView = Readonly<{
   conversionId: string;
+  owner: ConversionOwner;
+  sourceChannelId: string;
   state: ConversionState;
   revision: number;
   visibility: ConversionVisibility;
@@ -56,21 +61,28 @@ export type ConversionServiceDeps = Readonly<{
   sessions: ConversionSessionPort;
   access: ConversionAccessPort;
   bindings: ConversionBindingPort;
-  /** Test seam: throwing here fails the commit after the write pause and before the link. */
-  beforeLink?: () => void;
+  /** Test seam, run after the write pause and before the link; throwing here fails the commit. */
+  beforeLink?: () => void | Promise<void>;
 }>;
 
+type Result<T> = Promise<OperationResult<T, ConversionServiceRejection>>;
+
+/**
+ * Every call names the signed-in owner. `start` refuses one who does not own the source
+ * channel; every other call refuses anyone but the owner and participant that started it.
+ */
 export interface ConversionService {
-  start(input: unknown): Promise<OperationResult<ConversionView, ConversionServiceRejection>>;
+  start(owner: ConversionOwner, input: unknown): Result<ConversionView>;
   /** Advances whatever needs no human: create, requests, readiness, or forward release. */
-  resume(conversionId: string): Promise<OperationResult<ConversionView, ConversionServiceRejection>>;
-  decide(conversionId: string, decision: ConversionDecision): Promise<OperationResult<ConversionDecisionResult, ConversionServiceRejection>>;
-  /** Re-invites a blocked agent with a new individual request, after re-verifying its exact session. */
-  retry(conversionId: string, participantId: string): Promise<OperationResult<ConversionView, ConversionServiceRejection>>;
-  skip(conversionId: string, participantId: string): Promise<OperationResult<ConversionView, ConversionServiceRejection>>;
-  commit(conversionId: string): Promise<OperationResult<ConversionView, ConversionServiceRejection>>;
-  cancel(conversionId: string): Promise<OperationResult<ConversionView, ConversionServiceRejection>>;
-  view(conversionId: string): Promise<OperationResult<ConversionView, ConversionServiceRejection>>;
+  resume(owner: ConversionOwner, conversionId: string): Result<ConversionView>;
+  decide(owner: ConversionOwner, conversionId: string, decision: ConversionDecision): Result<ConversionDecisionResult>;
+  /** Withdraws a blocked agent's request and re-invites it with a new one, after re-verifying its exact session. */
+  retry(owner: ConversionOwner, conversionId: string, participantId: string): Result<ConversionView>;
+  /** Withdraws the agent's request, if any, and leaves it out of the destination. */
+  skip(owner: ConversionOwner, conversionId: string, participantId: string): Result<ConversionView>;
+  commit(owner: ConversionOwner, conversionId: string): Result<ConversionView>;
+  cancel(owner: ConversionOwner, conversionId: string): Result<ConversionView>;
+  view(owner: ConversionOwner, conversionId: string): Result<ConversionView>;
 }
 
 const PRE_COMMIT: readonly ConversionState[] = ['preparing', 'external_created', 'agents_pending'];
@@ -82,6 +94,8 @@ function viewOf(entry: ConversionEntry): ConversionView {
   const destinationChannelId = entry.destination?.destinationChannelId ?? null;
   return {
     conversionId: entry.record.conversionId,
+    owner: entry.snapshot.owner,
+    sourceChannelId: entry.snapshot.sourceChannelId,
     state,
     revision: entry.record.revision,
     visibility: entry.snapshot.visibility,
@@ -101,10 +115,21 @@ class Halt {
 }
 
 export function createConversionService(deps: ConversionServiceDeps): ConversionService {
-  async function load(conversionId: string): Promise<ConversionEntry> {
-    const read = await deps.journal.entry(conversionId);
-    if (read.kind === 'ok') return read.value;
-    throw new Halt(read.kind === 'rejected' ? rejected('not_found') : unavailable());
+  /** Conversions whose commit is running in this process, between the write pause and the link. */
+  const committing = new Set<string>();
+
+  async function read(conversionId: string): Promise<ConversionEntry> {
+    const found = await deps.journal.entry(conversionId);
+    if (found.kind === 'ok') return found.value;
+    throw new Halt(found.kind === 'rejected' ? rejected('not_found') : unavailable());
+  }
+
+  /** The conversion, only for the owner and participant that started it. */
+  async function load(owner: ConversionOwner, conversionId: string): Promise<ConversionEntry> {
+    const entry = await read(conversionId);
+    const started = entry.snapshot.owner;
+    if (started.ownerId !== owner.ownerId || started.participantId !== owner.participantId) throw new Halt(rejected('forbidden'));
+    return entry;
   }
 
   /** One journaled step; the operation ID is deterministic, so a replay of the same step is idempotent. */
@@ -203,6 +228,16 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
     return record(entry, 'failed', { to: 'failed' });
   }
 
+  /** Withdraws the agent's current request, if it has one, before the journal forgets it. */
+  async function withdraw(entry: ConversionEntry, agent: ConversionAgentState): Promise<void> {
+    if (agent.requestHandle === null) return;
+    const withdrawn = await deps.access.withdraw({
+      requestHandle: agent.requestHandle,
+      operationId: `${entry.record.conversionId}.withdraw.${agent.participantId}.${agent.attempt}`,
+    });
+    if (withdrawn !== 'withdrawn') throw new Halt(unavailable());
+  }
+
   async function drive(start: ConversionEntry): Promise<ConversionEntry> {
     let entry = start;
     for (;;) {
@@ -212,7 +247,11 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
         case 'external_created': entry = await record(entry, 'agents_pending', { to: 'agents_pending', agents: await request(entry) }); break;
         case 'agents_pending': entry = await pending(entry); break;
         // A commit that stopped between the write pause and the link never linked: resume the source.
-        case 'committing': entry = await fail(entry); break;
+        // One still running in this process is left to finish.
+        case 'committing':
+          if (committing.has(entry.record.conversionId)) return entry;
+          entry = await fail(entry);
+          break;
         case 'activating': entry = await activating(entry); break;
         default: return entry;
       }
@@ -233,9 +272,12 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
     throw new Halt(rejected('wrong_state'));
   };
 
-  async function agentAction(conversionId: string, participantId: string, act: (entry: ConversionEntry, agent: ConversionAgentState) => Promise<ConversionEntry>) {
+  async function agentAction(
+    owner: ConversionOwner, conversionId: string, participantId: string,
+    act: (entry: ConversionEntry, agent: ConversionAgentState) => Promise<ConversionEntry>,
+  ) {
     return guarded(async () => {
-      const entry = await load(conversionId);
+      const entry = await load(owner, conversionId);
       if (entry.record.state !== 'agents_pending') wrongState();
       const agent = entry.agents.find(candidate => candidate.participantId === participantId);
       if (!agent) throw new Halt(rejected('not_found'));
@@ -244,27 +286,27 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
   }
 
   return {
-    start(input) {
+    start(owner, input) {
       return guarded(async () => {
         const decoded = decodeConversionStart(input);
         if (!decoded.ok) throw new Halt(rejected('invalid_request'));
         if (decoded.value.historyMode !== 'start_fresh') throw new Halt(rejected('unsupported'));
-        const started = await deps.journal.start(decoded.value);
+        const started = await deps.journal.start(owner, decoded.value);
         if (started.kind === 'rejected') {
           throw new Halt(rejected(started.code === 'operation_mismatch' ? 'conflict' : started.code));
         }
         if (started.kind !== 'ok') throw new Halt(unavailable());
-        return viewOf(await drive(await load(decoded.value.conversionId)));
+        return viewOf(await drive(await load(owner, decoded.value.conversionId)));
       });
     },
 
-    resume(conversionId) {
-      return guarded(async () => viewOf(await drive(await load(conversionId))));
+    resume(owner, conversionId) {
+      return guarded(async () => viewOf(await drive(await load(owner, conversionId))));
     },
 
-    decide(conversionId, decision) {
+    decide(owner, conversionId, decision) {
       return guarded(async () => {
-        let entry = await load(conversionId);
+        let entry = await load(owner, conversionId);
         if (entry.record.state !== 'agents_pending') wrongState();
         const granted: string[] = [];
         const refused: string[] = [];
@@ -286,11 +328,12 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
       });
     },
 
-    retry(conversionId, participantId) {
-      return agentAction(conversionId, participantId, async (entry, agent) => {
+    retry(owner, conversionId, participantId) {
+      return agentAction(owner, conversionId, participantId, async (entry, agent) => {
         if (agent.status !== 'blocked') wrongState();
         const block = await verify(entry, participantId);
         if (block === 'unavailable') throw new Halt(unavailable());
+        if (!block) await withdraw(entry, agent);
         const change: Partial<ConversionAgentState> = block
           ? { block }
           : { status: 'verifying', block: null, requestHandle: null, attempt: agent.attempt + 1 };
@@ -298,16 +341,19 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
       });
     },
 
-    skip(conversionId, participantId) {
-      return agentAction(conversionId, participantId, async (entry, agent) => {
+    skip(owner, conversionId, participantId) {
+      return agentAction(owner, conversionId, participantId, async (entry, agent) => {
         if (agent.status === 'skipped') return entry;
-        return record(entry, `skip.${participantId}`, { agents: withAgent(entry.agents, participantId, { status: 'skipped', block: null }) });
+        await withdraw(entry, agent);
+        return record(entry, `skip.${participantId}`, {
+          agents: withAgent(entry.agents, participantId, { status: 'skipped', block: null, requestHandle: null }),
+        });
       });
     },
 
-    commit(conversionId) {
+    commit(owner, conversionId) {
       return guarded(async () => {
-        let entry = await drive(await load(conversionId));
+        let entry = await drive(await load(owner, conversionId));
         if (entry.record.state !== 'agents_pending') wrongState();
         if (!entry.agents.every(settled)) throw new Halt(rejected('not_ready'));
         // The exact selected sessions must still be the ones that became ready.
@@ -322,29 +368,34 @@ export function createConversionService(deps: ConversionServiceDeps): Conversion
           await record(entry, 'commit_verified', { agents });
           throw new Halt(rejected('not_ready'));
         }
-        entry = await record(entry, 'committing', { to: 'committing' });
+        committing.add(conversionId);
         try {
-          deps.beforeLink?.();
-          entry = await record(entry, 'linked', { to: 'activating' });
-        } catch (error) {
-          if (error instanceof Halt && error.result.kind === 'unavailable') throw error;
-          return viewOf(await fail(await load(conversionId)));
+          entry = await record(entry, 'committing', { to: 'committing' });
+          try {
+            await deps.beforeLink?.();
+            entry = await record(entry, 'linked', { to: 'activating' });
+          } catch (error) {
+            if (error instanceof Halt && error.result.kind === 'unavailable') throw error;
+            return viewOf(await fail(await read(conversionId)));
+          }
+        } finally {
+          committing.delete(conversionId);
         }
         return viewOf(await drive(entry));
       });
     },
 
-    cancel(conversionId) {
+    cancel(owner, conversionId) {
       return guarded(async () => {
-        const entry = await load(conversionId);
+        const entry = await load(owner, conversionId);
         if (entry.record.state === 'cancelled') return viewOf(entry);
         if (!PRE_COMMIT.includes(entry.record.state)) wrongState();
         return viewOf(await record(entry, 'cancelled', { to: 'cancelled' }));
       });
     },
 
-    view(conversionId) {
-      return guarded(async () => viewOf(await load(conversionId)));
+    view(owner, conversionId) {
+      return guarded(async () => viewOf(await load(owner, conversionId)));
     },
   };
 }

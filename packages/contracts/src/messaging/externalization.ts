@@ -6,6 +6,7 @@
 import {
   type Decoded, type Reader, array, decodeWith, elementPath, fail, identifier, literal, object, safeInteger, version,
 } from './decode';
+import type { OwnerId, ParticipantId } from './ids';
 import type { CallOptions, OperationResult } from './outcomes';
 
 export const CONVERSION_VERSION = 1;
@@ -213,6 +214,13 @@ export type ConversionAgentIdentity = Readonly<{
   generation: number;
 }>;
 
+/**
+ * The signed-in human who started a conversion: the owner of the source channel and
+ * the human participant acting for that owner. Every later step must come from the
+ * same owner and participant.
+ */
+export type ConversionOwner = Readonly<{ ownerId: OwnerId; participantId: ParticipantId }>;
+
 /** What the human asked for. `agents` names participants of the source channel. */
 export type ConversionStart = Readonly<{
   v: 1;
@@ -228,6 +236,8 @@ export type ConversionStart = Readonly<{
 export type ConversionSnapshot = Readonly<{
   v: 1;
   historyMode: HistoryMode;
+  /** Verified at start to own the source channel. */
+  owner: ConversionOwner;
   sourceChannelId: string;
   sourceRevision: number;
   title: string | null;
@@ -315,6 +325,10 @@ export interface ConversionAccessPort {
     input: Readonly<{ requestHandle: string; operationId: string }>, options?: CallOptions,
   ): Promise<OperationResult<Readonly<{ requestHandle: string }>, ConversionGrantRejection>>;
   readiness(requestHandle: string, options?: CallOptions): Promise<ConversionAccessReadiness>;
+  /** Withdraws a request the conversion no longer uses, in any state; idempotent by `operationId`. */
+  withdraw(
+    input: Readonly<{ requestHandle: string; operationId: string }>, options?: CallOptions,
+  ): Promise<'withdrawn' | 'unavailable'>;
 }
 
 /** Releases the conversion pause of one ready destination binding. Idempotent by `operationId`. */

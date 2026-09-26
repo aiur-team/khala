@@ -4,7 +4,7 @@ import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import {
   type ConversionAccessPort, type ConversionAccessReadiness, type ConversionAgentBlock, type ConversionAgentIdentity,
-  type ConversionBindingPort, type ConversionSessionCheck, type ConversionSessionPort, type ConversionVisibility,
+  type ConversionBindingPort, type ConversionOwner, type ConversionSessionCheck, type ConversionSessionPort, type ConversionVisibility,
   type HostedChannelCreated, type HostedChannelPort,
 } from '@khala/contracts/messaging/externalization';
 import { type OperationResult, ok, outcomeUnknown, rejected, unavailable } from '@khala/contracts/messaging/outcomes';
@@ -26,6 +26,7 @@ afterEach(() => {
 
 const owner = 'owner-ada' as OwnerId;
 const ada: RegisteredParticipant = { participantId: 'participant-ada' as ParticipantId, ownerId: owner, kind: 'human', displayName: 'Ada' };
+const asAda: ConversionOwner = { ownerId: owner, participantId: ada.participantId };
 const adaDevice = 'device-ada' as DeviceId;
 const channelId = 'internal-channel' as RoomId;
 const AGENTS = ['agent-1', 'agent-2', 'agent-3', 'agent-4'] as const;
@@ -42,6 +43,7 @@ class FakeHosted implements HostedChannelPort, ConversionAccessPort, ConversionB
   withheld = new Set<string>();
   blocked = new Map<string, ConversionAgentBlock>();
   releaseFails = new Set<string>();
+  readonly withdrawn = new Set<string>();
 
   async create(input: Readonly<{ idempotencyKey: string; title: string | null; visibility: ConversionVisibility }>) {
     if (this.createMode === 'unavailable') return unavailable();
@@ -77,7 +79,7 @@ class FakeHosted implements HostedChannelPort, ConversionAccessPort, ConversionB
 
   async grant(input: Readonly<{ requestHandle: string; operationId: string }>) {
     const request = this.requests.get(input.requestHandle);
-    if (!request) return rejected('not_found' as const);
+    if (!request || this.withdrawn.has(input.requestHandle)) return rejected('not_found' as const);
     request.granted += 1;
     return ok({ requestHandle: input.requestHandle });
   }
@@ -92,6 +94,12 @@ class FakeHosted implements HostedChannelPort, ConversionAccessPort, ConversionB
     // Activation readiness: the binding exists and is conversion-paused.
     if (!this.bindings.has(handle)) this.bindings.set(handle, { paused: true, direct: false });
     return { kind: 'ready' };
+  }
+
+  async withdraw(input: Readonly<{ requestHandle: string; operationId: string }>) {
+    this.withdrawn.add(input.requestHandle);
+    this.bindings.delete(input.requestHandle);
+    return 'withdrawn' as const;
   }
 
   async release(input: Readonly<{ requestHandle: string; destinationChannelId: string; operationId: string }>) {
@@ -122,7 +130,7 @@ type Harness = Readonly<{
   hosted: FakeHosted;
   sessions: FakeSessions;
   service: ConversionService;
-  withFault: (fault: () => void) => ConversionService;
+  withFault: (fault: () => void | Promise<void>) => ConversionService;
   send: () => string;
   events: () => number;
 }>;
@@ -153,7 +161,7 @@ function harness(): Harness {
   const hosted = new FakeHosted();
   const sessions = new FakeSessions();
   const journal = createConversionJournal(handle);
-  const make = (beforeLink?: () => void) =>
+  const make = (beforeLink?: () => void | Promise<void>) =>
     createConversionService({ journal, hosted, sessions, access: hosted, bindings: hosted, ...(beforeLink ? { beforeLink } : {}) });
   let sent = 0;
   return {
@@ -186,70 +194,70 @@ const handles = (view: ConversionView) => view.agents.map(agent => agent.request
 
 /** Starts, grants every selected request in one batch and makes each ready. */
 async function readyToCommit(h: Harness): Promise<ConversionView> {
-  const started = value(await h.service.start(startInput()));
-  value(await h.service.decide('conversion-1', { requestHandles: handles(started), operationId: 'batch-1' }));
-  return value(await h.service.resume('conversion-1'));
+  const started = value(await h.service.start(asAda, startInput()));
+  value(await h.service.decide(asAda, 'conversion-1', { requestHandles: handles(started), operationId: 'batch-1' }));
+  return value(await h.service.resume(asAda, 'conversion-1'));
 }
 
 describe('start-fresh conversion', () => {
   it('reconciles a lost create response to the same destination and never creates twice', async () => {
     const h = harness();
     h.hosted.createMode = 'lose_response';
-    const view = value(await h.service.start(startInput()));
+    const view = value(await h.service.start(asAda, startInput()));
     expect(view.state).toBe('agents_pending');
     expect(view.destinationChannelId).toBe('external-1');
     h.hosted.createMode = 'ok';
-    const again = value(await h.service.start(startInput()));
+    const again = value(await h.service.start(asAda, startInput()));
     expect(again.destinationChannelId).toBe('external-1');
-    value(await h.service.resume('conversion-1'));
+    value(await h.service.resume(asAda, 'conversion-1'));
     expect(h.hosted.creates).toHaveLength(1);
   });
 
   it('makes no access request before the destination exists', async () => {
     const h = harness();
     h.hosted.createMode = 'unavailable';
-    const view = value(await h.service.start(startInput()));
+    const view = value(await h.service.start(asAda, startInput()));
     expect(view.state).toBe('preparing');
     expect(h.hosted.requests.size).toBe(0);
     h.hosted.createMode = 'ok';
-    value(await h.service.resume('conversion-1'));
+    value(await h.service.resume(asAda, 'conversion-1'));
     expect(h.hosted.effects[0]).toBe('create:external-1');
     expect(h.hosted.effects.slice(1)).toEqual(['request:agent-1', 'request:agent-2', 'request:agent-3']);
   });
 
   it('defaults an omitted visibility to secret and honors each explicit choice', async () => {
     const h = harness();
-    expect(value(await h.service.start(startInput())).visibility).toBe('secret');
+    expect(value(await h.service.start(asAda, startInput())).visibility).toBe('secret');
     expect(h.hosted.creates[0]!.visibility).toBe('secret');
     for (const visibility of ['public', 'private', 'secret'] as const) {
       const other = harness();
-      value(await other.service.start(startInput({ visibility })));
+      value(await other.service.start(asAda, startInput({ visibility })));
       expect(other.hosted.creates[0]!.visibility).toBe(visibility);
     }
-    expect((await h.service.start(startInput({ conversionId: 'c2', operationId: 'op2', visibility: 'open' }))).kind).toBe('rejected');
+    expect((await h.service.start(asAda, startInput({ conversionId: 'c2', operationId: 'op2', visibility: 'open' }))).kind).toBe('rejected');
   });
 
   it('refuses a changed conversion choice under the same conversion', async () => {
     const h = harness();
-    value(await h.service.start(startInput()));
-    expect(await h.service.start(startInput({ operationId: 'op-other', agents: ['agent-1'] }))).toEqual(rejected('conflict'));
-    expect(await h.service.start(startInput({ visibility: 'public' }))).toEqual(rejected('conflict'));
-    expect(await h.service.start(startInput({ conversionId: 'conversion-2', operationId: 'op-2' }))).toEqual(rejected('conflict'));
+    value(await h.service.start(asAda, startInput()));
+    expect(await h.service.start(asAda, startInput({ operationId: 'op-other', agents: ['agent-1'] }))).toEqual(rejected('conflict'));
+    expect(await h.service.start(asAda, startInput({ visibility: 'public' }))).toEqual(rejected('conflict'));
+    expect(await h.service.start(asAda, startInput({ conversionId: 'conversion-2', operationId: 'op-2' }))).toEqual(rejected('conflict'));
     // Once cancelled the source is free, but the conversion ID still names the first choice.
-    value(await h.service.cancel('conversion-1'));
-    expect(await h.service.start(startInput({ operationId: 'op-again', agents: ['agent-1'] }))).toEqual(rejected('conflict'));
-    expect(value(await h.service.view('conversion-1')).agents.map(agent => agent.participantId)).toEqual(['agent-1', 'agent-2', 'agent-3']);
+    value(await h.service.cancel(asAda, 'conversion-1'));
+    expect(await h.service.start(asAda, startInput({ operationId: 'op-again', agents: ['agent-1'] }))).toEqual(rejected('conflict'));
+    expect(value(await h.service.view(asAda, 'conversion-1')).agents.map(agent => agent.participantId)).toEqual(['agent-1', 'agent-2', 'agent-3']);
   });
 
   it('makes one request per selected agent and grants exactly those from one batch decision', async () => {
     const h = harness();
-    const started = value(await h.service.start(startInput()));
+    const started = value(await h.service.start(asAda, startInput()));
     expect(h.hosted.requests.size).toBe(3);
     const intruder = value(await h.hosted.request({
       operationId: 'foreign', destinationChannelId: started.destinationChannelId!,
       agent: { participantId: 'agent-4', harness: 'codex', sessionId: 'session-agent-4', generation: 1 },
     })).requestHandle;
-    const decided = value(await h.service.decide('conversion-1', { requestHandles: [...handles(started), intruder], operationId: 'batch-1' }));
+    const decided = value(await h.service.decide(asAda, 'conversion-1', { requestHandles: [...handles(started), intruder], operationId: 'batch-1' }));
     expect(decided.granted).toEqual(handles(started));
     expect(decided.refused).toEqual([intruder]);
     for (const handle of handles(started)) expect(h.hosted.requests.get(handle)!.granted).toBe(1);
@@ -259,12 +267,12 @@ describe('start-fresh conversion', () => {
 
   it('never counts a launcher-side direct binding as a ready agent', async () => {
     const h = harness();
-    const started = value(await h.service.start(startInput({ agents: ['agent-1'] })));
+    const started = value(await h.service.start(asAda, startInput({ agents: ['agent-1'] })));
     h.hosted.directBind('agent-1');
-    const view = value(await h.service.resume('conversion-1'));
+    const view = value(await h.service.resume(asAda, 'conversion-1'));
     expect(view.agents[0]!.status).toBe('requested');
     expect(view.canCommit).toBe(false);
-    expect(await h.service.commit('conversion-1')).toEqual(rejected('not_ready'));
+    expect(await h.service.commit(asAda, 'conversion-1')).toEqual(rejected('not_ready'));
     expect(h.hosted.requests.get(handles(started)[0]!)!.granted).toBe(0);
   });
 
@@ -274,7 +282,7 @@ describe('start-fresh conversion', () => {
     const view = await readyToCommit(h);
     expect(view.agents.map(agent => agent.status)).toEqual(['ready', 'requested', 'ready']);
     expect(view.canCommit).toBe(false);
-    expect(await h.service.commit('conversion-1')).toEqual(rejected('not_ready'));
+    expect(await h.service.commit(asAda, 'conversion-1')).toEqual(rejected('not_ready'));
     expect(h.send()).toBe('stored');
   });
 
@@ -283,17 +291,17 @@ describe('start-fresh conversion', () => {
     h.sessions.checks.set('agent-1', 'stale_session');
     h.sessions.checks.set('agent-2', 'revoked');
     h.sessions.checks.set('agent-3', 'unsupported');
-    const view = value(await h.service.start(startInput()));
+    const view = value(await h.service.start(asAda, startInput()));
     expect(view.agents.map(agent => [agent.status, agent.block])).toEqual([
       ['blocked', 'stale_session'], ['blocked', 'revoked'], ['blocked', 'unsupported'],
     ]);
     expect(h.hosted.requests.size).toBe(0);
     expect(view.canCommit).toBe(false);
     h.sessions.checks.delete('agent-1');
-    const retried = value(await h.service.retry('conversion-1', 'agent-1'));
+    const retried = value(await h.service.retry(asAda, 'conversion-1', 'agent-1'));
     expect(retried.agents[0]).toMatchObject({ status: 'requested', attempt: 1 });
-    value(await h.service.skip('conversion-1', 'agent-2'));
-    expect(value(await h.service.retry('conversion-1', 'agent-3')).agents[2]).toMatchObject({ status: 'blocked', block: 'unsupported' });
+    value(await h.service.skip(asAda, 'conversion-1', 'agent-2'));
+    expect(value(await h.service.retry(asAda, 'conversion-1', 'agent-3')).agents[2]).toMatchObject({ status: 'blocked', block: 'unsupported' });
     expect(h.sessions.verified.every(agent => agent.sessionId === `session-${agent.participantId}` && agent.generation === 1)).toBe(true);
   });
 
@@ -301,8 +309,8 @@ describe('start-fresh conversion', () => {
     const h = harness();
     await readyToCommit(h);
     h.sessions.checks.set('agent-3', 'stale_session');
-    expect(await h.service.commit('conversion-1')).toEqual(rejected('not_ready'));
-    const view = value(await h.service.view('conversion-1'));
+    expect(await h.service.commit(asAda, 'conversion-1')).toEqual(rejected('not_ready'));
+    const view = value(await h.service.view(asAda, 'conversion-1'));
     expect(view.agents[2]).toMatchObject({ status: 'blocked', block: 'stale_session' });
     expect(h.send()).toBe('stored');
   });
@@ -311,7 +319,7 @@ describe('start-fresh conversion', () => {
     const h = harness();
     const view = await readyToCommit(h);
     for (const handle of handles(view)) expect(h.hosted.canExchange(handle)).toBe(false);
-    const committed = value(await h.service.commit('conversion-1'));
+    const committed = value(await h.service.commit(asAda, 'conversion-1'));
     expect(committed.state).toBe('externalized');
     for (const handle of handles(view)) expect(h.hosted.canExchange(handle)).toBe(true);
   });
@@ -321,8 +329,8 @@ describe('start-fresh conversion', () => {
     h.hosted.blocked.set('agent-2', 'denied');
     const view = await readyToCommit(h);
     expect(view.agents[1]).toMatchObject({ status: 'blocked', block: 'denied' });
-    value(await h.service.skip('conversion-1', 'agent-2'));
-    const committed = value(await h.service.commit('conversion-1'));
+    value(await h.service.skip(asAda, 'conversion-1', 'agent-2'));
+    const committed = value(await h.service.commit(asAda, 'conversion-1'));
     expect(committed.state).toBe('externalized');
     expect(h.hosted.canExchange(view.agents[1]!.requestHandle!)).toBe(false);
   });
@@ -338,7 +346,7 @@ describe('start-fresh conversion', () => {
     const reference = listed.page.items[0]!.listingRef;
     await readyToCommit(h);
     expect(listing.resolve(caller, reference)).toMatchObject({ channelId });
-    value(await h.service.commit('conversion-1'));
+    value(await h.service.commit(asAda, 'conversion-1'));
     expect(listing.resolve(caller, reference)).toBe('unavailable');
     const relisted = listing.list({ principal: 'agent:someone', generation: 2 }, null);
     expect(relisted.kind === 'listed' && relisted.page.items).toEqual([]);
@@ -352,7 +360,7 @@ describe('start-fresh conversion', () => {
       pausedAtFault = h.send();
       throw new Error('crash before link');
     });
-    const view = value(await failing.commit('conversion-1'));
+    const view = value(await failing.commit(asAda, 'conversion-1'));
     expect(pausedAtFault).toBe('read_only');
     expect(view.state).toBe('failed');
     expect(view.orphanDestinationChannelId).toBe('external-1');
@@ -364,13 +372,13 @@ describe('start-fresh conversion', () => {
     const h = harness();
     const ready = await readyToCommit(h);
     h.hosted.releaseFails.add('agent-2');
-    const partial = value(await h.service.commit('conversion-1'));
+    const partial = value(await h.service.commit(asAda, 'conversion-1'));
     expect(partial.state).toBe('activating');
     expect(partial.agents.map(agent => agent.released)).toEqual([true, false, false]);
     expect(h.send()).toBe('read_only');
-    expect(await h.service.cancel('conversion-1')).toEqual(rejected('wrong_state'));
+    expect(await h.service.cancel(asAda, 'conversion-1')).toEqual(rejected('wrong_state'));
     h.hosted.releaseFails.clear();
-    const resumed = value(await h.service.resume('conversion-1'));
+    const resumed = value(await h.service.resume(asAda, 'conversion-1'));
     expect(resumed.state).toBe('externalized');
     for (const handle of handles(ready)) expect(h.hosted.canExchange(handle)).toBe(true);
     expect(h.send()).toBe('read_only');
@@ -378,11 +386,11 @@ describe('start-fresh conversion', () => {
 
   it('reports the orphan destination when cancelled before commit and reopens the source', async () => {
     const h = harness();
-    value(await h.service.start(startInput()));
-    const view = value(await h.service.cancel('conversion-1'));
+    value(await h.service.start(asAda, startInput()));
+    const view = value(await h.service.cancel(asAda, 'conversion-1'));
     expect(view).toMatchObject({ state: 'cancelled', orphanDestinationChannelId: 'external-1' });
     expect(h.send()).toBe('stored');
-    expect(value(await h.service.start(startInput({ conversionId: 'conversion-2', operationId: 'op-2' }))).state).toBe('agents_pending');
+    expect(value(await h.service.start(asAda, startInput({ conversionId: 'conversion-2', operationId: 'op-2' }))).state).toBe('agents_pending');
   });
 
   it('sends no source message into the destination', async () => {
@@ -391,13 +399,97 @@ describe('start-fresh conversion', () => {
     h.send();
     const before = h.events();
     await readyToCommit(h);
-    value(await h.service.commit('conversion-1'));
+    value(await h.service.commit(asAda, 'conversion-1'));
     expect(h.events()).toBe(before);
     expect(h.hosted.effects.every(effect => effect.startsWith('create:') || effect.startsWith('request:'))).toBe(true);
   });
 
   it('refuses carry-history conversions, which this service does not transfer', async () => {
     const h = harness();
-    expect(await h.service.start(startInput({ historyMode: 'carry_history' }))).toEqual(rejected('unsupported'));
+    expect(await h.service.start(asAda, startInput({ historyMode: 'carry_history' }))).toEqual(rejected('unsupported'));
+  });
+
+  it('refuses every call from anyone but the owner that started the conversion', async () => {
+    const h = harness();
+    const mallory: ConversionOwner = { ownerId: 'owner-mallory' as OwnerId, participantId: 'participant-mallory' as ParticipantId };
+    h.store.registerParticipant({ participantId: mallory.participantId, ownerId: mallory.ownerId, kind: 'human', displayName: 'M' });
+    const forbidden = rejected('forbidden');
+    expect(await h.service.start(mallory, startInput())).toEqual(forbidden);
+    expect(h.hosted.creates).toHaveLength(0);
+    const started = value(await h.service.start(asAda, startInput()));
+    expect(started.owner).toEqual(asAda);
+    expect(await h.service.start(mallory, startInput())).toEqual(forbidden);
+    // Same owner, another participant: still not the one who started it.
+    const bob = { ownerId: owner, participantId: 'participant-bob' as ParticipantId };
+    for (const caller of [mallory, bob]) {
+      expect(await h.service.view(caller, 'conversion-1')).toEqual(forbidden);
+      expect(await h.service.resume(caller, 'conversion-1')).toEqual(forbidden);
+      expect(await h.service.decide(caller, 'conversion-1', { requestHandles: handles(started), operationId: 'steal' })).toEqual(forbidden);
+      expect(await h.service.skip(caller, 'conversion-1', 'agent-1')).toEqual(forbidden);
+      expect(await h.service.retry(caller, 'conversion-1', 'agent-1')).toEqual(forbidden);
+      expect(await h.service.cancel(caller, 'conversion-1')).toEqual(forbidden);
+    }
+    for (const handle of handles(started)) expect(h.hosted.requests.get(handle)!.granted).toBe(0);
+    value(await h.service.decide(asAda, 'conversion-1', { requestHandles: handles(started), operationId: 'batch-1' }));
+    for (const caller of [mallory, bob]) expect(await h.service.commit(caller, 'conversion-1')).toEqual(forbidden);
+    expect(h.send()).toBe('stored');
+    expect(value(await h.service.view(asAda, 'conversion-1')).state).toBe('agents_pending');
+    expect(value(await h.service.commit(asAda, 'conversion-1')).state).toBe('externalized');
+  });
+
+  it('never grants a handle whose agent is no longer requesting', async () => {
+    const h = harness();
+    h.hosted.blocked.set('agent-2', 'denied');
+    const started = value(await h.service.start(asAda, startInput()));
+    const view = value(await h.service.resume(asAda, 'conversion-1'));
+    expect(view.agents[1]).toMatchObject({ status: 'blocked', requestHandle: handles(started)[1] });
+    const decided = value(await h.service.decide(asAda, 'conversion-1', { requestHandles: [handles(started)[1]!], operationId: 'batch-1' }));
+    expect(decided).toMatchObject({ granted: [], refused: [handles(started)[1]] });
+    expect(h.hosted.requests.get(handles(started)[1]!)!.granted).toBe(0);
+  });
+
+  it('withdraws the earlier request when an agent is skipped or re-invited', async () => {
+    const h = harness();
+    h.hosted.blocked.set('agent-2', 'denied');
+    const started = value(await h.service.start(asAda, startInput()));
+    value(await h.service.resume(asAda, 'conversion-1'));
+    const skipped = value(await h.service.skip(asAda, 'conversion-1', 'agent-1'));
+    expect(skipped.agents[0]).toMatchObject({ status: 'skipped', requestHandle: null });
+    expect(h.hosted.withdrawn).toEqual(new Set([handles(started)[0]]));
+    h.hosted.blocked.delete('agent-2');
+    const retried = value(await h.service.retry(asAda, 'conversion-1', 'agent-2'));
+    expect(retried.agents[1]!.requestHandle).not.toBe(handles(started)[1]);
+    expect(h.hosted.withdrawn).toEqual(new Set([handles(started)[0], handles(started)[1]]));
+    const decided = value(await h.service.decide(asAda, 'conversion-1', { requestHandles: handles(started), operationId: 'batch-1' }));
+    expect(decided.granted).toEqual([handles(started)[2]]);
+  });
+
+  it('leaves a commit that is still running to finish when resumed meanwhile', async () => {
+    const h = harness();
+    await readyToCommit(h);
+    let during: string | null = null;
+    const service: ConversionService = h.withFault(async () => {
+      during = value(await service.resume(asAda, 'conversion-1')).state;
+    });
+    const committed = value(await service.commit(asAda, 'conversion-1'));
+    expect(during).toBe('committing');
+    expect(committed.state).toBe('externalized');
+  });
+
+  it('lets nobody join the source channel after the link commit', async () => {
+    const h = harness();
+    await readyToCommit(h);
+    value(await h.service.commit(asAda, 'conversion-1'));
+    // Leaving still works; coming back does not.
+    expect(h.store.setMembership({ channelId, participantId: 'agent-1' as ParticipantId, membership: 'left' }).kind).toBe('done');
+    for (const membership of ['joining', 'joined'] as const) {
+      expect(h.store.setMembership({ channelId, participantId: 'agent-1' as ParticipantId, membership }))
+        .toEqual({ kind: 'rejected', code: 'read_only' });
+    }
+    const admitted = createDiscoveryStore(h.handle).admit({
+      providerOperationId: 'admit-late', channelId, ownerId: owner, participantId: 'agent-5' as ParticipantId,
+      deviceId: 'device-agent-5' as DeviceId, displayName: 'Late',
+    });
+    expect(admitted).toEqual({ kind: 'rejected' });
   });
 });
