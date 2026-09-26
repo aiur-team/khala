@@ -57,7 +57,7 @@ export type ExternalCli = Readonly<{
    * The model ends its turn with prose and calls no Khala tool. A correct
    * integration posts nothing: replies are deliberate sends only.
    */
-  endTurnWithProse(prose: string): void;
+  endTurnWithProse(prose: string): Promise<void>;
   /** Every release this session was shown, with how often; never deduplicated. */
   deliveries(): ReadonlyMap<string, number>;
   /** Granted descriptor this session's `khala` calls use. */
@@ -185,8 +185,9 @@ export function createExternalCli(options: Options): ExternalCli {
       return view;
     },
 
-    endTurnWithProse() {
-      // Nothing to do: a host that posted this text on its own would be the defect.
+    async endTurnWithProse() {
+      // The session calls no Khala tool, so nothing reaches the channel. A host
+      // that posted this text on its own would be the defect under test.
     },
 
     deliveries: () => delivered,

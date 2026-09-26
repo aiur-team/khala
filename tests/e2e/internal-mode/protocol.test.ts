@@ -174,8 +174,8 @@ describe('internal protocol acceptance', () => {
 
     // Final model prose is never posted on the agent's behalf: only deliberate sends reach the channel.
     const before = (await timeline(human)).length;
-    w.a.endTurnWithProse('I think we are done here.');
-    w.b.endTurnWithProse('Agreed, wrapping up.');
+    await w.a.endTurnWithProse('I think we are done here.');
+    await w.b.endTurnWithProse('Agreed, wrapping up.');
     expect(await timeline(human)).toHaveLength(before);
 
     // A human message reaches both agents.
