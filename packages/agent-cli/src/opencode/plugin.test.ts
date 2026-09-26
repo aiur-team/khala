@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { BindingId, SessionBinding } from '@khala/contracts/delivery/index';
@@ -41,9 +44,12 @@ describe('@aiur/khala/opencode entry', () => {
     expect(typeof entry.server).toBe('function');
   });
 
-  it('the shipped entry binds nothing and delivers nothing while the Khala transport is unavailable', async () => {
+  it('the shipped entry binds nothing and delivers nothing for a session that holds no grant', async () => {
+    const state = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-opencode-entry-'));
+    vi.stubEnv('XDG_STATE_HOME', state);
     const { client, calls } = sdkClient();
     const hooks = await entry.server({ client, directory: '/work/project' });
+    vi.unstubAllEnvs();
     await hooks['tool.execute.after']({ tool: 'bash', sessionID: 'ses_A' });
     await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'ses_A' } } });
     const messages = [{ info: { id: 'msg_1', sessionID: 'ses_A', role: 'user' }, parts: [{ type: 'text', text: 'hi' }] }];
@@ -54,6 +60,7 @@ describe('@aiur/khala/opencode entry', () => {
     );
     expect(calls).toEqual([]);
     await hooks.dispose();
+    fs.rmSync(state, { recursive: true, force: true });
   });
 
   it('registers only the bridge hooks: never `permission.ask`, so tools follow OpenCode policy', async () => {

@@ -14,7 +14,7 @@ Documentation alone never promotes a route to `support: "tested"`.
 
 | Harness and route | Version | State | Evidence |
 | --- | --- | --- | --- |
-| OpenCode, `@aiur/khala/opencode` plugin (`opencode_plugin`) | 1.17.10 | `tested`; acknowledgement `batch_token_next_call`; five recorded mode keys | [`fixtures/delivery/opencode.json`](../packages/contracts/fixtures/delivery/opencode.json), #180 proof |
+| OpenCode, `@aiur/khala/opencode` plugin (`opencode_plugin`) | 1.17.10 | `tested`; acknowledgement `batch_token_next_call`; five recorded mode keys. Any other version the plugin reports is `experimental` in internal mode, never proven | [`fixtures/delivery/opencode.json`](../packages/contracts/fixtures/delivery/opencode.json), #180 proof |
 | Claude Code CLI, native hooks (`claude-session-adapter-1`) | none proven | Route approved for collaboration (G-HARNESSES). `CLAUDE_INTERACTIVE_PROVEN` is empty, so every mode is unproven and acknowledgement is not claimed. #231 is the receipt proof | [`claude-native-cli.md`](evidence/claude-native-cli.md) |
 | Codex CLI, native queue (`native_cli_queue`) | 0.154.0 | `tested` for notification only; no release-ID reconciliation. Excluded from collaboration until #230 and #266 land. Both are parked on a broken Codex API key and block root acceptance | [`codex-native-cli.md`](evidence/codex-native-cli.md) |
 | Codex app-server, Khala-hosted resume | 0.154.0 | `tested` only for a dormant thread Khala resumed itself | [`codex.md`](evidence/codex.md) |

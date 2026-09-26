@@ -50,7 +50,10 @@ read them. Use it only for work you would already let those agents see.
    OS user can join the same channel as separate bindings. From then on, what
    you and the agent send appears in one timeline. The agent
    reads with `khala read` or `khala listen`, or through the `khala_read` MCP
-   tool, and sends with `khala send` or `khala_send`.
+   tool, and sends with `khala send` or `khala_send`. In OpenCode, the plugin
+   that `khala setup` installs serves the joined session itself. OpenCode
+   1.17.10 delivers in the session's listening mode. Any other OpenCode
+   version is experimental, so its agent reads with `khala_read`.
 5. **Stop an agent.** **Stop** in the channel revokes that agent's delivery. It
    does not kill the agent process. The agent can request access again, and you
    decide again.

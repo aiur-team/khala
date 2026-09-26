@@ -66,6 +66,11 @@ export type KhalaOpenCodeDependencies = Readonly<{
   /** Acquires the binding generation's inbox listener (the wakeable batch consumer). */
   openBatch(binding: SessionBinding): Promise<HeldBatchPort>;
   openStore(binding: SessionBinding): Promise<OpenCodeBridgeStore>;
+  /**
+   * Told the OpenCode session each hook and tool call comes from, before `controls` is
+   * read for it, so a composition that keeps one grant per session can pick that session's.
+   */
+  observeSession?: (sessionID: string) => void;
   /** The running OpenCode version; defaults to the one in the executable path, else unknown. */
   version?: string | null;
   onReport?: (report: OpenCodeBridgeReport) => void;
@@ -186,7 +191,17 @@ export function createKhalaOpenCodeServer(dependencies: KhalaOpenCodeDependencie
       return next;
     };
 
-    const hook = async (work: (bridge: OpenCodeSessionBridge) => Promise<void>) => {
+    const observe = (sessionID: unknown) => {
+      if (typeof sessionID !== 'string') return;
+      try {
+        dependencies.observeSession?.(sessionID);
+      } catch (error) {
+        report('error', cliErrorCode(error));
+      }
+    };
+
+    const hook = async (sessionID: unknown, work: (bridge: OpenCodeSessionBridge) => Promise<void>) => {
+      observe(sessionID);
       try {
         const bridge = await current();
         if (bridge !== null) await work(bridge);
@@ -195,7 +210,10 @@ export function createKhalaOpenCodeServer(dependencies: KhalaOpenCodeDependencie
       }
     };
 
-    const toolCall = async (work: (bridge: OpenCodeSessionBridge) => Promise<string>): Promise<string> => {
+    const toolCall = async (
+      sessionID: string, work: (bridge: OpenCodeSessionBridge) => Promise<string>,
+    ): Promise<string> => {
+      observe(sessionID);
       try {
         const bridge = await current();
         return bridge === null ? JSON.stringify({ kind: 'refused', code: 'not_connected' }) : await work(bridge);
@@ -212,7 +230,7 @@ export function createKhalaOpenCodeServer(dependencies: KhalaOpenCodeDependencie
         [KHALA_READ_TOOL]: {
           description: READ_DESCRIPTION,
           args: { ackBatchToken: z.string().optional().describe(ACK_DESCRIPTION) },
-          execute: (args, context) => toolCall(bridge => bridge.read({
+          execute: (args, context) => toolCall(context.sessionID, bridge => bridge.read({
             sessionID: context.sessionID, ackBatchToken: ackBatchToken(args),
           })),
         },
@@ -222,16 +240,21 @@ export function createKhalaOpenCodeServer(dependencies: KhalaOpenCodeDependencie
             message: z.string().min(1).describe('Message body to send; it is never echoed in the result.'),
             ackBatchToken: z.string().optional().describe(ACK_DESCRIPTION),
           },
-          execute: (args, context) => toolCall(bridge => bridge.sendMessage({
+          execute: (args, context) => toolCall(context.sessionID, bridge => bridge.sendMessage({
             sessionID: context.sessionID,
             message: typeof args.message === 'string' ? args.message : '',
             ackBatchToken: ackBatchToken(args),
           })),
         },
       },
-      'tool.execute.after': input => hook(bridge => bridge.afterTool(input)),
-      'experimental.chat.messages.transform': (_input, output) => hook(bridge => bridge.transformMessages(output.messages)),
-      event: ({ event }) => hook(bridge => bridge.onEvent(event)),
+      'tool.execute.after': input => hook(input.sessionID, bridge => bridge.afterTool(input)),
+      'experimental.chat.messages.transform': (_input, output) => hook(
+        [...output.messages].reverse().find(message => message.info.role === 'user')?.info.sessionID,
+        bridge => bridge.transformMessages(output.messages),
+      ),
+      event: ({ event }) => hook(
+        (event.properties as { sessionID?: unknown } | undefined)?.sessionID, bridge => bridge.onEvent(event),
+      ),
       dispose: async () => {
         const next = lifecycle.then(close, close);
         lifecycle = next.catch(() => undefined);

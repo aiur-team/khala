@@ -2,6 +2,7 @@ import { MAX_SEND_BYTES } from '@aiur/khala/cli/send';
 import { type HarnessCapabilities, type SessionBinding, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { claudeCapabilities } from '@khala/harnesses/claude/capabilities';
 import { interactiveCodexCapabilities } from '@khala/harnesses/codex/interactive';
+import { installedOpenCodeCapabilities } from '@khala/harnesses/opencode/interactive';
 import type { HarnessObservation } from '../../server/binding-mode';
 
 // The harness claim the internal server projects a binding's mode through for the
@@ -11,6 +12,9 @@ import type { HarnessObservation } from '../../server/binding-mode';
 // observation and the claim is derived here from the released proof matrix: an
 // unproven version or untrusted hooks claim nothing, and without a shipped receipt
 // proof `async` stays unproven. Before any report the Codex claim is unknown.
+// OpenCode is claimed from the version its installed plugin reports: proven only for
+// an exact version with retained route evidence, experimental for any other version,
+// and unknown before the plugin reports.
 
 const limits = decodeDeliveryLimits({ maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32 });
 if (!limits.ok) throw new Error('binding modes: invalid delivery limits');
@@ -34,15 +38,17 @@ export function createServerHarnessCapabilities(): ServerHarnessCapabilities {
   return {
     capabilities(binding) {
       if (binding.harness === CLAUDE.harness) return CLAUDE;
-      if (binding.harness !== 'codex') return null;
+      if (binding.harness !== 'codex' && binding.harness !== 'opencode') return null;
       const observation = observed.get(key(binding));
       if (observation === undefined) return null;
+      // The plugin is the route, so OpenCode has no hook review to consult.
+      if (binding.harness === 'opencode') return installedOpenCodeCapabilities(observation.version, LIMITS);
       return interactiveCodexCapabilities(observation.version, LIMITS, observation.hookReview === 'trusted'
         ? { state: 'trusted' }
         : { state: observation.hookReview, reason: REVIEW_REASONS[observation.hookReview] });
     },
     observe(binding, observation) {
-      if (binding.harness === 'codex') observed.set(key(binding), observation);
+      if (binding.harness === 'codex' || binding.harness === 'opencode') observed.set(key(binding), observation);
     },
   };
 }
