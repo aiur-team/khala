@@ -9,6 +9,8 @@ export interface NavigationItem {
   href: string;
   current: boolean;
   count?: number;
+  /** Feature-owned navigation markup when its badge/accessibility behavior is richer than the shell default. */
+  content?: ReactNode;
 }
 
 export interface ThemePort {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { decodeContentLimits, type DeviceId, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
+import { decodeContentLimits, type ChannelAccessRequestHandle, type DeviceId, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
 import { createHumanBrowserApi } from './browser-api';
 
 const origin = 'https://khala.aiur.team';
@@ -159,5 +159,48 @@ describe('createHumanBrowserApi', () => {
       displayName: userId,
       deviceIds: [],
     });
+  });
+
+  it('binds the channel-request inbox and decisions to human-cookie routes', async () => {
+    const requestHandle = 'careq_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq' as ChannelAccessRequestHandle;
+    const projection = {
+      v: 1, requestHandle, operationKind: 'access', outcome: 'pending_owner', revision: 'carev_1',
+      requester: { sessionFingerprint: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq', harness: 'codex', displayLabel: null, workspaceLabel: null },
+      detail: { kind: 'access', title: 'Plans', history: 'none' }, createdAt: '2026-09-25T00:00:00.000Z',
+      deadline: '2026-10-02T00:00:00.000Z', ownerDecision: 'pending', decidedAt: null, muted: false, muteRevision: null,
+    };
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'ok', requests: [projection] }))
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { ...projection, outcome: 'approved', ownerDecision: 'approved' }))
+      .mockResolvedValueOnce(json(200, { v: 1, operationKind: 'access', muted: true, revision: 'carev_2' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'ok', value: [projection] });
+    expect(await api.channelAccess.decide({
+      v: 1, requestHandle, expectedRevision: 'carev_1', decision: 'approve', operationId: 'decide_1',
+    })).toMatchObject({ kind: 'ok', value: { ownerDecision: 'approved' } });
+    expect(await api.channelAccess.setMute({
+      v: 1, requestHandle, expectedRevision: null, action: 'mute', operationId: 'mute_1',
+    })).toEqual({ kind: 'ok', value: { v: 1, operationKind: 'access', muted: true, revision: 'carev_2' } });
+
+    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/channel-access/inbox`);
+    expect(fetch.mock.calls[2]?.[0]).toBe(`${origin}/api/human/channel-access/decision`);
+    expect(fetch.mock.calls[3]?.[0]).toBe(`${origin}/api/human/channel-access/mute`);
+    expect(new Headers(fetch.mock.calls[2]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+  });
+
+  it('distinguishes inbox authority loss from retryable route failures', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(401, { code: 'signed_out' }))
+      .mockResolvedValueOnce(json(403, { code: 'forbidden' }))
+      .mockResolvedValueOnce(json(404, { code: 'not_found' }))
+      .mockResolvedValueOnce(json(200, { v: 1, kind: 'ok', requests: 'malformed' }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'unavailable', retryable: true });
+    expect(await api.channelAccess.inbox()).toEqual({ kind: 'unavailable', retryable: true });
   });
 });

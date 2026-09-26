@@ -134,6 +134,9 @@ importers:
       '@khala/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@khala/harnesses':
+        specifier: workspace:*
+        version: link:../harnesses
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
