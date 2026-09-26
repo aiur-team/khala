@@ -136,6 +136,7 @@ function snapshotOf(fixture: Fixture): AgentControlsSnapshot {
         version: fixture.store.version,
         experimentalGrants: fixture.store.experimentalGrants,
         hardCancelGrants: fixture.store.hardCancelGrants,
+        lastChangedBy: { kind: 'unknown' },
         support: fixture.modes,
         ...effectiveOf(fixture),
       },
