@@ -13,6 +13,8 @@ import {
   postprocessMcpResult, postprocessPreselectedMcpResult, type McpPostprocessSuppression,
 } from '../mcp/result-postprocessor.js';
 import { runMcpServer } from '../mcp/server.js';
+import { runCodexHook } from '../codex/hook.js';
+import { acquireListenerWithin, callScopedConsumer } from './call-consumer.js';
 
 export type CliDependencies = Readonly<{
   client: AgentClientPort;
@@ -30,6 +32,7 @@ export async function runCli(argv: readonly string[], deps: CliDependencies): Pr
       case 'send': return await send(args, deps);
       case 'status': return await status(args, deps);
       case 'mcp-serve': return await mcp(args, deps);
+      case 'codex-hook': return await codexHook(args, deps);
       default: throw new CliError('invalid_arguments');
     }
   } catch (error) {
@@ -89,7 +92,7 @@ async function read(args: readonly string[], deps: CliDependencies): Promise<num
   }
 
   const inbox = await deps.inbox(heldBinding.bindingId, heldBinding.generation);
-  const consumer = await inbox.acquireListener();
+  const consumer = await acquireListenerWithin(inbox, { signal: deps.signal });
   try {
     const operation = new ReadOperation({
       heldBinding,
@@ -122,38 +125,49 @@ async function mcp(args: readonly string[], deps: CliDependencies): Promise<numb
   if (!current.connected || current.binding === null) throw new CliError('not_connected');
   const heldBinding = current.binding;
   const inbox = await deps.inbox(heldBinding.bindingId, heldBinding.generation);
-  const consumer = await inbox.acquireListener();
-  try {
-    const currentBinding = async () => {
-      const latest = publicStatus(await deps.client.status(deps.signal));
-      return latest.connected ? latest.binding : null;
-    };
-    // Suppressed batches fail open to the plain tool result; report the
-    // content-free stage and code so the operator can see why nothing arrived.
-    const onSuppressed = (suppression: McpPostprocessSuppression) => {
-      deps.stderr.write(JSON.stringify({ ok: false, warning: 'batch_suppressed', ...suppression }) + '\n');
-    };
-    await runMcpServer({
-      input: deps.stdin,
-      output: deps.stdout,
-      send: new SendService(deps.client),
-      read: new ReadOperation({ heldBinding, consumer, currentBinding }),
-      postprocessResult: input => postprocessMcpResult({
-        ...input,
-        consumer,
-        isCurrentBinding: async () => sameHeldBinding(heldBinding, await currentBinding()),
-        onSuppressed,
-      }),
-      postprocessReadResult: input => postprocessPreselectedMcpResult({
-        ...input,
-        isCurrentBinding: async () => sameHeldBinding(heldBinding, await currentBinding()),
-        onSuppressed,
-      }),
-      signal: deps.signal,
-    });
-  } finally {
-    await consumer.release();
-  }
+  // Hold the listener lock per call, not for the server lifetime, so the harness's
+  // native hooks and explicit reads for this binding can pull between tool calls.
+  const consumer = callScopedConsumer(inbox, { signal: deps.signal });
+  const currentBinding = async () => {
+    const latest = publicStatus(await deps.client.status(deps.signal));
+    return latest.connected ? latest.binding : null;
+  };
+  // Suppressed batches fail open to the plain tool result; report the
+  // content-free stage and code so the operator can see why nothing arrived.
+  const onSuppressed = (suppression: McpPostprocessSuppression) => {
+    deps.stderr.write(JSON.stringify({ ok: false, warning: 'batch_suppressed', ...suppression }) + '\n');
+  };
+  await runMcpServer({
+    input: deps.stdin,
+    output: deps.stdout,
+    send: new SendService(deps.client),
+    read: new ReadOperation({ heldBinding, consumer, currentBinding }),
+    postprocessResult: input => postprocessMcpResult({
+      ...input,
+      consumer,
+      isCurrentBinding: async () => sameHeldBinding(heldBinding, await currentBinding()),
+      onSuppressed,
+    }),
+    postprocessReadResult: input => postprocessPreselectedMcpResult({
+      ...input,
+      isCurrentBinding: async () => sameHeldBinding(heldBinding, await currentBinding()),
+      onSuppressed,
+    }),
+    signal: deps.signal,
+  });
+  return 0;
+}
+
+async function codexHook(args: readonly string[], deps: CliDependencies): Promise<number> {
+  if (args.length !== 0) throw new CliError('invalid_arguments');
+  const currentBinding = async () => {
+    const latest = publicStatus(await deps.client.status(deps.signal));
+    return latest.connected ? latest.binding : null;
+  };
+  await runCodexHook({
+    stdin: deps.stdin, stdout: deps.stdout, stderr: deps.stderr, inbox: deps.inbox, signal: deps.signal, currentBinding,
+    listeningMode: async () => deps.client.listeningMode ? deps.client.listeningMode(deps.signal) : null,
+  });
   return 0;
 }
 

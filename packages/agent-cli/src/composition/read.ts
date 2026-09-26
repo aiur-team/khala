@@ -7,6 +7,7 @@ export type ReadInput = Readonly<{
   bindingId: BindingId | null;
   acknowledgeToken?: string;
   maxBytes: number;
+  offerScope?: string;
 }>;
 
 export type ReadResult =
@@ -37,6 +38,7 @@ export class ReadOperation {
   async read(input: ReadInput): Promise<ReadResult> {
     if (!(input.bindingId === null || validBindingArgument(input.bindingId))
       || !(input.acknowledgeToken === undefined || typeof input.acknowledgeToken === 'string')
+      || !(input.offerScope === undefined || typeof input.offerScope === 'string')
       || !Number.isSafeInteger(input.maxBytes) || input.maxBytes < 0) {
       throw new CliError('invalid_arguments');
     }
@@ -50,6 +52,7 @@ export class ReadOperation {
     const batch = await this.#consumer.readBatch({
       maxBytes: input.maxBytes,
       ...(input.acknowledgeToken === undefined ? {} : { acknowledgeToken: input.acknowledgeToken }),
+      ...(input.offerScope === undefined ? {} : { offerScope: input.offerScope }),
     });
 
     if (!sameHeldBinding(this.#heldBinding, await this.#currentBinding())) {

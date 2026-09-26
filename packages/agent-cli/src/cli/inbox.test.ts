@@ -304,6 +304,33 @@ describe('durable inbox batches', () => {
     expect(await restartedReader.readBatch({ maxBytes: 1, acknowledgeToken: staged!.token })).toEqual(advanced);
   });
 
+  it('offers the outstanding batch once per scope, durably, until its token advances', async () => {
+    const directory = stateDirectory();
+    const options = { stateDirectory: directory, bindingId, generation: 3, maxPayloadBytes: 1024, maxSelectionEvents: 32 };
+    const first = await openInbox(options);
+    await first.enqueue(released('release-1', 'first'));
+    const reader = await acquireBatch(first);
+    const offered = await reader.readBatch({ maxBytes: 1024, offerScope: 'turn-1' });
+    expect(offered).not.toBeNull();
+    expect(await reader.readBatch({ maxBytes: 1024, offerScope: 'turn-1' })).toBeNull();
+    // Unscoped reads (explicit pulls, MCP piggyback) still replay it unchanged.
+    expect(await reader.readBatch({ maxBytes: 1024 })).toEqual(offered);
+    await reader.release();
+
+    const restarted = await openInbox(options);
+    const restartedReader = await acquireBatch(restarted);
+    expect(await restartedReader.readBatch({ maxBytes: 1024, offerScope: 'turn-1' })).toBeNull();
+    expect(await restartedReader.readBatch({ maxBytes: 1024, offerScope: 'turn-2' })).toEqual(offered);
+    expect((await restarted.status()).cursor.offset).toBe(0);
+
+    await restarted.enqueue(released('release-2', 'second'));
+    const next = await restartedReader.readBatch({ maxBytes: 1024, acknowledgeToken: offered!.token, offerScope: 'turn-2' });
+    expect(next?.items.map(item => item.record.releaseId)).toEqual(['release-2']);
+    expect(await restartedReader.readBatch({ maxBytes: 1024, offerScope: 'turn-2' })).toBeNull();
+    expect(await restartedReader.readBatch({ maxBytes: 1024, offerScope: 'turn-3' })).toEqual(next);
+    await expect(restartedReader.readBatch({ maxBytes: 1024, offerScope: '' })).rejects.toMatchObject({ code: 'invalid_input' });
+  });
+
   it('recovers an acknowledgement committed before outstanding-state cleanup', async () => {
     const directory = stateDirectory();
     const first = await openInbox({

@@ -27,10 +27,12 @@ export const BUSY_BEHAVIORS = ['queue', 'steer', 'reject', 'unknown'] as const;
  * did not start through the harness CLI (KHA-146 Codex evidence).
  * `agent_installed_listener` is a listener the agent starts inside its session trust
  * boundary; the capability's support and evidence fields still determine whether a
- * particular adapter may claim it.
+ * particular adapter may claim it. `native_hooks` pulls into a session Khala did not
+ * start through the harness's own user-trusted lifecycle hooks (E09 interactive Codex
+ * evidence); the per-mode support says which boundaries it owns.
  */
 export const EXISTING_SESSION_SUPPORT = [
-  'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener',
+  'unknown', 'unsupported', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener', 'native_hooks',
 ] as const;
 
 /**
