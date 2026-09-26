@@ -5,6 +5,13 @@ import type { CreateChannelPorts } from './ports';
 
 type JournalPorts = Pick<CreateChannelPorts, 'room' | 'admission' | 'limits'>;
 
+/**
+ * `shared` (hosted) ends by minting a share link through the admission port.
+ * `private` omits admission entirely and completes once the channel and its
+ * introductions exist.
+ */
+export type CreateChannelMode = 'shared' | 'private';
+
 /** Which in-flight step `retry()` resumes; never exposed on the view. */
 type PendingStep = 'create' | 'intro' | 'share' | null;
 
@@ -67,9 +74,10 @@ function selectedPolicy(view: CreateChannelView): AdmissionPolicy {
 
 export function createCreateChannelController(
   ports: JournalPorts,
-  options: Readonly<{ createId?: () => string }> = {},
+  options: Readonly<{ createId?: () => string; mode?: CreateChannelMode }> = {},
 ): CreateChannelController {
   const createId = options.createId ?? defaultCreateId;
+  const mode = options.mode ?? 'shared';
 
   let view: CreateChannelView = INITIAL_VIEW;
   let disposed = false;
@@ -190,6 +198,12 @@ export function createCreateChannelController(
   }
 
   async function attemptShare(): Promise<void> {
+    // A private channel is complete once it and its introductions exist; the
+    // admission port is never called, so no share link can be minted.
+    if (mode === 'private') {
+      setPhase('ready');
+      return;
+    }
     setPhase('sharing');
     // Cleared unconditionally: a stale prior share URL must never survive into
     // a failed or resolving outcome, only a freshly confirmed `ok`.
@@ -258,7 +272,9 @@ export function createCreateChannelController(
       const title = view.title.trim();
       const titleError = validateTitle(title, ports.limits);
       const namedEmail = view.namedEmail.trim();
-      const namedEmailError = view.admissionPolicy === 'named_no_history' && !EMAIL.test(namedEmail) ? 'email_invalid' : null;
+      const namedEmailError = mode === 'shared' && view.admissionPolicy === 'named_no_history' && !EMAIL.test(namedEmail)
+        ? 'email_invalid'
+        : null;
       const intros: readonly IntroDraft[] = view.intros.map(intro => ({ ...intro, error: validateIntroBody(intro.body, ports.limits) }));
       if (titleError !== null || namedEmailError !== null || intros.some(intro => intro.error !== null)) {
         view = { ...view, title, titleError, namedEmail, namedEmailError, intros };

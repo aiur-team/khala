@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Panel } from '../../shell/Panel';
-import { createCreateChannelController, type CreateChannelController } from './controller';
+import { createCreateChannelController, type CreateChannelController, type CreateChannelMode } from './controller';
 import type { CreateChannelView } from './model';
 import type { CreateChannelPorts } from './ports';
 import { copyShareLink, type CopyResult } from './share-link';
@@ -10,6 +10,11 @@ export interface CreateChannelScreenProps {
   /** Injected for tests and for hosts that supply their own clipboard bridge. */
   onCopyShareLink?: (shareUrl: string) => Promise<CopyResult>;
   onOpenRoom?: (roomId: string) => void;
+  /**
+   * `private` omits the admission choice and share step, and opens the new
+   * channel through `onOpenRoom` as soon as it and its introductions exist.
+   */
+  mode?: CreateChannelMode;
   /** Test-only seam: a pre-built controller (for example one already driven to a target phase). */
   controller?: CreateChannelController;
 }
@@ -29,8 +34,10 @@ const BUSY_MESSAGE: Partial<Record<CreateChannelView['phase'], string>> = {
   resolving: RESOLVING_MESSAGE,
 };
 
-export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, onOpenRoom, controller: injectedController }: CreateChannelScreenProps) {
-  const ownController = useMemo(() => createCreateChannelController(ports), [ports]);
+export function CreateChannelScreen({
+  ports, onCopyShareLink = copyShareLink, onOpenRoom, mode = 'shared', controller: injectedController,
+}: CreateChannelScreenProps) {
+  const ownController = useMemo(() => createCreateChannelController(ports, { mode }), [mode, ports]);
   const controller = injectedController ?? ownController;
   const [view, setView] = useState<CreateChannelView>(() => controller.getView());
   const [readiness, setReadiness] = useState<Readiness>({ kind: 'checking' });
@@ -55,7 +62,11 @@ export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, on
         const identity = await ports.identity.current();
         if (cancelled) return;
         if (identity.kind === 'signed_out') {
-          setReadiness({ kind: 'blocked', reason: 'Sign in to create a channel.' });
+          // A private composition has no sign-in; its session can only be relaunched.
+          setReadiness({
+            kind: 'blocked',
+            reason: mode === 'private' ? 'This session has ended. Relaunch Khala to create a channel.' : 'Sign in to create a channel.',
+          });
           return;
         }
         if (identity.kind === 'unavailable') {
@@ -77,7 +88,7 @@ export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, on
     return () => {
       cancelled = true;
     };
-  }, [ports]);
+  }, [mode, ports]);
 
   useEffect(() => {
     if (focusAfterRemoveIndex === null) return;
@@ -90,6 +101,10 @@ export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, on
   useEffect(() => {
     setCopyStatus('idle');
   }, [view.shareUrl]);
+
+  useEffect(() => {
+    if (mode === 'private' && view.phase === 'ready' && view.roomId !== null) onOpenRoom?.(view.roomId);
+  }, [mode, onOpenRoom, view.phase, view.roomId]);
 
   const editable = view.phase === 'editing';
   // Once the channel exists its title is already committed server-side; only the
@@ -140,41 +155,42 @@ export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, on
           ) : null}
         </div>
 
-        <fieldset className="create-channel__policy" disabled={!editable}>
-          <legend>Who can join from this link?</legend>
-          <label>
-            <input
-              type="radio"
-              name="create-channel-admission-policy"
-              value="link_no_history"
-              checked={view.admissionPolicy === 'link_no_history'}
-              onChange={() => controller.setAdmissionPolicy('link_no_history')}
-            />
-            Anyone with the link, from when they join
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="create-channel-admission-policy"
-              value="named_no_history"
-              checked={view.admissionPolicy === 'named_no_history'}
-              onChange={() => controller.setAdmissionPolicy('named_no_history')}
-            />
-            Only a named email, from when they join
-          </label>
-          {view.admissionPolicy === 'named_no_history' ? (
-            <div className="create-channel__field create-channel__policy-email">
-              <label htmlFor="create-channel-policy-email">Invitee email</label>
+        {mode === 'shared' ? (
+          <fieldset className="create-channel__policy" disabled={!editable}>
+            <legend>Who can join from this link?</legend>
+            <label>
               <input
-                id="create-channel-policy-email"
-                type="email"
-                value={view.namedEmail}
-                aria-invalid={view.namedEmailError !== null}
-                aria-describedby={view.namedEmailError !== null ? 'create-channel-policy-email-error' : undefined}
-                onChange={event => controller.setNamedEmail(event.target.value)}
+                type="radio"
+                name="create-channel-admission-policy"
+                value="link_no_history"
+                checked={view.admissionPolicy === 'link_no_history'}
+                onChange={() => controller.setAdmissionPolicy('link_no_history')}
               />
-              {view.namedEmailError !== null ? (
-                <p role="alert" id="create-channel-policy-email-error">Enter a valid email address.</p>
+              Anyone with the link, from when they join
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="create-channel-admission-policy"
+                value="named_no_history"
+                checked={view.admissionPolicy === 'named_no_history'}
+                onChange={() => controller.setAdmissionPolicy('named_no_history')}
+              />
+              Only a named email, from when they join
+            </label>
+            {view.admissionPolicy === 'named_no_history' ? (
+              <div className="create-channel__field create-channel__policy-email">
+                <label htmlFor="create-channel-policy-email">Invitee email</label>
+                <input
+                  id="create-channel-policy-email"
+                  type="email"
+                  value={view.namedEmail}
+                  aria-invalid={view.namedEmailError !== null}
+                  aria-describedby={view.namedEmailError !== null ? 'create-channel-policy-email-error' : undefined}
+                  onChange={event => controller.setNamedEmail(event.target.value)}
+                />
+                {view.namedEmailError !== null ? (
+                  <p role="alert" id="create-channel-policy-email-error">Enter a valid email address.</p>
               ) : null}
             </div>
           ) : null}
@@ -189,6 +205,7 @@ export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, on
             Anyone with the link can read messages sent before they joined
           </label>
         </fieldset>
+        ) : null}
 
         <fieldset className="create-channel__intros">
           <legend>Introduction messages</legend>
@@ -254,7 +271,7 @@ export function CreateChannelScreen({ ports, onCopyShareLink = copyShareLink, on
       </form>
 
       <p aria-live="polite" className="create-channel__status">
-        {busyMessage ?? ''}
+        {busyMessage ?? (mode === 'private' && view.phase === 'ready' ? 'Channel created. Opening it…' : '')}
       </p>
 
       {view.errorCode ? (

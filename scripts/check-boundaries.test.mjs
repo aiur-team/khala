@@ -207,6 +207,40 @@ test('repository: only the internal composition graph carries the local automati
   }
 });
 
+test('the hosted web graph never reaches the internal entry or its loopback transport', t => {
+  const errors = fixture(t, {
+    'apps/web/src/main.tsx': "import './composition/human/room';",
+    'apps/web/src/composition/human/room.ts': "import '../../internal/composition/ports'; import '../../../../../packages/messaging/src/local/http/index';",
+    'apps/web/src/internal/composition/ports.ts': 'export const ports = 1;',
+    'packages/messaging/src/local/http/index.ts': 'export const substrate = 1;',
+  });
+  assert(errors.some(error => error.startsWith('apps/web/src/main.tsx: hosted browser graph reaches the internal entry') && error.includes('internal/composition/ports')));
+  assert(errors.some(error => error.includes('hosted browser graph reaches the internal entry') && error.includes('messaging/src/local/http')));
+});
+test('the internal entry never reaches Matrix, join, pairing or recovery code', t => {
+  const errors = fixture(t, {
+    'apps/web/src/internal/main.tsx': "import './composition/screen';",
+    'apps/web/src/internal/composition/screen.tsx': [
+      "import '../../composition/human/screen';",
+      "import '../../composition/human/mount';",
+      "import '../../features/join/JoinScreen';",
+      "import '../../composition/recovery/register';",
+      "import 'matrix-js-sdk';",
+    ].join('\n'),
+    'apps/web/src/composition/human/screen.tsx': 'export const screen = 1;',
+    'apps/web/src/composition/human/mount.tsx': 'export const mount = 1;',
+    'apps/web/src/features/join/JoinScreen.tsx': 'export const join = 1;',
+    'apps/web/src/composition/recovery/register.ts': 'export const recovery = 1;',
+  });
+  const reached = errors.filter(error => error.startsWith('apps/web/src/internal/main.tsx: internal entry reaches hosted-only code'));
+  assert.equal(reached.length, 4, errors.join('\n'));
+  assert(!errors.some(error => error.includes('human/screen.tsx') && error.includes('hosted-only')));
+});
+test('repository: the internal entry and the hosted entry stay apart', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const errors = checkBoundaries(root).filter(error => /internal entry|hosted browser graph/.test(error));
+  assert.deepEqual(errors, []);
+});
 test('invalid browser import makes the command fail for CI', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-boundary-cli-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

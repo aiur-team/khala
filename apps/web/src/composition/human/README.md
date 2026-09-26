@@ -27,6 +27,13 @@ are released during logout, account switch, route replacement, or application
 shutdown. Re-entry creates a fresh attachment for the new route generation;
 an old generation must never regain a DOM listener or subscription.
 
+`screen.tsx` is the route-agnostic application screen: shell chrome, identity
+and device status, and the ready route. It imports no route feature and takes
+`renderRoute` and `renderSignedOut` from its host. `mount.tsx` binds the hosted
+create/join/channel routes and OAuth sign-in to it. The internal entry
+(`apps/web/src/internal`) binds only private create and channel routes, so its
+bundle never reaches join, recovery, the Matrix adapter or the control API.
+
 The standalone mount owns Khala chrome. A host-content mount owns only route
 content and follows the same authentication and disposal rules, so a future
 Aiur host does not create duplicate chrome or alternate authority semantics.

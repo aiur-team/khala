@@ -62,6 +62,44 @@ function makeCreateId() {
   return () => `id_${(counter += 1)}`;
 }
 
+describe('createCreateChannelController in private mode', () => {
+  it('completes after the channel and its intros exist without ever calling admission', async () => {
+    const create = vi.fn().mockResolvedValue(ok(CHANNEL));
+    const prepareIntro = vi.fn().mockResolvedValue(ok([sendState('t1', 'accepted')]));
+    const admission = fakeAdmissionPort();
+    const controller = createCreateChannelController(
+      { room: fakeChannelPort({ create, prepareIntro }), admission, limits: LIMITS },
+      { createId: makeCreateId(), mode: 'private' },
+    );
+    controller.addIntro();
+    controller.updateIntro(controller.getView().intros[0]!.localId, 'Plan the release.');
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
+    expect(controller.getView()).toMatchObject({ roomId: ROOM_ID, shareUrl: null, errorCode: null });
+    expect(admission.share).not.toHaveBeenCalled();
+    expect(admission.inspect).not.toHaveBeenCalled();
+    expect(admission.admit).not.toHaveBeenCalled();
+  });
+
+  it('ignores the hosted named-recipient rule and resolves an unknown create under the same operation', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce({ kind: 'outcome_unknown', operationId: 'id_1' })
+      .mockResolvedValueOnce(ok(CHANNEL));
+    const admission = fakeAdmissionPort();
+    const controller = createCreateChannelController(
+      { room: fakeChannelPort({ create }), admission, limits: LIMITS },
+      { createId: makeCreateId(), mode: 'private' },
+    );
+    controller.setAdmissionPolicy('named_no_history');
+    controller.submit();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('resolving'));
+    controller.retry();
+    await vi.waitFor(() => expect(controller.getView().phase).toBe('ready'));
+    expect(create.mock.calls.map(call => call[0].operationId)).toEqual(['id_1', 'id_1']);
+    expect(admission.share).not.toHaveBeenCalled();
+  });
+});
+
 describe('createCreateChannelController', () => {
   it('maps an unnamed title to null and preserves intro order and body bytes', async () => {
     const create = vi.fn().mockResolvedValue(ok(CHANNEL));

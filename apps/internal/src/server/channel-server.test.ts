@@ -281,6 +281,21 @@ describe('credential authentication', () => {
     expect((await call(h.server.port, { path, headers: bearer(h.fixture.bob.credential) })).status).toBe(401);
   });
 
+  it('reports the bootstrapped human authority only to that human session', async () => {
+    const h = await start();
+    const session = await humanSession(h);
+    const path = '/api/v1/session';
+    const held = await call(h.server.port, { path, headers: session });
+    expect(held.status).toBe(200);
+    expect(held.json).toEqual({
+      human: { ownerId: h.fixture.bootstrap.human.ownerId, participantId: h.fixture.bootstrap.human.participantId, deviceId: aliceDevice },
+    });
+    expect(held.text).not.toContain(session['x-khala-request-secret']);
+    expect((await call(h.server.port, { path, headers: bearer(h.fixture.bob.credential) })).status).toBe(403);
+    expect((await call(h.server.port, { path, headers: { cookie: session.cookie! } })).status).toBe(401);
+    expect((await call(h.server.port, { path })).status).toBe(401);
+  });
+
   it('refuses a binding whose persisted generation was replaced', async () => {
     const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-server-'), now: NOW });
     cleanups.push(() => fixture.dispose());
