@@ -35,6 +35,11 @@ export {
   receiptIdFor,
 } from './receipts';
 export type { ReleaseCodecPort } from './transport';
+export {
+  CODEX_IDLE_WAKE_NOTICE, codexIdleWakeArgv, createCodexIdleWake,
+  type CodexIdleWake, type CodexIdleWakeDeps, type CodexIdleWakeOutcome, type CodexIdleWakePort,
+  type CodexIdleWakeResult,
+} from './idle-wake';
 
 type CodexHarnessBaseDeps = Readonly<{
   client: CodexClientPort;

@@ -15,6 +15,10 @@ export const CODEX_INTERACTIVE_EVIDENCE_REVISION = 'interactive-codex-2026-09-25
 export const CODEX_INTERACTIVE_VERSIONS: readonly string[] = ['0.154.0', '0.156.1'];
 
 const IDLE = 'Idle agents receive messages only at their next turn.';
+const IDLE_WOKEN = 'An idle agent is woken by a content-free queue notice, and the hook then pulls the batch.';
+
+/** Whether the constant `codex queue` idle wake works here; a failure keeps the next-turn claim. */
+export type CodexIdleWakeState = 'available' | 'unavailable';
 
 /** The user's hook-review state for the installed Khala handlers, as setup reports it. */
 export type CodexInteractiveHookReview =
@@ -30,7 +34,9 @@ export function interactiveCodexCapabilities(
   version: string,
   limits: DeliveryLimits,
   review: CodexInteractiveHookReview,
+  idleWake: CodexIdleWakeState = 'unavailable',
 ): HarnessCapabilities {
+  const idle = idleWake === 'available' ? IDLE_WOKEN : IDLE;
   if (!CODEX_INTERACTIVE_VERSIONS.includes(version)) {
     return closed(version, limits, `Codex ${version} has no interactive hook proof; proven versions are `
       + `${CODEX_INTERACTIVE_VERSIONS.join(' and ')}. ${IDLE}`);
@@ -54,8 +60,7 @@ export function interactiveCodexCapabilities(
     adapterVersion: CODEX_INTERACTIVE_ADAPTER_VERSION,
     support: 'tested',
     existingSession: 'native_hooks',
-    // The content-free idle wake is proven separately (`codex-idle-wake`).
-    immediateNotification: 'unknown',
+    immediateNotification: idleWake === 'available' ? 'native_cli_queue' : 'unknown',
     // Busy handling differs by mode and is stated per mode below.
     busy: 'unknown',
     receiptEvidence: [],
@@ -65,9 +70,9 @@ export function interactiveCodexCapabilities(
     modes: {
       steer: proven('codex-hooks-next-tool-boundary', 'steer means the next tool boundary: PreToolUse blocks the '
         + 'next tool, PostToolUse adds a batch that arrived during a tool, and Stop continues once. '
-        + `Hard abort is disabled. ${IDLE}`),
+        + `Hard abort is disabled. ${idle}`),
       sync: proven('codex-hooks-stop-or-prompt', 'Delivered after the turn at Stop, or with the next prompt; '
-        + `tool boundaries stay silent. ${IDLE}`),
+        + `tool boundaries stay silent. ${idle}`),
       async: proven('codex-khala-read', 'Delivered only when the agent calls khala_read; hooks inject nothing.'),
     },
     acknowledgement: 'batch_token_next_call',
