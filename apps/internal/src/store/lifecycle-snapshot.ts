@@ -57,14 +57,22 @@ export type LifecycleBindResult =
   | Readonly<{ kind: 'bound'; changed: boolean }>
   | Readonly<{ kind: 'identity_mismatch' }>;
 
-/** Exactly one channel row must exist, match, and agree with any bound meta identity. */
+/**
+ * A bound store is identified by its bound launch channel, which must still exist;
+ * channels later created in the same store (an owner-confirmed create request) do
+ * not change that identity. An unbound legacy store must hold exactly this one channel.
+ */
 function identityOf(db: DatabaseSync, channelId: string): LifecycleIdentity {
-  const channels = db.prepare('SELECT channel_id FROM channels ORDER BY channel_id LIMIT 2')
-    .all() as unknown as Array<{ channel_id: string }>;
-  if (channels.length !== 1 || channels[0]?.channel_id !== channelId) return 'mismatch';
   const bound = db.prepare('SELECT value FROM meta WHERE key = ?')
     .get(LIFECYCLE_CHANNEL_META_KEY) as { value: string } | undefined;
-  return bound === undefined || bound.value === channelId ? 'match' : 'mismatch';
+  if (bound !== undefined) {
+    return bound.value === channelId && db.prepare('SELECT 1 FROM channels WHERE channel_id = ?').get(channelId)
+      ? 'match'
+      : 'mismatch';
+  }
+  const channels = db.prepare('SELECT channel_id FROM channels ORDER BY channel_id LIMIT 2')
+    .all() as unknown as Array<{ channel_id: string }>;
+  return channels.length === 1 && channels[0]?.channel_id === channelId ? 'match' : 'mismatch';
 }
 
 /** Binds a freshly created or legacy single-channel store to its logical channel ID. */
@@ -208,5 +216,36 @@ export function readArchiveSnapshot(
   return checked(handle, channelId, (db, metadata) => {
     const events = eventsOf(db, channelId);
     return events === null ? null : { metadata, participants: participantsOf(db, channelId), events };
+  });
+}
+
+export type CreatedChannelRemoval =
+  | Readonly<{ kind: 'removed' }>
+  /** This store does not hold the channel, or holds it as its launch channel. */
+  | Readonly<{ kind: 'absent' }>;
+
+/**
+ * Removes one channel that an owner-confirmed create added to a launch store, and
+ * nothing else: its events, memberships, discovery settings and create record go,
+ * and any binding activated for it is revoked. The launch channel and every other
+ * channel in the store keep all of their rows.
+ */
+export function removeCreatedChannel(handle: InternalStoreHandle, channelId: string): CreatedChannelRemoval {
+  return handle.transaction(db => {
+    const bound = db.prepare('SELECT value FROM meta WHERE key = ?')
+      .get(LIFECYCLE_CHANNEL_META_KEY) as { value: string } | undefined;
+    if (bound === undefined || bound.value === channelId
+      || !db.prepare('SELECT 1 FROM channels WHERE channel_id = ?').get(channelId)) return { kind: 'absent' } as const;
+    db.prepare(`
+      UPDATE bindings SET status = 'revoked'
+      WHERE (binding_id, generation) IN (SELECT binding_id, generation FROM discovery_activations WHERE channel_id = ?)
+    `).run(channelId);
+    for (const table of [
+      'discovery_activations', 'discovery_allowlist', 'discovery_visibility', 'channel_operations',
+      'receipt_fact_events', 'events', 'memberships', 'channels',
+    ]) {
+      db.prepare(`DELETE FROM ${table} WHERE channel_id = ?`).run(channelId);
+    }
+    return { kind: 'removed' } as const;
   });
 }

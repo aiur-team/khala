@@ -2,8 +2,13 @@
 // origin. The descriptor is always requested from that origin's fixed path, and
 // every redirect is revalidated against the same allowlist. Nothing the link or
 // response says can move the connector to an origin it was not configured with.
+// Code-only pairing has no link at all: its descriptor comes from the one hosted
+// origin named in trusted connector configuration.
 
-import { type BootstrapDescriptor, DESCRIPTOR_MEDIA_TYPE, DESCRIPTOR_PATH, MAX_DESCRIPTOR_BYTES, decodeDescriptor } from './descriptor';
+import {
+  type BootstrapDescriptor, type PairingDescriptor, DESCRIPTOR_MEDIA_TYPE, DESCRIPTOR_PATH, MAX_DESCRIPTOR_BYTES, PAIRING_METHOD,
+  decodeDescriptor, decodePairingDescriptor,
+} from './descriptor';
 
 export const MAX_LINK_BYTES = 2048;
 export const MAX_REDIRECTS = 3;
@@ -17,13 +22,25 @@ export type DiscoveryResult =
   /** Nothing conclusive happened (network, timeout, 5xx, 429); retry later. */
   | Readonly<{ kind: 'unavailable' }>;
 
+export type PairingDiscoveryResult =
+  | Readonly<{ kind: 'resolved'; origin: string; descriptor: PairingDescriptor }>
+  | Readonly<{ kind: 'rejected'; code: DiscoveryRejection }>
+  | Readonly<{ kind: 'unavailable' }>;
+
 export interface DiscoveryPort {
   resolve(channelUrl: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<DiscoveryResult>;
+  /**
+   * Resolves the code-only descriptor from the configured hosted origin. It takes
+   * no origin or code: absent means this connector has no pairing configuration.
+   */
+  resolvePairing?(options?: Readonly<{ signal?: AbortSignal }>): Promise<PairingDiscoveryResult>;
 }
 
 export type DiscoveryOptions = Readonly<{
   /** Exact origins, e.g. `https://khala.aiur.team`. `http:` only for loopback development hosts. */
   trustedOrigins: readonly string[];
+  /** The one canonical hosted origin for code-only pairing. Absent disables pairing discovery. */
+  hostedOrigin?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
 }>;
@@ -74,77 +91,111 @@ export function createDiscovery(options: DiscoveryOptions): DiscoveryPort {
   for (const origin of options.trustedOrigins) {
     if (!isAcceptableOrigin(origin)) throw new Error('trusted origins must be exact https (or loopback http) origins');
   }
+  const hostedOrigin = options.hostedOrigin ?? null;
+  if (hostedOrigin !== null && !isAcceptableOrigin(hostedOrigin)) {
+    throw new Error('the hosted origin must be an exact https (or loopback http) origin');
+  }
   const trusted = new Set(options.trustedOrigins);
   const transport = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS;
+  const signalFor = (callSignal?: AbortSignal) => {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    return callSignal ? AbortSignal.any([callSignal, timeout]) : timeout;
+  };
 
   return {
     async resolve(channelUrl, callOptions) {
       const checked = checkChannelLink(channelUrl, trusted);
       if (checked.kind === 'rejected') return checked;
-      const timeout = AbortSignal.timeout(timeoutMs);
-      const signal = callOptions?.signal ? AbortSignal.any([callOptions.signal, timeout]) : timeout;
-      let target = new URL(`${checked.origin}${DESCRIPTOR_PATH}`);
+      const target = new URL(`${checked.origin}${DESCRIPTOR_PATH}`);
       target.searchParams.set('link', checked.link);
-      try {
-        for (let hop = 0; ; hop++) {
-          const response = await transport(target, {
-            method: 'GET',
-            headers: { accept: DESCRIPTOR_MEDIA_TYPE },
-            redirect: 'manual',
-            credentials: 'omit',
-            signal,
-          });
-          if (response.status >= 300 && response.status < 400) {
-            await discard(response);
-            const location = response.headers.get('location');
-            if (location === null || hop >= MAX_REDIRECTS) return { kind: 'rejected', code: 'link_unavailable' };
-            let next: URL;
-            try {
-              next = new URL(location, target);
-            } catch {
-              return { kind: 'rejected', code: 'untrusted_origin' };
-            }
-            // Same origin only: a redirect cannot move a production link's flow to a preview origin.
-            if (next.username !== '' || next.password !== '' || next.origin !== checked.origin) {
-              return { kind: 'rejected', code: 'untrusted_origin' };
-            }
-            target = next;
-            continue;
-          }
-          if (response.status === 429 || response.status >= 500) {
-            await discard(response);
-            return { kind: 'unavailable' };
-          }
-          if (response.status !== 200) {
-            await discard(response);
-            return { kind: 'rejected', code: 'link_unavailable' };
-          }
-          const mediaType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase();
-          if (mediaType !== DESCRIPTOR_MEDIA_TYPE) {
-            await discard(response);
-            return { kind: 'rejected', code: 'unsupported_descriptor' };
-          }
-          const body = await readBounded(response, MAX_DESCRIPTOR_BYTES);
-          if (body === null) return { kind: 'rejected', code: 'unsupported_descriptor' };
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
-          } catch {
-            return { kind: 'rejected', code: 'unsupported_descriptor' };
-          }
-          const decoded = decodeDescriptor(parsed, target.origin);
-          if (decoded.kind === 'invalid') {
-            return { kind: 'rejected', code: decoded.code === 'foreign_endpoint' ? 'untrusted_origin' : 'unsupported_descriptor' };
-          }
-          return { kind: 'resolved', origin: target.origin, descriptor: decoded.descriptor };
-        }
-      } catch {
-        // Network failure, timeout or abort: never echo the error, it may carry the URL.
-        return { kind: 'unavailable' };
+      const fetched = await fetchDescriptor(transport, target, signalFor(callOptions?.signal));
+      if (fetched.kind !== 'fetched') return fetched;
+      const decoded = decodeDescriptor(fetched.body, fetched.origin);
+      if (decoded.kind === 'invalid') {
+        return { kind: 'rejected', code: decoded.code === 'foreign_endpoint' ? 'untrusted_origin' : 'unsupported_descriptor' };
       }
+      return { kind: 'resolved', origin: fetched.origin, descriptor: decoded.descriptor };
+    },
+    async resolvePairing(callOptions) {
+      // Only trusted configuration names the origin; a pairing code never reaches this request.
+      if (hostedOrigin === null) return { kind: 'rejected', code: 'untrusted_origin' };
+      const target = new URL(`${hostedOrigin}${DESCRIPTOR_PATH}`);
+      target.searchParams.set('method', PAIRING_METHOD);
+      const fetched = await fetchDescriptor(transport, target, signalFor(callOptions?.signal));
+      if (fetched.kind !== 'fetched') return fetched;
+      const decoded = decodePairingDescriptor(fetched.body, hostedOrigin);
+      if (decoded.kind === 'invalid') {
+        return { kind: 'rejected', code: decoded.code === 'foreign_endpoint' ? 'untrusted_origin' : 'unsupported_descriptor' };
+      }
+      return { kind: 'resolved', origin: hostedOrigin, descriptor: decoded.descriptor };
     },
   };
+}
+
+type Fetched =
+  | Readonly<{ kind: 'fetched'; origin: string; body: unknown }>
+  | Readonly<{ kind: 'rejected'; code: DiscoveryRejection }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+/**
+ * GETs one descriptor document. Redirects stay on the first request's origin, and
+ * the body must be bounded, JSON-typed UTF-8. Decoding belongs to the caller.
+ */
+async function fetchDescriptor(transport: typeof fetch, initial: URL, signal: AbortSignal): Promise<Fetched> {
+  const origin = initial.origin;
+  let target = initial;
+  try {
+    for (let hop = 0; ; hop++) {
+      const response = await transport(target, {
+        method: 'GET',
+        headers: { accept: DESCRIPTOR_MEDIA_TYPE },
+        redirect: 'manual',
+        credentials: 'omit',
+        signal,
+      });
+      if (response.status >= 300 && response.status < 400) {
+        await discard(response);
+        const location = response.headers.get('location');
+        if (location === null || hop >= MAX_REDIRECTS) return { kind: 'rejected', code: 'link_unavailable' };
+        let next: URL;
+        try {
+          next = new URL(location, target);
+        } catch {
+          return { kind: 'rejected', code: 'untrusted_origin' };
+        }
+        // Same origin only: a redirect cannot move a production link's flow to a preview origin.
+        if (next.username !== '' || next.password !== '' || next.origin !== origin) {
+          return { kind: 'rejected', code: 'untrusted_origin' };
+        }
+        target = next;
+        continue;
+      }
+      if (response.status === 429 || response.status >= 500) {
+        await discard(response);
+        return { kind: 'unavailable' };
+      }
+      if (response.status !== 200) {
+        await discard(response);
+        return { kind: 'rejected', code: 'link_unavailable' };
+      }
+      const mediaType = (response.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase();
+      if (mediaType !== DESCRIPTOR_MEDIA_TYPE) {
+        await discard(response);
+        return { kind: 'rejected', code: 'unsupported_descriptor' };
+      }
+      const body = await readBounded(response, MAX_DESCRIPTOR_BYTES);
+      if (body === null) return { kind: 'rejected', code: 'unsupported_descriptor' };
+      try {
+        return { kind: 'fetched', origin: target.origin, body: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body)) };
+      } catch {
+        return { kind: 'rejected', code: 'unsupported_descriptor' };
+      }
+    }
+  } catch {
+    // Network failure, timeout or abort: never echo the error, it may carry the URL.
+    return { kind: 'unavailable' };
+  }
 }
 
 /** Reads at most `limit` bytes; `null` when the body is larger. Never trusts `content-length`. */

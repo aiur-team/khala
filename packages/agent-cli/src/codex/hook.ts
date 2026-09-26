@@ -147,7 +147,7 @@ export async function runCodexHook(deps: CodexHookDependencies): Promise<void> {
   }
 }
 
-async function readJson(input: Readable): Promise<unknown> {
+export async function readJson(input: Readable): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of input) {
@@ -163,6 +163,6 @@ async function readJson(input: Readable): Promise<unknown> {
   }
 }
 
-function write(stream: Writable, value: string): Promise<void> {
+export function write(stream: Writable, value: string): Promise<void> {
   return new Promise((resolve, reject) => stream.write(value, error => error ? reject(error) : resolve()));
 }

@@ -25,6 +25,19 @@ export const FROZEN_COMMAND_VERBS = ['send', 'read', 'create', 'join', 'who'] as
 
 /** The one MCP server entry, launched as `khala mcp-serve`, and its tools. */
 export const FROZEN_MCP_SERVER = { name: 'khala', command: 'khala', args: ['mcp-serve'] } as const;
+/**
+ * Marks the plugin's own MCP entry so `mcp-serve` binds to the Claude session. The
+ * session ID alone is not enough: every process a Claude Bash tool starts inherits it.
+ */
+export const CLAUDE_MCP_ENV = { KHALA_MCP_HARNESS: 'claude' } as const;
+
+/** Where the bundled skill lives, and the verbs this plugin version dispatches. */
+export const SKILL_FILE = 'skills/khala/SKILL.md';
+export const DISPATCHED_VERBS = ['send', 'read'] as const;
+/**
+ * `khala_channel_access_status` (#341) is a decided addition, an amendment to decision 27
+ * like the `KHALA_MCP_HARNESS` marker (#333).
+ */
 export const FROZEN_MCP_TOOLS = [
   'khala_send',
   'khala_read',
@@ -33,6 +46,7 @@ export const FROZEN_MCP_TOOLS = [
   'khala_create_channel',
   'khala_list_channels',
   'khala_request_channel_access',
+  'khala_channel_access_status',
   'khala_list_agents',
 ] as const;
 

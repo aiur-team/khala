@@ -11,6 +11,7 @@ function client() {
     mode: vi.fn(async () => ({ kind: 'refused' as const, code: 'unproven' as const })),
     setMode: vi.fn(async () => ({ kind: 'refused' as const, code: 'unproven' as const })),
     pending: vi.fn(async () => ({ kind: 'idle' as const })),
+    hook: vi.fn(async () => ({ kind: 'hook' as const, effective: null, watchSeconds: null })),
   } satisfies ClaudeSessionClient;
 }
 

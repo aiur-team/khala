@@ -3,7 +3,7 @@ import { MAX_SEND_BYTES } from '../cli/send.js';
 import { plainObject, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { readRuntimeDescriptor, type RuntimeDescriptorFailure } from './claude-descriptor.js';
 import {
-  CLAUDE_SESSION_REFUSALS, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome,
+  CLAUDE_SESSION_REFUSALS, type ClaudeHookOutcome, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome,
   type ClaudeReadOutcome, type ClaudeSendOutcome, type ClaudeSessionAdapter, type ClaudeSessionRefusal,
   type ClaudeStatusOutcome, type ModeSetInput,
 } from './claude-session.js';
@@ -22,7 +22,7 @@ export type ClaudeSessionRequest =
     v: 1; op: 'mode_set'; sessionId: string;
     commandId: string; expectedVersion: number; requested: ListeningMode; issuedAt: string;
   }>
-  | Readonly<{ v: 1; op: 'pending'; sessionId: string }>;
+  | Readonly<{ v: 1; op: 'pending' | 'hook'; sessionId: string }>;
 
 export type ClaudeSessionResponse = Readonly<{ status: 200 | 400 | 401; body: Readonly<Record<string, unknown>> }>;
 
@@ -51,6 +51,7 @@ export async function handleClaudeSessionRequest(
       commandId: request.commandId, expectedVersion: request.expectedVersion, requested: request.requested, issuedAt: request.issuedAt,
     }); break;
     case 'pending': outcome = await adapter.pending(call); break;
+    case 'hook': outcome = await adapter.hook(call); break;
   }
   return { status: outcome.kind === 'refused' && outcome.code === 'unauthorized' ? 401 : 200, body: outcome };
 }
@@ -61,7 +62,7 @@ function decodeRequest(value: unknown): ClaudeSessionRequest | null {
   const only = (...extra: string[]) => keys.every(key => ['v', 'op', 'sessionId', ...extra].includes(key));
   const sessionId = value.sessionId;
   switch (value.op) {
-    case 'pull': case 'read': case 'status': case 'mode': case 'pending':
+    case 'pull': case 'read': case 'status': case 'mode': case 'pending': case 'hook':
       return only() ? { v: 1, op: value.op, sessionId } : null;
     case 'send':
       return only('body') && typeof value.body === 'string' ? { v: 1, op: 'send', sessionId, body: value.body } : null;
@@ -96,6 +97,8 @@ export interface ClaudeSessionClient {
   mode(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeModeOutcome>>;
   setMode(sessionId: string, input: ClaudeModeSetRequest, signal?: AbortSignal): Promise<Result<ClaudeModeSetOutcome>>;
   pending(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudePendingOutcome>>;
+  /** Hook boundary state: effective mode and watcher window. Never acknowledges. */
+  hook(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeHookOutcome>>;
 }
 
 export const DEFAULT_CLIENT_TIMEOUT_MS = 10_000;
@@ -190,6 +193,16 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
       const value = await call({ v: 1, op: 'pending', sessionId }, signal);
       if (plainObject(value) && (value.kind === 'pending' || value.kind === 'idle') && Object.keys(value).length === 1) {
         return { kind: value.kind };
+      }
+      return refusal(value);
+    },
+    async hook(sessionId, signal) {
+      const value = await call({ v: 1, op: 'hook', sessionId }, signal);
+      const mode = (candidate: unknown) => (LISTENING_MODES as readonly unknown[]).includes(candidate);
+      if (plainObject(value) && value.kind === 'hook' && Object.keys(value).length === 3
+        && (value.effective === null || mode(value.effective))
+        && (value.watchSeconds === null || (Number.isSafeInteger(value.watchSeconds) && (value.watchSeconds as number) > 0))) {
+        return { kind: 'hook', effective: value.effective as ListeningMode | null, watchSeconds: value.watchSeconds as number | null };
       }
       return refusal(value);
     },

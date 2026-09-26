@@ -30,6 +30,7 @@ function client(overrides: Partial<ClaudeSessionClient> = {}): ClaudeSessionClie
     send: vi.fn(async () => ({ kind: 'accepted' as const, clientTxnId: 'txn-12345678', eventId: null })),
     mode: vi.fn(async () => ({ kind: 'refused' as const, code: 'unproven' as const })),
     pending: vi.fn(async () => ({ kind: 'pending' as const })),
+    hook: vi.fn(async () => ({ kind: 'hook' as const, effective: 'sync' as const, watchSeconds: 3000 })),
     ...overrides,
   };
 }
@@ -74,6 +75,9 @@ describe('khala claude command registration', () => {
     });
     await expect(run(['claude', 'pending', '--session', 's-1'], composed)).resolves.toEqual({
       code: 0, out: '{"ok":true,"kind":"pending"}\n', err: '',
+    });
+    await expect(run(['claude', 'hook', '--session', 's-1'], composed)).resolves.toEqual({
+      code: 0, out: '{"ok":true,"kind":"hook","effective":"sync","watchSeconds":3000}\n', err: '',
     });
   });
 

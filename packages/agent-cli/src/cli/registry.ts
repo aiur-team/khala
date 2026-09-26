@@ -10,6 +10,7 @@ import { modeCommand } from './commands/mode.js';
 import { readCommand } from './commands/read.js';
 import { sendCommand } from './commands/send.js';
 import { statusCommand } from './commands/status.js';
+import { pairCommand } from './pair.js';
 import type { CliCommand } from './types.js';
 
 const COMMAND_NAME = /^[a-z][a-z0-9-]*$/;
@@ -57,6 +58,7 @@ export const CLI_COMMANDS: readonly CliCommand[] = Object.freeze([
   codexHookCommand,
   joinCommand,
   claudeCommand,
+  pairCommand,
 ]);
 
 export const commandRegistry: CommandRegistry = createCommandRegistry(CLI_COMMANDS);
