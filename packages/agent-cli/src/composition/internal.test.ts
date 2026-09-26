@@ -418,6 +418,9 @@ describe('createInternalClient', () => {
     expect((server.log.at(-1)!.body as { operationId: string }).operationId).toBe(third);
     // No request ever carried the transport capability.
     expect(server.capabilitiesSince(0)).not.toContain(launched.transportOnly.transportCapability);
+    // A rotated or unknown discovery capability asks for a fresh descriptor, not a transport failure.
+    server.discovery.clear();
+    expect(await client.requestAccess!(url)).toEqual({ kind: 'refused', code: 'discovery_required' });
   });
 
   it('reports join as unavailable when the server exposes no access journal', async () => {

@@ -30,6 +30,18 @@ const JOURNAL_KEY_RECORD = 'internal.channel-access.policy-key.v1';
 const OWNER_REVISION = 'internal-owner-v1';
 const CAPABILITY_BYTES = 32;
 const CHANNEL_PATH = /^\/channels\/([A-Za-z0-9._~-]{1,256})$/;
+/**
+ * Server-only channel reference. A listing-reference request stays bound to the
+ * requester's eligibility, so an allowlist revoke closes it; a canonical URL is a
+ * locator that never needed eligibility.
+ */
+const LISTED_PREFIX = 'listed:';
+
+function channelOf(channelRef: string): Readonly<{ channelId: string; listed: boolean }> {
+  return channelRef.startsWith(LISTED_PREFIX)
+    ? { channelId: channelRef.slice(LISTED_PREFIX.length), listed: true }
+    : { channelId: channelRef, listed: false };
+}
 
 export type InternalChannelDiscovery = Readonly<{
   port: InternalDiscoveryPort;
@@ -116,7 +128,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       return {
         kind: 'resolved',
         ownerId: human.ownerId,
-        channelRef: channelId as AuthorizedChannelRef,
+        channelRef: `${input.kind === 'listing_ref' ? LISTED_PREFIX : ''}${channelId}` as AuthorizedChannelRef,
         targetRevision: `vis_${target.target.visibilityEpoch}`,
         title: target.target.title ?? 'Untitled channel',
       };
@@ -130,11 +142,18 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       if (input.ownerId !== human.ownerId) return { kind: 'unavailable' };
       const agent = currentAgent(input.requester.principal, input.requester.sessionGeneration);
       if (agent === 'unavailable') return { kind: 'unavailable' };
-      const target = store.target(input.channelRef);
+      const { channelId, listed } = channelOf(input.channelRef);
+      const target = store.target(channelId);
       if (target.kind === 'unavailable') return { kind: 'unavailable' };
       // Rebind, deletion and any visibility change close the request.
       if (agent === 'revoked' || target.kind === 'absent' || `vis_${target.target.visibilityEpoch}` !== input.targetRevision) {
         return { kind: 'revoked' };
+      }
+      // So does losing the eligibility a listing reference was issued under.
+      if (listed) {
+        const eligible = store.eligible(channelId, input.requester.principal);
+        if (eligible === 'unavailable') return { kind: 'unavailable' };
+        if (!eligible) return { kind: 'revoked' };
       }
       return { kind: 'current', ownerId: human.ownerId, targetRevision: input.targetRevision, title: target.target.title ?? 'Untitled channel' };
     },
@@ -146,7 +165,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
     },
     async currentAccessOwner(channelRef, principal) {
       if (principal.ownerId !== human.ownerId) return { kind: 'forbidden' };
-      const target = store.target(channelRef);
+      const target = store.target(channelOf(channelRef).channelId);
       if (target.kind === 'unavailable') return { kind: 'unavailable' };
       return target.kind === 'found'
         ? { kind: 'owned', ownerId: human.ownerId, targetRevision: `vis_${target.target.visibilityEpoch}` }
@@ -181,7 +200,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
     if (typeof agent !== 'object') return null;
     return {
       providerOperationId: input.providerOperationId,
-      channelId: input.channelRef,
+      channelId: channelOf(input.channelRef).channelId,
       ownerId: human.ownerId,
       participantId: agentParticipant(input.requester) as HumanAuthority['participantId'],
       deviceId: input.deviceId,

@@ -132,15 +132,24 @@ optional display text; the owner sees them marked as untrusted.
 - The server stores only a digest of the capability, so it survives a restart
   of the same channel. Requests are bound to the loopback origin, so a resume on
   a different port closes them.
-- Anyone who can read your files as the same OS user can copy either file. This
-  is the accepted v1 limit, not something the files prevent.
+- Anyone who can read your files as the same OS user can copy either file, and
+  anyone who can read `active.json` can reissue a descriptor for a session ID
+  they know, which revokes the one you hold. This is the accepted v1 limit, not
+  something the files prevent.
 
 Every local channel starts `private` with an empty allowlist, so no agent can
 list it until you add one. The owner changes visibility and the explicit
 per-agent allowlist; `public` lists a channel to every discovery agent of this
 local service, and `secret` is never listed. A channel URL
 (`<origin>/channels/<channelId>`) always reaches the owner prompt, whatever the
-visibility, and approving still requires you in the browser.
+visibility, and approving still requires you in the browser. A request made
+from a listing reference also closes if you revoke that agent from the
+allowlist before approving it.
+
+A channel you approve from an agent's create request is added to the running
+launch's store as a `secret` channel. Resume and export still address the
+launch channel, and deleting the launch channel deletes every channel in its
+store.
 
 Launching needs the built internal web bundle in `internal-web/` beside
 `khala-internal.js`. Without it, launch fails with `web_bundle_unavailable`
@@ -172,7 +181,10 @@ the local client.
   as that agent and prints `{"ok":true,"kind":"access","outcome":...}` without
   waiting. A retry reads the same request, and `unavailable` never starts a new
   one. After a `denied`, `expired` or `revoked` answer (Stop revokes), the next
-  `join` files a fresh request instead of repeating the old answer. The
+  `join` files a fresh request instead of repeating the old answer, up to 16
+  times per channel and descriptor generation. After that, or when a rotated
+  descriptor is refused with `discovery_required`, run `khala internal
+  discovery` again. The
   launch's transport capability names no agent, so `join` with `active.json`
   alone is refused with `discovery_required`, unless the file already holds a
   live grant for that channel. The owner approves in the channel-requests

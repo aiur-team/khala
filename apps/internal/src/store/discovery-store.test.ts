@@ -5,6 +5,7 @@ import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChannelStore } from './channel-store';
 import { type DiscoveryStore, createDiscoveryStore } from './discovery-store';
+import { bindLifecycleChannel, readResumeMetadata } from './lifecycle-snapshot';
 import { type InternalStoreHandle, openChannelStore } from './open';
 
 const roots: string[] = [];
@@ -82,6 +83,12 @@ describe('internal discovery store', () => {
     // Two agents of the same local owner see different private listings.
     expect(listed(discovery, first.principal)).toEqual(['ch_c', 'ch_a']);
     expect(listed(discovery, second.principal)).toEqual(['ch_c', 'ch_b']);
+    // Revoking removes exactly that principal's private eligibility.
+    expect(set(discovery, 'ch_b', 'op-revoke', { kind: 'revoke', principal: second.principal, expectedGeneration: 1 }))
+      .toMatchObject({ kind: 'done', settings: { allowlist: [], visibilityEpoch: 0 } });
+    expect(listed(discovery, second.principal)).toEqual(['ch_c']);
+    expect(discovery.eligible('ch_b', second.principal)).toBe(false);
+    expect(set(discovery, 'ch_b', 'op-regrant', { kind: 'allow', principal: second.principal, expectedGeneration: 1 }).kind).toBe('done');
     expect(set(discovery, 'ch_a', 'op4', { kind: 'visibility', visibility: 'secret' }).kind).toBe('done');
     // Secret hides the channel even from an allowlisted principal.
     expect(listed(discovery, first.principal)).toEqual(['ch_c']);
@@ -170,5 +177,17 @@ describe('internal discovery store', () => {
     expect(handle.read(db => db.prepare('SELECT count(*) AS n FROM channels').get())).toEqual({ n: 1 });
     expect(handle.read(db => db.prepare('SELECT participant_id FROM memberships').all())).toEqual([{ participant_id: human }]);
     expect(handle.read(db => db.prepare('SELECT count(*) AS n FROM bindings').get())).toEqual({ n: 0 });
+  });
+
+  it('keeps the launch channel resumable after a secret channel is created in its store', () => {
+    const { handle, discovery } = open(directory());
+    seed(handle, [['ch_launch', 'Launch']]);
+    expect(bindLifecycleChannel(handle, 'ch_launch')).toEqual({ kind: 'bound', changed: true });
+    expect(discovery.createSecretChannel({
+      idempotencyKey: 'intent_1', channelId: 'ch_created', title: 'Proposed', ownerId: owner,
+      creatorParticipantId: human, creatorDeviceId: humanDevice, createdAt: T,
+    }).kind).toBe('created');
+    expect(readResumeMetadata(handle, 'ch_launch')).toMatchObject({ kind: 'found', value: { channelId: 'ch_launch' } });
+    expect(readResumeMetadata(handle, 'ch_created')).toEqual({ kind: 'identity_mismatch' });
   });
 });

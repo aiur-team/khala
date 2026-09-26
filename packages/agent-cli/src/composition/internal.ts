@@ -214,7 +214,11 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
 
 type AccessOutcome = (typeof ACCESS_REQUEST_OUTCOMES)[number];
 
-function accessOutcome(reply: Reply, operationId: string): AccessOutcome | null {
+/** A 401 means the discovery capability was rotated or is unknown here: reissue it. */
+const DISCOVERY_REJECTED = 'discovery_rejected' as const;
+
+function accessOutcome(reply: Reply, operationId: string): AccessOutcome | typeof DISCOVERY_REJECTED | null {
+  if (reply.status === 401) return DISCOVERY_REJECTED;
   const body = reply.body;
   return reply.status === 200 && plainObject(body) && body.v === 1 && body.operationId === operationId
     && typeof body.outcome === 'string' && (ACCESS_REQUEST_OUTCOMES as readonly string[]).includes(body.outcome)
@@ -243,13 +247,14 @@ async function joinWithDiscovery(
     const operationId = createHash('sha256')
       .update(JSON.stringify(['khala.agent-cli.internal-join.v2', channelUrl, principal, generation, attempt]))
       .digest('base64url').slice(0, 32);
-    let outcome: AccessOutcome | null;
+    let outcome: AccessOutcome | typeof DISCOVERY_REJECTED | null;
     try {
       outcome = accessOutcome(await call(discoveryCapability, `${AGENT_CHANNEL_ACCESS_STATUS_PATH}/${operationId}`, { method: 'GET' }), operationId);
     } catch {
       return { kind: 'unavailable' };
     }
     if (outcome === null) return { kind: 'unavailable' };
+    if (outcome === DISCOVERY_REJECTED) return { kind: 'refused', code: 'discovery_required' };
     if (CLOSED_OUTCOMES.has(outcome)) {
       closed = outcome;
       continue;
@@ -263,6 +268,7 @@ async function joinWithDiscovery(
     } catch {
       return { kind: 'unavailable' };
     }
+    if (outcome === DISCOVERY_REJECTED) return { kind: 'refused', code: 'discovery_required' };
     return outcome === null ? { kind: 'unavailable' } : { kind: 'status', outcome };
   }
   return closed === null ? { kind: 'unavailable' } : { kind: 'status', outcome: closed };

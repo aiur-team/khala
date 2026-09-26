@@ -426,6 +426,24 @@ describe('internal channel discovery', () => {
     expect((await accessStatus(w, rebound, 'op-2')).json.outcome).toBe('expired');
   });
 
+  it('closes a pending listing-reference request when the owner revokes that agent from the allowlist', async () => {
+    const w = await world();
+    const agent = await issue(w, 'session-1');
+    await setSettings(w, channelId, { kind: 'allow', principal: agent.principal, expectedGeneration: 1 });
+    const ref = (await list(w, agent)).json.items[0].listingRef as string;
+    expect((await requestAccess(w, agent, 'op-listed', { listingRef: ref })).json.outcome).toBe('pending_owner');
+    // A URL request for the same channel is a locator and does not depend on eligibility.
+    w.clock.now += 5 * 60_000;
+    expect((await requestAccess(w, agent, 'op-url', { channelUrl: `${w.server.origin}/channels/${channelId}` })).json.outcome).toBe('pending_owner');
+    const [listed] = (await inbox(w)).filter(entry => entry.outcome === 'pending_owner');
+    expect((await setSettings(w, channelId, { kind: 'revoke', principal: agent.principal, expectedGeneration: 1 })).status).toBe(200);
+    expect((await settings(w, channelId)).allowlist).toEqual([]);
+    expect((await accessStatus(w, agent, 'op-listed')).json.outcome).toBe('revoked');
+    expect((await accessStatus(w, agent, 'op-url')).json.outcome).toBe('pending_owner');
+    const stale = await decide(w, listed!.requestHandle, listed!.revision, 'approve');
+    expect(stale.status).not.toBe(200);
+  });
+
   it('serves khala join on the journal path for a discovery descriptor only', async () => {
     const w = await world();
     const agent = await issue(w, 'session-join');
