@@ -1,0 +1,48 @@
+{
+  "local_chat": {
+    "steer": {
+      "status": "unknown",
+      "route": "cursor.postToolUse",
+      "evidenceRef": null,
+      "evidenceRevision": null,
+      "reason": "Blocked on 2026-09-25: Cursor is not installed on the proof host and no Cursor account is signed in (host-inventory.txt), so no exact Cursor version, account tier, or administrator policy exists to key a trial. A person must run kit/ in their own Agent Chat; no hook timing, model-context, restart, or acknowledgement evidence exists."
+    },
+    "sync": {
+      "status": "unknown",
+      "route": "cursor.stop",
+      "evidenceRef": null,
+      "evidenceRevision": null,
+      "reason": "Blocked on 2026-09-25: Cursor is not installed on the proof host and no Cursor account is signed in (host-inventory.txt), so no exact Cursor version, account tier, or administrator policy exists to key a trial. A person must run kit/ in their own Agent Chat; no hook timing, model-context, restart, or acknowledgement evidence exists."
+    },
+    "async": {
+      "status": "unknown",
+      "route": "mcp.khala_read",
+      "evidenceRef": null,
+      "evidenceRevision": null,
+      "reason": "Blocked on 2026-09-25: Cursor is not installed on the proof host and no Cursor account is signed in (host-inventory.txt), so no exact Cursor version, account tier, or administrator policy exists to key a trial. A person must run kit/ in their own Agent Chat; no hook timing, model-context, restart, or acknowledgement evidence exists."
+    }
+  },
+  "cloud_task": {
+    "steer": {
+      "status": "unknown",
+      "route": "cursor.postToolUse",
+      "evidenceRef": null,
+      "evidenceRevision": null,
+      "reason": "Blocked on 2026-09-25: no Cursor account and no existing cloud agent is available (host-inventory.txt). Creating a cloud agent to test would not be the person's existing session. Cursor documents no sessionStart hook for cloud agents and no user-level hooks there, so a trial needs project hooks committed into that agent's repository."
+    },
+    "sync": {
+      "status": "unknown",
+      "route": "cursor.stop",
+      "evidenceRef": null,
+      "evidenceRevision": null,
+      "reason": "Blocked on 2026-09-25: no Cursor account and no existing cloud agent is available (host-inventory.txt). Creating a cloud agent to test would not be the person's existing session. Cursor documents no sessionStart hook for cloud agents and no user-level hooks there, so a trial needs project hooks committed into that agent's repository."
+    },
+    "async": {
+      "status": "unknown",
+      "route": "mcp.khala_read",
+      "evidenceRef": null,
+      "evidenceRevision": null,
+      "reason": "Blocked on 2026-09-25: no Cursor account and no existing cloud agent is available (host-inventory.txt). Creating a cloud agent to test would not be the person's existing session. Cursor documents no sessionStart hook for cloud agents and no user-level hooks there, so a trial needs project hooks committed into that agent's repository."
+    }
+  }
+}

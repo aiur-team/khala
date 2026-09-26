@@ -147,6 +147,7 @@ function currentSnapshot(state: BindingState): AgentControlsSnapshot {
         version: listening.version,
         experimentalGrants: listening.experimentalGrants,
         hardCancelGrants: listening.hardCancelGrants,
+        lastChangedBy: { kind: 'unknown' },
         effective,
         effectiveReason: effective === null ? 'experimental_grant_required' : null,
         support: MODES,

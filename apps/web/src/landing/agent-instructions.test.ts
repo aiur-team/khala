@@ -23,10 +23,12 @@ describe('agent-readable landing instructions', () => {
   });
 
   it('lists only CLI commands and MCP tools implemented in source', async () => {
-    const [guide, cliSource, mcpSource] = await Promise.all([
+    const commandNames = ['connect', 'status', 'listen', 'send', 'mcp-serve'];
+    const [guide, registrySource, mcpSource, ...commandSources] = await Promise.all([
       readFile(resolve(publicDirectory, 'AGENTS.md'), 'utf8'),
-      read('packages/agent-cli/src/cli/app.ts'),
-      read('packages/agent-cli/src/mcp/server.ts'),
+      read('packages/agent-cli/src/cli/registry.ts'),
+      read('packages/agent-cli/src/mcp/tools/send.ts'),
+      ...commandNames.map(name => read(`packages/agent-cli/src/cli/commands/${name}.ts`)),
     ]);
 
     const shellCommands = [...guide.matchAll(/```sh\n([\s\S]*?)```/g)]
@@ -39,16 +41,11 @@ describe('agent-readable landing instructions', () => {
       'khala mcp-serve',
     ]);
 
-    for (const [documented, sourceCase] of [
-      ['khala connect', "case 'connect'"],
-      ['khala status', "case 'status'"],
-      ['khala listen', "case 'listen'"],
-      ['khala send', "case 'send'"],
-      ['khala mcp-serve', "case 'mcp-serve'"],
-    ]) {
-      expect(guide).toContain(documented);
-      expect(cliSource).toContain(sourceCase);
-    }
+    commandNames.forEach((name, index) => {
+      expect(guide).toContain(`khala ${name}`);
+      expect(commandSources[index]).toContain(`name: '${name}'`);
+      expect(registrySource).toContain(`./commands/${name}.js`);
+    });
 
     expect(guide).toContain('`khala_send`');
     expect(mcpSource).toContain("const SEND_TOOL_NAME = 'khala_send'");

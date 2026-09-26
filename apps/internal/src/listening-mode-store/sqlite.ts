@@ -3,6 +3,7 @@ import {
   LISTENING_MODES,
   type ListeningModeControl,
   type RouteGrant,
+  readListeningModeActor,
 } from '@khala/contracts/delivery/index';
 import {
   array, decodeWith, fail, identifier, literal, object, safeInteger, version,
@@ -13,7 +14,7 @@ import type { InternalStoreHandle } from '../store/open';
 export type SqliteListeningModeStoreKey = Pick<ListeningModeControl, 'bindingId' | 'generation'>;
 export type SqliteListeningModeStoreNext = Pick<
   ListeningModeControl,
-  'requested' | 'experimentalGrants' | 'hardCancelGrants'
+  'requested' | 'experimentalGrants' | 'hardCancelGrants' | 'lastChangedBy'
 >;
 export type SqliteListeningModeStoreWrite = Readonly<{
   key: SqliteListeningModeStoreKey;
@@ -51,6 +52,7 @@ type ControlRow = Readonly<{
   version: unknown;
   experimental_grants: unknown;
   hard_cancel_grants: unknown;
+  last_changed_by: unknown;
 }>;
 
 type OperationRow = Readonly<{
@@ -99,7 +101,9 @@ function readGrant(
 
 function decodeControl(input: unknown): ListeningModeControl | null {
   const decoded = decodeWith(() => {
-    const reader = object(input, '', CONTROL_FIELDS);
+    // `lastChangedBy` is absent from records written before actors were recorded.
+    const hasActor = typeof input === 'object' && input !== null && Object.hasOwn(input, 'lastChangedBy');
+    const reader = object(input, '', hasActor ? [...CONTROL_FIELDS, 'lastChangedBy'] : CONTROL_FIELDS);
     const key: SqliteListeningModeStoreKey = {
       bindingId: readId<'BindingId'>(reader.field('bindingId'), reader.at('bindingId')),
       generation: safeInteger(reader.field('generation'), reader.at('generation')),
@@ -117,6 +121,9 @@ function decodeControl(input: unknown): ListeningModeControl | null {
         .map((grant, index) => readGrant(
           grant, `${reader.at('hardCancelGrants')}[${index}]`, 'hard_cancel', key, controlVersion,
         )),
+      lastChangedBy: readListeningModeActor(
+        hasActor ? reader.field('lastChangedBy') : undefined, reader.at('lastChangedBy'),
+      ),
     } satisfies ListeningModeControl;
   });
   return decoded.ok ? decoded.value : null;
@@ -131,6 +138,8 @@ function controlFromRow(row: ControlRow): ListeningModeControl | null {
   const experimentalGrants = parseJson(row.experimental_grants);
   const hardCancelGrants = parseJson(row.hard_cancel_grants);
   if (experimentalGrants === null || hardCancelGrants === null) return null;
+  const lastChangedBy = row.last_changed_by === null ? undefined : parseJson(row.last_changed_by);
+  if (lastChangedBy === null) return null;
   return decodeControl({
     bindingId: row.binding_id,
     generation: row.generation,
@@ -138,12 +147,13 @@ function controlFromRow(row: ControlRow): ListeningModeControl | null {
     version: row.version,
     experimentalGrants,
     hardCancelGrants,
+    lastChangedBy,
   });
 }
 
 function queryControl(db: DatabaseSync, key: SqliteListeningModeStoreKey): ListeningModeControl | null | 'corrupt' {
   const row = db.prepare(`
-    SELECT binding_id, generation, requested, version, experimental_grants, hard_cancel_grants
+    SELECT binding_id, generation, requested, version, experimental_grants, hard_cancel_grants, last_changed_by
     FROM mode_controls WHERE binding_id = ? AND generation = ?
   `).get(key.bindingId, key.generation) as ControlRow | undefined;
   if (!row) return null;
@@ -191,20 +201,21 @@ function writeControl(db: DatabaseSync, control: ListeningModeControl, existing:
     control.version,
     JSON.stringify(control.experimentalGrants),
     JSON.stringify(control.hardCancelGrants),
+    JSON.stringify(control.lastChangedBy),
     control.bindingId,
     control.generation,
   ] as const;
   if (existing === null) {
     db.prepare(`
       INSERT INTO mode_controls (
-        requested, version, experimental_grants, hard_cancel_grants, binding_id, generation
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        requested, version, experimental_grants, hard_cancel_grants, last_changed_by, binding_id, generation
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(...bindings);
     return;
   }
   const updated = db.prepare(`
     UPDATE mode_controls
-    SET requested = ?, version = ?, experimental_grants = ?, hard_cancel_grants = ?
+    SET requested = ?, version = ?, experimental_grants = ?, hard_cancel_grants = ?, last_changed_by = ?
     WHERE binding_id = ? AND generation = ? AND version = ?
   `).run(...bindings, existing.version);
   if (updated.changes !== 1) throw new Error('listening-mode version changed during transaction');

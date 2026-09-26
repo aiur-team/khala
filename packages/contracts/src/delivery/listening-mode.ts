@@ -1,7 +1,7 @@
 import {
   type Decoded, decodeWith, fail, identifier, literal, nullable, object, safeInteger, utcTimestamp, version,
 } from './decode';
-import { type BindingId, type CommandId, readId } from './ids';
+import { type BindingId, type CommandId, type ParticipantId, readId } from './ids';
 
 export const LISTENING_MODES = ['steer', 'sync', 'async'] as const;
 export const MODE_SUPPORT_STATUSES = [
@@ -107,6 +107,28 @@ export type AgentBindingAuthority = Readonly<{
   [agentBindingAuthority]: true;
 }>;
 
+/**
+ * Who made the last change, taken only from the verified authority (owner session
+ * or agent binding) and never from command input. An owner's `participantId` is
+ * their `ownerId`. `unknown` covers records written before actors were recorded.
+ */
+export type ListeningModeActor = Readonly<{ kind: 'owner' | 'agent'; participantId: ParticipantId }>;
+export type ListeningModeLastChangedBy = ListeningModeActor | Readonly<{ kind: 'unknown' }>;
+
+export const UNKNOWN_LISTENING_MODE_ACTOR: ListeningModeLastChangedBy = { kind: 'unknown' };
+
+/** Reads a persisted actor; a missing value is a pre-actor record and decodes as `unknown`. */
+export function readListeningModeActor(input: unknown, field: string): ListeningModeLastChangedBy {
+  if (input === undefined) return UNKNOWN_LISTENING_MODE_ACTOR;
+  const kind = literal((input as Record<string, unknown> | null)?.kind, `${field}.kind`, ['owner', 'agent', 'unknown'] as const);
+  if (kind === 'unknown') {
+    object(input, field, ['kind']);
+    return UNKNOWN_LISTENING_MODE_ACTOR;
+  }
+  const r = object(input, field, ['kind', 'participantId']);
+  return { kind, participantId: readId<'ParticipantId'>(r.field('participantId'), r.at('participantId')) };
+}
+
 /** Durable listening-mode state. Capability support and effective mode are derived. */
 export type ListeningModeControl = Readonly<{
   bindingId: BindingId;
@@ -115,6 +137,7 @@ export type ListeningModeControl = Readonly<{
   version: number;
   experimentalGrants: readonly RouteGrant[];
   hardCancelGrants: readonly RouteGrant[];
+  lastChangedBy: ListeningModeLastChangedBy;
 }>;
 
 /** Current-capability projection of one durable control record. */
