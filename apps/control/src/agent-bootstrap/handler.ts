@@ -84,6 +84,16 @@ export type AdapterRefusal =
   | 'proof_required' | 'invalid_proof' | 'proof_key_mismatch' | 'proof_target_mismatch' | 'proof_token_mismatch' | 'proof_replayed';
 
 /**
+ * A binding as the revocation service (KHA-128) and trust policy see it. `generation` is the
+ * control plane's authoritative generation: the bound generation while active, and the revoked
+ * generation once revoked, which never advances. The messaging device key is not held here; the
+ * composition root resolves it from the substrate.
+ */
+export type BindingLookupResult =
+  | Readonly<{ kind: 'found'; ownerId: OwnerId; generation: number; deviceId: SessionBinding['deviceId']; status: 'active' | 'revoked' }>
+  | Readonly<{ kind: 'absent' | 'unavailable' }>;
+
+/**
  * The adapter capability's side of KHA-128. `revokeAdapterCapability` has the shape of
  * `RevocationControlPort.revokeAdapterCapability` in `@khala/messaging/revocation`, so a
  * composition root can pass it straight through.
@@ -91,6 +101,17 @@ export type AdapterRefusal =
 export interface AdapterCapabilities {
   /** Checks an adapter request: `Authorization: DPoP <capability>` plus a proof for this exact request. */
   authorize(request: Request, action: string): Promise<AdapterAuthorization>;
+  /** Reads one binding by ID. A replaced binding is `absent`: it holds no authority any more. */
+  lookupBinding(bindingId: BindingId | string): Promise<BindingLookupResult>;
+  /**
+   * The binding side of `RevocationControlPort.disable`: moves an active binding at `expectedGeneration`
+   * to `revokedGeneration` and drops its capability. Idempotent: a binding already revoked at
+   * `revokedGeneration` answers `applied`. Any other binding state is `stale`.
+   */
+  disableBinding(
+    input: Readonly<{ operationId: string; bindingId: BindingId; expectedGeneration: number; revokedGeneration: number }>,
+    options?: CallOptions,
+  ): Promise<Readonly<{ kind: 'applied' | 'stale' | 'outcome_unknown' | 'unavailable' }>>;
   /** After `applied`, no capability issued for `bindingId` is accepted, whatever its generation. Idempotent. */
   revokeAdapterCapability(
     input: Readonly<{ operationId: string; bindingId: BindingId; revokedGeneration: number }>,
@@ -496,6 +517,38 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       return { kind: 'authorized', action: action as AdapterAction, ownerId: held.ownerId as OwnerId, roomId: held.roomId as RoomId, binding: record.binding };
     },
 
+    async lookupBinding(bindingId) {
+      if (typeof bindingId !== 'string') return { kind: 'absent' };
+      const found = await bindings.findBinding(bindingId);
+      if (found.kind !== 'found') return found;
+      const { binding, revokedGeneration } = found.record;
+      return {
+        kind: 'found', ownerId: binding.ownerId, deviceId: binding.deviceId,
+        generation: revokedGeneration ?? binding.generation, status: revokedGeneration === null ? 'active' : 'revoked',
+      };
+    },
+
+    async disableBinding(input) {
+      if (typeof input?.bindingId !== 'string' || !Number.isSafeInteger(input.expectedGeneration)
+        || !Number.isSafeInteger(input.revokedGeneration) || input.revokedGeneration <= input.expectedGeneration) {
+        return { kind: 'unavailable' };
+      }
+      const { expectedGeneration, revokedGeneration } = input;
+      let stale = false;
+      const result = await bindings.updateBinding(input.bindingId, record => {
+        stale = false;
+        if (record.revokedGeneration === revokedGeneration) return null;
+        if (record.revokedGeneration !== null || record.binding.generation !== expectedGeneration) {
+          stale = true;
+          return null;
+        }
+        return { ...record, revokedGeneration, capability: null };
+      });
+      if (result === 'unavailable') return { kind: 'unavailable' };
+      if (result === 'absent' || stale) return { kind: 'stale' };
+      return { kind: 'applied' };
+    },
+
     async revokeAdapterCapability(input) {
       if (typeof input?.bindingId !== 'string' || !Number.isSafeInteger(input.revokedGeneration) || input.revokedGeneration < 0) {
         return { kind: 'unavailable' };
@@ -565,7 +618,8 @@ function bindingVerdict(record: BindingRecord, held: GrantRecord, agentParticipa
     && binding.agentParticipantId === agentParticipantId;
   if (revokedGeneration !== null) {
     if (!sameIdentity) return 'binding_conflict';
-    return held.generation > Math.max(revokedGeneration, binding.generation) ? 'replace' : 'binding_revoked';
+    // The revoked generation is the first one a replacement may use, so a harness bumps its generation once.
+    return held.generation > binding.generation && held.generation >= revokedGeneration ? 'replace' : 'binding_revoked';
   }
   return sameIdentity && binding.generation === held.generation ? 'reuse' : 'binding_conflict';
 }
