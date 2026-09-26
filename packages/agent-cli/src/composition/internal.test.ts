@@ -13,6 +13,7 @@ import { openInbox } from '../cli/inbox.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import type { CliDependencies } from '../cli/types.js';
 import { ReadOperation } from './read.js';
+import { createUnavailableClient } from './unavailable.js';
 import {
   AGENT_CHANNEL_ACCESS_REQUEST_PATH, AGENT_CHANNEL_ACCESS_STATUS_PATH, createInternalClient, localChannelId, readInternalDescriptor,
 } from './internal.js';
@@ -506,6 +507,31 @@ describe('--internal-descriptor through the CLI and MCP', () => {
     expect(await runCli(['--internal-descriptor', file, 'mcp-serve'], cliDeps(io, state))).toBe(2);
     expect(io.error()).toContain('not_connected');
     expect(server.authors).toEqual(['agent-local']);
+  });
+
+  it('serves the installed argv-less mcp-serve entry from the default descriptor, following each rotation', async () => {
+    const { server, file, grant, resume } = await launch();
+    const state = temporaryDirectory();
+    const loads: string[] = [];
+    const call = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'khala_send', arguments: { message: 'm' } } });
+    for (const rotate of [() => grant(1), () => resume(2)]) {
+      const bindingCapability = rotate();
+      const from = server.log.length;
+      const io = streams(`${call}\n`);
+      expect(await runCli(['mcp-serve'], { ...cliDeps(io, state, loads), defaultDescriptorPath: file })).toBe(0);
+      expect(io.output()).toContain('accepted');
+      expect(server.capabilitiesSince(from).every(value => value === bindingCapability)).toBe(true);
+    }
+    expect(loads).toEqual([file, file]);
+    expect(server.authors).toEqual(['agent-local', 'agent-local']);
+  });
+
+  it('applies the default descriptor to mcp-serve only', async () => {
+    const loads: string[] = [];
+    const io = streams('x');
+    const deps = { ...cliDeps(io, temporaryDirectory(), loads), defaultDescriptorPath: '/x/active.json', client: createUnavailableClient() };
+    for (const argv of [['status'], ['send'], ['read']]) await runCli(argv, deps);
+    expect(loads).toEqual([]);
   });
 
   it('joins through the access journal without an inbox or channel content', async () => {

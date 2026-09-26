@@ -77,7 +77,7 @@ export function resolveSetupPaths(input: SetupPathInputs): SetupPaths {
     manifestPath: path.join(setupState, 'manifest.v1.json'),
     transactionPath: path.join(setupState, 'transaction.v1.json'),
     backupsRoot: path.join(setupState, 'backups'),
-    runtimeDescriptorPath: path.join(khalaData, 'internal', 'active.json'),
+    runtimeDescriptorPath: path.join(stateHome, 'khala', 'internal', 'active.json'),
     pathEntries: pathEntries(input.PATH),
   };
 }
