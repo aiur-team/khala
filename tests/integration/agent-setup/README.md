@@ -15,6 +15,8 @@ guarded direct edits.
 node --test tests/integration/agent-setup/setup-acceptance.test.mjs
 ```
 
+Scratch prefixes and homes go under the system temp directory. If `TMPDIR` points inside this repository, they go to `/tmp` instead, so the installed package can never resolve workspace `node_modules`. They are removed at the end; set `KHALA_SETUP_KEEP=1` to keep them for inspection.
+
 CI runs it after `pnpm test`. The release workflow runs it against the exact
 tarball the package gate accepted and publishes that tarball only after it passes.
 
