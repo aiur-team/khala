@@ -31,6 +31,10 @@ describe('live acceptance runner', () => {
     expect(report.checks.filter(entry => entry.status !== 'pass')).toEqual([]);
     expect(report.verdict).toBe('pass');
     expect(report.modes.runnable).toEqual(['steer', 'sync', 'async']);
+    // Every declared-supported mode is requested for both bindings through the mode route.
+    expect(world.modeCalls).toEqual(['steer', 'sync', 'async'].flatMap(mode => [
+      { bindingId: 'binding_a', mode }, { bindingId: 'binding_b', mode },
+    ]));
     expect(world.issues.size).toBe(2);
     for (const issue of world.issues.values()) expect(issue.labels).toEqual(expect.arrayContaining(['acceptance', 'agent:todo']));
     // Stop names exactly the two recorded bindings, never "every binding".
@@ -73,6 +77,19 @@ describe('live acceptance runner', () => {
     const world = createWorld({ mode: { kind: 'unsupported', reason: 'no control' } });
     const report = await run(world);
     expect(status(report, 'handshake:sync')).toBe('unproven');
+    expect(report.verdict).toBe('unproven');
+    expectCleanTail(world, report);
+  });
+
+  it('exercises the modes the route confirms and keeps only the unconfirmed one unproven', async () => {
+    const world = createWorld({
+      mode: mode => (mode === 'async' ? { kind: 'unsupported', reason: 'async is not effective: support_unknown' } : { kind: 'effective' }),
+    });
+    const report = await run(world);
+    expect(status(report, 'handshake:steer')).toBe('pass');
+    expect(status(report, 'handshake:sync')).toBe('pass');
+    expect(report.checks.find(entry => entry.check === 'handshake:async'))
+      .toEqual({ check: 'handshake:async', status: 'unproven', detail: 'mode control reported unsupported: async is not effective: support_unknown' });
     expect(report.verdict).toBe('unproven');
     expectCleanTail(world, report);
   });

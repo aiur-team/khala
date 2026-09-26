@@ -65,8 +65,8 @@ export type WorldKnobs = {
   closeFailsFor: number | null;
   /** The human declines the channel. */
   confirmChannel: boolean;
-  /** What the mode control reports. */
-  mode: ModeRequest;
+  /** What the owner mode route confirms for each requested mode. */
+  mode: ModeRequest | ((mode: ListeningMode) => ModeRequest);
   /** Another run already holds the lock. */
   lockHeld: boolean;
 };
@@ -87,6 +87,8 @@ export type World = Readonly<{
   issues: Map<number, IssueRecord>;
   closed: number[];
   stopCalls: (readonly StopTarget[])[];
+  /** Every mode request the runner made, in order. */
+  modeCalls: Readonly<{ bindingId: string; mode: ListeningMode }>[];
   signalled: number[];
   launcherStarts: number;
   serverClosed(): boolean;
@@ -104,6 +106,7 @@ export function createWorld(partial: Partial<WorldKnobs> = {}, profile: Profile 
   const issues = new Map<number, IssueRecord>();
   const closed: number[] = [];
   const stopCalls: (readonly StopTarget[])[] = [];
+  const modeCalls: { bindingId: string; mode: ListeningMode }[] = [];
   const signalled: number[] = [];
   const events: StoredEvent[] = [];
   const receipts: SnapshotReceipt[] = [];
@@ -215,8 +218,9 @@ export function createWorld(partial: Partial<WorldKnobs> = {}, profile: Profile 
         sessionDigest: request.sessionFingerprint, status: 'active',
       });
     },
-    async requestMode() {
-      return knobs.mode;
+    async requestMode(target, mode) {
+      modeCalls.push({ bindingId: target.bindingId, mode });
+      return typeof knobs.mode === 'function' ? knobs.mode(mode) : knobs.mode;
     },
     async stop(targets): Promise<StopReply> {
       stopCalls.push(targets);
@@ -321,7 +325,7 @@ export function createWorld(partial: Partial<WorldKnobs> = {}, profile: Profile 
   };
 
   return {
-    deps, profile, markers, knobs, issues, closed, stopCalls, signalled,
+    deps, profile, markers, knobs, issues, closed, stopCalls, modeCalls, signalled,
     get launcherStarts() { return launcherStarts; },
     serverClosed: () => serverClosed,
     lockAcquired: () => lockAcquired,
