@@ -51,6 +51,7 @@ async function boundary(
   cells: readonly CodexAppProvenCell[],
   mode: ListeningMode,
   event: CodexAppHookEvent,
+  handlerRuns = env.hookDeployment !== 'web_plugin',
 ): Promise<string> {
   const parent = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-codex-app-conformance-'));
   roots.push(parent);
@@ -70,8 +71,8 @@ async function boundary(
     currentBinding: async () => BINDING,
     listeningMode: async () => ({ v: 1, bindingId: BINDING.bindingId, generation: BINDING.generation, effective: mode }),
     inbox: async () => open(),
-    // A handler run is recorded only when the handler itself executes in this session.
-    recordHookRun: async (_session, ran) => { if (env.hookDeployment !== 'web_plugin') runs.push(ran); },
+    // A run is recorded only when the handler itself executes in this session.
+    recordHookRun: async (_session, ran) => { if (handlerRuns) runs.push(ran); },
     inspect: async () => inspectCodexApp({ ...env, hookRuns: runs }, fixtureLimits, cells).record,
   });
   return out;
@@ -104,6 +105,18 @@ describe('codex app conformance: wrong implementations', () => {
     const env = session({ hookDeployment: 'web_plugin' });
     expect(await boundary(env, proof(env), 'steer', 'PostToolUse')).toBe('');
     expect(await boundary(env, proof(env), 'sync', 'Stop')).toBe('');
+  });
+
+  it('a web plugin install stays closed even when a handler run is recorded', async () => {
+    const env = session({ hookDeployment: 'web_plugin' });
+    expect(await boundary(env, proof(env), 'steer', 'PostToolUse', true)).toBe('');
+    expect(await boundary(env, proof(env), 'sync', 'Stop', true)).toBe('');
+  });
+
+  it('a locally configured hook that never ran in this session delivers nothing', async () => {
+    const env = session();
+    expect(await boundary(env, proof(env), 'steer', 'PostToolUse', false)).toBe('');
+    expect(await boundary(env, proof(env), 'sync', 'Stop', false)).toBe('');
   });
 
   it('a Codex task Khala launched cannot satisfy same-session delivery', async () => {
