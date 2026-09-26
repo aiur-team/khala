@@ -128,7 +128,7 @@ describe('decodeSetupResult', () => {
     at(v => { v.command = 'install'; }, '$.command');
     at(v => { v.state = 'done'; }, '$.state');
     at(v => { v.ok = 'yes'; }, '$.ok');
-    at(v => { v.harnesses[0].harness = 'cursor'; }, '$.harnesses[0].harness');
+    at(v => { v.harnesses[0].harness = 'aider'; }, '$.harnesses[0].harness');
     at(v => { v.harnesses[0].components[0].state = 'installed'; }, '$.harnesses[0].components[0].state');
     at(v => { v.harnesses[0].route = 'magic'; }, '$.harnesses[0].route');
     at(v => { v.operations[0].type = 'shell'; }, '$.operations[0].type');
