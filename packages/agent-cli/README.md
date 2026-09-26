@@ -46,7 +46,7 @@ bundles the internal application's composition entry
 `dist/khala-internal.js`, which `khala.js` imports only for `khala internal`, so
 no other command loads the local store, server, or `node:sqlite`. It bundles
 the OpenCode plugin (`src/opencode/index.ts`) into `dist/opencode.js`, the
-`@aiur/khala/opencode` export. It copies the web build's `apps/web/dist/internal-web/` (run `pnpm --filter @khala/web build:internal` first) to `dist/internal-web/`, which `khala internal` serves. The tarball carries only those files, this README and `package.json`; it declares no
+`@aiur/khala/opencode` export. It copies the web build's `apps/web/dist/internal-web/` (building it with `pnpm --filter @khala/web build:internal` when absent) to `dist/internal-web/`, which `khala internal` serves. The tarball carries only those files, this README and `package.json`; it declares no
 runtime dependencies, so installing it fetches nothing and runs no lifecycle
 script. On Node 22.23.2 or later:
 

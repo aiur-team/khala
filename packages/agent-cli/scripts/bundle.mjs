@@ -8,6 +8,7 @@
 //
 // `opencode.js` is the self-contained OpenCode plugin (`@aiur/khala/opencode`). OpenCode
 // imports it in its own process, so it too carries its whole closure.
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -54,10 +55,13 @@ export async function bundle({
   if (internalEntryPoint && existsSync(internalEntryPoint)) {
     await buildOne({ entryPoint: internalEntryPoint, outfile: path.join(path.dirname(outfile), 'khala-internal.js'), absWorkingDir });
   }
-  // `khala internal` serves `internal-web/` beside `khala-internal.js`; the web build
-  // (`pnpm --filter @khala/web build`) must have produced it first.
+  // `khala internal` serves `internal-web/` beside `khala-internal.js`. Build it from the
+  // web workspace when no earlier `pnpm --filter @khala/web build` left one behind.
   if (internalEntryPoint && existsSync(internalEntryPoint)) {
-    if (!existsSync(path.join(internalWebSource, 'index.html'))) throw new Error(`internal web bundle missing at ${internalWebSource}; run "pnpm --filter @khala/web build" first`);
+    if (!existsSync(path.join(internalWebSource, 'index.html'))) {
+      const web = spawnSync('pnpm', ['--filter', '@khala/web', 'build:internal'], { cwd: packageDirectory, stdio: 'inherit' });
+      if (web.status !== 0 || !existsSync(path.join(internalWebSource, 'index.html'))) throw new Error(`internal web bundle missing at ${internalWebSource} and "pnpm --filter @khala/web build:internal" did not produce it`);
+    }
     await fs.cp(internalWebSource, path.join(path.dirname(outfile), 'internal-web'), { recursive: true });
   }
   return metafile;

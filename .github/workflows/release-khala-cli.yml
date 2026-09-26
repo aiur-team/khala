@@ -32,8 +32,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm --filter @aiur/khala test
-      # `khala internal` serves this browser bundle; prepack copies it into the package.
-      - run: pnpm --filter @khala/web build:internal
       # The gate packs the tarball and refuses it before anything is published.
       - run: node scripts/agent-cli-package-gate.mjs --out "$RUNNER_TEMP/khala-package"
       # Publish exactly the gated tarball; publishing a tarball skips prepack.
