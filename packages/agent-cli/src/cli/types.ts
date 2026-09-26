@@ -117,10 +117,12 @@ export type CliDependencies = Readonly<{
   listeningMode?: AgentListeningModeApplication | null;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
   internal?: InternalRuntimeLoader; env?: Readonly<Record<string, string | undefined>>; cwd?: string;
-  /** Lazily composes the descriptor-backed local client; called only when `--internal-descriptor` is given. */
+  /** Lazily composes the descriptor-backed local client; called only when `--internal-descriptor` or `defaultDescriptorPath` selects it. */
   internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
   /** Lazily composes delivery of local-server releases into the held binding's inbox, with `--internal-descriptor`. */
   internalDelivery?: (descriptorPath: string) => Promise<InternalDelivery>;
+  /** The stable `active.json` the installed Codex/OpenCode `mcp-serve` entry re-reads when argv names no descriptor. */
+  defaultDescriptorPath?: string;
   claude?: ClaudeSessionClient;
   /** Setup planning and configuration status. The production composition always supplies it. */
   setup?: SetupService;
