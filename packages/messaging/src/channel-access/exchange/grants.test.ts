@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { fakeControlStore } from '../support.test';
+import { fakeControlStore } from '../journal/support.test';
 import { createExchangeGrantIssuer, type ExchangeGrantBinding } from './grants';
-import { CHANNEL_REF, DEVICE, T0, owner, requester } from './support.test';
+import { CHANNEL_REF, DEVICE, T0, owner, requester } from './journal-harness.test';
 
 const binding: ExchangeGrantBinding = {
   operationId: 'op_access_1',

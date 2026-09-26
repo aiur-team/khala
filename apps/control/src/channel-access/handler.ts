@@ -5,12 +5,13 @@ import {
   decodeChannelAccessRequest,
   decodeChannelAccessStatusQuery,
   decodeChannelCreateIntent,
+  type ChannelAccessDecisionPort,
+  type ChannelAccessRequestJournalPort,
   type ChannelAccessRequesterContext,
   type DiscoveryRequester,
 } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../auth';
 import type { RouteRegistration } from '../runtime/handler';
-import type { ChannelAccessService } from './service';
 
 export const AGENT_CHANNEL_ACCESS_REQUEST_PATH = '/api/agent/channel-access/request';
 export const AGENT_CHANNEL_ACCESS_CREATE_PATH = '/api/agent/channel-access/create';
@@ -25,7 +26,7 @@ export type AgentChannelAccessAuthentication =
   | Readonly<{ kind: 'unavailable' }>;
 
 export type ChannelAccessHandlerDependencies = Readonly<{
-  service: Pick<ChannelAccessService, 'journal' | 'decisions'>;
+  service: Readonly<{ journal: ChannelAccessRequestJournalPort; decisions: ChannelAccessDecisionPort }>;
   auth: Pick<AuthService, 'authenticateRequest' | 'requireHumanMutation'>;
   /** Composition verifies both values; caller JSON can never supply either one. */
   authenticateAgent(request: Request): Promise<AgentChannelAccessAuthentication>;

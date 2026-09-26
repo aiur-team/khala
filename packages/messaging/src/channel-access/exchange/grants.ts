@@ -1,11 +1,11 @@
-// Hosted one-time grant issuer for the channel-access exchange. A grant is 256
+// One-time grant issuer for the channel-access exchange. A grant is 256
 // random bits returned exactly once for sealing; storage keeps only a
 // purpose-separated SHA-256 hash, its bound tuple and a short expiry. Redemption
 // (used by `channel-access-activation`) is bound to the same tuple and consumes
 // the operation by compare-and-set, so at most one grant per operation is ever
 // redeemed, even if a crashed exchange minted an unsealed one first.
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type {
   AuthorizedChannelRef,
   CallOptions,
@@ -15,7 +15,6 @@ import type {
   StableAgentPrincipal,
   TrustedClock,
 } from '@khala/contracts/messaging/index';
-import { safeEqual } from '../../auth/csrf';
 
 export type ExchangeGrantBinding = Readonly<{
   operationId: string;
@@ -155,4 +154,10 @@ async function safe<T>(operation: () => Promise<T>): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+function safeEqual(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }

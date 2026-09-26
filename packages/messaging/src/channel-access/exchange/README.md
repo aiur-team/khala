@@ -4,7 +4,10 @@ This module is the connector-only exchange behind RD5A, `channel-access-grant-ex
 owner-approved channel-access operation presents that operation, its authenticated Ed25519 proof key, the device
 it reserved and a separate X25519 recovery key. It receives one versioned sealed envelope in return.
 `createGrantExchangeService(deps).forConnector({ sessionFingerprint })` returns an `AdmissionGrantExchangePort`.
-The hosted wiring lives in `apps/control/src/composition/agent/channel-access-exchange.ts`.
+`authority.ts` adapts the shared channel-access journal (`../journal/`) to `GrantExchangeAuthorityPort`, and
+`grants.ts` is the `ControlStore` grant issuer. Both are shared by the hosted wiring in
+`apps/control/src/composition/agent/channel-access-exchange.ts` and the internal wiring in
+`apps/internal/src/composition/channel-discovery/`.
 
 ## State machine
 
