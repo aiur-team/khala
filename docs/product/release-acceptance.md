@@ -31,7 +31,7 @@ evidence below shows it. `unknown` and `not observed` are never shown as pass.
     { "id": "R09", "result": "unknown", "evidence": "tests/conformance; no live harness report" },
     { "id": "R10", "result": "pass", "evidence": "package manifests; docs/evidence/client-reuse.md; docs/evidence/backend.md" },
     { "id": "R11", "result": "pass", "evidence": "decisions P16, P11; docs/operations/backend.md" },
-    { "id": "R12", "result": "unknown", "evidence": "no recorded desktop/mobile/keyboard run (#238 open)" },
+    { "id": "R12", "result": "unknown", "evidence": "no desktop/mobile/keyboard run on this candidate (#238 fixed after it by #394)" },
     { "id": "R13", "result": "pass", "evidence": "docs/research/README.md; docs/product/decisions.md" },
     { "id": "R14", "result": "pass", "evidence": "docs/plans/README.md; docs/plans/reviews/README.md" },
     { "id": "R15", "result": "unknown", "evidence": "no hosted journey observed" }
@@ -69,7 +69,7 @@ contracts hold. It does not show that the collaboration product works.
 | ID | Requirement | Result | Evidence |
 | --- | --- | --- | --- |
 | R1 | Validate the chosen collaboration journey on the merged base with real existing sessions | **fail** | No live run. The three KHA-139 runs are all `blocked` before any action. The latest one is blocked only because no harness version is pinned |
-| R2 | Separate security, operational and user-experience evidence tied to exact builds | **fail** | Security: rerun on the candidate, with one failing row (#380, fixed after this candidate by #395; the row must pass on the next rerun). Operational: backup/restore rehearsal passed on 2026-09-18 against the packaged Synapse (`docs/operations/backend.md`); no hosted deployment exists. User experience: not observed (#238 open) |
+| R2 | Separate security, operational and user-experience evidence tied to exact builds | **fail** | Security: rerun on the candidate, with one failing row (#380, fixed after this candidate by #395; the row must pass on the next rerun). Operational: backup/restore rehearsal passed on 2026-09-18 against the packaged Synapse (`docs/operations/backend.md`); no hosted deployment exists. User experience: not observed on this candidate (browser acceptance landed after it in #394, and must pass on the next rerun) |
 | R3 | Finish user and adapter docs and record limitations without expanding scope | **pass** | [User guide](../user-guide.md), [adapter guide](../adapter-guide.md), and the [findings](#findings) below |
 | AE1 | Leaf tickets closed but no evidence of third-owner admission, so the root stays unaccepted | **holds** | `third_owner_independent` and `third_owner_history` are `blocked` in every run |
 | AE2 | A proof on a stale build is rerun on the candidate | **holds** | The security and collaboration suites were rerun on `a120b9e` (above) |
@@ -91,7 +91,7 @@ These are the IDs from [requirements coverage](requirements-coverage.md).
 | R09 | Any model, cross-owner | unknown | Conformance passes in `fake-contract` mode. No `live-harness` report has been accepted |
 | R10 | TypeScript and OSS reuse | pass | Product source is TypeScript. The exceptions are the Claude plugin's hook entry points and runtime, which ship as `.mjs` with a `.d.mts` declaration so that Claude Code can run them unbuilt, plus build configuration and one landing-page script. Synapse and `matrix-js-sdk` are reused (`client-reuse.md`, `backend.md`) |
 | R11 | Netlify preferred, Railway acceptable | pass | Topology decided in P16 (Synapse on Railway, web on Netlify at P11's origin). Neither is provisioned, so this is a design pass, not a deployment pass |
-| R12 | Aiur branding, dashboard-native | unknown | Shell built (KHA-107). No recorded desktop, mobile, keyboard or contrast run; #238 is open |
+| R12 | Aiur branding, dashboard-native | unknown | Shell built (KHA-107). No desktop, mobile, keyboard or contrast run on this candidate. #238 was fixed after it by #394, which must pass on the next rerun |
 | R13 | Parallel research and product questions | pass | Research index and decision register |
 | R14 | Ticket proposal, then detailed plans | pass | 44 plans with review dispositions |
 | R15 | No-setup onboarding | unknown | No hosted OAuth → link → coworker journey has been observed |
@@ -129,7 +129,7 @@ ticket does not fix them.
 
 | Finding | Owner | Needed for |
 | --- | --- | --- |
-| No live collaboration run. The case needs a pinned harness version, a registered live driver and a disposable environment | #239, #240, #241. Under decision 43 the Executor owes the Claude and OpenCode live runs (#240, #241) | R1, R01–R03, R15, AE1 |
+| No live collaboration run. The case needs a pinned harness version, a registered live driver and a disposable environment | #240, #241. The live runner (#239) landed after this candidate in #405. Under decision 43 the Executor owes the Claude and OpenCode live runs (#240, #241) | R1, R01–R03, R15, AE1 |
 | No disposable preview environment exists for the live human proof | #134 (Executor-owned) | R1, R01–R03, R06, R15 |
 | No production composition of the hosted connector, and no protected human control transport | KHA-133/134/135/136 integration owners | R04, R05, R07, R15 |
 | Relay confidentiality not observed: needs a disposable Synapse with database and log access | KHA-138 live rows | R06 |
@@ -139,11 +139,10 @@ ticket does not fix them.
 | OpenCode and cross-harness read receipts are not proven. Acknowledgement is core to decision 3 | #232, #233 | R02, R03, R07 |
 | Internal mode has no pause or listening-mode control. Decisions 23 and 42 require mode control | #392 | R05, R07 |
 | Only one agent session per user can bind, which gates the internal-mode flow | #391 | R1 |
-| Browser acceptance (desktop, mobile, keyboard) is not recorded | #238 | R12 |
 
 ### Contained rework (owned elsewhere, not blocking this record's scope)
 
-#385 (setup crash recovery) and #388 (absent harnesses not reported).
+#385 (setup crash recovery).
 
 ### Fixed after this candidate
 
@@ -157,6 +156,13 @@ ticket does not fix them.
 - #386 (installed entries could not find the runtime descriptor): fixed on
   `main` by #402 (`d2e8efa`). Entries that run a bare `khala` still depend on
   PATH (#403).
+- #388 (setup results omitted absent harnesses): fixed on `main` by #400
+  (`a39a792`).
+- #238 (browser acceptance of the internal channel): fixed on `main` by #394
+  (`b3301e8`), with keyboard, focus and 320px-wide checks. R12 stays unknown
+  until that suite passes on the next candidate.
+- #239 (live acceptance runner): landed on `main` in #405 (`1ad0170`). The
+  live runs themselves (#240, #241) are still owed.
 
 ### Deferred, nonblocking by decision
 
