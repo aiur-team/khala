@@ -59,7 +59,7 @@ export async function bundle({
   // web workspace when no earlier `pnpm --filter @khala/web build` left one behind.
   if (internalEntryPoint && existsSync(internalEntryPoint)) {
     if (!existsSync(path.join(internalWebSource, 'index.html'))) {
-      const web = spawnSync('pnpm', ['--filter', '@khala/web', 'build:internal'], { cwd: packageDirectory, stdio: 'inherit' });
+      const web = spawnSync('pnpm', ['--filter', '@khala/web', 'build:internal'], { cwd: packageDirectory, stdio: ['ignore', 2, 2] });
       if (web.status !== 0 || !existsSync(path.join(internalWebSource, 'index.html'))) throw new Error(`internal web bundle missing at ${internalWebSource} and "pnpm --filter @khala/web build:internal" did not produce it`);
     }
     await fs.cp(internalWebSource, path.join(path.dirname(outfile), 'internal-web'), { recursive: true });
