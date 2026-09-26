@@ -83,7 +83,7 @@ invariants.
 
 | Term | Meaning |
 | --- | --- |
-| requested mode | The per-binding value selected by the agent or human; normally defaults to `sync`. An exact **interactive-session** route with proved unsupported `sync` may initialize `async` with an explicit reason rather than perform a later fallback. Secondary hosted evidence cannot trigger this exception. |
+| requested mode | The per-binding value selected by the agent or human; defaults to `null` whenever the harness has no proven or experimental mode (Cursor, Claude CLI at an uninspected version, the agent-skill fallback, and v2 capability records), and to `sync` otherwise. A stored `null` stays `null` after evidence arrives, until the owner selects a mode; `release-feed` still wakes on every message while the request is null. An exact **interactive-session** route with proved unsupported `sync` may initialize `async` with an explicit reason rather than perform a later fallback. Secondary hosted evidence cannot trigger this exception. |
 | effective mode | The route currently usable for the exact harness, version, and session shape; `null` when none is honest. |
 | proven | A retained, reproducible observation exercises the composed Khala route on the named version. |
 | experimental | The underlying surface exists, but Khala has not proved the composed behavior. It requires explicit opt-in. |

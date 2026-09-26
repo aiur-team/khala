@@ -3,7 +3,7 @@ import { StoreError } from './errors';
 
 /** `PRAGMA application_id`: ASCII "KHCH" (Khala channel), distinct from connector storage. */
 export const APPLICATION_ID = 0x4b484348;
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const CORE_SCHEMA_V1_SQL = `
 CREATE TABLE meta (
@@ -225,10 +225,37 @@ CREATE TABLE discovery_activations (
 ) STRICT;
 `;
 
+/**
+ * v6 lets a control store no requested mode (NULL) for a harness with no proven or
+ * experimental mode. SQLite cannot relax a column constraint in place, so the table is rebuilt.
+ */
+export const MODE_SCHEMA_V6_SQL = `
+ALTER TABLE mode_controls RENAME TO mode_controls_v5;
+CREATE TABLE mode_controls (
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  requested TEXT CHECK (requested IS NULL OR requested IN ('steer', 'sync', 'async')),
+  version INTEGER NOT NULL CHECK (version >= 1),
+  experimental_grants TEXT NOT NULL,
+  hard_cancel_grants TEXT NOT NULL,
+  last_changed_by TEXT,
+  PRIMARY KEY (binding_id, generation),
+  FOREIGN KEY (binding_id, generation)
+    REFERENCES bindings (binding_id, generation) ON DELETE RESTRICT
+) STRICT;
+INSERT INTO mode_controls (
+  binding_id, generation, requested, version, experimental_grants, hard_cancel_grants, last_changed_by
+) SELECT
+  binding_id, generation, requested, version, experimental_grants, hard_cancel_grants, last_changed_by
+FROM mode_controls_v5;
+DROP TABLE mode_controls_v5;
+`;
+
 export type MigrationStage =
   | 'after_mode_controls' | 'after_mode_operations' | 'before_user_version' | 'after_user_version'
   | 'after_receipt_tables' | 'before_receipt_user_version'
-  | 'after_discovery_tables' | 'before_discovery_user_version';
+  | 'after_discovery_tables' | 'before_discovery_user_version'
+  | 'after_mode_rebuild' | 'before_mode_rebuild_user_version';
 export type MigrationFault = (stage: MigrationStage) => void;
 
 function pragmaNumber(db: DatabaseSync, name: 'application_id' | 'user_version'): number {
@@ -276,6 +303,7 @@ function expectedManifest(version: number): readonly SchemaRow[] {
     if (version >= 3) expected.exec(MODE_SCHEMA_V3_SQL);
     if (version >= 4) expected.exec(RECEIPT_SCHEMA_V4_SQL);
     if (version >= 5) expected.exec(DISCOVERY_SCHEMA_V5_SQL);
+    if (version >= 6) expected.exec(MODE_SCHEMA_V6_SQL);
     const rows = schemaRows(expected).map(row => ({ ...row, sql: normalizeSql(row.sql) }));
     expectedManifests.set(version, rows);
     return rows;
@@ -318,6 +346,7 @@ export function prepareSchema(
     db.exec(MODE_SCHEMA_V3_SQL);
     db.exec(RECEIPT_SCHEMA_V4_SQL);
     db.exec(DISCOVERY_SCHEMA_V5_SQL);
+    db.exec(MODE_SCHEMA_V6_SQL);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     assertManifest(db, SCHEMA_VERSION);
     assertIntegrity(db);
@@ -369,5 +398,14 @@ export function prepareSchema(
     assertIntegrity(db);
     migrationFault?.('before_discovery_user_version');
     db.exec('PRAGMA user_version = 5');
+  }
+
+  if (version <= 5) {
+    db.exec(MODE_SCHEMA_V6_SQL);
+    migrationFault?.('after_mode_rebuild');
+    assertManifest(db, 6);
+    assertIntegrity(db);
+    migrationFault?.('before_mode_rebuild_user_version');
+    db.exec('PRAGMA user_version = 6');
   }
 }
