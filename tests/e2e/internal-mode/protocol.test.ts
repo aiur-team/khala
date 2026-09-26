@@ -290,6 +290,32 @@ describe('internal protocol acceptance', () => {
     expect(w.scenario.evidence().filter(record => record.kind === 'channel.sent')).toHaveLength(2);
   });
 
+  it('never offers an acknowledged batch again after a launcher resume, and a pending message arrives once', async () => {
+    const w = await world();
+    const launcher = await launch(w);
+    const human = await humanSession(launcher.report);
+    const channelUrl = await grantBoth(w, human);
+
+    // A reads and acknowledges H1; H2 is still pending when the launcher closes.
+    const h1 = await humanSays(human, 'H1 read and acknowledged', 'txn-human-0201');
+    const acknowledged = await receive(w.a, [h1]);
+    const h2 = await humanSays(human, 'H2 pending at the restart', 'txn-human-0202');
+    expect(await launcher.close()).toBe(0);
+
+    const resumed = await launch(w, launcher.report.channelId);
+    w.a.relaunched(w.launcherProfile);
+    expect(await w.a.join(channelUrl)).toBe('connected');
+
+    // The first read after the resume holds only H2; H1 is never offered again.
+    expect(await receive(w.a, [h2])).toHaveLength(1);
+    expect(await w.a.read()).toEqual({ kind: 'empty' });
+    expect(w.a.deliveries().get(acknowledged[0]!.releaseId)).toBe(1);
+
+    expect(await resumed.close()).toBe(0);
+    open = null;
+    assertCleanClose(await w.scenario.close());
+  });
+
   it('re-reads and acknowledges a durable release across a launcher restart over the same SQLite files', async () => {
     const w = await world();
     const launcher = await launch(w);
