@@ -30,16 +30,22 @@ describe('bundled CLI entrypoint', () => {
     expect(JSON.parse(result.stderr)).toEqual({ ok: false, error: 'invalid_arguments' });
   });
 
-  it('keeps the registered Claude session command fail-closed until live composition exists', () => {
-    const result = spawnSync(process.execPath, [linkedEntrypoint, 'claude', 'read', '--session', 'session-1'], { encoding: 'utf8' });
+  it('composes the Claude session client over the internal runtime descriptor', () => {
+    // No internal server has published `active.json` under this state root.
+    const state = fs.mkdtempSync(path.join(temporaryDirectory, 'state-'));
+    const result = spawnSync(process.execPath, [linkedEntrypoint, 'claude', 'read', '--session', 'session-1'], {
+      encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: state },
+    });
 
-    expect(result.status).toBe(2);
-    expect(result.stdout).toBe('');
-    expect(JSON.parse(result.stderr)).toEqual({ ok: false, error: 'transport_unavailable' });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({ ok: false, kind: 'refused', code: 'descriptor_missing' });
   });
 
   it('runs standalone status through a symlink', () => {
-    const result = spawnSync(process.execPath, [linkedEntrypoint, 'status'], { encoding: 'utf8' });
+    const home = path.join(temporaryDirectory, 'home');
+    fs.mkdirSync(home);
+    const result = spawnSync(process.execPath, [linkedEntrypoint, 'status'], { encoding: 'utf8', env: { HOME: home, PATH: '' } });
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
@@ -50,7 +56,12 @@ describe('bundled CLI entrypoint', () => {
       route: 'unavailable',
       sourceCursor: null,
       inbox: null,
+      configuration: {
+        v: 1, command: 'status', ok: true, changed: false, state: 'no_harness', planDigest: null,
+        confirmation: { required: false, confirmed: false }, harnesses: [], operations: [], diagnostics: [],
+      },
     });
+    expect(fs.readdirSync(home)).toEqual([]);
   });
 
   it('keeps the internal runtime out of the main bundle and loads it only for internal', () => {
@@ -68,8 +79,14 @@ describe('bundled CLI entrypoint', () => {
     expect(deleted.stdout).toBe('');
     expect(result(deleted.stderr)).toEqual({ ok: false, error: 'missing_state', channelId: 'ch_missing' });
 
-    // Without a built internal web bundle beside it, launch refuses before taking any runtime state.
-    const created = spawnSync(process.execPath, [linkedEntrypoint, 'internal'], { encoding: 'utf8', env });
+    // The packaged build carries the browser bundle beside the internal runtime.
+    expect(fs.existsSync(path.join(packageDirectory, 'dist/internal-web/index.html'))).toBe(true);
+
+    // Without that bundle beside it, launch refuses before taking any runtime state. The copy
+    // omits `internal-web/`: launching the real build would start a server that never exits.
+    const bare = fs.mkdtempSync(path.join(temporaryDirectory, 'bare-'));
+    for (const file of ['khala.js', 'khala-internal.js']) fs.copyFileSync(path.join(packageDirectory, 'dist', file), path.join(bare, file));
+    const created = spawnSync(process.execPath, [path.join(bare, 'khala.js'), 'internal'], { encoding: 'utf8', env, timeout: 30_000 });
     expect(created.status).toBe(3);
     expect(result(created.stderr)).toEqual({ ok: false, error: 'web_bundle_unavailable' });
     expect(fs.existsSync(path.join(state, 'khala', 'internal', 'runtime.lock'))).toBe(false);

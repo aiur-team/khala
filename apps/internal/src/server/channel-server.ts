@@ -5,6 +5,7 @@ import {
   decodeContentLimits, decodeMessageContent,
 } from '@khala/contracts/messaging/index';
 import type { ChannelStore, StoredChannel, StoredEvent } from '../store/channel-store';
+import type { InternalReceiptReadModel } from '../store/receipts';
 import { type AssetLimits, type AssetManifest, type AssetTable, DEFAULT_ASSET_LIMITS, loadAssets } from './assets';
 import {
   BOOTSTRAP_DOCUMENT, BOOTSTRAP_DOCUMENT_ROUTE, BOOTSTRAP_SCRIPT, BOOTSTRAP_SCRIPT_ROUTE, REQUEST_SECRET_HEADER,
@@ -18,6 +19,9 @@ import { type InternalDiscoveryPort, createDiscoveryRoutes, discoveryRole } from
 import {
   BodyError, type ErrorCode, applySecurityHeaders, headerValues, readJsonObject, sendBytes, sendError, sendJson,
 } from './http';
+import { type BindingKey, createRevocationBarrier } from './stop/barrier';
+import { STOP_ROUTE, handleStop } from './stop/route';
+import { type GrantClearing, type StopCandidate, createBindingStopService } from './stop/service';
 import {
   type AuthOutcome, DEFAULT_LIMITS, type LogEvent, type LoopbackServer, type RouteContext, type RouteSpec, isRouteSegment,
   type ServerLimits, startLoopbackServer,
@@ -71,16 +75,42 @@ export type AgentReleaseFeed = Readonly<{
   read(input: Readonly<{ binding: SessionBinding; channelId: RoomId; cursor: string | null; limit: number }>): AgentReleaseRead;
 }>;
 
+/**
+ * One composition-supplied agent route, admitted only for the launch's transport
+ * capability. The server authenticates and bounds the body; the handler rechecks the
+ * bearer itself and owns everything else, including its status and closed body.
+ */
+export type AgentSessionRoute = Readonly<{
+  path: string;
+  handle(input: Readonly<{ authorization: string; body: Record<string, unknown> }>): Promise<Readonly<{
+    status: 200 | 400 | 401; body: Readonly<Record<string, unknown>>;
+  }>>;
+}>;
+
+/** Composition-supplied parts of the binding Stop control. */
+export type BindingStopOptions = Readonly<{
+  /** Binding generations activated for the channel through channel access. */
+  activatedBindings?(channelId: RoomId): readonly SessionBinding[] | 'unavailable';
+  /** Removes granted binding fields from the runtime descriptor when they name one of `bindingIds`. */
+  clearGrant?(bindingIds: ReadonlySet<string>): GrantClearing;
+}>;
+
 export type ChannelServerOptions = Readonly<{
   store: ChannelStore;
   bootstrap: readonly BootstrapCredential[];
   bindings: readonly BindingCredential[];
   /** Serves `GET .../releases` to binding principals; the route is absent without it. */
   releases?: AgentReleaseFeed;
+  /** Serves the owner-only `GET .../receipts` evidence read; the route is absent without it. */
+  receipts?: Pick<InternalReceiptReadModel, 'channelReceipts'>;
   /** The launch's transport capability; with `discovery`, it may only ask for a discovery descriptor. */
   transportCapability?: string;
   /** Channel discovery, access requests and the connector exchange. Absent means those routes do not exist. */
   discovery?: InternalDiscoveryPort;
+  /** The Claude session route. Absent means the route does not exist. */
+  agentSession?: AgentSessionRoute;
+  /** Serves the human-only binding Stop endpoint; the route is absent without it. */
+  stop?: BindingStopOptions;
   assets?: AssetManifest;
   newId: () => string;
   clock: () => number;
@@ -101,8 +131,17 @@ const ROUTES = {
   hints: { method: 'GET', path: '/api/v1/channels/:channelId/hints', admission: 'authenticated' },
   binding: { method: 'GET', path: '/api/v1/agent/binding', admission: 'authenticated' },
   releases: { method: 'GET', path: '/api/v1/channels/:channelId/releases', admission: 'authenticated', allowQuery: true },
+  receipts: { method: 'GET', path: '/api/v1/channels/:channelId/receipts', admission: 'authenticated' },
   channelDocument: { method: 'GET', path: '/channels/:channelId', admission: 'public' },
+  settingsDocument: { method: 'GET', path: '/channels/:channelId/settings', admission: 'public' },
+  requestsDocument: { method: 'GET', path: '/channel-requests', admission: 'public' },
+  requestDocument: { method: 'GET', path: '/channel-requests/:handle', admission: 'public' },
 } as const satisfies Record<string, RouteSpec>;
+
+/** Every application route answered with the app shell; the client router decides what it shows. */
+const APP_DOCUMENT_ROUTES: readonly RouteSpec[] = [
+  ROUTES.channelDocument, ROUTES.settingsDocument, ROUTES.requestsDocument, ROUTES.requestDocument,
+];
 
 const TOKEN = /^[\x21-\x7e]+$/;
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
@@ -119,7 +158,8 @@ function fail(response: ServerResponse, outcome: Failure): void {
 
 function rejection(code: string): Failure {
   switch (code) {
-    case 'identity_mismatch': return failure(403, 'forbidden');
+    case 'identity_mismatch':
+    case 'read_only': return failure(403, 'forbidden');
     case 'not_found': return failure(404, 'not_found');
     case 'not_joined': return failure(403, 'not_joined');
     case 'operation_mismatch': return failure(409, 'operation_mismatch');
@@ -170,11 +210,16 @@ function actor(principal: Principal): Readonly<{ participantId: ParticipantId; d
   throw new Error('channel route reached without a channel principal');
 }
 
-/** Channel content routes: the creating human, or the human and bound agents. */
-function admits(route: RouteSpec, principal: Principal): boolean {
+/**
+ * Channel content routes: the creating human, or the human and bound agents. The
+ * agent-session route belongs to the installation's transport capability alone.
+ */
+function admits(route: RouteSpec, principal: Principal, agentSession: RouteSpec | null): boolean {
+  if (route === agentSession) return principal.kind === 'transport';
   const role = discoveryRole(route);
   if (role !== null) return role === principal.kind;
-  if (route === ROUTES.create) return principal.kind === 'human';
+  // Receipt evidence is owner-only: a bound agent never reads delivery metadata.
+  if (route === ROUTES.create || route === ROUTES.receipts || route === STOP_ROUTE) return principal.kind === 'human';
   return principal.kind === 'human' || principal.kind === 'binding';
 }
 
@@ -216,6 +261,10 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     ROUTES.session, ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
   ];
   if (options.releases) routes.push(ROUTES.releases);
+  if (options.receipts) routes.push(ROUTES.receipts);
+  if (options.stop) routes.push(STOP_ROUTE);
+  // Every binding effect commits through this barrier; Stop raises it before revoking durably.
+  const barrier = createRevocationBarrier();
   let origin = '';
   const discovery = options.discovery
     ? createDiscoveryRoutes({
@@ -232,7 +281,11 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     })
     : null;
   if (discovery) routes.push(...discovery.routes);
-  if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
+  const agentSession: RouteSpec | null = options.agentSession
+    ? { method: 'POST', path: options.agentSession.path, admission: 'authenticated' }
+    : null;
+  if (agentSession) routes.push(agentSession);
+  if (assets?.channelDocument) routes.push(...APP_DOCUMENT_ROUTES);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
 
   /**
@@ -241,6 +294,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
    */
   function bindingLive(principal: Principal): 'live' | 'revoked' | 'unavailable' {
     if (principal.kind !== 'binding') return 'live';
+    if (barrier.barred(principal.binding)) return 'revoked';
     const result = store.binding(principal.binding);
     const latest = store.latestBindingGeneration(principal.binding.bindingId);
     if (result.kind === 'unavailable' || latest.kind === 'unavailable') return 'unavailable';
@@ -255,6 +309,53 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     if (live === 'live') return true;
     fail(context.response, live === 'unavailable' ? failure(503, 'unavailable') : failure(401, 'unauthenticated'));
     return false;
+  }
+
+  /**
+   * The commit point of every authorized write: authority is rechecked here, after
+   * the body arrived, never only when the request was authenticated. A binding
+   * effect commits through the revocation barrier so Stop can drain it. `null`
+   * means the reply was already sent.
+   */
+  function commitAuthorized<T>(context: RouteContext<Principal>, effect: () => T): T | null {
+    const principal = context.principal!;
+    const guarded = () => (stillLive(context) ? effect() : null);
+    if (principal.kind !== 'binding') return guarded();
+    const ran = barrier.run(principal.binding, guarded);
+    if (ran.kind === 'ran') return ran.value;
+    fail(context.response, failure(401, 'unauthenticated'));
+    return null;
+  }
+
+  const stopService = createBindingStopService({
+    barrier,
+    candidates(channelId) {
+      const activated = options.stop?.activatedBindings?.(channelId as RoomId) ?? [];
+      if (activated === 'unavailable') return 'unavailable';
+      const unique = new Map<string, SessionBinding>();
+      for (const binding of [...activated, ...authority.scopedBindings(channelId as RoomId)]) {
+        unique.set(JSON.stringify([binding.bindingId, binding.generation]), binding);
+      }
+      const candidates: StopCandidate[] = [];
+      for (const binding of unique.values()) {
+        const row = store.binding(binding);
+        const latest = store.latestBindingGeneration(binding.bindingId);
+        if (row.kind === 'unavailable' || latest.kind === 'unavailable') return 'unavailable';
+        if (row.kind !== 'done') continue;
+        candidates.push({ binding, status: row.binding.status, latest: latest.generation === binding.generation });
+      }
+      return candidates;
+    },
+    revoke: (key: BindingKey) => (store.revokeBinding(key).kind === 'done' ? 'revoked' : 'failed'),
+    dropCapability: key => authority.revokeBinding(key),
+    ...(options.stop?.clearGrant ? { clearGrant: options.stop.clearGrant } : {}),
+  });
+
+  function humanMayStop(channelId: string, principal: Principal): 'allowed' | 'not_found' | 'forbidden' | 'unavailable' {
+    const read = store.channel({ channelId: channelId as RoomId, participantId: actor(principal).participantId });
+    if (read.kind === 'done') return 'allowed';
+    if (read.kind === 'unavailable') return 'unavailable';
+    return read.code === 'not_joined' ? 'forbidden' : 'not_found';
   }
 
   async function authenticate(
@@ -287,7 +388,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       principal = authority.authenticateSession(cookie, secrets[0]!);
     }
     if (!principal) return { ok: false, status: 401, code: 'unauthenticated' };
-    if (!admits(route, principal)) return { ok: false, status: 403, code: 'forbidden' };
+    if (!admits(route, principal, agentSession)) return { ok: false, status: 403, code: 'forbidden' };
     try {
       const live = bindingLive(principal);
       if (live === 'unavailable') return { ok: false, status: 503, code: 'unavailable' };
@@ -447,7 +548,13 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       return;
     }
     const held = principal.binding;
-    const result = options.releases.read({ binding: held, channelId: params.channelId as RoomId, ...page });
+    const feed = options.releases;
+    const read = barrier.run(held, () => feed.read({ binding: held, channelId: params.channelId as RoomId, ...page }));
+    if (read.kind === 'barred') {
+      fail(response, failure(401, 'unauthenticated'));
+      return;
+    }
+    const result = read.value;
     const identity = { bindingId: held.bindingId, generation: held.generation };
     switch (result.kind) {
       case 'page':
@@ -479,6 +586,35 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     }
   }
 
+  /**
+   * The owner's durable receipt evidence for one channel: content-free facts, the
+   * channel events each release carried, and the shared batch groups. Membership
+   * is checked by the read model, so a refused read never reveals whether facts exist.
+   */
+  function receipts({ principal, params, response }: RouteContext<Principal>): void {
+    if (principal?.kind !== 'human' || !options.receipts) {
+      fail(response, failure(403, 'forbidden'));
+      return;
+    }
+    const result = options.receipts.channelReceipts({
+      channelId: params.channelId as RoomId,
+      participantId: principal.human.participantId,
+    });
+    if (result.kind === 'done') {
+      sendJson(response, 200, {
+        v: 1,
+        facts: result.facts.map(fact => ({
+          receipt: fact.receipt,
+          evidenceRef: fact.evidenceRef,
+          events: fact.events.map(event => ({ eventId: event.eventId, sequence: event.sequence })),
+        })),
+        groups: result.groups.map(group => ({ evidenceRef: group.evidenceRef, receiptIds: group.receiptIds })),
+      });
+    } else {
+      fail(response, result.kind === 'rejected' ? rejection(result.code) : failure(503, 'unavailable'));
+    }
+  }
+
   async function send(context: RouteContext<Principal>): Promise<void> {
     const { principal, params, response } = context;
     const body = await readJsonObject(context, limits.maxBodyBytes);
@@ -488,17 +624,19 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       fail(response, failure(400, 'invalid_request'));
       return;
     }
-    if (!stillLive(context)) return;
     const author = actor(principal!);
-    const result = store.send({
+    const clientTxnId = body.clientTxnId;
+    // A send blocked on its body while Stop ran can never commit once Stop has reported success.
+    const result = commitAuthorized(context, () => store.send({
       channelId: params.channelId as RoomId,
       eventId: options.newId() as EventId,
       authorParticipantId: author.participantId,
       authorDeviceId: author.deviceId,
-      clientTxnId: body.clientTxnId,
+      clientTxnId,
       content: content.value,
       receivedAt: new Date(options.clock()).toISOString(),
-    });
+    }));
+    if (result === null) return;
     if (result.kind === 'stored' || result.kind === 'replayed') {
       sendJson(response, result.kind === 'stored' ? 201 : 200, { state: result.kind, event: eventView(result.event) });
     } else if (result.kind === 'rejected') {
@@ -528,12 +666,14 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
 
     let open = true;
     let unsubscribe = () => {};
+    let unregisterStop = () => {};
     let keepalive: NodeJS.Timeout | undefined;
     // Registered before anything can throw, so the stream slot is always released.
     const cleanup = () => {
       if (!open) return;
       open = false;
       unsubscribe();
+      unregisterStop();
       clearInterval(keepalive);
       signal.removeEventListener('abort', cleanup);
       totalStreams -= 1;
@@ -555,6 +695,8 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       return false;
     };
     try {
+      // Stop ends a binding's stream at once rather than at its next frame.
+      if (who.kind === 'binding') unregisterStop = barrier.onRaise(who.binding, cleanup);
       unsubscribe = store.subscribeHints(channelId, () => {
         if (open && stillAuthorized()) response.write('event: hint\ndata: {}\n\n');
       });
@@ -575,8 +717,14 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     }
   }
 
+  async function agentSessionCall(context: RouteContext<Principal>): Promise<void> {
+    const body = await readJsonObject(context, limits.maxBodyBytes);
+    const reply = await options.agentSession!.handle({ authorization: headerValues(context.request, 'authorization')[0]!, body });
+    sendJson(context.response, reply.status, reply.body);
+  }
+
   function staticAsset({ route, response }: RouteContext<Principal>): void {
-    const asset = route === ROUTES.channelDocument ? assets?.channelDocument : assets?.get(route.path);
+    const asset = APP_DOCUMENT_ROUTES.includes(route) ? assets?.channelDocument : assets?.get(route.path);
     if (!asset) {
       fail(response, failure(404, 'not_found'));
       return;
@@ -608,6 +756,9 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.hints: return hints(context);
           case ROUTES.binding: return binding(context);
           case ROUTES.releases: return releases(context);
+          case ROUTES.receipts: return receipts(context);
+          case agentSession: return await agentSessionCall(context);
+          case STOP_ROUTE: return await handleStop(context, { service: stopService, maxBodyBytes: limits.maxBodyBytes, humanMayStop });
           default:
             if (discovery && discoveryRole(context.route) !== null) return await discovery.handle(context);
             return staticAsset(context);

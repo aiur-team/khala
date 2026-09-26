@@ -75,6 +75,11 @@ export function discoveryPrincipal(harness: string, sessionId: string): string {
   return `agent_${digest('principal', harness, sessionId)}`;
 }
 
+/** What a binding stores as its session: a digest, never the harness's own session ID. */
+export function sessionDigest(harness: string, sessionId: string): string {
+  return digest('session', harness, sessionId);
+}
+
 function agentParticipant(principal: string): string {
   return `participant_${principal}`;
 }
@@ -376,7 +381,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       const issued = store.issueAgent({
         principal,
         harness: input.harness,
-        sessionDigest: digest('session', input.harness, input.sessionId),
+        sessionDigest: sessionDigest(input.harness, input.sessionId),
         displayLabel: input.displayLabel,
         workspaceLabel: input.workspaceLabel,
         capabilityDigest: capabilityDigest(capability),

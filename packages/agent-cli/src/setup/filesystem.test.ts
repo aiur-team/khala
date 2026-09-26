@@ -88,4 +88,21 @@ describe('confined filesystem', () => {
     await confined.removeEmptyDirectories(created);
     expect(await fsp.readdir(path.join(root, 'a', 'b'))).toEqual(['keep']);
   });
+
+  it('creates and prunes a missing root nested in another root, but never an outermost one', async () => {
+    const data = path.join(root, '.local', 'share');
+    const nested = new ConfinedFilesystem([root, data]);
+    const target = path.join(data, 'khala', 'bin', 'khala');
+    const created = await nested.missingDirectories(target);
+    expect(created).toEqual([path.join(root, '.local'), data, path.join(data, 'khala'), path.join(data, 'khala', 'bin')]);
+    await nested.createDirectories(created);
+    await nested.replace(target, null, bytes('launcher'), 0o500);
+    await nested.remove(target, sha256(bytes('launcher')));
+    await nested.removeEmptyDirectories(created);
+    expect(await fsp.readdir(root)).toEqual([]);
+
+    const missing = new ConfinedFilesystem([path.join(outside, 'gone')]);
+    expect(await missing.missingDirectories(path.join(outside, 'gone', 'a', 'file'))).toEqual([path.join(outside, 'gone', 'a')]);
+    expect(await code(missing.createDirectories([path.join(outside, 'gone')]))).toBe('unsafe_path');
+  });
 });

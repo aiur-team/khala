@@ -9,6 +9,7 @@ import {
 import {
   decodeSubscriptionCursor, decodeTimelineCursor, encodeSubscriptionCursor, encodeTimelineCursor,
 } from './cursors';
+import { isChannelLinked, isChannelWritable } from './conversion-lock';
 import type { InternalStoreHandle } from './open';
 
 export type RegisteredParticipant = Omit<ParticipantView, 'deviceIds'>;
@@ -45,12 +46,17 @@ type ParticipantRegistrationResult = MutationResult<'identity_mismatch' | 'inval
 type DeviceRegistrationResult = MutationResult<'identity_mismatch' | 'not_found' | 'invalid_input'>;
 type BindingRegistrationResult = MutationResult<'identity_mismatch' | 'not_found' | 'invalid_input'>;
 type BindingRevocationResult = MutationResult<'not_found' | 'invalid_input'>;
-type MembershipResult = MutationResult<'not_found' | 'invalid_input'>;
+/** `read_only`: nobody joins a channel whose conversion linked it to its external channel. */
+type MembershipResult = MutationResult<'not_found' | 'read_only' | 'invalid_input'>;
 
 export type BindingReadResult =
   | Readonly<{ kind: 'done'; binding: StoredBinding }>
   | Readonly<{ kind: 'absent' }>
   | Readonly<{ kind: 'rejected'; code: 'binding_mismatch' }>
+  | Readonly<{ kind: 'unavailable' }>;
+
+export type SessionBindingResult =
+  | Readonly<{ kind: 'done'; binding: StoredBinding | null }>
   | Readonly<{ kind: 'unavailable' }>;
 
 export type LatestGenerationResult =
@@ -84,7 +90,7 @@ export type ProvenanceResult =
 
 export type SendResult =
   | Readonly<{ kind: 'stored' | 'replayed'; event: StoredEvent }>
-  | Readonly<{ kind: 'rejected'; code: 'identity_mismatch' | 'not_found' | 'not_joined' | 'operation_mismatch' | 'invalid_input' }>
+  | Readonly<{ kind: 'rejected'; code: 'identity_mismatch' | 'not_found' | 'not_joined' | 'operation_mismatch' | 'read_only' | 'invalid_input' }>
   | Readonly<{ kind: 'unavailable' }>;
 
 export type TimelineResult =
@@ -330,6 +336,11 @@ export interface ChannelStore {
   binding(binding: TrustedBinding): BindingReadResult;
   /** Newest registered generation for a binding ID, or null when none exists. */
   latestBindingGeneration(bindingId: string): LatestGenerationResult;
+  /**
+   * This binding ID's active row at its newest generation, only when it names exactly
+   * this harness session; otherwise null. A revoked or superseded row never answers.
+   */
+  sessionBinding(key: Readonly<{ bindingId: string; harness: string; sessionId: string }>): SessionBindingResult;
   setMembership(input: Readonly<{ channelId: RoomId; participantId: ParticipantId; membership: ChannelMembership }>): MembershipResult;
   createChannel(input: Readonly<{
     operationId: string;
@@ -487,6 +498,20 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
       } catch { return unavailable(); }
     },
 
+    sessionBinding(key) {
+      if (![key.bindingId, key.harness, key.sessionId].every(isIdentifier)) return { kind: 'done', binding: null };
+      try {
+        return handle.read(db => {
+          const row = db.prepare(`
+            SELECT b.* FROM bindings b
+            WHERE b.binding_id = ? AND b.harness = ? AND b.session_id = ? AND b.status = 'active'
+              AND b.generation = (SELECT max(generation) FROM bindings WHERE binding_id = b.binding_id)
+          `).get(key.bindingId, key.harness, key.sessionId) as BindingRow | undefined;
+          return { kind: 'done', binding: row ? bindingFromRow(row) : null } as const;
+        });
+      } catch { return unavailable(); }
+    },
+
     latestBindingGeneration(bindingId) {
       try {
         return handle.read(db => {
@@ -511,6 +536,9 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           const row = db.prepare('SELECT membership FROM memberships WHERE channel_id = ? AND participant_id = ?')
             .get(input.channelId, input.participantId) as { membership: string } | undefined;
           if (row?.membership === input.membership) return { kind: 'done', changed: false } as const;
+          if ((input.membership === 'joining' || input.membership === 'joined') && isChannelLinked(db, input.channelId)) {
+            return { kind: 'rejected', code: 'read_only' } as const;
+          }
           db.prepare(`
             INSERT INTO memberships (channel_id, participant_id, membership) VALUES (?, ?, ?)
             ON CONFLICT (channel_id, participant_id) DO UPDATE SET membership = excluded.membership
@@ -683,6 +711,7 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           if (device?.participant_id !== input.authorParticipantId) {
             return { kind: 'rejected', code: 'identity_mismatch' } as const;
           }
+          if (!isChannelWritable(db, input.channelId)) return { kind: 'rejected', code: 'read_only' } as const;
           const inserted = db.prepare(`
             INSERT INTO events (
               event_id, channel_id, author_participant_id, author_device_id, client_txn_id,

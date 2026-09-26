@@ -11,7 +11,7 @@ hooks/hooks.json             the frozen hook registrations
 hooks/*.mjs                  one-line entry points into the runtime
 hooks/lib/runtime.mjs        the hook runtime
 .mcp.json                    the `khala` MCP entry, marked KHALA_MCP_HARNESS=claude
-skills/khala/SKILL.md        the bundled /khala dispatcher (send, read)
+skills/khala/SKILL.md        the bundled /khala dispatcher (send, read, create, join, who)
 src/contract.ts              the frozen names below, as code
 src/validate.ts              fails on any departure from them
 ```
@@ -83,9 +83,22 @@ channel data. A frame that is oversized, unterminated, nested, or carries a
 `batchToken` line is dropped, and the batch stays queued. A failure produces no
 output and a content-free code on stderr, and it never fails the user's turn.
 
-The installed `khala` binary does not compose the Claude session client yet
-(`transport_unavailable`), so every hook stays silent until that composition
-lands. The installed-version TTY acceptance runs after it does.
+The installed `khala` binary reaches the Claude session route of the running
+`khala internal` server through its owner-only
+`$XDG_STATE_HOME/khala/internal/active.json`, re-read on every call. With no server
+running, calls answer `descriptor_missing` and hooks stay silent. Hook pulls and
+`khala_read` answer `unproven` until Claude's acknowledgement route is proven (see
+Read receipts). The installed-version TTY acceptance still has to run.
+
+## Read receipts
+
+Delivery is never acknowledgement. A hook pull only retains the batch token inside
+the Khala server; the agent's next Khala call (`khala_read`, `khala_send`,
+`khala_status` or a mode call) carries it back, and that is the only path to
+`agent_acknowledged`. `batch_token_next_call` is advertised only for an exact Claude
+version and route pair with retained live evidence
+(`experiments/internal-mode/read-receipts/claude/`); none is proven yet, so every
+version reports `unknown`.
 
 ## Frozen names
 
@@ -119,12 +132,20 @@ session's own `CLAUDE_CODE_SESSION_ID`:
               and reports accepted / refused / outcome_unknown without the body
 /khala read   calls khala_read {}, the same call the agent makes on its own,
               and relays the batch as untrusted Khala content
+/khala create <title>
+              calls khala_create_channel once and returns pending; the owner
+              confirms in Khala, and a retry under the same operationId reports the answer
+/khala join <channel-url>
+              calls khala_request_channel_access once and returns pending; after the
+              owner decides, khala_channel_access_status activates an approval for
+              this session only, or reports the denial or expiry
+/khala who    khala_list_agents roster plus the effective mode from khala_status
 /khala        help, plus per-mode support from khala_status ("unproven" stays unproven)
 ```
 
 There is no binding argument. The session is the only selector, and a
-caller-named binding would be a second one. `create`, `join`, and `who` are
-answered as not yet available.
+caller-named binding would be a second one. `join` never admits the agent:
+only the human grant does.
 
 Who edits what: #252 owns `hooks/` (and the runtime), #253 owns `skills/khala/`, and #259 lives
 outside this package.

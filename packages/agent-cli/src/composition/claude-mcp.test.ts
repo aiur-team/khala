@@ -5,8 +5,9 @@ import { MAX_SEND_BYTES } from '../cli/send.js';
 import {
   CREDENTIAL_A, CREDENTIAL_B, authenticator, batch, directory, fakeServices, memoryState, type FakeServices,
 } from '../fixtures/claude.js';
+import type { AgentClientPort } from '../cli/types.js';
 import { CLAUDE_MCP_HARNESS_ENV } from './claude-mcp.js';
-import { createClaudeSessionAdapter, type ClaudeSessionAdapter } from './claude-session.js';
+import { createClaudeSessionAdapter, type ClaudeSessionAccess, type ClaudeSessionAdapter } from './claude-session.js';
 import type { ClaudeSessionClient } from './claude-session-http.js';
 import { createUnavailableClient } from './unavailable.js';
 
@@ -26,6 +27,11 @@ function inProcessClient(adapter: ClaudeSessionAdapter, credential: string): Cla
     mode: sessionId => adapter.mode(call(sessionId)),
     setMode: (sessionId, input) => adapter.setMode(call(sessionId), input),
     pending: sessionId => adapter.pending(call(sessionId)),
+    roster: sessionId => adapter.roster(call(sessionId)),
+    listChannels: (sessionId, input) => adapter.listChannels(call(sessionId), input),
+    requestAccess: (sessionId, input) => adapter.requestAccess(call(sessionId), input),
+    accessStatus: (sessionId, input) => adapter.accessStatus(call(sessionId), input),
+    requestCreate: (sessionId, input) => adapter.requestCreate(call(sessionId), input),
     hook: sessionId => adapter.hook(call(sessionId)),
   };
 }
@@ -46,6 +52,7 @@ async function serve(
   claude: ClaudeSessionClient | undefined,
   lines: string[],
   env: Record<string, string | undefined> = { CLAUDE_CODE_SESSION_ID: 's-1' },
+  port: Partial<AgentClientPort> = {},
 ) {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -56,7 +63,7 @@ async function serve(
   const inbox = vi.fn(async () => { throw new Error('the Claude MCP server must never open inbox storage'); });
   const status = vi.fn(async () => { throw new Error('the Claude MCP server must not use a held binding'); });
   const code = await runCli(['mcp-serve'], {
-    client: { ...createUnavailableClient(), status },
+    client: { ...createUnavailableClient(), status, ...port },
     inbox,
     stdin: Readable.from([lines.map(line => `${line}\n`).join('')]), stdout, stderr,
     env: { [CLAUDE_MCP_HARNESS_ENV]: 'claude', ...env },
@@ -67,12 +74,17 @@ async function serve(
 }
 
 describe('Claude plugin MCP entry', () => {
-  it('advertises only the session-bound send, read and status tools, none taking a binding or token', async () => {
+  it('advertises the session-bound, discovery and create tools, none taking a binding or token', async () => {
     const { responses } = await serve(inProcessClient(server().adapter, CREDENTIAL_A), [
       JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     ]);
     const tools = (responses[0]!.result as unknown as { tools: { name: string; inputSchema: { properties: object } }[] }).tools;
-    expect(tools.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_status']);
+    expect(tools.map(tool => tool.name)).toEqual([
+      'khala_send', 'khala_read', 'khala_status', 'khala_list_agents',
+      'khala_list_channels', 'khala_request_channel_access', 'khala_channel_access_status',
+      'khala_create_channel',
+    ]);
+    expect(Object.keys(tools.find(tool => tool.name === 'khala_list_agents')!.inputSchema.properties)).toEqual([]);
     for (const tool of tools) {
       expect(Object.keys(tool.inputSchema.properties)).not.toContain('bindingId');
       expect(Object.keys(tool.inputSchema.properties)).not.toContain('ackBatchToken');
@@ -213,5 +225,197 @@ describe('Claude plugin MCP entry', () => {
     });
     expect(code).toBe(2);
     expect(err).not.toContain('session');
+  });
+});
+
+const ROSTER = {
+  kind: 'listed',
+  roster: { v: 1, agents: [{ v: 1, participantId: 'agent-1', displayName: 'Ada', ownerDisplayName: 'Kim', connection: 'connected' }] },
+};
+
+describe('Claude plugin channel tools', () => {
+  it('lists this session\'s roster with no argument, resolving the binding from the session', async () => {
+    const { services, adapter } = server();
+    services.roster.value = ROSTER;
+    const { responses } = await serve(inProcessClient(adapter, CREDENTIAL_A), [
+      request(1, 'khala_list_agents'),
+      request(2, 'khala_list_agents', { channel: 'binding-2' }),
+      request(3, 'khala_list_agents', { bindingId: 'binding-2' }),
+    ], { CLAUDE_CODE_SESSION_ID: 's-2' });
+    expect(responses[0]!.result!.structuredContent).toEqual({ ok: true, v: 1, agents: ROSTER.roster.agents });
+    expect(responses[1]!.error).toEqual({ code: -32602, message: 'Invalid params' });
+    expect(responses[2]!.error).toEqual({ code: -32602, message: 'Invalid params' });
+    // Only the session's own binding was served, and the result names no binding.
+    expect(services.rosterCalls).toEqual(['binding-2']);
+    expect(JSON.stringify(responses)).not.toContain('binding-2');
+  });
+
+  it('answers an unbound or foreign session as not_joined, without disclosing a binding', async () => {
+    const { services, adapter } = server();
+    services.roster.value = ROSTER;
+    const { responses } = await serve(inProcessClient(adapter, CREDENTIAL_B), [request(1, 'khala_list_agents')]);
+    expect(responses[0]!.result!.structuredContent).toEqual({ ok: false, error: 'not_joined' });
+    expect(services.rosterCalls).toEqual([]);
+  });
+
+  it('fails a malformed roster closed', async () => {
+    const { services, adapter } = server();
+    services.roster.value = { kind: 'listed', roster: { v: 1, agents: [{ participantId: 'a', roomId: '!x:matrix' }] } };
+    const { responses } = await serve(inProcessClient(adapter, CREDENTIAL_A), [request(1, 'khala_list_agents')]);
+    expect(responses[0]!.result!.structuredContent).toEqual({ ok: false, error: 'unavailable' });
+  });
+
+  it('never accepts a batch token on the discovery and access tools', async () => {
+    const requestChannelAccess = vi.fn(async () => ({ kind: 'unavailable' as const }));
+    const { responses } = await serve(inProcessClient(server().adapter, CREDENTIAL_A), [
+      request(1, 'khala_list_channels', { ackBatchToken: 'token' }),
+      request(2, 'khala_request_channel_access', { target: 'https://khala.example/c/x', ackBatchToken: 'token' }),
+      request(3, 'khala_channel_access_status', { operationId: 'op-12345678', ackBatchToken: 'token' }),
+      request(4, 'khala_create_channel', { title: 'Plans', operationId: 'op-12345678', ackBatchToken: 'token' }),
+    ], undefined, { requestChannelAccess });
+    expect(responses.map(response => response.error)).toEqual(Array(4).fill({ code: -32602, message: 'Invalid params' }));
+    expect(requestChannelAccess).not.toHaveBeenCalled();
+  });
+
+  describe('join', () => {
+    const URL = 'https://khala.example/c/room-1';
+
+    /**
+     * A local server whose access port files each request for the session that made it. It
+     * binds nothing: the grant path (owner approval, exchange, activation) is proven against
+     * the real journal and launcher in `apps/internal`'s Claude session integration test.
+     */
+    function joinable() {
+      const { services } = server();
+      const filed = new Map<string, { sessionId: string; outcome: string }>();
+      const requests: Array<{ sessionId: string; operationId: string }> = [];
+      const status = (operationId: string) => ({ kind: 'status' as const, status: { v: 1, operationId, outcome: filed.get(operationId)!.outcome } });
+      const access: ClaudeSessionAccess = {
+        listChannels: async () => ({ kind: 'unavailable' }),
+        request: async (_principal, sessionId, input) => {
+          requests.push({ sessionId, operationId: input.operationId });
+          if (!filed.has(input.operationId)) filed.set(input.operationId, { sessionId, outcome: 'pending_owner' });
+          return status(input.operationId);
+        },
+        status: async (_principal, sessionId, input) =>
+          filed.get(input.operationId)?.sessionId === sessionId ? status(input.operationId) : { kind: 'refused', code: 'not_found' },
+        create: async (_principal, sessionId, input) => {
+          requests.push({ sessionId, operationId: input.operationId });
+          if (!filed.has(input.operationId)) filed.set(input.operationId, { sessionId, outcome: 'pending_owner' });
+          return status(input.operationId);
+        },
+      };
+      const sessions = { resolve: async () => null };
+      const adapter = createClaudeSessionAdapter({
+        authenticator: authenticator(), sessions, state: memoryState(), services: b => services.services(b), access,
+      });
+      return {
+        services, adapter, requests,
+        /** The owner's decision, recorded against the operation only. */
+        decide(operationId: string, outcome: string) {
+          filed.get(operationId)!.outcome = outcome;
+        },
+      };
+    }
+    const asSession = (sessionId: string | undefined) => sessionId === undefined ? {} : { CLAUDE_CODE_SESSION_ID: sessionId };
+    const operationOf = (response: Response) => (response.result!.structuredContent as { operationId: string }).operationId;
+
+    it('records a request and admits nothing: no binding exists until the owner grants', async () => {
+      const { services, adapter, requests } = joinable();
+      const { responses } = await serve(inProcessClient(adapter, CREDENTIAL_A), [
+        request(1, 'khala_request_channel_access', { target: URL }),
+        request(2, 'khala_send', { message: 'hello' }),
+        request(3, 'khala_list_agents'),
+        request(4, 'khala_read'),
+      ], asSession('s-9'));
+      expect(responses[0]!.result!.structuredContent).toMatchObject({ ok: true, outcome: 'pending_owner' });
+      expect(requests).toHaveLength(1);
+      // No admitted binding: the session still resolves to nothing.
+      expect(responses[1]!.result!.structuredContent).toEqual({ kind: 'refused', code: 'session_not_bound' });
+      expect(responses[2]!.result!.structuredContent).toEqual({ ok: false, error: 'not_joined' });
+      expect(responses[3]!.result!.structuredContent).toEqual({ kind: 'refused', code: 'session_not_bound' });
+      expect(services.sends).toEqual([]);
+      expect(services.rosterCalls).toEqual([]);
+    });
+
+    it('carries the session on the request, and two sessions joining one URL get distinct operation IDs', async () => {
+      const { adapter, requests } = joinable();
+      const claude = inProcessClient(adapter, CREDENTIAL_A);
+      const first = await serve(claude, [request(1, 'khala_request_channel_access', { target: URL })], asSession('s-9'));
+      const second = await serve(claude, [request(1, 'khala_request_channel_access', { target: URL })], asSession('s-10'));
+      const retry = await serve(claude, [request(1, 'khala_request_channel_access', { target: URL })], asSession('s-9'));
+      expect(operationOf(first.responses[0]!)).not.toBe(operationOf(second.responses[0]!));
+      // A retry in one session reuses its own operation, so it files nothing new.
+      expect(operationOf(retry.responses[0]!)).toBe(operationOf(first.responses[0]!));
+      expect(requests.map(entry => entry.sessionId)).toEqual(['s-9', 's-10', 's-9']);
+      // The session ID itself never reaches the result.
+      expect(JSON.stringify([first.responses, second.responses])).not.toContain('s-9');
+    });
+
+    const ARGS: Record<string, Record<string, unknown>> = {
+      khala_list_channels: {},
+      khala_request_channel_access: { target: URL },
+      khala_channel_access_status: { operationId: 'op-12345678' },
+      khala_create_channel: { title: 'Plans', operationId: 'op-12345678' },
+    };
+
+    it.each(Object.keys(ARGS))(
+      'refuses %s as session_missing without a valid session ID, before any port runs',
+      async name => {
+        const { adapter, requests } = joinable();
+        const args = ARGS[name]!;
+        for (const env of [asSession(undefined), asSession('bad\nsession')]) {
+          const { responses } = await serve(inProcessClient(adapter, CREDENTIAL_A), [request(1, name, args)], env);
+          expect(responses[0]!.result!.structuredContent).toEqual({ kind: 'refused', code: 'session_missing' });
+          expect(responses[0]!.result!.isError).toBe(true);
+        }
+        expect(requests).toEqual([]);
+      });
+
+    it('answers another session\'s operation as unavailable, never its state', async () => {
+      const { adapter } = joinable();
+      const claude = inProcessClient(adapter, CREDENTIAL_A);
+      const asked = await serve(claude, [request(1, 'khala_request_channel_access', { target: URL })], asSession('s-9'));
+      const { responses } = await serve(claude, [
+        request(1, 'khala_channel_access_status', { operationId: operationOf(asked.responses[0]!) }),
+      ], asSession('s-10'));
+      expect(responses[0]!.result!.structuredContent).toMatchObject({ ok: false, error: 'not_found' });
+    });
+
+    it.each(['denied', 'expired'])('resumes on %s through the access status, never a wait, and binds nothing', async outcome => {
+      const { adapter, decide, requests } = joinable();
+      const claude = inProcessClient(adapter, CREDENTIAL_A);
+      const first = await serve(claude, [request(1, 'khala_request_channel_access', { target: URL })], asSession('s-9'));
+      const operationId = operationOf(first.responses[0]!);
+      // The owner decides in their own UI; nothing polled or waited meanwhile.
+      expect(requests).toHaveLength(1);
+      decide(operationId, outcome);
+
+      const resumed = await serve(claude, [
+        request(1, 'khala_channel_access_status', { operationId }),
+        request(2, 'khala_read'),
+        request(3, 'khala_request_channel_access', { target: URL, operationId }),
+      ], asSession('s-9'));
+      expect(resumed.responses[0]!.result!.structuredContent).toMatchObject({ ok: true, operationId, outcome });
+      // A retry reuses the same operation ID, so it never files a second request.
+      expect(resumed.responses[2]!.result!.structuredContent).toMatchObject({ operationId });
+      // Denial and expiry create no binding and deliver nothing.
+      expect(resumed.responses[1]!.result!.structuredContent).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    });
+
+    it('files a create intent for this session, and a retry under the same operation reads its state', async () => {
+      const { adapter, requests, decide } = joinable();
+      const claude = inProcessClient(adapter, CREDENTIAL_A);
+      const create = request(1, 'khala_create_channel', { title: 'Launch plans', operationId: 'create-12345678' });
+      const asked = await serve(claude, [create], asSession('s-9'));
+      expect(asked.responses[0]!.result!.structuredContent).toEqual({
+        ok: true, v: 1, operationId: 'create-12345678', outcome: 'pending_owner', next: null,
+      });
+      decide('create-12345678', 'denied');
+      const retried = await serve(claude, [create], asSession('s-9'));
+      expect(retried.responses[0]!.result!.structuredContent).toMatchObject({ ok: true, outcome: 'denied' });
+      // Both calls were filed for the requesting session only.
+      expect(requests).toEqual([{ sessionId: 's-9', operationId: 'create-12345678' }, { sessionId: 's-9', operationId: 'create-12345678' }]);
+    });
   });
 });

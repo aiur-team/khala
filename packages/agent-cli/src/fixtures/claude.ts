@@ -98,6 +98,9 @@ export type FakeServices = Readonly<{
   capabilities: { value: HarnessCapabilities };
   /** The fence's idle-watcher window. */
   watch: { value: Readonly<{ seconds: number }> | null };
+  /** The raw `listAgents` port result `roster` reports; `rosterCalls` records the binding each call served. */
+  roster: { value: unknown };
+  rosterCalls: string[];
   /** The effective mode `readMode` reports. */
   mode: { value: ListeningMode | null };
   /** Piggyback batches the next send or mode-set calls select, in order. */
@@ -112,10 +115,12 @@ export function fakeServices(): FakeServices {
   const pending = { value: false };
   const caps = { value: capabilities() };
   const watch: FakeServices['watch'] = { value: { seconds: 3000 } };
+  const roster: FakeServices['roster'] = { value: { kind: 'listed', roster: { v: 1, agents: [] } } };
+  const rosterCalls: string[] = [];
   const mode: FakeServices['mode'] = { value: null };
   const piggyback: Array<InboxBatch | null> = [];
   return {
-    reads, sends, modeSets, pending, capabilities: caps, watch, mode, piggyback,
+    reads, sends, modeSets, pending, capabilities: caps, watch, roster, rosterCalls, mode, piggyback,
     services(bound) {
       if (!reads.has(bound.bindingId)) reads.set(bound.bindingId, fakeRead());
       return {
@@ -141,6 +146,7 @@ export function fakeServices(): FakeServices {
         capabilities: async () => caps.value,
         pending: async () => ({ pending: pending.value }),
         watchWindow: async () => watch.value,
+        roster: async () => { rosterCalls.push(bound.bindingId); return roster.value; },
       };
     },
   };

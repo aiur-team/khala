@@ -9,6 +9,9 @@
 // `opencode.js` is the self-contained OpenCode plugin (`@aiur/khala/opencode`). OpenCode
 // imports it in its own process, so it too carries its whole closure.
 import { spawnSync } from 'node:child_process';
+//
+// `payload/` carries the reviewed harness assets `khala setup` installs: the Claude plugin's
+// shipped files and the Codex skill.
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -20,6 +23,20 @@ const packageDirectory = fileURLToPath(new URL('..', import.meta.url));
 export const INTERNAL_WEB_SOURCE = path.resolve(packageDirectory, '../../apps/web/dist/internal-web');
 
 export const INTERNAL_ENTRY_POINT = path.resolve(packageDirectory, '../../apps/internal/src/composition/internal-cli.ts');
+/** Top-level Claude plugin entries that ship; sources, tests, and package metadata do not. */
+const CLAUDE_PLUGIN_ENTRIES = ['.claude-plugin', '.mcp.json', 'hooks', 'skills'];
+
+async function copyPayload(workingDirectory, distDirectory) {
+  const claudePlugin = path.resolve(workingDirectory, '../claude-plugin');
+  const codexSkill = path.resolve(workingDirectory, '../agent-skill/SKILL.md');
+  // A detached copy of this package has neither; the gate's file allowlist then refuses it.
+  if (!existsSync(claudePlugin) || !existsSync(codexSkill)) return;
+  for (const entry of CLAUDE_PLUGIN_ENTRIES) {
+    await fs.cp(path.join(claudePlugin, entry), path.join(distDirectory, 'payload/claude-plugin', entry), { recursive: true });
+  }
+  await fs.mkdir(path.join(distDirectory, 'payload/codex'), { recursive: true });
+  await fs.copyFile(codexSkill, path.join(distDirectory, 'payload/codex/SKILL.md'));
+}
 
 async function buildOne({ entryPoint, outfile, absWorkingDir }) {
   const result = await build({
@@ -64,6 +81,7 @@ export async function bundle({
     }
     await fs.cp(internalWebSource, path.join(path.dirname(outfile), 'internal-web'), { recursive: true });
   }
+  await copyPayload(absWorkingDir, path.dirname(outfile));
   return metafile;
 }
 

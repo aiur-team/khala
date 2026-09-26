@@ -69,12 +69,18 @@ importers:
 
   apps/internal:
     dependencies:
+      '@aiur/khala':
+        specifier: workspace:*
+        version: link:../../packages/agent-cli
       '@khala/connector':
         specifier: workspace:*
         version: link:../../packages/connector
       '@khala/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@khala/harnesses':
+        specifier: workspace:*
+        version: link:../../packages/harnesses
       '@khala/messaging':
         specifier: workspace:*
         version: link:../../packages/messaging
@@ -82,9 +88,6 @@ importers:
         specifier: workspace:*
         version: link:../../packages/policy
     devDependencies:
-      '@aiur/khala':
-        specifier: workspace:*
-        version: link:../../packages/agent-cli
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0

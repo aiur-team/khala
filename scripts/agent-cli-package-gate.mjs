@@ -21,7 +21,23 @@ export const OLD_PACKAGE_NAME = ['@khala', 'agent-cli'].join('/');
 // `dist/internal-web/` is the browser bundle `khala internal` serves; its hashed asset
 // names vary per build, so only the directory prefix and its entry document are fixed.
 export const INTERNAL_WEB_DIRECTORY = 'dist/internal-web/';
-export const PACKED_FILES = ['README.md', 'dist/internal-web/index.html', 'dist/khala-internal.js', 'dist/khala.js', 'dist/opencode.js', 'package.json'];
+// `dist/payload/` holds the reviewed assets `khala setup` installs: the Claude plugin's shipped
+// files and the Codex skill.
+export const PAYLOAD_FILES = [
+  'dist/payload/claude-plugin/.claude-plugin/plugin.json',
+  'dist/payload/claude-plugin/.mcp.json',
+  'dist/payload/claude-plugin/hooks/hooks.json',
+  'dist/payload/claude-plugin/hooks/lib/runtime.d.mts',
+  'dist/payload/claude-plugin/hooks/lib/runtime.mjs',
+  'dist/payload/claude-plugin/hooks/post-tool-use.mjs',
+  'dist/payload/claude-plugin/hooks/session-end.mjs',
+  'dist/payload/claude-plugin/hooks/stop-watcher.mjs',
+  'dist/payload/claude-plugin/hooks/stop.mjs',
+  'dist/payload/claude-plugin/hooks/user-prompt-submit.mjs',
+  'dist/payload/claude-plugin/skills/khala/SKILL.md',
+  'dist/payload/codex/SKILL.md',
+];
+export const PACKED_FILES = ['README.md', 'dist/khala-internal.js', 'dist/khala.js', 'dist/opencode.js', ...PAYLOAD_FILES, 'dist/internal-web/index.html', 'package.json'];
 export const OPENCODE_EXPORT = `${PACKAGE_NAME}/opencode`;
 export const BUNDLES =['dist/khala.js', 'dist/khala-internal.js', 'dist/opencode.js'];
 export const REPOSITORY_URL = 'git+https://github.com/aiur-team/khala.git';

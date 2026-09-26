@@ -181,6 +181,38 @@ directory. It holds identifiers, sequence bounds and digests, never bodies or au
 labels. A resumed chunk is re-read from the source and must reproduce its digest
 (`source_changed` otherwise).
 
+### Start-fresh conversion
+
+`apps/internal/src/externalization/journal.ts` implements `ConversionJournalPort` inside
+the internal store. It keeps each conversion in `control_records`: the immutable
+`ConversionSnapshot` (channel revision, joined humans, and each selected agent's exact
+session and generation), the destination, and per-agent status. `decodeConversionStart`
+reads an omitted `visibility` as `secret`. `apps/internal/src/externalization/service.ts`
+drives the conversion through these steps:
+
+- `start` refuses (`forbidden`) any `ConversionOwner` that is not a human participant of
+  the source channel's owner. The snapshot records that owner and participant, and every
+  later call from anyone else is refused.
+- It creates the hosted channel once through `HostedChannelPort`. A lost create response is
+  reconciled by its idempotency key.
+- Only after the destination exists does it make one `ConversionAccessPort.request` per
+  selected agent.
+- A human batch decision grants each exact journaled request individually. Any other handle
+  is refused, including one whose agent is no longer requesting. Skipping or re-inviting an
+  agent first withdraws its earlier request.
+- An agent counts as ready only when its own request reports activation readiness. Its
+  destination binding stays conversion-paused until `ConversionBindingPort.release`. Nothing
+  binds an agent directly.
+- Commit requires every agent to be ready or skipped, and re-verifies each exact session.
+  `committing` pauses source writes. `activating` is the link commit: in one transaction the
+  source becomes read-only (`send` and joining return `read_only`, and admission is
+  refused), it stops being eligible for discovery (so old listing references stop
+  resolving), and the activation intent is journaled.
+- A failure before the link unfreezes the source and reports the orphan destination. A
+  commit still running in the same process is never failed by a concurrent `resume`. After
+  the link, recovery only releases the remaining bindings forward.
+- Start-fresh copies no message.
+
 ## Outcomes
 
 `OperationResult` is `ok`, `rejected` (a finite code), `unavailable` (nothing happened, so

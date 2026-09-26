@@ -6,7 +6,12 @@ import { createRoot } from 'react-dom/client';
 import { MAX_CHANNEL_TITLE_BYTES, decodeContentLimits } from '@khala/contracts/messaging/index';
 import { createHumanApplication } from '../composition/human/application';
 import { KhalaPageFrame } from '../shell/KhalaPageFrame';
-import { createLocalPorts, readRequestSecret } from './composition/ports';
+import { createChannelAccessInboxController } from '../features/channel-access/controller';
+import { createLocalChannelAccessPort } from './channel-requests/ports';
+import { createLocalChannelSettingsPort } from './channel-settings/ports';
+import { createHumanClient } from './composition/human-client';
+import { createLocalEvidencePort, createLocalPorts, readRequestSecret } from './composition/ports';
+import { createHttpStopPort } from './composition/stop-http';
 import { SessionEnded } from './composition/room';
 import { createLocalRouteCodec } from './composition/routes';
 import { mountLocalApplication } from './composition/screen';
@@ -15,9 +20,14 @@ import '../brand/tokens.css';
 import '../shell/shell.css';
 import '../features/create-channel/create-channel.css';
 import '../features/timeline/timeline.css';
+import '../features/receipt-evidence/receipt-evidence.css';
 import '../features/channel/channel.css';
+import '../features/approval-decision/approval-decision.css';
+import '../features/channel-access/channel-access.css';
+import '../features/channel-settings/channel-settings.css';
 import '../main.css';
 import './internal.css';
+import './controls/stop-control.css';
 
 const target = document.querySelector('#app');
 if (!target) throw new Error('missing Khala application mount');
@@ -47,13 +57,38 @@ if (requestSecret === null) {
     participant: ports.participant,
     limits: ports.limits,
   }, { initialPath: `${location.pathname}${location.search}` });
+  let routedPath = `${location.pathname}${location.search}`;
   const navigateRoute = (path: string) => {
     history.pushState(null, '', path);
+    routedPath = path;
     application.navigate(path);
   };
-  const mounted = mountLocalApplication(target, { application, routes, transport: ports.substrate.transport, navigateRoute });
+  const stop = {
+    port: createHttpStopPort({ origin: location.origin, requestSecret }),
+    channelUrl: (roomId: string) => `${location.origin}${routes.roomPath(roomId)}`,
+  };
+  const humanClient = createHumanClient({ origin: location.origin, requestSecret });
+  const owner = {
+    createChannelAccess: () => createChannelAccessInboxController({ requests: createLocalChannelAccessPort(humanClient) }),
+    settings: createLocalChannelSettingsPort(humanClient),
+  };
+  const mounted = mountLocalApplication(target, {
+    application,
+    routes,
+    transport: ports.substrate.transport,
+    navigateRoute,
+    evidencePort: createLocalEvidencePort(ports.substrate),
+    owner,
+    stop,
+  });
 
-  const onPopState = () => application.navigate(`${location.pathname}${location.search}`);
+  // A hash-only history step (evidence navigation) stays on the mounted route.
+  const onPopState = () => {
+    const path = `${location.pathname}${location.search}`;
+    if (path === routedPath) return;
+    routedPath = path;
+    application.navigate(path);
+  };
   addEventListener('popstate', onPopState);
   addEventListener('pagehide', () => {
     removeEventListener('popstate', onPopState);

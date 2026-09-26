@@ -24,13 +24,34 @@ function copyPlugin(): string {
 }
 
 describe('bundled /khala skill', () => {
-  it('dispatches send and read only to the session-bound MCP tools', () => {
+  it('dispatches send, read, create, join, and who only to the session-bound MCP tools', () => {
     expect(DISPATCHED_VERBS.every(verb => (FROZEN_COMMAND_VERBS as readonly string[]).includes(verb))).toBe(true);
     for (const verb of DISPATCHED_VERBS) expect(skill).toContain(`## \`${verb}\``);
     expect(normalized).toContain('Call the `khala_send` MCP tool once with the message as its `message` argument');
     expect(normalized).toContain('Call the `khala_read` MCP tool with no arguments');
     expect(normalized).toContain('`CLAUDE_CODE_SESSION_ID`');
     expect(normalized).toMatch(/no current session per working directory/);
+  });
+
+  it('creates only after human confirmation, and joins without admitting itself', () => {
+    expect(normalized).toContain('Call the `khala_create_channel` MCP tool once with `{ title, operationId }`');
+    expect(normalized).toContain('Never retry under a new `operationId`');
+    expect(normalized).not.toContain('not available in this version');
+    expect(normalized).toContain('Never create a channel without the person\'s confirmation');
+    expect(normalized).toContain('say that no channel was created');
+    expect(normalized).toContain('Call `khala_request_channel_access` once');
+    expect(normalized).toContain('Never wait, poll, or loop for the decision');
+    expect(normalized).toContain('You never admit this agent, create a binding, or treat a request as a grant');
+    expect(normalized).toContain('reuse the `operationId` returned by the first call');
+    expect(normalized).toMatch(/single resume path/);
+  });
+
+  it('renders the authoritative roster and never the raw session ID', () => {
+    expect(normalized).toContain('Call the `khala_list_agents` MCP tool with no arguments');
+    expect(normalized).toContain('you never handle a binding ID');
+    expect(normalized).toContain('Never infer membership from message authors or the timeline');
+    expect(normalized).toContain('Never print the raw Claude session ID');
+    expect(normalized).toContain('effective listening mode');
   });
 
   it('never routes arguments, messages, or channel text through a shell', () => {
@@ -65,6 +86,8 @@ describe('bundled /khala skill', () => {
       expect(normalized, 'bundled skill').toContain(sentence);
       expect(agentSkill, 'agent-skill').toContain(sentence);
     }
+    expect(agentSkill).toContain('khala_create_channel');
+    expect(agentSkill).toContain('khala_request_channel_access');
     expect(agentSkill).toContain('packages/claude-plugin/skills/khala/SKILL.md');
   });
 

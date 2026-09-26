@@ -51,12 +51,25 @@ export class ConfinedFilesystem {
     return root;
   }
 
+  /** The longest root strictly containing `directory`, or `null`. */
+  #enclosingRoot(directory: string): string | null {
+    return this.#roots.filter(candidate => directory.startsWith(candidate + path.sep))
+      .sort((a, b) => b.length - a.length)[0] ?? null;
+  }
+
+  /** `assertSafe` for a directory the executor creates or removes, which may be a nested root itself. */
+  async #assertSafeDirectory(directory: string): Promise<void> {
+    if (!path.isAbsolute(directory) || path.resolve(directory) !== directory) throw new SetupFilesystemError('unsafe_path', directory);
+    const root = this.#enclosingRoot(directory);
+    if (root === null) throw new SetupFilesystemError('unsafe_path', directory);
+    await this.assertSafe(directory, root);
+  }
+
   /**
    * Refuses a target outside every root, or one with a symbolic link (or a non-directory
    * parent) anywhere below its root. Absent trailing components are allowed.
    */
-  async assertSafe(target: string): Promise<void> {
-    const root = this.rootOf(target);
+  async assertSafe(target: string, root = this.rootOf(target)): Promise<void> {
     const parts = path.relative(root, target).split(path.sep);
     let current = root;
     for (const [index, part] of parts.entries()) {
@@ -106,9 +119,10 @@ export class ConfinedFilesystem {
   /** Parent directories of `target` below its root that do not exist yet, outermost first. */
   async missingDirectories(target: string): Promise<string[]> {
     await this.assertSafe(target);
-    const root = this.rootOf(target);
     const missing: string[] = [];
-    for (let directory = path.dirname(target); directory !== root && directory.startsWith(root); directory = path.dirname(directory)) {
+    // A root nested in another root (`~/.local/share` below HOME) may itself be missing on a
+    // fresh machine; it is created like any other directory. Only an outermost root must exist.
+    for (let directory = path.dirname(target); this.#enclosingRoot(directory) !== null; directory = path.dirname(directory)) {
       try {
         await fsp.lstat(directory);
         break;
@@ -123,7 +137,7 @@ export class ConfinedFilesystem {
   /** Creates each listed directory (outermost first) owner-only; an existing entry is refused. */
   async createDirectories(directories: readonly string[]): Promise<void> {
     for (const directory of directories) {
-      await this.assertSafe(directory);
+      await this.#assertSafeDirectory(directory);
       try {
         await fsp.mkdir(directory, { mode: 0o700 });
       } catch (error) {
@@ -140,7 +154,7 @@ export class ConfinedFilesystem {
   /** Removes the listed directories innermost first, keeping any that are not empty. */
   async removeEmptyDirectories(directories: readonly string[]): Promise<void> {
     for (const directory of [...directories].sort((a, b) => b.length - a.length)) {
-      await this.assertSafe(directory);
+      await this.#assertSafeDirectory(directory);
       try {
         await fsp.rmdir(directory);
       } catch (error) {

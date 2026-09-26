@@ -1,13 +1,53 @@
 #!/usr/bin/env node
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { INTERNAL_ACTIVE_DESCRIPTOR_FILE } from '@khala/contracts/internal/descriptor';
 import { runCli } from './app.js';
 import { openInbox } from './inbox.js';
 import { bundledInternalRuntime } from './internal.js';
 import { MAX_SEND_BYTES } from './send.js';
+import { createClaudeSessionClient } from '../composition/claude-session-http.js';
+import { packagedSetupService } from '../composition/setup.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
+import { createNodeSetupProbe } from '../setup/detect.js';
+import { resolveSetupPaths } from '../setup/paths.js';
+import type { SetupExecute } from '../setup/plan.js';
+import { PAYLOAD_DIRECTORY } from '../setup/payload.js';
+import { executeSetupPlan } from '../setup/transaction.js';
+import type { SetupEnvironment } from '../setup/types.js';
+
+/** Builds the setup environment from explicit HOME/XDG/CODEX_HOME/PATH values only; nothing else is inherited. */
+export function setupEnvironment(env: NodeJS.ProcessEnv): SetupEnvironment {
+  const paths = resolveSetupPaths(env);
+  const probeEnvironment = {
+    HOME: paths.home, XDG_CONFIG_HOME: paths.configHome, XDG_DATA_HOME: paths.dataHome,
+    XDG_STATE_HOME: paths.stateHome, CODEX_HOME: paths.codexHome, PATH: paths.pathEntries.join(path.delimiter),
+  };
+  return {
+    home: paths.home, xdgConfigHome: paths.configHome, xdgDataHome: paths.dataHome, xdgStateHome: paths.stateHome,
+    codexHome: paths.codexHome,
+    probe: createNodeSetupProbe({ pathEntries: paths.pathEntries, environment: probeEnvironment }),
+  };
+}
+
+/** Applies a confirmed plan through the transactional executor, rooted at the same HOME/XDG/CODEX_HOME/PATH. */
+export function setupExecute(env: NodeJS.ProcessEnv): SetupExecute {
+  return request => {
+    const paths = resolveSetupPaths(env);
+    return executeSetupPlan({
+      roots: {
+        home: paths.home, xdgConfigHome: paths.configHome, xdgDataHome: paths.dataHome, xdgStateHome: paths.stateHome,
+        codexHome: paths.codexHome,
+      },
+      searchPath: paths.pathEntries.join(path.delimiter),
+      confirmedDigest: request.confirmedDigest,
+      // The executor passes its committed manifest; adapters observe the same state themselves.
+      replan: () => request.replan(),
+    });
+  };
+}
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const stateDirectory = path.resolve(process.env.XDG_STATE_HOME ?? path.join(homedir(), '.local/state'), 'khala');
@@ -15,6 +55,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const stop = () => abort.abort();
   // Kept installed until the command returns, so a repeated Ctrl+C cannot cut a shutdown short.
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
+  const distDirectory = path.dirname(fileURLToPath(import.meta.url));
+  // The staged runtime behind the `khala` launcher carries no payload, so it composes no setup:
+  // its `status` reports the connection only, and setup runs from the published package.
+  const setup = existsSync(path.join(distDirectory, PAYLOAD_DIRECTORY)) ? packagedSetupService({
+    distDirectory,
+    nodePath: process.execPath,
+    environment: () => setupEnvironment(process.env),
+    execute: setupExecute(process.env),
+    cwd: process.cwd(),
+  }) : undefined;
   try {
     return await runCli(argv, {
       client: createUnavailableClient(),
@@ -23,8 +73,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       inbox: (bindingId, generation) => openInbox({
         stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
       }),
+      ...(setup === undefined ? {} : { setup }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),
+      // The Claude plugin's hooks and `mcp-serve` reach the running internal server through
+      // its owner-only `active.json`, re-read on every call.
+      claude: createClaudeSessionClient({ descriptorPath: path.join(stateDirectory, 'internal', INTERNAL_ACTIVE_DESCRIPTOR_FILE) }),
       internalClient: async descriptorPath =>
         (await import('../composition/internal.js')).createInternalClient({ descriptorPath }),
       internalDelivery: async descriptorPath =>

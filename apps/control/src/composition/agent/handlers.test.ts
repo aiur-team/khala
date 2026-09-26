@@ -14,6 +14,7 @@ describe('registerAgentHandlers', () => {
       { path: '/api/agent/channel-access/status', methods: ['GET'] },
       { path: '/api/agent/channel-access/exchange', methods: ['POST'] },
       { path: '/api/agent/channel-access/ready', methods: ['POST'] },
+      { path: '/api/agent/channel-access/resume', methods: ['POST'] },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'] },
       { path: '/api/agent/channels', methods: ['GET'] },
     ]);
@@ -24,7 +25,7 @@ describe('registerAgentHandlers', () => {
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
       expect(await response.json()).toEqual(index === 0
         ? { code: 'feature_unavailable' }
-        : index < 8
+        : index < 9
           ? { v: 1, kind: 'rejected', code: 'feature_unavailable' }
           : { error: 'feature_unavailable' });
     }
@@ -104,6 +105,7 @@ describe('registerAgentHandlers', () => {
           observedAt: '2026-09-19T12:00:00.000Z',
           internalEvidence: 'must not escape',
         },
+        acknowledgement: 'batch_token_next_call' as const,
         installCommand: "khala connect 'https://khala.example/room/link'",
         pendingPlaintext: 'must not escape',
       }],
@@ -130,6 +132,7 @@ describe('registerAgentHandlers', () => {
         connection: 'connected',
         routeLabel: 'Codex CLI',
         lastReceipt: { kind: 'context_consumed', observedAt: '2026-09-19T12:00:00.000Z' },
+        acknowledgement: 'batch_token_next_call',
         installCommand: "khala connect 'https://khala.example/room/link'",
       }],
     });
