@@ -215,6 +215,8 @@ export interface ChannelAccessStore {
     binding: ChannelAccessBindingInput | ChannelAccessCreateInput;
     expectedRevision: number;
     operationId: string;
+    /** Also ends a `connected` request, as the owner's Stop of its binding does. */
+    connected?: boolean;
   }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'updated'; outcome: 'revoked'; revision: number }>
     | Readonly<{ kind: 'stale' | 'not_found' | 'unavailable' }>
@@ -457,7 +459,7 @@ export function createChannelAccessStore(deps: Readonly<{
       }
       const cooldownKey = scopeKey(policy, 'cooldown', input);
       if (Object.values(aggregate.requests).some(request => request.cooldownKey === cooldownKey
-        && !admittedByOwner(request.outcome)
+        && !admittedByOwner(request)
         && now < Date.parse(request.createdAt) + CHANNEL_ACCESS_COOLDOWN_MS)) {
         return unchanged({ kind: 'unavailable' as const });
       }
@@ -721,7 +723,9 @@ export function createChannelAccessStore(deps: Readonly<{
         return unchanged({ kind: 'updated' as const, outcome: 'revoked' as const, revision: row.revision });
       }
       if (row.revision !== input.expectedRevision) return unchanged({ kind: 'stale' as const });
-      if (terminal(row.outcome)) return unchanged({ kind: 'stale' as const });
+      if (terminal(row.outcome) && !(input.connected === true && row.outcome === 'connected')) {
+        return unchanged({ kind: 'stale' as const });
+      }
       const value = cloneAggregate(aggregate);
       const next: StoredRequest = {
         ...row,
@@ -1049,9 +1053,12 @@ function activeForCapacity(outcome: ChannelAccessOutcome): boolean {
 /**
  * A request the owner admitted and that has since ended, as the owner's Stop ends it, does not
  * cool its requester down: asking again after it is a fresh request for the owner to decide.
+ * A request revoked before the owner approved it, as a revision change or the requester's own
+ * revocation ends one, was never admitted, so it cools its requester down like any other.
  */
-function admittedByOwner(outcome: ChannelAccessOutcome): boolean {
-  return outcome === 'connected' || outcome === 'revoked';
+function admittedByOwner(request: StoredRequest): boolean {
+  return (request.outcome === 'connected' || request.outcome === 'revoked')
+    && (request.approvedAt !== null || request.claim !== null);
 }
 
 function terminal(outcome: ChannelAccessOutcome): boolean {

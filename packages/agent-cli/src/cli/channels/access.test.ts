@@ -4,7 +4,7 @@ import { ACCESS_REQUEST_OUTCOMES } from '@khala/contracts/messaging/index';
 import { runCli } from '../app.js';
 import type { BatchInbox } from '../inbox.js';
 import type { AgentClientPort } from '../types.js';
-import { defaultOperationId, parseAccessTarget } from './access.js';
+import { MAX_REVOKED_SUCCESSORS, defaultOperationId, parseAccessTarget } from './access.js';
 import { listingClient } from './fixtures/listing.js';
 import type { ChannelAccessResult } from './types.js';
 
@@ -216,6 +216,68 @@ describe('MCP channel access tools', () => {
     expect(result.error).toMatchObject({ code: -32602 });
     expect(requestChannelAccess).not.toHaveBeenCalled();
     expect(channelAccessStatus).not.toHaveBeenCalled();
+  });
+});
+
+/** A journal the owner decides: an unknown operation files a new pending request. */
+function ownedJournal() {
+  const outcomes = new Map<string, string>();
+  const requestChannelAccess = vi.fn<NonNullable<AgentClientPort['requestChannelAccess']>>(async input => {
+    if (!outcomes.has(input.operationId)) outcomes.set(input.operationId, 'pending_owner');
+    return status(input.operationId, outcomes.get(input.operationId)!);
+  });
+  const pending = () => [...outcomes].filter(([, outcome]) => outcome === 'pending_owner').map(([id]) => id);
+  return {
+    client: accessClient({ requestChannelAccess }),
+    requestChannelAccess,
+    pending,
+    approveAndConnect() { for (const id of pending()) outcomes.set(id, 'connected'); },
+    stop() { for (const [id, outcome] of outcomes) if (outcome === 'connected') outcomes.set(id, 'revoked'); },
+  };
+}
+
+// Wrong-implementation test (#441): requesting the target's default operation as given answers a
+// stopped agent with its revoked operation, so the owner never sees a new request to approve.
+describe.each([
+  ['khala channels request-access', (client: AgentClientPort) => cli(client, ['channels', 'request-access', URL_TARGET]).then(run => run.json())],
+  ['khala_request_channel_access', (client: AgentClientPort) => mcpCall(client, 'khala_request_channel_access', { target: URL_TARGET })
+    .then(({ result }) => result.result.structuredContent as Record<string, unknown>)],
+])('%s after the owner\'s Stop', (_name, request) => {
+  it('files a new request the owner approves, and repeating it reaches the same live one', async () => {
+    const journal = ownedJournal();
+    const first = await request(journal.client);
+    expect(first).toMatchObject({ ok: true, outcome: 'pending_owner', operationId: defaultOperationId({ kind: 'channel_url', channelUrl: URL_TARGET }) });
+    journal.approveAndConnect();
+    expect(await request(journal.client)).toMatchObject({ outcome: 'connected', operationId: first.operationId });
+    journal.stop();
+
+    const again = await request(journal.client);
+    expect(again).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    expect(again.operationId).not.toBe(first.operationId);
+    expect(journal.pending()).toEqual([again.operationId]);
+    expect(await request(journal.client)).toEqual(again);
+    expect(journal.pending()).toEqual([again.operationId]);
+
+    journal.approveAndConnect();
+    expect(await request(journal.client)).toMatchObject({ outcome: 'connected', operationId: again.operationId });
+  });
+
+  it('stops walking at the cap and answers revoked', async () => {
+    const requestChannelAccess = vi.fn<NonNullable<AgentClientPort['requestChannelAccess']>>(async input => status(input.operationId, 'revoked'));
+    expect(await request(accessClient({ requestChannelAccess }))).toMatchObject({ ok: true, outcome: 'revoked' });
+    expect(requestChannelAccess).toHaveBeenCalledTimes(MAX_REVOKED_SUCCESSORS + 1);
+  });
+});
+
+describe('an explicit operation after the owner\'s Stop', () => {
+  it('reads the revoked operation as given, from the CLI and the MCP tool alike', async () => {
+    const requestChannelAccess = vi.fn<NonNullable<AgentClientPort['requestChannelAccess']>>(async input => status(input.operationId, 'revoked'));
+    const client = accessClient({ requestChannelAccess });
+    expect((await cli(client, ['channels', 'request-access', URL_TARGET, '--operation', 'op-1'])).json())
+      .toMatchObject({ operationId: 'op-1', outcome: 'revoked' });
+    const { result } = await mcpCall(client, 'khala_request_channel_access', { target: URL_TARGET, operationId: 'op-1' });
+    expect(result.result.structuredContent).toMatchObject({ operationId: 'op-1', outcome: 'revoked' });
+    expect(requestChannelAccess).toHaveBeenCalledTimes(2);
   });
 });
 

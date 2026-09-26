@@ -10,7 +10,7 @@ pnpm test
 pnpm build
 ```
 
-`node --test tests/integration/agent-setup/setup-acceptance.test.mjs` is the `@aiur/khala` setup release gate. It packs the CLI and drives the installed tarball, and CI runs it after `pnpm test`. `pnpm check:boundaries` runs the import graph check directly. CI runs the same commands. New adjacent `src/**/*.test.ts` or `.test.tsx` tests are automatically discovered by each package's Vitest script. Empty package shells require no fake tests. Root Node tests cover the boundary checker. Experiments have isolated manifests and lockfiles and are excluded from workspace installation and production builds.
+`node --test tests/integration/agent-setup/setup-acceptance.test.mjs` is the `@aiur/khala` setup release gate. It packs the CLI and drives the installed tarball, and CI runs it after `pnpm test`. `node --test tests/e2e/installed-delivery/installed-delivery.test.mjs` runs next: it drives every harness entry that tarball installs through join, owner approval, delivery and Stop against the installed `khala internal`. `pnpm check:boundaries` runs the import graph check directly. CI runs the same commands. New adjacent `src/**/*.test.ts` or `.test.tsx` tests are automatically discovered by each package's Vitest script. Empty package shells require no fake tests. Root Node tests cover the boundary checker. Experiments have isolated manifests and lockfiles and are excluded from workspace installation and production builds.
 
 | Package | Responsibility |
 | --- | --- |

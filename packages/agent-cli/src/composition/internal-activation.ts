@@ -375,6 +375,20 @@ function seedGrant(grantPath: string, launchPath: string): boolean {
 }
 
 /**
+ * Drops the grant of `bindingId` from the agent's granted descriptor once the server no longer
+ * holds that binding, as after the owner's Stop, keeping the launch's transport fields. A
+ * later approval can then write its own binding; otherwise the revoked grant would refuse it.
+ * A descriptor that holds any other binding, or none, is left alone.
+ */
+export function releaseRevokedGrant(grantPath: string, bindingId: string): boolean {
+  const held = readInternalDescriptor(grantPath);
+  if (!held.ok || !isGrantedDescriptor(held.value) || held.value.bindingId !== bindingId) return false;
+  const { v, channelId, origin, transportCapability } = held.value;
+  const text = encodeOrNull({ v, channelId, origin, transportCapability });
+  return text !== null && writeDescriptor(grantPath, text);
+}
+
+/**
  * Atomically adds `{grantRef, bindingId, bindingCapability}` to the agent's granted
  * descriptor, which takes the grant's channel. It refuses a different live binding, so an
  * approval never replaces the grant the file already holds.

@@ -54,12 +54,17 @@ async function requestAccess(args: readonly string[], deps: CliDependencies): Pr
   const target = parseAccessTarget(rawTarget);
   if (target === null) throw new CliError('invalid_arguments');
   const flags = parseFlags(rest, ['--operation', '--origin']);
-  const operationId = flags.get('--operation') ?? defaultOperationId(target);
+  const named = flags.get('--operation');
+  const operationId = named ?? defaultOperationId(target);
   const origin = flags.get('--origin') ?? null;
   if (!validOperationArgument(operationId) || (origin !== null && !validOriginArgument(origin))) {
     throw new CliError('invalid_arguments');
   }
-  const output = await new ChannelAccessService(deps.client).request({ target, operationId, origin }, deps.signal);
+  const access = new ChannelAccessService(deps.client);
+  // Without `--operation`, asking again after the owner's Stop files the revoked operation's successor.
+  const output = named === undefined
+    ? await access.requestAgain({ target, operationId, origin }, deps.signal)
+    : await access.request({ target, operationId, origin }, deps.signal);
   await write(deps.stdout, JSON.stringify(output) + '\n');
   return accessExitCode(output);
 }
