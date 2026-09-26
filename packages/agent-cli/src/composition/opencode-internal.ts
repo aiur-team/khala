@@ -9,7 +9,7 @@ import type { AgentClientPort } from '../cli/types.js';
 import type { OpenCodeControls } from '../opencode/bridge.js';
 import { type KhalaOpenCodeDependencies, openCodeVersionFromExecPath } from '../opencode/plugin.js';
 import { openOpenCodeBridgeStore } from '../opencode/store.js';
-import { deliveringInbox } from './delivering-inbox.js';
+import { type OpenGenerationInbox, deliveringInbox } from './delivering-inbox.js';
 import { createInternalClient, readInternalDescriptor } from './internal.js';
 import { createInternalDelivery } from './internal-delivery.js';
 import { internalSessionDigest } from './internal-session.js';
@@ -91,8 +91,10 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
     async listAgents() { return { kind: 'unavailable' }; },
   });
 
-  const openGeneration = (bindingId: string, generation: number) => openInbox({
+  // The delivering inbox passes the recorder that writes this generation's receipts on the server.
+  const openGeneration: OpenGenerationInbox = (bindingId, generation, inboxOptions) => openInbox({
     stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
+    ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
   });
 
   return {

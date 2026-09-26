@@ -35,9 +35,8 @@ tarball it publishes. `KHALA_SETUP_KEEP=1` keeps the scratch machines.
 An empty next read only shows that the agent's local cursor moved. The owner sees the
 acknowledgement only as an `agent_acknowledged` receipt for the delivered message. So
 each delivering journey then reads the owner's `GET /api/v1/channels/:id/receipts`. The
-suite asserts that receipt in a `todo` subtest because internal mode records no
-acknowledgement yet (#442). Node reports the subtest as a failing todo until #442 lands.
-Then remove the `todo` so a missing receipt fails the journey.
+suite asserts that receipt in its own subtest, so a missing receipt fails that harness
+(#442).
 
 Two more checks keep the suite honest:
 

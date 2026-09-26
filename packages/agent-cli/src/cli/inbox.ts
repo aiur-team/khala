@@ -99,12 +99,14 @@ export interface BatchInbox extends Inbox {
 
 /**
  * A content-free acknowledgement of one outstanding batch: the held binding and the
- * release IDs of that batch's committed prefix, in order. It never carries the token.
+ * release IDs of that batch's committed prefix, in order, each with the IDs of the
+ * events it carried. It never carries the token.
  */
 export type BatchAcknowledgement = Readonly<{
   bindingId: BindingId;
   generation: number;
   releaseIds: readonly string[];
+  releases: readonly Readonly<{ releaseId: string; eventIds: readonly string[] }>[];
 }>;
 
 /**
@@ -384,6 +386,9 @@ class FileInbox implements BatchInbox {
         bindingId: this.#options.bindingId,
         generation: this.#options.generation,
         releaseIds: batch.items.map(item => item.record.releaseId),
+        releases: batch.items.map(item => ({
+          releaseId: item.record.releaseId, eventIds: item.record.events.map(event => event.eventId),
+        })),
       });
     } catch (error) {
       if (error instanceof CliError) throw error;

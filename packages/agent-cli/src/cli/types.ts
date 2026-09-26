@@ -10,7 +10,7 @@ import type { ChannelAccessPort, ChannelListingPort } from './channels/types.js'
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { InternalDelivery } from '../composition/internal-delivery.js';
 import type { SessionGrants } from '../composition/session-grant.js';
-import type { BatchInbox } from './inbox.js';
+import type { OpenGenerationInbox } from '../composition/delivering-inbox.js';
 import type { SetupService } from '../setup/plan.js';
 
 export const CLI_ERROR_CODES = [
@@ -117,7 +117,8 @@ export type InternalRuntimeLoader = () => Promise<InternalRuntime>;
 
 export type CliDependencies = Readonly<{
   client: AgentClientPort;
-  inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
+  /** Opens one binding generation's inbox; an internal composition passes its acknowledgement recorder. */
+  inbox: OpenGenerationInbox;
   /** Pre-bound to the held binding by trusted composition; absent or null means no mode control is composed. */
   listeningMode?: AgentListeningModeApplication | null;
   stdin: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;

@@ -1,5 +1,10 @@
-import type { BatchInbox } from '../cli/inbox.js';
+import type { BatchInbox, BatchAcknowledgementRecorder } from '../cli/inbox.js';
 import type { HeldGeneration, InternalDelivery } from './internal-delivery.js';
+
+/** Opens one binding generation's inbox; `recordAcknowledgement` records its batch acknowledgements. */
+export type OpenGenerationInbox = (
+  bindingId: string, generation: number, options?: Readonly<{ recordAcknowledgement?: BatchAcknowledgementRecorder }>,
+) => Promise<BatchInbox>;
 
 // Kept apart from `internal-delivery.ts` so the CLI entry can wrap its inbox
 // without loading the descriptor client until `--internal-descriptor` is given.
@@ -18,10 +23,11 @@ export type DeliveringInbox = Readonly<{
  * Wraps a command's inbox factory so the first open of a binding generation pulls
  * first (a `khala read` sees a message already released), then pulls again every
  * `intervalMs` for as long as the command runs (`listen`, `mcp-serve`). A pull that
- * reports the binding revoked ends that generation's loop for good.
+ * reports the binding revoked ends that generation's loop for good. Every inbox it opens
+ * records its batch acknowledgements through the same server, as that generation.
  */
 export function deliveringInbox(
-  open: (bindingId: string, generation: number) => Promise<BatchInbox>,
+  open: OpenGenerationInbox,
   delivery: InternalDelivery,
   options: Readonly<{ signal?: AbortSignal; intervalMs?: number }> = {},
 ): DeliveringInbox {
@@ -41,7 +47,9 @@ export function deliveringInbox(
   return {
     async inbox(bindingId, generation) {
       const held = { bindingId, generation };
-      const openHeld = () => open(bindingId, generation);
+      const openHeld = () => open(bindingId, generation, {
+        recordAcknowledgement: acknowledgement => delivery.acknowledge(held, acknowledgement),
+      });
       const key = JSON.stringify([bindingId, generation]);
       if (!loops.has(key) && !signal.aborted) {
         let first = await delivery.pull(held, openHeld, signal);

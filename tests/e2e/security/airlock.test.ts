@@ -141,6 +141,22 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
       add(s, `GET receipts ${id}`, receipts);
     }
   },
+  'http-internal:POST /api/v1/channels/:channelId/acknowledgements': async s => {
+    // The agent acknowledges only releases its own binding was made; a pending message was never
+    // released to it, and the other channel is outside its scope.
+    const pendingEvent = s.world.say(otherChannelId, `unacknowledgeable ${s.pending.text}`);
+    const binding = JSON.parse((await s.world.http('GET', '/api/v1/agent/binding')).body) as { bindingId?: string; generation?: number };
+    const claim = (eventId: string) => ({
+      v: 1, bindingId: binding.bindingId, generation: binding.generation,
+      releases: [{ releaseId: `rel_${eventId}`, eventIds: [eventId] }],
+    });
+    const other = await s.world.http('POST', channelRoute(otherChannelId, '/acknowledgements'), { body: claim(pendingEvent) });
+    expect(other.status).toBe(403);
+    add(s, 'POST acknowledgements other', other);
+    const forged = await s.world.http('POST', channelRoute(channelId, '/acknowledgements'), { body: claim(pendingEvent) });
+    expect([400, 401]).toContain(forged.status);
+    add(s, 'POST acknowledgements forged', forged);
+  },
   'http-internal:POST /api/v1/channels/:channelId/stop': async s => {
     // Human-only Stop: the agent binding cannot revoke bindings in either channel, and its own read still works.
     for (const id of [channelId, otherChannelId]) {

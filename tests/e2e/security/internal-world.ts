@@ -15,6 +15,7 @@ import { composeBindingModes } from '../../../apps/internal/src/composition/bind
 import { FakeHostedProvider } from '../../../apps/internal/src/composition/fixtures/make-external-provider';
 import { composeMakeExternal } from '../../../apps/internal/src/composition/make-external';
 import { createInternalReleaseFeed } from '../../../apps/internal/src/composition/internal-delivery/release-feed';
+import { composeInternalReceipts } from '../../../apps/internal/src/composition/receipt-projection';
 import { startChannelServer } from '../../../apps/internal/src/server/channel-server';
 import { createReceiptReadModel } from '../../../apps/internal/src/store/receipts';
 import { mintCredential } from '../../../apps/internal/src/server/credentials';
@@ -83,6 +84,7 @@ export async function startInternalWorld(): Promise<InternalWorld> {
     newId: () => `id-${++id}`,
     clock: () => NOW,
     log: event => logs.push(event),
+    acknowledgements: composeInternalReceipts({ store: fixture.handle, logFile: path.join(root, 'receipts.ndjson') }).acknowledgements,
     receipts: createReceiptReadModel(fixture.handle),
     // Composed as the launcher composes it, so the human-only Stop route is mounted and probed.
     stop: composeBindingControl({ handle: fixture.handle, root: path.join(root, 'state') }),
@@ -127,7 +129,8 @@ export async function startInternalWorld(): Promise<InternalWorld> {
     const deps: CliDependencies = {
       client: options.client === 'internal' ? await createInternalClient({ descriptorPath }) : createUnavailableClient(),
       listeningMode: null,
-      inbox: (bindingId, generation) => openInbox({
+      inbox: (bindingId, generation, inboxOptions) => openInbox({
+        ...inboxOptions,
         stateDirectory: agentState, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
       }),
       stdin, stdout, stderr, signal: abort.signal, env: {}, cwd: root,

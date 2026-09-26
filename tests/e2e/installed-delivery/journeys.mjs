@@ -6,8 +6,7 @@
 // intentionally unproven must refuse honestly instead. Every failure is a
 // `DeliveryFailure` naming the harness, so a broken entry fails the suite under that
 // harness's name. A delivering journey resolves to whether the owner's receipts show
-// the agent acknowledged the delivered message, which the suite asserts as todo until
-// internal mode records acknowledgements (#442).
+// the agent acknowledged the delivered message, which the suite asserts (#442).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,8 +34,8 @@ function join(install, machine, harness, sessionId, channelUrl) {
 
 /**
  * Whether the owner's receipts show `agent_acknowledged` for the delivered message,
- * given a moment to project. Returned rather than asserted, so the suite can mark it
- * todo until #442 lands without skipping the rest of the journey.
+ * given a moment to project. Returned rather than asserted, so the suite reports it as
+ * its own subtest after the rest of the journey has run.
  */
 async function ownerAcknowledgement(launch, eventId) {
   const deadline = Date.now() + 3_000;

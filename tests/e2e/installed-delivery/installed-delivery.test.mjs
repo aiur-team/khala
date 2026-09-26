@@ -39,16 +39,12 @@ const TITLES = Object.freeze({
   cursor: 'cursor: approved binding refuses honestly (unproven route), Stop ends the binding',
 });
 
-// Internal mode records no agent acknowledgement yet, so the owner's receipts stay
-// empty after the agent's next call (#442). Kept as todo, not dropped, until #442 lands.
-const ACK_TODO = "#442: internal mode records no agent_acknowledged receipt";
-
 describe('each installed entry delivers end to end', () => {
   for (const harness of HARNESSES) {
     test(TITLES[harness], async t => {
       const acknowledgement = await runJourney(install, harness);
       if (acknowledgement === undefined) return;
-      await t.test(`${harness}: the owner's receipts show agent_acknowledged for the delivered message (#442)`, { todo: ACK_TODO }, () =>
+      await t.test(`${harness}: the owner's receipts show agent_acknowledged for the delivered message (#442)`, () =>
         assert.ok(acknowledgement.acknowledged, `[${harness}] no agent_acknowledged receipt for ${acknowledgement.eventId}`));
     });
   }

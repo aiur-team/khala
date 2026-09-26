@@ -277,7 +277,7 @@ function codexSend(id: number, thread: string): string {
 
 /** The installed entry's composition: a local client and a delivery per descriptor. */
 function routedDeps(io: ReturnType<typeof streams>, stateDirectory: string, loads: string[] = []): CliDependencies {
-  return { ...cliDeps(io, stateDirectory, loads), internalDelivery: async () => ({ async pull() { return 'caught_up' as const; } }) };
+  return { ...cliDeps(io, stateDirectory, loads), internalDelivery: async () => ({ async pull() { return 'caught_up' as const; }, async acknowledge() {} }) };
 }
 
 describe('createInternalClient', () => {

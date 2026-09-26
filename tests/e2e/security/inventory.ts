@@ -142,6 +142,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'http-internal:GET /api/v1/agent/binding': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/releases': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/receipts': probe('internal-http'),
+  'http-internal:POST /api/v1/channels/:channelId/acknowledgements': probe('internal-http'),
   'http-internal:POST /api/v1/channels/:channelId/stop': probe('internal-http'),
   'http-internal:GET /api/v1/channels/:channelId/make-external': probe('internal-http'),
   'http-internal:POST /api/v1/channels/:channelId/make-external': probe('internal-http'),
