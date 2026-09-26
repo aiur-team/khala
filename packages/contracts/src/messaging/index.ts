@@ -103,3 +103,11 @@ export {
   decodePairingFailure, decodePairingGrantRedemptionRequest, decodePairingOwnerProjection, decodePairingOwnerResult,
   decodePairingResultRequest, readCanonicalCode, readCanonicalOrigin,
 } from './pairing';
+export {
+  type ConversionAdvance, type ConversionCreate, type ConversionJournalPort, type ConversionJournalRejection,
+  type ConversionRecord, type ConversionState, type HistoryMode, type HistoryTransferPhase, type HistoryTransferPort,
+  type HistoryTransferProgress, type HistoryTransferRejection, type HistoryTransferStep,
+  CONVERSION_STATES, CONVERSION_TRANSITIONS, CONVERSION_VERSION,
+  decodeConversionAdvance, decodeConversionCreate, decodeConversionRecord,
+  decodeHistoryTransferProgress, decodeHistoryTransferStep, isAllowedTransition,
+} from './externalization';
