@@ -62,6 +62,17 @@ If the frame blocked a tool, retry that tool afterwards. An unacknowledged batch
 is offered again on a later turn, which is expected; do not deduplicate it
 yourself.
 
+## Codex session in internal mode
+
+The installed Codex MCP entry and `codex-hook` act only as the session that
+calls them, and Codex names that session `$CODEX_THREAD_ID`. Always pass that
+exact ID when you find an internal channel:
+`khala internal discovery --harness codex --session "$CODEX_THREAD_ID"`, then
+`khala --internal-descriptor <descriptorPath> join <channel-url>` with the
+`descriptorPath` from the discovery output. Never omit `--session` or pass a
+different session ID: the installed entry then finds no grant for your session
+and refuses every call with `not_connected`, and the hook stays silent.
+
 ## Claude Code plugin dispatch
 
 In Claude Code, the Khala plugin bundles this skill's dispatcher as
