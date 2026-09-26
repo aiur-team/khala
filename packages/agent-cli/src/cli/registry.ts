@@ -1,4 +1,5 @@
 import { agentsCommand, channelsCommand } from './channels/commands.js';
+import { claudeCommand } from './commands/claude.js';
 import { codexHookCommand } from './commands/codex-hook.js';
 import { connectCommand } from './commands/connect.js';
 import { internalCommand } from './commands/internal.js';
@@ -53,6 +54,7 @@ export const CLI_COMMANDS: readonly CliCommand[] = Object.freeze([
   agentsCommand,
   internalCommand,
   codexHookCommand,
+  claudeCommand,
 ]);
 
 export const commandRegistry: CommandRegistry = createCommandRegistry(CLI_COMMANDS);
