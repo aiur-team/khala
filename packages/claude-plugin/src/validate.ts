@@ -1,15 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { FROZEN_HOOK_EVENTS, FROZEN_MCP_SERVER, FROZEN_PLUGIN_NAME } from './contract';
+import { FROZEN_HOOK_EVENTS, FROZEN_MCP_SERVER, FROZEN_PLUGIN_NAME, FROZEN_WATCHER_SCRIPT } from './contract';
 
 type Json = Record<string, unknown>;
 
 const readJson = (root: string, relative: string): Json =>
   JSON.parse(fs.readFileSync(path.join(root, relative), 'utf8')) as Json;
 
-const hookCommands = (entries: unknown): string[] =>
-  (Array.isArray(entries) ? entries : []).flatMap(entry =>
-    ((entry as { hooks?: unknown[] }).hooks ?? []).map(hook => String((hook as { command?: unknown }).command ?? '')));
+type Hook = { command?: unknown; asyncRewake?: unknown };
+
+const hookEntries = (entries: unknown): Hook[] =>
+  (Array.isArray(entries) ? entries : []).flatMap(entry => (entry as { hooks?: Hook[] }).hooks ?? []);
 
 /** Every way the plugin directory departs from the frozen contract; empty means it conforms. */
 export function validatePlugin(root: string): string[] {
@@ -21,10 +22,16 @@ export function validatePlugin(root: string): string[] {
   for (const event of Object.keys(hooks)) {
     if (!Object.hasOwn(FROZEN_HOOK_EVENTS, event)) errors.push(`hook event ${event} is not in the frozen list`);
   }
-  for (const [event, script] of Object.entries(FROZEN_HOOK_EVENTS)) {
-    const commands = hookCommands(hooks[event]);
-    if (!commands.some(command => command.includes(script))) errors.push(`hook event ${event} must run ${script}`);
-    if (!fs.existsSync(path.join(root, script))) errors.push(`missing hook script ${script}`);
+  for (const [event, scripts] of Object.entries(FROZEN_HOOK_EVENTS)) {
+    const registered = hookEntries(hooks[event]);
+    for (const script of scripts) {
+      const hook = registered.find(entry => String(entry.command ?? '').includes(script));
+      if (!hook) errors.push(`hook event ${event} must run ${script}`);
+      else if ((script === FROZEN_WATCHER_SCRIPT) !== (hook.asyncRewake === true)) {
+        errors.push(`${script} must ${script === FROZEN_WATCHER_SCRIPT ? '' : 'not '}set asyncRewake`);
+      }
+      if (!fs.existsSync(path.join(root, script))) errors.push(`missing hook script ${script}`);
+    }
   }
 
   const servers = (readJson(root, '.mcp.json').mcpServers ?? {}) as Record<string, Json>;

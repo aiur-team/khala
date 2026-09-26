@@ -4,13 +4,19 @@
  * rename anything here without amending decision 27 and this list.
  */
 
-/** Hook events the manifest may register, and the stub each one runs. */
+/**
+ * Hook events the manifest may register, and the stubs each one runs. `Stop`
+ * carries the synchronous delivery hook and the `asyncRewake` idle watcher armed
+ * on it (the #178 amendment); there is no `UserPromptSubmit` registration.
+ */
 export const FROZEN_HOOK_EVENTS = {
-  UserPromptSubmit: 'hooks/user-prompt-submit.mjs',
-  PostToolUse: 'hooks/post-tool-use.mjs',
-  Stop: 'hooks/stop.mjs',
-  SessionEnd: 'hooks/session-end.mjs',
+  PostToolUse: ['hooks/post-tool-use.mjs'],
+  Stop: ['hooks/stop.mjs', 'hooks/stop-watcher.mjs'],
+  SessionEnd: ['hooks/session-end.mjs'],
 } as const;
+
+/** The hook command that must be registered with `asyncRewake: true`. */
+export const FROZEN_WATCHER_SCRIPT = 'hooks/stop-watcher.mjs';
 
 /** The one bundled skill, and the exact `/khala <verb>` forms it resolves. */
 export const FROZEN_SKILL_NAME = 'khala';

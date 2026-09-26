@@ -8,7 +8,7 @@ import { FROZEN_HOOK_EVENTS } from './contract';
 import { validatePlugin } from './validate';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const scripts = Object.values(FROZEN_HOOK_EVENTS);
+const scripts = Object.values(FROZEN_HOOK_EVENTS).flat();
 
 function copyPlugin(): string {
   const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-plugin-'));
@@ -28,6 +28,19 @@ describe('claude plugin scaffold', () => {
     manifest.hooks.PreToolUse = manifest.hooks.PostToolUse;
     fs.writeFileSync(file, JSON.stringify(manifest));
     expect(validatePlugin(copy)).toContain('hook event PreToolUse is not in the frozen list');
+  });
+
+  it('fails validation when UserPromptSubmit is registered or the watcher loses asyncRewake', () => {
+    const copy = copyPlugin();
+    const file = path.join(copy, 'hooks/hooks.json');
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    manifest.hooks.UserPromptSubmit = manifest.hooks.PostToolUse;
+    delete manifest.hooks.Stop[0].hooks[1].asyncRewake;
+    fs.writeFileSync(file, JSON.stringify(manifest));
+    expect(validatePlugin(copy)).toEqual(expect.arrayContaining([
+      'hook event UserPromptSubmit is not in the frozen list',
+      'hooks/stop-watcher.mjs must set asyncRewake',
+    ]));
   });
 
   it('fails validation when a frozen hook event is dropped or the MCP entry is renamed', () => {
