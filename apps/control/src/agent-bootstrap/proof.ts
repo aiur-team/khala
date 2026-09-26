@@ -70,6 +70,19 @@ export function checkProof(proof: string | null, expected: ProofExpectation): Pr
   return { kind: 'valid', jti, publicKey: jwk.x };
 }
 
+/**
+ * The thumbprint of the key a proof embeds, or `null` if it has no well-formed key.
+ * Nothing is verified: callers must still `checkProof` against this thumbprint.
+ */
+export function proofKeyThumbprint(proof: string | null): string | null {
+  if (proof === null || proof.length === 0 || proof.length > MAX_PROOF_BYTES) return null;
+  const parts = proof.split('.');
+  if (parts.length !== 3 || !parts.every(part => B64URL.test(part))) return null;
+  const jwk = parseJson(parts[0]!)?.jwk as Record<string, unknown> | undefined;
+  if (typeof jwk !== 'object' || jwk === null || typeof jwk.x !== 'string' || !KEY_X.test(jwk.x)) return null;
+  return thumbprint(jwk.x);
+}
+
 /** RFC 7638 thumbprint of an Ed25519 public key. */
 export function thumbprint(x: string): string {
   return createHash('sha256').update(JSON.stringify({ crv: 'Ed25519', kty: 'OKP', x })).digest('base64url');
