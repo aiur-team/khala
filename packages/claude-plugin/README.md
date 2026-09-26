@@ -2,8 +2,8 @@
 
 The single user-scope Claude Code plugin (decision 27): the `khala` skill, the
 hooks and the Khala MCP entry in one directory. `setup-cli-claude` installs it;
-there is no separate installed `/khala` skill. The installer arrives in a
-later ticket that edits a disjoint part of this package.
+there is no separate installed `/khala` skill. The installer is the Claude setup
+adapter in `packages/agent-cli/src/setup/adapters/claude.ts`.
 
 ```text
 .claude-plugin/plugin.json   manifest, name `khala`
