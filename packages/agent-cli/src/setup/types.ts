@@ -2,7 +2,7 @@
 // operation vocabulary, and the side-effect-free adapter interface. Later tickets
 // (planner, executor, adapters) consume this module and must not widen it in place;
 // a new operation type or state is a versioned contract change.
-import type { AgentRoute } from '../cli/types.js';
+import { AGENT_ROUTES, type AgentRoute } from '../cli/types.js';
 
 export const SETUP_SCHEMA_VERSION = 1 as const;
 
@@ -258,10 +258,6 @@ function list<T>(value: unknown, path: string, decode: (v: unknown, p: string) =
   return value.map((item, index) => decode(item, `${path}[${index}]`));
 }
 
-const AGENT_ROUTE_VALUES: readonly AgentRoute[] = [
-  'unknown', 'unavailable', 'khala_hosted_resume', 'native_cli_queue', 'agent_installed_listener',
-];
-
 function decodeComponentState(value: unknown, path: string) {
   const o = rec(value, path, ['component', 'state']);
   return { component: oneOf(o.component, SETUP_COMPONENTS, `${path}.component`),
@@ -279,7 +275,7 @@ function decodeHarness(value: unknown, path: string): HarnessReport {
     version: { detected: nullable(ver.detected, `${path}.version.detected`, str),
       supported: bool(ver.supported, `${path}.version.supported`) },
     components: list(o.components, `${path}.components`, decodeComponentState),
-    route: oneOf(o.route, AGENT_ROUTE_VALUES, `${path}.route`),
+    route: oneOf(o.route, AGENT_ROUTES, `${path}.route`),
   };
 }
 
