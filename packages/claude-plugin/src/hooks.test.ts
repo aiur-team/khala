@@ -233,6 +233,8 @@ describe('idle watcher', () => {
     const { khala, stop, watcher } = setup();
     khala.bind(A, 'sync');
     const older = watcher(A);
+    // Stops are sequential: the older watcher owns the session before the next one arms.
+    await until(() => khala.ops(A).includes('hook'));
     const newer = watcher(A, true);
     await expect(older).resolves.toEqual(silent);
     await stop(A, true);
