@@ -34,6 +34,8 @@ function client(overrides: Partial<AgentClientPort> = {}): AgentClientPort {
     async connect() { return { kind: 'connected', binding: BINDING, reused: false }; },
     async send(input) { return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: 'event-1' }; },
     async status() { return { v: 1, connected: true, binding: BINDING, route: 'unknown', sourceCursor: 'source-1' }; },
+    async listChannels() { return { kind: 'unavailable' }; },
+    async listAgents() { return { kind: 'unavailable' }; },
     ...overrides,
   };
 }
