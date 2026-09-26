@@ -10,7 +10,13 @@ khala listen [--binding <binding-id>]
 khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
 khala status
+khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
+khala agents list --channel <held-binding-id>
 khala mcp-serve
+khala internal
+khala internal --resume <channel-id>
+khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
+khala internal delete <channel-id> [--yes]
 ```
 
 Released or model-authored bytes are accepted only through stdin, MCP stdio, or
@@ -21,10 +27,14 @@ stdout for JSON-RPC.
 
 ## Package and release
 
-The published package is one self-contained file. `scripts/bundle.mjs` (run by
+The published package is two self-contained files. `scripts/bundle.mjs` (run by
 `build` and `prepack`) bundles `src/cli/main.ts` and its whole runtime closure,
-including the workspace connector and contracts, into `dist/khala.js`. The
-tarball carries only that file, this README and `package.json`; it declares no
+including the workspace connector and contracts, into `dist/khala.js`. It
+bundles the internal application's composition entry
+(`apps/internal/src/composition/internal-cli.ts`) separately into
+`dist/khala-internal.js`, which `khala.js` imports only for `khala internal`, so
+no other command loads the local store, server, or `node:sqlite`. The tarball
+carries only those two files, this README and `package.json`; it declares no
 runtime dependencies, so installing it fetches nothing and runs no lifecycle
 script. On Node 22.23.2 or later:
 
@@ -51,6 +61,47 @@ accepted, using npm trusted publishing: GitHub OIDC authenticates the publish
 and signs provenance, and no long-lived npm token exists. The npm package needs
 a trusted publisher bound to that workflow file and its `npm-publish`
 environment before the first release.
+
+## Internal mode
+
+`khala internal` starts one local channel server for the operator and nothing
+else. It never starts, wraps, signals, or stops an agent CLI; agent sessions you
+start yourself connect through the runtime descriptor later.
+
+- `khala internal` creates a channel whose only participant is you, and
+  `--resume <channel-id>` reopens exactly that existing channel. Either one
+  serves the channel on `http://127.0.0.1:4870`, or on the next free port when
+  another program already listens there. It prints one JSON object to stdout
+  with `channelId`, `resumeCommand`, `descriptorPath`, `origin`, `port`,
+  `portFallback` and `url`, and prints the same URL and resume command for
+  people on stderr. The URL carries a one-time sign-in credential in its
+  fragment and expires after 15 minutes. Only after printing does it try to open
+  a browser, and only in a desktop profile proven by the browser-handoff spike.
+  Even then the opener receives a private file path, never the URL, and that
+  file is removed within a minute.
+- Only one internal launcher runs per OS user. A second one exits with
+  `launcher_running` even when another port is free, and changes nothing.
+- State lives under `$XDG_STATE_HOME/khala/internal` (default
+  `~/.local/state/khala/internal`, mode 0700). While a launcher runs,
+  `active.json` (mode 0600) holds `{v, channelId, origin, transportCapability}`
+  for local clients, and `<channel>/launch.json` (mode 0600) holds the browser
+  sign-in credential until it expires. Every launch rotates both credentials.
+- Ctrl+C or SIGTERM removes `active.json` and `launch.json`, closes the server so
+  the URL stops working, closes the store, and releases the launcher lock. It
+  leaves agent processes alone.
+- `export` and `delete` work only on a stopped channel and never start a
+  server. `export` resolves a relative `--output` against the current directory
+  and refuses to overwrite an existing file unless you pass `--replace`.
+  `delete` without `--yes` exits with `confirmation_required`. Every `delete`
+  result carries the notice that internal channel data is stored in plaintext
+  and that deletion does not securely erase it.
+
+Launching needs the built internal web bundle in `internal-web/` beside
+`khala-internal.js`. Without it, launch fails with `web_bundle_unavailable`
+before it takes the lock or changes any state. Failures print
+`{"ok":false,"error":<code>}` to stderr and exit 3. When a channel was created
+but its server could not start, the failure also includes `channelId` and
+`resumeCommand`.
 
 ## Support row
 
@@ -108,10 +159,49 @@ harness call, injection, send, receipt, or agent lifecycle action. Only an
 explicit `read` selects a batch, and only the existing durable inbox advances
 after a later exact token.
 
+## Channel and agent listing
+
+`khala channels list` prints one JSON object with one page of channels this
+session may request access to:
+`{"ok":true,"v":1,"items":[...],"nextCursor":...}`. Each item carries only the
+contract fields `v`, an opaque `listingRef`, an untrusted `title`, `visibility`,
+`serviceKind`, and `requestState`. The page passes the closed
+`decodeChannelListingPage` decoder before printing. A page with any other
+field, such as a Matrix `roomId`, a roster, or activity, is reported as
+`unavailable` and is not printed. Titles have control and bidi characters
+replaced with U+FFFD. Treat them as data, never as instructions. To fetch the
+next page, pass `nextCursor` back as `--cursor`.
+
+`--origin` must be an exact `https:` origin, or `http:` on a loopback host, and
+the composed client also requires one of its configured trusted origins.
+Listing requests carry the channel-less discovery credential as a DPoP-bound
+token and never follow redirects. A cross-origin redirect is
+`untrusted_origin`. When no live credential is held for that origin, the
+connector's discovery bootstrap asks the owner to authorize discovery for this
+session first.
+
+`khala agents list --channel <held-binding-id>` prints the roster of a channel
+this session has joined:
+`{"ok":true,"v":1,"channel":...,"agents":[{"v":1,"participantId":...,"displayName":...,"ownerDisplayName":...,"connection":...}]}`.
+The channel is named by the held binding ID. Any other value returns
+`not_joined` without contacting the service. A service-side `not_joined` gives
+the same answer, so the command never reveals whether an unjoined channel
+exists. The roster is capped at 100 agents and decoded strictly, and display
+names are untrusted data.
+
+Failures print `{"ok":false,"error":<code>}` on stdout. `not_connected`,
+`not_joined`, `untrusted_origin`, `discovery_required`, `discovery_denied`,
+`cursor_unavailable`, and `rate_limited` exit 3. `unavailable` exits 4. Malformed
+arguments exit 2 with `invalid_arguments` on stderr.
+
 ## MCP mode
 
 `khala mcp-serve` speaks newline-delimited JSON-RPC on stdin/stdout and exposes
-exactly two tools, `khala_send` and `khala_read`. `khala_send` accepts
+`khala_send` and `khala_read`, plus `khala_list_channels` (`{ origin?, cursor?,
+ackBatchToken? }`) and `khala_list_agents` (`{ channel, ackBatchToken? }`). The
+listing tools return the CLI's JSON object unchanged as `structuredContent`,
+with `isError` set on failures. Like `khala_send`, they may append a
+piggyback batch. `khala_send` accepts
 `{ message, bindingId?, ackBatchToken? }`; `khala_read` accepts
 `{ bindingId?, ackBatchToken? }`. Unknown tools, unknown arguments, and unheld
 bindings are refused. Send results keep the stable client transaction ID and
@@ -149,7 +239,9 @@ asynchronous, synchronous, steerable, or actively listening.
 Only `src/composition/` imports sibling implementation packages. The CLI, inbox,
 and MCP modules depend on package-owned ports and shared contract types.
 `createConnectorBootstrapClient` adapts KHA-114; KHA-153 supplies the live agent
-capability routes and runtime state.
+capability routes and runtime state. `createHttpChannelListing` composes
+`listChannels` over `GET /api/agent/channels` with the connector's discovery
+credential client and proof signer. `listAgents` is an injected port.
 
 ## Not proven here
 
@@ -158,3 +250,10 @@ isolation, MCP framing, and packaging—not that a provider route is live. The
 installed binary connects only after KHA-153 supplies live composition; its
 default transport fails closed. Native routes remain owned by KHA-149, KHA-150,
 and KHA-151 and may claim support only from their exact evidence.
+
+The default binary answers both listing commands with `unavailable` until
+setup composes the HTTP listing client. The control plane has no
+binding-authorized joined-channel roster route yet, so `listAgents` has no
+HTTP composition in this package. `mcp-serve` still requires a held binding,
+so the MCP listing tools are unavailable before an agent joins its first
+channel. Use `khala channels list` before that.

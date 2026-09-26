@@ -14,11 +14,15 @@ const send: AgentClientPort['send'] = async input => ({
 const status: AgentClientPort['status'] = async () => ({
   v: 1, connected: false, binding: null, route: 'unknown', sourceCursor: null,
 });
+const listChannels: AgentClientPort['listChannels'] = async () => ({ kind: 'unavailable' });
+const listAgents: AgentClientPort['listAgents'] = async () => ({ kind: 'refused', code: 'not_joined' });
 
 describe('connector bootstrap composition', () => {
   it('reuses a deterministic operation ID and maps blocked results', async () => {
     mockedBootstrap.mockResolvedValue({ kind: 'blocked', code: 'admission_denied' });
-    const client = createConnectorBootstrapClient({ ports: {} as BootstrapPorts, session, send, status });
+    const client = createConnectorBootstrapClient({
+      ports: {} as BootstrapPorts, session, send, status, listChannels, listAgents,
+    });
 
     await expect(client.connect('https://chat.example/i/room')).resolves.toEqual({
       kind: 'refused', code: 'admission_denied',
@@ -36,14 +40,21 @@ describe('connector bootstrap composition', () => {
     mockedBootstrap.mockResolvedValue({ kind: 'unavailable', retryable: true, operationId: 'operation-1' });
     const delegatedSend = vi.fn(send);
     const delegatedStatus = vi.fn(status);
+    const delegatedListChannels = vi.fn(listChannels);
+    const delegatedListAgents = vi.fn(listAgents);
     const client = createConnectorBootstrapClient({
       ports: {} as BootstrapPorts, session, send: delegatedSend, status: delegatedStatus,
+      listChannels: delegatedListChannels, listAgents: delegatedListAgents,
     });
 
     await expect(client.connect('https://chat.example/i/room')).resolves.toEqual({ kind: 'unavailable' });
     await client.send({ bindingId: null, clientTxnId: 'txn-12345678', body: 'hello' });
     await client.status();
+    await client.listChannels({ origin: null, cursor: null });
+    await client.listAgents({ bindingId: 'binding-1' as never });
     expect(delegatedSend).toHaveBeenCalledOnce();
     expect(delegatedStatus).toHaveBeenCalledOnce();
+    expect(delegatedListChannels).toHaveBeenCalledOnce();
+    expect(delegatedListAgents).toHaveBeenCalledOnce();
   });
 });

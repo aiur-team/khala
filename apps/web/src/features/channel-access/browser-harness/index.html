@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Khala channel-requests browser harness (synthetic, not the production app)</title>
+    <link rel="stylesheet" href="../../../brand/tokens.css" />
+    <link rel="stylesheet" href="../../../brand/fonts.css" />
+    <link rel="stylesheet" href="../../../shell/shell.css" />
+    <link rel="stylesheet" href="../../approval-decision/approval-decision.css" />
+    <link rel="stylesheet" href="../channel-access.css" />
+    <style>
+      body {
+        margin: 0;
+      }
+
+      .harness {
+        display: grid;
+        grid-template-columns: 14rem minmax(0, 1fr);
+        gap: 1rem;
+        padding: 1rem;
+      }
+
+      .harness__menu {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      .harness__toggle {
+        display: none;
+        min-height: 44px;
+        min-width: 44px;
+      }
+
+      /* A host's collapsed menu: the entry sits behind a toggle on narrow screens. */
+      @media (max-width: 40rem) {
+        .harness {
+          grid-template-columns: minmax(0, 1fr);
+          padding: 0.5rem;
+        }
+
+        .harness__toggle {
+          display: block;
+        }
+
+        .harness__nav[data-open='false'] .harness__menu {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body data-theme="dark">
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
