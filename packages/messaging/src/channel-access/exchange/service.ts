@@ -2,13 +2,16 @@
 // sealed grant result. The state machine is durable: the first bound tuple and
 // the provider operation are persisted before any effect, admission ambiguity is
 // reconciled rather than retried blindly, and once an envelope is stored every
-// retry returns exactly those bytes. Nothing here activates the connector or
-// reports `connected`; that belongs to `channel-access-activation`.
+// retry returns exactly those bytes. The exchange never activates the connector
+// or reports `connected`: only the connector's readiness acknowledgement, sent
+// after local activation (`channel-access-activation`), marks the journal
+// `connected` and deletes the stored envelope.
 
 import {
   type AdmissionGrantExchangePort,
   type CallOptions,
   type ChannelAccessAuthorization,
+  type ChannelAccessReadiness,
   type ControlStore,
   type GrantExchangeRejection,
   type OperationResult,
@@ -39,9 +42,16 @@ const MAX_STEPS = 8;
 type ExchangeResult = OperationResult<SealedGrantEnvelope, GrantExchangeRejection>;
 type Step = Readonly<{ kind: 'continue' }> | Readonly<{ kind: 'done'; result: ExchangeResult }>;
 
+type ReadinessResult = OperationResult<null, GrantExchangeRejection>;
+
+/** The exchange plus the readiness acknowledgement that ends envelope recovery. */
+export type ConnectorGrantExchangePort = AdmissionGrantExchangePort & Readonly<{
+  acknowledge(input: ChannelAccessReadiness, options?: CallOptions): Promise<ReadinessResult>;
+}>;
+
 export type GrantExchangeService = Readonly<{
   /** Request-scoped port for one authenticated connector. */
-  forConnector(connector: GrantExchangeConnector): AdmissionGrantExchangePort;
+  forConnector(connector: GrantExchangeConnector): ConnectorGrantExchangePort;
 }>;
 
 export function createGrantExchangeService(deps: Readonly<{
@@ -68,7 +78,11 @@ export function createGrantExchangeService(deps: Readonly<{
       }
       const stored = loaded.stored;
       const record = stored.record;
-      const drift = bindingDrift(record, input, connector);
+      const drift = bindingDrift(record, {
+        sessionGeneration: input.sessionGeneration,
+        deviceId: input.deviceId,
+        proofKeyThumbprint: input.proofKey.thumbprint,
+      }, connector);
       if (drift !== null) return rejected(drift);
       const key = classifyGrantExchangeBinding(bindingOf(record), bindingOf({
         ...record,
@@ -81,6 +95,8 @@ export function createGrantExchangeService(deps: Readonly<{
         if (key !== 'match') return rejected('encryption_key_mismatch');
         return deps.clock() < Date.parse(record.expiresAt) ? ok(record.envelope!) : rejected('expired');
       }
+      // Readiness was acknowledged and the envelope deleted; nothing is left to recover.
+      if (record.phase === 'acknowledged') return rejected('closed');
       if (record.phase === 'closed') return rejected(record.closed!);
       const next = key === 'match'
         ? await advance(stored, options)
@@ -246,15 +262,65 @@ export function createGrantExchangeService(deps: Readonly<{
     return saved.kind === 'conflict' ? { kind: 'continue' } : done(unavailable());
   }
 
+  /**
+   * Readiness acknowledgement after local activation: the journal becomes `connected`
+   * first, then the stored envelope is deleted. A duplicate acknowledgement is
+   * idempotent; nothing but a sealed exchange for the same bound tuple can be acknowledged.
+   */
+  async function acknowledge(
+    input: ChannelAccessReadiness,
+    connector: GrantExchangeConnector,
+    options?: CallOptions,
+  ): Promise<ReadinessResult> {
+    for (let step = 0; step < MAX_STEPS; step += 1) {
+      const loaded = await journal.load(input, options);
+      if (loaded.kind === 'unavailable') return unavailable();
+      if (loaded.kind === 'absent') return rejected('operation_mismatch');
+      const stored = loaded.stored;
+      const record = stored.record;
+      const drift = bindingDrift(record, {
+        sessionGeneration: input.sessionGeneration,
+        deviceId: input.deviceId,
+        proofKeyThumbprint: input.proofKeyThumbprint,
+      }, connector);
+      if (drift !== null) return rejected(drift);
+      if (record.encryptionKeyThumbprint !== input.recipientKeyThumbprint) return rejected('encryption_key_mismatch');
+      if (record.phase === 'acknowledged') return { kind: 'ok', value: null };
+      if (record.phase === 'closed') return rejected(record.closed!);
+      // Before sealing there is nothing the connector could have activated.
+      if (record.phase !== 'sealed') return rejected('operation_mismatch');
+      if (deps.clock() >= Date.parse(record.expiresAt)) return rejected('expired');
+      const marked = await safe(() => deps.authority.markConnected({
+        operationId: record.operationId,
+        requester: record.requester,
+        origin: record.origin,
+        sessionGeneration: record.sessionGeneration,
+        sessionFingerprint: record.sessionFingerprint,
+        claimOperationId: `${stored.key}#claim`,
+        readyOperationId: `${stored.key}#ready`,
+      }, options));
+      if (marked === null || marked === 'unavailable') return unavailable();
+      if (marked === 'closed') {
+        await journal.save(stored, { ...record, phase: 'closed', closed: 'closed', envelope: null }, options);
+        return rejected('closed');
+      }
+      const saved = await journal.save(stored, { ...record, phase: 'acknowledged', envelope: null }, options);
+      if (saved.kind === 'saved') return { kind: 'ok', value: null };
+      if (saved.kind === 'unavailable') return unavailable();
+    }
+    return unavailable();
+  }
+
   async function close(stored: StoredExchange, reason: 'expired' | 'closed', options?: CallOptions): Promise<Step> {
     await journal.save(stored, { ...stored.record, phase: 'closed', closed: reason }, options);
     return done(rejected(reason));
   }
 
   return Object.freeze({
-    forConnector(connector: GrantExchangeConnector): AdmissionGrantExchangePort {
+    forConnector(connector: GrantExchangeConnector): ConnectorGrantExchangePort {
       return Object.freeze({
         exchange: (input: ValidatedGrantExchangeRequest, options?: CallOptions) => exchange(input, connector, options),
+        acknowledge: (input: ChannelAccessReadiness, options?: CallOptions) => acknowledge(input, connector, options),
       });
     },
   });
@@ -262,12 +328,12 @@ export function createGrantExchangeService(deps: Readonly<{
 
 function bindingDrift(
   record: ExchangeRecord,
-  input: ValidatedGrantExchangeRequest,
+  input: Readonly<{ sessionGeneration: number; deviceId: string; proofKeyThumbprint: string }>,
   connector: GrantExchangeConnector,
 ): GrantExchangeRejection | null {
   if (record.sessionGeneration !== input.sessionGeneration) return 'wrong_generation';
   if (record.deviceId !== input.deviceId) return 'wrong_device';
-  if (record.proofKeyThumbprint !== input.proofKey.thumbprint) return 'proof_mismatch';
+  if (record.proofKeyThumbprint !== input.proofKeyThumbprint) return 'proof_mismatch';
   if (record.sessionFingerprint !== connector.sessionFingerprint) return 'operation_mismatch';
   return null;
 }
@@ -302,11 +368,11 @@ function ok(value: SealedGrantEnvelope): ExchangeResult {
   return { kind: 'ok', value };
 }
 
-function rejected(code: GrantExchangeRejection): ExchangeResult {
+function rejected<T = SealedGrantEnvelope>(code: GrantExchangeRejection): OperationResult<T, GrantExchangeRejection> {
   return { kind: 'rejected', code };
 }
 
-function unavailable(): ExchangeResult {
+function unavailable<T = SealedGrantEnvelope>(): OperationResult<T, GrantExchangeRejection> {
   return { kind: 'unavailable', retryable: true };
 }
 

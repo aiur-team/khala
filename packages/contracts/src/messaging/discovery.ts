@@ -213,6 +213,22 @@ export type SealedGrantPayload = Readonly<{
   grant: string;
 }>;
 
+/**
+ * Connector readiness acknowledgement for one exchanged operation. It is sent only
+ * after local activation; the service then reports `connected` and deletes the
+ * stored envelope. It carries identifiers and thumbprints, never a grant.
+ */
+export type ChannelAccessReadiness = Readonly<{
+  v: 1;
+  operationId: string;
+  requester: StableAgentPrincipal;
+  origin: string;
+  sessionGeneration: number;
+  deviceId: DeviceId;
+  proofKeyThumbprint: string;
+  recipientKeyThumbprint: string;
+}>;
+
 export type DiscoveryCredentialValidity =
   | 'valid'
   | 'expired'
@@ -725,4 +741,26 @@ export function validateSealedGrantPayload(
   if (payload.proofKeyThumbprint !== expected.proofKeyThumbprint) return 'proof_mismatch';
   if (payload.recipientKeyThumbprint !== expected.recipientKeyThumbprint) return 'encryption_key_mismatch';
   return 'valid';
+}
+
+export function decodeChannelAccessReadiness(input: unknown): Decoded<ChannelAccessReadiness> {
+  return decodeWith(() => {
+    const r = object(input, '', [
+      'v', 'operationId', 'requester', 'origin', 'sessionGeneration', 'deviceId', 'proofKeyThumbprint',
+      'recipientKeyThumbprint',
+    ]);
+    const proofKeyThumbprint = readThumbprint(r.field('proofKeyThumbprint'), r.at('proofKeyThumbprint'));
+    const recipientKeyThumbprint = readThumbprint(r.field('recipientKeyThumbprint'), r.at('recipientKeyThumbprint'));
+    if (proofKeyThumbprint === recipientKeyThumbprint) fail(r.at('recipientKeyThumbprint'), 'mismatch');
+    return {
+      v: version(r.field('v'), r.at('v')),
+      operationId: identifier(r.field('operationId'), r.at('operationId')),
+      requester: identifier(r.field('requester'), r.at('requester')) as StableAgentPrincipal,
+      origin: readCanonicalOrigin(r.field('origin'), r.at('origin')),
+      sessionGeneration: safeInteger(r.field('sessionGeneration'), r.at('sessionGeneration')),
+      deviceId: readId<'DeviceId'>(r.field('deviceId'), r.at('deviceId')),
+      proofKeyThumbprint,
+      recipientKeyThumbprint,
+    };
+  });
 }
