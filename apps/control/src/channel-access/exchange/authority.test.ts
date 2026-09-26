@@ -98,6 +98,34 @@ describe('hosted grant-exchange authority', () => {
     expect(await h.authority.authorize(input)).toEqual({ kind: 'closed', reason: 'closed' });
   });
 
+  it('marks a claimed request connected only on readiness, idempotently', async () => {
+    const h = setup();
+    await h.approved();
+    await h.authority.authorize(input);
+    expect(await h.status()).toEqual({ v: 1, operationId: 'op_access_1', outcome: 'connecting' });
+    const ready = { ...input, readyOperationId: 'exchange_ready_1' };
+    expect(await h.authority.markConnected(ready)).toBe('connected');
+    expect(await h.status()).toEqual({ v: 1, operationId: 'op_access_1', outcome: 'connected' });
+    // A lost acknowledgement response retried later reports the same result.
+    expect(await h.authority.markConnected(ready)).toBe('connected');
+  });
+
+  it('never marks an undecided, closed, or foreign request connected', async () => {
+    const h = setup();
+    await h.service.journal.requestAccess({
+      v: 1, kind: 'listing_ref', operationId: 'op_access_1', credentialRef: 'credential_1', listingRef: 'listing_1',
+    }, requester, context);
+    const ready = { ...input, readyOperationId: 'exchange_ready_1' };
+    expect(await h.authority.markConnected(ready)).toBe('unavailable');
+    expect((await h.status()).outcome).toBe('pending_owner');
+    const revoked = setup();
+    await revoked.approved();
+    revoked.state.requester = 'revoked';
+    expect(await revoked.authority.markConnected(ready)).toBe('closed');
+    expect((await revoked.status()).outcome).toBe('revoked');
+    expect(await revoked.authority.markConnected({ ...ready, sessionGeneration: 4 })).toBe('unavailable');
+  });
+
   it('collapses journal failures to unavailable', async () => {
     const h = setup();
     await h.approved();

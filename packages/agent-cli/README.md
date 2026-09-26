@@ -409,6 +409,36 @@ and writes only a content-free code to stderr. The handler never starts,
 signals or waits on Codex. Channel bytes reach Codex only on the hook's stdout,
 inside the shared untrusted-data frame.
 
+## OpenCode plugin
+
+`@aiur/khala/opencode` is the in-process OpenCode plugin. Its default export is
+an OpenCode v1 plugin module (`{ id, server }`), so OpenCode loads only
+`server`. The plugin runs inside the person's own TUI; Khala never starts or
+hosts OpenCode. One binding generation delivers into exactly the OpenCode
+session it names, through the shared inbox batch and its token:
+
+| Mode | Route |
+| --- | --- |
+| `steer` | `tool.execute.after` marks the batch; the next `experimental.chat.messages.transform` of the bound session appends the envelope. Delivered envelopes are re-applied on later model calls from durable state. Never aborts, never busy `promptAsync`. |
+| `sync` | Held while busy. After a notifier hint or `session.idle`, the bridge re-reads controls and session status, then calls session-addressed `promptAsync` once. `steer` uses the same idle route for a batch arriving at rest. |
+| `async` | Nothing automatic; the plugin's `khala_read` tool returns the batch. |
+
+The prompt is one length-delimited JSON envelope within the MCP batch ceiling
+that frames peer content as untrusted data. Acknowledgement is only the agent's
+next `khala_read` or `khala_send` call echoing `ackBatchToken`; the plugin keeps
+no cursor, lease or release-ID dedupe. Per binding generation it persists the
+bound session tuple, the one in-flight request and the steer envelopes to
+re-apply. A prompt whose storage cannot be decided becomes `outcome_unknown` and
+blocks the binding until a human confirms it or authorizes a replay. Stop, a
+stale generation, pause, a deleted session, an oversized envelope, and OpenCode
+version, model or directory drift all fail closed; a route is used only when its
+exact evidence key is recorded for the running version. The plugin registers no
+permission hook, so its tools follow OpenCode's normal permission policy.
+
+Like the `khala` binary, the shipped entry has no live Khala transport until
+live composition supplies one, so it binds and delivers nothing.
+`createKhalaOpenCodeServer` takes the controls, send, inbox and state ports.
+
 ## Claude session adapter
 
 ```text

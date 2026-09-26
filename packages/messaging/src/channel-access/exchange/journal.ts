@@ -16,7 +16,7 @@ import {
   decodeSealedGrantEnvelope,
 } from '@khala/contracts/messaging/index';
 
-export type ExchangePhase = 'bound' | 'admitting' | 'admitted' | 'sealed' | 'closed';
+export type ExchangePhase = 'bound' | 'admitting' | 'admitted' | 'sealed' | 'acknowledged' | 'closed';
 
 export type ExchangeRecord = Readonly<{
   v: 1;
@@ -68,7 +68,7 @@ export type ExchangeIdentity = Readonly<{ requester: string; origin: string; ope
 
 const RECORD_PREFIX = 'channel-access-exchange/';
 const KEY_PREFIX = 'channel-access-exchange-key/';
-const PHASES: readonly ExchangePhase[] = ['bound', 'admitting', 'admitted', 'sealed', 'closed'];
+const PHASES: readonly ExchangePhase[] = ['bound', 'admitting', 'admitted', 'sealed', 'acknowledged', 'closed'];
 const RECORD_FIELDS = [
   'v', 'seq', 'operationId', 'requester', 'origin', 'sessionGeneration', 'sessionFingerprint', 'deviceId',
   'proofKeyThumbprint', 'encryptionPublicKey', 'encryptionKeyThumbprint', 'providerOperationId', 'createdAt',
@@ -227,7 +227,7 @@ export function decodeRecord(value: unknown): ExchangeRecord | null {
   // and membership is known exactly from admission onward.
   if ((phase === 'sealed') !== (envelope !== null)) return null;
   if ((phase === 'closed') !== (r.closed !== null)) return null;
-  if ((phase === 'admitted' || phase === 'sealed') && r.membership === null) return null;
+  if ((phase === 'admitted' || phase === 'sealed' || phase === 'acknowledged') && r.membership === null) return null;
   if ((phase === 'bound' || phase === 'admitting') && r.membership !== null) return null;
   if (envelope !== null && envelope.recipientKeyThumbprint !== r.encryptionKeyThumbprint) return null;
   return {

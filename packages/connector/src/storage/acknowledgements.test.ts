@@ -303,7 +303,7 @@ describe('schema', () => {
     await seedReleases(storage, ['release_1']);
     await storage.close();
     const db = new DatabaseSync(path.join(state, LEDGER_FILE));
-    db.exec('DROP TABLE receipt_outbox; PRAGMA user_version = 3;');
+    db.exec('DROP TABLE channel_access_activations; DROP TABLE receipt_outbox; PRAGMA user_version = 3;');
     db.close();
 
     const migrated = await openConnectorStorage({ directory: state, mode: 'existing', limits });
