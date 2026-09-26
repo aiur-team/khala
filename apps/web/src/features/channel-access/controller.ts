@@ -6,6 +6,7 @@ import {
   type OperationResult,
 } from '@khala/contracts/messaging/index';
 import { isDecidable, type DecisionChoice, type DecisionStatus } from '../approval-decision/model';
+import { CREATE_DECIDED_MESSAGE } from '../channel-create/model';
 import {
   INITIAL_INBOX_VIEW,
   isRetained,
@@ -74,11 +75,11 @@ function isNewer(next: string, current: string): boolean {
 
 type HeldDecision = Readonly<{ handle: ChannelAccessRequestHandle; decision: DecisionChoice; operationId: string }>;
 
-function decidedMessage(request: OwnerRequest): string {
+export function decidedMessage(request: OwnerRequest): string {
   if (request.ownerDecision === 'denied') return 'Denied. Nothing was granted.';
   return request.operationKind === 'access'
     ? 'Approved. The agent joins when its connector picks this up; this page shows when it connects.'
-    : 'Approved. The channel is created when the agent’s connector picks this up; this page shows when it connects.';
+    : CREATE_DECIDED_MESSAGE;
 }
 
 export function createChannelAccessInboxController(
