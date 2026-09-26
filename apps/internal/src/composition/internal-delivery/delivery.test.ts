@@ -116,6 +116,23 @@ async function records(open: () => Promise<BatchInbox>, maxBytes = 1024 * 1024):
   return batch?.items.map(item => item.record.releaseId) ?? [];
 }
 
+/** Drains every delivered record in order, acknowledging each batch through the real inbox token. */
+async function drainAll(open: () => Promise<BatchInbox>): Promise<string[]> {
+  const inbox = await open();
+  const listener = await inbox.acquireListener();
+  const all: string[] = [];
+  try {
+    let token: string | undefined;
+    for (let reads = 0; reads < 100; reads += 1) {
+      const batch = await listener.readBatch({ maxBytes: 16 * 1024 * 1024, ...(token ? { acknowledgeToken: token } : {}) });
+      if (!batch || batch.items.length === 0) break;
+      all.push(...batch.items.map(item => item.record.releaseId));
+      token = batch.token;
+    }
+  } finally { await listener.release(); }
+  return all;
+}
+
 async function khala(h: Harness, args: readonly string[]) {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -268,10 +285,9 @@ describe('internal inbox delivery', () => {
       outcome = await delivery(h).pull(held, inboxFor(h));
     }
     expect(outcome).toBe('caught_up');
-    // One batch read is size-capped, so compare the delivered prefix in order.
-    const delivered = await records(inboxFor(h), 16 * 1024 * 1024);
-    expect(delivered.length).toBeGreaterThan(0);
-    expect(delivered).toEqual([...ids, after].map(id => internalReleaseId(bobBinding, id)).slice(0, delivered.length));
+    // Drain the whole inbox: every one of the 51 releases arrives, in order, with none skipped at a page edge.
+    const delivered = await drainAll(inboxFor(h));
+    expect(delivered).toEqual([...ids, after].map(id => internalReleaseId(bobBinding, id)));
   });
 
   it('placeholders an escape-heavy message over the record limit and keeps delivering', async () => {
