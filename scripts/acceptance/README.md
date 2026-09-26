@@ -39,7 +39,7 @@ Until `@aiur/khala` is published, pack it locally from a clean tree:
 pnpm acceptance:pack --out <directory>
 ```
 
-It refuses tracked or untracked changes, packs through the release package gate (`scripts/agent-cli-package-gate.mjs`), and refuses if packing moved `HEAD` or changed the tree. It writes `<tarball>.provenance.json` next to the tarball and prints the `khalaPackage` value to paste into the profile:
+It refuses tracked or untracked changes. It then packs through the release package gate (`scripts/agent-cli-package-gate.mjs`) in a fresh `git worktree` at `HEAD`, with dependencies installed from the lockfile. Ignored build output in your checkout, such as a leftover `apps/web/dist/internal-web`, never reaches the tarball. It refuses if packing moved the worktree's `HEAD` or changed its tree. It writes `<tarball>.provenance.json` next to the tarball and prints the `khalaPackage` value to paste into the profile:
 
 ```json
 { "tarball": "/abs/path/aiur-khala-0.1.0.tgz", "sha256": "<64 hex>", "commit": "<full commit id>" }
