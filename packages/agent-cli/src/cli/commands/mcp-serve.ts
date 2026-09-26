@@ -1,3 +1,4 @@
+import { isClaudeMcpEntry, runClaudeMcpServer } from '../../composition/claude-mcp.js';
 import { ListeningModeOperation } from '../../composition/listening-mode.js';
 import { ReadOperation, sameHeldBinding } from '../../composition/read.js';
 import {
@@ -5,7 +6,7 @@ import {
 } from '../../mcp/result-postprocessor.js';
 import { runMcpServer } from '../../mcp/server.js';
 import { callScopedConsumer } from '../call-consumer.js';
-import { ChannelListingService } from '../channels/service.js';
+import { composeChannelTools } from '../../mcp/channels/tools.js';
 import { CliError } from '../errors.js';
 import { publicStatus } from '../runtime.js';
 import { SendService } from '../send.js';
@@ -15,6 +16,10 @@ export const mcpServeCommand: CliCommand = {
   name: 'mcp-serve',
   async run(args, deps) {
     if (args.length !== 0) throw new CliError('invalid_arguments');
+    if (isClaudeMcpEntry(deps.env)) {
+      await runClaudeMcpServer({ claude: deps.claude, env: deps.env ?? {}, input: deps.stdin, output: deps.stdout, signal: deps.signal });
+      return 0;
+    }
     const current = publicStatus(await deps.client.status(deps.signal));
     if (!current.connected || current.binding === null) throw new CliError('not_connected');
     const heldBinding = current.binding;
@@ -37,7 +42,7 @@ export const mcpServeCommand: CliCommand = {
       send: new SendService(deps.client),
       read: new ReadOperation({ heldBinding, consumer, currentBinding }),
       listeningMode: new ListeningModeOperation({ application: deps.listeningMode ?? null }),
-      channels: new ChannelListingService(deps.client),
+      channels: composeChannelTools(deps.client),
       postprocessResult: input => postprocessMcpResult({
         ...input,
         consumer,

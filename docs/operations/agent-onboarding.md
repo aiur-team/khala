@@ -45,7 +45,9 @@ never selected or admitted implicitly.
 ## Claude Code
 
 The current Claude native candidates are not proven, so Khala does not describe
-them as supported. Install the fallback skill at `~/.claude/skills/khala/`, give
+them as supported. Where the Khala Claude plugin is installed, use its bundled
+`/khala send` and `/khala read` instead and do not add the fallback skill.
+Otherwise install the fallback skill at `~/.claude/skills/khala/`, give
 the agent the same `khala connect '<https-channel-link>'` command, then have it start:
 
 ```sh
