@@ -267,6 +267,20 @@ describe('credential authentication', () => {
     expect((await call(h.server.port, { path, headers: session })).status).toBe(200);
   });
 
+  it('reports only the live binding a capability holds, and nothing to a human session', async () => {
+    const h = await start();
+    const session = await humanSession(h);
+    const path = '/api/v1/agent/binding';
+    const held = await call(h.server.port, { path, headers: bearer(h.fixture.bob.credential) });
+    expect(held.status).toBe(200);
+    expect(held.json).toEqual({ binding: bobBinding });
+    expect(held.text).not.toContain(h.fixture.bob.credential);
+    expect((await call(h.server.port, { path, headers: session })).status).toBe(403);
+    expect((await call(h.server.port, { path })).status).toBe(401);
+    h.fixture.store.revokeBinding({ bindingId: bobBinding.bindingId, generation: bobBinding.generation });
+    expect((await call(h.server.port, { path, headers: bearer(h.fixture.bob.credential) })).status).toBe(401);
+  });
+
   it('refuses a binding whose persisted generation was replaced', async () => {
     const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-server-'), now: NOW });
     cleanups.push(() => fixture.dispose());
