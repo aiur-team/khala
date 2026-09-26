@@ -222,6 +222,18 @@ test('wrong implementation: a run from any undeclared or unnamed client proves n
   }
 });
 
+test('wrong implementation: a known non-app client proves nothing even when run.json declares it', async () => {
+  const dir = await stateDir();
+  await fullAsyncRun(dir);
+  const log = await events(dir);
+  for (const name of ['claude-code', 'Claude Code', 'mcp-remote']) {
+    const relabelled = log.map(e => (e.kind === 'connected' ? { ...e, clientInfo: { ...e.clientInfo, name } } : e));
+    const result = verify({ ...identity('desktop_extension'), expectedClientNames: [name] }, relabelled);
+    assert.equal(result.modes.async.status, 'unknown', `client ${JSON.stringify(name)}`);
+    assert.ok(result.failures.some(f => /a known non-app MCP client/.test(f)), `client ${JSON.stringify(name)}`);
+  }
+});
+
 test('a run without declared app clients or target conversations is not graded', async () => {
   const dir = await stateDir();
   await fullAsyncRun(dir);

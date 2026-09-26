@@ -14,6 +14,8 @@ const IDENTITY_FIELDS = ['app', 'shape', 'appVersion', 'accountTier', 'administr
 // Declared before the run: the app's own MCP client name(s), and the
 // conversation(s) the operator started for the proof.
 const DECLARED_LISTS = ['expectedClientNames', 'targetConversations'];
+// Known non-app MCP clients: rejected even when a run declares them.
+const NON_APP_CLIENTS = /^(claude[- ]?code|mcp-remote)$/i;
 
 const unknown = (route, reason) => ({ status: 'unknown', route, reason });
 
@@ -37,6 +39,9 @@ export function verify(run, events) {
     const name = connection.clientInfo?.name;
     if (!expectedClients.has(name)) {
       failures.push(`connection ${connection.connectionId} is ${JSON.stringify(name ?? null)}, not a declared Claude app client`);
+    }
+    if (typeof name === 'string' && NON_APP_CLIENTS.test(name.trim())) {
+      failures.push(`connection ${connection.connectionId} is ${JSON.stringify(name)}, a known non-app MCP client`);
     }
   }
   const clientNames = new Set([...connections.values()].map(c => c.clientInfo?.name ?? null));

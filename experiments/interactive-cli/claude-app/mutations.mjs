@@ -14,6 +14,7 @@ const MUTATIONS = [
   ['forged HTTP session accepted', 'server/http.mjs', "if (!connection) return res.writeHead(404).end();", "if (!connection) return res.writeHead(200).end();"],
   ['notifications count as delivery (async gaps ignored)', 'verify.mjs', '  return gaps;\n}', '  return [];\n}'],
   ['undeclared or unnamed client accepted', 'verify.mjs', 'if (!expectedClients.has(name)) {', 'if (false) {'],
+  ['declared non-app client accepted', 'verify.mjs', "if (typeof name === 'string' && NON_APP_CLIENTS.test(name.trim())) {", 'if (false) {'],
   ['undeclared clients or conversations still graded', 'verify.mjs', "...DECLARED_LISTS.filter(key => !Array.isArray(run[key]) || run[key].length === 0 || !run[key].every(nonEmpty)),", ''],
   ['echo accepted outside delivery..acknowledgement', 'verify.mjs', 'ack.releaseIds.includes(e.release) && firstDelivery(ack) < index.get(e) && index.get(e) < index.get(ack)', 'ack.releaseIds.includes(e.release)'],
   ['echo accepted from any conversation', 'verify.mjs', "e.observation === 'model-echo' && run.targetConversations.includes(e.conversation));", "e.observation === 'model-echo');"],

@@ -38,6 +38,7 @@ result then grades each row.
   `notifications/message`), a change in tool availability, or any call from an MCP client that the
   run did not declare, including a client with an empty or missing name. The check is an
   allowlist, so Claude Code, `mcp-remote`, the MCP inspector, and any other client fail the run.
+  Claude Code and `mcp-remote` fail it even when `run.json` declares them.
   Any of these makes the run fail or stay `unknown`.
 - **`steer` and `sync` are never simulated.** The kit has no push boundary. Claude Desktop and
   claude.ai document no active-tool or end-turn prompt-injection hook, so these cells stay
@@ -123,6 +124,7 @@ table lists each line, the test that fails when it is reverted, and whether that
 | `http.mjs` 404 for an unknown session | remote connector speaks Streamable HTTP… | KILLED |
 | `verify.mjs` async evidence gaps | wrong implementation: an MCP notification or tool-list change is not delivery | KILLED |
 | `verify.mjs` declared-client allowlist (also rejects empty names) | wrong implementation: a run from any undeclared or unnamed client proves nothing | KILLED |
+| `verify.mjs` rejects known non-app clients even when declared | wrong implementation: a known non-app client proves nothing even when run.json declares it | KILLED |
 | `verify.mjs` declared clients and target conversations required | a run without declared app clients or target conversations is not graded | KILLED |
 | `verify.mjs` echo between first delivery and acknowledgement | wrong implementation: an echo before delivery, after acknowledgement, or in another conversation… | KILLED |
 | `verify.mjs` echo in a declared target conversation | wrong implementation: an echo before delivery, after acknowledgement, or in another conversation… | KILLED |
