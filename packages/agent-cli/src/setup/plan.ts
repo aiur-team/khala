@@ -78,13 +78,13 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
       // Every invocation, including a confirmed one, starts from fresh state. An approval is
       // never checked against a plan computed earlier.
       const snapshot = await observe(options.environment(), adapters);
-      if (snapshot.recovery) return result(command, 'recovery_required', snapshot, [], null, notRequired(lifecycleOptions));
+      if (snapshot.recovery) return result(command, 'recovery_required', snapshot, [], null, NOT_REQUIRED);
       const refusal = refusalState(command, snapshot);
-      if (refusal !== null) return result(command, refusal, snapshot, [], null, notRequired(lifecycleOptions));
+      if (refusal !== null) return result(command, refusal, snapshot, [], null, NOT_REQUIRED);
       const operations = planOperations(command, snapshot);
       if (operations.length === 0) {
         return result(command, command === 'setup' ? statusState(snapshot) : settledRemoveState(snapshot), snapshot,
-          [], null, notRequired(lifecycleOptions));
+          [], null, NOT_REQUIRED);
       }
       const digest = planDigest(command, snapshot, operations);
       if (lifecycleOptions.dryRun || lifecycleOptions.confirm !== digest) {
@@ -363,9 +363,8 @@ function confirmationRequest(
   };
 }
 
-function notRequired(options: LifecycleOptions): SetupResult['confirmation'] {
-  return { required: false, confirmed: options.confirm !== null };
-}
+// A supplied digest confirms nothing unless it reached the executor, so these paths report false.
+const NOT_REQUIRED: SetupResult['confirmation'] = Object.freeze({ required: false, confirmed: false });
 
 function result(
   command: SetupResult['command'], state: SetupState, snapshot: Snapshot, operations: readonly SetupOperation[],
