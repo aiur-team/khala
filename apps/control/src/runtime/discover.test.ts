@@ -134,6 +134,15 @@ describe('renderRouteManifest', () => {
     const manifest = JSON.parse(renderRouteManifest(await discoverRoutes(actualRoot)));
     expect(manifest.routes).toEqual([
       { path: '/api/health', methods: ['GET'], domain: 'runtime' },
+      { path: '/api/human/auth/login', methods: ['GET'], domain: 'human' },
+      { path: '/api/human/auth/callback', methods: ['GET'], domain: 'human' },
+      { path: '/api/human/me', methods: ['GET'], domain: 'human' },
+      { path: '/api/human/auth/logout', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/invitations/share', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/invitations/inspect', methods: ['GET'], domain: 'human' },
+      { path: '/api/human/invitations/admit', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/messaging/session', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/messaging/participants', methods: ['POST'], domain: 'human' },
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'], domain: 'human' },
       { path: '/api/human/pairing/decision', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-access/inbox', methods: ['GET'], domain: 'human' },
@@ -150,6 +159,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/agent/channel-access/create', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-access/status', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/channel-access/exchange', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/channel-access/ready', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-discovery/bootstrap/token', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channels', methods: ['GET'], domain: 'agent' },
     ]);

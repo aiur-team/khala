@@ -11,7 +11,11 @@ import type { ChannelAdmissionProviderPort } from '@khala/messaging/channel-acce
 import { createGrantExchangeService } from '@khala/messaging/channel-access/exchange/service';
 import { createGrantExchangeAuthority } from '../../channel-access/exchange/authority';
 import { createExchangeGrantIssuer } from '../../channel-access/exchange/grants';
-import { type GrantExchangeHandlerDependencies, createGrantExchangeHandler } from '../../channel-access/exchange/handler';
+import {
+  type GrantExchangeHandlerDependencies,
+  createGrantExchangeHandler,
+  createGrantReadinessHandler,
+} from '../../channel-access/exchange/handler';
 import type { ChannelAccessStore } from '../../channel-access/store';
 import type { RouteRegistration } from '../../runtime/handler';
 
@@ -30,9 +34,10 @@ export function composeChannelAccessExchange(deps: Readonly<{
     issuer: createExchangeGrantIssuer({ store: deps.store, clock: deps.clock }),
     clock: deps.clock,
   });
-  return Object.freeze([createGrantExchangeHandler({
+  const handlerDeps: GrantExchangeHandlerDependencies = {
     authenticateConnector: deps.authenticateConnector,
     exchangeFor: connector => service.forConnector(connector),
     clock: deps.clock,
-  })]);
+  };
+  return Object.freeze([createGrantExchangeHandler(handlerDeps), createGrantReadinessHandler(handlerDeps)]);
 }

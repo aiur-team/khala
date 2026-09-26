@@ -57,6 +57,24 @@ async function setup() {
       `${requester.origin}/api/agent/channel-access/exchange?operation=op_access_1`,
       { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
     )),
+    ready: (overrides: Record<string, unknown> = {}) => route('/api/agent/channel-access/ready').handle(new Request(
+      `${requester.origin}/api/agent/channel-access/ready?operation=op_access_1`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          v: 1,
+          operationId: 'op_access_1',
+          requester: requester.principal,
+          origin: requester.origin,
+          sessionGeneration: 3,
+          deviceId: DEVICE,
+          proofKeyThumbprint: body.proofKey.thumbprint,
+          recipientKeyThumbprint: body.encryptionKey.thumbprint,
+          ...overrides,
+        }),
+      },
+    )),
     status: () => route('/api/agent/channel-access/status').handle(new Request(
       `${requester.origin}/api/agent/channel-access/status?v=1&operationId=op_access_1&operationKind=access`,
     )),
@@ -93,6 +111,33 @@ describe('composed channel-access grant exchange', () => {
     const persisted = JSON.stringify([...h.journal.backing.records.values()]);
     expect(persisted).not.toContain('cagrant_');
     expect(persisted).not.toContain('"connected"');
+  });
+
+  it('reports connected only after readiness, then deletes the envelope', async () => {
+    const h = await setup();
+    await h.journal.approved();
+    const envelope = await (await h.exchange()).json() as { ciphertext: string };
+    // Readiness names the recovery key the envelope was sealed to; any other is refused.
+    expect((await h.ready({ recipientKeyThumbprint: 'A'.repeat(43) })).status).toBe(409);
+    expect(await (await h.status()).json()).toMatchObject({ outcome: 'connecting' });
+
+    const ready = await h.ready();
+    expect(ready.status).toBe(200);
+    expect(ready.headers.get('cache-control')).toBe('no-store');
+    expect(await ready.json()).toEqual({ v: 1, kind: 'acknowledged' });
+    expect(await (await h.status()).json()).toEqual({ v: 1, operationId: 'op_access_1', outcome: 'connected' });
+    expect(JSON.stringify([...h.journal.backing.records.values()])).not.toContain(envelope.ciphertext);
+    // A duplicate acknowledgement is the same success; the envelope is gone for good.
+    expect((await h.ready()).status).toBe(200);
+    expect((await h.exchange()).status).toBe(410);
+    expect(h.admits).toHaveLength(1);
+  });
+
+  it('refuses readiness before the exchange sealed a result', async () => {
+    const h = await setup();
+    await h.journal.approved();
+    expect((await h.ready()).status).toBe(409);
+    expect(await (await h.status()).json()).toMatchObject({ outcome: 'approved' });
   });
 
   it('does not admit or mint before the owner approves', async () => {
