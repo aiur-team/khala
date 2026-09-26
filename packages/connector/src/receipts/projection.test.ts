@@ -45,7 +45,7 @@ function world(entries: readonly OutboxEntry[], faults: { failLogAt?: string; fa
     async commitCheckpoint(revision) {
       calls.push(`checkpoint ${revision}`);
       if (faults.failCheckpointAt === revision) {
-        faults.failCheckpointAt = undefined;
+        delete faults.failCheckpointAt;
         throw new Error('crash before checkpoint');
       }
       checkpoint = Math.max(checkpoint, revision);
@@ -62,7 +62,7 @@ function world(entries: readonly OutboxEntry[], faults: { failLogAt?: string; fa
     async record(observation: ReceiptObservation) {
       calls.push(`log ${observation.receiptId}`);
       if (faults.failLogAt === observation.receiptId) {
-        faults.failLogAt = undefined;
+        delete faults.failLogAt;
         throw new Error('crash before log');
       }
       lines.push(observation);
