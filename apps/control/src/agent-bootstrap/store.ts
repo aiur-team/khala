@@ -509,7 +509,7 @@ function validReplacement(current: BindingRecord, replacement: BindingRecord): b
     && after.bindingId !== before.bindingId && after.ownerId === before.ownerId
     && after.agentParticipantId === before.agentParticipantId && after.deviceId === before.deviceId
     && after.harness === before.harness && after.sessionId === before.sessionId
-    && after.generation > Math.max(current.revokedGeneration, before.generation);
+    && after.generation > before.generation && after.generation >= current.revokedGeneration;
 }
 
 function exactObject(value: unknown, keys: readonly string[]): Record<string, unknown> | null {
