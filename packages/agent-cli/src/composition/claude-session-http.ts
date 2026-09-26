@@ -1,11 +1,14 @@
 import { LISTENING_MODE_RESULT_OUTCOMES, LISTENING_MODES, type ListeningMode } from '@khala/contracts/delivery/index';
+import { parseAccessTarget, validOperationArgument } from '../cli/channels/access.js';
+import { validCursorArgument, validOriginArgument } from '../cli/channels/service.js';
+import type { AccessRequestInput, AccessStatusInput, ChannelListInput } from '../cli/channels/types.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import { plainObject, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { readRuntimeDescriptor, type RuntimeDescriptorFailure } from './claude-descriptor.js';
 import {
-  CLAUDE_SESSION_REFUSALS, type ClaudeHookOutcome, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome,
+  CLAUDE_SESSION_REFUSALS, type ClaudeAccessOutcome, type ClaudeHookOutcome, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome,
   type ClaudeReadOutcome, type ClaudeSendOutcome, type ClaudeSessionAdapter, type ClaudeSessionRefusal,
-  type ClaudeStatusOutcome, type ModeSetInput,
+  type ClaudeRosterOutcome, type ClaudeStatusOutcome, type ModeSetInput,
 } from './claude-session.js';
 
 /** The local server route that mounts `handleClaudeSessionRequest`. */
@@ -15,14 +18,17 @@ const MAX_RESPONSE_BYTES = MAX_SEND_BYTES * 6 + 65_536;
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
 
 export type ClaudeSessionRequest =
-  | Readonly<{ v: 1; op: 'pull' | 'read' | 'status'; sessionId: string }>
+  | Readonly<{ v: 1; op: 'pull' | 'read' | 'status' | 'roster'; sessionId: string }>
   | Readonly<{ v: 1; op: 'send'; sessionId: string; body: string }>
   | Readonly<{ v: 1; op: 'mode'; sessionId: string }>
   | Readonly<{
     v: 1; op: 'mode_set'; sessionId: string;
     commandId: string; expectedVersion: number; requested: ListeningMode; issuedAt: string;
   }>
-  | Readonly<{ v: 1; op: 'pending' | 'hook'; sessionId: string }>;
+  | Readonly<{ v: 1; op: 'pending' | 'hook'; sessionId: string }>
+  | (Readonly<{ v: 1; op: 'channels'; sessionId: string }> & ChannelListInput)
+  | (Readonly<{ v: 1; op: 'access_request'; sessionId: string }> & AccessRequestInput)
+  | (Readonly<{ v: 1; op: 'access_status'; sessionId: string }> & AccessStatusInput);
 
 export type ClaudeSessionResponse = Readonly<{ status: 200 | 400 | 401; body: Readonly<Record<string, unknown>> }>;
 
@@ -52,6 +58,12 @@ export async function handleClaudeSessionRequest(
     }); break;
     case 'pending': outcome = await adapter.pending(call); break;
     case 'hook': outcome = await adapter.hook(call); break;
+    case 'roster': outcome = await adapter.roster(call); break;
+    case 'channels': outcome = await adapter.listChannels(call, { origin: request.origin, cursor: request.cursor }); break;
+    case 'access_request': outcome = await adapter.requestAccess(call, {
+      target: request.target, operationId: request.operationId, origin: request.origin,
+    }); break;
+    case 'access_status': outcome = await adapter.accessStatus(call, { operationId: request.operationId, origin: request.origin }); break;
   }
   return { status: outcome.kind === 'refused' && outcome.code === 'unauthorized' ? 401 : 200, body: outcome };
 }
@@ -62,7 +74,7 @@ function decodeRequest(value: unknown): ClaudeSessionRequest | null {
   const only = (...extra: string[]) => keys.every(key => ['v', 'op', 'sessionId', ...extra].includes(key));
   const sessionId = value.sessionId;
   switch (value.op) {
-    case 'pull': case 'read': case 'status': case 'mode': case 'pending': case 'hook':
+    case 'pull': case 'read': case 'status': case 'roster': case 'mode': case 'pending': case 'hook':
       return only() ? { v: 1, op: value.op, sessionId } : null;
     case 'send':
       return only('body') && typeof value.body === 'string' ? { v: 1, op: 'send', sessionId, body: value.body } : null;
@@ -74,9 +86,26 @@ function decodeRequest(value: unknown): ClaudeSessionRequest | null {
         v: 1, op: 'mode_set', sessionId, commandId: value.commandId,
         expectedVersion: value.expectedVersion as number, requested: value.requested as ListeningMode, issuedAt: value.issuedAt,
       };
+    case 'channels':
+      if (!only('origin', 'cursor') || !optional(value.origin, validOriginArgument) || !optional(value.cursor, validCursorArgument)) return null;
+      return { v: 1, op: 'channels', sessionId, origin: value.origin ?? null, cursor: value.cursor ?? null } as ClaudeSessionRequest;
+    case 'access_request': {
+      const target = plainObject(value.target) ? parseAccessTarget(value.target.kind === 'channel_url' ? value.target.channelUrl : value.target.listingRef) : null;
+      if (!only('target', 'operationId', 'origin') || target === null || !plainObject(value.target)
+        || target.kind !== value.target.kind || !validOperationArgument(value.operationId) || !optional(value.origin, validOriginArgument)) return null;
+      return { v: 1, op: 'access_request', sessionId, target, operationId: value.operationId, origin: value.origin ?? null } as ClaudeSessionRequest;
+    }
+    case 'access_status':
+      if (!only('operationId', 'origin') || !validOperationArgument(value.operationId) || !optional(value.origin, validOriginArgument)) return null;
+      return { v: 1, op: 'access_status', sessionId, operationId: value.operationId, origin: value.origin ?? null } as ClaudeSessionRequest;
     default:
       return null;
   }
+}
+
+/** An absent or null field, or a value the validator accepts. */
+function optional(value: unknown, valid: (candidate: unknown) => boolean): boolean {
+  return value === undefined || value === null || valid(value);
 }
 
 export type ClaudeClientRefusal =
@@ -99,6 +128,15 @@ export interface ClaudeSessionClient {
   pending(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudePendingOutcome>>;
   /** Hook boundary state: effective mode and watcher window. Never acknowledges. */
   hook(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeHookOutcome>>;
+  /** The session's own channel roster, undecoded. The session selects the binding; no argument names one. */
+  roster(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeRosterOutcome>>;
+  /**
+   * Discovery and access for this session. The server files a request for exactly this
+   * session, so a grant can bind no other; results are raw port results, decoded by the caller.
+   */
+  listChannels(sessionId: string, input: ChannelListInput, signal?: AbortSignal): Promise<Result<ClaudeAccessOutcome>>;
+  requestAccess(sessionId: string, input: AccessRequestInput, signal?: AbortSignal): Promise<Result<ClaudeAccessOutcome>>;
+  accessStatus(sessionId: string, input: AccessStatusInput, signal?: AbortSignal): Promise<Result<ClaudeAccessOutcome>>;
 }
 
 export const DEFAULT_CLIENT_TIMEOUT_MS = 10_000;
@@ -196,6 +234,22 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
       }
       return refusal(value);
     },
+    async roster(sessionId, signal) {
+      const value = await call({ v: 1, op: 'roster', sessionId }, signal);
+      if (plainObject(value) && value.kind === 'roster' && Object.keys(value).length === 2) return { kind: 'roster', roster: value.roster };
+      return refusal(value);
+    },
+    async listChannels(sessionId, input, signal) {
+      return accessResult(await call({ v: 1, op: 'channels', sessionId, origin: input.origin, cursor: input.cursor }, signal));
+    },
+    async requestAccess(sessionId, input, signal) {
+      return accessResult(await call({
+        v: 1, op: 'access_request', sessionId, target: input.target, operationId: input.operationId, origin: input.origin,
+      }, signal));
+    },
+    async accessStatus(sessionId, input, signal) {
+      return accessResult(await call({ v: 1, op: 'access_status', sessionId, operationId: input.operationId, origin: input.origin }, signal));
+    },
     async hook(sessionId, signal) {
       const value = await call({ v: 1, op: 'hook', sessionId }, signal);
       const mode = (candidate: unknown) => (LISTENING_MODES as readonly unknown[]).includes(candidate);
@@ -207,6 +261,11 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
       return refusal(value);
     },
   };
+}
+
+function accessResult(value: unknown): Result<ClaudeAccessOutcome> {
+  return plainObject(value) && value.kind === 'access' && Object.keys(value).length === 2
+    ? { kind: 'access', result: value.result } : refusal(value);
 }
 
 const CLIENT_REFUSALS: readonly string[] = [
