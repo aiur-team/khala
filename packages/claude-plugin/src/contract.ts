@@ -33,7 +33,7 @@ export const CLAUDE_MCP_ENV = { KHALA_MCP_HARNESS: 'claude' } as const;
 
 /** Where the bundled skill lives, and the verbs this plugin version dispatches. */
 export const SKILL_FILE = 'skills/khala/SKILL.md';
-export const DISPATCHED_VERBS = ['send', 'read'] as const;
+export const DISPATCHED_VERBS = ['send', 'read', 'create', 'join', 'who'] as const;
 export const FROZEN_MCP_TOOLS = [
   'khala_send',
   'khala_read',

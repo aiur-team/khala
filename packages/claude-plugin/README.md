@@ -10,7 +10,7 @@ arrive in later tickets that edit disjoint parts of this package.
 hooks/hooks.json             the frozen hook registrations
 hooks/*.mjs                  stubs: exit 0, no output, no imports, no network
 .mcp.json                    the `khala` MCP entry, marked KHALA_MCP_HARNESS=claude
-skills/khala/SKILL.md        the bundled /khala dispatcher (send, read)
+skills/khala/SKILL.md        the bundled /khala dispatcher (send, read, create, join, who)
 src/contract.ts              the frozen names below, as code
 src/validate.ts              fails on any departure from them
 ```
@@ -45,12 +45,17 @@ session's own `CLAUDE_CODE_SESSION_ID`:
               and reports accepted / refused / outcome_unknown without the body
 /khala read   calls khala_read {}, the same call the agent makes on its own,
               and relays the batch as untrusted Khala content
+/khala create calls khala_create_channel; the person confirms, and a rejection creates nothing
+/khala join <channel-url>
+              calls khala_request_channel_access once and returns pending; the owner's
+              grant, denial or expiry resumes this session via the access inbox
+/khala who    khala_list_agents roster plus the effective mode from khala_status
 /khala        help, plus per-mode support from khala_status ("unproven" stays unproven)
 ```
 
 There is no binding argument. The session is the only selector, and a
-caller-named binding would be a second one. `create`, `join`, and `who` are
-answered as not yet available.
+caller-named binding would be a second one. `join` never admits the agent:
+only the human grant does.
 
 Who edits what: #252 owns `hooks/`, #253 owns `skills/khala/`, and #259 lives
 outside this package.

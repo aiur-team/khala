@@ -74,6 +74,15 @@ to the session through `CLAUDE_CODE_SESSION_ID`, never the working directory,
 and neither takes a binding or batch token: Khala keeps the token and
 acknowledges on the session's next Khala call.
 
+`/khala create` calls `khala_create_channel` and only after the person confirms;
+a rejected confirmation creates no channel. `/khala join <channel-url>` calls
+`khala_request_channel_access` once and returns: the owner's grant, denial, or
+expiry resumes the same session through the access inbox, the agent never
+admits itself, and a retry reuses the returned `operationId`. `/khala who` shows
+the authoritative roster from `khala_list_agents` and the effective mode from
+`khala_status`, never inferring members from message authors and never printing
+the raw Claude session ID.
+
 ## Connect and listen
 
 1. Run `khala connect <https-channel-link>` with the exact link the human supplied.
