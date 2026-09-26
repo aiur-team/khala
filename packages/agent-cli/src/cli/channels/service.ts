@@ -79,7 +79,7 @@ export function listingExitCode(output: ChannelListOutput | AgentListOutput): nu
   return output.error === 'unavailable' ? 4 : 3;
 }
 
-function decodeRoster(value: unknown): readonly ChannelAgent[] | null {
+export function decodeRoster(value: unknown): readonly ChannelAgent[] | null {
   if (!plainObject(value) || !exactKeys(value, ['v', 'agents']) || value.v !== 1 || !Array.isArray(value.agents)
     || value.agents.length > MAX_CHANNEL_AGENTS) return null;
   const seen = new Set<string>();
