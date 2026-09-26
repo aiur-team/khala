@@ -18,6 +18,7 @@ khala internal --resume <channel-id>
 khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
 khala internal delete <channel-id> [--yes]
 khala codex-hook
+khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
 ```
 
 Released or model-authored bytes are accepted only through stdin, MCP stdio, or
@@ -238,6 +239,35 @@ message; only an explicit `khala_send` call sends. Pull or piggyback delivery
 creates no receipt, advertises no capability, and makes no claim that a peer is
 asynchronous, synchronous, steerable, or actively listening.
 
+## Setup transactions
+
+`src/setup/transaction.ts` applies a confirmed `setup` or `remove` plan.
+`executeSetupPlan` takes the exclusive lock under `$XDG_STATE_HOME/khala/setup/`
+and finishes or rolls back any interrupted journal. It then reruns the planner
+and applies nothing unless the new plan digest equals the confirmed one. A
+second process gets a stable `busy` result.
+
+Before the first write, every target is checked against its planned preimage,
+and every managed path of each selected harness is checked for drift. A symlink
+below a root, an unowned target, or a restore to anything other than the
+original baseline refuses the whole plan. The executor then writes owner-only
+byte-exact backups and a `prepared` journal, `transaction.v1.json`. It applies
+operations in order with no-follow atomic replacement. The journal is advanced
+around each operation, and every postimage's hash, mode, and owner is verified.
+On success the executor publishes `manifest.v1.json`. Any failure restores the
+applied operations from backup. A rollback that cannot be proven exact becomes
+`rollback_failed`, and each later command retries it. Setup never overwrites
+user bytes that changed while it ran.
+
+The manifest keeps each path's original pre-Khala preimage (or absence) across
+upgrades, so removal restores the state from before the first setup. Backups
+are kept only while the manifest refers to them. A clean remove deletes the
+manifest, backups, and installer tree. Vendor commands run with an absolute
+executable, no shell, and only `HOME`, `XDG_*`, and `PATH`. Only the paths an
+adapter declares are backed up and reversed; adapters own proof of that
+footprint. `inspectSetupRecovery` gives `status` a read-only view of the
+journal.
+
 ## Codex hooks
 
 `khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
@@ -306,6 +336,62 @@ permission hook, so its tools follow OpenCode's normal permission policy.
 Like the `khala` binary, the shipped entry has no live Khala transport until
 live composition supplies one, so it binds and delivers nothing.
 `createKhalaOpenCodeServer` takes the controls, send, inbox and state ports.
+
+## Claude session adapter
+
+```text
+khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
+```
+
+This is the entry point for the Claude plugin's hooks and `/khala` skill. The
+command resolves the loopback origin and installation credential from the
+owner-only (exactly `0600`, not a symlink) runtime descriptor on every call,
+posts one request to the local Khala server, and exits. Installed plugin or MCP
+entries hold only the descriptor path; the port and credential never appear in
+configuration, argv, environment variables, output, or errors. A missing,
+malformed, or insecure descriptor fails closed with `descriptor_missing`,
+`descriptor_malformed`, or `descriptor_insecure`; a stale one is refused by
+the server as `unauthorized`, and a server that does not answer within 10
+seconds as `unavailable`. `send` reads its message from stdin; its JSON result
+may carry a token-free `batch` delivered alongside it.
+
+Server-side, `createClaudeSessionAdapter` authenticates the installation
+credential and treats the Claude session ID only as a selector among that
+principal's verified bindings, at their active generation. Cwd is never used,
+and a foreign session is refused exactly like an unknown one
+(`session_not_bound`). Reads call the single `khala_read` operation.
+
+There are two kinds of call. A hook pull (`pull`, used by `PostToolUse`, `Stop`,
+and the watcher) never acknowledges: it reads with no token and retains the
+returned batch token. The shared inbox has at most one outstanding batch per
+binding and generation and replays it until it is acknowledged, so a repeated
+pull shows the same batch again. An agent-initiated call (`read`, `send`,
+`status`, `mode`, or a mode change) acknowledges every retained token. The
+current generation's token rides on the call itself; each other generation gets
+one `readBatch` call of its own, and a replaced generation's token is fenced
+and dropped so its release is redelivered. The server's `ClaudeSessionStatePort`
+durably keeps retained tokens per principal and binding. It clears them only
+after the call that carried them resolves, including across a server restart. A
+replay after a crash is answered as `duplicate`. `status` is content-free: it
+reports only how many retained tokens it acknowledged.
+
+A token is retained only when its batch was rendered into the result; a batch
+that cannot be delivered replays instead. The token never reaches the hook or
+command process: `pull` and `read` print the shared `<khala-channel-batch-v1>`
+frame without its `batchToken` line. Handoff runs only when
+`HarnessCapabilities.acknowledgement` is `batch_token_next_call`; otherwise
+`pull` and `read` are refused as `unproven`, and mode support without evidence
+reports `unproven`. `pending` returns only `pending` or `idle` from the local
+automation fence's notification signal; it never pulls or acknowledges.
+
+For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
+(`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the
+MCP server's own `CLAUDE_CODE_SESSION_ID`, so a tool call cannot name another
+session. It has no pull. A missing ID fails closed as `session_missing`. Wiring
+it into `mcp-serve` belongs to the plugin dispatch work.
+
+The installed binary does not compose this client yet, so `khala claude`
+fails closed with `transport_unavailable`.
 
 ## Composition boundary
 
