@@ -234,7 +234,8 @@ export function installedPluginAssets(
   const mcp = parseJson(assets.get('.mcp.json') ?? new Uint8Array());
   const server = isObject(mcp) && isObject(mcp.mcpServers) ? mcp.mcpServers[CLAUDE_PLUGIN_NAME] : undefined;
   if (!isObject(mcp) || !isObject(server) || server.command !== 'khala') throw new Error('claude plugin .mcp.json must run khala');
-  installed.set('.mcp.json', encodeJson({ ...mcp, mcpServers: { ...mcp.mcpServers as Json, [CLAUDE_PLUGIN_NAME]: { ...server, command: runtime.launcher } } }));
+  const servers = { ...mcp.mcpServers as Json, [CLAUDE_PLUGIN_NAME]: { ...server, command: runtime.launcher } };
+  installed.set('.mcp.json', encodeJson({ ...mcp, mcpServers: servers }));
 
   const hooks = parseJson(assets.get('hooks/hooks.json') ?? new Uint8Array());
   if (!isObject(hooks) || !isObject(hooks.hooks)) throw new Error('claude plugin hooks/hooks.json is not hook configuration');

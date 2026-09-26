@@ -587,7 +587,15 @@ entry is a conflict, even when identical. So is any competitor for `/khala`: a
 user `commands/khala.md`, a `commands/khala/` namespace, a user
 `skills/khala/`, another enabled `khala@*` plugin, or an enabled plugin that
 ships any of these. Such a conflict fails the plan before any write. The
-settings entries and the plugin's `khala mcp-serve` entry hold no port or token.
+settings entries and the plugin's `mcp-serve` entry hold no port or token.
+
+Setup installs the plugin's `.mcp.json` and `hooks/hooks.json` with absolute paths, so no
+installed entry depends on `khala` or `node` being on PATH. The MCP entry's `command` is the
+staged launcher `$XDG_DATA_HOME/khala/bin/khala`. Each hook runs the Node that ran setup with
+its script and the launcher as the argument, for example
+`'<node>' "${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs" '<XDG_DATA_HOME>/khala/bin/khala'`. The hook
+runtime calls `khala claude <op>` through that launcher. Every other plugin file installs as
+packaged.
 
 The optional hardening check (the Claude sandbox enabled in user settings) and
 folder trust for a given directory are reported as `info` diagnostics only.
@@ -626,7 +634,7 @@ direct edits, with no plugin and no vendor command. `~/.codex` below means
 
 The MCP table runs the stable launcher `$XDG_DATA_HOME/khala/bin/khala
 mcp-serve`, which reads the port and token from the runtime descriptor on each
-call. Codex writes hook trust into the same `config.toml`, so setup, upgrade,
+call. The hooks run the same launcher by absolute path, so neither depends on PATH. Codex writes hook trust into the same `config.toml`, so setup, upgrade,
 and remove never touch a `hooks.state` or `trusted_hash` byte. Hooks report
 `awaiting_hook_review` until the user trusts them in Codex's own dialog. An
 upgrade leaves `hooks.json` alone, so trust carries over. An unowned Khala
@@ -696,10 +704,12 @@ components are ready.
 
 `khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
 installs into the user's Codex config layer, together with the MCP entry and the
-skill. `codexHooksFragment()` in `src/codex/hooks-config.ts` is the exact
-`hooks.json` fragment: one fixed, argument-free `khala codex-hook` command for
+skill. `codexHooksFragment(launcher)` in `src/codex/hooks-config.ts` is the exact
+`hooks.json` fragment: one fixed command, `'<XDG_DATA_HOME>/khala/bin/khala' codex-hook`
+(the staged launcher by absolute path, never a `khala` from PATH), for
 `PreToolUse`, `PostToolUse`, `UserPromptSubmit` and `Stop`. Codex hashes that
-command when the user trusts it, so it must stay byte-stable across releases.
+command when the user trusts it, so it must stay byte-stable across releases. The
+launcher path never moves across upgrades.
 Setup never writes Codex's hook trust. `codexHookReviewState()` reads
 `config.toml` and reports `trusted`, `awaiting_hook_review` or `unknown` with a
 reason. It checks that a trust record exists at each Khala handler's position;
@@ -871,7 +881,7 @@ For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
 MCP server's own `CLAUDE_CODE_SESSION_ID`, so a tool call cannot name another
 session. It has no pull. A missing ID fails closed as `session_missing`.
 
-The Claude plugin's MCP entry launches `khala mcp-serve` with
+The Claude plugin's MCP entry launches the staged launcher's `mcp-serve` with
 `KHALA_MCP_HARNESS=claude`. The session ID alone does not select this mode,
 because every process a Claude Bash tool starts inherits it. In this mode
 `mcp-serve` holds no binding, inbox, or listener lock. It serves three tools
@@ -945,8 +955,8 @@ under `dist/payload/`. Setup stages three installer files:
 
 | Path | Component | Runs for |
 | --- | --- | --- |
-| `$XDG_DATA_HOME/khala/versions/<version>/khala.js` | `payload` | Codex, OpenCode, Cursor |
-| `$XDG_DATA_HOME/khala/bin/khala` (0500; runs the runtime with the Node that ran setup) | `launcher` | Codex, OpenCode, Cursor |
+| `$XDG_DATA_HOME/khala/versions/<version>/khala.js` | `payload` | Claude Code, Codex, OpenCode, Cursor |
+| `$XDG_DATA_HOME/khala/bin/khala` (0500; runs the runtime with the Node that ran setup) | `launcher` | Claude Code, Codex, OpenCode, Cursor |
 | `$XDG_DATA_HOME/khala/bin/opencode.js` | `payload` | OpenCode |
 
 The first harness in harness order that runs a file and is being set up records it.

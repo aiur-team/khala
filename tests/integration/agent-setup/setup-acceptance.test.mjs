@@ -578,18 +578,24 @@ describe('installed entries', () => {
    * gets its whole `input` and EOF, as its harness sends it; an MCP session keeps stdin open.
    */
   async function runProcess(command, args, env, { input, ms, until = null }) {
-    const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Its own process group, so stopping it also stops what a hook shell started.
+    const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    child.stdin.on('error', () => {});
     let stdout = '';
     let stderr = '';
     let settle;
     const settled = new Promise(resolve => { settle = resolve; });
-    const exited = new Promise(resolve => child.once('exit', (code, signal) => { resolve({ code, signal }); settle(); }));
+    // A command that does not exist emits `error` and never `exit`.
+    const exited = new Promise(resolve => {
+      child.once('exit', (code, signal) => { resolve({ code, signal }); settle(); });
+      child.once('error', error => { resolve({ code: null, signal: null, error: error.code }); settle(); });
+    });
     child.stdout.on('data', chunk => { stdout += chunk; if (until?.(stdout)) settle(); });
     child.stderr.on('data', chunk => { stderr += chunk; });
     if (until === null) child.stdin.end(input); else child.stdin.write(input);
     await Promise.race([settled, new Promise(resolve => setTimeout(resolve, ms))]);
     child.stdin.end();
-    child.kill('SIGKILL');
+    if (child.pid !== undefined) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } }
     return { ...(await exited), stdout, stderr };
   }
 
@@ -627,6 +633,7 @@ describe('installed entries', () => {
       for (const [harness, entry] of Object.entries(entries.mcp)) {
         const before = requests.length;
         const result = await runProcess(entry.command, entry.args, { ...env, ...entry.env }, { input: INITIALIZE, ms: 3_000, until: initialized });
+        assert.equal(result.error, undefined, `${harness} MCP entry ${entry.command} did not start`);
         const reached = since(before);
         if (harness === 'claude') {
           // The Claude entry holds no binding, so it serves its session tools and answers.
