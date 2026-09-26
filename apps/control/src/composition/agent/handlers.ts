@@ -80,6 +80,7 @@ const unavailableChannelAccessRoutes = Object.freeze([
 const unavailableChannelAccessExchangeRoutes = Object.freeze([
   unavailablePairing('/api/agent/channel-access/exchange'),
   unavailablePairing('/api/agent/channel-access/ready'),
+  unavailablePairing('/api/agent/channel-access/resume'),
 ]);
 const unavailableChannelDiscoveryRoutes = Object.freeze([
   Object.freeze({
