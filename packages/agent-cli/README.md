@@ -38,7 +38,7 @@ stdout for JSON-RPC.
 
 ## Package and release
 
-The published package is three self-contained files. `scripts/bundle.mjs` (run by
+The published package is three self-contained files plus the internal browser bundle. `scripts/bundle.mjs` (run by
 `build` and `prepack`) bundles `src/cli/main.ts` and its whole runtime closure,
 including the workspace connector and contracts, into `dist/khala.js`. It
 bundles the internal application's composition entry
@@ -46,7 +46,7 @@ bundles the internal application's composition entry
 `dist/khala-internal.js`, which `khala.js` imports only for `khala internal`, so
 no other command loads the local store, server, or `node:sqlite`. It bundles
 the OpenCode plugin (`src/opencode/index.ts`) into `dist/opencode.js`, the
-`@aiur/khala/opencode` export. The tarball carries only those three files, this README and `package.json`; it declares no
+`@aiur/khala/opencode` export. It copies the web build's `apps/web/dist/internal-web/` (run `pnpm --filter @khala/web build:internal` first) to `dist/internal-web/`, which `khala internal` serves. The tarball carries only those files, this README and `package.json`; it declares no
 runtime dependencies, so installing it fetches nothing and runs no lifecycle
 script. On Node 22.23.2 or later:
 

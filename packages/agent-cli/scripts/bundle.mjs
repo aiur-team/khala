@@ -16,6 +16,8 @@ import { build } from 'esbuild';
 
 const packageDirectory = fileURLToPath(new URL('..', import.meta.url));
 
+export const INTERNAL_WEB_SOURCE = path.resolve(packageDirectory, '../../apps/web/dist/internal-web');
+
 export const INTERNAL_ENTRY_POINT = path.resolve(packageDirectory, '../../apps/internal/src/composition/internal-cli.ts');
 
 async function buildOne({ entryPoint, outfile, absWorkingDir }) {
@@ -42,6 +44,7 @@ export async function bundle({
   outfile = path.join(packageDirectory, 'dist/khala.js'),
   absWorkingDir = packageDirectory,
   internalEntryPoint = INTERNAL_ENTRY_POINT,
+  internalWebSource = INTERNAL_WEB_SOURCE,
 } = {}) {
   await fs.rm(path.dirname(outfile), { recursive: true, force: true });
   const metafile = await buildOne({ entryPoint, outfile, absWorkingDir });
@@ -50,6 +53,12 @@ export async function bundle({
   // internal application beside it; the gate's file allowlist then refuses it.
   if (internalEntryPoint && existsSync(internalEntryPoint)) {
     await buildOne({ entryPoint: internalEntryPoint, outfile: path.join(path.dirname(outfile), 'khala-internal.js'), absWorkingDir });
+  }
+  // `khala internal` serves `internal-web/` beside `khala-internal.js`; the web build
+  // (`pnpm --filter @khala/web build`) must have produced it first.
+  if (internalEntryPoint && existsSync(internalEntryPoint)) {
+    if (!existsSync(path.join(internalWebSource, 'index.html'))) throw new Error(`internal web bundle missing at ${internalWebSource}; run "pnpm --filter @khala/web build" first`);
+    await fs.cp(internalWebSource, path.join(path.dirname(outfile), 'internal-web'), { recursive: true });
   }
   return metafile;
 }
