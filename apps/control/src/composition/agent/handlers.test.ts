@@ -104,6 +104,7 @@ describe('registerAgentHandlers', () => {
           observedAt: '2026-09-19T12:00:00.000Z',
           internalEvidence: 'must not escape',
         },
+        acknowledgement: 'batch_token_next_call' as const,
         installCommand: "khala connect 'https://khala.example/room/link'",
         pendingPlaintext: 'must not escape',
       }],
@@ -130,6 +131,7 @@ describe('registerAgentHandlers', () => {
         connection: 'connected',
         routeLabel: 'Codex CLI',
         lastReceipt: { kind: 'context_consumed', observedAt: '2026-09-19T12:00:00.000Z' },
+        acknowledgement: 'batch_token_next_call',
         installCommand: "khala connect 'https://khala.example/room/link'",
       }],
     });

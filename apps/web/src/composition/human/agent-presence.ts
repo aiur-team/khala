@@ -1,6 +1,8 @@
 import {
-  RECEIPT_KINDS,
-  type ReceiptKind,
+  ACKNOWLEDGEMENT_SUPPORT,
+  type AcknowledgementSupport,
+  RECEIPT_KINDS_V2,
+  type ReceiptKindV2,
 } from '@khala/contracts/delivery/index';
 import {
   decodeParticipantId,
@@ -31,9 +33,10 @@ export type ChannelUiCompositionOptions = Readonly<{
 export type RoomUiCompositionOptions = ChannelUiCompositionOptions;
 
 const CONNECTIONS: readonly AgentConnectionState[] = ['connected', 'stale', 'offline', 'unknown'];
-const AGENT_KEYS = [
+const LEGACY_AGENT_KEYS = [
   'participantId', 'displayName', 'ownerDisplayName', 'connection', 'routeLabel', 'lastReceipt', 'installCommand',
 ] as const;
+const AGENT_KEYS = [...LEGACY_AGENT_KEYS, 'acknowledgement'] as const;
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -50,12 +53,21 @@ function visibleText(value: unknown): value is string {
     && !/[\u0000-\u001f\u007f-\u009f\u061c\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/.test(value);
 }
 
-function receipt(value: unknown): Readonly<{ kind: ReceiptKind; observedAt: string }> | null | undefined {
+function receipt(value: unknown): Readonly<{ kind: ReceiptKindV2; observedAt: string }> | null | undefined {
   if (value === null) return null;
   if (!object(value) || !exactKeys(value, ['kind', 'observedAt'])) return undefined;
-  if (typeof value.kind !== 'string' || !(RECEIPT_KINDS as readonly string[]).includes(value.kind)) return undefined;
+  if (typeof value.kind !== 'string' || !(RECEIPT_KINDS_V2 as readonly string[]).includes(value.kind)) return undefined;
   if (!visibleText(value.observedAt) || Number.isNaN(Date.parse(value.observedAt))) return undefined;
-  return { kind: value.kind as ReceiptKind, observedAt: value.observedAt };
+  return { kind: value.kind as ReceiptKindV2, observedAt: value.observedAt };
+}
+
+/** A snapshot from before the capability existed presents it as `unknown`; any other value is closed. */
+function acknowledgement(raw: Record<string, unknown>): AcknowledgementSupport | undefined {
+  if (!Object.hasOwn(raw, 'acknowledgement')) return 'unknown';
+  const value = raw.acknowledgement;
+  return typeof value === 'string' && (ACKNOWLEDGEMENT_SUPPORT as readonly string[]).includes(value)
+    ? value as AcknowledgementSupport
+    : undefined;
 }
 
 function decodeSnapshot(value: unknown): Readonly<{
@@ -68,12 +80,16 @@ function decodeSnapshot(value: unknown): Readonly<{
   }
   const commands: { participantId: ParticipantId; command: string }[] = [];
   const agents: AgentPresence[] = value.agents.map(raw => {
-    if (!object(raw) || !exactKeys(raw, AGENT_KEYS)) throw new TypeError('invalid_agent_status');
+    if (!object(raw) || !(exactKeys(raw, AGENT_KEYS) || exactKeys(raw, LEGACY_AGENT_KEYS))) {
+      throw new TypeError('invalid_agent_status');
+    }
     const participant = decodeParticipantId(raw.participantId);
     const lastReceipt = receipt(raw.lastReceipt);
+    const support = acknowledgement(raw);
     if (!participant.ok || !visibleText(raw.displayName) || !visibleText(raw.ownerDisplayName)
       || typeof raw.connection !== 'string' || !(CONNECTIONS as readonly string[]).includes(raw.connection)
-      || !visibleText(raw.routeLabel) || lastReceipt === undefined || !visibleText(raw.installCommand)) {
+      || !visibleText(raw.routeLabel) || lastReceipt === undefined || support === undefined
+      || !visibleText(raw.installCommand)) {
       throw new TypeError('invalid_agent_status');
     }
     commands.push({ participantId: participant.value, command: raw.installCommand });
@@ -84,6 +100,7 @@ function decodeSnapshot(value: unknown): Readonly<{
       connection: raw.connection as AgentConnectionState,
       routeLabel: raw.routeLabel,
       lastReceipt,
+      acknowledgement: support,
     };
   });
   return { snapshot: { generation: value.generation as number, agents }, commands };

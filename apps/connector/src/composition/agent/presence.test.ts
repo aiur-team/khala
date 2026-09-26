@@ -105,6 +105,7 @@ describe('connector agent presence source', () => {
         connection: 'connected',
         routeLabel: 'Codex CLI',
         lastReceipt: { kind: 'context_consumed', observedAt: receipt.observedAt },
+        acknowledgement: 'unknown',
         installCommand: "khala connect 'https://khala.example/channel/link'",
       }],
     });
@@ -166,5 +167,28 @@ describe('connector agent presence source', () => {
     stop();
     expect(subscribe).toHaveBeenCalledOnce();
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['unknown', status()],
+    ['unsupported', status({ harnessCapabilities: { ...capabilities, acknowledgement: 'unsupported' } })],
+    ['batch_token_next_call', status({ harnessCapabilities: { ...capabilities, acknowledgement: 'batch_token_next_call' } })],
+    // Without a selected capability nothing is known, whatever the receipts say.
+    ['unknown', status({ harnessCapabilities: null })],
+  ] as const)('carries the selected capability %s unchanged, never inferred from receipts', async (expected, current) => {
+    const acknowledged = { ...receipt, v: 2, kind: 'agent_acknowledged', source: 'agent', evidenceRef: 'ack-1', errorCode: null } as const;
+    const source = createAgentPresenceSource(runtime(current), {
+      identity: async () => ({ roomId: 'room-1' as RoomId, displayName: 'Agent', ownerDisplayName: 'Owner' }),
+      lastReceipt: async () => acknowledged,
+      installCommand: async () => 'khala connect link',
+      subscribe: () => () => undefined,
+    });
+
+    const snapshot = await source.snapshot('room-1' as RoomId, new AbortController().signal);
+
+    expect(snapshot.agents[0]).toMatchObject({
+      acknowledgement: expected,
+      lastReceipt: { kind: 'agent_acknowledged', observedAt: receipt.observedAt },
+    });
   });
 });

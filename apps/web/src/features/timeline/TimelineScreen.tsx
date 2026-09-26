@@ -4,9 +4,12 @@
 // review-action slot) render outside the message-content renderer, so
 // message syntax can never create them (KTD4).
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { RoomId } from '@khala/contracts/messaging/ids';
 import type { EventRef, MessageContent, ParticipantView, ChannelPort, TimelineItem } from '@khala/contracts/messaging/index';
+import type { ReceiptEvidenceController, ReceiptEvidenceView } from '../receipt-evidence/controller';
+import { type EvidenceUnit, isInlineUnit } from '../receipt-evidence/model';
+import { EvidenceAccess, EvidenceAnnouncer, EvidenceGroup, InlineEvidence } from '../receipt-evidence/ReceiptEvidence';
 import { attributionFor, buildDisplayNameResolver, ownershipLabel } from './attribution';
 import type { TimelineController } from './controller';
 import { renderMessageContent } from './message-renderer';
@@ -29,7 +32,51 @@ export interface TimelineScreenProps {
   sendBlockedReason?: string | null;
   /** Keeps unreconciled sends across a reload so a retry reuses the same `clientTxnId`. */
   pendingStore?: PendingSendStore;
+  /** The owner's durable receipt evidence for this channel; absent means none is shown. */
+  evidence?: ReceiptEvidenceController;
 }
+
+/** A per-row DOM id for the link that opened an evidence group, so back can return to it. */
+function evidenceLinkId(unit: EvidenceUnit, eventId: string): string {
+  return `${unit.id}-from-${eventId.replace(/[^A-Za-z0-9-]/g, character => `_${character.charCodeAt(0).toString(16)}_`)}`;
+}
+
+const EVIDENCE_RETURN = 'khalaEvidenceReturn';
+
+type EvidenceLayout = Readonly<{
+  inline: ReadonlyMap<string, EvidenceUnit>;
+  /** Groups rendered before their earliest loaded member row. */
+  groupsBefore: ReadonlyMap<string, readonly EvidenceUnit[]>;
+  /** Every loaded member row's non-inline groups. */
+  memberOf: ReadonlyMap<string, readonly EvidenceUnit[]>;
+}>;
+
+/**
+ * Places each unit against the loaded rows. A group is anchored before its
+ * earliest loaded member, so loading an older page moves it rather than losing
+ * it, and a member link is only exposed while its target is rendered.
+ */
+function layoutEvidence(units: readonly EvidenceUnit[], loaded: readonly string[]): EvidenceLayout {
+  const position = new Map(loaded.map((eventId, index) => [eventId, index]));
+  const inline = new Map<string, EvidenceUnit>();
+  const groupsBefore = new Map<string, EvidenceUnit[]>();
+  const memberOf = new Map<string, EvidenceUnit[]>();
+  for (const unit of units) {
+    const members = unit.eventIds.filter(eventId => position.has(eventId));
+    if (members.length === 0) continue;
+    if (isInlineUnit(unit)) {
+      inline.set(members[0]!, unit);
+      continue;
+    }
+    const first = members.reduce((earliest, eventId) => (position.get(eventId)! < position.get(earliest)! ? eventId : earliest));
+    groupsBefore.set(first, [...(groupsBefore.get(first) ?? []), unit]);
+    for (const eventId of members) memberOf.set(eventId, [...(memberOf.get(eventId) ?? []), unit]);
+  }
+  return { inline, groupsBefore, memberOf };
+}
+
+const NO_EVIDENCE: ReceiptEvidenceView = { status: 'ready', units: [], announcement: null };
+const noEvidenceSubscribe = () => () => undefined;
 
 export interface PendingSendStore {
   load(): readonly PendingSend[];
@@ -75,9 +122,47 @@ function isReadableItem(item: TimelineItem): item is Extract<TimelineItem, { con
 }
 
 export function TimelineScreen({
-  controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore,
+  controller, roomPort, roomId, viewer, renderReviewAction, sendBlockedReason = null, pendingStore, evidence,
 }: TimelineScreenProps) {
   const data = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const evidenceView = useSyncExternalStore(
+    evidence?.subscribe ?? noEvidenceSubscribe,
+    evidence?.getSnapshot ?? (() => NO_EVIDENCE),
+    evidence?.getSnapshot ?? (() => NO_EVIDENCE),
+  );
+  const evidenceLayout = useMemo(
+    () => layoutEvidence(evidenceView.units, data.items.map(item => item.ref.eventId)),
+    [data.items, evidenceView.units],
+  );
+
+  useEffect(() => {
+    void evidence?.refresh();
+  }, [evidence]);
+
+  // Back from an evidence group returns focus to the exact row link that opened it.
+  useEffect(() => {
+    if (!evidence) return undefined;
+    const onPopState = (event: PopStateEvent) => {
+      const state: unknown = event.state;
+      const returnTo = typeof state === 'object' && state !== null ? (state as Record<string, unknown>)[EVIDENCE_RETURN] : undefined;
+      const target = typeof returnTo === 'string' ? document.getElementById(returnTo) : null;
+      if (target) {
+        target.scrollIntoView({ block: 'nearest' });
+        target.focus();
+      }
+    };
+    addEventListener('popstate', onPopState);
+    return () => removeEventListener('popstate', onPopState);
+  }, [evidence]);
+
+  function openEvidence(unit: EvidenceUnit, linkId: string): void {
+    const current: unknown = history.state;
+    history.replaceState({ ...(typeof current === 'object' && current !== null ? current : {}), [EVIDENCE_RETURN]: linkId }, '');
+    history.pushState(null, '', `#${unit.id}`);
+    const heading = document.getElementById(`${unit.id}-heading`);
+    heading?.scrollIntoView({ block: 'start' });
+    heading?.focus();
+  }
   const [draft, setDraft] = useState('');
   // Every send keeps its own row by `clientTxnId` until reconciled: a later
   // send never silently replaces an earlier failed/outcome_unknown one (R3).
@@ -190,6 +275,12 @@ export function TimelineScreen({
           You no longer have access to this conversation.
         </p>
       ) : null}
+      {evidence ? (
+        <>
+          <EvidenceAccess status={evidenceView.status} onRetry={() => void evidence.refresh()} />
+          <EvidenceAnnouncer text={evidenceView.announcement?.text ?? null} />
+        </>
+      ) : null}
       {data.nextCursor !== null ? (
         <button type="button" className="timeline__load-older" disabled={isLoadingOlder} onClick={() => void handleLoadOlder()}>
           Load earlier messages
@@ -207,26 +298,54 @@ export function TimelineScreen({
         {data.items.length === 0 && data.phase === 'ready' ? <li className="timeline__empty">No messages yet.</li> : null}
         {data.items.map(item => {
           const attribution = attributionFor(item.participant, viewer.ownerId);
+          const inlineEvidence = evidence ? evidenceLayout.inline.get(item.ref.eventId) : undefined;
+          const groups = evidence ? evidenceLayout.groupsBefore.get(item.ref.eventId) ?? [] : [];
+          const memberOf = evidence ? evidenceLayout.memberOf.get(item.ref.eventId) ?? [] : [];
           return (
-            <li key={item.ref.eventId} data-event-id={item.ref.eventId} className="timeline__row">
-              <header className="timeline__row-header">
-                <span className="timeline__author" dir="auto">
-                  {resolveDisplayName(item.participant)}
-                </span>
-                <span className="timeline__kind">{ownershipLabel(attribution)}</span>
-                <time className="timeline__timestamp" dateTime={item.receivedAt}>
-                  {item.receivedAt}
-                </time>
-              </header>
-              {isReadableItem(item) ? (
-                <>
-                  <div className="timeline__body">{renderMessageContent(item.content)}</div>
-                  {renderReviewAction ? <div className="timeline__review-slot">{renderReviewAction(item.ref)}</div> : null}
-                </>
-              ) : (
-                <p className="timeline__body message-content__unavailable">Content unavailable.</p>
-              )}
-            </li>
+            <Fragment key={item.ref.eventId}>
+              {groups.map(unit => (
+                <li key={unit.id} className="timeline__evidence-group">
+                  <EvidenceGroup unit={unit} status={evidenceView.status} />
+                </li>
+              ))}
+              <li data-event-id={item.ref.eventId} className="timeline__row">
+                <header className="timeline__row-header">
+                  <span className="timeline__author" dir="auto">
+                    {resolveDisplayName(item.participant)}
+                  </span>
+                  <span className="timeline__kind">{ownershipLabel(attribution)}</span>
+                  <time className="timeline__timestamp" dateTime={item.receivedAt}>
+                    {item.receivedAt}
+                  </time>
+                </header>
+                {isReadableItem(item) ? (
+                  <>
+                    <div className="timeline__body">{renderMessageContent(item.content)}</div>
+                    {renderReviewAction ? <div className="timeline__review-slot">{renderReviewAction(item.ref)}</div> : null}
+                  </>
+                ) : (
+                  <p className="timeline__body message-content__unavailable">Content unavailable.</p>
+                )}
+                {inlineEvidence ? <InlineEvidence unit={inlineEvidence} status={evidenceView.status} /> : null}
+                {memberOf.map(unit => {
+                  const linkId = evidenceLinkId(unit, item.ref.eventId);
+                  return (
+                    <a
+                      key={unit.id}
+                      id={linkId}
+                      className="timeline__evidence-link"
+                      href={`#${unit.id}`}
+                      onClick={event => {
+                        event.preventDefault();
+                        openEvidence(unit, linkId);
+                      }}
+                    >
+                      View batch evidence
+                    </a>
+                  );
+                })}
+              </li>
+            </Fragment>
           );
         })}
         {pendingList.map(entry => (
