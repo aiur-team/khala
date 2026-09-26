@@ -73,7 +73,9 @@ export const claudeAppSetupAdapter: SetupAdapter = {
         executable: candidate.path,
         version: await detectedVersion(environment, candidate.path, candidate.kind),
         // A version alone never matches a proof: the account tier and administrator
-        // policy cannot be inspected locally, and no tuple is proven anyway.
+        // policy cannot be inspected locally, and no tuple is proven anyway. This
+        // adapter is report-only and plans nothing, so the planner must not list it
+        // in `unsupportedHarnesses`; that would refuse setup for every other harness.
         supported: false,
       };
     }
