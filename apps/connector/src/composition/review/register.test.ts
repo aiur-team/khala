@@ -62,11 +62,26 @@ describe('connector review registration', () => {
     await capability.start();
     await capability.start();
     expect(served).toHaveLength(1);
-    expect(Object.keys(served[0]!).sort()).toEqual(['approve', 'preview', 'resumeReleases']);
+    expect(Object.keys(served[0]!).sort()).toEqual(['approve', 'dispose', 'preview', 'resumeReleases']);
     expect(errors).toEqual(['resume_failed']);
 
     await capability.stop();
     await capability.stop();
     expect(disposed()).toBe(1);
+  });
+  it('overlapping starts serve once, and a stop during recovery keeps the transport closed', async () => {
+    const overlap = transport();
+    const first = registerReview({ ...context, dependencies: { protectedTransport: overlap.port, control } });
+    await Promise.all([first.start(), first.start()]);
+    expect(overlap.served).toHaveLength(1);
+    await first.stop();
+    expect(overlap.disposed()).toBe(1);
+
+    const interrupted = transport();
+    const second = registerReview({ ...context, dependencies: { protectedTransport: interrupted.port, control } });
+    const starting = second.start();
+    await second.stop();
+    await starting;
+    expect(interrupted.served).toEqual([]);
   });
 });

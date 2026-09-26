@@ -101,7 +101,8 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   const stopRoom = room.observe(roomId, onRoom);
   const refreshMs = options.refreshMs ?? 5_000;
   const timer = refreshMs > 0 ? setInterval(() => {
-    if (listeners.size > 0) void refresh();
+    // A slow answer is never cancelled by the next tick; only new room data supersedes it.
+    if (listeners.size > 0 && inFlight === null) void refresh();
   }, refreshMs) : null;
   (timer as { unref?: () => void } | null)?.unref?.();
 
@@ -142,12 +143,17 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
       // Settled answers refresh receipts and the queue even if the caller stopped waiting.
       void sent.then(() => refresh());
       if (signal.aborted) return { kind: 'outcome_unknown', commandId: command.commandId };
+      let stopWaiting: () => void = () => {};
       const abandoned = new Promise<ApprovalUiResult>(resolve => {
-        signal.addEventListener('abort', () => resolve({ kind: 'outcome_unknown', commandId: command.commandId }), {
-          once: true,
-        });
+        const onAbort = () => resolve({ kind: 'outcome_unknown', commandId: command.commandId });
+        signal.addEventListener('abort', onAbort, { once: true });
+        stopWaiting = () => signal.removeEventListener('abort', onAbort);
       });
-      return Promise.race([sent, abandoned]);
+      try {
+        return await Promise.race([sent, abandoned]);
+      } finally {
+        stopWaiting();
+      }
     },
 
     dispose() {

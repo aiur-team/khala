@@ -51,8 +51,10 @@ export type ReviewControlDependencies = Readonly<{
   bindingId?: BindingId;
   /** Fresh releaser-chosen identifiers. Defaults to random UUIDs. */
   newReleaseId?: () => string;
+  /** First delay before re-handing a release the dispatcher did not take. Doubles per miss. Defaults to 1000. */
+  resumeDelayMs?: number;
   /** Called with a content-free code when a background step fails; never with a payload. */
-  onError?: (code: 'enqueue_failed' | 'resume_failed') => void;
+  onError?: (code: 'enqueue_failed' | 'enqueue_conflict' | 'resume_failed') => void;
 }>;
 
 /**
@@ -64,9 +66,12 @@ export interface ReviewControlHandler {
   preview(authority: OwnerAuthority, input: unknown): Promise<PreviewOutcome>;
   /** Re-enqueues committed releases for `bindingId` that never reached the dispatcher. */
   resumeReleases(bindingId: BindingId): Promise<void>;
+  /** Cancels scheduled handoff retries. Committed releases stay durable for the next start. */
+  dispose(): void;
 }
 
 const MAX_STALE_LEDGER_ATTEMPTS = 3;
+const MAX_RESUME_ATTEMPTS = 6;
 
 const refuse = (code: Exclude<ApprovalResult, { ok: true }>['code'] & string): ApprovalResult =>
   ({ ok: false, code } as ApprovalResult);
@@ -101,31 +106,94 @@ export function createReviewControlHandler(deps: ReviewControlDependencies): Rev
     });
   }
 
-  async function enqueue(job: UnverifiedReleasedJob): Promise<void> {
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  let disposed = false;
+
+  /** Hands every undispatched release for the binding over again; false when that could not run. */
+  async function resumeOnce(bindingId: BindingId): Promise<boolean> {
     try {
-      await deps.releases.enqueue(job);
+      const report = await recoverConnectorStorage(deps.storage);
+      const jobs = await deps.storage.ledger.transaction(tx => report.undispatchedReleases.flatMap(id => {
+        const release = tx.readRelease(id);
+        return release !== null && release.job.binding.bindingId === bindingId ? [release.job] : [];
+      }));
+      let delivered = true;
+      for (const job of jobs) delivered = await handOver(job) && delivered;
+      return delivered;
     } catch {
-      // The release is durable. `resumeReleases` hands it over again after restart.
-      deps.onError?.('enqueue_failed');
+      deps.onError?.('resume_failed');
+      return false;
     }
   }
 
-  /** Replays a committed outcome and makes sure its release reached the dispatcher. */
+  /**
+   * An accepted release must not wait for a restart because the dispatcher missed it
+   * once. Retries back off and stop after a bounded number of misses; the release
+   * stays durable and `start()` resumes it after that.
+   */
+  function scheduleResume(bindingId: BindingId, attempt = 0): void {
+    if (disposed || attempt >= MAX_RESUME_ATTEMPTS) return;
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      void resumeOnce(bindingId).then(ok => { if (!ok) scheduleResume(bindingId, attempt + 1); });
+    }, (deps.resumeDelayMs ?? 1_000) * 2 ** attempt);
+    (timer as { unref?: () => void }).unref?.();
+    timers.add(timer);
+  }
+
+  /** Enqueues once. False when the dispatcher did not take it; a conflict is reported, never retried. */
+  async function handOver(job: UnverifiedReleasedJob): Promise<boolean> {
+    try {
+      const outcome = await deps.releases.enqueue(job);
+      if (outcome === 'conflict') deps.onError?.('enqueue_conflict');
+      return true;
+    } catch {
+      deps.onError?.('enqueue_failed');
+      return false;
+    }
+  }
+
+  async function enqueue(job: UnverifiedReleasedJob): Promise<void> {
+    if (!await handOver(job)) scheduleResume(job.binding.bindingId);
+  }
+
+  /**
+   * Replays a committed outcome and makes sure its release reached the dispatcher.
+   * The outcome is already durable, so a failed read here never changes the answer.
+   */
   async function replay(record: CommandRecord, inputDigest: string): Promise<ApprovalResult> {
     if (record.inputDigest !== inputDigest) return refuse('idempotency_conflict');
-    if (record.result.ok) {
-      const jobs = await deps.storage.ledger.transaction(tx =>
-        record.result.ok ? record.result.releaseIds.map(id => tx.readRelease(id)?.job ?? null) : []);
-      for (const job of jobs) if (job !== null) await enqueue(job);
+    const result = record.result;
+    if (result.ok) {
+      try {
+        const jobs = await deps.storage.ledger.transaction(tx => result.releaseIds.map(id => tx.readRelease(id)?.job ?? null));
+        for (const job of jobs) if (job !== null) await enqueue(job);
+      } catch {
+        const bound = record.command?.bindingId ?? deps.bindingId;
+        if (bound !== undefined) scheduleResume(bound);
+      }
     }
-    return record.result;
+    return result;
   }
+
+  const unknown = (command: ApprovalCommand): ApprovalResult =>
+    ({ ok: false, code: 'outcome_unknown', operationId: command.commandId as string as OperationId });
 
   async function attempt(
     authority: OwnerAuthority,
     command: ApprovalCommand,
     inputDigest: string,
   ): Promise<Attempt> {
+    // A journalled command is answered from the journal alone, whatever else is down.
+    // An earlier request may have committed it, so an unreadable journal is unknown, not refused.
+    let journalled: CommandRecord | null;
+    try {
+      journalled = await deps.storage.ledger.transaction(tx => tx.readCommand(authority.ownerId, command.commandId));
+    } catch {
+      return { kind: 'done', result: unknown(command) };
+    }
+    if (journalled !== null) return { kind: 'done', result: await replay(journalled, inputDigest) };
+
     const [effective, members] = await Promise.all([
       effectivePolicy(command.bindingId),
       deps.room.members(command.roomId),
@@ -178,15 +246,15 @@ export function createReviewControlHandler(deps: ReviewControlDependencies): Rev
     } catch {
       // The commit may or may not have landed. The journal answers a retry of the
       // same command ID; nothing here may mint a second release for it.
-      return {
-        kind: 'done',
-        result: { ok: false, code: 'outcome_unknown', operationId: command.commandId as string as OperationId },
-      };
+      return { kind: 'done', result: unknown(command) };
     }
     if (committed.kind !== 'conflict') {
       if (committed.kind === 'committed') return { kind: 'done', result, job: decision.job };
-      const record = await deps.storage.ledger.transaction(tx => tx.readCommand(authority.ownerId, command.commandId));
-      return { kind: 'done', result: record === null ? refuse('unavailable') : await replay(record, inputDigest) };
+      // Another request committed this command first. Its outcome is durable, so a
+      // failed read may not report a definite refusal.
+      const record = await deps.storage.ledger.transaction(tx => tx.readCommand(authority.ownerId, command.commandId))
+        .catch(() => null);
+      return { kind: 'done', result: record === null ? unknown(command) : await replay(record, inputDigest) };
     }
     if (committed.code === 'stale_ledger') return { kind: 'retry' };
     return { kind: 'done', result: CONFLICTS[committed.code] };
@@ -207,7 +275,7 @@ export function createReviewControlHandler(deps: ReviewControlDependencies): Rev
         return outcome.result;
       }
     } catch {
-      // Reads failed before any commit was attempted: definitely nothing was written.
+      // Only reads before any commit attempt can throw here: nothing was written.
       return refuse('unavailable');
     }
     return refuse('unavailable');
@@ -227,17 +295,14 @@ export function createReviewControlHandler(deps: ReviewControlDependencies): Rev
   }
 
   async function resumeReleases(bindingId: BindingId): Promise<void> {
-    try {
-      const report = await recoverConnectorStorage(deps.storage);
-      const jobs = await deps.storage.ledger.transaction(tx => report.undispatchedReleases.flatMap(id => {
-        const release = tx.readRelease(id);
-        return release !== null && release.job.binding.bindingId === bindingId ? [release.job] : [];
-      }));
-      for (const job of jobs) await enqueue(job);
-    } catch {
-      deps.onError?.('resume_failed');
-    }
+    if (!await resumeOnce(bindingId)) scheduleResume(bindingId);
   }
 
-  return { approve, preview, resumeReleases };
+  function dispose(): void {
+    disposed = true;
+    for (const timer of timers) clearTimeout(timer);
+    timers.clear();
+  }
+
+  return { approve, preview, resumeReleases, dispose };
 }

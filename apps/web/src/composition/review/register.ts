@@ -34,21 +34,26 @@ const UNAVAILABLE: ReviewCapability = Object.freeze({
  */
 export function registerReview(dependencies?: BrowserReviewDependencies): ReviewCapability {
   if (!dependencies) return UNAVAILABLE;
-  const attached = new Map<HumanRouteContext, Set<BrowserReviewPort>>();
+  // One port per room and binding for each attached route; route teardown disposes them.
+  const attached = new Map<HumanRouteContext, Map<string, BrowserReviewPort>>();
+  const disposeAll = (ports: Map<string, BrowserReviewPort>) => {
+    for (const port of ports.values()) port.dispose();
+    ports.clear();
+  };
 
   return Object.freeze({
     id: 'review' as const,
     state: 'ready' as const,
 
     attach(context: HumanRouteContext) {
-      const ports = new Set<BrowserReviewPort>();
+      const previous = attached.get(context);
+      if (previous) disposeAll(previous);
+      const ports = new Map<string, BrowserReviewPort>();
       attached.set(context, ports);
       return {
         dispose() {
-          if (attached.get(context) !== ports) return;
-          attached.delete(context);
-          for (const port of ports) port.dispose();
-          ports.clear();
+          if (attached.get(context) === ports) attached.delete(context);
+          disposeAll(ports);
         },
       };
     },
@@ -58,6 +63,9 @@ export function registerReview(dependencies?: BrowserReviewDependencies): Review
       if (!ports) return null;
       const bindingId = dependencies.bindingFor(context, roomId);
       if (bindingId === null) return null;
+      const key = JSON.stringify([roomId, bindingId]);
+      const existing = ports.get(key);
+      if (existing) return existing;
       const port = createBrowserReviewPort({
         client: dependencies.client,
         room: context.room,
@@ -67,7 +75,7 @@ export function registerReview(dependencies?: BrowserReviewDependencies): Review
         limits: dependencies.limits,
         ...(dependencies.refreshMs === undefined ? {} : { refreshMs: dependencies.refreshMs }),
       });
-      ports.add(port);
+      ports.set(key, port);
       return port;
     },
   });

@@ -43,20 +43,37 @@ export function registerReview(context: ReviewCapabilityContext): ConnectorCapab
   }
   const handler = createReviewControlHandler({ ...control, bindingId: context.binding.bindingId });
   let dispose: (() => void) | null = null;
+  let starting: Promise<void> | null = null;
+  // Each stop invalidates every start still waiting on recovery.
+  let epoch = 0;
 
   return Object.freeze({
     id: 'review' as const,
     state: 'ready' as const,
-    async start() {
-      if (dispose !== null) return;
-      // A release committed before a crash reaches the dispatcher before new approvals do.
-      await handler.resumeReleases(context.binding.bindingId);
-      dispose = protectedTransport.serve(handler);
+    start() {
+      if (dispose !== null) return Promise.resolve();
+      if (starting !== null) return starting;
+      const token = epoch;
+      const run = async (): Promise<void> => {
+        try {
+          // A release committed before a crash reaches the dispatcher before new approvals do.
+          await handler.resumeReleases(context.binding.bindingId);
+          if (token === epoch && dispose === null) dispose = protectedTransport.serve(handler);
+        } finally {
+          if (starting === current) starting = null;
+        }
+      };
+      const current = run();
+      starting = current;
+      return current;
     },
     async stop() {
+      epoch += 1;
+      starting = null;
       const active = dispose;
       dispose = null;
       active?.();
+      handler.dispose();
     },
   });
 }

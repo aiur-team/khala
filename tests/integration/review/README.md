@@ -23,7 +23,9 @@ the agent's session.
 | Wrong owner, stale generation, stale policy, edited content, duplicate selection, unknown binding and revocation all refuse before anything is enqueued | `control-handler.test.ts` |
 | The same command ID with the same input replays its release IDs; with changed input it is `idempotency_conflict` | `control-handler.test.ts` |
 | Owner fields or `human: true` in a request body grant nothing; preview answers another owner exactly like an unknown binding | `control-handler.test.ts` |
-| The capability handle exposes no approval entry point; the handler is served only on the protected transport | `register.test.ts` |
+| The capability handle exposes no approval entry point. The handler is served only on the protected transport, overlapping starts serve it once, and a stop during recovery keeps it closed | `register.test.ts` |
+| A dispatcher that misses the handoff once gets the release again without a restart. A dispatcher conflict is reported, not counted as delivered | `control-handler.test.ts` |
+| A committed command that cannot be read back answers `outcome_unknown`, never a definite refusal. A journalled command replays even while policy and membership reads are down | `control-handler.test.ts` |
 | The browser sends exact references only, never bodies or owner identity. It shows only digest-exact pending items, drops late old-generation answers, and clears the preview on revocation | `apps/web/src/composition/review/browser-port.test.ts` |
 | Approval JSON inside a message body stays inert; closing a browser wait does not cancel the write or change its command ID | `browser-port.test.ts` |
 
@@ -56,6 +58,11 @@ The KHA-115 ledger has no "is this event released" read, and `readApprovalSnapsh
 still returns a released event. A released item therefore stays in the preview until
 retention (KHA-130) removes it. Approving it again is refused (`stale_content`), so
 nothing is delivered twice. This only affects presentation.
+
+Definite refusals are not journalled, only committed releases. A command ID that
+was refused (for example `stale_policy`) can succeed if it is retried after the
+state that refused it changes. The browser always mints a new command ID for a new
+selection, and every success is still journalled once.
 
 ## Live run, once the prerequisites exist
 

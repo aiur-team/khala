@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   type ApprovalCommand, type BindingId, type CommandId, type DeliveryLimits, type DeviceId, type EventId,
   type EventRef, type OwnerAuthority, type OwnerId, type ParticipantId, type ReceiptId, type ReleaseId,
@@ -280,6 +280,66 @@ describe('review control handler', () => {
     const retry = await handler.approve(authority, command('approve-b-7', [refB]));
     expect(retry).toEqual({ ok: true, releaseIds: ['release_1'] });
     expect(releases.jobs.map(job => job.releaseId)).toEqual(['release_1']);
+  });
+
+  it('hands an accepted release over again without waiting for a restart', async () => {
+    const { storage } = await seeded();
+    const flaky = sink(1);
+    const errors: string[] = [];
+    const handler = handlerFor(storage, flaky, { resumeDelayMs: 5, onError: code => errors.push(code) });
+
+    expect(await handler.approve(authority, command('approve-b-7', [refB]))).toEqual({ ok: true, releaseIds: ['release_1'] });
+    expect(flaky.jobs).toEqual([]);
+    await vi.waitFor(() => expect(flaky.jobs.map(job => job.releaseId)).toEqual(['release_1']));
+    expect(errors).toEqual(['enqueue_failed']);
+    handler.dispose();
+  });
+
+  it('reports a dispatcher conflict instead of treating it as delivered', async () => {
+    const { storage } = await seeded();
+    const errors: string[] = [];
+    const conflicting = { jobs: [] as UnverifiedReleasedJob[], enqueue: async (): Promise<EnqueueResult> => 'conflict' };
+    const handler = handlerFor(storage, conflicting as ReturnType<typeof sink>, { onError: code => errors.push(code) });
+
+    expect(await handler.approve(authority, command('approve-b-7', [refB]))).toMatchObject({ ok: true });
+    expect(errors).toEqual(['enqueue_conflict']);
+  });
+
+  it('never answers a definite refusal when a committed command cannot be read back', async () => {
+    const { storage } = await seeded();
+    await handlerFor(storage, sink()).approve(authority, command('approve-b-7', [refB]));
+    const real = storage.ledger.transaction.bind(storage.ledger);
+    const unreadable = {
+      ...storage,
+      ledger: {
+        transaction: async <T>(run: Parameters<typeof real<T>>[0]): Promise<T> => {
+          let reads = false;
+          const value = await real(tx => run(new Proxy(tx, {
+            get(target, key, receiver) {
+              if (key === 'readCommand') reads = true;
+              return Reflect.get(target, key, receiver);
+            },
+          })));
+          if (reads) throw new Error('SQLITE_BUSY');
+          return value;
+        },
+      },
+    } as ConnectorStorage;
+    const handler = handlerFor(unreadable, sink(), { dispatchStorage: createConnectorDispatchStorage(storage) });
+
+    expect(await handler.approve(authority, command('approve-b-7', [refB])))
+      .toEqual({ ok: false, code: 'outcome_unknown', operationId: 'approve-b-7' });
+  });
+
+  it('replays a journalled command while the dispatch ledger and membership are down', async () => {
+    const { storage } = await seeded();
+    await handlerFor(storage, sink()).approve(authority, command('approve-b-7', [refB]));
+    const down = handlerFor(storage, sink(), {
+      dispatchStorage: { ledger: { transact: async () => { throw new Error('down'); } } },
+      room: { members: async () => { throw new Error('down'); } },
+    });
+
+    expect(await down.approve(authority, command('approve-b-7', [refB]))).toEqual({ ok: true, releaseIds: ['release_1'] });
   });
 
   it('keeps membership and missing policy explicit instead of inventing success', async () => {

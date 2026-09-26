@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   type ApprovalCommand, type BindingId, type CommandId, type DeliveryLimits, type EventRef, decodeDeliveryLimits,
 } from '@khala/contracts/delivery/index';
@@ -276,5 +276,72 @@ describe('browser review registration', () => {
     const none = registerReview({ client, limits, bindingFor: () => null });
     none.attach(context);
     expect(none.portFor(context, roomId)).toBeNull();
+  });
+  it('reuses one port per room and disposes the ports of a replaced attachment', () => {
+    const { client } = scriptedClient(() => ({ kind: 'ok', body: previewBody([]) }));
+    const capability = registerReview({ client, limits, refreshMs: 0, bindingFor: () => bindingId });
+    const first = capability.attach(context);
+    const port = capability.portFor(context, roomId)!;
+    expect(capability.portFor(context, roomId)).toBe(port);
+    let notified = 0;
+    port.subscribe(() => { notified += 1; }, new AbortController().signal);
+
+    const second = capability.attach(context);
+    const replacement = capability.portFor(context, roomId);
+    expect(replacement).not.toBe(port);
+    // The disposed port no longer subscribes; a stale first handle cannot tear down the new one.
+    expect(port.subscribe(() => undefined, new AbortController().signal)()).toBeUndefined();
+    first.dispose();
+    expect(capability.portFor(context, roomId)).toBe(replacement);
+    second.dispose();
+    expect(capability.portFor(context, roomId)).toBeNull();
+    expect(notified).toBe(0);
+  });
+});
+
+describe('browser review port lifecycle', () => {
+  it('removes its abort listener once an approval settles', async () => {
+    const { client } = scriptedClient(() => ({ kind: 'ok', body: previewBody([]) }));
+    const review = port(client, fakeRoom().room);
+    const controller = new AbortController();
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const signal = controller.signal;
+    const add = signal.addEventListener.bind(signal);
+    const remove = signal.removeEventListener.bind(signal);
+    signal.addEventListener = ((type: string, listener: EventListener, options?: AddEventListenerOptions) => {
+      added.push(listener);
+      add(type, listener, options);
+    }) as typeof signal.addEventListener;
+    signal.removeEventListener = ((type: string, listener: EventListener) => {
+      removed.push(listener);
+      remove(type, listener);
+    }) as typeof signal.removeEventListener;
+
+    await review.approve(command('c-listener'), signal);
+
+    expect(added).toHaveLength(1);
+    expect(removed).toEqual(added);
+    review.dispose();
+  });
+
+  it('does not let the polling tick cancel a slow preview', async () => {
+    vi.useFakeTimers();
+    try {
+      let answer!: (value: Answer) => void;
+      const { client, requests } = scriptedClient(() => new Promise<Answer>(resolve => { answer = resolve; }));
+      const { room, emit } = fakeRoom();
+      const review = createBrowserReviewPort({ client, room, roomId, bindingId, viewerOwnerId: viewer, limits, refreshMs: 10 });
+      review.subscribe(() => undefined, new AbortController().signal);
+      emit([itemB]);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(requests).toHaveLength(1);
+      answer({ kind: 'ok', body: previewBody([refOf(itemB)]) });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(review.snapshot().pending).toEqual([itemB]);
+      review.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
