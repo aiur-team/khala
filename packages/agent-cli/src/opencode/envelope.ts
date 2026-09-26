@@ -4,7 +4,7 @@
 
 import type { InboxBatch } from '../cli/inbox.js';
 import { MCP_SOFT_RESPONSE_BYTES } from '../mcp/result-postprocessor.js';
-import { plainObject, validDigest, validIdentifier } from '../cli/validation.js';
+import { exactKeys, plainObject, validDigest, validIdentifier } from '../cli/validation.js';
 
 export const OPENCODE_ENVELOPE_HEADER = 'khala-channel-envelope-v1';
 export const OPENCODE_ENVELOPE_KIND = 'khala.channel.batch';
@@ -14,7 +14,10 @@ export const OPENCODE_ENVELOPE_MAX_BYTES = MCP_SOFT_RESPONSE_BYTES;
 const FRAMING_RESERVE_BYTES = 16 * 1024;
 // JSON string escaping expands a payload byte to at most six bytes (`\u00XX`).
 const MAX_JSON_STRING_EXPANSION = 6;
-/** Payload budget for one inbox read, chosen so a batch within it always fits the ceiling. */
+/**
+ * Payload budget for one inbox read: a batch within it always fits the ceiling. The inbox
+ * still admits a first record over budget, so encoding re-checks the size and refuses.
+ */
 export const OPENCODE_BATCH_READ_BYTES = Math.floor(
   (OPENCODE_ENVELOPE_MAX_BYTES - FRAMING_RESERVE_BYTES) / MAX_JSON_STRING_EXPANSION,
 );
@@ -84,8 +87,4 @@ export function parseOpenCodeEnvelope(text: string): Readonly<{ token: string; r
     releaseIds.push(release.releaseId);
   }
   return { token: value.batchToken, releaseIds };
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }

@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { BindingId } from '@khala/contracts/delivery/index';
 import { CliError } from '../cli/errors.js';
-import { plainObject, validIdentifier } from '../cli/validation.js';
+import { exactKeys, plainObject, validIdentifier } from '../cli/validation.js';
 import { parseOpenCodeEnvelope } from './envelope.js';
 
 /** The session tuple one binding generation is admitted for, recorded on first observation. */
@@ -168,10 +168,6 @@ function decodeSteer(value: unknown): OpenCodeSteerRecord {
     || !validIdentifier(value.token) || !validIdentifier(value.anchorMessageID) || typeof value.envelope !== 'string'
     || parseOpenCodeEnvelope(value.envelope)?.token !== value.token) throw new CliError('storage_failed');
   return value as OpenCodeSteerRecord;
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {

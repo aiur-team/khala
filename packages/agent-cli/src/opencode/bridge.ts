@@ -326,11 +326,18 @@ export class OpenCodeSessionBridge {
         return refused(cliErrorCode(error));
       }
       const primary = JSON.stringify(publicSendResult(result));
-      const batch = await this.#readForTool(input.ackBatchToken);
-      const state = await this.#settleAcknowledged(gate.state, batch);
-      if (batch === null) return primary;
-      const envelope = await this.#deliverToTool(state, batch);
-      return envelope === null ? primary : `${primary}\n\n${envelope.text}`;
+      // The send result is authoritative from here: a failed piggyback is reported and
+      // suppressed, never turned into a refusal the agent could retry into a second send.
+      try {
+        const batch = await this.#readForTool(input.ackBatchToken);
+        const state = await this.#settleAcknowledged(gate.state, batch);
+        if (batch === null) return primary;
+        const envelope = await this.#deliverToTool(state, batch);
+        return envelope === null ? primary : `${primary}\n\n${envelope.text}`;
+      } catch (error) {
+        this.#report('error', [], cliErrorCode(error));
+        return primary;
+      }
     });
   }
 

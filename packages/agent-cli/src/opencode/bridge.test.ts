@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BindingId, EventRef, SessionBinding } from '@khala/contracts/delivery/index';
+import { CliError } from '../cli/errors.js';
 import { type BatchInbox, type ReadBatchInput, type WakeableInboxConsumer, openInbox } from '../cli/inbox.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import { type OpenCodeBridgeReport, type OpenCodeControls, OpenCodeSessionBridge } from './bridge.js';
@@ -59,6 +60,8 @@ async function harness(options: Readonly<{ mode: OpenCodeControls['mode']; versi
     store: null as unknown as OpenCodeBridgeStore,
     bridge: null as unknown as OpenCodeSessionBridge,
     version: options.version === undefined ? '1.17.10' : options.version,
+    directory: '/work/project',
+    failReads: false,
   };
   await start(h);
   return h;
@@ -68,7 +71,8 @@ async function harness(options: Readonly<{ mode: OpenCodeControls['mode']; versi
 async function start(h: {
   state: string; inbox: BatchInbox; opencode: FakeOpenCode; controls: FakeControls; send: FakeSend;
   reads: ReadBatchInput[]; reports: OpenCodeBridgeReport[]; consumer: WakeableInboxConsumer;
-  store: OpenCodeBridgeStore; bridge: OpenCodeSessionBridge; version: string | null;
+  store: OpenCodeBridgeStore; bridge: OpenCodeSessionBridge; version: string | null; directory: string;
+  failReads: boolean;
 }): Promise<void> {
   // The real listener: hints arrive over its socket through `inbox.notifyListener`.
   const consumer = await h.inbox.acquireListener();
@@ -78,14 +82,17 @@ async function start(h: {
   h.bridge = new OpenCodeSessionBridge({
     binding,
     batch: {
-      readBatch: input => { h.reads.push(input); return consumer.readBatch(input); },
+      readBatch: input => {
+        h.reads.push(input);
+        return h.failReads ? Promise.reject(new CliError('storage_failed')) : consumer.readBatch(input);
+      },
       nextWake: () => consumer.nextWake(),
     },
     session: h.opencode,
     controls: h.controls,
     send: h.send,
     store: h.store,
-    runtime: { version: h.version, directory: '/work/project' },
+    runtime: { version: h.version, directory: h.directory },
     onReport: report => h.reports.push(report),
   });
 }
@@ -289,6 +296,16 @@ describe('OpenCode session bridge: acknowledgement and piggyback', () => {
     expect(h.opencode.prompts).toHaveLength(1);
   });
 
+  it('an accepted send stays accepted when the piggyback read fails, so it is never retried into a second send', async () => {
+    const h = await harness({ mode: 'async' });
+    await release(h, 'release-1', 'x');
+    h.failReads = true;
+    const reply = await h.bridge.sendMessage({ sessionID: A, message: 'hi', ackBatchToken: 'token-from-before' });
+    expect(JSON.parse(reply)).toMatchObject({ kind: 'accepted' });
+    expect(h.send.sent).toEqual(['hi']);
+    expect(h.reports.some(report => report.type === 'error' && report.reason === 'storage_failed')).toBe(true);
+  });
+
   it('keeps no host-side dedupe: bridge state holds no release IDs and no acknowledgement record', async () => {
     const h = await harness({ mode: 'sync' });
     h.opencode.userTurn(A, 'join');
@@ -478,6 +495,16 @@ describe('OpenCode session bridge: fail closed', () => {
     await restart(h);
     await modelCall(h);
     expect((await h.store.read()).degraded).toBe('version_drift');
+  });
+
+  it('directory drift after a restart degrades the binding', async () => {
+    const h = await harness({ mode: 'sync' });
+    h.opencode.userTurn(A, 'first');
+    await modelCall(h);
+    h.directory = '/work/another-project';
+    await restart(h);
+    await modelCall(h);
+    expect((await h.store.read()).degraded).toBe('directory_drift');
   });
 
   it('a deleted session degrades the binding and nothing is created in its place', async () => {
