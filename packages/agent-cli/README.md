@@ -943,13 +943,25 @@ session. It has no pull. A missing ID fails closed as `session_missing`.
 The Claude plugin's MCP entry launches the staged launcher's `mcp-serve` with
 `KHALA_MCP_HARNESS=claude`. The session ID alone does not select this mode,
 because every process a Claude Bash tool starts inherits it. In this mode
-`mcp-serve` holds no binding, inbox, or listener lock. It serves three tools
-over `createClaudeAgentEntry`:
+`mcp-serve` holds no binding, inbox, or listener lock. It serves these tools
+over `createClaudeAgentEntry`, alongside the session-bound discovery, access and
+roster tools:
 
 - `khala_send { message }`: the plugin's `/khala send`.
 - `khala_read {}`: both a person-entered `/khala read` and the agent's own read.
 - `khala_status {}`: the requested and effective mode, plus per-mode support
   from `HarnessCapabilities`, where unevidenced modes read `unproven`.
+- `khala_mode_get {}`: the same mode read, for the get-then-set flow. It returns
+  `requested`, `effective`, `effectiveReason`, `version` and `support`. While the
+  requested route is unproven, `effective` is `null` and `effectiveReason` says
+  why (decisions 34 and 37), for example `support_unknown`.
+- `khala_mode_set { requested, expectedVersion }`: the session's own mode change
+  (decision 42: the owner and the agent may both change it; last change wins).
+  It applies `khala mode set`'s rules: the result is `applied` with the new
+  state, `conflict` (`reason: "stale_version"`) with the `current` state when the
+  version moved, or `refused` with a code. On a conflict, read again and decide
+  afresh; never retry automatically. A set whose outcome cannot be known, such as
+  a transport failure after the request left, reports `outcome_unknown`.
 
 None of these tools accepts `bindingId` or `ackBatchToken`. The session selects
 the binding, and tokens stay inside Khala. A read or piggyback batch arrives as

@@ -115,7 +115,9 @@ export function defaultDependencies(env = process.env, command = 'khala') {
   const stateHome = env.XDG_STATE_HOME && path.isAbsolute(env.XDG_STATE_HOME)
     ? env.XDG_STATE_HOME : path.join(os.homedir(), '.local/state');
   const parent = process.ppid;
+  const internalRoot = path.join(stateHome, 'khala', 'internal');
   return {
+    bound: sessionId => sessionGranted(internalRoot, sessionId),
     khala: (op, sessionId) => runKhala(command, op, sessionId),
     stateRoot: path.join(stateHome, 'khala', 'claude-hooks'),
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
@@ -124,6 +126,41 @@ export function defaultDependencies(env = process.env, command = 'khala') {
     // Claude ends the watcher with the session; if it does not, the watcher notices its parent is gone.
     parentAlive: () => process.ppid === parent && processAlive(parent),
   };
+}
+
+/**
+ * Where the internal launcher's Claude session route keeps one session's granted
+ * descriptor: `<internal root>/discovery/<principal>/claude-grant.json`, the
+ * principal being the launcher's `discoveryPrincipal('claude', sessionId)`.
+ */
+export function claudeGrantPath(internalRoot, sessionId) {
+  const principal = createHash('sha256').update(['khala.internal.principal.v1', 'claude', sessionId].join('\0')).digest('base64url');
+  return path.join(internalRoot, 'discovery', `agent_${principal}`, 'claude-grant.json');
+}
+
+async function readDescriptor(file) {
+  try {
+    const value = JSON.parse(await fs.readFile(file, 'utf8'));
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The cheap local check every hook makes first, because setup enables the plugin for
+ * every Claude session on the machine: whether this session holds a grant from the
+ * running launch. Its own grant file must name a binding and carry the transport
+ * capability of the current `active.json`, as the launcher's route requires. It only
+ * reads, at most two small files, and an unbound session stops at the first missing
+ * one. The adapter still decides everything after it.
+ */
+export async function sessionGranted(internalRoot, sessionId) {
+  if (!validSessionId(sessionId)) return false;
+  const grant = await readDescriptor(claudeGrantPath(internalRoot, sessionId));
+  if (typeof grant?.bindingId !== 'string' || typeof grant.transportCapability !== 'string') return false;
+  const launch = await readDescriptor(path.join(internalRoot, 'active.json'));
+  return typeof launch?.transportCapability === 'string' && launch.transportCapability === grant.transportCapability;
 }
 
 function processAlive(pid) {
@@ -272,6 +309,11 @@ export async function runHook(role, raw, deps) {
   const input = decodeHookInput(role, raw);
   if (input === null) return { stdout: '', stderr: '', exitCode: 0 };
   const state = sessionState(deps, input.sessionId);
+  // An unbound session is a plain Claude session: no output, no state, no `khala` call.
+  // SessionEnd still removes the session's own state, which an unbound one never has.
+  if (role !== 'session-end' && !await deps.bound(input.sessionId).catch(() => false)) {
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
   try {
     switch (role) {
       case 'user-prompt-submit': return await userPromptSubmit(input, state, deps);

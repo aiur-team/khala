@@ -15,8 +15,8 @@ async function passingInput(): Promise<VerifyInput> {
   const deps = {
     ...world.deps,
     launcher: {
-      async start(resume: string | null) {
-        const server = await start(resume);
+      async start(spec: string, resume: string | null) {
+        const server = await start(spec, resume);
         return {
           ...server,
           async owner() {

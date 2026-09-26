@@ -35,6 +35,8 @@ describe('claude plugin scaffold', () => {
       'khala_read',
       'khala_status',
       'khala_listening_mode',
+      'khala_mode_get',
+      'khala_mode_set',
       'khala_create_channel',
       'khala_list_channels',
       'khala_request_channel_access',
