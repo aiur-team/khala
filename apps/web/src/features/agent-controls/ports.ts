@@ -1,5 +1,5 @@
 import type {
-  BindingId, DeliveryReceipt, HarnessCapabilities, ListeningModeCommand, ListeningModeResult, ListeningModeView,
+  BindingId, DeliveryReceiptTransport, HarnessCapabilities, ListeningModeCommand, ListeningModeResult, ListeningModeView,
   ModeSupport, OwnerRouteGrantCommand, PolicyAck, PolicySetCommand, SessionBinding,
 } from '@khala/contracts/delivery/index';
 import type { Disposer } from '@khala/contracts/messaging/index';
@@ -77,7 +77,7 @@ export type AgentControlsSnapshot = Readonly<{
   capabilities: HarnessCapabilities | null;
   policy: PolicySnapshot;
   connection: 'connected' | 'offline' | 'unknown';
-  latestReceipt: DeliveryReceipt | null;
+  latestReceipt: DeliveryReceiptTransport | null;
   /** `null` until the listening-mode store has answered for this binding generation. */
   listening: ListeningModeSnapshot | null;
 }>;

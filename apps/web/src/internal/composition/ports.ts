@@ -20,6 +20,8 @@ import {
   REQUEST_SECRET_STORAGE_KEY, createHttpRoomSubstrate, type HttpRoomSubstrate, type LocalHuman,
 } from '@khala/messaging/local/http/index';
 import { createBrowserRoomJournal } from '../../composition/human/room-journal';
+import type { ReceiptEvidencePort } from '../../features/receipt-evidence/controller';
+import { decodeReceiptEvidence } from '../../features/receipt-evidence/model';
 
 /** The local device never re-initialises within one page, so its lifecycle generation is fixed. */
 export const LOCAL_DEVICE_GENERATION = 1;
@@ -158,6 +160,20 @@ export function createLocalPorts(options: LocalPortsOptions): LocalPorts {
     dispose() {
       service?.stop();
       substrate.close();
+    },
+  };
+}
+
+/**
+ * The owner's receipt evidence over the loopback server. The server applies the
+ * session owner gate; this adapter decodes strictly and never turns a refused or
+ * failed read into an empty one.
+ */
+export function createLocalEvidencePort(substrate: Pick<HttpRoomSubstrate, 'receiptEvidence'>): ReceiptEvidencePort {
+  return {
+    async read(channelId, signal) {
+      const reply = await substrate.receiptEvidence(channelId, { signal });
+      return reply.kind === 'ok' ? decodeReceiptEvidence(reply.body) : { kind: 'unavailable' };
     },
   };
 }
