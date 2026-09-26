@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { type GrantedDescriptor, isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
-import type { BatchInbox } from '../cli/inbox.js';
+import { cliErrorCode } from '../cli/errors.js';
+import { type BatchInbox, acquireProcessLock } from '../cli/inbox.js';
 import type { InboxDelivery } from '../cli/types.js';
 import { exactKeys, plainObject, validDigest, validEventRef, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { type DescriptorRead, readInternalDescriptor } from './internal.js';
@@ -26,11 +27,13 @@ export type HeldGeneration = Readonly<{ bindingId: string; generation: number }>
 export type PullOutcome =
   /** Every release available now is durable in the inbox. */
   | 'caught_up'
+  /** This pull's page budget ran out first; the next pull continues from the committed cursor. */
+  | 'partial'
   /** The server holds this binding's releases (pause or unreadable mode). */
   | 'held'
   /** Another process is pulling for this binding generation right now. */
   | 'busy'
-  /** The binding generation is no longer live, or the descriptor no longer names it. */
+  /** The binding generation is no longer live, or the descriptor no longer names it. Terminal. */
   | 'revoked'
   | 'unavailable';
 
@@ -101,7 +104,9 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
     } catch {
       return { kind: 'unavailable' };
     }
-    if (status === 401 || status === 403) return { kind: 'revoked' };
+    // Only 401 means the generation is no longer live; a 403 (such as a membership
+    // change) is retried, so it never ends delivery for a live binding.
+    if (status === 401) return { kind: 'revoked' };
     if (status !== 200 || Buffer.byteLength(text) > MAX_RESPONSE_BYTES) return { kind: 'unavailable' };
     let body: unknown;
     try { body = JSON.parse(text); } catch { return { kind: 'unavailable' }; }
@@ -116,9 +121,14 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
       let directory: string;
       try { directory = await deliveryDirectory(options.stateDirectory, descriptor.channelId, held); }
       catch { return 'unavailable'; }
-      const lock = await acquirePullLock(path.join(directory, LOCK_FILE));
-      if (lock === 'busy') return 'busy';
-      if (lock === 'unavailable') return 'unavailable';
+      let lock: Readonly<{ release(): Promise<void> }>;
+      try {
+        // One puller per binding generation across processes, so the inbox's
+        // duplicate index is never stale when a release is appended.
+        lock = await acquireProcessLock(path.join(directory, LOCK_FILE));
+      } catch (error) {
+        return cliErrorCode(error) === 'listener_busy' ? 'busy' : 'unavailable';
+      }
       try {
         const inbox = await openInbox();
         const cursorFile = path.join(directory, CURSOR_FILE);
@@ -134,20 +144,21 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
             const appended = await inbox.enqueue(release.delivery);
             if (appended === 'appended' && release.wake) wake = true;
           }
+          // Hinted as soon as the releases are durable: the hint names only the
+          // binding generation and a reason, and a spare wake just re-reads the inbox.
+          if (wake) await inbox.notifyListener('released').catch(() => 'unavailable' as const);
           await options.beforeCursorCommit?.();
           if (page.nextCursor !== null && page.nextCursor !== cursor) {
             await writeCursor(cursorFile, directory, page.nextCursor);
             cursor = page.nextCursor;
           }
-          // The hint names only the binding generation and a reason, never a release.
-          if (wake) await inbox.notifyListener('released').catch(() => 'unavailable' as const);
           if (page.caughtUp) return 'caught_up';
         }
-        return 'caught_up';
+        return 'partial';
       } catch {
         return 'unavailable';
       } finally {
-        await lock.release();
+        await lock.release().catch(() => undefined);
       }
     },
   };
@@ -251,55 +262,5 @@ async function writeCursor(file: string, directory: string, cursor: string): Pro
     try { await parent.sync(); } finally { await parent.close(); }
   } finally {
     await fsp.unlink(temporary).catch(() => undefined);
-  }
-}
-
-type PullLock = Readonly<{ release(): Promise<void> }>;
-
-/**
- * One puller per binding generation across processes, so the inbox's duplicate
- * index is never stale when a release is appended. A lock left by a dead process
- * is moved aside under a unique name and removed only if it is still that one.
- */
-async function acquirePullLock(file: string): Promise<PullLock | 'busy' | 'unavailable'> {
-  const token = `${process.pid}:${randomUUID()}`;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await fsp.open(file, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY
-        | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
-      try { await handle.writeFile(token, 'utf8'); } finally { await handle.close(); }
-      return {
-        async release() {
-          const current = await fsp.readFile(file, 'utf8').catch(() => null);
-          if (current === token) await fsp.unlink(file).catch(() => undefined);
-        },
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return 'unavailable';
-    }
-    const holder = await fsp.readFile(file, 'utf8').catch(() => null);
-    if (holder === null) continue;
-    if (processIsLive(Number(holder.split(':')[0]))) return 'busy';
-    const aside = `${file}.stale-${randomUUID()}`;
-    try { await fsp.rename(file, aside); } catch { continue; }
-    const moved = await fsp.readFile(aside, 'utf8').catch(() => null);
-    if (moved !== holder) {
-      // Another process replaced the stale lock first: put its lock back.
-      await fsp.link(aside, file).catch(() => undefined);
-      await fsp.unlink(aside).catch(() => undefined);
-      return 'busy';
-    }
-    await fsp.unlink(aside).catch(() => undefined);
-  }
-  return 'busy';
-}
-
-function processIsLive(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid < 1) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
 }

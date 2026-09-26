@@ -221,6 +221,31 @@ describe('internal inbox delivery', () => {
     expect(await Promise.race([woke, new Promise(resolve => setTimeout(() => resolve(false), 1_000))])).toBe(true);
   });
 
+  it('stores a human release without waking the listener in async mode', async () => {
+    const h = await start();
+    expect(createSqliteListeningModeRepository(h.fixture.handle).initialize({
+      bindingId: bobBinding.bindingId, generation: bobBinding.generation, requested: 'async', version: 1,
+      experimentalGrants: [], hardCancelGrants: [], lastChangedBy: { kind: 'unknown' },
+    })).toBe(true);
+    const inbox = await inboxFor(h)();
+    const listener = await inbox.acquireListener();
+    cleanups.push(() => listener.release());
+    await listener.nextWake(); // The start-up catch-up wake.
+    const eventId = say(h, BODY);
+    const woke = listener.nextWake().then(() => true);
+    expect(await delivery(h).pull(held, inboxFor(h))).toBe('caught_up');
+    expect(await Promise.race([woke, new Promise(resolve => setTimeout(() => resolve(false), 300))])).toBe(false);
+    const batch = await listener.readBatch({ maxBytes: 1024 * 1024 });
+    expect(batch?.items.map(item => item.record.releaseId)).toEqual([internalReleaseId(bobBinding, eventId)]);
+  });
+
+  it('does not pull for khala status', async () => {
+    const h = await start();
+    say(h, BODY);
+    expect((await khala(h, ['status'])).code).toBe(0);
+    expect(fs.existsSync(path.join(h.stateDirectory, 'internal-delivery'))).toBe(false);
+  });
+
   it('never writes a message body to server logs or CLI output streams other than read', async () => {
     const h = await start();
     say(h, BODY);

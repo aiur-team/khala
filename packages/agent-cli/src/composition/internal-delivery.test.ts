@@ -125,11 +125,47 @@ describe('internal delivery pull', () => {
     expect(inbox.durable.size).toBe(0);
   });
 
-  it.each([401, 403])('treats %i as revoked and enqueues nothing', async status => {
+  it('treats 401 as revoked and a 403 as retryable, enqueueing nothing', async () => {
+    const revoked = fakeInbox();
+    expect(await subject(server([{ status: 401, body: { error: { code: 'unauthenticated' } } }]).fetch)
+      .pull(held, revoked.open)).toBe('revoked');
+    const forbidden = fakeInbox();
+    expect(await subject(server([{ status: 403, body: { error: { code: 'not_joined' } } }]).fetch)
+      .pull(held, forbidden.open)).toBe('unavailable');
+    expect(revoked.durable.size + forbidden.durable.size).toBe(0);
+  });
+
+  it('reports partial when the page budget runs out before the server is caught up', async () => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-delivery-'));
+    directories.push(stateDirectory);
+    const { fetch } = server([
+      { status: 200, body: page({ releases: [release('r1', false)], nextCursor: 'cursor-1', caughtUp: false }) },
+      { status: 200, body: page({ releases: [release('r2', false)], nextCursor: 'cursor-2', caughtUp: true }) },
+    ]);
+    const delivery = createInternalDelivery({
+      descriptorPath: '/unused', stateDirectory, fetch, maxPages: 1, readDescriptor: () => ({ ok: true, value: granted }),
+    });
     const inbox = fakeInbox();
-    expect(await subject(server([{ status, body: { error: { code: 'unauthenticated' } } }]).fetch).pull(held, inbox.open))
-      .toBe('revoked');
-    expect(inbox.durable.size).toBe(0);
+    expect(await delivery.pull(held, inbox.open)).toBe('partial');
+    expect(await delivery.pull(held, inbox.open)).toBe('caught_up');
+    expect([...inbox.durable.keys()]).toEqual(['r1', 'r2']);
+  });
+
+  it('lets only one puller per binding generation run at a time', async () => {
+    let unblock!: () => void;
+    const gate = new Promise<void>(resolve => { unblock = resolve; });
+    const fetch: typeof globalThis.fetch = async () => {
+      await gate;
+      return new Response(JSON.stringify(page({ releases: [release('r1', true)] })), { status: 200 });
+    };
+    const delivery = subject(fetch);
+    const inbox = fakeInbox();
+    const first = delivery.pull(held, inbox.open);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await delivery.pull(held, inbox.open)).toBe('busy');
+    unblock();
+    expect(await first).toBe('caught_up');
+    expect(await delivery.pull(held, inbox.open)).toBe('caught_up');
   });
 
   it('is revoked without a request when the descriptor no longer grants this binding', async () => {
@@ -176,6 +212,17 @@ describe('delivering inbox', () => {
     expect(after).toBeGreaterThan(1);
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(pulls.length).toBe(after);
+  });
+
+  it('waits for a concurrent puller before the first open', async () => {
+    const outcomes: ('busy' | 'caught_up')[] = ['busy', 'busy', 'caught_up'];
+    let pulls = 0;
+    const wrapped = deliveringInbox(async () => ({} as BatchInbox), {
+      async pull() { pulls += 1; return outcomes.shift() ?? 'caught_up'; },
+    }, { intervalMs: 60_000 });
+    await wrapped.inbox('binding-bob', 3);
+    await wrapped.stop();
+    expect(pulls).toBe(3);
   });
 
   it('never loops for a revoked generation', async () => {

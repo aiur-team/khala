@@ -4,6 +4,9 @@ import type { HeldGeneration, InternalDelivery } from './internal-delivery.js';
 // Kept apart from `internal-delivery.ts` so the CLI entry can wrap its inbox
 // without loading the descriptor client until `--internal-descriptor` is given.
 
+const BUSY_RETRY_MS = 100;
+const BUSY_WAIT_MS = 3_000;
+
 export type DeliveringInbox = Readonly<{
   /** Opens the inbox only after one pull for that exact generation, then keeps pulling. */
   inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
@@ -41,7 +44,13 @@ export function deliveringInbox(
       const openHeld = () => open(bindingId, generation);
       const key = JSON.stringify([bindingId, generation]);
       if (!loops.has(key) && !signal.aborted) {
-        const first = await delivery.pull(held, openHeld, signal);
+        let first = await delivery.pull(held, openHeld, signal);
+        // Another process is mid-pull: wait briefly for it, so a one-shot read sees
+        // what that pull makes durable instead of reporting an empty inbox.
+        for (let waited = 0; first === 'busy' && waited < BUSY_WAIT_MS && !signal.aborted; waited += BUSY_RETRY_MS) {
+          await pause(BUSY_RETRY_MS, signal);
+          first = await delivery.pull(held, openHeld, signal);
+        }
         if (first !== 'revoked') loops.set(key, loop(held, openHeld));
       }
       return openHeld();
