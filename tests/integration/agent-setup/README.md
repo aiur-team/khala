@@ -42,10 +42,6 @@ Unit coverage and per-mutation fault injection stay beside the setup modules
 | Descriptor discovery | The Claude hook entry (`khala claude <op>`) and the Codex/OpenCode MCP entry (bare `mcp-serve`), each run through the staged launcher, reach whichever loopback server the current `$XDG_STATE_HOME/khala/internal/active.json` names after the descriptor moves. The hook presents that launch's transport credential. The MCP entry, given a granted launch, presents that launch's binding credential. No entry is rewritten. |
 | Secret redaction | Sentinel descriptor ports and tokens are rotated mid-run. They never appear in harness config, fake-harness argv, plans, the manifest, backups, or any output. Seeded user secrets never appear in output. Rotating the descriptor plans nothing and rewrites no entry. |
 
-No case is `todo`. A known gap can land as a `todo` case, which runs and reports
-but does not fail the suite. When its fix lands, remove the `todo` option so the
-case gates the release.
-
 ## Wrong-implementation checks
 
 Each guard below was reverted in source and the suite rerun (it repacks from
