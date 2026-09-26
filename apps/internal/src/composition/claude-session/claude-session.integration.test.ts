@@ -7,7 +7,7 @@ import { runCli } from '@aiur/khala/cli/app';
 import { createClaudeSessionClient } from '@aiur/khala/composition/claude-session-http';
 import { createUnavailableClient } from '@aiur/khala/composition/unavailable';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
+import { runHook, sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
 import { webBundleManifest } from '../../launcher/bundle';
 import { type LaunchReport, launchInternal } from '../../launcher/launcher';
 
@@ -384,6 +384,53 @@ describe('Claude delivery through the internal launcher', () => {
     const [sent] = await serve(session.report.descriptorPath, 'session-delivered', [['khala_send', { message: 'thanks' }]]);
     expect(sent).toMatchObject({ kind: 'accepted' });
     expect(JSON.parse(await session.run('pull'))).toEqual({ ok: true, kind: 'empty' });
+  });
+
+  it('delivers at the next PostToolUse under steer only after the owner grants the experimental route', async () => {
+    const session = await bound('session-granted');
+    const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
+    const [entry] = (await call(session.report.origin, { path: bindings, headers: session.owner })).json.bindings;
+    const binding = `${bindings}/${encodeURIComponent(entry.binding.bindingId)}`;
+    const owner = (path: string, body: unknown) => call(session.report.origin, { method: 'POST', path: `${binding}/${path}`, headers: session.owner, body });
+    // The Claude plugin's own PostToolUse hook, running `khala claude <op>` for this session.
+    const postToolUse = () => runHook('post-tool-use', JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'session-granted', tool_name: 'Bash' }), {
+      bound: sessionId => sessionGranted(path.join(session.parent, 'internal'), sessionId),
+      khala: async op => ({ code: 0, stdout: await session.run(op) }),
+      stateRoot: path.join(session.parent, 'claude-hooks'),
+      sleep: async () => undefined,
+      now: () => Date.now(),
+      nonce: () => 'nonce',
+      parentAlive: () => true,
+    });
+    const issuedAt = new Date().toISOString();
+    const steer = await owner('listening-mode', {
+      v: 1, commandId: 'steer-1', generation: entry.binding.generation, expectedVersion: entry.view.version, requested: 'steer', issuedAt,
+    });
+    expect(steer.json).toMatchObject({ outcome: 'applied', requested: 'steer', effective: null });
+
+    // Without the grant the requested experimental mode is not in effect, so the hook pulls nothing.
+    expect(JSON.parse(await session.run('hook'))).toMatchObject({ ok: true, kind: 'hook', effective: null });
+    await session.post('held without a grant');
+    expect(await postToolUse()).toEqual({ stdout: '', stderr: '', exitCode: 0 });
+
+    const { steer: support } = entry.view.support;
+    const pin = { mode: 'steer', route: support.route, harnessVersion: support.testedVersion, evidenceRevision: support.evidenceRevision };
+    const granted = await owner('experimental-route/grant', {
+      v: 1, commandId: 'grant-1', generation: entry.binding.generation, expectedVersion: steer.json.version, ...pin, issuedAt,
+    });
+    expect(granted.json).toMatchObject({ outcome: 'applied', view: { effective: 'steer' } });
+    expect(JSON.parse(await session.run('hook'))).toMatchObject({ ok: true, kind: 'hook', effective: 'steer' });
+    const delivered = await postToolUse();
+    expect(delivered.stdout).toContain('held without a grant');
+
+    // Revoking the grant stops hook delivery again.
+    await session.run('status');
+    const revoked = await owner('experimental-route/revoke', {
+      v: 1, commandId: 'revoke-1', generation: entry.binding.generation, expectedVersion: granted.json.view.version, ...pin, issuedAt,
+    });
+    expect(revoked.json).toMatchObject({ outcome: 'applied', view: { effective: null } });
+    await session.post('held after revoke');
+    expect(await postToolUse()).toEqual({ stdout: '', stderr: '', exitCode: 0 });
   });
 
   it('keeps a Claude whose version cannot be inspected unproven: nothing is pulled or read', async () => {

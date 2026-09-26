@@ -29,6 +29,10 @@ const port: ListeningPort = {
     else beaPaused = paused;
     return { kind: 'done' };
   },
+  async changeExperimentalRoute(_channel, binding, action, route) {
+    harness.__calls.push(`${action}:${binding.displayName}:${route.mode}`);
+    return { kind: 'failed', reason: 'forbidden' };
+  },
 };
 
 const controller = createListeningController(port, 'ch_harness');
