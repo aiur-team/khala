@@ -280,7 +280,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       });
       // Claude sessions present the transport capability from `active.json` and join as themselves.
       const claude = await composeClaudeSession({
-        root, store: channel.store, channelId: channel.channelId as RoomId, transportCapability, clock,
+        root, store: channel.store, transportCapability, clock,
       });
       server = await startChannelServer({
         store: channel.store,

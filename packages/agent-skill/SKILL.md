@@ -76,7 +76,8 @@ acknowledges on the session's next Khala call.
 
 `/khala create <title>` calls `khala_create_channel` once and returns: the
 person confirms in Khala's own human-confirmation step, a retry or status check
-reuses the same `operationId`, and a rejected confirmation creates no channel. `/khala join <channel-url>` calls
+repeats the same title and `operationId`, and a rejected confirmation creates no
+channel. `/khala join <channel-url>` calls
 `khala_request_channel_access` once and returns: the owner's grant, denial, or
 expiry resumes the same session through the access inbox, the agent never
 admits itself, and a retry reuses the returned `operationId`. `/khala who` shows

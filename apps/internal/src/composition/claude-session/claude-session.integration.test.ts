@@ -120,6 +120,71 @@ describe('Claude mcp-serve against the internal launcher', () => {
     expect(read).toEqual({ kind: 'refused', code: 'session_not_bound' });
   });
 
+  it('admits only the launch transport capability on the Claude session route', async () => {
+    const { report, owner } = await launched();
+    const body = { v: 1, op: 'status', sessionId: 'session-any' };
+    // The owner's browser session is a real principal, but not this route's.
+    const asOwner = await call(report.origin, { method: 'POST', path: '/api/agent/claude/session', headers: owner, body });
+    expect(asOwner.status).toBe(403);
+    const forged = await call(report.origin, {
+      method: 'POST', path: '/api/agent/claude/session', headers: { authorization: `Bearer ${'A'.repeat(42)}E` }, body,
+    });
+    expect(forged.status).toBe(401);
+  });
+
+  it('refuses an access request naming another origin, before anything is filed', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const [refused] = await serve(report.descriptorPath, 'session-origin', [
+      ['khala_request_channel_access', { target: channelUrl, origin: 'http://127.0.0.1:1' }],
+    ]);
+    expect(refused).toMatchObject({ ok: false, error: 'untrusted_origin' });
+    const inbox = await call(report.origin, { path: '/api/human/channel-requests', headers: owner });
+    expect(inbox.json.requests).toEqual([]);
+  });
+
+  it('shares one discovery identity between concurrent first calls of a new session', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const session = 'session-racing';
+    const [[listed], [requested]] = await Promise.all([
+      serve(report.descriptorPath, session, [['khala_list_channels']]),
+      serve(report.descriptorPath, session, [['khala_request_channel_access', { target: channelUrl }]]),
+    ]);
+    expect(listed).toMatchObject({ ok: true });
+    expect(requested).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    // The request stays readable: no second issuance rotated the identity that filed it.
+    const [status] = await serve(report.descriptorPath, session, [['khala_channel_access_status', { operationId: requested!.operationId }]]);
+    expect(status).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    await approvePending(report.origin, owner);
+  });
+
+  it('binds a session to another channel the owner created, and lists that channel', async () => {
+    const { report, owner } = await launched();
+    const created = await call(report.origin, {
+      method: 'POST', path: '/api/v1/channels', headers: owner, body: { operationId: 'second-channel', title: 'Second' },
+    });
+    expect(created.status).toBe(201);
+    const second = created.json.channel.channelId as string;
+    expect(second).not.toBe(report.channelId);
+    const [requested] = await serve(report.descriptorPath, 'session-second', [
+      ['khala_request_channel_access', { target: `${report.origin}/channels/${encodeURIComponent(second)}` }],
+    ]);
+    expect(requested).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    await approvePending(report.origin, owner);
+    const [status, send, who] = await serve(report.descriptorPath, 'session-second', [
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+      ['khala_send', { message: 'hello second channel' }],
+      ['khala_list_agents'],
+    ]);
+    expect(status).toMatchObject({ ok: true, outcome: 'connected' });
+    expect(send).toMatchObject({ kind: 'accepted' });
+    expect((who as { agents: unknown[] }).agents).toHaveLength(1);
+    const timeline = async (channel: string) => JSON.stringify((await call(report.origin, {
+      path: `/api/v1/channels/${encodeURIComponent(channel)}/timeline`, headers: owner,
+    })).json);
+    expect(await timeline(second)).toContain('hello second channel');
+    expect(await timeline(report.channelId)).not.toContain('hello second channel');
+  });
+
   it('files a create intent for the session through the journal, which reaches the owner and admits nothing', async () => {
     const { report, owner } = await launched();
     const create = ['khala_create_channel', { title: 'Launch plans', operationId: 'create-12345678' }] as const;

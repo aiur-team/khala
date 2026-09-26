@@ -30,10 +30,16 @@ local `Set` rather than the channel-access journal.
   An owner-approved status runs the existing journaled activation
   (`activateInternalAccess`) into a per-session granted descriptor beside that
   identity, never the shared `active.json`.
-- **Directory.** A session resolves to the newest active `claude` binding whose
-  stored session digest is that session's digest, looked up in the channel store
-  (the `bindings_session` index). A session with no activated grant resolves to
-  nothing.
+- **Directory.** A session resolves only to the binding its own granted
+  descriptor names, and only while the channel store holds that binding active at
+  its newest generation for the session's digest. The grant and the binding it
+  selects therefore never differ. A live grant is kept, so a session holds one
+  binding at a time. Activation adopts the approved channel, which need not be the
+  launch channel, and the roster reads that channel.
+- **Restart.** After `khala internal --resume` a granted session's capability is
+  gone, and a `connected` request is not re-activated. The `khala join` path shares
+  this limitation, so a re-activation policy for internal mode is left for a
+  follow-up.
 - **Binding services.** Send uses the internal client over the per-session
   granted descriptor. Roster comes from the channel store. Capabilities are the
   production `claudeCapabilities`, whose acknowledgement stays `unknown`, so the

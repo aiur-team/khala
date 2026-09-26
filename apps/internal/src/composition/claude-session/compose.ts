@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { CliError } from '@aiur/khala/cli/errors';
 import { MAX_SEND_BYTES, SendService } from '@aiur/khala/cli/send';
@@ -15,7 +16,7 @@ import {
   type InternalDiscoveryCallResult, createInternalDiscoveryClient, selectInternalDiscovery,
 } from '@aiur/khala/composition/internal-discovery';
 import { type SessionBinding, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
-import { encodeInternalDescriptor, isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
+import { type GrantedDescriptor, encodeInternalDescriptor, isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
 import {
   INTERNAL_DISCOVERY_DESCRIPTOR_FILE, INTERNAL_DISCOVERY_DIRECTORY,
 } from '@khala/contracts/internal/discovery-descriptor';
@@ -35,8 +36,9 @@ import { issueDiscoveryDescriptor } from '../discovery-descriptor';
 // session ID), so its access request is journaled for that session only. An approved
 // request is activated through the same journaled connector path `khala join` uses,
 // into a granted descriptor kept beside that identity rather than the shared
-// `active.json`. The session then resolves to the binding activation stored for its
-// session digest, and to nothing before that.
+// `active.json`. The session then resolves only to the binding its own granted
+// descriptor names, and only while the store holds that binding active for its
+// session digest; before a grant it resolves to nothing.
 
 export const CLAUDE_HARNESS = 'claude';
 /** The per-session granted descriptor beside the session's discovery descriptor. */
@@ -51,7 +53,6 @@ export type ClaudeSessionCompositionOptions = Readonly<{
   /** The private internal root holding `active.json` and `discovery/`. */
   root: string;
   store: ChannelStore;
-  channelId: RoomId;
   /** The launch's transport capability, the only credential this route accepts. */
   transportCapability: string;
   fetch?: typeof fetch;
@@ -72,16 +73,32 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
 
+  // Issuing rotates the identity, so concurrent first calls of one session share a single
+  // issuance; a call that finds the identity already reissued since it looked just uses it.
+  const issuing = new Map<string, Promise<boolean>>();
+  const descriptorText = (sessionId: string): string | null => {
+    try { return fs.readFileSync(paths(sessionId).descriptorPath, 'utf8'); } catch { return null; }
+  };
+
   /** Issues this session's discovery identity once; a rotated or missing one is reissued. */
   async function withIdentity(sessionId: string, run: () => Promise<InternalDiscoveryCallResult>): Promise<InternalDiscoveryCallResult> {
+    const seen = descriptorText(sessionId);
     const first = await run();
     if (first.kind !== 'discovery_required') return first;
-    const issued = await issueDiscoveryDescriptor({
-      root,
-      command: { kind: 'discovery', harness: CLAUDE_HARNESS, sessionId, displayLabel: null, workspaceLabel: null },
-      ...(options.fetch ? { fetch: options.fetch } : {}),
-    });
-    return issued.kind === 'issued' ? run() : { kind: 'unavailable' };
+    let pending = issuing.get(sessionId);
+    if (pending === undefined) {
+      pending = (async () => {
+        if (descriptorText(sessionId) !== seen) return true;
+        const issued = await issueDiscoveryDescriptor({
+          root,
+          command: { kind: 'discovery', harness: CLAUDE_HARNESS, sessionId, displayLabel: null, workspaceLabel: null },
+          ...(options.fetch ? { fetch: options.fetch } : {}),
+        });
+        return issued.kind === 'issued';
+      })().finally(() => issuing.delete(sessionId));
+      issuing.set(sessionId, pending);
+    }
+    return await pending ? run() : { kind: 'unavailable' };
   }
 
   /** Finishes an approved request for exactly this session, into its own granted descriptor. */
@@ -91,18 +108,21 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     if (selected.kind !== 'selected' || !prepareGrant(sessionId, grantPath)) return outcome;
     const activated = await activateInternalAccess({
       descriptorPath, descriptor: selected.selection.descriptor, origin: selected.selection.origin, operationId,
-      activePath: grantPath, repair: outcome === 'repair_required', fetch: options.fetch, clock: options.clock,
+      // The approved channel need not be the launch channel; the grant records the one it names.
+      activePath: grantPath, adoptChannel: true, repair: outcome === 'repair_required', fetch: options.fetch, clock: options.clock,
     });
     return activated === 'unavailable' ? outcome : activated;
   }
 
-  /** Seeds the session's granted descriptor from the launch, dropping a grant that is no longer live. */
+  /**
+   * Seeds the session's granted descriptor from the launch. A live grant is kept, so a
+   * session holds one binding at a time; a grant the store no longer holds is dropped.
+   */
   function prepareGrant(sessionId: string, grantPath: string): boolean {
     const launch = readInternalDescriptor(activeDescriptorPath(root));
     if (!launch.ok) return false;
     const held = readInternalDescriptor(grantPath);
-    if (held.ok && held.value.origin === launch.value.origin && held.value.channelId === launch.value.channelId
-      && (!isGrantedDescriptor(held.value) || bound(sessionId)?.bindingId === held.value.bindingId)) return true;
+    if (held.ok && held.value.origin === launch.value.origin && (!isGrantedDescriptor(held.value) || bound(sessionId) !== null)) return true;
     const { v, channelId, origin, transportCapability } = launch.value;
     try {
       writePrivateFile(path.dirname(grantPath), path.basename(grantPath), encodeInternalDescriptor({ v, channelId, origin, transportCapability }));
@@ -112,9 +132,22 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     }
   }
 
-  /** The live binding activation stored for this session's digest, if any. */
+  /** The session's granted descriptor, when it holds a grant. */
+  function grant(sessionId: string): GrantedDescriptor | null {
+    const held = readInternalDescriptor(paths(sessionId).grantPath);
+    return held.ok && isGrantedDescriptor(held.value) ? held.value : null;
+  }
+
+  /**
+   * The binding the session's own grant names, only while the store holds it active for
+   * this session's digest. The grant and the binding it selects can therefore never differ.
+   */
   function bound(sessionId: string): SessionBinding | null {
-    const found = store.sessionBinding({ harness: CLAUDE_HARNESS, sessionId: sessionDigest(CLAUDE_HARNESS, sessionId) });
+    const held = grant(sessionId);
+    if (held === null) return null;
+    const found = store.sessionBinding({
+      bindingId: held.bindingId, harness: CLAUDE_HARNESS, sessionId: sessionDigest(CLAUDE_HARNESS, sessionId),
+    });
     if (found.kind !== 'done' || found.binding === null) return null;
     const { v, bindingId, ownerId, agentParticipantId, deviceId, harness, sessionId: stored, generation } = found.binding;
     return { v, bindingId, ownerId, agentParticipantId, deviceId, harness, sessionId: stored, generation };
@@ -202,18 +235,22 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       // No local automation fence is composed: nothing pending, and no idle watcher.
       pending: async () => ({ pending: false }),
       watchWindow: async () => null,
-      roster: async () => roster(),
+      roster: async () => {
+        const held = grant(binding.sessionId);
+        return held === null || held.bindingId !== binding.bindingId ? { kind: 'refused', code: 'not_joined' } : roster(held.channelId as RoomId);
+      },
     };
   }
 
-  function roster(): unknown {
-    const result = store.roster(options.channelId);
+  /** The joined agents of the channel the session's grant names. */
+  function roster(channelId: RoomId): unknown {
+    const result = store.roster(channelId);
     if (result.kind !== 'done') return { kind: 'unavailable' };
     const participants = result.participants;
     const agents = [];
     for (const participant of participants) {
       if (participant.kind !== 'agent') continue;
-      const channel = store.channel({ channelId: options.channelId, participantId: participant.participantId });
+      const channel = store.channel({ channelId, participantId: participant.participantId });
       if (channel.kind !== 'done' || channel.channel.membership !== 'joined') continue;
       const owner = participants.find(each => each.kind === 'human' && each.ownerId === participant.ownerId);
       agents.push({

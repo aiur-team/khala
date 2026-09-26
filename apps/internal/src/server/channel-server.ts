@@ -189,8 +189,12 @@ function actor(principal: Principal): Readonly<{ participantId: ParticipantId; d
   throw new Error('channel route reached without a channel principal');
 }
 
-/** Channel content routes: the creating human, or the human and bound agents. */
-function admits(route: RouteSpec, principal: Principal): boolean {
+/**
+ * Channel content routes: the creating human, or the human and bound agents. The
+ * agent-session route belongs to the installation's transport capability alone.
+ */
+function admits(route: RouteSpec, principal: Principal, agentSession: RouteSpec | null): boolean {
+  if (route === agentSession) return principal.kind === 'transport';
   const role = discoveryRole(route);
   if (role !== null) return role === principal.kind;
   // Receipt evidence is owner-only: a bound agent never reads delivery metadata.
@@ -312,10 +316,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       principal = authority.authenticateSession(cookie, secrets[0]!);
     }
     if (!principal) return { ok: false, status: 401, code: 'unauthenticated' };
-    // The agent-session route belongs to the installation's transport capability alone.
-    if (route === agentSession ? principal.kind !== 'transport' : !admits(route, principal)) {
-      return { ok: false, status: 403, code: 'forbidden' };
-    }
+    if (!admits(route, principal, agentSession)) return { ok: false, status: 403, code: 'forbidden' };
     try {
       const live = bindingLive(principal);
       if (live === 'unavailable') return { ok: false, status: 503, code: 'unavailable' };
