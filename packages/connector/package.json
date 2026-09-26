@@ -11,7 +11,8 @@
     "./subscription/*": "./src/subscription/*.ts",
     "./dispatch/*": "./src/dispatch/*.ts",
     "./dispatch/fixtures/*": null,
-    "./retention/*": "./src/retention/*.ts"
+    "./retention/*": "./src/retention/*.ts",
+    "./receipts/*": "./src/receipts/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",

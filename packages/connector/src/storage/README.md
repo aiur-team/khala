@@ -41,7 +41,15 @@ const report = await recoverConnectorStorage(storage);
   transaction. All of them share one fresh, non-secret `evidenceRef`. The receipt ID
   is derived from `['agent', bindingId, generation, releaseId, 'agent_acknowledged']`,
   so a repeat returns the stored receipts byte for byte. `readReceiptOutbox` pages
-  the outbox by ledger revision. The projection owns its own checkpoint.
+  the outbox by ledger revision. Each entry names its release's channel events by
+  `roomId`/`eventId` only. The projection owns its own checkpoint.
+- `@khala/connector/receipts/projection` drains that outbox. `createReceiptProjector`
+  writes each fact to a read model, then records a content-free
+  `khala.receipt.observed` log line, and only then checkpoints the whole ledger
+  revision. A crash before the checkpoint re-drains the revision. The read model
+  compares the repeat equal, and the log line is byte-identical. A conflicting fact
+  stops the drain before its revision. The internal-mode adapter is
+  `apps/internal/src/composition/receipt-projection.ts`.
 - `persistPending` / `persistUnavailable` → `commitCursor` is the ingestion order. An
   event is durably stored, as content or as an unavailable placeholder, before the
   application cursor may move past it. Both take the `streamId` that observed the event.

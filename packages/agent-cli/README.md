@@ -17,6 +17,7 @@ khala internal
 khala internal --resume <channel-id>
 khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
 khala internal delete <channel-id> [--yes]
+khala codex-hook
 khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
 ```
 
@@ -226,14 +227,56 @@ suppresses a batch, the tool result stays unchanged and stderr receives one
 content-free line such as
 `{"ok":false,"warning":"batch_suppressed","stage":"read","code":"storage_failed"}`.
 
-`mcp-serve` and `listen` share the inbox's single-consumer lease, so concurrent
-consumers fail with `listener_busy`. Explicit `khala_read` selects directly;
+`listen` holds the inbox's single-consumer lock for its lifetime. `mcp-serve`,
+`read` and `codex-hook` hold it only for each selection and wait up to two
+seconds for another short-lived holder, so a harness's native hooks can pull
+between MCP tool calls; a holder that stays busy past that wait yields
+`listener_busy`. Explicit `khala_read` selects directly;
 every valid `khala_send` result may also select and append an incidental
 piggyback batch. Both paths share the same batch operation and renderer, while
 arrival alone selects nothing. Neither delivery path publishes or forwards a
 message; only an explicit `khala_send` call sends. Pull or piggyback delivery
 creates no receipt, advertises no capability, and makes no claim that a peer is
 asynchronous, synchronous, steerable, or actively listening.
+
+## Codex hooks
+
+`khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
+installs into the user's Codex config layer, together with the MCP entry and the
+skill. `codexHooksFragment()` in `src/codex/hooks-config.ts` is the exact
+`hooks.json` fragment: one fixed, argument-free `khala codex-hook` command for
+`PreToolUse`, `PostToolUse`, `UserPromptSubmit` and `Stop`. Codex hashes that
+command when the user trusts it, so it must stay byte-stable across releases.
+Setup never writes Codex's hook trust. `codexHookReviewState()` reads
+`config.toml` and reports `trusted`, `awaiting_hook_review` or `unknown` with a
+reason. It checks that a trust record exists at each Khala handler's position;
+it cannot recompute Codex's `trusted_hash`, so setup must append the Khala groups
+after the user's own hooks and keep the handler byte-stable.
+
+The handler reads Codex's hook JSON on stdin and acts only when that session is
+the held `codex` binding's session. It then reads the binding's effective
+listening mode and pulls through the shared `khala_read` operation at the
+boundaries that mode owns:
+
+| Mode | Pulls at | Hook output |
+| --- | --- | --- |
+| `steer` | `PreToolUse`, `PostToolUse`, `Stop`, `UserPromptSubmit` | Blocks the next tool, adds context after a tool, continues once at `Stop`, or adds context to the prompt. |
+| `sync` (default) | `Stop`, `UserPromptSubmit` | Continues once after the turn, or adds context to the next prompt. Tool boundaries stay silent. |
+| `async` | never | Nothing; the agent calls `khala_read`. |
+
+A `Stop` with `stop_hook_active` never pulls. The hook never acknowledges: the
+batch stays outstanding until the agent's next Khala call presents its token.
+The inbox records, in the outstanding batch's own state, which Codex turn a
+batch was offered to, and whether the agent's own Khala call (`khala read`,
+`khala_read` or a piggyback) returned it. A hook therefore never repeats a batch
+within a turn. The next turn start (`UserPromptSubmit`, including a resumed
+session's) offers an unacknowledged batch again, and an acknowledged batch is
+never offered. A hook response is capped at 256 KiB; a larger staged batch is
+left for `khala_read`. An unbound, revoked or foreign
+session, an unavailable mode, or any failure returns without output, exits 0,
+and writes only a content-free code to stderr. The handler never starts,
+signals or waits on Codex. Channel bytes reach Codex only on the hook's stdout,
+inside the shared untrusted-data frame.
 
 ## Claude session adapter
 
