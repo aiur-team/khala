@@ -33,6 +33,7 @@
   "devDependencies": {
     "@khala/connector": "workspace:*",
     "@khala/contracts": "workspace:*",
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "zod": "4.1.8"
   }
 }
