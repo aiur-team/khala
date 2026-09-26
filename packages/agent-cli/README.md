@@ -14,6 +14,8 @@ khala status
 khala mode get
 khala mode set <steer|sync|async> --expected-version <version>
 khala channels list [--origin <trusted-origin>] [--cursor <cursor>]
+khala channels request-access <channel-url-or-listing-ref> [--operation <id>] [--origin <trusted-origin>]
+khala channels access-status --operation <id> [--origin <trusted-origin>]
 khala agents list --channel <held-binding-id>
 khala mcp-serve
 khala internal
@@ -264,12 +266,52 @@ Failures print `{"ok":false,"error":<code>}` on stdout. `not_connected`,
 `cursor_unavailable`, and `rate_limited` exit 3. `unavailable` exits 4. Malformed
 arguments exit 2 with `invalid_arguments` on stderr.
 
+## Channel access requests
+
+`khala channels request-access <channel-url-or-listing-ref>` asks the channel
+owner for access and returns promptly. `/khala join` uses this same operation
+for a channel URL; there is no second join or admission path. The argument is a
+`listingRef` from `khala channels list` or a channel URL (`https:`, or `http:`
+on loopback, with no credentials, query, or fragment). The command prints one
+JSON object:
+`{"ok":true,"v":1,"operationId":...,"outcome":...,"next":null}`. It waits for
+nothing: `pending_owner` is the normal first answer, and the owner decides in
+their own UI. Nothing here grants access.
+
+`khala channels access-status --operation <id>` reads the same operation once.
+There is no polling. `outcome` keeps owner decisions (`pending_owner`, `denied`,
+`expired`, `revoked`) apart from connector readiness (`approved`, `connecting`,
+`connected`, `repair_required`); `connected` appears only after the connector
+has activated the grant. Output is decoded with the closed
+`decodeAccessRequestStatus` decoder, so any extra field is reported as
+`unavailable` and not printed.
+
+The operation ID is idempotent. Without `--operation` it is derived from the
+target, so repeating the command reuses it; pass `--operation` to name your own,
+or a new one to deliberately start over after a denial or expiry. Every result,
+including failures, echoes the ID. `next` says what to do:
+`repair_connector` (outcome `repair_required`) means repair the connector, and
+`reuse_operation_id` (outcome or error `unavailable`) means any retry must reuse
+that same ID, because a new one could create a second request. The command
+never retries on its own.
+
+Exit codes: 0 for `pending_owner`, `approved`, `connecting`, and `connected`; 3
+for `denied`, `expired`, `revoked`, `repair_required`, and refusals
+(`untrusted_origin`, `discovery_required`, `discovery_denied`,
+`invalid_request`, `operation_conflict`, `not_found`, `rate_limited`); 4 for
+`unavailable`. `--origin` is exact-allowlisted like listing, and a channel URL
+whose origin differs from `--origin` is `untrusted_origin`. Requests never
+follow redirects.
+
 ## MCP mode
 
 `khala mcp-serve` speaks newline-delimited JSON-RPC on stdin/stdout and exposes
 `khala_send`, `khala_read`, and `khala_listening_mode`, plus `khala_list_channels`
 (`{ origin?, cursor?, ackBatchToken? }`) and `khala_list_agents`
-(`{ channel, ackBatchToken? }`). `khala_send` accepts
+(`{ channel, ackBatchToken? }`). The access tools are `khala_request_channel_access`
+(`{ target, operationId?, origin?, ackBatchToken? }`) and `khala_channel_access_status`
+(`{ operationId, origin?, ackBatchToken? }`); they return the access commands'
+JSON object as `structuredContent`, with `isError` set on failures. `khala_send` accepts
 `{ message, bindingId?, ackBatchToken? }`; `khala_read` accepts
 `{ bindingId?, ackBatchToken? }`; `khala_listening_mode` accepts
 `{ action: "get", ackBatchToken? }` or `{ action: "set", requested,
@@ -340,6 +382,36 @@ adapter declares are backed up and reversed; adapters own proof of that
 footprint. `inspectSetupRecovery` gives `status` a read-only view of the
 journal.
 
+A plan can mark a foreign file entry-owned (`entryOwnedPaths`) when the harness
+itself rewrites the rest of that file. Khala then owns only the named
+`config_entry_set` entry. Whole-file drift no longer refuses, but every operation
+still checks its preimage, and a later plan may only edit that same entry.
+`config_entry_remove` releases the path and leaves every other byte in place.
+
+## Codex setup adapter
+
+`src/setup/adapters/codex.ts` detects `codex --version` and plans three guarded
+direct edits, with no plugin and no vendor command:
+
+| Component | Path | Setup | Remove |
+| --- | --- | --- | --- |
+| `skill` | `~/.codex/skills/khala/SKILL.md` | create; replace on upgrade | delete |
+| `hooks` | `~/.codex/hooks.json` | append the Khala groups after the user's own | restore the byte-exact preimage |
+| `mcp_entry` | `~/.codex/config.toml` | append one `[mcp_servers.khala]` table (entry-owned) | delete exactly that table |
+
+The MCP table runs the stable launcher `$XDG_DATA_HOME/khala/bin/khala
+mcp-serve`, which reads the port and token from the runtime descriptor on each
+call. Codex writes hook trust into the same `config.toml`, so setup, upgrade,
+and remove never touch a `hooks.state` or `trusted_hash` byte. Hooks report
+`awaiting_hook_review` until the user trusts them in Codex's own dialog. An
+upgrade leaves `hooks.json` alone, so trust carries over. An unowned Khala
+entry is a conflict, even if identical, and an edited Khala table is drift.
+
+| Codex | Support |
+| --- | --- |
+| 0.154.0 | Supported |
+| Any other version | `unsupported`: setup refuses; manifest-driven remove still works |
+
 ## Codex hooks
 
 `khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
@@ -409,6 +481,31 @@ Like the `khala` binary, the shipped entry has no live Khala transport until
 live composition supplies one, so it binds and delivers nothing.
 `createKhalaOpenCodeServer` takes the controls, send, inbox and state ports.
 
+## Cursor setup
+
+`createCursorSetupAdapter()` in `src/cursor/setup.ts` is the Cursor `SetupAdapter`.
+**Cursor delivery is unproven.** The 2026-09-25 proof
+(`experiments/interactive-cli/cursor-app/`) kept every cell Blocked. Every
+listening mode therefore reports `unknown`, and Khala selects no mode for a
+Cursor agent. Setup installs no Cursor hook. It adds exactly one entry,
+`mcpServers.khala` = `{ "command": "<XDG_DATA_HOME>/khala/bin/khala", "args":
+["mcp-serve"] }`, to the person's global `~/.cursor/mcp.json`. That gives their
+own Agent Chat the shared channel tools. The entry carries no port, token,
+channel or message bytes; the launcher reads the runtime descriptor on each call.
+
+The version comes from the first line of `cursor --version`. An absent `cursor`
+with nothing installed creates and reads nothing. An unreadable version is
+`unsupported`. Ownership comes only from the setup manifest. A `khala` entry
+the manifest does not record is a `conflict`, even when it is identical. So is a
+config that is not a plain JSON object or that starts with a byte-order mark.
+Both are left untouched. Khala's own entry reports `ready`, or `drifted` after
+a user edit, even when `cursor` is no longer on PATH. An outdated own entry is
+replaced. Every inspection of an installed Cursor carries the
+`cursor_delivery_unproven` warning. `plan({ desired: 'absent' })` returns
+`cursorRemovalOperations(manifest)`, which restores each managed Cursor path to
+its recorded pre-Khala bytes, or deletes it if it was absent before. The planner
+must pass back the exact observation object `inspect` returned.
+
 ## Claude session adapter
 
 ```text
@@ -459,11 +556,26 @@ automation fence's notification signal; it never pulls or acknowledges.
 For MCP and the dispatcher, `createClaudeAgentEntry` exposes the agent calls
 (`read`, `send`, `status`, `mode`, `setMode`) and takes the session only from the
 MCP server's own `CLAUDE_CODE_SESSION_ID`, so a tool call cannot name another
-session. It has no pull. A missing ID fails closed as `session_missing`. Wiring
-it into `mcp-serve` belongs to the plugin dispatch work.
+session. It has no pull. A missing ID fails closed as `session_missing`.
+
+The Claude plugin's MCP entry launches `khala mcp-serve` with
+`KHALA_MCP_HARNESS=claude`. The session ID alone does not select this mode,
+because every process a Claude Bash tool starts inherits it. In this mode
+`mcp-serve` holds no binding, inbox, or listener lock. It serves three tools
+over `createClaudeAgentEntry`:
+
+- `khala_send { message }`: the plugin's `/khala send`.
+- `khala_read {}`: both a person-entered `/khala read` and the agent's own read.
+- `khala_status {}`: the requested and effective mode, plus per-mode support
+  from `HarnessCapabilities`, where unevidenced modes read `unproven`.
+
+None of these tools accepts `bindingId` or `ackBatchToken`. The session selects
+the binding, and tokens stay inside Khala. A read or piggyback batch arrives as
+its own content item in the shared `<khala-channel-batch-v1>` frame, without its
+token.
 
 The installed binary does not compose this client yet, so `khala claude`
-fails closed with `transport_unavailable`.
+and the plugin's `mcp-serve` fail closed with `transport_unavailable`.
 
 ## Composition boundary
 
@@ -472,7 +584,10 @@ and MCP modules depend on package-owned ports and shared contract types.
 `createConnectorBootstrapClient` adapts KHA-114; KHA-153 supplies the live agent
 capability routes and runtime state. `createHttpChannelListing` composes
 `listChannels` over `GET /api/agent/channels` with the connector's discovery
-credential client and proof signer. `listAgents` is an injected port.
+credential client and proof signer. `createHttpChannelAccess` composes
+`requestChannelAccess` and `channelAccessStatus` over
+`POST /api/agent/channel-access/request` and `GET /api/agent/channel-access/status`
+the same way. `listAgents` is an injected port.
 
 ## Not proven here
 
@@ -487,4 +602,7 @@ setup composes the HTTP listing client. The control plane has no
 binding-authorized joined-channel roster route yet, so `listAgents` has no
 HTTP composition in this package. `mcp-serve` still requires a held binding,
 so the MCP listing tools are unavailable before an agent joins its first
-channel. Use `khala channels list` before that.
+channel. Use `khala channels list` before that. The access commands are
+likewise `unavailable` until setup composes the HTTP access client, and the MCP
+access tools share the held-binding requirement, so use `khala channels
+request-access` for a first join.
