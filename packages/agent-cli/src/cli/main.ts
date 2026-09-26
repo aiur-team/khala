@@ -25,6 +25,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),
+      internalClient: async descriptorPath =>
+        (await import('../composition/internal.js')).createInternalClient({ descriptorPath }),
     });
   } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
 }

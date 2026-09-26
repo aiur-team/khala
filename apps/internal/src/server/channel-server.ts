@@ -68,6 +68,7 @@ const ROUTES = {
   timeline: { method: 'GET', path: '/api/v1/channels/:channelId/timeline', admission: 'authenticated', allowQuery: true },
   send: { method: 'POST', path: '/api/v1/channels/:channelId/messages', admission: 'authenticated' },
   hints: { method: 'GET', path: '/api/v1/channels/:channelId/hints', admission: 'authenticated' },
+  binding: { method: 'GET', path: '/api/v1/agent/binding', admission: 'authenticated' },
   channelDocument: { method: 'GET', path: '/channels/:channelId', admission: 'public' },
 } as const satisfies Record<string, RouteSpec>;
 
@@ -160,7 +161,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
 
   const routes: RouteSpec[] = [
     ROUTES.bootstrapDocument, ROUTES.bootstrapScript, ROUTES.exchange,
-    ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints,
+    ROUTES.create, ROUTES.channel, ROUTES.timeline, ROUTES.send, ROUTES.hints, ROUTES.binding,
   ];
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);
   for (const route of assets?.routes ?? []) routes.push({ method: 'GET', path: route, template: 'asset', admission: 'public' });
@@ -272,6 +273,21 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       // An unavailable write may or may not have committed; never report success.
       fail(response, failure(503, 'outcome_unknown'));
     }
+  }
+
+  /** Lets a local agent client learn the exact live binding its capability holds. */
+  function binding({ principal, response }: RouteContext<Principal>): void {
+    if (principal?.kind !== 'binding') {
+      fail(response, failure(403, 'forbidden'));
+      return;
+    }
+    const held = principal.binding;
+    sendJson(response, 200, {
+      binding: {
+        v: held.v, bindingId: held.bindingId, ownerId: held.ownerId, agentParticipantId: held.agentParticipantId,
+        deviceId: held.deviceId, harness: held.harness, sessionId: held.sessionId, generation: held.generation,
+      },
+    });
   }
 
   function channel({ principal, params, response }: RouteContext<Principal>): void {
@@ -443,6 +459,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.timeline: return timeline(context);
           case ROUTES.send: return await send(context);
           case ROUTES.hints: return hints(context);
+          case ROUTES.binding: return binding(context);
           default: return staticAsset(context);
         }
       } catch (error) {
