@@ -218,3 +218,34 @@ export function readArchiveSnapshot(
     return events === null ? null : { metadata, participants: participantsOf(db, channelId), events };
   });
 }
+
+export type CreatedChannelRemoval =
+  | Readonly<{ kind: 'removed' }>
+  /** This store does not hold the channel, or holds it as its launch channel. */
+  | Readonly<{ kind: 'absent' }>;
+
+/**
+ * Removes one channel that an owner-confirmed create added to a launch store, and
+ * nothing else: its events, memberships, discovery settings and create record go,
+ * and any binding activated for it is revoked. The launch channel and every other
+ * channel in the store keep all of their rows.
+ */
+export function removeCreatedChannel(handle: InternalStoreHandle, channelId: string): CreatedChannelRemoval {
+  return handle.transaction(db => {
+    const bound = db.prepare('SELECT value FROM meta WHERE key = ?')
+      .get(LIFECYCLE_CHANNEL_META_KEY) as { value: string } | undefined;
+    if (bound === undefined || bound.value === channelId
+      || !db.prepare('SELECT 1 FROM channels WHERE channel_id = ?').get(channelId)) return { kind: 'absent' } as const;
+    db.prepare(`
+      UPDATE bindings SET status = 'revoked'
+      WHERE (binding_id, generation) IN (SELECT binding_id, generation FROM discovery_activations WHERE channel_id = ?)
+    `).run(channelId);
+    for (const table of [
+      'discovery_activations', 'discovery_allowlist', 'discovery_visibility', 'channel_operations',
+      'receipt_fact_events', 'events', 'memberships', 'channels',
+    ]) {
+      db.prepare(`DELETE FROM ${table} WHERE channel_id = ?`).run(channelId);
+    }
+    return { kind: 'removed' } as const;
+  });
+}

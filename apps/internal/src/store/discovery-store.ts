@@ -1,3 +1,4 @@
+import { type SessionBinding, sameSessionBinding } from '@khala/contracts/delivery/index';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import type { InternalStoreHandle } from './open';
 
@@ -5,7 +6,8 @@ import type { InternalStoreHandle } from './open';
 // empty allowlist, so an unconfigured channel is listed to nobody. Discovery
 // agents are stored by capability digest only; reissuing for the same harness
 // session rotates that digest and increments the generation. Admission and the
-// create adapter are idempotent per operation and never create a binding.
+// create adapter are idempotent per operation and never create a binding; only
+// activation of an exchanged operation does, once per operation.
 
 export type DiscoveryVisibility = 'public' | 'private' | 'secret';
 
@@ -73,6 +75,21 @@ export type SecretChannelOutcome =
   | Readonly<{ kind: 'operation_mismatch' }>
   | Readonly<{ kind: 'unavailable' }>;
 
+/** One exchanged operation's binding, keyed by a requester/origin/operation digest. */
+export type ActivationInput = Readonly<{
+  operationKey: string;
+  binding: SessionBinding;
+  channelId: string;
+  sessionGeneration: number;
+}>;
+
+export type StoredActivation = Readonly<{
+  binding: SessionBinding;
+  channelId: RoomId;
+  sessionGeneration: number;
+  status: 'active' | 'revoked';
+}>;
+
 type Unavailable = Readonly<{ kind: 'unavailable' }>;
 
 export interface DiscoveryStore {
@@ -98,6 +115,51 @@ export interface DiscoveryStore {
   reconcileAdmission(input: AdmissionInput): AdmissionOutcome | Readonly<{ kind: 'not_applied' }>;
   createSecretChannel(input: SecretChannelInput): SecretChannelOutcome;
   findSecretChannel(idempotencyKey: string): SecretChannelOutcome | Readonly<{ kind: 'absent' }>;
+  /**
+   * Registers the binding for a joined agent and records it against the operation, in
+   * one transaction. The same operation returns the stored activation; different input
+   * for it, a missing membership or a foreign device is rejected.
+   */
+  activate(input: ActivationInput): Readonly<{ kind: 'activated'; activation: StoredActivation }> | Readonly<{ kind: 'rejected' }> | Unavailable;
+  activation(operationKey: string): Readonly<{ kind: 'found'; activation: StoredActivation }> | Readonly<{ kind: 'absent' }> | Unavailable;
+}
+
+type ActivationRow = Readonly<{
+  binding_id: string;
+  generation: number;
+  owner_id: string;
+  participant_id: string;
+  device_id: string;
+  harness: string;
+  session_id: string;
+  status: 'active' | 'revoked';
+  channel_id: string;
+  session_generation: number;
+}>;
+
+const ACTIVATION_SELECT = `
+  SELECT b.binding_id, b.generation, b.owner_id, b.participant_id, b.device_id, b.harness, b.session_id, b.status,
+    a.channel_id, a.session_generation
+  FROM discovery_activations a JOIN bindings b ON b.binding_id = a.binding_id AND b.generation = a.generation
+  WHERE a.operation_key = ?
+`;
+
+function activationFromRow(row: ActivationRow): StoredActivation {
+  return {
+    binding: {
+      v: 1,
+      bindingId: row.binding_id as SessionBinding['bindingId'],
+      ownerId: row.owner_id as OwnerId,
+      agentParticipantId: row.participant_id as ParticipantId,
+      deviceId: row.device_id as DeviceId,
+      harness: row.harness,
+      sessionId: row.session_id,
+      generation: row.generation,
+    },
+    channelId: row.channel_id as RoomId,
+    sessionGeneration: row.session_generation,
+    status: row.status,
+  };
 }
 
 type AgentRow = Readonly<{
@@ -407,6 +469,55 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
         });
         if (result.kind === 'created') handle.publish({ kind: 'channel', channelId: result.channelId });
         return result;
+      } catch { return unavailable(); }
+    },
+
+    activate(input) {
+      const { binding } = input;
+      try {
+        return handle.transaction(db => {
+          const recorded = db.prepare(ACTIVATION_SELECT).get(input.operationKey) as ActivationRow | undefined;
+          if (recorded) {
+            const activation = activationFromRow(recorded);
+            return sameSessionBinding(activation.binding, binding) && activation.channelId === input.channelId
+              && activation.sessionGeneration === input.sessionGeneration
+              ? { kind: 'activated', activation } as const
+              : { kind: 'rejected' } as const;
+          }
+          // Only an admitted agent, on the device admission reserved for it, is ever bound.
+          const joined = db.prepare(`
+            SELECT 1 FROM memberships m
+            JOIN participants p ON p.participant_id = m.participant_id
+            JOIN devices d ON d.participant_id = m.participant_id
+            WHERE m.channel_id = ? AND m.participant_id = ? AND m.membership = 'joined'
+              AND p.kind = 'agent' AND p.owner_id = ? AND d.device_id = ?
+          `).get(input.channelId, binding.agentParticipantId, binding.ownerId, binding.deviceId);
+          if (!joined || db.prepare('SELECT 1 FROM bindings WHERE binding_id = ?').get(binding.bindingId)) {
+            return { kind: 'rejected' } as const;
+          }
+          db.prepare(`
+            INSERT INTO bindings (binding_id, generation, owner_id, participant_id, device_id, harness, session_id, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+          `).run(
+            binding.bindingId, binding.generation, binding.ownerId, binding.agentParticipantId,
+            binding.deviceId, binding.harness, binding.sessionId,
+          );
+          db.prepare(`
+            INSERT INTO discovery_activations (operation_key, binding_id, generation, channel_id, session_generation)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(input.operationKey, binding.bindingId, binding.generation, input.channelId, input.sessionGeneration);
+          return {
+            kind: 'activated',
+            activation: activationFromRow(db.prepare(ACTIVATION_SELECT).get(input.operationKey) as ActivationRow),
+          } as const;
+        });
+      } catch { return unavailable(); }
+    },
+
+    activation(operationKey) {
+      try {
+        const row = handle.read(db => db.prepare(ACTIVATION_SELECT).get(operationKey) as ActivationRow | undefined);
+        return row ? { kind: 'found', activation: activationFromRow(row) } : { kind: 'absent' };
       } catch { return unavailable(); }
     },
 

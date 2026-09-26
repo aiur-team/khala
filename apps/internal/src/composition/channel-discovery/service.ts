@@ -1,11 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
+import type { SessionBinding } from '@khala/contracts/delivery/index';
 import {
   type AuthPrincipal, type AuthorizedChannelRef, type ChannelAccessRequesterContext, type ChannelAccessResolutionPort,
-  type ChannelCreateAdapterPort, type ChannelCreateReconciliation, type ControlStore, type DiscoveryRequester,
-  type StableAgentPrincipal, type TrustedClock, validateGrantExchangeRequest,
+  type ChannelCreateAdapterPort, type ChannelCreateReconciliation, type ControlStore, type DeviceId, type DiscoveryRequester,
+  type GrantExchangeRejection, type OperationResult, type RoomId, type StableAgentPrincipal, type TrustedClock,
+  validateGrantExchangeRequest,
 } from '@khala/contracts/messaging/index';
 import { createGrantExchangeAuthority } from '@khala/messaging/channel-access/exchange/authority';
-import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
+import { type ExchangeGrantBinding, type ExchangeGrantRedemption, createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import type { ChannelAdmissionProviderPort, ChannelAdmissionRequest } from '@khala/messaging/channel-access/exchange/ports';
 import { createGrantExchangeService } from '@khala/messaging/channel-access/exchange/service';
 import { createChannelAccessPolicy } from '@khala/messaging/channel-access/journal/policy';
@@ -22,8 +24,9 @@ import { createInternalListing } from './listing';
 // Internal-mode composition of channel discovery. The shared channel-access
 // journal, grant exchange and grant issuer run unchanged over the channel
 // store's SQLite `ControlStore`; this module supplies only the local adapters:
-// catalog resolution, admission, the human-workflow-only create adapter and
-// descriptor issuance. The single local human owns every channel. Agents never
+// catalog resolution, admission, the human-workflow-only create adapter,
+// descriptor issuance and binding activation. The single local human owns every
+// channel. Agents never
 // receive a channel ID, owner, roster or grant from any of these surfaces.
 
 const JOURNAL_KEY_RECORD = 'internal.channel-access.policy-key.v1';
@@ -208,13 +211,86 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
     };
   }
 
+  const issuer = createExchangeGrantIssuer({ store: deps.control, clock });
   const exchange = createGrantExchangeService({
     store: deps.control,
     authority: createGrantExchangeAuthority({ store: journal, fulfillment: access.fulfillment, clock }),
     provider: admission,
-    issuer: createExchangeGrantIssuer({ store: deps.control, clock }),
+    issuer,
     clock,
   });
+
+  /** The one binding an operation activates is named by its requester, origin and operation. */
+  function activationKey(agent: DiscoveryAgentContext, operationId: string): string {
+    return digest('activation', agent.principal, agent.origin, operationId);
+  }
+
+  /** The grant's bound tuple, from a first redemption or from one that already happened. */
+  async function redeemed(tuple: ExchangeGrantRedemption): Promise<ExchangeGrantBinding | GrantExchangeRejection | 'unavailable'> {
+    const result = await issuer.redeem(tuple);
+    if (result.kind === 'redeemed') return result.binding;
+    if (result.kind === 'unavailable') return 'unavailable';
+    if (result.code === 'expired') return 'expired';
+    if (result.code === 'invalid_grant') return 'closed';
+    // Consumed before a crash could record the binding: this exact grant finishes the same activation.
+    const consumed = await issuer.consumed(tuple);
+    if (consumed.kind === 'consumed') return consumed.binding;
+    return consumed.kind === 'unavailable' ? 'unavailable' : 'closed';
+  }
+
+  async function activate(
+    agent: DiscoveryAgentContext,
+    operationId: string,
+    input: Readonly<{ deviceId: string; grant: string | null }>,
+  ): Promise<OperationResult<Readonly<{ binding: SessionBinding; channelId: RoomId }>, GrantExchangeRejection>> {
+    const stored = currentAgent(agent.principal, agent.generation);
+    if (stored === 'unavailable') return { kind: 'unavailable', retryable: true };
+    if (stored === 'revoked') return { kind: 'rejected', code: 'closed' };
+    const operationKey = activationKey(agent, operationId);
+    const found = store.activation(operationKey);
+    if (found.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
+    if (found.kind === 'found') {
+      const { activation } = found;
+      if (activation.sessionGeneration !== agent.generation) return { kind: 'rejected', code: 'wrong_generation' };
+      if (activation.binding.deviceId !== input.deviceId) return { kind: 'rejected', code: 'wrong_device' };
+      // A revoked binding stays revoked; resuming never mints it a new capability.
+      if (activation.status !== 'active') return { kind: 'rejected', code: 'closed' };
+      return { kind: 'ok', value: { binding: activation.binding, channelId: activation.channelId } };
+    }
+    if (input.grant === null) return { kind: 'rejected', code: 'closed' };
+    const bound = await redeemed({
+      grant: input.grant,
+      operationId,
+      requester: agent.principal as StableAgentPrincipal,
+      origin: agent.origin,
+      sessionGeneration: agent.generation,
+      deviceId: input.deviceId as DeviceId,
+      proofKeyThumbprint: stored.proofThumbprint,
+    });
+    if (bound === 'unavailable') return { kind: 'unavailable', retryable: true };
+    if (typeof bound === 'string') return { kind: 'rejected', code: bound };
+    if (bound.ownerId !== human.ownerId) return { kind: 'rejected', code: 'closed' };
+    const channelId = channelOf(bound.channelRef).channelId;
+    const activated = store.activate({
+      operationKey,
+      channelId,
+      sessionGeneration: agent.generation,
+      binding: {
+        v: 1,
+        bindingId: `binding_${operationKey}` as SessionBinding['bindingId'],
+        ownerId: human.ownerId,
+        agentParticipantId: agentParticipant(agent.principal) as SessionBinding['agentParticipantId'],
+        deviceId: bound.deviceId,
+        harness: stored.harness,
+        // The session digest, never the harness's own session identifier.
+        sessionId: stored.sessionDigest,
+        generation: 1,
+      },
+    });
+    if (activated.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
+    if (activated.kind === 'rejected') return { kind: 'rejected', code: 'closed' };
+    return { kind: 'ok', value: { binding: activated.activation.binding, channelId: activated.activation.channelId } };
+  }
 
   const createAdapter: ChannelCreateAdapterPort = {
     async create(input) {
@@ -337,6 +413,8 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       return exchange.forConnector({ sessionFingerprint: stored.sessionDigest }).exchange(validated.request);
     },
 
+    activate,
+
     async acknowledge(agent, operationId, readiness) {
       const stored = currentAgent(agent.principal, agent.generation);
       if (typeof stored !== 'object') return { kind: 'rejected', code: 'closed' };
@@ -346,6 +424,12 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       if (readiness.origin !== agent.origin) return { kind: 'rejected', code: 'wrong_origin' };
       if (readiness.sessionGeneration !== agent.generation) return { kind: 'rejected', code: 'wrong_generation' };
       if (readiness.proofKeyThumbprint !== stored.proofThumbprint) return { kind: 'rejected', code: 'proof_mismatch' };
+      // `connected` is honest only once this operation holds a live binding on the same device.
+      const activated = store.activation(activationKey(agent, operationId));
+      if (activated.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
+      if (activated.kind === 'absent') return { kind: 'rejected', code: 'operation_mismatch' };
+      if (activated.activation.binding.deviceId !== readiness.deviceId) return { kind: 'rejected', code: 'wrong_device' };
+      if (activated.activation.status !== 'active') return { kind: 'rejected', code: 'closed' };
       return exchange.forConnector({ sessionFingerprint: stored.sessionDigest }).acknowledge(readiness);
     },
 

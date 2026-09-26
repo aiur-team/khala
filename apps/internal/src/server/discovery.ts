@@ -3,9 +3,10 @@ import {
   type AccessRequestStatus, type ChannelAccessDecisionCommand, type ChannelAccessReadiness, type ChannelAccessDecisionRejection,
   type ChannelAccessMuteCommand, type ChannelAccessMuteResult, type ChannelAccessOwnerProjection, type ChannelAccessRequest,
   type ChannelAccessStatusQuery, type ChannelCreateIntent, type ChannelListingPage, type GrantExchangeRejection,
-  type GrantExchangeRequest, type OperationResult, type SealedGrantEnvelope, decodeChannelAccessDecisionCommand,
+  type GrantExchangeRequest, type OperationResult, type RoomId, type SealedGrantEnvelope, decodeChannelAccessDecisionCommand,
   decodeChannelAccessMuteCommand, decodeChannelAccessReadiness, decodeChannelAccessRequest, decodeChannelCreateIntent, decodeGrantExchangeRequest,
 } from '@khala/contracts/messaging/index';
+import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { DiscoveryIdentity, HumanAuthority, Principal } from './credentials';
 import { type ErrorCode, readJsonObject, sendError, sendJson } from './http';
 import { type RouteContext, type RouteSpec, isRouteSegment } from './server';
@@ -17,7 +18,7 @@ import { type RouteContext, type RouteSpec, isRouteSegment } from './server';
 // - discovery (a descriptor's capability): list, request access, submit a create
 //   intent, read request status. Nothing else.
 // - connector (a discovery capability plus a fresh DPoP proof from the separately
-//   registered connector key): the grant exchange only.
+//   registered connector key): the grant exchange, binding activation and readiness.
 // - human (cookie plus request secret): inbox, decisions, mute, visibility,
 //   allowlist and the verified-agent list.
 //
@@ -77,6 +78,15 @@ export type DiscoveryListResult =
   | Readonly<{ kind: 'rejected'; code: 'rate_limited' | 'cursor_unavailable' }>
   | Readonly<{ kind: 'unavailable' }>;
 
+export type DiscoveryActivationInput = Readonly<{
+  deviceId: string;
+  /** The opened one-time grant; `null` resumes an operation that already activated. */
+  grant: string | null;
+}>;
+
+/** The binding an approved, exchanged operation activated in this store. */
+export type DiscoveryActivation = Readonly<{ binding: SessionBinding; channelId: RoomId }>;
+
 export type SettingsMutationRejection = 'not_found' | 'stale_revision' | 'operation_mismatch' | 'unknown_principal' | 'wrong_generation';
 
 /** Implemented by the internal composition; the server only authenticates, decodes and maps results. */
@@ -92,6 +102,15 @@ export interface InternalDiscoveryPort {
     operationId: string,
     request: GrantExchangeRequest,
   ): Promise<OperationResult<SealedGrantEnvelope, GrantExchangeRejection>>;
+  /**
+   * Redeems the exchanged grant into a binding, idempotently by operation ID. A retry,
+   * with or without the grant, returns the same binding; it never admits again.
+   */
+  activate(
+    agent: DiscoveryAgentContext,
+    operationId: string,
+    input: DiscoveryActivationInput,
+  ): Promise<OperationResult<DiscoveryActivation, GrantExchangeRejection>>;
   /** Connector readiness after local activation: marks the request `connected` and ends envelope recovery. */
   acknowledge(
     agent: DiscoveryAgentContext,
@@ -130,6 +149,10 @@ export const DISCOVERY_ROUTES = {
     method: 'POST', path: '/api/connector/channel-access-requests/:operationId/exchange',
     template: '/api/connector/channel-access-requests/:operation/exchange', admission: 'authenticated',
   },
+  activate: {
+    method: 'POST', path: '/api/connector/channel-access-requests/:operationId/activate',
+    template: '/api/connector/channel-access-requests/:operation/activate', admission: 'authenticated',
+  },
   ready: {
     method: 'POST', path: '/api/connector/channel-access-requests/:operationId/ready',
     template: '/api/connector/channel-access-requests/:operation/ready', admission: 'authenticated',
@@ -152,6 +175,7 @@ const ROLES = new Map<RouteSpec, DiscoveryRole>([
   [DISCOVERY_ROUTES.requestCreate, 'discovery'],
   [DISCOVERY_ROUTES.createStatus, 'discovery'],
   [DISCOVERY_ROUTES.exchange, 'discovery'],
+  [DISCOVERY_ROUTES.activate, 'discovery'],
   [DISCOVERY_ROUTES.ready, 'discovery'],
   [DISCOVERY_ROUTES.inbox, 'human'],
   [DISCOVERY_ROUTES.accessDecision, 'human'],
@@ -177,6 +201,7 @@ const B64URL = /^[A-Za-z0-9_-]+$/;
 const KEY_X = /^[A-Za-z0-9_-]{43}$/;
 const JTI = /^[A-Za-z0-9_-]{16,64}$/;
 const BOUNDED_TOKEN = /^[\x21-\x7e]{1,512}$/;
+const ACTIVATION_GRANT = /^cagrant_[A-Za-z0-9_-]{43}$/;
 
 export type ProofExpectation = Readonly<{ method: string; url: string; jkt: string; accessToken: string; nowMs: number }>;
 
@@ -263,6 +288,8 @@ export function createDiscoveryRoutes(deps: Readonly<{
   origin: () => string;
   clock: () => number;
   maxBodyBytes: number;
+  /** Installs an activated binding in the running server and returns its fresh capability. */
+  installBinding(activation: DiscoveryActivation): string | null;
 }>): DiscoveryRouteHandler {
   const { port } = deps;
   // Proof `jti`s seen within the acceptance window; a replay is refused.
@@ -409,6 +436,40 @@ export function createDiscoveryRoutes(deps: Readonly<{
     else sendUnavailable(context, true);
   }
 
+  async function activate(context: RouteContext<Principal>): Promise<void> {
+    const agent = agentOf(context);
+    const operationId = context.params.operationId!;
+    if (!connectorProven(context, agent)) return;
+    const body = await readJsonObject(context, deps.maxBodyBytes);
+    const { v, deviceId, grant } = body;
+    if (!exactKeys(body, ['v', 'operationId', 'deviceId', 'grant']) || v !== 1 || body.operationId !== operationId
+      || !isRouteSegment(deviceId) || (grant !== null && (typeof grant !== 'string' || !ACTIVATION_GRANT.test(grant)))) {
+      fail(context, 400, 'invalid_request');
+      return;
+    }
+    const result = await port.activate(agent, operationId, { deviceId, grant });
+    if (result.kind === 'rejected') {
+      sendGrantRejection(context, result.code);
+      return;
+    }
+    const capability = result.kind === 'ok' ? deps.installBinding(result.value) : null;
+    if (result.kind !== 'ok' || capability === null) {
+      sendUnavailable(context, true);
+      return;
+    }
+    const { binding, channelId } = result.value;
+    sendJson(context.response, 200, {
+      v: 1,
+      operationId,
+      binding: {
+        v: binding.v, bindingId: binding.bindingId, ownerId: binding.ownerId, agentParticipantId: binding.agentParticipantId,
+        deviceId: binding.deviceId, harness: binding.harness, sessionId: binding.sessionId, generation: binding.generation,
+      },
+      channelId,
+      capability,
+    });
+  }
+
   async function ready(context: RouteContext<Principal>): Promise<void> {
     const agent = agentOf(context);
     const operationId = context.params.operationId!;
@@ -495,6 +556,7 @@ export function createDiscoveryRoutes(deps: Readonly<{
         case DISCOVERY_ROUTES.requestCreate: return requestCreate(context);
         case DISCOVERY_ROUTES.createStatus: return status(context, 'create');
         case DISCOVERY_ROUTES.exchange: return exchange(context);
+        case DISCOVERY_ROUTES.activate: return activate(context);
         case DISCOVERY_ROUTES.ready: return ready(context);
         case DISCOVERY_ROUTES.inbox: return inbox(context);
         case DISCOVERY_ROUTES.accessDecision: return decide(context, 'access');

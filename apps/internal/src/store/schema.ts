@@ -155,8 +155,8 @@ CREATE TABLE receipt_projection_checkpoints (
  * Channel discovery. `control_records`/`control_operations` back the shared
  * `ControlStore` used by the channel-access journal, grant exchange and grant
  * issuer. The discovery tables hold owner visibility, the explicit per-principal
- * allowlist, issued discovery agents (capability digests only) and admission
- * operations. A channel without a visibility row is `private` with no allowlist.
+ * allowlist, issued discovery agents (capability digests only), admission
+ * operations and the binding each exchanged operation activated. A channel without a visibility row is `private` with no allowlist.
  */
 export const DISCOVERY_SCHEMA_V5_SQL = `
 CREATE TABLE control_records (
@@ -212,6 +212,16 @@ CREATE TABLE admission_operations (
   provider_operation_id TEXT PRIMARY KEY,
   fingerprint TEXT NOT NULL,
   membership TEXT NOT NULL CHECK (membership IN ('joined', 'already_joined'))
+) STRICT;
+
+CREATE TABLE discovery_activations (
+  operation_key TEXT PRIMARY KEY,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation >= 1),
+  channel_id TEXT NOT NULL REFERENCES channels (channel_id) ON DELETE RESTRICT,
+  session_generation INTEGER NOT NULL CHECK (session_generation >= 1),
+  UNIQUE (binding_id, generation),
+  FOREIGN KEY (binding_id, generation) REFERENCES bindings (binding_id, generation) ON DELETE RESTRICT
 ) STRICT;
 `;
 

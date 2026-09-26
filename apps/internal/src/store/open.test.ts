@@ -108,7 +108,7 @@ describe('openChannelStore', () => {
     expect(second.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all()
       .map(row => (row as { name: string }).name))).toEqual([
       'admission_operations', 'bindings', 'channel_operations', 'channels', 'control_operations', 'control_records',
-      'devices', 'discovery_agents', 'discovery_allowlist', 'discovery_operations', 'discovery_visibility', 'events',
+      'devices', 'discovery_activations', 'discovery_agents', 'discovery_allowlist', 'discovery_operations', 'discovery_visibility', 'events',
       'memberships', 'meta', 'mode_controls', 'mode_operations', 'participants', 'receipt_fact_events', 'receipt_facts',
       'receipt_projection_checkpoints', 'sqlite_sequence',
     ]);

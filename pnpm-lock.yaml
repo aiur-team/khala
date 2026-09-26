@@ -85,6 +85,9 @@ importers:
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0
+      libsodium-wrappers:
+        specifier: 0.8.4
+        version: 0.8.4
       tsx:
         specifier: 4.20.6
         version: 4.20.6

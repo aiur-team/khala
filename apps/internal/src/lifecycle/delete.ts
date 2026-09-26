@@ -1,7 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { readResumeMetadata } from '../store/lifecycle-snapshot';
+import { readResumeMetadata, removeCreatedChannel } from '../store/lifecycle-snapshot';
+import { StoreError } from '../store/errors';
+import { openChannelStore } from '../store/open';
+import { CHANNELS_DIRECTORY, isLifecycleChannelId, isNormalAbsolute } from './paths';
 import { type LifecycleOpenFailureCode, isOpenFailure, lifecycleFailure, openOwnedChannel } from './resume';
 
 /** Every surface that offers or reports deletion must show this boundary. */
@@ -15,7 +18,11 @@ export function deleteConfirmation(channelId: string): DeleteConfirmationV1 {
   return { kind: 'delete_internal_channel', v: 1, channelId };
 }
 
-export type DeleteFailureCode = LifecycleOpenFailureCode | 'tombstone_collision';
+/**
+ * `channels_remain`: the launch channel names its store directory, so it is deleted
+ * only once the channels created in that store are gone; nothing was removed.
+ */
+export type DeleteFailureCode = LifecycleOpenFailureCode | 'tombstone_collision' | 'channels_remain';
 
 export type DeleteResultV1 =
   | Readonly<{ kind: 'deleted'; v: 1; channelId: string; notice: typeof PLAINTEXT_DELETION_NOTICE }>
@@ -55,6 +62,41 @@ function removeTree(directory: string, fault: DeleteFault | undefined): void {
 }
 
 /**
+ * A channel an owner-confirmed create added to some launch store has no directory of
+ * its own. Each other offline store is checked for it, and only its rows are removed.
+ */
+function deleteCreatedChannel(root: string, channelId: string): DeleteResultV1 {
+  let names: string[];
+  try {
+    names = fs.readdirSync(path.join(root, CHANNELS_DIRECTORY));
+  } catch {
+    return lifecycleFailure('missing_state');
+  }
+  let running = false;
+  for (const name of names) {
+    if (name.startsWith('.')) continue;
+    let handle: ReturnType<typeof openChannelStore>;
+    try {
+      handle = openChannelStore({ directory: path.join(root, CHANNELS_DIRECTORY, name), mode: 'existing' });
+    } catch (error) {
+      running ||= error instanceof StoreError && error.code === 'locked';
+      continue;
+    }
+    try {
+      if (removeCreatedChannel(handle, channelId).kind === 'removed') {
+        return { kind: 'deleted', v: 1, channelId, notice: PLAINTEXT_DELETION_NOTICE };
+      }
+    } catch {
+      return lifecycleFailure('unavailable');
+    } finally {
+      handle.close();
+    }
+  }
+  // A running launch may hold it; lifecycle changes wait until that launch stops.
+  return lifecycleFailure(running ? 'channel_running' : 'missing_state');
+}
+
+/**
  * Deletes one confirmed offline channel. Ownership is retained while the exact
  * directory is renamed into a fresh same-parent tombstone, so no other owner can
  * open it mid-delete. A failure after that rename never recreates the original
@@ -72,7 +114,11 @@ export function deleteInternalChannel(input: Readonly<{
     return { kind: 'confirmation_required', v: 1, channelId: input.channelId, notice: PLAINTEXT_DELETION_NOTICE };
   }
   const owned = openOwnedChannel(input.root, input.channelId);
-  if (isOpenFailure(owned)) return owned;
+  if (isOpenFailure(owned)) {
+    return owned.code === 'missing_state' && isNormalAbsolute(input.root) && isLifecycleChannelId(input.channelId)
+      ? deleteCreatedChannel(input.root, input.channelId)
+      : owned;
+  }
 
   const parent = path.dirname(owned.directory);
   const tombstone = path.join(parent, `.tombstone-${input.tombstoneSuffix?.() ?? randomBytes(12).toString('hex')}`);
@@ -83,6 +129,12 @@ export function deleteInternalChannel(input: Readonly<{
     if (identity.kind !== 'found') {
       owned.handle.close();
       return lifecycleFailure(identity.kind);
+    }
+    // Removing the directory would take every channel created in this store with it.
+    const others = owned.handle.read(db => db.prepare('SELECT 1 FROM channels WHERE channel_id <> ? LIMIT 1').get(input.channelId));
+    if (others) {
+      owned.handle.close();
+      return lifecycleFailure('channels_remain');
     }
     pinned = fs.lstatSync(owned.directory);
     if (!pinned.isDirectory()) {

@@ -11,7 +11,7 @@ import {
 } from './bootstrap';
 import {
   type BindingCredential, type BootstrapCredential, type CredentialAuthority, CredentialConfigError, type Principal,
-  createCredentialAuthority,
+  createCredentialAuthority, mintCredential,
 } from './credentials';
 import { type InternalDiscoveryPort, createDiscoveryRoutes, discoveryRole } from './discovery';
 import {
@@ -180,7 +180,18 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   ];
   let origin = '';
   const discovery = options.discovery
-    ? createDiscoveryRoutes({ port: options.discovery, origin: () => origin, clock: options.clock, maxBodyBytes: limits.maxBodyBytes })
+    ? createDiscoveryRoutes({
+      port: options.discovery,
+      origin: () => origin,
+      clock: options.clock,
+      maxBodyBytes: limits.maxBodyBytes,
+      // A binding activated through channel access takes effect in this running server.
+      installBinding({ binding, channelId }) {
+        if (!isRouteSegment(channelId)) return null;
+        const credential = mintCredential();
+        return authority.installBinding({ credential, binding, channels: [channelId] }) ? credential : null;
+      },
+    })
     : null;
   if (discovery) routes.push(...discovery.routes);
   if (assets?.channelDocument) routes.push(ROUTES.channelDocument);

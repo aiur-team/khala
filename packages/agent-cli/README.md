@@ -129,9 +129,16 @@ optional display text; the owner sees them marked as untrusted.
   channel, change visibility or the allowlist, or exchange a grant. Only a
   request that also carries a fresh DPoP proof signed by the connector key can
   exchange an approved request for its sealed grant
-  (`POST /api/connector/channel-access-requests/<operation>/exchange`) or
-  acknowledge readiness after local activation (`.../<operation>/ready`), which
-  marks the request `connected`.
+  (`POST /api/connector/channel-access-requests/<operation>/exchange`), redeem
+  the opened grant for a binding (`.../<operation>/activate`), or acknowledge
+  readiness (`.../<operation>/ready`), which marks the request `connected`.
+- Activation registers the binding in the running server and returns it with
+  the channel ID and a fresh binding capability, which sends and reads in that
+  one channel. Readiness is refused until the operation holds a live binding.
+  Activation is idempotent per operation: a retry, including one with
+  `"grant": null` after a restart, returns the same binding with a new
+  capability and retires the previous one. A revoked binding is never
+  reactivated.
 - The server stores only a digest of the capability, so it survives a restart
   of the same channel. Requests are bound to the loopback origin, so a resume on
   a different port closes them.
@@ -151,8 +158,11 @@ allowlist before approving it.
 
 A channel you approve from an agent's create request is added to the running
 launch's store as a `secret` channel. Resume and export still address the
-launch channel, and deleting the launch channel deletes every channel in its
-store.
+launch channel. `delete <channel-id>` removes only the named channel: for a
+created channel it removes that channel's messages, members and settings from
+the launch's store and revokes any binding to it, leaving the launch channel
+and every other channel in place. The launch channel names the store, so
+deleting it exits with `channels_remain` while created channels remain.
 
 Launching needs the built internal web bundle in `internal-web/` beside
 `khala-internal.js`. Without it, launch fails with `web_bundle_unavailable`

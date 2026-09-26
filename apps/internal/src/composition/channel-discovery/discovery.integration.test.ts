@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { createHash, createPrivateKey, randomBytes, sign } from 'node:crypto';
 import fs from 'node:fs';
 import { type IncomingMessage, request as httpRequest } from 'node:http';
 import path from 'node:path';
@@ -8,12 +8,14 @@ import {
 import {
   type DeviceId, type GrantExchangeRequest, type RoomId, deriveOkpKeyThumbprint,
 } from '@khala/contracts/messaging/index';
+import sodium from 'libsodium-wrappers';
 import { afterEach, describe, expect, it } from 'vitest';
 import { writeActiveDescriptor } from '../../descriptor/write';
 import { startChannelServer } from '../../server/channel-server';
 import { mintCredential } from '../../server/credentials';
 import { aliceDevice, alice, channelId, createChannelFixture, otherChannelId, type ChannelFixture } from '../../server/fixtures/channel-fixture';
 import type { LoopbackServer } from '../../server/server';
+import { createExchangeGrantIssuer } from '@khala/messaging/channel-access/exchange/grants';
 import { createChannelStore } from '../../store/channel-store';
 import { createSqliteControlStore } from '../../store/control-store';
 import { ROOM_DATABASE_FILE } from '../../store/path';
@@ -152,9 +154,19 @@ function proof(w: World, agent: Agent, url: string, overrides: Readonly<{ key?: 
   return `${header}.${payload}.${sign(null, Buffer.from(`${header}.${payload}`), privateKey).toString('base64url')}`;
 }
 
-async function exchangeRequest(w: World, agent: Agent, operationId: string, deviceId = 'device_connector_1'): Promise<GrantExchangeRequest> {
+type Recovery = Readonly<{ publicKey: Uint8Array; privateKey: Uint8Array }>;
+
+/** A connector's X25519 recovery keypair; the service seals the grant to its public half. */
+async function recoveryKey(): Promise<Recovery> {
+  await sodium.ready;
+  return sodium.crypto_box_keypair();
+}
+
+async function exchangeRequest(
+  w: World, agent: Agent, operationId: string, deviceId = 'device_connector_1', recovery?: Recovery,
+): Promise<GrantExchangeRequest> {
   const proofThumbprint = await deriveOkpKeyThumbprint({ algorithm: 'Ed25519', publicKey: agent.connector.publicKey, thumbprint: '' });
-  const box = generateKeyPairSync('x25519').publicKey.export({ format: 'jwk' }).x!;
+  const box = sodium.to_base64((recovery ?? await recoveryKey()).publicKey, sodium.base64_variants.URLSAFE_NO_PADDING);
   const boxThumbprint = await deriveOkpKeyThumbprint({ algorithm: 'X25519', publicKey: box, thumbprint: '' });
   if (!proofThumbprint.ok || !boxThumbprint.ok) throw new Error('crypto');
   return {
@@ -163,6 +175,21 @@ async function exchangeRequest(w: World, agent: Agent, operationId: string, devi
     encryptionKey: { algorithm: 'X25519', publicKey: box, thumbprint: boxThumbprint.thumbprint },
     deviceId: deviceId as DeviceId, sessionGeneration: agent.generation, expiresAt: new Date(w.clock.now + 60_000).toISOString(),
   };
+}
+
+/** Opens a sealed envelope exactly as the connector does and returns the one-time grant. */
+function openGrant(envelope: { ciphertext: string }, recovery: Recovery): string {
+  const ciphertext = sodium.from_base64(envelope.ciphertext, sodium.base64_variants.URLSAFE_NO_PADDING);
+  const opened = JSON.parse(sodium.to_string(sodium.crypto_box_seal_open(ciphertext, recovery.publicKey, recovery.privateKey)));
+  return opened.grant as string;
+}
+
+function activateCall(w: World, agent: Agent, operationId: string, body: Readonly<{ deviceId: string; grant: string | null }>, signed = true) {
+  const route = `/api/connector/channel-access-requests/${operationId}/activate`;
+  return call(w.server.port, {
+    method: 'POST', path: route, body: { v: 1, operationId, ...body },
+    headers: { ...bearer(agent), ...(signed ? { dpop: proof(w, agent, `${w.server.origin}${route}`) } : {}) },
+  });
 }
 
 function exchangeCall(w: World, agent: Agent, operationId: string, body: unknown, proofValue?: string) {
@@ -351,7 +378,8 @@ describe('internal channel discovery', () => {
     const other = await issue(w, 'session-2');
     await approvedAccess(w, agent, 'op-1');
     const url = `${w.server.origin}/api/connector/channel-access-requests/op-1/exchange`;
-    const body = await exchangeRequest(w, agent, 'op-1');
+    const recovery = await recoveryKey();
+    const body = await exchangeRequest(w, agent, 'op-1', undefined, recovery);
 
     // Wrong key, wrong target URL, stale proof and another agent's capability are all refused.
     expect((await exchangeCall(w, agent, 'op-1', body, proof(w, agent, url, { key: other.connector }))).status).toBe(401);
@@ -385,12 +413,117 @@ describe('internal channel discovery', () => {
       method: 'POST', path: '/api/connector/channel-access-requests/op-1/ready', headers: { ...bearer(agent), ...headers }, body: readiness,
     });
     expect((await ready({})).status).toBe(401);
+    // Readiness before a binding exists would claim `connected` for an agent that cannot send.
+    const early = await ready({ dpop: proof(w, agent, readyUrl) });
+    expect([early.status, early.json]).toEqual([409, { v: 1, kind: 'rejected', code: 'operation_mismatch' }]);
+    expect((await accessStatus(w, agent, 'op-1')).json.outcome).toBe('connecting');
+    expect((await activateCall(w, agent, 'op-1', { deviceId: body.deviceId, grant: openGrant(first.json, recovery) })).status).toBe(200);
     const acknowledged = await ready({ dpop: proof(w, agent, readyUrl) });
     expect([acknowledged.status, acknowledged.json]).toEqual([200, { v: 1, operationId: 'op-1', outcome: 'connected' }]);
     expect((await accessStatus(w, agent, 'op-1')).json.outcome).toBe('connected');
     expect((await ready({ dpop: proof(w, agent, readyUrl) })).status).toBe(200);
     // The envelope is gone once readiness is acknowledged.
     expect((await exchangeCall(w, agent, 'op-1', body, proof(w, agent, url))).status).toBe(410);
+  });
+
+  it('turns an approved request into a working binding: request, approve, exchange, activate, send and read', async () => {
+    const w = await world();
+    const agent = await issue(w, 'session-full');
+    await approvedAccess(w, agent, 'op-full');
+    const recovery = await recoveryKey();
+    const body = await exchangeRequest(w, agent, 'op-full', 'device_full_1', recovery);
+    const exchangeUrl = `${w.server.origin}/api/connector/channel-access-requests/op-full/exchange`;
+    const envelope = await exchangeCall(w, agent, 'op-full', body, proof(w, agent, exchangeUrl));
+    expect(envelope.status).toBe(200);
+    const grant = openGrant(envelope.json, recovery);
+    const bindingRows = () => w.handle.read(db => db.prepare('SELECT count(*) AS n FROM bindings WHERE participant_id = ?')
+      .get(`participant_${agent.principal}`));
+
+    // Only the connector key activates, only for the device the grant is bound to, and only with that grant.
+    expect((await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant }, false)).status).toBe(401);
+    expect((await activateCall(w, agent, 'op-full', { deviceId: 'device_other', grant })).status).toBe(410);
+    expect((await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant: `cagrant_${'A'.repeat(43)}` })).status).toBe(410);
+    expect((await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant: null })).status).toBe(410);
+    expect(bindingRows()).toEqual({ n: 0 });
+
+    const activated = await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant });
+    expect(activated.status).toBe(200);
+    expect(activated.json).toMatchObject({
+      v: 1, operationId: 'op-full', channelId,
+      binding: { v: 1, ownerId: alice.ownerId, agentParticipantId: `participant_${agent.principal}`, deviceId: body.deviceId, generation: 1 },
+    });
+    const capability = activated.json.capability as string;
+    expect(capability).not.toBe(agent.capability);
+    expect(activated.text).not.toContain(grant);
+    expect(bindingRows()).toEqual({ n: 1 });
+
+    // The agent sends and reads in the channel it was admitted to, and nowhere else.
+    const timeline = (credential: string, channel: string = channelId) =>
+      call(w.server.port, { path: `/api/v1/channels/${channel}/timeline`, headers: bearer(credential) });
+    const sent = await call(w.server.port, {
+      method: 'POST', path: `/api/v1/channels/${channelId}/messages`, headers: bearer(capability),
+      body: { clientTxnId: 'txn-full', content: { v: 1, kind: 'text', body: 'hello from the joined agent' } },
+    });
+    expect(sent.status).toBe(201);
+    expect(sent.json.event.participant).toMatchObject({ participantId: `participant_${agent.principal}` });
+    const read = await timeline(capability);
+    expect(read.status).toBe(200);
+    expect(read.json.events.map((event: { content: { body: string } }) => event.content.body)).toContain('hello from the joined agent');
+    expect((await timeline(capability, otherChannelId)).status).toBe(403);
+    const human = await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: w.human });
+    expect(human.json.events.map((event: { content: { body: string } }) => event.content.body)).toContain('hello from the joined agent');
+    // The binding capability holds no discovery authority.
+    expect((await call(w.server.port, { path: '/api/agent/channels', headers: bearer(capability) })).status).toBe(403);
+
+    // Only now is readiness acknowledged, so `connected` is true.
+    const readyRoute = '/api/connector/channel-access-requests/op-full/ready';
+    const readiness = {
+      v: 1, operationId: 'op-full', requester: agent.principal, origin: w.server.origin, sessionGeneration: agent.generation,
+      deviceId: body.deviceId, proofKeyThumbprint: body.proofKey.thumbprint, recipientKeyThumbprint: body.encryptionKey.thumbprint,
+    };
+    const ready = await call(w.server.port, {
+      method: 'POST', path: readyRoute, body: readiness,
+      headers: { ...bearer(agent), dpop: proof(w, agent, `${w.server.origin}${readyRoute}`) },
+    });
+    expect(ready.json).toEqual({ v: 1, operationId: 'op-full', outcome: 'connected' });
+
+    // Retries are idempotent by operation ID: a replayed grant and a grant-free resume return the
+    // same binding with a fresh capability, and the capability they replace stops working.
+    const replayed = await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant });
+    expect(replayed.json.binding).toEqual(activated.json.binding);
+    const resumed = await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant: null });
+    expect(resumed.json.binding).toEqual(activated.json.binding);
+    expect((await timeline(capability)).status).toBe(401);
+    expect((await timeline(replayed.json.capability)).status).toBe(401);
+    expect((await timeline(resumed.json.capability)).status).toBe(200);
+    expect(bindingRows()).toEqual({ n: 1 });
+    expect((await activateCall(w, agent, 'op-full', { deviceId: 'device_other', grant: null })).status).toBe(409);
+
+    // Revocation stops the binding, and resuming never mints it a new capability.
+    const binding = activated.json.binding as { bindingId: string; generation: number };
+    expect(createChannelStore(w.handle).revokeBinding({ bindingId: binding.bindingId, generation: binding.generation }).kind).toBe('done');
+    expect((await timeline(resumed.json.capability)).status).toBe(401);
+    expect((await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant: null })).status).toBe(410);
+  });
+
+  it('finishes an activation whose grant was consumed before the binding was recorded', async () => {
+    const w = await world();
+    const agent = await issue(w, 'session-crash');
+    await approvedAccess(w, agent, 'op-crash');
+    const recovery = await recoveryKey();
+    const body = await exchangeRequest(w, agent, 'op-crash', 'device_crash_1', recovery);
+    const exchangeUrl = `${w.server.origin}/api/connector/channel-access-requests/op-crash/exchange`;
+    const grant = openGrant((await exchangeCall(w, agent, 'op-crash', body, proof(w, agent, exchangeUrl))).json, recovery);
+    // A crash after redemption: the grant is consumed, but no binding or activation exists yet.
+    const issuer = createExchangeGrantIssuer({ store: createSqliteControlStore(w.handle, () => w.clock.now), clock: () => w.clock.now });
+    const consumed = await issuer.redeem({
+      grant, operationId: 'op-crash', requester: body.requester, origin: body.origin, sessionGeneration: body.sessionGeneration,
+      deviceId: body.deviceId, proofKeyThumbprint: body.proofKey.thumbprint,
+    });
+    expect(consumed.kind).toBe('redeemed');
+    const activated = await activateCall(w, agent, 'op-crash', { deviceId: body.deviceId, grant });
+    expect(activated.status).toBe(200);
+    expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(200);
   });
 
   it('keeps visibility, allowlists, pending decisions and exchange recovery across restart', async () => {
@@ -401,9 +534,12 @@ describe('internal channel discovery', () => {
     await approvedAccess(first, agent, 'op-1');
     expect((await requestCreate(first, waiting, 'op-pending')).json.outcome).toBe('pending_owner');
     const url = (w: World) => `${w.server.origin}/api/connector/channel-access-requests/op-1/exchange`;
-    const body = await exchangeRequest(first, agent, 'op-1');
+    const recovery = await recoveryKey();
+    const body = await exchangeRequest(first, agent, 'op-1', undefined, recovery);
     const envelope = await exchangeCall(first, agent, 'op-1', body, proof(first, agent, url(first)));
     expect(envelope.status).toBe(200);
+    const activated = await activateCall(first, agent, 'op-1', { deviceId: body.deviceId, grant: openGrant(envelope.json, recovery) });
+    expect(activated.status).toBe(200);
 
     await first.server.close();
     first.handle.close();
@@ -421,6 +557,13 @@ describe('internal channel discovery', () => {
     const recovered = await exchangeCall(second, agent, 'op-1', body, proof(second, agent, url(second)));
     expect(recovered.text).toBe(envelope.text);
     expect(second.handle.read(db => db.prepare('SELECT count(*) AS n FROM admission_operations').get())).toEqual({ n: 1 });
+    // Capabilities live only in the running server; the relaunched one resumes the same binding by operation ID.
+    const timeline = (credential: string) =>
+      call(second.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(credential) });
+    expect((await timeline(activated.json.capability)).status).toBe(401);
+    const resumed = await activateCall(second, agent, 'op-1', { deviceId: body.deviceId, grant: null });
+    expect(resumed.json.binding).toEqual(activated.json.binding);
+    expect((await timeline(resumed.json.capability)).status).toBe(200);
   });
 
   it('revalidates the session generation on rebind and expires pending requests at the deadline', async () => {
