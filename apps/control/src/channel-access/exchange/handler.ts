@@ -19,7 +19,7 @@ import {
   validateGrantExchangeRequest,
 } from '@khala/contracts/messaging/index';
 import type { RouteRegistration } from '../../runtime/handler';
-import type { ChannelAccessResumeRequest, ChannelAccessResumeService } from './resume';
+import type { ChannelAccessResumeRequest, ChannelAccessResumeService } from '../../composition/agent/channel-access-resume';
 
 /** The exchange plus the readiness acknowledgement, as the composed exchange service provides it. */
 export type ConnectorGrantExchangePort = AdmissionGrantExchangePort & Readonly<{

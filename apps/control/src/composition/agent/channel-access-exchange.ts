@@ -20,7 +20,7 @@ import {
   createGrantExchangeHandler,
   createGrantReadinessHandler,
 } from '../../channel-access/exchange/handler';
-import { createChannelAccessResumeService } from '../../channel-access/exchange/resume';
+import { createChannelAccessResumeService } from './channel-access-resume';
 import type { RouteRegistration } from '../../runtime/handler';
 
 export function composeChannelAccessExchange(deps: Readonly<{
