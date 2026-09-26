@@ -24,6 +24,14 @@ const row = (overrides: Partial<ClaudeAppEvidence> = {}): ClaudeAppEvidence => (
   route: 'claude-app-desktop-extension-khala-read',
   evidenceRef: 'experiments/interactive-cli/claude-app/evidence/desktop_extension/verdict.json',
   evidenceRevision: 'claude-app-2026-10-01',
+  run: {
+    expectedClientNames: ['claude-ai'],
+    clientNames: ['claude-ai'],
+    targetConversations: ['proof-conversation'],
+    firstDeliveryAt: 4,
+    echo: { conversation: 'proof-conversation', at: 5 },
+    acknowledgedAt: 6,
+  },
   ...overrides,
 });
 

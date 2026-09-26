@@ -13,7 +13,8 @@ export {
 } from './capabilities';
 export {
   CLAUDE_APP_DELIVERIES, CLAUDE_APP_EVIDENCE, CLAUDE_APP_PROOF_REF, CLAUDE_APP_SHAPES, type ClaudeAppDelivery,
-  type ClaudeAppEvidence, type ClaudeAppShape, admittedEvidence, identityComplete,
+  type ClaudeAppEvidence, type ClaudeAppProofRun, type ClaudeAppShape, admittedEvidence, identityComplete,
+  proofRunAdmissible,
 } from './evidence';
 
 export type ClaudeAppHarnessDeps = Readonly<{

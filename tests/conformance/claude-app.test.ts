@@ -1,4 +1,4 @@
-import { claudeAppIdentity, type ClaudeAppEvidence } from '@khala/harnesses/claude-app/index';
+import { claudeAppIdentity, type ClaudeAppEvidence, type ClaudeAppProofRun } from '@khala/harnesses/claude-app/index';
 import { describe, expect, it } from 'vitest';
 import {
   claudeAppCapabilities, claudeAppEnvironment, claudeAppHarnessSubject, claudeBrowser, claudeDesktop,
@@ -13,8 +13,21 @@ const row = (overrides: Partial<ClaudeAppEvidence>): ClaudeAppEvidence => ({
   route: 'claude-app-desktop-extension-khala-read',
   evidenceRef: 'experiments/interactive-cli/claude-app/evidence/desktop_extension/verdict.json',
   evidenceRevision: 'claude-app-conformance',
+  run: proofRun(),
   ...overrides,
 });
+
+function proofRun(overrides: Partial<ClaudeAppProofRun> = {}): ClaudeAppProofRun {
+  return {
+    expectedClientNames: ['claude-ai'],
+    clientNames: ['claude-ai'],
+    targetConversations: ['proof-conversation'],
+    firstDeliveryAt: 4,
+    echo: { conversation: 'proof-conversation', at: 5 },
+    acknowledgedAt: 6,
+    ...overrides,
+  };
+}
 
 describe('harness conformance: fail-closed Claude app adapter', () => {
   for (const observation of [claudeDesktop, claudeBrowser]) {
@@ -61,6 +74,46 @@ describe('claude-app-channel-adapter wrong-implementation tests', () => {
     const pullOnly = claudeAppCapabilities(claudeDesktop, [row({})]);
     expect(pullOnly.modes.async.status).toBe('proven');
     expect(pullOnly.modes.sync.status).toBe('unknown');
+  });
+
+  it('a client not on the declared allowlist never promotes async', () => {
+    for (const run of [
+      proofRun({ clientNames: ['mcp-inspector'] }),
+      // Claude Code and mcp-remote are refused even when the run declares them.
+      proofRun({ expectedClientNames: ['claude-code'], clientNames: ['claude-code'] }),
+      proofRun({ expectedClientNames: ['Claude Code'], clientNames: ['Claude Code'] }),
+      proofRun({ expectedClientNames: ['mcp-remote'], clientNames: ['mcp-remote'] }),
+      proofRun({ expectedClientNames: [''], clientNames: [''] }),
+      proofRun({ expectedClientNames: [], clientNames: ['claude-ai'] }),
+      // Exactly one client per run.
+      proofRun({ expectedClientNames: ['claude-ai', 'other'], clientNames: ['claude-ai', 'other'] }),
+      proofRun({ clientNames: [] }),
+    ]) {
+      expect(claudeAppCapabilities(claudeDesktop, [row({ run })]).modes.async.status).toBe('unknown');
+    }
+  });
+
+  it('an echo before delivery never promotes async', () => {
+    for (const at of [3, 4]) {
+      const run = proofRun({ echo: { conversation: 'proof-conversation', at } });
+      expect(claudeAppCapabilities(claudeDesktop, [row({ run })]).modes.async.status).toBe('unknown');
+    }
+  });
+
+  it('an echo after the ack never promotes async', () => {
+    for (const at of [6, 7]) {
+      const run = proofRun({ echo: { conversation: 'proof-conversation', at } });
+      expect(claudeAppCapabilities(claudeDesktop, [row({ run })]).modes.async.status).toBe('unknown');
+    }
+  });
+
+  it('an echo outside a declared target conversation never promotes async', () => {
+    for (const run of [
+      proofRun({ echo: { conversation: 'another-conversation', at: 5 } }),
+      proofRun({ targetConversations: [], echo: { conversation: '', at: 5 } }),
+    ]) {
+      expect(claudeAppCapabilities(claudeDesktop, [row({ run })]).modes.async.status).toBe('unknown');
+    }
   });
 
   it('keeps desktop and browser records separate', () => {

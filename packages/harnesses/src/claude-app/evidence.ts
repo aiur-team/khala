@@ -29,6 +29,24 @@ export type ClaudeAppEvidence = Readonly<{
   route: string;
   evidenceRef: string;
   evidenceRevision: string;
+  run: ClaudeAppProofRun;
+}>;
+
+/**
+ * The `claude-app-channel-proof` (#295) run facts that make a row admissible.
+ * Positions are indexes into that run's `events.jsonl`, so ordering is checked
+ * here rather than trusted.
+ */
+export type ClaudeAppProofRun = Readonly<{
+  /** The app's MCP `clientInfo.name` values, declared in `run.json` before the run. */
+  expectedClientNames: readonly string[];
+  /** Every distinct `clientInfo.name` that connected during the run. */
+  clientNames: readonly string[];
+  /** The conversations the operator started for the proof, declared before the run. */
+  targetConversations: readonly string[];
+  firstDeliveryAt: number;
+  echo: Readonly<{ conversation: string; at: number }>;
+  acknowledgedAt: number;
 }>;
 
 export const CLAUDE_APP_PROOF_REF = 'docs/product/internal-mode/interactive-desktop-apps.md#mode-matrix';
@@ -67,5 +85,27 @@ export function admittedEvidence(
   return rows.find(row => row.mode === mode
     && sameAppHarnessIdentity(row.identity, identity)
     && MODE_BOUNDARIES[mode].includes(row.boundary)
-    && row.delivery === MODE_DELIVERY[mode]) ?? null;
+    && row.delivery === MODE_DELIVERY[mode]
+    && proofRunAdmissible(row.run)) ?? null;
+}
+
+// Known non-app MCP clients: never Claude app evidence, even when a run declares them.
+const NON_APP_CLIENTS = /^(claude[- ]?code|mcp-remote)$/i;
+
+const namedClient = (name: string): boolean => name.trim() !== '' && !NON_APP_CLIENTS.test(name.trim());
+
+/**
+ * The #295 proof-kit rules: exactly one client, declared and not a known
+ * non-app client, and a model echo in a declared target conversation after the
+ * first delivery and before the acknowledgement.
+ */
+export function proofRunAdmissible(run: ClaudeAppProofRun): boolean {
+  const { expectedClientNames: expected, clientNames: clients, targetConversations: targets, echo } = run;
+  const [client] = clients;
+  return expected.length > 0 && expected.every(namedClient)
+    && clients.length === 1 && client !== undefined && namedClient(client) && expected.includes(client)
+    && targets.length > 0 && targets.every(target => target.trim() !== '')
+    && targets.includes(echo.conversation)
+    && [run.firstDeliveryAt, echo.at, run.acknowledgedAt].every(Number.isSafeInteger)
+    && run.firstDeliveryAt < echo.at && echo.at < run.acknowledgedAt;
 }

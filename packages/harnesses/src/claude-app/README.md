@@ -28,6 +28,12 @@ recorded as what it is. It never promotes a mode. In particular, `sync` never fa
 back to polling. A desktop row does not prove the browser, another version, or
 another account tier or policy.
 
+Each row also carries its proof run's facts (`run`), and admission applies the
+`claude-app-channel-proof` kit rules to them: exactly one MCP client, on the run's
+declared `expectedClientNames` and never `claude-code` or `mcp-remote`; and a model
+echo in a declared target conversation after the first delivery and before the
+acknowledgement. A row that fails any rule is ignored.
+
 To add a proven route, append the graded row from the proof's `verdict.json` and
 cite it. The setup adapter (`@aiur/khala` `setup/adapters/claude-app`) plans no
 writes until it can install a proven route.
