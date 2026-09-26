@@ -49,7 +49,8 @@ watcher reads only the local automation fence's notification-only pending
 signal. It exits 2 with a fixed, content-free notice only once the session is
 idle, meaning a `Stop` returned empty or a `stop_hook_active` Stop ran. Claude
 then starts a turn whose synchronous `UserPromptSubmit` pulls the batch. The
-watcher itself never pulls.
+watcher itself never pulls. A delivered batch that the agent has not yet
+acknowledged is not pending again, so the session is never re-woken for it.
 
 **Watcher lifetime.** The fence sets it, through `khala claude hook`. No window
 means no watcher. The watcher also exits when its Claude process is gone. It
