@@ -34,6 +34,8 @@ export function sendBlockedReason(state: LocalTransportState): string | null {
       return 'Sending is paused while Khala reconnects. Your draft is kept.';
     case 'stopped':
       return 'Sending is paused because the local server is not reachable. Your draft is kept.';
+    case 'channel_unavailable':
+      return 'Sending is unavailable because this session can no longer open this channel.';
     case 'auth_failed':
       return 'Sending is unavailable because this local session has ended.';
   }
@@ -50,7 +52,7 @@ export function TransportStatus({ state, roomId, onRetry }: {
 
   // A state that needs the reader's action takes focus so it is never missed.
   useEffect(() => {
-    if (state.kind === 'stopped' || state.kind === 'auth_failed') terminal.current?.focus();
+    if (state.kind === 'stopped' || state.kind === 'channel_unavailable' || state.kind === 'auth_failed') terminal.current?.focus();
   }, [state.kind]);
 
   let message: string;
@@ -79,6 +81,14 @@ export function TransportStatus({ state, roomId, onRetry }: {
           </p>
           <pre><code>{resumeCommand(roomId)}</code></pre>
           <button type="button" onClick={onRetry}>Try to reconnect</button>
+        </div>
+      ) : null}
+      {state.kind === 'channel_unavailable' ? (
+        <div className="local-transport__terminal" role="alert">
+          <h2 ref={terminal} tabIndex={-1}>This channel is not available</h2>
+          <p>
+            The local server is running, but this session can no longer open channel <code>{roomId}</code>.
+          </p>
         </div>
       ) : null}
       {state.kind === 'auth_failed' ? <SessionEnded roomId={roomId} headingRef={terminal} /> : null}
@@ -118,12 +128,13 @@ export function LocalRoom({ context, roomId, transport }: {
     timeline.dispose();
     channel.dispose();
   }, [channel, timeline]);
-  // A history read that failed while the server was unreachable is reread once
-  // the transport is live again, so the transcript never stays degraded.
+  // A failed history read is reread once the transport is live, whichever
+  // happened last. Keyed on both values, so a read that keeps failing retries
+  // only on the next transport or phase change, never in a tight loop.
+  const phase = useSyncExternalStore(timeline.subscribe, () => timeline.getSnapshot().phase, () => timeline.getSnapshot().phase);
   useEffect(() => {
-    const phase = timeline.getSnapshot().phase;
     if (state.kind === 'live' && (phase === 'unavailable' || phase === 'partial')) void timeline.loadOlder();
-  }, [state.kind, timeline]);
+  }, [phase, state.kind, timeline]);
   const viewer = context.participant?.() ?? null;
   if (viewer === null) {
     return (

@@ -13,14 +13,16 @@ import { API, type LocalHuman, REQUEST_SECRET_HEADER, decodeChannel, decodeSent,
 /**
  * Transport state shared by every request and hint stream of one browser session.
  * `auth_failed` is terminal: the session credential was refused and only a
- * relaunch issues a new one. `stopped` follows an exhausted reconnect budget
- * or lost channel access; `retry()` starts over from it.
+ * relaunch issues a new one. `stopped` follows an exhausted reconnect
+ * budget; `retry()` starts over from it. `channel_unavailable` means the
+ * server answered but this session can no longer read the channel.
  */
 export type LocalTransportState =
   | Readonly<{ kind: 'connecting' }>
   | Readonly<{ kind: 'live' }>
   | Readonly<{ kind: 'reconnecting'; attempt: number }>
   | Readonly<{ kind: 'stopped' }>
+  | Readonly<{ kind: 'channel_unavailable' }>
   | Readonly<{ kind: 'auth_failed' }>;
 
 export interface LocalTransport {
@@ -257,17 +259,23 @@ export function createHttpRoomSubstrate(options: HttpRoomSubstrateOptions): Http
     if (!stream.open || closed || state.kind === 'auth_failed') return;
     const controller = new AbortController();
     stream.controller = controller;
+    // The connect timeout covers only the response headers: aborting a fetch
+    // signal later would also error the body, killing a healthy stream. Once
+    // open, silence is caught by the idle watchdog instead.
+    const connectTimer = timers.set(() => controller.abort(), timeoutMs);
     let response: Response;
     try {
       response = await request(`${options.origin}${API.hints(stream.roomId)}`, {
         method: 'GET',
         credentials: 'same-origin',
         headers: { accept: 'text/event-stream', [REQUEST_SECRET_HEADER]: options.requestSecret },
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(timeoutMs)]),
+        signal: controller.signal,
       });
     } catch {
       if (stream.controller === controller) reconnect(stream);
       return;
+    } finally {
+      timers.clear(connectTimer);
     }
     if (stream.controller !== controller) {
       void response.body?.cancel().catch(() => undefined);
@@ -278,9 +286,9 @@ export function createHttpRoomSubstrate(options: HttpRoomSubstrateOptions): Http
       return;
     }
     if (response.status === 403 || response.status === 404) {
-      // Access to this channel is gone; retrying the same stream cannot restore it.
+      // Access to this channel is gone; the server is up, and retrying cannot restore it.
       halt(stream);
-      setState({ kind: 'stopped' });
+      setState({ kind: 'channel_unavailable' });
       return;
     }
     if (response.status !== 200 || !response.body) {
@@ -328,10 +336,13 @@ export function createHttpRoomSubstrate(options: HttpRoomSubstrateOptions): Http
     if (newest.kind !== 'done' || !stream.open) return;
     const events: SubstrateEvent[] = [...newest.value.events];
     const overlaps = () => stream.published.size === 0 || events.some(event => stream.published.has(event.eventId));
-    for (let pages = 0; pages < maxCatchUpPages && !overlaps() && newest.kind === 'done' && newest.value.nextCursor !== null; pages += 1) {
-      newest = await page(stream.roomId, newest.value.nextCursor, pageSize);
-      if (newest.kind !== 'done' || !stream.open) break;
-      events.unshift(...newest.value.events);
+    for (let pages = 0; pages < maxCatchUpPages && !overlaps() && newest.value.nextCursor !== null; pages += 1) {
+      const older = await page(stream.roomId, newest.value.nextCursor, pageSize);
+      // Publishing a partial walk would mark its events seen and hide the gap
+      // behind them for good; the next hint or reconnect retries the whole walk.
+      if (older.kind !== 'done' || !stream.open) return;
+      newest = older;
+      events.unshift(...older.value.events);
     }
     if (!stream.open) return;
     for (const event of events) stream.published.add(event.eventId);

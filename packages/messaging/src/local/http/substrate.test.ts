@@ -71,7 +71,7 @@ function harness(routes: (call: Call) => Response | Promise<Response> | 'throw')
     timer.cleared = true;
     timer.callback();
   };
-  return { substrate, calls, states, fire };
+  return { substrate, calls, states, fire, timers };
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -162,7 +162,12 @@ describe('HttpRoomSubstrate requests', () => {
 });
 
 describe('HttpRoomSubstrate hint stream', () => {
-  function live(pages: Array<Readonly<{ events: unknown[]; nextCursor: string | null }>>, streams: Stream[], hintStatus = 200) {
+  function live(
+    pages: Array<Readonly<{ events: unknown[]; nextCursor: string | null }>>,
+    streams: Stream[],
+    hintStatus = 200,
+    olderPages: { fail: boolean } = { fail: false },
+  ) {
     return harness(call => {
       if (call.url.endsWith('/hints')) {
         if (hintStatus !== 200) return json(hintStatus, { error: { code: 'x' } });
@@ -172,6 +177,7 @@ describe('HttpRoomSubstrate hint stream', () => {
       }
       if (call.url.includes('/timeline')) {
         const cursor = new URL(call.url).searchParams.get('cursor');
+        if (cursor !== null && olderPages.fail) return json(503, { error: { code: 'unavailable' } });
         const found = cursor === null ? pages[0] : pages.find((_, index) => pages[index - 1]?.nextCursor === cursor);
         return json(200, { ...found, revision: '3' });
       }
@@ -234,6 +240,48 @@ describe('HttpRoomSubstrate hint stream', () => {
     streams[3]!.send('event: ready\ndata: {}\n\n');
     await settle();
     expect(states.at(-1)).toEqual({ kind: 'live' });
+  });
+
+  it('bounds only the connect by the request timeout, never the open stream', async () => {
+    const streams: Stream[] = [];
+    const { substrate, timers } = live([{ events: [], nextCursor: null }], streams);
+    substrate.subscribe(CHANNEL, () => undefined);
+    await settle();
+    // A fetch signal aborted after the headers would also error the body.
+    const connectTimers = timers.filter(timer => timer.ms === 10_000);
+    expect(connectTimers).toHaveLength(1);
+    expect(connectTimers[0]!.cleared).toBe(true);
+    expect(timers.some(timer => timer.ms === 45_000 && !timer.cleared)).toBe(true);
+  });
+
+  it('publishes nothing when a catch-up page fails, so the gap is retried rather than hidden', async () => {
+    const streams: Stream[] = [];
+    const olderPages = { fail: false };
+    const pages: Array<{ events: unknown[]; nextCursor: string | null }> = [{ events: [event('e1')], nextCursor: null }];
+    const { substrate } = live(pages, streams, 200, olderPages);
+    const updates: SubstrateUpdate[] = [];
+    substrate.subscribe(CHANNEL, update => updates.push(update));
+    await settle();
+    streams[0]!.send('event: ready\ndata: {}\n\n');
+    await settle(); await settle();
+    pages.splice(0, 1, { events: [event('e4'), event('e5')], nextCursor: 'older' }, { events: [event('e1'), event('e2'), event('e3')], nextCursor: null });
+    olderPages.fail = true;
+    streams[0]!.send('event: hint\ndata: {}\n\n');
+    await settle(); await settle(); await settle();
+    expect(updates).toHaveLength(1);
+    olderPages.fail = false;
+    streams[0]!.send('event: hint\ndata: {}\n\n');
+    await settle(); await settle(); await settle();
+    expect(updates.at(-1)!.events.map(entry => entry.eventId)).toEqual(['e1', 'e2', 'e3', 'e4', 'e5']);
+  });
+
+  it('reports lost channel access apart from a stopped server', async () => {
+    const { substrate, states, calls } = live([], [], 403);
+    substrate.subscribe(CHANNEL, () => undefined);
+    await settle(); await settle();
+    expect(states).toEqual([{ kind: 'channel_unavailable' }]);
+    substrate.transport.retry();
+    expect(calls).toHaveLength(1);
   });
 
   it('never reconnects a stream whose credential was refused', async () => {

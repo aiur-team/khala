@@ -8,7 +8,7 @@ import type { PendingSend } from '../../features/timeline/send';
 
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
-const PHASES = new Set(['pending', 'accepted', 'failed', 'outcome_unknown']);
+const PHASES = new Set(['pending', 'outcome_unknown']);
 const MAX_ENTRIES = 50;
 
 function valid(value: unknown): value is PendingSend {
@@ -41,7 +41,10 @@ export function createPendingSendStore(ownerId: OwnerId, roomId: RoomId, storage
     },
     save(pending) {
       try {
-        const open = pending.filter(entry => entry.phase !== 'accepted');
+        // Only a send that may have landed needs its identity after a reload.
+        // A `failed` send provably did not land (and may be a permanent
+        // rejection), so keeping it would only block the composer for good.
+        const open = pending.filter(entry => entry.phase === 'pending' || entry.phase === 'outcome_unknown');
         if (open.length === 0) storage?.removeItem(key);
         else storage?.setItem(key, JSON.stringify(open.slice(0, MAX_ENTRIES)));
       } catch {

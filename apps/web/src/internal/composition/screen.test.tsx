@@ -97,6 +97,7 @@ describe('LocalApplicationScreen', () => {
     [{ kind: 'connecting' } as const, 'Connecting to the local Khala server…', 'Sending starts once Khala connects'],
     [{ kind: 'reconnecting', attempt: 2 } as const, 'Reconnecting (attempt 2)', 'Sending is paused while Khala reconnects'],
     [{ kind: 'stopped' } as const, 'The local Khala server stopped', 'local server is not reachable'],
+    [{ kind: 'channel_unavailable' } as const, 'This channel is not available', 'can no longer open this channel'],
     [{ kind: 'auth_failed' } as const, 'This local session has ended', 'this local session has ended'],
   ])('blocks sending and explains the %j transport state', (state, status, reason) => {
     const html = render('/channels/ch_1', state);
@@ -115,7 +116,7 @@ describe('LocalApplicationScreen', () => {
 
   it('leaves sending enabled only while live', () => {
     expect(sendBlockedReason({ kind: 'live' })).toBeNull();
-    for (const kind of ['connecting', 'stopped', 'auth_failed'] as const) expect(sendBlockedReason({ kind })).not.toBeNull();
+    for (const kind of ['connecting', 'stopped', 'channel_unavailable', 'auth_failed'] as const) expect(sendBlockedReason({ kind })).not.toBeNull();
     const live = renderToStaticMarkup(<TransportStatus state={{ kind: 'live' }} roomId="ch_1" onRetry={vi.fn()} />);
     expect(live).toContain('role="status"');
     expect(live).not.toContain('role="alert"');
