@@ -57,9 +57,6 @@ read them. Use it only for work you would already let those agents see.
 
 ### Known gaps in internal mode
 
-- Installed Claude and Codex entries run a bare `khala`, which `khala setup`
-  does not put on your PATH (#403). Until that is fixed, the agent passes `--internal-descriptor` itself, as in
-  step 2.
 - Only one agent session per OS user can be bound at a time (#391).
 - Internal mode has no pause and no listening-mode control yet. `khala mode get`
   and `khala mode set` answer `unavailable`, and native hooks deliver nothing to
