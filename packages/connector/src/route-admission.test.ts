@@ -56,6 +56,7 @@ describe('OpenCode plugin route admission', () => {
     )).toBe(false);
     expect(admitsExistingSessionRoute(set({ immediateNotification: 'native_cli_queue' }), 'opencode')).toBe(false);
     expect(admitsExistingSessionRoute(set({ support: 'experimental' }), 'opencode')).toBe(false);
+    expect(admitsExistingSessionRoute(set({ harness: 'codex' }), 'codex')).toBe(false);
   });
 
   it('refuses when every mode is honestly unproven', () => {
