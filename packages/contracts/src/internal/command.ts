@@ -29,8 +29,11 @@ export type InternalRuntime = Readonly<{
   runInternalCommand(command: InternalCommand, io: InternalCommandIo): Promise<number>;
 }>;
 
-/** Channel IDs accepted on the command line are exact local route segments. */
-const CHANNEL_ARGUMENT = /^[A-Za-z0-9._~-]{1,256}$/;
+/**
+ * Channel IDs accepted on the command line are exact local route segments that
+ * cannot be mistaken for an option (created IDs always start with `ch_`).
+ */
+const CHANNEL_ARGUMENT = /^[A-Za-z0-9._~][A-Za-z0-9._~-]{0,255}$/;
 
 export function isInternalChannelArgument(value: unknown): value is string {
   return typeof value === 'string' && CHANNEL_ARGUMENT.test(value) && value !== '.' && value !== '..';

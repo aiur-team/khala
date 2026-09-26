@@ -24,24 +24,28 @@ function currentUid(): number | null {
   return typeof process.getuid === 'function' ? process.getuid() : null;
 }
 
-/** Creates the lease file if absent and checks it is a private regular file. */
+// POSIX drops every lock a process holds on a file when any descriptor for it
+// closes. The file is therefore opened outside SQLite only while this process
+// cannot hold its lease, and re-entry is refused before the file is touched.
+const heldRoots = new Set<string>();
+
+/** Creates the lease file if absent and checks it is a private regular file, without opening an existing one. */
 function prepareLeaseFile(file: string): void {
-  const flags = fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW;
-  let descriptor: number;
+  let stats: fs.Stats;
   try {
-    descriptor = fs.openSync(file, flags, 0o600);
+    stats = fs.lstatSync(file);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    throw new PrivateFileError(code === 'ELOOP' ? 'unsafe_path' : 'io_failed');
-  }
-  try {
-    const stats = fs.fstatSync(descriptor);
-    const uid = currentUid();
-    if (!stats.isFile() || stats.nlink !== 1 || (uid !== null && stats.uid !== uid) || (stats.mode & 0o077) !== 0) {
-      throw new PrivateFileError('unsafe_path');
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new PrivateFileError('io_failed');
+    try {
+      fs.closeSync(fs.openSync(file, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600));
+      stats = fs.lstatSync(file);
+    } catch {
+      throw new PrivateFileError('io_failed');
     }
-  } finally {
-    fs.closeSync(descriptor);
+  }
+  const uid = currentUid();
+  if (!stats.isFile() || stats.nlink !== 1 || (uid !== null && stats.uid !== uid) || (stats.mode & 0o077) !== 0) {
+    throw new PrivateFileError('unsafe_path');
   }
 }
 
@@ -53,6 +57,7 @@ function isBusy(error: unknown): boolean {
 /** Tries once, without waiting, to take the per-user root lease. */
 export function acquireRootLease(root: string): RootLeaseResult {
   const file = path.join(root, ROOT_LEASE_FILE);
+  if (heldRoots.has(root)) return { kind: 'held' };
   try {
     ensurePrivateDirectory(root);
     prepareLeaseFile(file);
@@ -77,6 +82,7 @@ export function acquireRootLease(root: string): RootLeaseResult {
     return isBusy(error) ? { kind: 'held' } : { kind: 'failed', code: 'io_failed' };
   }
   let held = true;
+  heldRoots.add(root);
   return {
     kind: 'acquired',
     lease: {
@@ -84,6 +90,7 @@ export function acquireRootLease(root: string): RootLeaseResult {
         if (!held) return;
         held = false;
         try { db.close(); } catch {}
+        heldRoots.delete(root);
       },
     },
   };

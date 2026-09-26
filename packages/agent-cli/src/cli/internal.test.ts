@@ -64,7 +64,7 @@ describe('khala internal arguments', () => {
       ['export', 'ch_1', '--format', 'markdown', '--output', 'x', '--replace', '--replace'],
       ['export', 'ch_1', '--format', 'markdown', '--output', '--replace'],
       ['export', 'ch_1', '--format', 'markdown', '--output', 'x', '--resume', 'ch_2'],
-      ['--resume', 'ch_1', 'delete', 'ch_1', '--yes'],
+      ['--resume', 'ch_1', 'delete', 'ch_1', '--yes'], ['delete', '--yes'], ['--resume', '--help'], ['--resume', '-ch_1'],
     ]) {
       expect(() => parseInternalArguments(args), args.join(' ')).toThrow(CliError);
     }

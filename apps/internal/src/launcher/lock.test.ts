@@ -15,6 +15,22 @@ function makeRoot(): string {
   return path.join(base, 'internal');
 }
 
+/** Asks for the lease from a separate process and reports the result. */
+async function childAttempt(root: string): Promise<string> {
+  const lockModule = fileURLToPath(new URL('./lock.ts', import.meta.url));
+  const script = `import { acquireRootLease } from ${JSON.stringify(lockModule)};
+    const result = acquireRootLease(${JSON.stringify(root)});
+    process.stdout.write(result.kind);
+    if (result.kind === 'acquired') result.lease.release();`;
+  const child = spawn(process.execPath, ['--no-warnings', '--import', 'tsx', '--input-type=module', '-e', script], {
+    cwd: fileURLToPath(new URL('../..', import.meta.url)), stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  let out = '';
+  child.stdout!.on('data', chunk => { out += String(chunk); });
+  await new Promise(resolve => child.once('exit', resolve));
+  return out;
+}
+
 describe('root runtime lease', () => {
   it('admits one owner at a time and is reusable after release', () => {
     const root = makeRoot();
@@ -27,6 +43,16 @@ describe('root runtime lease', () => {
     expect(second.kind).toBe('acquired');
     if (second.kind === 'acquired') second.lease.release();
   });
+
+  it('keeps the operating-system lock when this process asks again', async () => {
+    const root = makeRoot();
+    const first = acquireRootLease(root);
+    expect(first.kind).toBe('acquired');
+    expect(acquireRootLease(root)).toEqual({ kind: 'held' });
+    expect(await childAttempt(root)).toBe('held');
+    if (first.kind === 'acquired') first.lease.release();
+    expect(await childAttempt(root)).toBe('acquired');
+  }, 30_000);
 
   it('is released by the operating system when the owning process dies', async () => {
     const root = makeRoot();

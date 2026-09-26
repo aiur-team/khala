@@ -1,4 +1,4 @@
-import { type ChildProcess, execFileSync, spawn as childSpawn } from 'node:child_process';
+import { type ChildProcess, execFile, spawn as childSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -80,7 +80,7 @@ export type OpenBootstrapInput = Readonly<{
   handoffParent: string;
   env: Readonly<Record<string, string | undefined>>;
   profiles?: readonly ProvenProfile[];
-  capture?: (env: Readonly<Record<string, string>>) => EnvironmentProfile | null;
+  capture?: (env: Readonly<Record<string, string>>) => EnvironmentProfile | null | Promise<EnvironmentProfile | null>;
   spawn?: Spawn;
 }>;
 
@@ -153,12 +153,15 @@ async function prepareHandoff(url: string, parent: string): Promise<PreparedHand
   }
 }
 
-function run(file: string, args: readonly string[], env: Readonly<Record<string, string>>): string | undefined {
-  try {
-    return execFileSync(file, args, { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 }).trim();
-  } catch {
-    return undefined;
-  }
+/** Asynchronous so profiling never blocks the running server or signal handling. */
+function run(file: string, args: readonly string[], env: Readonly<Record<string, string>>): Promise<string | undefined> {
+  return new Promise(resolve => {
+    try {
+      execFile(file, [...args], { env, encoding: 'utf8', timeout: 5_000 }, (error, stdout) => resolve(error ? undefined : stdout.trim()));
+    } catch {
+      resolve(undefined);
+    }
+  });
 }
 
 function procfsHidepid(mounts: string): string | undefined {
@@ -169,10 +172,11 @@ function procfsHidepid(mounts: string): string | undefined {
 }
 
 function desktopExec(desktopId: string, env: Readonly<Record<string, string>>): string | undefined {
+  // Relative entries would let the working directory choose the profiled binary.
   const directories = [
-    env.XDG_DATA_HOME ?? path.join(env.HOME ?? '', '.local/share'),
-    ...(env.XDG_DATA_DIRS ?? '/usr/local/share:/usr/share').split(':'),
-  ];
+    env.XDG_DATA_HOME || (env.HOME ? path.join(env.HOME, '.local/share') : ''),
+    ...(env.XDG_DATA_DIRS || '/usr/local/share:/usr/share').split(':'),
+  ].filter(directory => path.isAbsolute(directory));
   for (const directory of directories) {
     try {
       const text = fs.readFileSync(path.join(directory, 'applications', desktopId), 'utf8');
@@ -185,12 +189,12 @@ function desktopExec(desktopId: string, env: Readonly<Record<string, string>>): 
 }
 
 /** Captures the profile from the exact environment the opener would receive. */
-export function captureProfile(env: Readonly<Record<string, string>>): EnvironmentProfile {
-  const versionLine = run(OPENER_COMMAND, ['--version'], env);
-  const desktopId = run('xdg-mime', ['query', 'default', 'text/html'], env);
+export async function captureProfile(env: Readonly<Record<string, string>>): Promise<EnvironmentProfile> {
+  const versionLine = await run(OPENER_COMMAND, ['--version'], env);
+  const desktopId = await run('xdg-mime', ['query', 'default', 'text/html'], env);
   const exec = desktopId ? desktopExec(desktopId, env) : undefined;
   const program = exec?.split(/\s+/)[0];
-  const browserVersion = program ? run(program, ['--version'], env) : undefined;
+  const browserVersion = program && path.isAbsolute(program) ? await run(program, ['--version'], env) : undefined;
   let mounts = '';
   try { mounts = fs.readFileSync('/proc/mounts', 'utf8'); } catch {}
   return {
@@ -221,7 +225,7 @@ async function attempt(input: OpenBootstrapInput): Promise<OpenOutcome> {
   // A credential already present in the inherited environment would reach the opener.
   const forms = leakForms(input.credential);
   let runtime: EnvironmentProfile | null = null;
-  try { runtime = (input.capture ?? captureProfile)(env); } catch {}
+  try { runtime = await (input.capture ?? captureProfile)(env); } catch {}
   const decision = automaticOpenDecision(runtime, input.profiles ?? PROVEN_PROFILES);
   if (!decision.open) return { opened: false, reason: decision.reason };
 

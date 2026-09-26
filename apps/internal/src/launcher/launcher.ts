@@ -33,6 +33,8 @@ export const HANDOFF_DIRECTORY = 'handoff';
 /** How long the printed bootstrap URL can be exchanged for a browser session. */
 export const BOOTSTRAP_TTL_MS = 15 * 60_000;
 export const HUMAN_DISPLAY_NAME = 'Owner';
+/** Upper bound on how long a private browser redirect file exists. */
+export const HANDOFF_DEADLINE_MS = 60_000;
 
 export type LaunchRequest =
   | Readonly<{ kind: 'create' }>
@@ -62,12 +64,16 @@ export type LaunchReport = Readonly<{
   portFallback: boolean;
   /** Manual bootstrap URL; carries the one-time credential in its fragment. */
   url: string;
-  browser: Readonly<{ opened: boolean }>;
 }>;
 
 export type RunningLaunch = Readonly<{
   kind: 'running';
   report: LaunchReport;
+  /**
+   * Best-effort automatic browser opening, run after the report is printed so it
+   * can never delay the manual URL. Resolves whether a browser was started; never throws.
+   */
+  openBrowser(): Promise<boolean>;
   /** Idempotent; every call resolves after the same single shutdown. */
   shutdown(): Promise<void>;
 }>;
@@ -187,7 +193,12 @@ function recoverStaleRuntime(root: string): void {
   const handoff = path.join(root, HANDOFF_DIRECTORY);
   fs.rmSync(handoff, { recursive: true, force: true });
   ensurePrivateDirectory(handoff);
-  ensurePrivateDirectory(path.join(root, CHANNELS_DIRECTORY));
+  const channels = path.join(root, CHANNELS_DIRECTORY);
+  ensurePrivateDirectory(channels);
+  // A killed launcher leaves its bootstrap credential behind; no launcher owns it now.
+  for (const entry of fs.readdirSync(channels, { withFileTypes: true })) {
+    if (entry.isDirectory()) removeLaunchRecord(path.join(channels, entry.name));
+  }
 }
 
 export async function launchInternal(options: LauncherOptions): Promise<LaunchOutcome> {
@@ -203,12 +214,14 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
   if (leased.kind === 'held') return failure('launcher_running');
   if (leased.kind === 'failed') return failure(leased.code);
   const lease: RootLease = leased.lease;
-  options.afterLease?.();
 
   let opened: OpenedChannel | null = null;
   let server: LoopbackServer | null = null;
+  let stopping: Promise<void> | null = null;
+  const timers: NodeJS.Timeout[] = [];
   const handoffCleanups: Array<() => Promise<void>> = [];
   const release = async (): Promise<void> => {
+    for (const timer of timers.splice(0)) clearTimeout(timer);
     // Discovery first, so no client can find a server that is going away.
     try { removeActiveDescriptor(root); } catch {}
     if (opened) try { removeLaunchRecord(opened.directory); } catch {}
@@ -217,92 +230,107 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
     if (opened) try { opened.handle.close(); } catch {}
     lease.release();
   };
-
-  try {
-    recoverStaleRuntime(root);
-  } catch {
-    await release();
-    return failure('unsafe_path');
-  }
-
-  const now = clock();
-  const channel = options.request.kind === 'create'
-    ? createChannel(root, now, token)
-    : resumeChannel(root, options.request.channelId);
-  if ('kind' in channel) {
-    await release();
-    return failure(channel.code);
-  }
-  opened = channel;
-
-  const bootstrapCredential = mintCredential();
-  const transportCapability = mintCredential();
-  const expiresAt = now + BOOTSTRAP_TTL_MS;
-  const requestedPort = options.startPort;
-  try {
-    server = await startChannelServer({
-      store: channel.store,
-      bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
-      // Agent bindings are granted later through channel access, never at launch.
-      bindings: [],
-      assets: options.assets,
-      newId: randomUUID,
-      clock,
-      ...(requestedPort === undefined ? {} : { startPort: requestedPort }),
-    });
-  } catch {
-    await release();
-    // A created channel is durable user state: keep it and say how to resume.
-    return failure('server_failed', channel.channelId);
-  }
-
-  try {
-    writeLaunchRecord(channel.directory, {
-      v: 1, channelId: channel.channelId, origin: server.origin, bootstrapCredential, expiresAt,
-    });
-    // Published only once the server is listening; transport discovery only.
-    writeActiveDescriptor(root, { v: 1, channelId: channel.channelId, origin: server.origin, transportCapability });
-  } catch {
-    await release();
-    return failure('publish_failed', channel.channelId);
-  }
-
-  const url = bootstrapUrlFor(server.origin, bootstrapCredential, channel.channelId);
-  let browserOpened = false;
-  if (options.openBrowser) {
-    try {
-      const outcome = await options.openBrowser({
-        bootstrapUrl: url, credential: bootstrapCredential, handoffParent: path.join(root, HANDOFF_DIRECTORY),
-      });
-      if (outcome.opened) {
-        browserOpened = true;
-        handoffCleanups.push(outcome.cleanup);
-        // The redirect file is useless once the credential expires; remove it no later.
-        const timer = setTimeout(() => void outcome.cleanup().catch(() => {}), Math.max(0, expiresAt - clock()));
-        timer.unref();
-        handoffCleanups.push(async () => clearTimeout(timer));
-      }
-    } catch {
-      // Opening is best effort; the manual URL is always reported.
-    }
-  }
-
-  let stopping: Promise<void> | null = null;
-  return {
-    kind: 'running',
-    report: {
-      channelId: channel.channelId,
-      resumeCommand: resumeCommandFor(channel.channelId),
-      descriptorPath: activeDescriptorPath(root),
-      origin: server.origin,
-      port: server.port,
-      portFallback: requestedPort !== undefined && requestedPort !== 0 && server.port !== requestedPort,
-      url,
-      browser: { opened: browserOpened },
-    },
-    shutdown() {
-      stopping ??= release();
-      return stopping;
-    },
+  const later = (milliseconds: number, run: () => void): void => {
+    const timer = setTimeout(() => { try { run(); } catch {} }, Math.max(0, milliseconds));
+    timer.unref();
+    timers.push(timer);
   };
+
+  // Everything after the lease releases it on any failure, expected or not.
+  let createdChannelId: string | undefined;
+  try {
+    options.afterLease?.();
+    try {
+      recoverStaleRuntime(root);
+    } catch {
+      await release();
+      return failure('unsafe_path');
+    }
+
+    const now = clock();
+    const channel = options.request.kind === 'create'
+      ? createChannel(root, now, token)
+      : resumeChannel(root, options.request.channelId);
+    if ('kind' in channel) {
+      await release();
+      return failure(channel.code);
+    }
+    opened = channel;
+    // A created channel is durable user state: from here on, failures say how to resume it.
+    createdChannelId = channel.channelId;
+
+    const bootstrapCredential = mintCredential();
+    const transportCapability = mintCredential();
+    const expiresAt = now + BOOTSTRAP_TTL_MS;
+    const requestedPort = options.startPort;
+    try {
+      server = await startChannelServer({
+        store: channel.store,
+        bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
+        // Agent bindings are granted later through channel access, never at launch.
+        bindings: [],
+        assets: options.assets,
+        newId: randomUUID,
+        clock,
+        ...(requestedPort === undefined ? {} : { startPort: requestedPort }),
+      });
+    } catch {
+      await release();
+      return failure('server_failed', channel.channelId);
+    }
+    const origin = server.origin;
+
+    try {
+      writeLaunchRecord(channel.directory, { v: 1, channelId: channel.channelId, origin, bootstrapCredential, expiresAt });
+      // Published only once the server is listening; transport discovery only.
+      writeActiveDescriptor(root, { v: 1, channelId: channel.channelId, origin, transportCapability });
+    } catch {
+      await release();
+      return failure('publish_failed', channel.channelId);
+    }
+    // The bootstrap record is useless once its credential expires.
+    later(expiresAt - clock(), () => removeLaunchRecord(channel.directory));
+
+    const url = bootstrapUrlFor(origin, bootstrapCredential, channel.channelId);
+    return {
+      kind: 'running',
+      report: {
+        channelId: channel.channelId,
+        resumeCommand: resumeCommandFor(channel.channelId),
+        descriptorPath: activeDescriptorPath(root),
+        origin,
+        port: server.port,
+        portFallback: requestedPort !== undefined && requestedPort !== 0 && server.port !== requestedPort,
+        url,
+      },
+      async openBrowser() {
+        if (!options.openBrowser || stopping) return false;
+        let outcome: OpenOutcome;
+        try {
+          outcome = await options.openBrowser({
+            bootstrapUrl: url, credential: bootstrapCredential, handoffParent: path.join(root, HANDOFF_DIRECTORY),
+          });
+        } catch {
+          return false;
+        }
+        if (!outcome.opened) return false;
+        if (stopping) {
+          await outcome.cleanup().catch(() => {});
+          return true;
+        }
+        handoffCleanups.push(outcome.cleanup);
+        // The browser reads the redirect file as it starts; it never outlives this deadline.
+        later(Math.min(HANDOFF_DEADLINE_MS, expiresAt - clock()), () => void outcome.cleanup().catch(() => {}));
+        return true;
+      },
+      shutdown() {
+        stopping ??= release();
+        return stopping;
+      },
+    };
+  } catch {
+    stopping ??= release();
+    await stopping;
+    return failure('unavailable', createdChannelId);
+  }
 }

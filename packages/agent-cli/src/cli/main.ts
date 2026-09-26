@@ -13,7 +13,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const stateDirectory = path.resolve(process.env.XDG_STATE_HOME ?? path.join(homedir(), '.local/state'), 'khala');
   const abort = new AbortController();
   const stop = () => abort.abort();
-  process.once('SIGINT', stop); process.once('SIGTERM', stop);
+  // Kept installed until the command returns, so a repeated Ctrl+C cannot cut a shutdown short.
+  process.on('SIGINT', stop); process.on('SIGTERM', stop);
   try {
     return await runCli(argv, {
       client: createUnavailableClient(),

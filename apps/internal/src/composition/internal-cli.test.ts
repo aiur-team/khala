@@ -121,7 +121,8 @@ describe('internal runtime composition', () => {
     const exit = runtime.runInternalCommand({ kind: 'create' }, run.io);
     while (run.out.length === 0) await new Promise(resolve => setTimeout(resolve, 10));
     const report = run.json(run.out);
-    expect(report).toMatchObject({ ok: true, kind: 'running', channelId: expect.stringMatching(/^ch_/), browser: { opened: false } });
+    expect(report).toMatchObject({ ok: true, kind: 'running', channelId: expect.stringMatching(/^ch_/) });
+    expect(report).not.toHaveProperty('browser');
     const human = run.err.join('');
     expect(human).toContain(report.url);
     expect(human).toContain(report.resumeCommand);

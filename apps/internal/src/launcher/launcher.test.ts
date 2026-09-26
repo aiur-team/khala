@@ -93,7 +93,6 @@ describe('internal launcher', () => {
     expect(report.descriptorPath).toBe(path.join(root, INTERNAL_ACTIVE_DESCRIPTOR_FILE));
     expect(report.origin).toBe(`http://127.0.0.1:${report.port}`);
     expect(report.url).toMatch(new RegExp(`^${report.origin}/__khala/bootstrap#credential=[A-Za-z0-9_-]{43}&channel=${report.channelId}$`));
-    expect(report.browser).toEqual({ opened: false });
 
     expect(mode(root)).toBe(0o700);
     const active = parseInternalDescriptor(fs.readFileSync(report.descriptorPath, 'utf8'));
@@ -206,6 +205,19 @@ describe('internal launcher', () => {
     expect(fs.readdirSync(path.join(root, 'channels'))).toHaveLength(1);
   });
 
+  it('removes stale bootstrap records of every channel once the lease is taken', async () => {
+    const root = makeRoot();
+    const first = await running(root);
+    const record = path.join(channelDirectory(root, first.report.channelId)!, LAUNCH_RECORD_FILE);
+    const stale = fs.readFileSync(record);
+    await first.shutdown();
+    // As a SIGKILLed launcher would leave it.
+    fs.writeFileSync(record, stale, { mode: 0o600 });
+    const second = await running(root);
+    expect(second.report.channelId).not.toBe(first.report.channelId);
+    expect(fs.existsSync(record)).toBe(false);
+  });
+
   it('removes stale discovery and handoff files left by a launcher that no longer holds the lease', async () => {
     const root = makeRoot();
     fs.mkdirSync(root, { mode: 0o700 });
@@ -242,9 +254,15 @@ describe('internal launcher', () => {
 
   it('never lets a browser-open failure abort the launch, and removes an opened handoff on shutdown', async () => {
     const root = makeRoot();
-    const throwing = await running(root, { openBrowser: async () => { throw new Error('ENOENT'); } });
-    expect(throwing.report.browser).toEqual({ opened: false });
+    let attempts = 0;
+    const throwing = await running(root, { openBrowser: async () => { attempts += 1; throw new Error('ENOENT'); } });
+    // Opening is a separate step after the report, so launch never waits on it.
+    expect(attempts).toBe(0);
+    expect(await throwing.openBrowser()).toBe(false);
+    expect(attempts).toBe(1);
     await throwing.shutdown();
+    expect(await throwing.openBrowser()).toBe(false);
+    expect(attempts).toBe(1);
 
     let cleaned = 0;
     const opened = await running(root, {
@@ -253,7 +271,7 @@ describe('internal launcher', () => {
         return { opened: true, profileId: 'proven', cleanup: async () => { cleaned += 1; } };
       },
     });
-    expect(opened.report.browser).toEqual({ opened: true });
+    expect(await opened.openBrowser()).toBe(true);
     await opened.shutdown();
     expect(cleaned).toBe(1);
   });

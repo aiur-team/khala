@@ -29,7 +29,8 @@ type Failure = Readonly<{ ok: false; error: string; channelId?: string; resumeCo
 
 /** `$XDG_STATE_HOME/khala/internal`, falling back to `~/.local/state`. */
 export function internalRoot(env: InternalCommandIo['env']): string | null {
-  const state = env.XDG_STATE_HOME ?? (env.HOME ? path.join(env.HOME, '.local/state') : undefined);
+  // An empty XDG variable means unset.
+  const state = env.XDG_STATE_HOME || (env.HOME ? path.join(env.HOME, '.local/state') : undefined);
   if (!state || !path.isAbsolute(state)) return null;
   return path.resolve(state, 'khala', 'internal');
 }
@@ -98,6 +99,8 @@ export function createInternalRuntime(options: InternalRuntimeOptions = {}): Int
         'Press Ctrl+C to stop the local server. Agent sessions you started are not affected.',
         '',
       ].join('\n'));
+      // Only after the URL is out: automatic opening can add to it, never delay it.
+      if (await outcome.openBrowser()) await io.stderr.write('Opened your browser to sign in.\n');
       await waitForAbort(io.signal);
     } finally {
       await outcome.shutdown();

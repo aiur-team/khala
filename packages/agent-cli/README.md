@@ -71,19 +71,19 @@ start yourself connect through the runtime descriptor later.
   serves the channel on `http://127.0.0.1:4870`, or on the next free port when
   another program already listens there. It prints one JSON object to stdout
   with `channelId`, `resumeCommand`, `descriptorPath`, `origin`, `port`,
-  `portFallback`, `url` and `browser`, and prints the same URL and resume
-  command for people on stderr. The URL carries a one-time sign-in credential in
-  its fragment and expires after 15 minutes. It stays valid until then even when
-  a browser is opened automatically. Automatic opening happens only in a
-  desktop profile proven by the browser-handoff spike. Even then the opener
-  receives a private file path, never the URL.
+  `portFallback` and `url`, and prints the same URL and resume command for
+  people on stderr. The URL carries a one-time sign-in credential in its
+  fragment and expires after 15 minutes. Only after printing does it try to open
+  a browser, and only in a desktop profile proven by the browser-handoff spike.
+  Even then the opener receives a private file path, never the URL, and that
+  file is removed within a minute.
 - Only one internal launcher runs per OS user. A second one exits with
   `launcher_running` even when another port is free, and changes nothing.
 - State lives under `$XDG_STATE_HOME/khala/internal` (default
   `~/.local/state/khala/internal`, mode 0700). While a launcher runs,
   `active.json` (mode 0600) holds `{v, channelId, origin, transportCapability}`
   for local clients, and `<channel>/launch.json` (mode 0600) holds the browser
-  sign-in credential. Every launch rotates both credentials.
+  sign-in credential until it expires. Every launch rotates both credentials.
 - Ctrl+C or SIGTERM removes `active.json` and `launch.json`, closes the server so
   the URL stops working, closes the store, and releases the launcher lock. It
   leaves agent processes alone.
