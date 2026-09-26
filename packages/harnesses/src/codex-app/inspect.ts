@@ -6,6 +6,7 @@ import {
   type AppHarnessIdentity, type AppHarnessRecord, type DeliveryLimits, type HarnessCapabilities, type ListeningMode,
   type ModeSupport, LISTENING_MODES, sameAppHarnessIdentity, unknownModeSupport,
 } from '@khala/contracts/delivery/index';
+import { type CodexAppCensus, codexAppCensusViolation } from './census';
 import {
   CODEX_APP, CODEX_APP_ADAPTER_VERSION, CODEX_APP_BLOCKED_REASONS, CODEX_APP_BOUNDARIES, CODEX_APP_PROOF_RECORD,
   CODEX_APP_PROVEN_CELLS, type CodexAppProvenCell, type CodexAppShape,
@@ -22,8 +23,13 @@ export type CodexAppEnvironment = Readonly<{
   appVersion: string | null;
   accountTier: string | null;
   administratorPolicyScope: string | null;
-  /** Who started the desktop session, or created the cloud task. */
-  sessionStartedBy: 'user' | 'khala' | 'unknown';
+  /**
+   * The process table observed in this session. Trust settings and Khala ancestry are
+   * derived from it, never from a caller's claim about who started the session.
+   */
+  census: CodexAppCensus | null;
+  /** Cloud tasks only: who created the task, as the task's own record states. */
+  taskCreatedBy: 'user' | 'other' | 'unknown';
   /** Where the session's tools run. A hosted tool runs outside the hook host and skips its hooks. */
   toolExecution: 'hook_host' | 'hosted' | 'unknown';
   /** Where the Khala hook handler is configured. A web plugin install is not a hook deployment. */
@@ -58,8 +64,10 @@ export function codexAppIdentity(environment: CodexAppEnvironment, shape: CodexA
 
 /** Why a mode's route is not active in this session, or `null` when it is. */
 function inactiveRoute(mode: ListeningMode, shape: CodexAppShape, environment: CodexAppEnvironment): string | null {
-  if (environment.sessionStartedBy !== 'user') {
-    return 'Only a session the user started, or a task the user created, can receive delivery.';
+  const violation = codexAppCensusViolation(environment.census);
+  if (violation !== null) return violation;
+  if (shape === 'cloud_task' && environment.taskCreatedBy !== 'user') {
+    return 'Only a task the user created can receive delivery.';
   }
   if (mode === 'async') return environment.mcpActive ? null : 'The Khala MCP entry is not active in this session.';
   if (environment.hookDeployment !== REQUIRED_DEPLOYMENT[shape]) {

@@ -7,7 +7,6 @@ import {
 import {
   type CodexAppRouteEvidence, type CodexAppSetupContribution, codexAppSetupContribution,
 } from '../codex-app/setup.js';
-import type { SetupCommand } from '../setup/types.js';
 
 /**
  * A cell is proven for setup when any exact tuple proves it; the session-time inspection
@@ -22,7 +21,7 @@ export function codexAppRouteEvidence(
   }));
 }
 
-/** The Codex app's contribution to one setup command, from the committed proof record. */
-export function codexAppSetupEntries(command: SetupCommand): CodexAppSetupContribution {
-  return codexAppSetupContribution(command, codexAppRouteEvidence());
+/** The Codex app's contribution to `setup`, `status` and `remove`, from the committed proof record. */
+export function codexAppSetupEntries(): CodexAppSetupContribution {
+  return codexAppSetupContribution(codexAppRouteEvidence());
 }

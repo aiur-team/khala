@@ -3,7 +3,7 @@
 // the Codex setup adapter already owns; this module never proposes its own write. A cloud
 // task's hooks live in that task's environment, which local setup cannot reach.
 import type { ListeningMode } from '@khala/contracts/delivery/index';
-import type { SetupCommand, SetupComponent, SetupDiagnostic } from '../setup/types.js';
+import type { SetupComponent, SetupDiagnostic } from '../setup/types.js';
 
 export type CodexAppShape = 'local_chat' | 'cloud_task';
 
@@ -26,18 +26,13 @@ const SURFACE: Readonly<Record<CodexAppShape, string>> = {
   cloud_task: 'Codex Cloud task',
 };
 
-const EFFECT: Readonly<Record<SetupCommand, string>> = {
-  setup: 'Setup installs nothing for it.',
-  status: 'Nothing is installed for it.',
-  remove: 'Setup never installed anything for it, so there is nothing to remove.',
-};
-
 const COMPONENT: Readonly<Record<ListeningMode, SetupComponent>> = { steer: 'hooks', sync: 'hooks', async: 'mcp_entry' };
 
-export function codexAppSetupContribution(
-  command: SetupCommand,
-  routes: readonly CodexAppRouteEvidence[],
-): CodexAppSetupContribution {
+/**
+ * The same entries serve all three commands: the Codex adapter's inspection, which
+ * `setup`, `status` and `remove` share, carries them without knowing the command.
+ */
+export function codexAppSetupContribution(routes: readonly CodexAppRouteEvidence[]): CodexAppSetupContribution {
   const components = new Set<SetupComponent>();
   const diagnostics: SetupDiagnostic[] = [];
   for (const shape of ['local_chat', 'cloud_task'] as const) {
@@ -61,7 +56,7 @@ export function codexAppSetupContribution(
         severity: 'info',
         harness: 'codex',
         message: `${SURFACE[shape]}: delivery is unproven for ${unproven.map(route => route.mode).join(', ')}. `
-          + `${reasons} ${EFFECT[command]}`,
+          + `${reasons} Setup installs nothing for it, so there is nothing to remove.`,
       });
     }
   }

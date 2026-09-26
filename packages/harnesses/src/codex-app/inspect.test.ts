@@ -5,9 +5,23 @@ import { limits } from '../codex/fakes';
 import {
   CODEX_APP_BOUNDARIES, CODEX_APP_PROOF_RECORD, CODEX_APP_PROVEN_CELLS, CODEX_APP_SHAPES, type CodexAppProvenCell,
 } from './evidence';
+import type { CodexAppCensus } from './census';
 import { type CodexAppEnvironment, codexAppIdentity, inspectCodexApp } from './inspect';
 
 const MODES = ['steer', 'sync', 'async'] as const;
+
+/** A user-started desktop app whose Codex session process is pid 30, with the Khala hook as its child. */
+function census(session: readonly string[] = ['codex'], root: readonly string[] = ['/usr/lib/systemd/systemd', '--user']): CodexAppCensus {
+  return {
+    sessionPid: 30,
+    processes: [
+      { pid: 10, ppid: 1, argv: root },
+      { pid: 20, ppid: 10, argv: ['/opt/Codex/Codex'] },
+      { pid: 30, ppid: 20, argv: session },
+      { pid: 40, ppid: 30, argv: ['khala', 'codex-app-hook'] },
+    ],
+  };
+}
 
 /** A session whose route would be active if a proof covered its exact tuple. */
 function environment(overrides: Partial<CodexAppEnvironment> = {}): CodexAppEnvironment {
@@ -16,7 +30,8 @@ function environment(overrides: Partial<CodexAppEnvironment> = {}): CodexAppEnvi
     appVersion: '26.1.0',
     accountTier: 'plus',
     administratorPolicyScope: 'personal',
-    sessionStartedBy: 'user',
+    census: census(),
+    taskCreatedBy: 'user',
     toolExecution: 'hook_host',
     hookDeployment: 'local_config',
     hookRuns: ['PostToolUse', 'Stop'],
@@ -111,9 +126,43 @@ describe('inspectCodexApp', () => {
     expect(statuses(unrun, proven(unrun))).toEqual(['unknown', 'unknown', 'proven']);
   });
 
-  it('claims nothing for a session or task Khala started', () => {
-    for (const sessionStartedBy of ['khala', 'unknown'] as const) {
-      const env = environment({ sessionStartedBy });
+  it('claims nothing for a session the census cannot vouch for', () => {
+    const cases: [CodexAppCensus | null, string][] = [
+      [null, 'No process census'],
+      [{ ...census(), sessionPid: 99 }, 'not in the process census'],
+      [census(['codex'], ['node', '/usr/lib/node_modules/@aiur/khala/bin/khala.js']), 'under a Khala process'],
+      [census(['codex', '--yolo']), '--yolo'],
+      [census(['codex', '--dangerously-bypass-approvals-and-sandbox']), '--dangerously-bypass-approvals-and-sandbox'],
+      [census(['codex', '-a', 'never']), '-a never'],
+      [census(['codex', '--ask-for-approval=never']), '--ask-for-approval never'],
+      [census(['codex', '-s', 'danger-full-access']), '-s danger-full-access'],
+      [census(['codex', '-c', 'approval_policy=never']), '-c approval_policy=never'],
+      [census(['codex', '-c', 'sandbox_mode="danger-full-access"']), 'sandbox_mode'],
+    ];
+    for (const [observed, reason] of cases) {
+      const env = environment({ census: observed });
+      expect(statuses(env, proven(env))).toEqual(['unknown', 'unknown', 'unknown']);
+      for (const mode of MODES) {
+        expect(inspectCodexApp(env, limits, proven(env)).capabilities.modes[mode].reason).toContain(reason);
+      }
+    }
+  });
+
+  it('checks the session tree, not unrelated Codex processes', () => {
+    const base = census();
+    const child = environment({
+      census: { ...base, processes: [...base.processes, { pid: 50, ppid: 30, argv: ['codex', 'app-server', '--yolo'] }] },
+    });
+    expect(statuses(child, proven(child))).toEqual(['unknown', 'unknown', 'unknown']);
+    const unrelated = environment({
+      census: { ...base, processes: [...base.processes, { pid: 60, ppid: 1, argv: ['codex', '--yolo'] }] },
+    });
+    expect(statuses(unrelated, proven(unrelated))).toEqual(['proven', 'proven', 'proven']);
+  });
+
+  it('claims nothing for a cloud task the user did not create', () => {
+    for (const taskCreatedBy of ['other', 'unknown'] as const) {
+      const env = environment({ shape: 'cloud_task', hookDeployment: 'task_environment', taskCreatedBy });
       expect(statuses(env, proven(env))).toEqual(['unknown', 'unknown', 'unknown']);
     }
   });

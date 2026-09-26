@@ -11,10 +11,12 @@ import {
 } from '@khala/contracts/delivery/index';
 import { afterEach, describe, expect, it } from 'vitest';
 import proofRecord from '../../experiments/interactive-cli/codex-app/evidence/cells.json';
+import { trustBypass as proofKitTrustBypass } from '../../experiments/interactive-cli/codex-app/verify';
 import { openInbox } from '../../packages/agent-cli/src/cli/inbox';
 import { type CodexAppHookEvent, runCodexAppHook } from '../../packages/agent-cli/src/codex-app/hook';
 import {
-  type CodexAppEnvironment, type CodexAppHookBoundary, type CodexAppProvenCell, codexAppIdentity, inspectCodexApp,
+  type CodexAppCensus, type CodexAppEnvironment, type CodexAppHookBoundary, type CodexAppProvenCell, codexAppIdentity,
+  codexAppTrustBypass, inspectCodexApp,
 } from '../../packages/harnesses/src/codex-app/index';
 import { fixtureLimits } from './subjects';
 
@@ -31,11 +33,23 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
+/** The observed process table: the desktop app, its Codex session process (pid 30), and the Khala hook. */
+function census(sessionArgv: readonly string[] = ['codex'], parentArgv: readonly string[] = ['/opt/Codex/Codex']): CodexAppCensus {
+  return {
+    sessionPid: 30,
+    processes: [
+      { pid: 20, ppid: 1, argv: parentArgv },
+      { pid: 30, ppid: 20, argv: sessionArgv },
+      { pid: 40, ppid: 30, argv: ['khala', 'codex-app-hook'] },
+    ],
+  };
+}
+
 /** A user-started desktop session whose local hooks are configured; hook runs are recorded live. */
 function session(overrides: Partial<CodexAppEnvironment> = {}): CodexAppEnvironment {
   return {
     shape: 'local_chat', appVersion: '26.1.0', accountTier: 'plus', administratorPolicyScope: 'personal',
-    sessionStartedBy: 'user', toolExecution: 'hook_host', hookDeployment: 'local_config', hookRuns: [], mcpActive: true,
+    census: census(), taskCreatedBy: 'user', toolExecution: 'hook_host', hookDeployment: 'local_config', hookRuns: [], mcpActive: true,
     ...overrides,
   };
 }
@@ -119,10 +133,40 @@ describe('codex app conformance: wrong implementations', () => {
     expect(await boundary(env, proof(env), 'sync', 'Stop', false)).toBe('');
   });
 
-  it('a Codex task Khala launched cannot satisfy same-session delivery', async () => {
-    const env = session({ shape: 'cloud_task', hookDeployment: 'task_environment', sessionStartedBy: 'khala' });
+  it('a Codex task the user did not create cannot satisfy same-session delivery', async () => {
+    const env = session({ shape: 'cloud_task', hookDeployment: 'task_environment', taskCreatedBy: 'other' });
     expect(inspectCodexApp(env, fixtureLimits, proof(env)).capabilities.support).toBe('unsupported');
     expect(await boundary(env, proof(env), 'sync', 'Stop')).toBe('');
+  });
+
+  it('a proven cell stays closed for a session running under Khala, observed from the process table', async () => {
+    const env = session({ census: census(['codex'], ['node', '/usr/local/bin/khala', 'run']) });
+    expect(inspectCodexApp(env, fixtureLimits, proof(env)).capabilities.support).toBe('unsupported');
+    expect(await boundary(env, proof(env), 'steer', 'PostToolUse')).toBe('');
+    expect(await boundary(env, proof(env), 'sync', 'Stop')).toBe('');
+  });
+
+  it('a proven cell stays closed for a session that bypasses normal trust settings', async () => {
+    const bypasses = [
+      ['--yolo'], ['--dangerously-bypass-approvals-and-sandbox'], ['-a', 'never'], ['--ask-for-approval', 'never'],
+      ['--sandbox', 'danger-full-access'], ['-c', 'approval_policy=never'], ['-c', 'sandbox_mode=danger-full-access'],
+    ];
+    for (const flags of bypasses) {
+      const env = session({ census: census(['codex', ...flags]) });
+      const { modes } = inspectCodexApp(env, fixtureLimits, proof(env)).capabilities;
+      for (const mode of ['steer', 'sync', 'async'] as const) expect(modes[mode].status).toBe('unknown');
+      expect(await boundary(env, proof(env), 'steer', 'PostToolUse')).toBe('');
+      expect(await boundary(env, proof(env), 'sync', 'Stop')).toBe('');
+    }
+  });
+
+  it('applies the proof kit\'s trust rules exactly', () => {
+    const argvs = [
+      ['codex'], ['codex', '--yolo'], ['codex', '--port=9'], ['codex', '-sdanger-full-access'], ['codex', '-s', 'read-only'],
+      ['codex', '-a', 'on-request'], ['codex', '--ask-for-approval=never'], ['codex', '--config', 'approval_policy="never"'],
+      ['codex', '-c', 'model=o3'], ['codex', '--dangerously-bypass-hook-trust'], ['codex', 'exec', 'hi'],
+    ];
+    for (const argv of argvs) expect(codexAppTrustBypass(argv)).toBe(proofKitTrustBypass(argv));
   });
 
   it('a cloud-task proof cannot enable a desktop session', async () => {

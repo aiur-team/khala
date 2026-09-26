@@ -3,6 +3,9 @@
 // `khala_read` in the user's own session, never through a session Khala starts.
 
 export {
+  type CodexAppCensus, type CodexAppProcess, codexAppCensusViolation, codexAppTrustBypass,
+} from './census';
+export {
   CODEX_APP, CODEX_APP_ADAPTER_VERSION, CODEX_APP_BLOCKED_REASONS, CODEX_APP_BOUNDARIES, CODEX_APP_PROOF_RECORD,
   CODEX_APP_PROVEN_CELLS, CODEX_APP_SHAPES, type CodexAppProvenCell, type CodexAppShape,
 } from './evidence';

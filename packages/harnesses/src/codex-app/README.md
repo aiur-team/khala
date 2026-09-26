@@ -17,8 +17,16 @@ A mode is `proven` only when all of these hold:
 - A proven cell matches the full app/shape/version/account-tier/policy tuple. A
   cloud proof never matches a desktop session, and an unobserved field (`unknown`)
   never matches anything.
-- The user started the session, or created the task. Nothing a Khala-launched
-  session or task reports counts.
+- The session passes the proof kit's process census (`census.ts`, the rules of
+  `experiments/interactive-cli/codex-app/verify.ts`), taken from the observed
+  process table rather than from anyone's claim. The session process and its
+  ancestors must not include Khala. No Codex process in the session's tree
+  (ancestors and descendants included) may bypass normal trust settings:
+  `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, `-a never`,
+  `--sandbox danger-full-access`, or the equivalent `-c approval_policy=never` or
+  `-c sandbox_mode=danger-full-access` overrides. A missing census fails closed.
+  Conformance checks that `codexAppTrustBypass` agrees with the proof kit.
+- For a cloud task, the task's own record says the user created it.
 - For `steer` and `sync`, the Khala hook is configured where the shape runs it: the
   local Codex config for desktop, or the task environment for cloud. A web plugin
   install does not count. The handler must also have recorded running at that

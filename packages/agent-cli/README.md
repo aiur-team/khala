@@ -456,10 +456,11 @@ inside the shared untrusted-data frame.
 Delivery into the Codex desktop app or a Codex Cloud task is **unproven**. Every
 cell in the [proof record](../../experiments/interactive-cli/codex-app/README.md)
 is Blocked, so every app mode reports `unknown` and no app route can be selected.
-`codexAppSetupEntries(command)` in `src/composition/codex-app.ts` is the Codex app
-contribution to `setup`, `status` and `remove`. Today it asks for no components
-and plans no writes. It returns one `codex_app_delivery_unproven` diagnostic per
-app shape, which says so. A proven desktop cell would only ask the Codex adapter
+`codexAppSetupEntries()` in `src/composition/codex-app.ts` is the Codex app
+contribution to `setup`, `status` and `remove`. The Codex setup adapter adds its
+diagnostics to every inspection, so all three commands show them. Today it asks
+for no components and plans no writes. It returns one
+`codex_app_delivery_unproven` diagnostic per app shape, which says so. A proven desktop cell would only ask the Codex adapter
 for `hooks` or `mcp_entry`. A cloud-task proof never becomes a local install,
 because that task's hooks live in its own environment.
 
