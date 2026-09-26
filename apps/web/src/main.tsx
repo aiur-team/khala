@@ -6,12 +6,15 @@ import { createMatrixBrowserPorts } from './composition/human/matrix-browser';
 import { mountKhalaContent } from './composition/human/mount';
 import { renderHumanRoom } from './composition/human/room';
 import { createHumanRouteCodec } from './composition/human/routes';
+import { createChannelAccessInboxController } from './features/channel-access/controller';
 import './brand/fonts.css';
 import './brand/tokens.css';
 import './shell/shell.css';
 import './features/create-channel/create-channel.css';
 import './features/timeline/timeline.css';
 import './features/channel/channel.css';
+import './features/approval-decision/approval-decision.css';
+import './features/channel-access/channel-access.css';
 import './main.css';
 
 const target = document.querySelector('#app');
@@ -47,11 +50,13 @@ const application = createHumanApplication({
   limits: decodedLimits.value,
 }, { initialPath: entry.path });
 const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
+const channelAccess = createChannelAccessInboxController({ requests: api.channelAccess });
 const mounted = mountKhalaContent({
   target,
   application,
   identity: api.identity,
   routes,
+  channelAccess,
   mode: entry.mode,
   renderRoom: renderHumanRoom,
   navigateRoute(path) {

@@ -6,6 +6,9 @@ import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import { Panel } from '../../shell/Panel';
 import { resolveInitialTheme } from '../../shell/theme';
 import type { ShellMode, ThemeChoice } from '../../shell/types';
+import { ChannelRequestsInbox } from '../../features/channel-access/ChannelRequestsInbox';
+import { ChannelRequestsNavEntry } from '../../features/channel-access/ChannelRequestsNavEntry';
+import type { ChannelAccessInboxController } from '../../features/channel-access/controller';
 import { CreateChannelScreen } from '../../features/create-channel/CreateChannelScreen';
 import { createJoinController } from '../../features/join/controller';
 import { JoinScreen } from '../../features/join/JoinScreen';
@@ -25,6 +28,7 @@ export type HumanApplicationScreenProps = Readonly<{
   navigateRoute?: (path: string) => void;
   /** Binds the live room screens; production supplies `renderHumanRoom`. */
   renderRoom: HumanRoomRenderer;
+  channelAccess: ChannelAccessInboxController;
   capabilities?: readonly HumanCapability[];
 }>;
 
@@ -77,13 +81,14 @@ function JoinRoute({ context, routes, navigateExternal, navigateRoute }: {
   );
 }
 
-function ReadyRoute({ context, routes, renderRoom, navigateExternal, navigateRoute, capabilities }: {
+function ReadyRoute({ context, routes, renderRoom, navigateExternal, navigateRoute, capabilities, channelAccess }: {
   context: HumanRouteContext;
   routes: HumanRouteCodec;
   renderRoom: HumanRoomRenderer;
   navigateExternal: (url: string) => void;
   navigateRoute: (path: string) => void;
   capabilities: readonly HumanCapability[];
+  channelAccess: ChannelAccessInboxController;
 }) {
   useEffect(() => attachHumanCapabilities(capabilities, context), [capabilities, context]);
   const route = routes.parse(context.path);
@@ -98,6 +103,12 @@ function ReadyRoute({ context, routes, renderRoom, navigateExternal, navigateRou
       return <JoinRoute context={context} routes={routes} navigateExternal={navigateExternal} navigateRoute={navigateRoute} />;
     case 'channel':
       return renderRoom(context, route);
+    case 'channel_requests':
+      return (
+        <KhalaPageFrame model={{ title: 'Channel requests', labelledBy: 'khala-channel-requests-title' }}>
+          <ChannelRequestsInbox controller={channelAccess} selectedHandle={route.selectedHandle} />
+        </KhalaPageFrame>
+      );
     case 'not_found':
       return (
         <KhalaPageFrame model={{ title: 'Page not found', labelledBy: 'khala-not-found' }}>
@@ -105,6 +116,45 @@ function ReadyRoute({ context, routes, renderRoom, navigateExternal, navigateRou
         </KhalaPageFrame>
       );
   }
+}
+
+function OwnerShell({ controller, routes, path, mode, theme, collapsed, onCollapsedChange, children }: {
+  controller: ChannelAccessInboxController;
+  routes: HumanRouteCodec;
+  path: string;
+  mode: ShellMode;
+  theme: Readonly<{ theme: ThemeChoice; onThemeChange(theme: ThemeChoice): void }>;
+  collapsed: boolean;
+  onCollapsedChange(collapsed: boolean): void;
+  children: ReactNode;
+}) {
+  const route = routes.parse(path);
+  return (
+    <AiurShell
+      mode={mode}
+      navigation={[
+        { id: 'khala', label: 'Khala', href: routes.createPath(), current: route.kind !== 'channel_requests' },
+        {
+          id: 'channel-requests',
+          label: 'Channel requests',
+          href: routes.channelRequestsPath(),
+          current: route.kind === 'channel_requests',
+          content: (
+            <ChannelRequestsNavEntry
+              controller={controller}
+              href={routes.channelRequestsPath()}
+              current={route.kind === 'channel_requests'}
+            />
+          ),
+        },
+      ]}
+      theme={theme}
+      collapsed={collapsed}
+      onCollapsedChange={onCollapsedChange}
+    >
+      {children}
+    </AiurShell>
+  );
 }
 
 export function HumanApplicationScreen({
@@ -115,6 +165,7 @@ export function HumanApplicationScreen({
   navigateExternal = url => globalThis.location?.assign(url),
   navigateRoute = path => application.navigate(path),
   renderRoom,
+  channelAccess,
   capabilities = registerHumanCapabilities(),
 }: HumanApplicationScreenProps) {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
@@ -123,6 +174,11 @@ export function HumanApplicationScreen({
   ));
   const [collapsed, setCollapsed] = useState(false);
   const [signInFailed, setSignInFailed] = useState(false);
+
+  useEffect(() => {
+    if (snapshot.phase === 'ready') channelAccess.start();
+  }, [channelAccess, snapshot.phase]);
+  useEffect(() => () => channelAccess.dispose(), [channelAccess]);
 
   async function signIn() {
     setSignInFailed(false);
@@ -141,6 +197,7 @@ export function HumanApplicationScreen({
         navigateRoute={navigateRoute}
         capabilities={capabilities}
         renderRoom={renderRoom}
+        channelAccess={channelAccess}
       />
     );
   } else if (snapshot.phase === 'signed_out') {
@@ -160,6 +217,24 @@ export function HumanApplicationScreen({
     );
   }
 
+  // The human application's ready state is the credential guard. Removing it
+  // would expose owner-only inbox chrome on agent/discovery credential routes.
+  const ownerChannelAccess = snapshot.phase === 'ready' ? channelAccess : null;
+  if (ownerChannelAccess !== null) {
+    return (
+      <OwnerShell
+        controller={ownerChannelAccess}
+        routes={routes}
+        path={snapshot.path}
+        mode={mode}
+        theme={{ theme, onThemeChange: setTheme }}
+        collapsed={collapsed}
+        onCollapsedChange={setCollapsed}
+      >
+        {content}
+      </OwnerShell>
+    );
+  }
   return (
     <AiurShell
       mode={mode}
