@@ -31,6 +31,7 @@ function inProcessClient(adapter: ClaudeSessionAdapter, credential: string): Cla
     listChannels: (sessionId, input) => adapter.listChannels(call(sessionId), input),
     requestAccess: (sessionId, input) => adapter.requestAccess(call(sessionId), input),
     accessStatus: (sessionId, input) => adapter.accessStatus(call(sessionId), input),
+    requestCreate: (sessionId, input) => adapter.requestCreate(call(sessionId), input),
     hook: sessionId => adapter.hook(call(sessionId)),
   };
 }
@@ -73,7 +74,7 @@ async function serve(
 }
 
 describe('Claude plugin MCP entry', () => {
-  it('advertises the session-bound and discovery tools, none taking a binding or token, and no create tool', async () => {
+  it('advertises the session-bound, discovery and create tools, none taking a binding or token', async () => {
     const { responses } = await serve(inProcessClient(server().adapter, CREDENTIAL_A), [
       JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     ]);
@@ -81,9 +82,8 @@ describe('Claude plugin MCP entry', () => {
     expect(tools.map(tool => tool.name)).toEqual([
       'khala_send', 'khala_read', 'khala_status', 'khala_list_agents',
       'khala_list_channels', 'khala_request_channel_access', 'khala_channel_access_status',
+      'khala_create_channel',
     ]);
-    // `khala_create_channel` does not exist until #217; `/khala create` answers "not available".
-    expect(tools.map(tool => tool.name)).not.toContain('khala_create_channel');
     expect(Object.keys(tools.find(tool => tool.name === 'khala_list_agents')!.inputSchema.properties)).toEqual([]);
     for (const tool of tools) {
       expect(Object.keys(tool.inputSchema.properties)).not.toContain('bindingId');
@@ -271,8 +271,9 @@ describe('Claude plugin channel tools', () => {
       request(1, 'khala_list_channels', { ackBatchToken: 'token' }),
       request(2, 'khala_request_channel_access', { target: 'https://khala.example/c/x', ackBatchToken: 'token' }),
       request(3, 'khala_channel_access_status', { operationId: 'op-12345678', ackBatchToken: 'token' }),
+      request(4, 'khala_create_channel', { title: 'Plans', operationId: 'op-12345678', ackBatchToken: 'token' }),
     ], undefined, { requestChannelAccess });
-    expect(responses.map(response => response.error)).toEqual(Array(3).fill({ code: -32602, message: 'Invalid params' }));
+    expect(responses.map(response => response.error)).toEqual(Array(4).fill({ code: -32602, message: 'Invalid params' }));
     expect(requestChannelAccess).not.toHaveBeenCalled();
   });
 
@@ -298,6 +299,11 @@ describe('Claude plugin channel tools', () => {
         },
         status: async (_principal, sessionId, input) =>
           filed.get(input.operationId)?.sessionId === sessionId ? status(input.operationId) : { kind: 'refused', code: 'not_found' },
+        create: async (_principal, sessionId, input) => {
+          requests.push({ sessionId, operationId: input.operationId });
+          if (!filed.has(input.operationId)) filed.set(input.operationId, { sessionId, outcome: 'pending_owner' });
+          return status(input.operationId);
+        },
       };
       const sessions = { resolve: async () => null };
       const adapter = createClaudeSessionAdapter({
@@ -346,11 +352,18 @@ describe('Claude plugin channel tools', () => {
       expect(JSON.stringify([first.responses, second.responses])).not.toContain('s-9');
     });
 
-    it.each(['khala_list_channels', 'khala_request_channel_access', 'khala_channel_access_status'])(
+    const ARGS: Record<string, Record<string, unknown>> = {
+      khala_list_channels: {},
+      khala_request_channel_access: { target: URL },
+      khala_channel_access_status: { operationId: 'op-12345678' },
+      khala_create_channel: { title: 'Plans', operationId: 'op-12345678' },
+    };
+
+    it.each(Object.keys(ARGS))(
       'refuses %s as session_missing without a valid session ID, before any port runs',
       async name => {
         const { adapter, requests } = joinable();
-        const args = name === 'khala_request_channel_access' ? { target: URL } : name === 'khala_channel_access_status' ? { operationId: 'op-12345678' } : {};
+        const args = ARGS[name]!;
         for (const env of [asSession(undefined), asSession('bad\nsession')]) {
           const { responses } = await serve(inProcessClient(adapter, CREDENTIAL_A), [request(1, name, args)], env);
           expect(responses[0]!.result!.structuredContent).toEqual({ kind: 'refused', code: 'session_missing' });
@@ -388,6 +401,21 @@ describe('Claude plugin channel tools', () => {
       expect(resumed.responses[2]!.result!.structuredContent).toMatchObject({ operationId });
       // Denial and expiry create no binding and deliver nothing.
       expect(resumed.responses[1]!.result!.structuredContent).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    });
+
+    it('files a create intent for this session, and a retry under the same operation reads its state', async () => {
+      const { adapter, requests, decide } = joinable();
+      const claude = inProcessClient(adapter, CREDENTIAL_A);
+      const create = request(1, 'khala_create_channel', { title: 'Launch plans', operationId: 'create-12345678' });
+      const asked = await serve(claude, [create], asSession('s-9'));
+      expect(asked.responses[0]!.result!.structuredContent).toEqual({
+        ok: true, v: 1, operationId: 'create-12345678', outcome: 'pending_owner', next: null,
+      });
+      decide('create-12345678', 'denied');
+      const retried = await serve(claude, [create], asSession('s-9'));
+      expect(retried.responses[0]!.result!.structuredContent).toMatchObject({ ok: true, outcome: 'denied' });
+      // Both calls were filed for the requesting session only.
+      expect(requests).toEqual([{ sessionId: 's-9', operationId: 'create-12345678' }, { sessionId: 's-9', operationId: 'create-12345678' }]);
     });
   });
 });

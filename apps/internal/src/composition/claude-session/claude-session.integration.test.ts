@@ -120,6 +120,18 @@ describe('Claude mcp-serve against the internal launcher', () => {
     expect(read).toEqual({ kind: 'refused', code: 'session_not_bound' });
   });
 
+  it('files a create intent for the session through the journal, which reaches the owner and admits nothing', async () => {
+    const { report, owner } = await launched();
+    const create = ['khala_create_channel', { title: 'Launch plans', operationId: 'create-12345678' }] as const;
+    const [created, retried, send] = await serve(report.descriptorPath, 'session-creator', [create, create, ['khala_send', { message: 'hello' }]]);
+    expect(created).toEqual({ ok: true, v: 1, operationId: 'create-12345678', outcome: 'pending_owner', next: null });
+    // A retry under the same operation reads the same request; it files no second one.
+    expect(retried).toEqual(created);
+    expect(send).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    const inbox = await call(report.origin, { path: '/api/human/channel-requests', headers: owner });
+    expect(inbox.json.requests).toMatchObject([{ operationKind: 'create', outcome: 'pending_owner', requester: { harness: 'claude' } }]);
+  });
+
   it('binds only the requesting session: request, owner approval, grant and activation', async () => {
     const { report, owner, channelUrl } = await launched();
     const granted = 'session-granted';
@@ -159,7 +171,7 @@ describe('Claude mcp-serve against the internal launcher', () => {
     expect(otherSend).toEqual({ kind: 'refused', code: 'session_not_bound' });
     expect(otherWho).toEqual({ ok: false, error: 'not_joined' });
     // Another session's operation is not its own: it learns nothing of the grant.
-    expect(otherStatus).not.toMatchObject({ outcome: 'connected' });
+    expect(otherStatus).toMatchObject({ ok: true, operationId, outcome: 'unavailable' });
 
     // The message reached the channel, authored by the granted session's agent.
     const timeline = await call(report.origin, { path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/timeline`, headers: owner });

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { CliError } from '@aiur/khala/cli/errors';
 import { MAX_SEND_BYTES, SendService } from '@aiur/khala/cli/send';
 import type { AccessRequestInput, AccessStatusInput, ChannelAccessResult, ChannelListInput } from '@aiur/khala/cli/channels/types';
+import type { CreateRequestInput } from '@aiur/khala/cli/channels/create/types';
 import {
   type ClaudeBindingServices, type ClaudeSessionAccess, type ClaudeSessionAdapter, createClaudeSessionAdapter,
 } from '@aiur/khala/composition/claude-session';
@@ -159,6 +160,13 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     async status(_principal, sessionId, input: AccessStatusInput) {
       if (!localOrigin(input.origin)) return { kind: 'refused', code: 'untrusted_origin' };
       return answered(sessionId, await withIdentity(sessionId, () => discovery(sessionId).status('access', input.operationId)));
+    },
+    // A create intent only asks: like `khala channels create`, nothing is activated here.
+    async create(_principal, sessionId, input: CreateRequestInput) {
+      if (!localOrigin(input.origin)) return { kind: 'refused', code: 'untrusted_origin' };
+      return accessResult(await withIdentity(sessionId, () => discovery(sessionId).requestCreate({
+        operationId: input.operationId, proposedTitle: input.title,
+      })));
     },
   };
 

@@ -46,14 +46,17 @@ text in a shell command, argument list, or environment variable.
 
 ## `create`
 
-1. Reply "Creating a channel is not available in this version." and call
-   nothing. The `khala_create_channel` MCP tool does not exist in this version,
-   so never look for it, simulate it, or create a channel any other way.
-2. Once the tool ships (ticket #217), it must be called once, only after the
-   person's confirmation. Never create a channel without the person's
-   confirmation: the confirmation happens in Khala's own human-confirmation
-   step, and you may not answer it for them. If the person rejects or lets the
-   confirmation lapse, say that no channel was created, and never retry.
+1. Take the proposed title from the arguments after `create`; if there is none,
+   ask for one and call nothing. Choose one `operationId` and keep it.
+2. Call the `khala_create_channel` MCP tool once with `{ title, operationId }`.
+   It only asks: the result is usually `pending_owner`, and it never carries a
+   channel. Never create a channel without the person's confirmation: the
+   confirmation happens in Khala's own human-confirmation step, and you may not
+   answer it for them. Never create a channel any other way.
+3. To check on it, call `khala_create_channel` again with the same title and
+   `operationId`: that reads the same request and files no second one. Never
+   retry under a new `operationId`. If the person rejects or lets
+   the confirmation lapse, say that no channel was created, and never retry.
 
 ## `join`
 
@@ -104,7 +107,7 @@ nothing more:
 ```text
 /khala send   compose and send one message to this session's Khala channel
 /khala read   read waiting Khala channel messages
-/khala create  not available in this version
+/khala create <title>  ask the owner to create a channel; never creates itself
 /khala join <channel-url>  ask the owner for access; never admits itself
 /khala who    list the agents in this session's channel and the listening mode
 ```

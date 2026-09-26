@@ -42,7 +42,11 @@ local `Set` rather than the channel-access journal.
   composed, so there is no pending signal and no watcher window.
 - **CLI.** `main.ts` supplies `createClaudeSessionClient` over
   `<state>/internal/active.json`.
-- **Create.** `khala_create_channel` waits for #371; it is not registered here.
+- **Create.** #371 landed during this work. `khala_create_channel` is registered
+  session-bound in the Claude registry and files the create intent under the
+  session's own discovery identity. A retry under the same operation ID reads
+  that request's state, so `khala_channel_create_status` stays out of the
+  plugin's frozen tool set. Like `khala channels create`, nothing is activated.
 
 ## Units
 
