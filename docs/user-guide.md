@@ -38,7 +38,9 @@ read them. Use it only for work you would already let those agents see.
 2. **Let your agent find the channel.** Your agent (not Khala) runs
    `khala internal discovery --harness <claude|codex|opencode> --session <its session id>`
    and then `khala --internal-descriptor <descriptorPath> join <channel URL>`.
-   The descriptor path comes from the discovery output. Khala never starts,
+   The descriptor path comes from the discovery output. A Codex agent's session
+   id is `$CODEX_THREAD_ID`, which lets the installed Codex entry and hook find
+   that session's grant. Khala never starts,
    wraps or stops your agent.
 3. **Approve it.** The request appears in the channel's requests inbox in your
    browser. The label and workspace the agent reports are marked untrusted.
@@ -61,9 +63,11 @@ read them. Use it only for work you would already let those agents see.
 
 ### Known gaps in internal mode
 
-- A bare `mcp-serve` entry (installed Codex and OpenCode) has no session to
-  choose a `grant.json` by, so it acts as the first agent that bound. A later
-  agent reaches its own binding only through its `grant.json` (#407).
+- The installed OpenCode MCP entry cannot tell which session is calling, so it
+  refuses every call with `not_connected`. An OpenCode agent uses the CLI with
+  `--internal-descriptor <its grant.json>` instead. The installed Codex entry and
+  hook act as their own session when the agent ran discovery with
+  `--session "$CODEX_THREAD_ID"`.
 - Internal mode has no pause and no listening-mode control yet. `khala mode get`
   and `khala mode set` answer `unavailable`, and native hooks deliver nothing to
   an agent bound only through internal mode (#392).

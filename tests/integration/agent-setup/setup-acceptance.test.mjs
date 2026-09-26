@@ -14,7 +14,7 @@ import { parse as parseToml } from 'smol-toml';
 import {
   SUPPORTED, approveCodexHooksNatively, confirmed, createMachine, filesBelow, holdProbe, harnessCalls,
   installHarness, installTarball, khala, khalaAsync, machineEnvironment, packedTarball, removeHarness, removeScratch,
-  repackAtVersion, repositoryRoot, sha256, snapshot, writeDescriptor,
+  repackAtVersion, repositoryRoot, sha256, snapshot, writeDescriptor, writeSessionGrant,
 } from './harness.mjs';
 
 const ALL = { claude: SUPPORTED.claude, codex: SUPPORTED.codex, opencode: SUPPORTED.opencode };
@@ -485,6 +485,16 @@ async function launches() {
   return { requests, servers, close: () => { for (const server of servers) server.close(); } };
 }
 
+const INITIALIZE = `${JSON.stringify({
+  jsonrpc: '2.0', id: 1, method: 'initialize',
+  params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'acceptance', version: '0' } },
+})}\n`;
+// A tool call as Codex sends it, naming its thread in `_meta.threadId`; OpenCode names none.
+const toolCall = (id, threadId) => `${JSON.stringify({
+  jsonrpc: '2.0', id, method: 'tools/call',
+  params: { ...(threadId === undefined ? {} : { _meta: { threadId } }), name: 'khala_send', arguments: { message: 'acceptance' } },
+})}\n`;
+
 describe('runtime descriptor and secrets', () => {
   function sentinelDescriptor(install) {
     // A port whose spelling appears nowhere in the installed package, so a hit is a leak.
@@ -552,9 +562,10 @@ describe('runtime descriptor and secrets', () => {
   });
 
   // Runs a staged entry until it exits or a second passes, then stops it.
-  async function runEntry(machine, args, env = {}) {
+  async function runEntry(machine, args, env = {}, input = '') {
     const launcher = path.join(machine.home, '.local', 'share', 'khala', 'bin', 'khala');
     const child = spawn(launcher, args, { env: machineEnvironment(machine, env), stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.write(input);
     // `exit`, not `close`: a hook helper may keep inherited pipes open after the entry exits.
     const exited = new Promise(resolve => child.once('exit', resolve));
     let output = '';
@@ -568,8 +579,10 @@ describe('runtime descriptor and secrets', () => {
   }
 
   // `granted` publishes a launch that holds a human grant, so the entry presents that
-  // launch's binding capability; a transport-only launch is an unjoined agent.
-  async function assertFollowsMovedDescriptor(args, { env, granted = false } = {}) {
+  // launch's binding capability; a transport-only launch is an unjoined agent. With a
+  // `session`, the grant is that harness session's own `grant.json`, the entry is sent
+  // `input` naming it, and `active.json` holds another session's grant it must not borrow.
+  async function assertFollowsMovedDescriptor(args, { env, granted = false, session, input } = {}) {
     const machine = createMachine(ALL);
     assert.equal(confirmed(v1, machine, 'setup').applied.status, 0);
     // The internal server owns the descriptor directory; it exists before any launch moves it.
@@ -581,11 +594,16 @@ describe('runtime descriptor and secrets', () => {
         const transportCapability = randomBytes(32).toString('base64url');
         const bindingCapability = randomBytes(32).toString('base64url');
         const token = granted ? bindingCapability : transportCapability;
-        writeDescriptor(machine, {
+        const descriptor = {
           v: 1, channelId: `ch_${'a'.repeat(16)}`, origin: `http://127.0.0.1:${server.address().port}`, transportCapability,
           ...(granted ? { grantRef: `grant-${index}`, bindingId: `binding-${index}`, bindingCapability } : {}),
-        });
-        const output = await runEntry(machine, args, env);
+        };
+        if (session === undefined) writeDescriptor(machine, descriptor);
+        else {
+          writeSessionGrant(machine, session.harness, session.sessionId, descriptor);
+          writeDescriptor(machine, { ...descriptor, grantRef: 'grant-other', bindingId: 'binding-other', bindingCapability: randomBytes(32).toString('base64url') });
+        }
+        const output = await runEntry(machine, args, env, input);
         const reached = requests.filter(request => request.index === index);
         assert.ok(reached.length > 0, `${args.join(' ')} never reached launch ${index}: ${output}`);
         assert.ok(reached.every(request => request.headers.includes(token)), `${args.join(' ')} did not present launch ${index}'s credential`);
@@ -598,9 +616,14 @@ describe('runtime descriptor and secrets', () => {
   test('the Claude hook entry re-reads a moved runtime descriptor on every call', () =>
     assertFollowsMovedDescriptor(['claude', 'status', '--session', 'acceptance']));
 
-  // Codex `mcp_servers.khala` and OpenCode `mcp.khala` both run the launcher's bare `mcp-serve`.
-  test('the Codex and OpenCode MCP entry resolves a moved runtime descriptor', () =>
-    assertFollowsMovedDescriptor(['mcp-serve'], { granted: true }));
+  // Codex `mcp_servers.khala` and OpenCode `mcp.khala` both run the launcher's bare `mcp-serve`,
+  // which acts as the session each tool call names (#407).
+  test('the installed MCP entry resolves the calling session\'s moved grant, never active.json', () =>
+    assertFollowsMovedDescriptor(['mcp-serve'], {
+      granted: true,
+      session: { harness: 'codex', sessionId: 'acceptance-thread' },
+      input: INITIALIZE + toolCall(2, 'acceptance-thread'),
+    }));
 });
 
 // Every installed entry runs exactly as its harness config writes it. The machine's PATH holds
@@ -670,10 +693,6 @@ describe('installed entries', () => {
     return { ...(await exited), stdout, stderr };
   }
 
-  const INITIALIZE = `${JSON.stringify({
-    jsonrpc: '2.0', id: 1, method: 'initialize',
-    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'acceptance', version: '0' } },
-  })}\n`;
   const initialized = stdout => stdout.split('\n').some(line => { try { return JSON.parse(line).id === 1; } catch { return false; } });
 
   async function assertEntriesResolve(harnesses) {
@@ -698,12 +717,21 @@ describe('installed entries', () => {
       v: 1, channelId: `ch_${'b'.repeat(16)}`, origin: `http://127.0.0.1:${servers[0].address().port}`, transportCapability,
       grantRef: 'grant-0', bindingId: 'binding-0', bindingCapability,
     });
+    // The Codex session `acceptance` holds its own grant; `active.json` is another session's.
+    const sessionCapability = randomBytes(32).toString('base64url');
+    writeSessionGrant(machine, 'codex', 'acceptance', {
+      v: 1, channelId: `ch_${'b'.repeat(16)}`, origin: `http://127.0.0.1:${servers[0].address().port}`, transportCapability,
+      grantRef: 'grant-1', bindingId: 'binding-1', bindingCapability: sessionCapability,
+    });
     const since = count => requests.slice(count).map(request => request.headers);
+    const answered = id => stdout => stdout.split('\n').some(line => { try { return JSON.parse(line).id === id; } catch { return false; } });
     try {
       // MCP entries are spawned directly, command and args as written, with the entry's env.
       for (const [harness, entry] of Object.entries(entries.mcp)) {
         const before = requests.length;
-        const result = await runProcess(entry.command, entry.args, { ...env, ...entry.env }, { input: INITIALIZE, ms: 3_000, until: initialized });
+        const input = INITIALIZE + { claude: '', codex: toolCall(2, 'acceptance'), opencode: toolCall(2) }[harness];
+        const until = harness === 'claude' ? initialized : answered(2);
+        const result = await runProcess(entry.command, entry.args, { ...env, ...entry.env }, { input, ms: 3_000, until });
         assert.equal(result.error, undefined, `${harness} MCP entry ${entry.command} did not start`);
         const reached = since(before);
         if (harness === 'claude') {
@@ -713,8 +741,15 @@ describe('installed entries', () => {
           // granted launch's binding credential is never presented.
           assert.ok(reached.every(headers => !headers.includes(bindingCapability)), 'the Claude MCP entry presented the binding credential');
         } else {
-          // Against the stand-in launch it exits `not_connected`, after presenting the credential.
-          assert.ok(reached.some(headers => headers.includes(bindingCapability)), `${harness} MCP entry never reached the granted launch: ${result.stderr}`);
+          // Against the stand-in launch the call is refused `not_connected`: Codex's after
+          // presenting its own session's credential, OpenCode's before presenting any (#407).
+          assert.ok(answered(2)(result.stdout), `the ${harness} MCP entry never answered the tool call: ${result.stderr}`);
+          assert.ok(reached.every(headers => !headers.includes(bindingCapability)), `the ${harness} MCP entry borrowed active.json's binding`);
+          if (harness === 'codex') {
+            assert.ok(reached.some(headers => headers.includes(sessionCapability)), `the codex MCP entry never reached its session's grant: ${result.stderr}`);
+          } else {
+            assert.ok(reached.every(headers => !headers.includes(sessionCapability)), 'the opencode MCP entry acted as a Codex session');
+          }
         }
       }
 
@@ -753,10 +788,14 @@ describe('installed entries', () => {
         }
       }
       for (const hook of entries.codexHooks) {
+        const before = requests.length;
         const input = JSON.stringify({ hook_event_name: hook.event, session_id: 'acceptance', turn_id: 'turn-1' });
         const result = await runProcess('/bin/sh', ['-c', hook.command], env, { input, ms: 5_000 });
         assert.equal(result.code, 0, `${hook.command} failed: ${result.stderr}`);
         assert.doesNotMatch(result.stderr, /not found|No such file/);
+        // The installed hook asks as the session its input names, never as active.json's.
+        assert.ok(since(before).some(headers => headers.includes(sessionCapability)), `${hook.command} never reached its session's grant: ${result.stderr}`);
+        assert.ok(since(before).every(headers => !headers.includes(bindingCapability)), `${hook.command} borrowed active.json's binding`);
       }
     } finally { close(); }
   }

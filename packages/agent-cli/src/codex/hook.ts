@@ -32,18 +32,28 @@ export type CodexHookInput = Readonly<{
 /** `block` stops the boundary with a reason; `context` adds developer context. */
 export type CodexHookDelivery = 'block' | 'context';
 
-export type CodexHookDependencies = Readonly<{
-  stdin: Readable;
-  stdout: Writable;
-  stderr: Writable;
+/** What one hook invocation reads the held binding, its mode and its inbox through. */
+export type CodexHookPorts = Readonly<{
   currentBinding: () => Promise<SessionBinding | null>;
   /** How the held binding records Codex's own session ID; absent means verbatim. */
   storedSessionId?: (sessionId: string) => string;
   /** The held binding's listening-mode status, decoded here; `null` when unavailable. */
   listeningMode: () => Promise<unknown>;
   inbox: (bindingId: string, generation: number) => Promise<BatchInbox>;
-  signal?: AbortSignal | undefined;
 }>;
+
+export type CodexHookDependencies = Readonly<{
+  stdin: Readable;
+  stdout: Writable;
+  stderr: Writable;
+  signal?: AbortSignal | undefined;
+}> & (CodexHookPorts | Readonly<{
+  /**
+   * The ports of the Codex session the hook input names, or `null` when that session holds
+   * no grant; the hook is then silent. The installed hook serves every session this way.
+   */
+  session: (sessionId: string) => Promise<CodexHookPorts | null>;
+}>);
 
 const MODES: readonly string[] = ['steer', 'sync', 'async'] satisfies readonly ListeningMode[];
 
@@ -118,21 +128,23 @@ export async function runCodexHook(deps: CodexHookDependencies): Promise<void> {
   try {
     const input = decodeCodexHookInput(await readJson(deps.stdin));
     if (input === null) return;
-    const binding = await deps.currentBinding();
+    const ports = 'session' in deps ? await deps.session(input.sessionId) : deps;
+    if (ports === null) return;
+    const binding = await ports.currentBinding();
     // An unbound, revoked or foreign session is a plain Codex session again.
-    const session = deps.storedSessionId?.(input.sessionId) ?? input.sessionId;
+    const session = ports.storedSessionId?.(input.sessionId) ?? input.sessionId;
     if (binding === null || binding.harness !== 'codex' || binding.sessionId !== session) return;
-    const mode = decodeListeningModeStatus(await deps.listeningMode());
+    const mode = decodeListeningModeStatus(await ports.listeningMode());
     if (mode === null || mode.bindingId !== binding.bindingId || mode.generation !== binding.generation
       || mode.effective === null) return;
     const delivery = codexHookDelivery(mode.effective, input);
     if (delivery === null) return;
 
-    const inbox = await deps.inbox(binding.bindingId, binding.generation);
+    const inbox = await ports.inbox(binding.bindingId, binding.generation);
     const read = new ReadOperation({
       heldBinding: binding,
       consumer: callScopedConsumer(inbox, { signal: deps.signal }),
-      currentBinding: deps.currentBinding,
+      currentBinding: ports.currentBinding,
     });
     const result = await read.read({
       bindingId: binding.bindingId,

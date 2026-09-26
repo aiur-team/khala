@@ -60,6 +60,16 @@ export function isDiscoveryPrincipal(value: unknown): value is string {
   return typeof value === 'string' && PRINCIPAL.test(value) && isInternalIdentifier(value);
 }
 
+/**
+ * What a discovery principal digests: the principal is `agent_` plus the unpadded
+ * base64url SHA-256 of this string. The launcher derives it when it issues discovery,
+ * and an installed `mcp-serve` entry derives the same one to find that session's own
+ * `grant.json`, so neither stores the harness's session ID.
+ */
+export function discoveryPrincipalPreimage(harness: string, sessionId: string): string {
+  return ['khala.internal.principal.v1', harness, sessionId].join('\0');
+}
+
 function parse(text: string): Record<string, unknown> | null {
   if (typeof text !== 'string' || new TextEncoder().encode(text).byteLength > MAX_INTERNAL_DISCOVERY_FILE_BYTES) return null;
   try {
