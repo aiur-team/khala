@@ -8,7 +8,7 @@ Recorded 2026-09-26 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, V
 
 | Command | Result |
 | --- | --- |
-| `pnpm test:e2e -- tests/e2e/security/` | 47 passed, 1 expected fail (known defect #380), 3 live cases skipped |
+| `pnpm test:e2e -- tests/e2e/security/` | 48 passed, 3 live cases skipped |
 | `pnpm test:e2e -- tests/e2e/security/security.test.ts` | 3 live entries, one per row, skipped: live mode off |
 | `KHALA_E2E_LIVE=1 KHALA_E2E_DISPOSABLE_ENV=<id> pnpm test:e2e -- tests/e2e/security/security.test.ts` | **fails**: every live entry is blocked, and an all-skipped live entry is not acceptance |
 
@@ -36,7 +36,7 @@ Each case seeds fresh random canaries: `pending` (unreleased) and `approved` (re
 | Recipient binding | Current generation releases | Rebind after approval and before dispatch: nothing reaches the replacement session, nor the original session still running with the old binding, and a later approval answers `unavailable` (`restart.test.ts`). Internal mode: revoked and superseded generations get 401 on the timeline, releases, channel and binding routes, and `read` and MCP `khala_read` return nothing new (`revocation.test.ts`). | **pass** (local composition) |
 | Policy | Approved release delivered once after resume, with no new approval | A pause committed after approval holds the release (`queued`, never claimed) across a restart (`restart.test.ts`). Hosted `auto` refusal is covered by KHA-135's own tests, not repeated here. | **pass** for pause and resume across restart (local composition); unacknowledged re-arm reconnect **not observed** |
 | Recovery / revocation | A ledger copied after a lost reply and restored keeps the release `outcome_unknown` with no resubmission | Damaged release bytes block dispatch (`payload_damaged`) and nothing else is sent. A revoked hosted binding cannot be approved (`forbidden`), previewed (`revoked`) or dispatched to, even for an earlier approval, and recovery reports `binding_revoked` (`recovery.test.ts`, `revocation.test.ts`). A backup taken before dispatch and restored after delivery holds no evidence of the send, so the approved release is offered to the session a second time (`recovery.test.ts`, recorded as observed). | **pass** for confidentiality (local composition); messaging key loss and approved key restore **not observed** (browser relay only) |
-| Delivery ambiguity | A lost reply after the write is reconciled from the session's native queue to `accepted`, observed once (`restart.test.ts`) | Once the session has consumed the entry, the release stays `outcome_unknown` and is never resubmitted (`restart.test.ts`). **But** the KHA-136 recovery view reports that release as undispatched with no unknown outcome (#380). | **fail**: owner-facing recovery status is wrong (#380); no resubmission observed |
+| Delivery ambiguity | A lost reply after the write is reconciled from the session's native queue to `accepted`, observed once (`restart.test.ts`) | Once the session has consumed the entry, the release stays `outcome_unknown` and is never resubmitted (`restart.test.ts`). The KHA-136 recovery view reports that release as an unknown outcome, not undispatched (`recovery.test.ts`, fixed in #380). | **pass** (local composition); no resubmission observed |
 
 A failed row blocks acceptance. Rows marked not observed are gaps, not passes.
 
@@ -72,4 +72,4 @@ The frozen Claude plugin contract (`FROZEN_MCP_TOOLS`) omits the registered `kha
 
 ## Findings returned to owners
 
-- #380 (KHA-136): `recoverConnectorStorage` reads dispatch evidence only from `receipts`, while the dispatcher keeps its receipts in `dispatch_records`. The composed recovery view therefore misreports a release written to the session. Reproduced by the `it.fails` case in `recovery.test.ts`.
+- #380 (KHA-136): `recoverConnectorStorage` reads dispatch evidence only from `receipts`, while the dispatcher keeps its receipts in `dispatch_records`. The composed recovery view therefore misreported a release written to the session. Fixed in #380: recovery also reads `dispatch_records.state`, and `recovery.test.ts` now asserts the unknown outcome.
