@@ -7,6 +7,7 @@ import { runCli } from '@aiur/khala/cli/app';
 import { createClaudeSessionClient } from '@aiur/khala/composition/claude-session-http';
 import { createUnavailableClient } from '@aiur/khala/composition/unavailable';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
 import { webBundleManifest } from '../../launcher/bundle';
 import { type LaunchReport, launchInternal } from '../../launcher/launcher';
 
@@ -201,13 +202,16 @@ describe('Claude mcp-serve against the internal launcher', () => {
   });
 
   it('binds only the requesting session: request, owner approval, grant and activation', async () => {
-    const { report, owner, channelUrl } = await launched();
+    const { report, owner, channelUrl, parent } = await launched();
+    const root = path.join(parent, 'internal');
     const granted = 'session-granted';
     const bystander = 'session-bystander';
 
     const [requested] = await serve(report.descriptorPath, granted, [['khala_request_channel_access', { target: channelUrl }]]);
     expect(requested).toMatchObject({ ok: true, outcome: 'pending_owner' });
     const operationId = requested!.operationId as string;
+    // The plugin's hooks stay inert for a session that has only asked.
+    await expect(sessionGranted(root, granted)).resolves.toBe(false);
 
     // The owner decides in their own UI; nothing waited meanwhile.
     await approvePending(report.origin, owner);
@@ -229,6 +233,9 @@ describe('Claude mcp-serve against the internal launcher', () => {
     const agents = (who as { agents: Array<{ participantId: string; ownerDisplayName: string }> }).agents;
     expect(agents).toHaveLength(1);
     expect(agents[0]!.ownerDisplayName).toBe('Owner');
+    // The hooks' local check finds the grant this route wrote, and only for that session.
+    await expect(sessionGranted(root, granted)).resolves.toBe(true);
+    await expect(sessionGranted(root, bystander)).resolves.toBe(false);
 
     // The bystander holds no binding: the grant bound the requesting session only.
     const [otherSend, otherWho, otherStatus] = await serve(report.descriptorPath, bystander, [
@@ -270,6 +277,9 @@ describe('Claude mcp-serve against the internal launcher', () => {
     // The grant from the previous launch ended with it: the session is unbound until it resumes.
     const [unbound] = await serve(second.report.descriptorPath, sessionId, [['khala_send', { message: 'stale grant' }]]);
     expect(unbound).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    // So are the plugin's hooks: the stale grant does not match the new launch.
+    const root = path.join(first.parent, 'internal');
+    await expect(sessionGranted(root, sessionId)).resolves.toBe(false);
 
     // Its status resumes the connected operation into a fresh capability for the same binding.
     const [resumed, again, who] = await serve(second.report.descriptorPath, sessionId, [
@@ -280,6 +290,7 @@ describe('Claude mcp-serve against the internal launcher', () => {
     expect(resumed).toMatchObject({ ok: true, operationId, outcome: 'connected' });
     expect(again).toMatchObject({ kind: 'accepted' });
     expect(who).toEqual(roster);
+    await expect(sessionGranted(root, sessionId)).resolves.toBe(true);
     const inbox = await call(second.report.origin, { path: '/api/human/channel-requests', headers: second.owner });
     expect((inbox.json.requests as Array<{ outcome: string }>).filter(entry => entry.outcome === 'pending_owner')).toEqual([]);
     const timeline = await call(second.report.origin, {

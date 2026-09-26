@@ -79,6 +79,8 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
     release(sessionId: string, body: string) { session(sessionId).queue.push(body); },
     /** The user's Stop (decision 36): the binding is gone, and every op is refused as the adapter refuses it. */
     revoke(sessionId: string) { session(sessionId).revoked = true; },
+    /** Whether the session was ever bound, as its grant file records; a revoked binding keeps its file. */
+    granted: (sessionId: string) => sessions.has(sessionId),
     /** The agent's next Khala call: acknowledges the outstanding batch on Khala's side. */
     agentCall(sessionId: string) { session(sessionId).outstanding = null; },
     set available(value: boolean) { available = value; },
@@ -105,11 +107,16 @@ export function frame(bodies: readonly string[]): string {
   return lines.join('\n');
 }
 
-/** Hook dependencies over a fake adapter, with a clock the watcher's sleeps advance. */
-export function hookDeps(khala: HookDependencies['khala'], stateRoot = scratch()) {
+/**
+ * Hook dependencies over a fake adapter, with a clock the watcher's sleeps advance.
+ * `bound` stands in for the session's grant file; `bound` calls are recorded.
+ */
+export function hookDeps(khala: HookDependencies['khala'], bound: (sessionId: string) => boolean, stateRoot = scratch()) {
   const clock = { now: 1_000_000, alive: true };
   let nonces = 0;
+  const checks: string[] = [];
   const deps: HookDependencies = {
+    bound: async sessionId => { checks.push(sessionId); return bound(sessionId); },
     khala,
     stateRoot,
     now: () => clock.now,
@@ -120,7 +127,7 @@ export function hookDeps(khala: HookDependencies['khala'], stateRoot = scratch()
       await new Promise(resolve => setTimeout(resolve, 2));
     },
   };
-  return { deps, clock, stateRoot };
+  return { deps, clock, stateRoot, checks };
 }
 
 export function scratch(): string {
