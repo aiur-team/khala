@@ -25,13 +25,16 @@ export function isTerminal(request: OwnerRequest): boolean {
 
 /**
  * When the request's sensitive context stops being shown: 30 days after it
- * was decided, or after its deadline when it ended without a decision. The
- * journal purges on its own schedule; this keeps an open page from showing
- * context the server has already dropped.
+ * ended. A denial ends at its decision. Every other terminal outcome (connected,
+ * expired, revoked) ends no later than the request deadline, and the
+ * projection carries no exact end time, so the deadline is the bound that never
+ * hides a row the journal still returns. The journal purges on its own
+ * schedule; this keeps an open page from outliving that by more than the
+ * request lifetime.
  */
 export function retentionEndsAt(request: OwnerRequest): number | null {
   if (!isTerminal(request)) return null;
-  const endedAt = Date.parse(request.decidedAt ?? request.deadline);
+  const endedAt = Date.parse(request.outcome === 'denied' && request.decidedAt !== null ? request.decidedAt : request.deadline);
   return endedAt + CHANNEL_ACCESS_SENSITIVE_RETENTION_MS;
 }
 
@@ -174,7 +177,7 @@ export type InboxStatus =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'muted'; muted: boolean; operationKind: OwnerRequest['operationKind'] }>
   | Readonly<{ kind: 'mute_refreshed' }>
-  | Readonly<{ kind: 'mute_failed'; code: 'forbidden' | 'not_found' | 'operation_mismatch' | 'unavailable' }>
+  | Readonly<{ kind: 'mute_failed'; code: 'forbidden' | 'not_found' | 'operation_mismatch' | 'unavailable' | 'unknown' }>
   | Readonly<{ kind: 'authority_lost' }>
   | Readonly<{ kind: 'refresh_failed' }>;
 

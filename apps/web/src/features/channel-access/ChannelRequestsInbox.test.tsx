@@ -138,6 +138,24 @@ describe('ChannelRequestsInbox', () => {
     expect(text(html)).toContain('New channel request');
   });
 
+  it('announces every mute and refresh outcome honestly', () => {
+    const cases: Array<[InboxView['status'], string]> = [
+      [{ kind: 'muted', muted: true, operationKind: 'access' }, 'Muted. This agent’s new requests for this channel will not reach you.'],
+      [{ kind: 'muted', muted: false, operationKind: 'access' }, 'Unmuted. This agent can request this channel again.'],
+      [{ kind: 'muted', muted: true, operationKind: 'create' }, 'Muted. This agent’s new channel-creation requests will not reach you.'],
+      [{ kind: 'muted', muted: false, operationKind: 'create' }, 'Unmuted. This agent can ask you to create channels again.'],
+      [{ kind: 'mute_refreshed' }, 'Mute settings changed in another window.'],
+      [{ kind: 'mute_failed', code: 'forbidden' }, 'You no longer own this channel'],
+      [{ kind: 'mute_failed', code: 'unavailable' }, 'Could not reach the server. Nothing was changed'],
+      [{ kind: 'mute_failed', code: 'unknown' }, 'Could not confirm whether that change was saved.'],
+      [{ kind: 'refresh_failed' }, 'Could not refresh channel requests.'],
+    ];
+    for (const [status, message] of cases) {
+      expect(render(ready([], { status }))).toMatch(new RegExp(`<p role="status" aria-live="polite"[^>]*>${message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    }
+    expect(text(render(ready([], { status: { kind: 'mute_failed', code: 'unknown' } })))).not.toContain('Nothing was changed');
+  });
+
   it('announces lost authority', () => {
     const html = render(ready([], { readOnly: true, status: { kind: 'authority_lost' } }));
     expect(text(html)).toContain('You can no longer decide these requests.');

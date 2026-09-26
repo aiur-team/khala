@@ -19,8 +19,9 @@ creation, and pairing (`pairing-approval-ui`) all decide through
   never opens a queued request.
 - **Honest status.** A `role="status"` live region stays mounted.
   `submitting` disables the decision buttons, and `retryable` raises an alert
-  and offers the same decision again. `refreshed` means the request changed and
-  can be decided again. `decided` and `blocked` remove both decisions.
+  and offers the same decision again. `reloading` also disables them while a
+  changed request loads, and `refreshed` means it has loaded and can be decided
+  again. `decided` and `blocked` remove both decisions.
 - **Narrow layouts.** The details scroll, while the header and actions stay on
   screen. Every button is at least 44 by 44 CSS pixels.
 

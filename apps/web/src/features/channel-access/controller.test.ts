@@ -145,14 +145,14 @@ describe('channel-access inbox controller', () => {
     journal.bumpRevision(handle);
     controller.refresh();
     await flush();
-    expect(controller.getView().dialog!.request.revision).toBe('2');
+    expect(controller.getView().dialog!.request.revision).toBe('carev_2');
     controller.retry();
     await flush();
     dialog = controller.getView().dialog!;
     expect(dialog.status.kind).toBe('decided');
     expect(decideCalls).toHaveLength(2);
     expect(decideCalls[1]!.operationId).toBe(decideCalls[0]!.operationId);
-    expect(decideCalls[1]!.expectedRevision).toBe('2');
+    expect(decideCalls[1]!.expectedRevision).toBe('carev_2');
     expect(journal.rows().find(row => row.requestHandle === handle)!.ownerDecision).toBe('approved');
   });
 
@@ -181,7 +181,7 @@ describe('channel-access inbox controller', () => {
     controller.decide('approve');
     await flush();
     expect(controller.getView().dialog!.status.kind).toBe('refreshed');
-    expect(controller.getView().dialog!.request.revision).toBe('2');
+    expect(controller.getView().dialog!.request.revision).toBe('carev_2');
     controller.decide('approve');
     await flush();
     expect(controller.getView().dialog!.status.kind).toBe('decided');
@@ -266,7 +266,7 @@ describe('channel-access inbox controller', () => {
     expect(controller.getView().status.kind).toBe('mute_refreshed');
     const row = controller.getView().requests[0]!;
     expect(row.muted).toBe(true);
-    expect(row.muteRevision).toBe('1');
+    expect(row.muteRevision).toBe('carev_1');
     controller.toggleMute(access);
     await flush();
     expect(controller.getView().status).toEqual({ kind: 'muted', muted: false, operationKind: 'access' });
@@ -345,6 +345,145 @@ describe('channel-access inbox controller', () => {
     await flush();
     expect(pendingIndicator(controller.getView().requests)).toBe(50);
     expect(fixtureDigest('x')).toHaveLength(43);
+  });
+
+  it('an inbox read started before a decision cannot undo it', async () => {
+    const { journal, controller } = setup();
+    const handle = journal.submit(ACCESS)!;
+    await flush();
+    // Hold the next inbox read open with the pre-decision snapshot.
+    const inbox = journal.port.inbox.bind(journal.port);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    journal.port.inbox = async () => {
+      const stale = await inbox();
+      journal.port.inbox = inbox;
+      await gate;
+      return stale;
+    };
+    controller.refresh();
+    await flush();
+    controller.open(handle);
+    controller.decide('approve');
+    await flush();
+    release();
+    await flush();
+    const row = controller.getView().requests.find(request => request.requestHandle === handle)!;
+    expect(row.ownerDecision).toBe('approved');
+    expect(controller.getView().dialog!.status.kind).toBe('decided');
+  });
+
+  it('closing mid-submit and deciding another request keeps both results', async () => {
+    const { journal, controller } = setup();
+    const first = journal.submit(ACCESS)!;
+    const second = journal.submit(SECOND)!;
+    await flush();
+    const decide = journal.port.decide.bind(journal.port);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    journal.port.decide = async (input, options) => {
+      if (input.requestHandle === first) await gate;
+      return decide(input, options);
+    };
+    controller.open(first);
+    controller.decide('approve');
+    controller.close();
+    // Reopening while the decision is out shows it in flight and offers no second one.
+    controller.open(first);
+    expect(controller.getView().dialog!.status.kind).toBe('submitting');
+    controller.decide('deny');
+    controller.close();
+    controller.open(second);
+    controller.decide('deny');
+    await flush();
+    release();
+    await flush();
+    const outcome = (handle: string) => controller.getView().requests.find(request => request.requestHandle === handle)!.ownerDecision;
+    expect(outcome(first)).toBe('approved');
+    expect(outcome(second)).toBe('denied');
+    expect(controller.getView().dialog?.handle).toBe(second);
+  });
+
+  it('holds decisions off while a stale request reloads', async () => {
+    const journal = createFakeJournal();
+    const { controller, decideCalls } = setup(journal);
+    const handle = journal.submit(ACCESS)!;
+    await flush();
+    const inbox = journal.port.inbox.bind(journal.port);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    controller.open(handle);
+    journal.bumpRevision(handle);
+    journal.port.inbox = async () => {
+      await gate;
+      return inbox();
+    };
+    controller.decide('approve');
+    await flush();
+    expect(controller.getView().dialog!.status.kind).toBe('reloading');
+    controller.decide('approve');
+    expect(decideCalls).toHaveLength(1);
+    release();
+    await flush();
+    expect(controller.getView().dialog!.status.kind).toBe('refreshed');
+    expect(controller.getView().dialog!.request.revision).toBe('carev_2');
+  });
+
+  it('orders journal carev_ notification revisions numerically', async () => {
+    const { journal, controller } = setup();
+    const handle = journal.submit(ACCESS)!;
+    await flush();
+    const publish = (revision: string) => (
+      { v: 1, notificationId: 'n-order', revision, ownerId: 'owner-a', kind: 'request', requestHandle: handle, count: 1 }
+    );
+    const subscribers: Array<(notification: unknown) => void> = [];
+    const second = createChannelAccessInboxController({ requests: { ...journal.port, subscribe: listener => { subscribers.push(listener); return () => {}; } } }, { now: () => journal.now() });
+    second.start();
+    await flush();
+    subscribers[0]!(publish('carev_10'));
+    await flush();
+    subscribers[0]!(publish('carev_9'));
+    await flush();
+    expect(second.getView().notices.find(notice => notice.notificationId === 'n-order')!.revision).toBe('carev_10');
+    second.dismissNotice('n-order');
+    subscribers[0]!(publish('carev_10'));
+    subscribers[0]!(publish('carev_2'));
+    await flush();
+    expect(second.getView().notices.some(notice => notice.notificationId === 'n-order')).toBe(false);
+    subscribers[0]!(publish('carev_11'));
+    await flush();
+    expect(second.getView().notices.some(notice => notice.notificationId === 'n-order')).toBe(true);
+    controller.dispose();
+    second.dispose();
+  });
+
+  it('an unknown mute outcome refreshes and never claims nothing changed', async () => {
+    const { journal, controller } = setup();
+    const access = journal.submit(ACCESS)!;
+    await flush();
+    journal.failNext.setMute.push('unknown_after_commit');
+    controller.toggleMute(access);
+    await flush();
+    expect(controller.getView().status).toEqual({ kind: 'mute_failed', code: 'unknown' });
+    expect(controller.getView().requests[0]!.muted).toBe(true);
+  });
+
+  it('keeps an approved-then-connected request until 30 days after its deadline bound', async () => {
+    const { journal, controller } = setup();
+    const handle = journal.submit(ACCESS)!;
+    await flush();
+    controller.open(handle);
+    controller.decide('approve');
+    await flush();
+    journal.advance(handle, 'connected');
+    journal.advanceClock(CHANNEL_ACCESS_SENSITIVE_RETENTION_MS + 1000);
+    controller.refresh();
+    await flush();
+    expect(controller.getView().requests).toHaveLength(1);
+    journal.advanceClock(CHANNEL_ACCESS_REQUEST_LIFETIME_MS);
+    controller.refresh();
+    await flush();
+    expect(controller.getView().requests).toHaveLength(0);
   });
 
   it('stops listening after dispose', async () => {

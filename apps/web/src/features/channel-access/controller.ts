@@ -58,11 +58,21 @@ const REJECTION_MESSAGE: Readonly<Record<string, string>> = {
   forbidden: 'You can no longer decide this request. Only the channel’s current owner can.',
 };
 
-/** Revisions are opaque; numeric ones compare numerically. */
+/** The journal's `carev_<n>` revision number; bare integers are accepted too. */
+function revisionNumber(revision: string): number | null {
+  const match = /^(?:carev_)?(\d+)$/.exec(revision);
+  return match ? Number(match[1]) : null;
+}
+
+/** Revisions are otherwise opaque; journal-shaped ones compare numerically. */
 function isNewer(next: string, current: string): boolean {
-  if (/^\d+$/.test(next) && /^\d+$/.test(current)) return Number(next) > Number(current);
+  const a = revisionNumber(next);
+  const b = revisionNumber(current);
+  if (a !== null && b !== null) return a > b;
   return next !== current;
 }
+
+type HeldDecision = Readonly<{ handle: ChannelAccessRequestHandle; decision: DecisionChoice; operationId: string }>;
 
 function decidedMessage(request: OwnerRequest): string {
   if (request.ownerDecision === 'denied') return 'Denied. Nothing was granted.';
@@ -83,9 +93,12 @@ export function createChannelAccessInboxController(
   let readSequence = 0;
   let latestRead: Promise<void> = Promise.resolve();
   let unsubscribe: Disposer | null = null;
-  // One operation ID per held decision, reused only by `retry()`, so a lost
+  // One held decision per request, reused only by `retry()`, so a lost
   // response resolves to the same journal decision instead of a second one.
-  let heldDecision: Readonly<{ handle: ChannelAccessRequestHandle; decision: DecisionChoice; operationId: string }> | null = null;
+  // Keyed by request so closing one dialog and deciding another never
+  // orphans the first response.
+  const heldDecisions = new Map<string, HeldDecision>();
+  const inFlight = new Map<string, HeldDecision>();
   let heldMute: Readonly<{ handle: ChannelAccessRequestHandle; action: 'mute' | 'unmute'; operationId: string }> | null = null;
   const dismissed = new Map<string, string>();
   const listeners = new Set<(view: InboxView) => void>();
@@ -111,8 +124,14 @@ export function createChannelAccessInboxController(
     return { requests, rejected };
   }
 
+  /** Any read already in flight predates this change and must not land. */
+  function invalidateReads(): void {
+    readSequence += 1;
+  }
+
   function loseAuthority(): void {
-    heldDecision = null;
+    invalidateReads();
+    heldDecisions.clear();
     heldMute = null;
     emit({
       ...view,
@@ -135,10 +154,10 @@ export function createChannelAccessInboxController(
     }
     if (row.ownerDecision === 'pending' && row.outcome === 'pending_owner') return { ...dialog, request: row };
     // Decided (here after a lost response, or elsewhere) or closed.
-    const held = heldDecision?.handle === dialog.handle ? heldDecision : null;
+    const held = heldDecisions.get(dialog.handle) ?? null;
     const expected = held ? (held.decision === 'approve' ? 'approved' : 'denied') : null;
     if (dialog.status.kind === 'decided') return { ...dialog, request: row };
-    heldDecision = held ? null : heldDecision;
+    heldDecisions.delete(dialog.handle);
     const status: DecisionStatus = expected !== null && row.ownerDecision === expected
       ? { kind: 'decided', message: decidedMessage(row) }
       : {
@@ -223,10 +242,25 @@ export function createChannelAccessInboxController(
     return view.requests.find(request => request.requestHandle === handle);
   }
 
-  async function submitDecision(): Promise<void> {
+  function isOpen(handle: string): boolean {
+    return view.dialog?.handle === handle;
+  }
+
+  /** After a stale revision: nothing is decidable until the current version has loaded. */
+  async function reloadForRedecision(handle: string): Promise<void> {
+    setDialogStatus({ kind: 'reloading', message: 'This request changed while you were reviewing it. Loading the current version…' });
+    void readInbox();
+    await settled();
+    if (disposed || !isOpen(handle) || view.dialog!.status.kind !== 'reloading') return;
+    setDialogStatus(view.status.kind === 'refresh_failed'
+      ? { kind: 'blocked', message: 'This request changed, and its current version could not be loaded. Close it and review it again.' }
+      : { kind: 'refreshed', message: 'This request changed while you were reviewing it. It has been reloaded; review it and decide again.' });
+  }
+
+  async function submitDecision(held: HeldDecision): Promise<void> {
     const dialog = view.dialog;
-    if (!dialog || heldDecision === null || heldDecision.handle !== dialog.handle) return;
-    const held = heldDecision;
+    if (!dialog || dialog.handle !== held.handle || heldDecisions.get(held.handle) !== held) return;
+    inFlight.set(held.handle, held);
     setDialogStatus({ kind: 'submitting', decision: held.decision });
     let result: OperationResult<unknown, string>;
     try {
@@ -238,41 +272,42 @@ export function createChannelAccessInboxController(
         operationId: held.operationId,
       });
     } catch {
-      result = { kind: 'unavailable', retryable: true };
+      result = { kind: 'outcome_unknown', operationId: held.operationId };
     }
+    if (inFlight.get(held.handle) === held) inFlight.delete(held.handle);
     // A refresh already reconciled this decision (for example, it showed the
     // journal recorded it); a late transport result must not reopen it.
-    if (disposed || heldDecision !== held) return;
-    const stillOpen = view.dialog?.handle === held.handle;
+    if (disposed || heldDecisions.get(held.handle) !== held) return;
     if (result.kind === 'ok') {
       const decoded = decodeChannelAccessOwnerProjection(result.value);
-      if (decoded.ok) {
-        heldDecision = null;
+      if (decoded.ok && decoded.value.requestHandle === held.handle) {
+        heldDecisions.delete(held.handle);
         const row = decoded.value;
+        invalidateReads();
         emit({
           ...view,
           requests: [...view.requests.filter(request => request.requestHandle !== row.requestHandle), row],
-          dialog: stillOpen ? { handle: held.handle, request: row, status: { kind: 'decided', message: decidedMessage(row) } } : view.dialog,
+          dialog: isOpen(held.handle) ? { handle: held.handle, request: row, status: { kind: 'decided', message: decidedMessage(row) } } : view.dialog,
         });
+        void readInbox();
         return;
       }
-      // An undecodable success is an unknown outcome: keep the decision held.
+      // An undecodable or mismatched success is an unknown outcome: keep the decision held.
       result = { kind: 'outcome_unknown', operationId: held.operationId };
     }
     if (result.kind === 'rejected') {
-      heldDecision = null;
+      heldDecisions.delete(held.handle);
       if (result.code === 'forbidden') return loseAuthority();
-      if (stillOpen) {
-        setDialogStatus(result.code === 'stale_revision'
-          ? { kind: 'refreshed', message: 'This request changed while you were reviewing it. It has been reloaded; review it and decide again.' }
-          : { kind: 'blocked', message: REJECTION_MESSAGE[result.code] ?? `Nothing was recorded (${result.code}).` });
+      if (result.code === 'stale_revision' && isOpen(held.handle)) return reloadForRedecision(held.handle);
+      if (isOpen(held.handle)) {
+        setDialogStatus({ kind: 'blocked', message: REJECTION_MESSAGE[result.code] ?? `Nothing was recorded (${result.code}).` });
       }
       void readInbox();
       return;
     }
     // Unavailable or unknown: keep the dialog, its projection, and the held
     // operation; refresh so a retry carries the current revision.
-    if (stillOpen) setDialogStatus({ kind: 'retryable', decision: held.decision, message: RETRYABLE_MESSAGE });
+    if (isOpen(held.handle)) setDialogStatus({ kind: 'retryable', decision: held.decision, message: RETRYABLE_MESSAGE });
     void readInbox();
   }
 
@@ -295,9 +330,10 @@ export function createChannelAccessInboxController(
         operationId: held.operationId,
       });
     } catch {
-      result = { kind: 'unavailable', retryable: true };
+      result = { kind: 'outcome_unknown', operationId: held.operationId };
     }
-    if (disposed) return;
+    // Authority was lost (or the mute superseded) while this call was out.
+    if (disposed || heldMute !== held) return;
     if (result.kind === 'ok') {
       heldMute = null;
       const { muted, revision } = result.value;
@@ -323,8 +359,10 @@ export function createChannelAccessInboxController(
       void readInbox();
       return;
     }
-    // Held for the next click on the same action, which reuses the operation ID.
-    emit({ ...view, muting: null, status: { kind: 'mute_failed', code: 'unavailable' } });
+    // Held for the next click on the same action, which reuses the operation
+    // ID. An unknown outcome may have applied, so the refresh shows the truth.
+    emit({ ...view, muting: null, status: { kind: 'mute_failed', code: result.kind === 'unavailable' ? 'unavailable' : 'unknown' } });
+    void readInbox();
   }
 
   return {
@@ -376,32 +414,39 @@ export function createChannelAccessInboxController(
       if (disposed || view.dialog !== null) return;
       const request = findRequest(handle);
       if (!request) return;
+      const pending = inFlight.get(request.requestHandle);
       const status: DecisionStatus = view.readOnly
         ? { kind: 'blocked', message: REJECTION_MESSAGE.forbidden! }
-        : request.outcome === 'pending_owner'
-          ? { kind: 'idle' }
-          : { kind: 'decided', message: 'This request is no longer waiting for a decision.' };
+        : pending !== undefined
+          // Reopened while its decision is still out: show it, never offer a second one.
+          ? { kind: 'submitting', decision: pending.decision }
+          : request.outcome === 'pending_owner'
+            ? { kind: 'idle' }
+            : { kind: 'decided', message: 'This request is no longer waiting for a decision.' };
       emit({ ...view, dialog: { handle: request.requestHandle, request, status } });
     },
 
     close() {
       if (disposed || view.dialog === null) return;
-      if (heldDecision?.handle === view.dialog.handle && view.dialog.status.kind !== 'submitting') heldDecision = null;
+      // A decision still in flight stays held so its result reaches the row.
+      if (!inFlight.has(view.dialog.handle)) heldDecisions.delete(view.dialog.handle);
       // Closing never advances to the next queued request.
       emit({ ...view, dialog: null });
     },
 
     decide(choice) {
       const dialog = view.dialog;
-      if (disposed || view.readOnly || !dialog || !isDecidable(dialog.status)) return;
-      heldDecision = { handle: dialog.handle, decision: choice, operationId: createId() };
-      void submitDecision();
+      if (disposed || view.readOnly || !dialog || !isDecidable(dialog.status) || inFlight.has(dialog.handle)) return;
+      const held: HeldDecision = { handle: dialog.handle, decision: choice, operationId: createId() };
+      heldDecisions.set(dialog.handle, held);
+      void submitDecision(held);
     },
 
     retry() {
       const dialog = view.dialog;
-      if (disposed || !dialog || dialog.status.kind !== 'retryable' || heldDecision?.handle !== dialog.handle) return;
-      void submitDecision();
+      const held = dialog ? heldDecisions.get(dialog.handle) : undefined;
+      if (disposed || !dialog || dialog.status.kind !== 'retryable' || held === undefined) return;
+      void submitDecision(held);
     },
 
     toggleMute(handle) {

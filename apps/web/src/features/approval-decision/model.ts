@@ -41,6 +41,8 @@ export type DecisionChoice = 'approve' | 'deny';
 
 export type DecisionStatus =
   | Readonly<{ kind: 'idle' }>
+  /** The request changed; its current version is loading and nothing can be decided yet. */
+  | Readonly<{ kind: 'reloading'; message: string }>
   /** The request changed and was reloaded; the owner reviews it and decides again. */
   | Readonly<{ kind: 'refreshed'; message: string }>
   | Readonly<{ kind: 'submitting'; decision: DecisionChoice }>
@@ -62,6 +64,7 @@ export function statusAnnouncement(status: DecisionStatus, prompt: DecisionPromp
       return '';
     case 'submitting':
       return status.decision === 'approve' ? `Sending: ${prompt.approveLabel}…` : `Sending: ${prompt.denyLabel}…`;
+    case 'reloading':
     case 'refreshed':
     case 'retryable':
     case 'blocked':

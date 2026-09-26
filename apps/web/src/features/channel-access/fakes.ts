@@ -70,7 +70,7 @@ export type FakeJournal = {
   rows(): readonly ChannelAccessOwnerProjection[];
   calls: { decide: number; setMute: number; inbox: number };
   /** Results that replace the next call's outcome, per method. */
-  failNext: { decide: Array<'unavailable' | 'unknown_after_commit' | ChannelAccessDecisionRejection>; setMute: Array<'unavailable' | MuteRejection>; inbox: Array<'unavailable'> };
+  failNext: { decide: Array<'unavailable' | 'unknown_after_commit' | ChannelAccessDecisionRejection>; setMute: Array<'unavailable' | 'unknown_after_commit' | MuteRejection>; inbox: Array<'unavailable'> };
 };
 
 export const FAKE_OWNER_ID = 'owner-a' as OwnerId;
@@ -91,6 +91,8 @@ export function fixtureDigest(seed: string): string {
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
+/** The journal's revision format (`carev_<n>`), used for rows, mutes, and notifications alike. */
+const rev = (n: number): string => `carev_${n}`;
 
 export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: number }> = {}): FakeJournal {
   let clock = options.start ?? FAKE_START;
@@ -124,7 +126,7 @@ export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: 
       v: 1 as const,
       requestHandle: row.handle,
       outcome: row.outcome,
-      revision: String(row.revision),
+      revision: rev(row.revision),
       requester: {
         sessionFingerprint: row.fingerprint,
         harness: row.input.harness ?? 'claude-code',
@@ -136,7 +138,7 @@ export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: 
       ownerDecision: row.ownerDecision,
       decidedAt: row.decidedAt === null ? null : iso(row.decidedAt),
       muted: mute?.muted ?? false,
-      muteRevision: mute ? String(mute.revision) : null,
+      muteRevision: mute ? rev(mute.revision) : null,
     };
     return row.input.kind === 'access'
       ? { ...common, operationKind: 'access', detail: { kind: 'access', title: row.input.title, history: 'none' } }
@@ -175,7 +177,7 @@ export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: 
       if (failure === 'unavailable') return { kind: 'unavailable', retryable: true };
       if (failure === 'unknown_after_commit') {
         // The journal records the decision, but the response is lost.
-        if (row && row.outcome === 'pending_owner' && String(row.revision) === input.expectedRevision) applyDecision(row, input.decision, input.operationId);
+        if (row && row.outcome === 'pending_owner' && rev(row.revision) === input.expectedRevision) applyDecision(row, input.decision, input.operationId);
         return { kind: 'unavailable', retryable: true };
       }
       if (failure) return { kind: 'rejected', code: failure };
@@ -188,7 +190,7 @@ export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: 
       }
       if (row.outcome === 'expired') return { kind: 'rejected', code: 'expired' };
       if (row.outcome === 'revoked') return { kind: 'rejected', code: 'revoked' };
-      if (String(row.revision) !== input.expectedRevision) return { kind: 'rejected', code: 'stale_revision' };
+      if (rev(row.revision) !== input.expectedRevision) return { kind: 'rejected', code: 'stale_revision' };
       if (row.outcome !== 'pending_owner') return { kind: 'rejected', code: 'decision_conflict' };
       applyDecision(row, input.decision, input.operationId);
       return { kind: 'ok', value: project(row) };
@@ -199,7 +201,7 @@ export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: 
       await delay();
       const failure = failNext.setMute.shift();
       if (failure === 'unavailable') return { kind: 'unavailable', retryable: true };
-      if (failure) return { kind: 'rejected', code: failure };
+      if (failure && failure !== 'unknown_after_commit') return { kind: 'rejected', code: failure };
       if (!authorized()) return { kind: 'rejected', code: 'forbidden' };
       const row = rows.get(input.requestHandle);
       if (!row) return { kind: 'rejected', code: 'not_found' };
@@ -208,14 +210,16 @@ export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: 
       const current = mutes.get(key);
       if (current?.operationId === input.operationId) {
         return current.action === input.action
-          ? { kind: 'ok', value: { v: 1, operationKind: row.input.kind, muted: current.muted, revision: String(current.revision) } }
+          ? { kind: 'ok', value: { v: 1, operationKind: row.input.kind, muted: current.muted, revision: rev(current.revision) } }
           : { kind: 'rejected', code: 'operation_mismatch' };
       }
-      const currentRevision = current ? String(current.revision) : null;
+      const currentRevision = current ? rev(current.revision) : null;
       if (currentRevision !== input.expectedRevision) return { kind: 'rejected', code: 'stale_revision' };
       const next: Mute = { muted: input.action === 'mute', revision: (current?.revision ?? 0) + 1, operationId: input.operationId, action: input.action };
       mutes.set(key, next);
-      return { kind: 'ok', value: { v: 1, operationKind: row.input.kind, muted: next.muted, revision: String(next.revision) } };
+      // The journal records the mute, but the response is lost.
+      if (failure === 'unknown_after_commit') return { kind: 'outcome_unknown', operationId: input.operationId };
+      return { kind: 'ok', value: { v: 1, operationKind: row.input.kind, muted: next.muted, revision: rev(next.revision) } };
     },
 
     subscribe(listener) {
@@ -253,7 +257,7 @@ export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: 
         decisionOperation: null,
       });
       notificationSequence += 1;
-      publish({ v: 1, notificationId: `notice-${handle}`, revision: String(notificationSequence), ownerId: FAKE_OWNER_ID, kind: 'request', requestHandle: handle, count: 1 });
+      publish({ v: 1, notificationId: `notice-${handle}`, revision: rev(notificationSequence), ownerId: FAKE_OWNER_ID, kind: 'request', requestHandle: handle, count: 1 });
       // Keep later requests strictly ordered by creation time.
       clock += 1000;
       return handle;
@@ -281,7 +285,7 @@ export function createFakeJournal(options: Readonly<{ delayMs?: number; start?: 
     now: () => clock,
     publishBatch(count) {
       notificationSequence += 1;
-      publish({ v: 1, notificationId: 'notice-batch', revision: String(notificationSequence), ownerId: FAKE_OWNER_ID, kind: 'batch', requestHandle: null, count });
+      publish({ v: 1, notificationId: 'notice-batch', revision: rev(notificationSequence), ownerId: FAKE_OWNER_ID, kind: 'batch', requestHandle: null, count });
     },
     isMuted(kind, fingerprint, title = '') {
       return mutes.get(muteKey({ fingerprint: fixtureDigest(fingerprint), input: { kind, title } }))?.muted ?? false;

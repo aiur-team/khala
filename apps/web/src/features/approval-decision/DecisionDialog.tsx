@@ -91,7 +91,8 @@ export function DecisionDialog({ id, prompt, status, onDecide, onRetry, onDismis
     }
   }
 
-  const submitting = status.kind === 'submitting';
+  // Busy states keep the decision buttons in place but disabled.
+  const submitting = status.kind === 'submitting' || status.kind === 'reloading';
   const open = isDecidable(status) || submitting;
   const announcement = status.kind === 'retryable' ? '' : statusAnnouncement(status, prompt);
 

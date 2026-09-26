@@ -39,6 +39,7 @@ const MUTE_FAILURE: Readonly<Record<string, string>> = {
   not_found: 'That request is no longer available. Nothing was changed.',
   operation_mismatch: 'That change conflicted with an earlier one. Nothing was changed.',
   unavailable: 'Could not reach the server. Nothing was changed; try again.',
+  unknown: 'Could not confirm whether that change was saved. The list has been refreshed; check it and try again if needed.',
 };
 
 function statusMessage(status: InboxStatus): string {
