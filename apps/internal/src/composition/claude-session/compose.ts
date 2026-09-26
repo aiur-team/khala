@@ -12,8 +12,8 @@ import {
 import { CLAUDE_SESSION_PATH, handleClaudeSessionRequest } from '@aiur/khala/composition/claude-session-http';
 import { openClaudeSessionState } from '@aiur/khala/composition/claude-session-state';
 import { createInternalClient, readInternalDescriptor } from '@aiur/khala/composition/internal';
-import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import { activateInternalAccess } from '@aiur/khala/composition/internal-activation';
+import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import {
   type InternalDiscoveryCallResult, createInternalDiscoveryClient, selectInternalDiscovery,
 } from '@aiur/khala/composition/internal-discovery';

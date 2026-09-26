@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInternalRuntime } from '../../../apps/internal/src/composition/internal-cli';
+import { INSTALLED_CLAUDE } from './installed-claude';
 
 const abort = new AbortController();
 process.once('SIGINT', () => abort.abort());
@@ -15,6 +16,8 @@ const runtime = createInternalRuntime({
   bundleDirectory: path.join(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/internal/src/launcher/fixtures/internal-web'),
   startPort: 0,
   openBrowser: async () => ({ opened: false, reason: 'disabled in tests' }),
+  // The installed Claude Code this world's launcher claims: inspected, and not proven.
+  claudeVersion: async () => INSTALLED_CLAUDE,
 });
 const write = (stream: NodeJS.WritableStream) => ({
   write: (text: string) => new Promise<void>(resolve => stream.write(text, () => resolve())),
