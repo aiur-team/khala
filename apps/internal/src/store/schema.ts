@@ -3,7 +3,7 @@ import { StoreError } from './errors';
 
 /** `PRAGMA application_id`: ASCII "KHCH" (Khala channel), distinct from connector storage. */
 export const APPLICATION_ID = 0x4b484348;
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const CORE_SCHEMA_V1_SQL = `
 CREATE TABLE meta (
@@ -270,12 +270,34 @@ UPDATE discovery_activations SET start_sequence = (
 );
 `;
 
+/**
+ * v8 is the internal agent-acknowledgement ledger: the authority for `agent_acknowledged`
+ * receipts in internal mode, where no connector ledger exists. Each row is one immutable
+ * receipt for one single-event release. The receipt projection drains it by revision into
+ * the owner's read model, exactly as it drains the connector outbox.
+ */
+export const ACKNOWLEDGEMENT_SCHEMA_V8_SQL = `
+CREATE TABLE agent_acknowledgements (
+  receipt_id TEXT PRIMARY KEY,
+  release_id TEXT NOT NULL,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation >= 0),
+  channel_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  evidence_ref TEXT NOT NULL,
+  ledger_revision INTEGER NOT NULL CHECK (ledger_revision >= 1),
+  receipt TEXT NOT NULL
+) STRICT;
+CREATE INDEX agent_acknowledgements_revision ON agent_acknowledgements (ledger_revision);
+`;
+
 export type MigrationStage =
   | 'after_mode_controls' | 'after_mode_operations' | 'before_user_version' | 'after_user_version'
   | 'after_receipt_tables' | 'before_receipt_user_version'
   | 'after_discovery_tables' | 'before_discovery_user_version'
   | 'after_mode_rebuild' | 'before_mode_rebuild_user_version'
-  | 'after_activation_start' | 'before_activation_start_user_version';
+  | 'after_activation_start' | 'before_activation_start_user_version'
+  | 'after_acknowledgement_tables' | 'before_acknowledgement_user_version';
 export type MigrationFault = (stage: MigrationStage) => void;
 
 function pragmaNumber(db: DatabaseSync, name: 'application_id' | 'user_version'): number {
@@ -325,6 +347,7 @@ function expectedManifest(version: number): readonly SchemaRow[] {
     if (version >= 5) expected.exec(DISCOVERY_SCHEMA_V5_SQL);
     if (version >= 6) expected.exec(MODE_SCHEMA_V6_SQL);
     if (version >= 7) expected.exec(ACTIVATION_SCHEMA_V7_SQL);
+    if (version >= 8) expected.exec(ACKNOWLEDGEMENT_SCHEMA_V8_SQL);
     const rows = schemaRows(expected).map(row => ({ ...row, sql: normalizeSql(row.sql) }));
     expectedManifests.set(version, rows);
     return rows;
@@ -369,6 +392,7 @@ export function prepareSchema(
     db.exec(DISCOVERY_SCHEMA_V5_SQL);
     db.exec(MODE_SCHEMA_V6_SQL);
     db.exec(ACTIVATION_SCHEMA_V7_SQL);
+    db.exec(ACKNOWLEDGEMENT_SCHEMA_V8_SQL);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     assertManifest(db, SCHEMA_VERSION);
     assertIntegrity(db);
@@ -439,5 +463,14 @@ export function prepareSchema(
     assertIntegrity(db);
     migrationFault?.('before_activation_start_user_version');
     db.exec('PRAGMA user_version = 7');
+  }
+
+  if (version <= 7) {
+    db.exec(ACKNOWLEDGEMENT_SCHEMA_V8_SQL);
+    migrationFault?.('after_acknowledgement_tables');
+    assertManifest(db, 8);
+    assertIntegrity(db);
+    migrationFault?.('before_acknowledgement_user_version');
+    db.exec('PRAGMA user_version = 8');
   }
 }

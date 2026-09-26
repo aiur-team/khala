@@ -7,6 +7,10 @@ import {
   type ReceiptObservation, type ReceiptObservationLog, type ReceiptOutboxSource, type ReceiptProjector,
   createReceiptProjector,
 } from '@khala/connector/receipts/projection';
+import type { AgentAcknowledgementPort } from '../server/channel-server';
+import {
+  type AgentAcknowledgementLedger, type AgentAcknowledgementLedgerOptions, createAgentAcknowledgementLedger,
+} from '../store/acknowledgements';
 import { createReceiptReadModel } from '../store/receipts';
 import type { InternalStoreHandle } from '../store/open';
 
@@ -50,4 +54,35 @@ export function createInternalReceiptProjector(input: Readonly<{
   log: ReceiptObservationLog;
 }>): ReceiptProjector {
   return createReceiptProjector({ outbox: input.outbox, readModel: createReceiptReadModel(input.store), log: input.log });
+}
+
+/** The owner's NDJSON receipt log, beside the channel store. */
+export const RECEIPT_LOG_FILE = 'receipts.ndjson';
+
+export type InternalReceipts = Readonly<{
+  ledger: AgentAcknowledgementLedger;
+  projector: ReceiptProjector;
+  /** The server's acknowledgement route: commit to the ledger, then project it for the owner. */
+  acknowledgements: AgentAcknowledgementPort;
+}>;
+
+/**
+ * Internal mode's receipt writer and its projection. The acknowledgement ledger is the
+ * authority; the projector copies it into the owner's read model and the structured log.
+ */
+export function composeInternalReceipts(input: Readonly<{
+  store: InternalStoreHandle;
+  logFile: string;
+  ledger?: AgentAcknowledgementLedgerOptions;
+}>): InternalReceipts {
+  const ledger = createAgentAcknowledgementLedger(input.store, input.ledger);
+  const projector = createInternalReceiptProjector({ outbox: ledger, store: input.store, log: createNdjsonReceiptLog(input.logFile) });
+  return {
+    ledger,
+    projector,
+    acknowledgements: {
+      record: acknowledgement => ledger.recordBatchAcknowledgement(acknowledgement),
+      async project() { await projector.drain(); },
+    },
+  };
 }

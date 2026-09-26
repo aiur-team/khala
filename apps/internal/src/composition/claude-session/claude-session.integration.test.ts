@@ -4,13 +4,21 @@ import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { runCli } from '@aiur/khala/cli/app';
+import { openInbox } from '@aiur/khala/cli/inbox';
 import { createClaudeSessionClient } from '@aiur/khala/composition/claude-session-http';
+import { createInternalClient } from '@aiur/khala/composition/internal';
+import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import { createUnavailableClient } from '@aiur/khala/composition/unavailable';
+import { INTERNAL_DISCOVERY_DIRECTORY } from '@khala/contracts/internal/discovery-descriptor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHook, sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
 import { webBundleManifest } from '../../launcher/bundle';
 import { type LaunchReport, launchInternal } from '../../launcher/launcher';
-import { CLAUDE_SETTLE_INTERVAL_MS } from './compose';
+import { channelDirectory } from '../../lifecycle/paths';
+import { internalReleaseId } from '../../store/release-id';
+import { discoveryPrincipal } from '../channel-discovery/service';
+import { RECEIPT_LOG_FILE } from '../receipt-projection';
+import { CLAUDE_GRANT_FILE, CLAUDE_SETTLE_INTERVAL_MS } from './compose';
 
 // The Claude plugin's `mcp-serve` against the real internal launcher: the transport
 // capability from `active.json`, the channel-access journal, the owner's decision in
@@ -529,8 +537,26 @@ describe('Claude delivery through the internal launcher', () => {
         body: { clientTxnId: `txn-${posted}`, content: { v: 1, kind: 'text', body } },
       });
       expect(sent.status).toBe(201);
+      return sent.json.event.eventId as string;
     };
-    return { ...launch, post, run: (op: string) => claude(launch.report.descriptorPath, op, sessionId) };
+    const root = path.join(launch.parent, 'internal');
+    return {
+      ...launch, post, run: (op: string) => claude(launch.report.descriptorPath, op, sessionId),
+      /** The session's own granted descriptor, which a descriptor client presents as that binding. */
+      grantPath: path.join(root, INTERNAL_DISCOVERY_DIRECTORY, discoveryPrincipal('claude', sessionId), CLAUDE_GRANT_FILE),
+      receiptLog: path.join(channelDirectory(root, launch.report.channelId)!, RECEIPT_LOG_FILE),
+      /** The owner's receipt evidence for the launch channel. */
+      async facts() {
+        const read = await call(launch.report.origin, {
+          path: `/api/v1/channels/${encodeURIComponent(launch.report.channelId)}/receipts`, headers: launch.owner,
+        });
+        expect(read.status).toBe(200);
+        return read.json.facts as Array<{
+          receipt: { kind: string; source: string; releaseId: string; bindingId: string; generation: number; receiptId: string };
+          evidenceRef: string; events: Array<{ eventId: string; sequence: number | null }>;
+        }>;
+      },
+    };
   }
 
   // Wrong-implementation test (#443): a feed that starts at sequence 0 hands the rejoined
@@ -577,6 +603,112 @@ describe('Claude delivery through the internal launcher', () => {
     for (const earlier of ['said before any admission', 'said to the first binding', 'said while no agent was bound']) {
       expect(rejoined).not.toContain(earlier);
     }
+  });
+
+  /**
+   * `khala read --internal-descriptor <grant>` in its own inbox state, as `main.ts` composes it.
+   * `dropRecorder` opens the inbox the way internal mode did before receipts were wired.
+   */
+  async function descriptorRead(grantPath: string, stateDirectory: string, args: readonly string[] = [], dropRecorder = false) {
+    const stdout = new PassThrough();
+    let out = '';
+    stdout.on('data', chunk => { out += chunk; });
+    const stderr = new PassThrough();
+    let err = '';
+    stderr.on('data', chunk => { err += chunk; });
+    const code = await runCli(['--internal-descriptor', grantPath, 'read', ...args], {
+      client: createUnavailableClient(),
+      inbox: (bindingId, generation, inboxOptions) => openInbox({
+        stateDirectory, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
+        ...(dropRecorder ? {} : inboxOptions),
+      }),
+      stdin: Readable.from([]), stdout, stderr,
+      internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
+      internalDelivery: async descriptorPath => createInternalDelivery({ descriptorPath, stateDirectory }),
+    });
+    expect({ code, err }).toEqual({ code: 0, err: '' });
+    return out;
+  }
+
+  const tokenOf = (framed: string): string | null => /^batchToken: (\S+)$/m.exec(framed)?.[1] ?? null;
+
+  function scratchState(): string {
+    const directory = fs.mkdtempSync('/tmp/khala-cli-state-');
+    cleanups.push(() => fs.rmSync(directory, { recursive: true, force: true }));
+    return directory;
+  }
+
+  it('records the owner an agent_acknowledged receipt at the Claude session\'s next Khala call, never at the read', async () => {
+    const session = await bound('session-receipts');
+    const eventId = await session.post('owner asks');
+
+    expect(await session.run('read')).toContain('owner asks');
+    // Delivery and the read itself acknowledge nothing.
+    expect(await session.facts()).toEqual([]);
+
+    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 1 });
+    const facts = await session.facts();
+    expect(facts).toHaveLength(1);
+    const { receipt } = facts[0]!;
+    expect(receipt).toMatchObject({ kind: 'agent_acknowledged', source: 'agent' });
+    // Exactly the release the server made for this binding generation and event.
+    expect(receipt.releaseId).toBe(internalReleaseId(receipt, eventId));
+    expect(facts[0]!.events).toEqual([{ eventId, sequence: expect.any(Number) }]);
+    // The owner's structured log carries the same content-free observation.
+    const logged = fs.readFileSync(session.receiptLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(logged).toMatchObject([{ event: 'khala.receipt.observed', receiptId: receipt.receiptId, kind: 'agent_acknowledged' }]);
+    expect(fs.readFileSync(session.receiptLog, 'utf8')).not.toContain('owner asks');
+
+    // A repeated call has nothing left to acknowledge and records nothing more.
+    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 0 });
+    expect(await session.facts()).toHaveLength(1);
+  });
+
+  it('records a descriptor read\'s acknowledgement only for the exact outstanding token', async () => {
+    const session = await bound('session-cli-receipts');
+    const state = scratchState();
+    const first = await session.post('first for the cli');
+
+    const framed = await descriptorRead(session.grantPath, state);
+    expect(framed).toContain('first for the cli');
+    const token = tokenOf(framed)!;
+    expect(token).not.toBeNull();
+
+    // A wrong token returns the same batch under the same token and records nothing.
+    const wrong = await descriptorRead(session.grantPath, state, ['--ack', 'not-the-batch-token']);
+    expect(tokenOf(wrong)).toBe(token);
+    expect(await session.facts()).toEqual([]);
+
+    // The exact token acknowledges the batch: one receipt for that release.
+    expect(JSON.parse(await descriptorRead(session.grantPath, state, ['--ack', token]))).toEqual({ ok: true, kind: 'empty' });
+    const facts = await session.facts();
+    expect(facts.map(fact => fact.events.map(event => event.eventId))).toEqual([[first]]);
+    expect(facts[0]!.receipt.releaseId).toBe(internalReleaseId(facts[0]!.receipt, first));
+
+    // A stale token never acknowledges a later batch.
+    await session.post('second for the cli');
+    const later = await descriptorRead(session.grantPath, state, ['--ack', token]);
+    expect(later).toContain('second for the cli');
+    const laterToken = tokenOf(later)!;
+    expect(laterToken).not.toBe(token);
+    expect(tokenOf(await descriptorRead(session.grantPath, state, ['--ack', token]))).toBe(laterToken);
+    expect(await session.facts()).toHaveLength(1);
+
+    // Replaying the acknowledged token again records no second receipt either.
+    expect(JSON.parse(await descriptorRead(session.grantPath, state, ['--ack', laterToken]))).toEqual({ ok: true, kind: 'empty' });
+    expect(await session.facts()).toHaveLength(2);
+    expect(JSON.parse(await descriptorRead(session.grantPath, state, ['--ack', laterToken]))).toEqual({ ok: true, kind: 'empty' });
+    expect(await session.facts()).toHaveLength(2);
+  });
+
+  it('wrong implementation: an internal inbox opened without its recorder acknowledges into nothing', async () => {
+    const session = await bound('session-no-recorder');
+    const state = scratchState();
+    await session.post('never receipted');
+    const token = tokenOf(await descriptorRead(session.grantPath, state, [], true))!;
+    // The cursor moves as if acknowledged, yet the owner has no evidence: the check above catches it.
+    expect(JSON.parse(await descriptorRead(session.grantPath, state, ['--ack', token], true))).toEqual({ ok: true, kind: 'empty' });
+    expect(await session.facts()).toEqual([]);
   });
 
   it('delivers to a bound session on an experimental route: hook pull, then read, then next-call acknowledgement', async () => {

@@ -63,8 +63,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       // No trusted connector composition is installed yet, so mode calls refuse as unavailable.
       // Under `--internal-descriptor` the descriptor client supplies its own binding's mode control.
       listeningMode: null,
-      inbox: (bindingId, generation) => openInbox({
+      // An internal descriptor's delivering inbox supplies the recorder that writes its receipts.
+      inbox: (bindingId, generation, inboxOptions) => openInbox({
         stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
+        ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
       }),
       ...(setup === undefined ? {} : { setup }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,

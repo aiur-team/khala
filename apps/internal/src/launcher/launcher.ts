@@ -11,6 +11,7 @@ import { type BindingControl, composeBindingControl } from '../composition/bindi
 import { composeBindingModes } from '../composition/binding-modes/index';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
 import { composeClaudeSession, inspectClaudeRoute } from '../composition/claude-session/compose';
+import { RECEIPT_LOG_FILE, composeInternalReceipts } from '../composition/receipt-projection';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
 import { resumeInternalChannel } from '../lifecycle/resume';
 import type { AssetManifest } from '../server/assets';
@@ -291,6 +292,9 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       });
       bindingControl = composeBindingControl({ handle: channel.handle, root, cancelApproved: discovery.cancelApproved });
       const modes = composeBindingModes({ handle: channel.handle, store: channel.store, claude: claudeRoute });
+      const receipts = composeInternalReceipts({ store: channel.handle, logFile: path.join(channel.directory, RECEIPT_LOG_FILE) });
+      // Acknowledgements a crash left unprojected reach the owner's evidence before the server listens.
+      await receipts.projector.drain().catch(() => undefined);
       server = await startChannelServer({
         store: channel.store,
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
@@ -301,7 +305,9 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         releases: modes.releases,
         // Owner and agent mode control over the same SQLite record, plus the owner's pause.
         bindingModes: modes.control,
-        // The owner's projected receipt evidence, read-only; the projector owns writes.
+        // A bound agent's next Khala call acknowledges its batch into the ledger, which the
+        // projector copies into the owner's receipt evidence; that read is owner-only.
+        acknowledgements: receipts.acknowledgements,
         receipts: createReceiptReadModel(channel.handle),
         // The transport capability may only obtain a discovery-only descriptor.
         transportCapability,

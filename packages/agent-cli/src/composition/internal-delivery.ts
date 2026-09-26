@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { type GrantedDescriptor, isGrantedDescriptor } from '@khala/contracts/internal/descriptor';
-import { cliErrorCode } from '../cli/errors.js';
-import { type BatchInbox, acquireProcessLock } from '../cli/inbox.js';
+import { CliError, cliErrorCode } from '../cli/errors.js';
+import { type BatchAcknowledgement, type BatchInbox, acquireProcessLock } from '../cli/inbox.js';
 import type { InboxDelivery } from '../cli/types.js';
 import { exactKeys, plainObject, validDigest, validEventRef, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { type DescriptorRead, readInternalDescriptor } from './internal.js';
@@ -57,6 +57,12 @@ export type InternalDelivery = Readonly<{
    * called under the pull lock, so its duplicate index includes every earlier pull.
    */
   pull(held: HeldGeneration, openInbox: () => Promise<BatchInbox>, signal?: AbortSignal): Promise<PullOutcome>;
+  /**
+   * The inbox's `recordAcknowledgement` hook for exactly `held`: the server records one
+   * `agent_acknowledged` receipt per release before this resolves. It throws when the
+   * receipt is not durable, so the inbox keeps the batch outstanding and replays it.
+   */
+  acknowledge(held: HeldGeneration, acknowledgement: BatchAcknowledgement): Promise<void>;
 }>;
 
 const DELIVERY_DIRECTORY = 'internal-delivery';
@@ -113,7 +119,50 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
     return decodePage(body, held);
   }
 
+  async function postAcknowledgement(descriptor: GrantedDescriptor, body: string): Promise<number | null> {
+    const target = `/api/v1/channels/${encodeURIComponent(descriptor.channelId)}/acknowledgements`;
+    try {
+      const response = await fetcher(new URL(target, descriptor.origin), {
+        method: 'POST',
+        redirect: 'error',
+        headers: { authorization: `Bearer ${descriptor.bindingCapability}`, 'content-type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      await response.text().catch(() => '');
+      return response.status;
+    } catch {
+      return null;
+    }
+  }
+
   return {
+    async acknowledge(held, acknowledgement) {
+      // The hook is bound to one held generation; an acknowledgement for any other is never sent.
+      if (acknowledgement.bindingId !== held.bindingId || acknowledgement.generation !== held.generation) {
+        throw new CliError('binding_not_held');
+      }
+      const grant = currentGrant(readDescriptor, options.descriptorPath, held);
+      if (grant === 'revoked') throw new CliError('binding_not_held');
+      if (grant === 'unavailable') throw new CliError('transport_unavailable');
+      const body = JSON.stringify({
+        v: 1, bindingId: held.bindingId, generation: held.generation,
+        releases: acknowledgement.releases.map(release => ({ releaseId: release.releaseId, eventIds: release.eventIds })),
+      });
+      let status = await postAcknowledgement(grant, body);
+      if (status === 401) {
+        // As for a pull: activation may have rotated the capability since the file was read.
+        const reread = currentGrant(readDescriptor, options.descriptorPath, held);
+        if (typeof reread === 'object' && reread.bindingCapability !== grant.bindingCapability) {
+          status = await postAcknowledgement(reread, body);
+        }
+      }
+      if (status === 200) return;
+      if (status === 401) throw new CliError('binding_not_held');
+      if (status === 400 || status === 403) throw new CliError('invalid_input');
+      throw new CliError('transport_unavailable');
+    },
+
     async pull(held, openInbox, signal) {
       const first = currentGrant(readDescriptor, options.descriptorPath, held);
       if (first === 'unavailable') return 'unavailable';

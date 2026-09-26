@@ -7,7 +7,7 @@ import type { StoreErrorCode } from './errors';
 import { ROOM_DATABASE_FILE } from './path';
 import { openChannelStore } from './open';
 import {
-  APPLICATION_ID, CORE_SCHEMA_V1_SQL, DISCOVERY_SCHEMA_V5_SQL, MODE_SCHEMA_V2_SQL, MODE_SCHEMA_V3_SQL, MODE_SCHEMA_V6_SQL,
+  ACTIVATION_SCHEMA_V7_SQL, APPLICATION_ID, CORE_SCHEMA_V1_SQL, DISCOVERY_SCHEMA_V5_SQL, MODE_SCHEMA_V2_SQL, MODE_SCHEMA_V3_SQL, MODE_SCHEMA_V6_SQL,
   RECEIPT_SCHEMA_V4_SQL, SCHEMA_VERSION,
 } from './schema';
 
@@ -69,7 +69,7 @@ function snapshot(directory: string): ReadonlyArray<readonly [string, string, nu
   });
 }
 
-function createV1(directory: string, version: 1 | 2 | 3 | 4 | 5 | 6 = 1): string {
+function createV1(directory: string, version: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 1): string {
   fs.mkdirSync(directory, { mode: 0o700 });
   const target = file(directory);
   const db = new DatabaseSync(target);
@@ -80,6 +80,7 @@ function createV1(directory: string, version: 1 | 2 | 3 | 4 | 5 | 6 = 1): string
   if (version >= 4) db.exec(RECEIPT_SCHEMA_V4_SQL);
   if (version >= 5) db.exec(DISCOVERY_SCHEMA_V5_SQL);
   if (version >= 6) db.exec(MODE_SCHEMA_V6_SQL);
+  if (version >= 7) db.exec(ACTIVATION_SCHEMA_V7_SQL);
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
   db.exec(`PRAGMA user_version = ${version}`);
   db.exec("INSERT INTO participants (participant_id, owner_id, kind, display_name) VALUES ('p1', 'o1', 'agent', 'Agent')");
@@ -110,7 +111,7 @@ describe('openChannelStore', () => {
     const second = open(directory, 'existing');
     expect(second.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all()
       .map(row => (row as { name: string }).name))).toEqual([
-      'admission_operations', 'bindings', 'channel_operations', 'channels', 'control_operations', 'control_records',
+      'admission_operations', 'agent_acknowledgements', 'bindings', 'channel_operations', 'channels', 'control_operations', 'control_records',
       'devices', 'discovery_activations', 'discovery_agents', 'discovery_allowlist', 'discovery_operations', 'discovery_visibility', 'events',
       'memberships', 'meta', 'mode_controls', 'mode_operations', 'participants', 'receipt_fact_events', 'receipt_facts',
       'receipt_projection_checkpoints', 'sqlite_sequence',
@@ -236,6 +237,44 @@ describe('openChannelStore', () => {
         .toEqual([{ binding_id: 'b1', start_sequence: 3 }, { binding_id: 'b2', start_sequence: 0 }]);
       handle.close();
     }
+  });
+
+  it('migrates a v7 database to the acknowledgement ledger and rolls every injected failure back to intact v7', () => {
+    for (const stage of ['after_acknowledgement_tables', 'before_acknowledgement_user_version'] as const) {
+      const directory = scratchDirectory();
+      const target = createV1(directory, 7);
+      expect(() => openChannelStore({ directory, mode: 'existing', migrationFault: current => {
+        if (current === stage) throw new Error('injected');
+      } })).toThrow(expect.objectContaining({ code: 'transaction_aborted' }));
+      const raw = new DatabaseSync(target, { readOnly: true });
+      expect(raw.prepare('PRAGMA user_version').get()).toEqual({ user_version: 7 });
+      expect(raw.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'agent_acknowledgements%'").all()).toEqual([]);
+      raw.close();
+      const handle = open(directory, 'existing');
+      expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: SCHEMA_VERSION });
+      expect(handle.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE name = 'agent_acknowledgements'").get()))
+        .toEqual({ name: 'agent_acknowledgements' });
+      expect(handle.read(db => db.prepare('SELECT participant_id FROM participants').get())).toEqual({ participant_id: 'p1' });
+      handle.close();
+    }
+  });
+
+  it('migrates a v6 database through the activation backfill to the acknowledgement ledger in one open', () => {
+    const directory = scratchDirectory();
+    const target = createV1(directory, 6);
+    const db = new DatabaseSync(target);
+    db.exec("INSERT INTO channels VALUES ('c1', NULL, 'p1', 'd1', 0, '2026-09-26T00:00:00.000Z')");
+    db.exec(`INSERT INTO events (event_id, channel_id, author_participant_id, author_device_id, client_txn_id, canonical_payload, content_digest, received_at)
+      VALUES ('e1', 'c1', 'p1', 'd1', 't1', X'00', 'digest', '2026-09-26T00:00:00.000Z')`);
+    db.exec("INSERT INTO bindings VALUES ('b1', 1, 'o1', 'p1', 'd1', 'codex', 's-b1', 'active')");
+    db.exec("INSERT INTO discovery_activations VALUES ('op-b1', 'b1', 1, 'c1', 1)");
+    db.close();
+    const handle = open(directory, 'existing');
+    expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: SCHEMA_VERSION });
+    expect(handle.read(db => db.prepare('SELECT binding_id, start_sequence FROM discovery_activations').all()))
+      .toEqual([{ binding_id: 'b1', start_sequence: 1 }]);
+    expect(handle.read(db => db.prepare('SELECT count(*) AS n FROM agent_acknowledgements').get())).toEqual({ n: 0 });
+    handle.close();
   });
 
   it('rolls every injected v1 migration failure back and retries from intact v1 state', () => {

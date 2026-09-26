@@ -75,7 +75,8 @@ export function khala(profile: KhalaProfile, argv: readonly string[], options: K
     client: null as never,
     // As in `main.ts`: only a descriptor client supplies mode control, for its own binding.
     listeningMode: null,
-    inbox: (bindingId, generation) => openInbox({
+    inbox: (bindingId, generation, inboxOptions) => openInbox({
+      ...inboxOptions,
       stateDirectory: profile.stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
     }),
     stdin, stdout, stderr,
