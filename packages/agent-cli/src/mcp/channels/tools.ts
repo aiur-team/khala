@@ -1,9 +1,11 @@
 import type { BindingId } from '@khala/contracts/delivery/index';
-import type { ChannelListingService } from '../../cli/channels/service.js';
+import { ChannelAccessService } from '../../cli/channels/access.js';
+import { ChannelListingService } from '../../cli/channels/service.js';
+import type { AgentClientPort } from '../../cli/types.js';
 import {
   validChannelArgument, validCursorArgument, validOriginArgument,
 } from '../../cli/channels/service.js';
-import type { AgentListOutput, ChannelListOutput } from '../../cli/channels/types.js';
+import type { AccessOutput, AgentListOutput, ChannelListOutput } from '../../cli/channels/types.js';
 import type { McpToolResult } from '../result-postprocessor.js';
 import {
   extractSharedToolArguments, failure, success, type JsonRpcResponse, type McpTool, type McpToolContext,
@@ -12,7 +14,21 @@ import {
 export const LIST_CHANNELS_TOOL_NAME = 'khala_list_channels';
 export const LIST_AGENTS_TOOL_NAME = 'khala_list_agents';
 
-export type ChannelToolsPort = Pick<ChannelListingService, 'listChannels' | 'listAgents'>;
+type ChannelToolOutput = ChannelListOutput | AgentListOutput | AccessOutput;
+
+export type ChannelToolsPort = Pick<ChannelListingService, 'listChannels' | 'listAgents'>
+  & Pick<ChannelAccessService, 'request' | 'status'>;
+
+export function composeChannelTools(client: AgentClientPort): ChannelToolsPort {
+  const listing = new ChannelListingService(client);
+  const access = new ChannelAccessService(client);
+  return {
+    listChannels: (input, signal) => listing.listChannels(input, signal),
+    listAgents: (channel, signal) => listing.listAgents(channel, signal),
+    request: (input, signal) => access.request(input, signal),
+    status: (input, signal) => access.status(input, signal),
+  };
+}
 
 const ACK_BATCH_TOKEN_SCHEMA = {
   type: 'string',
@@ -76,10 +92,10 @@ export const listAgentsTool: McpTool = {
  * Runs one listing tool. A `null` projection means invalid arguments, answered
  * as `Invalid params`. Structured content is the exact CLI projection.
  */
-async function callListingTool(
+export async function callListingTool(
   argumentsValue: Record<string, unknown>,
   { id, notification, channels, postprocessResult }: McpToolContext,
-  project: (args: Record<string, unknown>, channels: ChannelToolsPort) => Promise<ChannelListOutput | AgentListOutput | null>,
+  project: (args: Record<string, unknown>, channels: ChannelToolsPort) => Promise<ChannelToolOutput | null>,
 ): Promise<JsonRpcResponse> {
   // Like read, a notification has no response channel, so it must not start
   // a listing that may ask the owner to authorize discovery.
@@ -95,7 +111,7 @@ async function callListingTool(
   }));
 }
 
-function toolResult(output: ChannelListOutput | AgentListOutput): McpToolResult {
+function toolResult(output: ChannelToolOutput): McpToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(output) }],
     structuredContent: output,

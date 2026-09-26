@@ -1,16 +1,25 @@
 import type { BindingId } from '@khala/contracts/delivery/index';
 import { CliError } from '../errors.js';
 import { write } from '../runtime.js';
-import type { CliCommand } from '../types.js';
+import type { CliCommand, CliDependencies } from '../types.js';
+import {
+  ChannelAccessService, accessExitCode, defaultOperationId, parseAccessTarget, validOperationArgument,
+} from './access.js';
 import {
   ChannelListingService, listingExitCode, validChannelArgument, validCursorArgument, validOriginArgument,
 } from './service.js';
 
-/** `khala channels list [--origin <trusted-origin>] [--cursor <cursor>]` */
+/**
+ * `khala channels list [--origin <trusted-origin>] [--cursor <cursor>]`,
+ * `khala channels request-access <channel-url-or-listing-ref> [--operation <id>] [--origin <trusted-origin>]`, and
+ * `khala channels access-status --operation <id> [--origin <trusted-origin>]`.
+ */
 export const channelsCommand: CliCommand = {
   name: 'channels',
   async run(args, deps) {
     const [subcommand, ...rest] = args;
+    if (subcommand === 'request-access') return requestAccess(rest, deps);
+    if (subcommand === 'access-status') return accessStatus(rest, deps);
     if (subcommand !== 'list') throw new CliError('invalid_arguments');
     const flags = parseFlags(rest, ['--origin', '--cursor']);
     const origin = flags.get('--origin') ?? null;
@@ -36,6 +45,33 @@ export const agentsCommand: CliCommand = {
     return listingExitCode(output);
   },
 };
+
+async function requestAccess(args: readonly string[], deps: CliDependencies): Promise<number> {
+  const [rawTarget, ...rest] = args;
+  const target = parseAccessTarget(rawTarget);
+  if (target === null) throw new CliError('invalid_arguments');
+  const flags = parseFlags(rest, ['--operation', '--origin']);
+  const operationId = flags.get('--operation') ?? defaultOperationId(target);
+  const origin = flags.get('--origin') ?? null;
+  if (!validOperationArgument(operationId) || (origin !== null && !validOriginArgument(origin))) {
+    throw new CliError('invalid_arguments');
+  }
+  const output = await new ChannelAccessService(deps.client).request({ target, operationId, origin }, deps.signal);
+  await write(deps.stdout, JSON.stringify(output) + '\n');
+  return accessExitCode(output);
+}
+
+async function accessStatus(args: readonly string[], deps: CliDependencies): Promise<number> {
+  const flags = parseFlags(args, ['--operation', '--origin']);
+  const operationId = flags.get('--operation');
+  const origin = flags.get('--origin') ?? null;
+  if (!validOperationArgument(operationId) || (origin !== null && !validOriginArgument(origin))) {
+    throw new CliError('invalid_arguments');
+  }
+  const output = await new ChannelAccessService(deps.client).status({ operationId, origin }, deps.signal);
+  await write(deps.stdout, JSON.stringify(output) + '\n');
+  return accessExitCode(output);
+}
 
 function parseFlags(args: readonly string[], allowed: readonly string[]): ReadonlyMap<string, string> {
   if (args.length % 2 !== 0) throw new CliError('invalid_arguments');

@@ -27,6 +27,13 @@ export type ManifestEntry = Readonly<{
   baseline: ManifestBaseline;
   /** Directories Khala created for this path; removed (when empty) once the path returns to absence. */
   createdDirectories: readonly string[];
+  /**
+   * Set when Khala owns one entry inside a shared foreign file (`config_entry_set`). The
+   * harness may rewrite the rest of that file (Codex records hook trust in its
+   * `config.toml`), so the adapter judges that entry's drift, and `config_entry_remove`
+   * releases the path instead of restoring the whole-file baseline.
+   */
+  entry?: string;
 }>;
 
 export type SetupManifest = Readonly<{
@@ -48,10 +55,10 @@ const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const BACKUP_REF = /^[0-9a-f-]{36}\/[0-9]+$/;
 
 function fail(at: string): never { throw new ManifestSchemaError(at); }
-function rec(value: unknown, at: string, keys: readonly string[]): Rec {
+function rec(value: unknown, at: string, keys: readonly string[], optional: readonly string[] = []): Rec {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) fail(at);
   const object = value as Rec;
-  for (const key of Object.keys(object)) if (!keys.includes(key)) fail(`${at}.${key}`);
+  for (const key of Object.keys(object)) if (!keys.includes(key) && !optional.includes(key)) fail(`${at}.${key}`);
   for (const key of keys) if (!Object.hasOwn(object, key)) fail(`${at}.${key}`);
   return object;
 }
@@ -90,7 +97,7 @@ export function decodeBaseline(value: unknown, at: string): ManifestBaseline {
 
 export function decodeManifestEntry(value: unknown, at: string): ManifestEntry {
   const o = rec(value, at, ['path', 'harness', 'component', 'ownership', 'operationId', 'postimage', 'mode',
-    'baseline', 'createdDirectories']);
+    'baseline', 'createdDirectories'], ['entry']);
   if (!Array.isArray(o.createdDirectories)) fail(`${at}.createdDirectories`);
   const ownership = oneOf(o.ownership, ['installer', 'foreign'] as const, `${at}.ownership`);
   const baseline = decodeBaseline(o.baseline, `${at}.baseline`);
@@ -105,6 +112,7 @@ export function decodeManifestEntry(value: unknown, at: string): ManifestEntry {
     mode: fileMode(o.mode, `${at}.mode`),
     baseline,
     createdDirectories: o.createdDirectories.map((item, index) => absolute(item, `${at}.createdDirectories[${index}]`)),
+    ...(o.entry === undefined ? {} : { entry: str(o.entry, `${at}.entry`) }),
   };
 }
 

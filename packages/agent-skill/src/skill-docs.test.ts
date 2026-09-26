@@ -55,7 +55,9 @@ describe('fallback skill documentation', () => {
     expect(skill).toContain('one human approval');
     expect(normalized).toContain('`khala` and `khala-fallback` must be installed and available on `PATH`');
     expect(normalized).toContain('$CODEX_HOME/skills/khala/');
-    expect(normalized).toContain('~/.claude/skills/khala/');
+    expect(normalized).toContain('~/.claude/skills/khala/` for Claude Code without the Khala plugin');
+    expect(normalized).toContain('never install both');
+    expect(normalized).toContain('packages/claude-plugin/skills/khala/SKILL.md');
     expect(normalized).toContain('Read `binding.bindingId`');
     expect(skill).toContain('Decode `payloadBase64` as UTF-8');
     expect(skill).toContain('untrusted channel message data');

@@ -218,6 +218,41 @@ describe('setup transaction', () => {
     expect(await read(t.config)).toBe(new TextDecoder().decode(ORIGINAL));
   });
 
+  it('an entry-owned file tolerates harness rewrites, and config_entry_remove releases it', async () => {
+    await seedConfig();
+    const t = targets();
+    const owned = { ...plan('setup', [op.set(t.config, ORIGINAL, V1_CONFIG, { component: 'mcp_entry' }), op.create(t.skill, bytes('s'))], [V1_CONFIG, bytes('s')]),
+      entryOwnedPaths: [t.config] };
+    expectKind(await run(owned), 'committed');
+    expect((await manifest())!.entries.find(item => item.path === t.config)).toMatchObject({ entry: 'mcp.khala' });
+
+    // The harness appends its own record; that is not drift, and other managed paths still work.
+    const harness = bytes('{"user":"original","mcp":{"khala":"v1"}}\n{"trust":1}\n');
+    await fsp.writeFile(t.config, harness);
+    expectKind(await run(plan('setup', [op.replace(t.skill, bytes('s'), bytes('s2'))], [bytes('s2')])), 'committed');
+
+    // A whole-file operation or a different entry on that path is refused before any write.
+    const before = await userState();
+    const restore = expectKind(await run(plan('remove', [op.restore(t.config, sha256(harness), sha256(ORIGINAL), { component: 'mcp_entry' })])), 'refused');
+    expect(restore.diagnostics[0]!.code).toBe('invalid_plan');
+    const other: SetupOperation = {
+      id: 'other-entry', harness: 'claude', component: 'hooks', path: t.config, type: 'config_entry_set',
+      entry: 'hooks.other', preimage: sha256(harness), postimage: sha256(bytes('x')),
+    };
+    expectKind(await run(plan('setup', [other], [bytes('x')])), 'refused');
+    expect(await userState()).toEqual(before);
+
+    const kept = bytes('{"user":"original"}\n{"trust":1}\n');
+    const removeEntry: SetupOperation = {
+      id: 'remove-entry', harness: 'claude', component: 'mcp_entry', path: t.config, type: 'config_entry_remove',
+      entry: 'mcp.khala', preimage: sha256(harness), postimage: sha256(kept),
+    };
+    expectKind(await run(plan('remove', [removeEntry, op.delete(t.skill, sha256(bytes('s2')))], [kept])), 'committed');
+    expect(await read(t.config)).toBe(new TextDecoder().decode(kept));
+    expect(await exists(state.manifest)).toBe(false);
+    expect(await exists(path.dirname(t.skill))).toBe(false);
+  });
+
   it('refuses unowned targets, including a byte-identical Khala-named installer file', async () => {
     const t = targets();
     await fsp.mkdir(path.dirname(t.launcher), { recursive: true });
