@@ -1,5 +1,9 @@
+import { createHash } from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
-import { decodeRoster } from '../cli/channels/service.js';
+import { ChannelAccessService, defaultOperationId } from '../cli/channels/access.js';
+import { ChannelListingService, decodeRoster } from '../cli/channels/service.js';
+import type { AccessRequestInput, AccessStatusInput, ChannelListInput } from '../cli/channels/types.js';
+import type { AgentClientPort } from '../cli/types.js';
 import { CliError } from '../cli/errors.js';
 import { channelAccessStatusTool, requestChannelAccessTool } from '../mcp/channels/access-tools.js';
 import { LIST_AGENTS_TOOL_NAME, listChannelsTool, type ChannelToolsPort } from '../mcp/channels/tools.js';
@@ -115,7 +119,7 @@ export function createClaudeToolRegistry(entry: ClaudeAgentEntry): ToolRegistry 
 
   return createToolRegistry([
     sendTool, readTool, statusTool, listAgentsTool,
-    ...[listChannelsTool, requestChannelAccessTool, channelAccessStatusTool].map(withoutBatchToken),
+    ...[listChannelsTool, requestChannelAccessTool, channelAccessStatusTool].map(tool => sessionBound(withoutBatchToken(tool), entry)),
   ]);
 }
 
@@ -136,6 +140,54 @@ function withoutBatchToken(tool: McpTool): McpTool {
       ? Promise.resolve(failure(context.id, -32602, 'Invalid params'))
       : tool.call(args, context),
   };
+}
+
+/**
+ * Discovery and access run against this Claude session and nothing else: the entry's
+ * `CLAUDE_CODE_SESSION_ID` is carried on every call, so a request is filed for this
+ * session and a grant can bind no other. Without a valid session ID the call is
+ * refused before any port runs. No argument can name a session or a binding.
+ */
+function sessionBound(tool: McpTool, entry: ClaudeAgentEntry): McpTool {
+  const channels = sessionChannels(entry);
+  return {
+    name: tool.name,
+    definition: tool.definition,
+    call(args, context) {
+      if (entry.session === null && !context.notification) {
+        return Promise.resolve(success(context.id, toolResult({ kind: 'refused', code: 'session_missing' })));
+      }
+      return tool.call(args, { ...context, channels });
+    },
+  };
+}
+
+/** The discovery and access port for one session, over the session client. */
+function sessionChannels(entry: ClaudeAgentEntry): ChannelToolsPort {
+  const raw = async (run: () => Promise<{ kind: string; result?: unknown }>) => {
+    const outcome = await run();
+    return outcome.kind === 'access' ? outcome.result : { kind: 'unavailable' };
+  };
+  const port = {
+    listChannels: (input: ChannelListInput) => raw(() => entry.listChannels(input)),
+    requestChannelAccess: (input: AccessRequestInput) => raw(() => entry.requestAccess(input)),
+    channelAccessStatus: (input: AccessStatusInput) => raw(() => entry.accessStatus(input)),
+  } as unknown as AgentClientPort;
+  const listing = new ChannelListingService(port);
+  const access = new ChannelAccessService(port);
+  return {
+    listChannels: input => listing.listChannels(input),
+    listAgents: async () => { throw new CliError('internal_error'); },
+    // The target's default operation ID is per target only; salt it with the session so
+    // two sessions joining one URL file two requests, and a retry in one reuses its own.
+    request: input => access.request(input.operationId === defaultOperationId(input.target)
+      ? { ...input, operationId: sessionOperationId(entry.session, input.operationId) } : input),
+    status: input => access.status(input),
+  };
+}
+
+function sessionOperationId(session: string | null, operationId: string): string {
+  return createHash('sha256').update(JSON.stringify(['khala.claude.access.v1', session, operationId])).digest('base64url').slice(0, 32);
 }
 
 function listingResult(output: Readonly<{ ok: boolean; [key: string]: unknown }>): McpToolResult {

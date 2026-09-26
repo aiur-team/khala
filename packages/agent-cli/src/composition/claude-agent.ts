@@ -1,10 +1,11 @@
 import { validIdentifier } from '../cli/validation.js';
+import type { AccessRequestInput, AccessStatusInput, ChannelListInput } from '../cli/channels/types.js';
 import type { ClaudeModeSetRequest, ClaudeSessionClient } from './claude-session-http.js';
 
 /** The environment variable Claude sets in the MCP server it launches for a session. */
 export const CLAUDE_SESSION_ENV = 'CLAUDE_CODE_SESSION_ID';
 
-type AgentCalls = Pick<ClaudeSessionClient, 'read' | 'send' | 'status' | 'mode' | 'setMode' | 'roster'>;
+type AgentCalls = Pick<ClaudeSessionClient, 'read' | 'send' | 'status' | 'mode' | 'setMode' | 'roster' | 'listChannels' | 'requestAccess' | 'accessStatus'>;
 type Outcome<K extends keyof AgentCalls> = Awaited<ReturnType<AgentCalls[K]>>;
 type SessionMissing = Readonly<{ kind: 'refused'; code: 'session_missing' }>;
 
@@ -21,6 +22,11 @@ export interface ClaudeAgentEntry {
   mode(signal?: AbortSignal): Promise<Outcome<'mode'> | SessionMissing>;
   setMode(input: ClaudeModeSetRequest, signal?: AbortSignal): Promise<Outcome<'setMode'> | SessionMissing>;
   roster(signal?: AbortSignal): Promise<Outcome<'roster'> | SessionMissing>;
+  /** The requesting session, or `null` when `CLAUDE_CODE_SESSION_ID` is missing or invalid. */
+  readonly session: string | null;
+  listChannels(input: ChannelListInput, signal?: AbortSignal): Promise<Outcome<'listChannels'> | SessionMissing>;
+  requestAccess(input: AccessRequestInput, signal?: AbortSignal): Promise<Outcome<'requestAccess'> | SessionMissing>;
+  accessStatus(input: AccessStatusInput, signal?: AbortSignal): Promise<Outcome<'accessStatus'> | SessionMissing>;
 }
 
 /**
@@ -37,9 +43,16 @@ export function createClaudeAgentEntry(
   const missing: SessionMissing = { kind: 'refused', code: 'session_missing' };
   if (!validIdentifier(sessionId)) {
     const refuse = async () => missing;
-    return { read: refuse, send: refuse, status: refuse, mode: refuse, setMode: refuse, roster: refuse };
+    return {
+      session: null, read: refuse, send: refuse, status: refuse, mode: refuse, setMode: refuse, roster: refuse,
+      listChannels: refuse, requestAccess: refuse, accessStatus: refuse,
+    };
   }
   return {
+    session: sessionId,
+    listChannels: (input, signal) => client.listChannels(sessionId, input, signal),
+    requestAccess: (input, signal) => client.requestAccess(sessionId, input, signal),
+    accessStatus: (input, signal) => client.accessStatus(sessionId, input, signal),
     read: signal => client.read(sessionId, signal),
     send: (body, signal) => client.send(sessionId, body, signal),
     status: signal => client.status(sessionId, signal),

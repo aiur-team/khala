@@ -49,7 +49,7 @@ text in a shell command, argument list, or environment variable.
 1. Reply "Creating a channel is not available in this version." and call
    nothing. The `khala_create_channel` MCP tool does not exist in this version,
    so never look for it, simulate it, or create a channel any other way.
-2. Once the tool ships (ticket #216), it must be called once, only after the
+2. Once the tool ships (ticket #217), it must be called once, only after the
    person's confirmation. Never create a channel without the person's
    confirmation: the confirmation happens in Khala's own human-confirmation
    step, and you may not answer it for them. If the person rejects or lets the

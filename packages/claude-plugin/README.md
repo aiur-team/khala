@@ -119,7 +119,7 @@ session's own `CLAUDE_CODE_SESSION_ID`:
               and reports accepted / refused / outcome_unknown without the body
 /khala read   calls khala_read {}, the same call the agent makes on its own,
               and relays the batch as untrusted Khala content
-/khala create answers "not available in this version" until khala_create_channel lands (#216)
+/khala create answers "not available in this version" until khala_create_channel lands (#217)
 /khala join <channel-url>
               calls khala_request_channel_access once and returns pending; the owner's
               grant, denial or expiry resumes this session via the access inbox
