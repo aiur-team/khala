@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BindingId, EventRef, SessionBinding } from '@khala/contracts/delivery/index';
+import {
+  type BindingId, type EventRef, type SessionBinding, OPENCODE_EVIDENCE_REF, OPENCODE_UNPROVEN_REASON,
+} from '@khala/contracts/delivery/index';
 import { CliError } from '../cli/errors.js';
 import { type BatchInbox, type ReadBatchInput, type WakeableInboxConsumer, openInbox } from '../cli/inbox.js';
 import { MAX_SEND_BYTES } from '../cli/send.js';
@@ -179,6 +181,38 @@ describe('OpenCode session bridge: two-tool mode matrix', () => {
     await restart(h);
     expect(await modelCall(h)).toEqual([token]);
     expect(h.reports.filter(report => report.type === 'steer.reapplied').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('steer: the envelope is a new message at the tail; the last user message is never edited, before or after a restart', async () => {
+    const h = await harness({ mode: 'steer' });
+    h.opencode.userTurn(A, 'run bash twice');
+    await modelCall(h);
+    startTool(h, 'bash', 1);
+    await release(h, 'release-1', 'hello from peer');
+    await endTool(h, 'bash', 1);
+    const token = await outstandingToken(h);
+
+    const expectTailEnvelope = async () => {
+      const stored = h.opencode.context(A);
+      const context = h.opencode.context(A);
+      const lastUser = [...context].reverse().find(message => message.info.role === 'user')!;
+      const userParts = structuredClone(lastUser.parts);
+      await h.bridge.transformMessages(context);
+      // Exactly one new message, appended after everything OpenCode stored.
+      expect(context).toHaveLength(stored.length + 1);
+      expect(context.slice(0, -1)).toEqual(stored);
+      const tail = context.at(-1)!;
+      expect(stored.map(message => message.info.id)).not.toContain(tail.info.id);
+      expect(tail.info.role).toBe('user');
+      expect(envelopeTokens([tail])).toEqual([token]);
+      // The user message it follows keeps its own parts, untouched.
+      expect(lastUser.parts).toEqual(userParts);
+      expect(envelopeTokens([lastUser])).toEqual([]);
+    };
+
+    await expectTailEnvelope();
+    await restart(h);
+    await expectTailEnvelope();
   });
 
   it('sync: nothing is delivered while busy; one session-addressed promptAsync after the session is observed idle', async () => {
@@ -472,7 +506,27 @@ describe('OpenCode session bridge: fail closed', () => {
     await h.bridge.wake('hint');
     expect(afterTool1).toEqual([]);
     expect(h.opencode.prompts).toEqual([]);
-    expect((await h.bridge.status()).modes.steer).not.toBe('proven');
+    const { modes } = await h.bridge.status();
+    expect(modes.steer.status).not.toBe('proven');
+    expect(modes.steer).toMatchObject({ route: 'opencode-plugin-steer', reason: OPENCODE_UNPROVEN_REASON });
+  });
+
+  it('status passes the full mode rows through and names delivery by its contract state', async () => {
+    const h = await harness({ mode: 'steer' });
+    const idle = await h.bridge.status();
+    expect(idle.modes.sync).toEqual({
+      status: 'proven', route: 'opencode-plugin-sync', testedVersion: '1.17.10',
+      evidenceRef: OPENCODE_EVIDENCE_REF, evidenceRevision: expect.any(String), reason: null,
+    });
+    expect(idle.delivery).toBeNull();
+
+    h.opencode.userTurn(A, 'run bash');
+    await modelCall(h);
+    await release(h, 'release-1', 'hello from peer');
+    await endTool(h, 'bash', 1);
+    expect((await h.bridge.status()).delivery).toEqual({ route: 'steer', state: 'leased', phase: 'marked' });
+    await modelCall(h);
+    expect((await h.bridge.status()).delivery).toEqual({ route: 'steer', state: 'delivered', phase: 'delivered' });
   });
 
   it('model drift on the bound session degrades the binding before delivery', async () => {
@@ -608,9 +662,12 @@ describe('OpenCode session bridge: stored, not stored and ambiguous outcomes', (
     h.opencode.stored.get(A)!.push({ id: 'msg_9999', sessionID: A, role: 'user', model: DEEPSEEK, texts: [encoded.envelope.text] });
 
     await restart(h);
+    // Mid-submit is not a claim of delivery until reconciliation settles it.
+    expect((await h.bridge.status()).delivery?.state).toBe('uncertain');
     await h.bridge.wake('hint');
     expect(h.opencode.prompts).toEqual([]);
     expect((await h.store.read()).request).toMatchObject({ phase: 'delivered', messageID: 'msg_9999' });
+    expect((await h.bridge.status()).delivery?.state).toBe('delivered');
     expect(await outstandingToken(h)).toBe(batch.token);
   });
 

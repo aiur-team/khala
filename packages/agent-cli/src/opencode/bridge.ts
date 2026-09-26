@@ -13,7 +13,7 @@
 
 import { createHash } from 'node:crypto';
 import {
-  type ListeningMode, type SessionBinding,
+  type ListeningMode, type ModeSupportMap, type SessionBinding,
   OPENCODE_ROUTE_EVIDENCE, decodeDeliveryLimits, openCodePluginCapabilities, resolveOpenCodeModes,
 } from '@khala/contracts/delivery/index';
 import { cliErrorCode } from '../cli/errors.js';
@@ -21,7 +21,7 @@ import type { InboxBatch, WakeableInboxConsumer } from '../cli/inbox.js';
 import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import type { SendResult } from '../cli/types.js';
 import { sameHeldBinding } from '../composition/read.js';
-import { nextOpenCodeDeliveryState } from './delivery-contract.js';
+import { type OpenCodeDeliveryState, nextOpenCodeDeliveryState } from './delivery-contract.js';
 import { OPENCODE_BATCH_READ_BYTES, type OpenCodeEnvelope, encodeOpenCodeEnvelope, parseOpenCodeEnvelope } from './envelope.js';
 import {
   OPENCODE_MAX_STEER_RECORDS, type OpenCodeBridgeState, type OpenCodeBridgeStore, type OpenCodeDegradedReason,
@@ -109,8 +109,12 @@ export type OpenCodeBridgeStatus = Readonly<{
   session: OpenCodeBridgeState['session'];
   runtime: OpenCodeRuntime;
   degraded: OpenCodeDegradedReason | null;
-  delivery: Readonly<{ route: OpenCodeRequest['route']; phase: OpenCodeRequest['phase'] }> | null;
-  modes: Readonly<Record<ListeningMode, string>>;
+  /** `state` is the delivery-contract state; `phase` is the bridge's finer request phase. */
+  delivery: Readonly<{
+    route: OpenCodeRequest['route']; state: OpenCodeDeliveryState; phase: OpenCodeRequest['phase'];
+  }> | null;
+  /** Full resolved rows, so a busy-only route and its reason reach setup status. */
+  modes: ModeSupportMap;
   acknowledgement: string;
 }>;
 
@@ -360,7 +364,6 @@ export class OpenCodeSessionBridge {
   async status(): Promise<OpenCodeBridgeStatus> {
     const state = await this.#store.read();
     const capabilities = this.#capabilities();
-    const modes = resolveOpenCodeModes(capabilities);
     return {
       v: 1,
       harness: 'opencode',
@@ -369,8 +372,10 @@ export class OpenCodeSessionBridge {
       session: state.session,
       runtime: this.#runtime,
       degraded: state.degraded,
-      delivery: state.request === null ? null : { route: state.request.route, phase: state.request.phase },
-      modes: { steer: modes.steer.status, sync: modes.sync.status, async: modes.async.status },
+      delivery: state.request === null ? null : {
+        route: state.request.route, state: DELIVERY_STATE[state.request.phase], phase: state.request.phase,
+      },
+      modes: resolveOpenCodeModes(capabilities),
       acknowledgement: capabilities.acknowledgement,
     };
   }
@@ -527,6 +532,16 @@ export class OpenCodeSessionBridge {
     }
   }
 }
+
+// A marked batch is leased, not yet placed. A prompt mid-submit reads as `uncertain`, like
+// the tool gate's `outcome_unknown`, until reconciliation settles it. The request is
+// forgotten once acknowledged, so `acknowledged` shows as no delivery.
+const DELIVERY_STATE: Readonly<Record<OpenCodeRequest['phase'], OpenCodeDeliveryState>> = {
+  marked: 'leased',
+  submitting: 'uncertain',
+  delivered: 'delivered',
+  uncertain: 'uncertain',
+};
 
 function placeEnvelope(
   messages: OpenCodeTransformMessage[],
