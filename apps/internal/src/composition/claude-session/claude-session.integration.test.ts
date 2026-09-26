@@ -1,0 +1,249 @@
+import fs from 'node:fs';
+import { request as httpRequest, type IncomingMessage } from 'node:http';
+import path from 'node:path';
+import { PassThrough, Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
+import { runCli } from '@aiur/khala/cli/app';
+import { createClaudeSessionClient } from '@aiur/khala/composition/claude-session-http';
+import { createUnavailableClient } from '@aiur/khala/composition/unavailable';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { webBundleManifest } from '../../launcher/bundle';
+import { type LaunchReport, launchInternal } from '../../launcher/launcher';
+
+// The Claude plugin's `mcp-serve` against the real internal launcher: the transport
+// capability from `active.json`, the channel-access journal, the owner's decision in
+// their own UI, and the journaled activation. Nothing here stands in for the grant.
+
+const fixtureBundle = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'launcher', 'fixtures', 'internal-web');
+const cleanups: Array<() => Promise<void> | void> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Reply = Readonly<{ status: number; headers: IncomingMessage['headers']; json: any }>;
+
+function call(origin: string, input: Readonly<{ method?: string; path: string; headers?: Record<string, string>; body?: unknown }>): Promise<Reply> {
+  const { port } = new URL(origin);
+  return new Promise((resolve, reject) => {
+    const body = input.body === undefined ? undefined : JSON.stringify(input.body);
+    const request = httpRequest({
+      host: '127.0.0.1', port: Number(port), method: input.method ?? 'GET', path: input.path, agent: false,
+      headers: {
+        host: `127.0.0.1:${port}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) }),
+        ...input.headers,
+      },
+    });
+    request.once('error', reject);
+    request.once('response', response => {
+      const chunks: Buffer[] = [];
+      response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      response.once('end', () => {
+        let json: unknown = null;
+        try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not JSON */ }
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, json });
+      });
+    });
+    request.end(body);
+  });
+}
+
+type ToolResponse = { id: number; result?: { structuredContent: Record<string, unknown>; isError?: boolean }; error?: unknown };
+
+async function launched() {
+  const parent = fs.mkdtempSync('/tmp/khala-claude-');
+  cleanups.push(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const outcome = await launchInternal({
+    root: path.join(parent, 'internal'), request: { kind: 'create' }, assets: webBundleManifest(fixtureBundle), startPort: 0,
+  });
+  if (outcome.kind !== 'running') throw new Error(`launch failed: ${outcome.code}`);
+  cleanups.push(() => outcome.shutdown());
+  const report: LaunchReport = outcome.report;
+  const fragment = new URLSearchParams(new URL(report.url).hash.slice(1));
+  const session = await call(report.origin, {
+    method: 'POST', path: '/__khala/session', headers: { origin: report.origin },
+    body: { credential: fragment.get('credential'), channelId: report.channelId },
+  });
+  expect(session.status).toBe(200);
+  const owner = {
+    cookie: String(session.headers['set-cookie']![0]).split(';')[0]!,
+    'x-khala-request-secret': session.json.requestSecret as string,
+    origin: report.origin,
+  };
+  return { report, owner, channelUrl: `${report.origin}/channels/${report.channelId}` };
+}
+
+/** `khala mcp-serve` exactly as the Claude plugin's MCP entry launches it for one session. */
+async function serve(descriptorPath: string, sessionId: string, calls: ReadonlyArray<readonly [string, Record<string, unknown>?]>) {
+  const stdout = new PassThrough();
+  let out = '';
+  stdout.on('data', chunk => { out += chunk; });
+  const lines = calls.map(([name, args], index) => JSON.stringify({
+    jsonrpc: '2.0', id: index + 1, method: 'tools/call', params: { name, arguments: args ?? {} },
+  }));
+  const code = await runCli(['mcp-serve'], {
+    client: createUnavailableClient(),
+    inbox: vi.fn(async () => { throw new Error('the Claude MCP server never opens inbox storage'); }),
+    claude: createClaudeSessionClient({ descriptorPath }),
+    stdin: Readable.from([lines.map(line => `${line}\n`).join('')]), stdout, stderr: new PassThrough(),
+    env: { KHALA_MCP_HARNESS: 'claude', CLAUDE_CODE_SESSION_ID: sessionId },
+  });
+  expect(code).toBe(0);
+  const responses = out.split('\n').filter(Boolean).map(line => JSON.parse(line) as ToolResponse);
+  return responses.map(response => response.result!.structuredContent);
+}
+
+async function approvePending(origin: string, owner: Record<string, string>): Promise<void> {
+  const inbox = await call(origin, { path: '/api/human/channel-requests', headers: owner });
+  expect(inbox.status).toBe(200);
+  const pending = (inbox.json.requests as Array<{ requestHandle: string; revision: string; outcome: string; requester: { harness: string } }>)
+    .filter(entry => entry.outcome === 'pending_owner');
+  expect(pending).toHaveLength(1);
+  expect(pending[0]!.requester.harness).toBe('claude');
+  const { requestHandle, revision } = pending[0]!;
+  const decided = await call(origin, {
+    method: 'POST', path: `/api/human/channel-access-requests/${requestHandle}/decision`, headers: owner,
+    body: { v: 1, requestHandle, expectedRevision: revision, decision: 'approve', operationId: `decide-${requestHandle.slice(-8)}` },
+  });
+  expect(decided.status).toBe(200);
+}
+
+describe('Claude mcp-serve against the internal launcher', () => {
+  it('starts against the real server, and an unbound session gets the unbound answers', async () => {
+    const { report } = await launched();
+    const [send, who, read] = await serve(report.descriptorPath, 'session-alone', [
+      ['khala_send', { message: 'hello' }], ['khala_list_agents'], ['khala_read'],
+    ]);
+    expect(send).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    expect(who).toEqual({ ok: false, error: 'not_joined' });
+    expect(read).toEqual({ kind: 'refused', code: 'session_not_bound' });
+  });
+
+  it('admits only the launch transport capability on the Claude session route', async () => {
+    const { report, owner } = await launched();
+    const body = { v: 1, op: 'status', sessionId: 'session-any' };
+    // The owner's browser session is a real principal, but not this route's.
+    const asOwner = await call(report.origin, { method: 'POST', path: '/api/agent/claude/session', headers: owner, body });
+    expect(asOwner.status).toBe(403);
+    const forged = await call(report.origin, {
+      method: 'POST', path: '/api/agent/claude/session', headers: { authorization: `Bearer ${'A'.repeat(42)}E` }, body,
+    });
+    expect(forged.status).toBe(401);
+  });
+
+  it('refuses an access request naming another origin, before anything is filed', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const [refused] = await serve(report.descriptorPath, 'session-origin', [
+      ['khala_request_channel_access', { target: channelUrl, origin: 'http://127.0.0.1:1' }],
+    ]);
+    expect(refused).toMatchObject({ ok: false, error: 'untrusted_origin' });
+    const inbox = await call(report.origin, { path: '/api/human/channel-requests', headers: owner });
+    expect(inbox.json.requests).toEqual([]);
+  });
+
+  it('shares one discovery identity between concurrent first calls of a new session', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const session = 'session-racing';
+    const [[listed], [requested]] = await Promise.all([
+      serve(report.descriptorPath, session, [['khala_list_channels']]),
+      serve(report.descriptorPath, session, [['khala_request_channel_access', { target: channelUrl }]]),
+    ]);
+    expect(listed).toMatchObject({ ok: true });
+    expect(requested).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    // The request stays readable: no second issuance rotated the identity that filed it.
+    const [status] = await serve(report.descriptorPath, session, [['khala_channel_access_status', { operationId: requested!.operationId }]]);
+    expect(status).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    await approvePending(report.origin, owner);
+  });
+
+  it('binds a session to another channel the owner created, and lists that channel', async () => {
+    const { report, owner } = await launched();
+    const created = await call(report.origin, {
+      method: 'POST', path: '/api/v1/channels', headers: owner, body: { operationId: 'second-channel', title: 'Second' },
+    });
+    expect(created.status).toBe(201);
+    const second = created.json.channel.channelId as string;
+    expect(second).not.toBe(report.channelId);
+    const [requested] = await serve(report.descriptorPath, 'session-second', [
+      ['khala_request_channel_access', { target: `${report.origin}/channels/${encodeURIComponent(second)}` }],
+    ]);
+    expect(requested).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    await approvePending(report.origin, owner);
+    const [status, send, who] = await serve(report.descriptorPath, 'session-second', [
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+      ['khala_send', { message: 'hello second channel' }],
+      ['khala_list_agents'],
+    ]);
+    expect(status).toMatchObject({ ok: true, outcome: 'connected' });
+    expect(send).toMatchObject({ kind: 'accepted' });
+    expect((who as { agents: unknown[] }).agents).toHaveLength(1);
+    const timeline = async (channel: string) => JSON.stringify((await call(report.origin, {
+      path: `/api/v1/channels/${encodeURIComponent(channel)}/timeline`, headers: owner,
+    })).json);
+    expect(await timeline(second)).toContain('hello second channel');
+    expect(await timeline(report.channelId)).not.toContain('hello second channel');
+  });
+
+  it('files a create intent for the session through the journal, which reaches the owner and admits nothing', async () => {
+    const { report, owner } = await launched();
+    const create = ['khala_create_channel', { title: 'Launch plans', operationId: 'create-12345678' }] as const;
+    const [created, retried, send] = await serve(report.descriptorPath, 'session-creator', [create, create, ['khala_send', { message: 'hello' }]]);
+    expect(created).toEqual({ ok: true, v: 1, operationId: 'create-12345678', outcome: 'pending_owner', next: null });
+    // A retry under the same operation reads the same request; it files no second one.
+    expect(retried).toEqual(created);
+    expect(send).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    const inbox = await call(report.origin, { path: '/api/human/channel-requests', headers: owner });
+    expect(inbox.json.requests).toMatchObject([{ operationKind: 'create', outcome: 'pending_owner', requester: { harness: 'claude' } }]);
+  });
+
+  it('binds only the requesting session: request, owner approval, grant and activation', async () => {
+    const { report, owner, channelUrl } = await launched();
+    const granted = 'session-granted';
+    const bystander = 'session-bystander';
+
+    const [requested] = await serve(report.descriptorPath, granted, [['khala_request_channel_access', { target: channelUrl }]]);
+    expect(requested).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    const operationId = requested!.operationId as string;
+
+    // The owner decides in their own UI; nothing waited meanwhile.
+    await approvePending(report.origin, owner);
+
+    // A second session in the same working directory asks for the same channel after the approval.
+    const [asked] = await serve(report.descriptorPath, bystander, [['khala_request_channel_access', { target: channelUrl }]]);
+    expect(asked).toMatchObject({ ok: true, outcome: 'pending_owner' });
+    expect(asked!.operationId).not.toBe(operationId);
+
+    // The granted session's status resumes the approved request into a live binding.
+    const [status, send, who] = await serve(report.descriptorPath, granted, [
+      ['khala_channel_access_status', { operationId }],
+      ['khala_send', { message: 'hello from Claude' }],
+      ['khala_list_agents'],
+    ]);
+    expect(status).toMatchObject({ ok: true, operationId, outcome: 'connected' });
+    expect(send).toMatchObject({ kind: 'accepted' });
+    expect(who).toMatchObject({ ok: true, v: 1 });
+    const agents = (who as { agents: Array<{ participantId: string; ownerDisplayName: string }> }).agents;
+    expect(agents).toHaveLength(1);
+    expect(agents[0]!.ownerDisplayName).toBe('Owner');
+
+    // The bystander holds no binding: the grant bound the requesting session only.
+    const [otherSend, otherWho, otherStatus] = await serve(report.descriptorPath, bystander, [
+      ['khala_send', { message: 'not mine' }],
+      ['khala_list_agents'],
+      ['khala_channel_access_status', { operationId }],
+    ]);
+    expect(otherSend).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    expect(otherWho).toEqual({ ok: false, error: 'not_joined' });
+    // Another session's operation is not its own: it learns nothing of the grant.
+    expect(otherStatus).toMatchObject({ ok: true, operationId, outcome: 'unavailable' });
+
+    // The message reached the channel, authored by the granted session's agent.
+    const timeline = await call(report.origin, { path: `/api/v1/channels/${encodeURIComponent(report.channelId)}/timeline`, headers: owner });
+    expect(timeline.status).toBe(200);
+    const bodies = JSON.stringify(timeline.json);
+    expect(bodies).toContain('hello from Claude');
+    expect(bodies).not.toContain('not mine');
+    expect(bodies).toContain(agents[0]!.participantId);
+  });
+});
