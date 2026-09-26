@@ -236,7 +236,7 @@ describe('setup planning', () => {
 
     expect(executor.calls).toBe(1);
     expect(executor.plans[0]).toMatchObject({ command: 'setup', planDigest: planA.planDigest, unsupportedHarnesses: [] });
-    expect(executor.plans[0]!.operations).toEqual(planA.operations.map(({ status: _status, ...operation }) => operation));
+    expect(executor.plans[0]!.operations.map(operation => ({ ...operation, status: 'planned' }))).toEqual(planA.operations);
     expect(applied).toMatchObject({ changed: true, planDigest: planA.planDigest, confirmation: { required: false, confirmed: true },
       operations: [{ status: 'applied' }, { status: 'applied' }] });
     expect(decodeSetupResult(JSON.parse(JSON.stringify(applied)))).toEqual(applied);
