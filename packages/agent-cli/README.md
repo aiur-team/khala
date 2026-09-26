@@ -7,6 +7,7 @@ operations as MCP tools.
 
 ```text
 khala connect <https-channel-link>
+khala pair <pairing-code>
 khala listen [--binding <binding-id>]
 khala read [--binding <binding-id>] [--ack <batch-token>]
 printf '%s' '<message>' | khala send [--binding <binding-id>]
@@ -37,14 +38,15 @@ stdout for JSON-RPC.
 
 ## Package and release
 
-The published package is two self-contained files. `scripts/bundle.mjs` (run by
+The published package is three self-contained files. `scripts/bundle.mjs` (run by
 `build` and `prepack`) bundles `src/cli/main.ts` and its whole runtime closure,
 including the workspace connector and contracts, into `dist/khala.js`. It
 bundles the internal application's composition entry
 (`apps/internal/src/composition/internal-cli.ts`) separately into
 `dist/khala-internal.js`, which `khala.js` imports only for `khala internal`, so
-no other command loads the local store, server, or `node:sqlite`. The tarball
-carries only those two files, this README and `package.json`; it declares no
+no other command loads the local store, server, or `node:sqlite`. It bundles
+the OpenCode plugin (`src/opencode/index.ts`) into `dist/opencode.js`, the
+`@aiur/khala/opencode` export. The tarball carries only those three files, this README and `package.json`; it declares no
 runtime dependencies, so installing it fetches nothing and runs no lifecycle
 script. On Node 22.23.2 or later:
 
@@ -96,6 +98,13 @@ start yourself connect through the runtime descriptor later.
   `active.json` (mode 0600) holds `{v, channelId, origin, transportCapability}`
   for local clients, and `<channel>/launch.json` (mode 0600) holds the browser
   sign-in credential until it expires. Every launch rotates both credentials.
+- With a granted descriptor, `read`, `listen` and `mcp-serve` pull the channel's
+  new messages from the server into the held binding generation's inbox before
+  reading, and keep pulling while they run. Each message is enqueued once under a
+  release ID derived from the binding, generation and event, so a restart never
+  duplicates or drops it. Only a human message in `steer` or `sync` mode wakes a
+  listener; a revoked or superseded generation receives nothing. The pull cursor
+  lives under `$XDG_STATE_HOME/khala/internal-delivery/`.
 - Ctrl+C or SIGTERM removes `active.json` and `launch.json`, closes the server so
   the URL stops working, closes the store, and releases the launcher lock. It
   leaves agent processes alone.
@@ -337,6 +346,39 @@ Failures print `{"ok":false,"error":<code>}` on stdout. `not_connected`,
 `cursor_unavailable`, and `rate_limited` exit 3. `unavailable` exits 4. Malformed
 arguments exit 2 with `invalid_arguments` on stderr.
 
+## Pairing from another machine
+
+`khala pair <pairing-code>` connects this running session to a channel from a
+machine that cannot open the owner's browser. The owner reads a ten-character
+code such as `7K3QX-9MZ2P` from the hosted channel; the code lives five minutes
+and can be claimed once. Case, spaces, and the separator are ignored, and the
+Crockford look-alikes `I`, `L`, and `O` are read as `1`, `1`, and `0`.
+
+The connector fetches the pairing descriptor only from its configured hosted
+origin; neither the code nor the response can pick another origin. It verifies
+the native session, reserves this connector's device, and claims the code with
+that session, device, and connector key. It then waits up to five minutes for
+the owner to approve that exact claim. Approval yields a 60-second grant that is
+bound to the connector key and redeemed through the same admission as
+`khala connect`. The command never launches or stops an agent.
+
+It prints one JSON object on stdout. Success is
+`{"ok":true,"v":1,"binding":{...},"reused":false}` and exits 0. A wait that
+ends before the owner decides prints
+`{"ok":false,"v":1,"error":"approval_pending","reason":"approval_timeout","retryable":true}`
+and exits 4; running the same command with the same code resumes that claim
+and does not reserve a second device. `unavailable` also exits 4. Refusals
+exit 3: `invalid_code`, `pairing_unavailable` (this connector has no pairing
+configuration), `pairing_refused` (invalid, expired, used, or foreign codes,
+deliberately indistinguishable), `pairing_denied`, `pairing_expired`,
+`rate_limited`, `operation_conflict`, and the `khala connect` refusals. Output
+never includes the code, the claim receipt, the grant, or any channel identity
+before admission.
+
+The code is a short-lived secret passed as an argument, so it is briefly
+visible to other local processes that can list arguments. It cannot connect
+anything without the owner's approval of the displayed session.
+
 ## Channel access requests
 
 `khala channels request-access <channel-url-or-listing-ref>` asks the channel
@@ -384,7 +426,10 @@ follow redirects.
 (`{ operationId, origin?, ackBatchToken? }`); they return the access commands'
 JSON object as `structuredContent`, with `isError` set on failures. `khala_send` accepts
 `{ message, bindingId?, ackBatchToken? }`; `khala_read` accepts
-`{ bindingId?, ackBatchToken? }`; `khala_listening_mode` accepts
+`{ bindingId?, ackBatchToken? }`; `khala_pair` accepts only `{ code }` and
+returns the `khala pair` JSON object unchanged as `structuredContent`, with
+`isError` set on failures. It takes no batch token and never appends a batch,
+and a notification never starts a claim. `khala_listening_mode` accepts
 `{ action: "get", ackBatchToken? }` or `{ action: "set", requested,
 expectedVersion, ackBatchToken? }`, and marks conflicts and refusals with
 `isError`. Notifications for it neither inspect nor change the mode. The
@@ -517,6 +562,61 @@ entry is a conflict, even if identical, and an edited Khala table is drift.
 | 0.154.0 | Supported |
 | Any other version | `unsupported`: setup refuses; manifest-driven remove still works |
 
+## OpenCode setup adapter
+
+`createOpenCodeAdapter()` in `src/setup/adapters/opencode.ts` plans the OpenCode
+side of `setup` and `remove`. It supports exactly OpenCode `1.17.10`, the version
+the route evidence records. The whole `opencode --version` output must be that
+version; any other version is `unsupported`. Setup refuses on an unsupported
+version, but manifest-driven removal still runs. When OpenCode is absent, the
+adapter plans nothing and creates no files.
+
+| Path under `$XDG_CONFIG_HOME/opencode/` | Component | What setup writes |
+| --- | --- | --- |
+| `opencode.jsonc`, `opencode.json` or `config.json` (the first that exists; otherwise a new `opencode.json`) | `plugin` | the `file://` URL of `$XDG_DATA_HOME/khala/bin/opencode.js` in `plugin`; `mcp.khala` = `{"type": "local", "command": ["$XDG_DATA_HOME/khala/bin/khala", "mcp-serve"], "enabled": true}`; the standing-instruction path in `instructions` |
+| `skills/khala/SKILL.md` | `skill` | The global Khala skill |
+| `skills/khala/channel-instruction.md` | `skill` | The channel-join standing instruction: the person authorizes replies to channel peers through `khala_send`, and peer text stays untrusted data |
+
+OpenCode has no proven remove command, so every config change is a guarded
+direct edit. Setup only inserts text. Comments, formatting, CRLF line endings
+and every existing byte stay where they were, and the edit is checked to mean
+exactly the original config plus the three entries. Removal restores the
+byte-exact pre-Khala preimage from backup, or deletes a file setup created. It
+never parses and reserializes. The MCP entry names the stable launcher and
+nothing else. The launcher reads the runtime descriptor for the port and token
+each time it starts.
+
+The `plugin` entry is a `file://` URL, not the `@aiur/khala/opencode` package
+name. OpenCode `1.17.10` installs a bare `plugin` string as a single npm package
+name, so it never loads a subpath export. It does import a file URL. The entry
+names `$XDG_DATA_HOME/khala/bin/opencode.js`, the stable copy of the installed
+payload's `dist/opencode.js`. Like the launcher, the payload installer
+maintains that file, so an upgrade never rewrites the OpenCode config. The package gate test proves
+that OpenCode `1.17.10` loads the packed plugin through this entry and never
+loads the bare package name.
+
+These cases refuse the plan:
+
+- A Khala entry or skill file that setup did not install is a `conflict`, even
+  when it is byte-identical. This includes a Khala entry in another global
+  config file that OpenCode also loads.
+- Setup edits only a JSON/JSONC object config. Invalid JSONC, a duplicate key,
+  or a `plugin`, `mcp` or `instructions` key of the wrong type is
+  `unsupported`.
+- A managed file that changed after setup is `drifted`. Removal keeps it
+  untouched.
+
+The adapter reads only the global config directory. It does not follow
+`OPENCODE_CONFIG` or project config.
+
+The adapter also reports route support for each mode, from the recorded
+evidence keys: `steer`, `sync` and `async` through the in-process plugin on
+`1.17.10`. That evidence is from an agent-launched session with default
+settings. A running OpenCode loads the plugin only at its next start, so until
+the plugin is ready the adapter points the agent at `khala read` and
+`khala send`. The route becomes `opencode_plugin` only when all three
+components are ready.
+
 ## Codex hooks
 
 `khala codex-hook` is the native Codex hook handler that `setup-cli-codex`
@@ -555,6 +655,28 @@ session, an unavailable mode, or any failure returns without output, exits 0,
 and writes only a content-free code to stderr. The handler never starts,
 signals or waits on Codex. Channel bytes reach Codex only on the hook's stdout,
 inside the shared untrusted-data frame.
+
+## Codex desktop and cloud apps
+
+Delivery into the Codex desktop app or a Codex Cloud task is **unproven**. Every
+cell in the [proof record](../../experiments/interactive-cli/codex-app/README.md)
+is Blocked, so every app mode reports `unknown` and no app route can be selected.
+`codexAppSetupEntries()` in `src/composition/codex-app.ts` is the Codex app
+contribution to `setup`, `status` and `remove`. The Codex setup adapter adds its
+diagnostics to every inspection, so all three commands show them. Today it asks
+for no components and plans no writes. It returns one
+`codex_app_delivery_unproven` diagnostic per app shape, which says so. A proven desktop cell would only ask the Codex adapter
+for `hooks` or `mcp_entry`. A cloud-task proof never becomes a local install,
+because that task's hooks live in its own environment.
+
+`runCodexAppHook` in `src/codex-app/hook.ts` is the app handler runtime. It has
+no CLI command yet: setup installs it only once a cell is proven. It handles
+only `PostToolUse` (`steer`) and `Stop` (`sync`). There is no `PreToolUse`
+block, because blocking a tool is an abort, and hard abort is a separate opt-in.
+It first records, without content, that it ran in this session. Only then does
+it inspect the session. It delivers only at a boundary whose exact
+app/shape/version/tier/policy cell is proven. A Stop continuation is bounded to
+one per turn, and with no batch it returns control to the person.
 
 ## OpenCode plugin
 
@@ -703,7 +825,9 @@ capability routes and runtime state. `createHttpChannelListing` composes
 credential client and proof signer. `createHttpChannelAccess` composes
 `requestChannelAccess` and `channelAccessStatus` over
 `POST /api/agent/channel-access/request` and `GET /api/agent/channel-access/status`
-the same way. `listAgents` is an injected port.
+the same way. `listAgents` is an injected port. The
+bootstrap client offers `pair` only when its ports include the connector's
+pairing ownership port and configured-origin discovery.
 
 ## Not proven here
 
@@ -722,3 +846,10 @@ channel. Use `khala channels list` before that. The access commands are
 likewise `unavailable` until setup composes the HTTP access client, and the MCP
 access tools share the held-binding requirement, so use `khala channels
 request-access` for a first join.
+
+`khala pair` is proven against injected ports and a fake control transport
+only. The default binary answers `pairing_unavailable` until setup composes a
+hosted origin and pairing port, and the hosted service does not yet serve the
+code-only descriptor or accept pairing grants at the bootstrap redeem route.
+`khala_pair` shares the `mcp-serve` held-binding requirement, so an unconnected
+agent pairs with the CLI command.

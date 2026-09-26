@@ -2,8 +2,9 @@
 // exactly as npm would publish it, then refuses the tarball unless it is
 // self-contained: an allowlisted file set, complete publish metadata, no runtime
 // dependencies, no consumer lifecycle hook in the package or anything bundled
-// into it, and a bin that installs into an empty prefix and runs outside this
-// workspace. The release workflow publishes the tarball this gate accepted.
+// into it, a bin that installs into an empty prefix and runs outside this
+// workspace, and an `@aiur/khala/opencode` export that imports from that prefix. The
+// release workflow publishes the tarball this gate accepted.
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,9 +16,11 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 export const PACKAGE_NAME = '@aiur/khala';
 // Spelled in parts so this file does not itself count as a live reference.
 export const OLD_PACKAGE_NAME = ['@khala', 'agent-cli'].join('/');
-// `khala-internal.js` is the separately loaded `khala internal` runtime.
-export const PACKED_FILES = ['README.md', 'dist/khala-internal.js', 'dist/khala.js', 'package.json'];
-export const BUNDLES = ['dist/khala.js', 'dist/khala-internal.js'];
+// `khala-internal.js` is the separately loaded `khala internal` runtime; `opencode.js` is
+// the OpenCode plugin behind the `@aiur/khala/opencode` export.
+export const PACKED_FILES = ['README.md', 'dist/khala-internal.js', 'dist/khala.js', 'dist/opencode.js', 'package.json'];
+export const OPENCODE_EXPORT = `${PACKAGE_NAME}/opencode`;
+export const BUNDLES =['dist/khala.js', 'dist/khala-internal.js', 'dist/opencode.js'];
 export const REPOSITORY_URL = 'git+https://github.com/aiur-team/khala.git';
 // Scripts npm (or git-dependency preparation) runs on a consumer's machine.
 export const CONSUMER_HOOKS = ['preinstall', 'install', 'postinstall', 'prepublish', 'preprepare', 'prepare', 'postprepare'];
@@ -65,6 +68,9 @@ export function manifestErrors(manifest) {
     if (resolved && !resolved.includes('*') && !PACKED_FILES.includes(path.posix.normalize(resolved))) errors.push(`export ${subpath} resolves outside the tarball (${resolved})`);
     if (resolved?.includes('*')) errors.push(`export ${subpath} exposes a wildcard (${resolved})`);
   }
+  // Setup installs this export as the OpenCode plugin, so a consumer must be able to import it.
+  const plugin = resolveConditional(manifest.exports?.['./opencode'] ?? null, ['node', 'import', 'default']);
+  if (path.posix.normalize(plugin ?? '') !== 'dist/opencode.js') errors.push(`export ./opencode must resolve to dist/opencode.js for consumers (${plugin})`);
   return errors;
 }
 
@@ -180,7 +186,28 @@ export function gatePackage({ packageDirectory = path.join(root, 'packages/agent
   }
   const installed = fs.realpathSync(path.join(prefix, 'node_modules', PACKAGE_NAME, 'dist/khala.js'));
   if (!installed.startsWith(fs.realpathSync(prefix) + path.sep)) errors.push(`installed bin resolves outside the prefix (${installed})`);
-  return { errors, tarball, work };
+  errors.push(...openCodeExportErrors(prefix, env));
+  return { errors, tarball, work, prefix };
+}
+
+/**
+ * Imports `@aiur/khala/opencode` from the installed prefix, as a consumer would, and
+ * checks that it resolves inside the prefix to an OpenCode v1 plugin module.
+ */
+function openCodeExportErrors(prefix, env) {
+  const probe = `const specifier = ${JSON.stringify(OPENCODE_EXPORT)};
+const plugin = (await import(specifier)).default;
+console.log(JSON.stringify({ resolved: import.meta.resolve(specifier), id: plugin?.id, server: typeof plugin?.server }));`;
+  const result = run(process.execPath, ['--input-type=module', '-e', probe], { cwd: prefix, env: { ...env, NODE_PATH: '' } });
+  let loaded;
+  try { loaded = JSON.parse(result.stdout); } catch { loaded = undefined; }
+  if (result.status !== 0 || !loaded) return [`import("${OPENCODE_EXPORT}") failed in a fresh prefix: ${result.stderr.trim()}`];
+  const errors = [];
+  const resolved = fs.realpathSync(fileURLToPath(loaded.resolved));
+  const expected = fs.realpathSync(path.join(prefix, 'node_modules', PACKAGE_NAME, 'dist/opencode.js'));
+  if (resolved !== expected) errors.push(`${OPENCODE_EXPORT} resolves to ${resolved}, not the installed dist/opencode.js`);
+  if (loaded.id !== 'khala' || loaded.server !== 'function') errors.push(`${OPENCODE_EXPORT} is not an OpenCode plugin module ({ id: 'khala', server })`);
+  return errors;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
