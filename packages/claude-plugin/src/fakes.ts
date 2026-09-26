@@ -11,6 +11,7 @@ type Session = {
   queue: string[];
   outstanding: string[] | null;
   delivered: string[][];
+  revoked: boolean;
 };
 
 /**
@@ -30,7 +31,7 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
 
   const session = (id: string): Session => {
     let found = sessions.get(id);
-    if (!found) sessions.set(id, found = { mode: null, watchSeconds: null, queue: [], outstanding: null, delivered: [] });
+    if (!found) sessions.set(id, found = { mode: null, watchSeconds: null, queue: [], outstanding: null, delivered: [], revoked: false });
     return found;
   };
 
@@ -38,6 +39,7 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
     if (!available) return { code: 2, stdout: '' };
     const bound = sessions.get(sessionId);
     if (bound === undefined) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"session_not_bound"}\n' };
+    if (bound.revoked) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"binding_not_held"}\n' };
     if (op === 'hook') {
       const watchSeconds = bound.mode === 'steer' || bound.mode === 'sync' ? bound.watchSeconds : null;
       return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: bound.mode, watchSeconds })}\n` };
@@ -75,6 +77,8 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
       Object.assign(session(sessionId), { mode, watchSeconds });
     },
     release(sessionId: string, body: string) { session(sessionId).queue.push(body); },
+    /** The user's Stop (decision 36): the binding is gone, and every op is refused as the adapter refuses it. */
+    revoke(sessionId: string) { session(sessionId).revoked = true; },
     /** The agent's next Khala call: acknowledges the outstanding batch on Khala's side. */
     agentCall(sessionId: string) { session(sessionId).outstanding = null; },
     set available(value: boolean) { available = value; },

@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  WAKE_NOTICE, describeDelivery, readWatcher, runHook, validFrame, type HookResult,
+  KHALA_CALL_TIMEOUT_MS, WAKE_NOTICE, WATCHER_HOOK_TIMEOUT_SECONDS, WATCH_POLL_MS, describeDelivery, readWatcher, runHook, validFrame,
+  type HookResult,
 } from '../hooks/lib/runtime.mjs';
 import { fakeKhala, frame, hookDeps, hookInput, scratch, until } from './fakes';
 
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const A = 'session-a';
 const B = 'session-b';
 
@@ -300,6 +303,31 @@ describe('idle watcher', () => {
     expect(await watcherState(A)).toBe('orphaned');
   });
 
+  it('reports the watcher disarmed past the hook timeout, even when Claude killed it before it could record so', async () => {
+    const { khala, stop, deps, clock, watcherState } = setup();
+    khala.bind(A, 'sync', 2 * WATCHER_HOOK_TIMEOUT_SECONDS);
+    await stop(A);
+    // A watcher that makes no further progress, as one Claude has killed does.
+    void runHook('stop-watcher', hookInput('Stop', A), { ...deps, sleep: () => new Promise<void>(() => undefined) });
+    await until(() => khala.ops(A).includes('pending'));
+    clock.now += WATCHER_HOOK_TIMEOUT_SECONDS * 1000 - 1;
+    expect(await watcherState(A)).toBe('armed');
+    clock.now += 1;
+    expect(await watcherState(A)).toBe('expired');
+    expect(describeDelivery({ watcher: await watcherState(A) }).idle).toBe('idle agents receive messages only at their next turn');
+  });
+
+  it('ends a watcher at the hook timeout when the fence grants a longer window', async () => {
+    const { khala, stop, deps, clock, watcherState } = setup();
+    khala.bind(A, 'sync', 2 * WATCHER_HOOK_TIMEOUT_SECONDS);
+    await stop(A);
+    const armedAt = clock.now;
+    const fast = { ...deps, sleep: async (ms: number) => { clock.now += ms; } };
+    await expect(runHook('stop-watcher', hookInput('Stop', A), fast)).resolves.toEqual(silent);
+    expect(clock.now - armedAt).toBeLessThanOrEqual(WATCHER_HOOK_TIMEOUT_SECONDS * 1000);
+    expect(await watcherState(A)).toBe('expired');
+  });
+
   it('SessionEnd removes only ephemeral state, stands the watcher down and never calls Khala', async () => {
     const { khala, stop, watcher, hook, stateRoot } = setup();
     khala.bind(A, 'sync');
@@ -311,6 +339,49 @@ describe('idle watcher', () => {
     expect(fs.readdirSync(stateRoot)).toEqual([]);
     await expect(watching).resolves.toEqual(silent);
     expect(khala.calls.slice(before).every(call => call.op === 'pending')).toBe(true);
+  });
+});
+
+describe('revoked binding (decision 36)', () => {
+  // Wrong-implementation test: a hook that injects after revocation, or a watcher that
+  // keeps watching a revoked binding, fails it.
+  it('injects no context, wakes nothing, and signals no process once the binding is revoked', async () => {
+    const kill = vi.spyOn(process, 'kill');
+    try {
+      const { khala, stop, watcher, prompt, postTool, clock, watcherState } = setup();
+      khala.bind(A, 'steer');
+      khala.bind(B, 'steer');
+
+      // B's watcher woke it just before the Stop: the claiming prompt must not pull.
+      await stop(B);
+      const woke = watcher(B);
+      khala.release(B, 'announced before revoke');
+      expect((await woke).exitCode).toBe(2);
+      khala.revoke(B);
+      await expect(prompt(B)).resolves.toEqual(silent);
+
+      // A's watcher is revoked partway through its window, and stands down at its next poll.
+      await stop(A);
+      const watching = watcher(A);
+      await until(() => khala.ops(A).includes('pending'));
+      khala.revoke(A);
+      const revokedAt = clock.now;
+      khala.release(A, 'after revoke');
+      await expect(watching).resolves.toEqual(silent);
+      expect(clock.now - revokedAt).toBeLessThanOrEqual(2 * WATCH_POLL_MS);
+      expect(await watcherState(A)).toBe('off');
+
+      for (const id of [A, B]) {
+        for (const result of [await prompt(id), await postTool(id), await stop(id)]) expect(result.stdout).toBe('');
+        expect(khala.session(id).delivered).toEqual([]);
+      }
+      expect(kill).not.toHaveBeenCalled();
+      // The only signal the runtime can send is the liveness probe, signal 0.
+      const runtime = fs.readFileSync(path.join(root, 'hooks/lib/runtime.mjs'), 'utf8');
+      expect(runtime.match(/\bkill\([^)]*\)/g)).toEqual(['kill(pid, 0)']);
+    } finally {
+      kill.mockRestore();
+    }
   });
 });
 
@@ -397,6 +468,21 @@ describe('capability wording', () => {
     expect(describeDelivery({ acknowledgement: 'local_ack' }).acknowledgement).toBe('unknown');
     expect(describeDelivery({}).sync).toMatch(/^unproven:/);
     expect(describeDelivery({ watcher: null }).idle).toBe('idle agents receive messages only at their next turn');
+  });
+});
+
+describe('timeouts', () => {
+  it('uses the CLI’s 10 s call timeout, fits two calls in each synchronous hook, and knows the watcher’s timeout', () => {
+    expect(KHALA_CALL_TIMEOUT_MS).toBe(10_000);
+    const registered = (JSON.parse(fs.readFileSync(path.join(root, 'hooks/hooks.json'), 'utf8')) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command: string; timeout: number; asyncRewake?: boolean }> }>>;
+    }).hooks;
+    for (const [event, entries] of Object.entries(registered)) {
+      for (const hook of entries.flatMap(entry => entry.hooks)) {
+        if (hook.asyncRewake) expect(hook.timeout).toBe(WATCHER_HOOK_TIMEOUT_SECONDS);
+        else if (event !== 'SessionEnd') expect(hook.timeout * 1000).toBeGreaterThan(2 * KHALA_CALL_TIMEOUT_MS);
+      }
+    }
   });
 });
 

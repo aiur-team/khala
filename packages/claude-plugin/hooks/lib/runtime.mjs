@@ -16,8 +16,13 @@ export const WAKE_NOTICE = 'Khala: channel messages are pending for this session
 
 /** Upper bound for one pulled frame; anything larger is treated as malformed and stays queued. */
 export const MAX_FRAME_BYTES = 512 * 1024;
-/** Per-call bound on one `khala claude` process, inside Claude's 10 s hook timeout. */
-export const KHALA_CALL_TIMEOUT_MS = 4_000;
+/**
+ * Per-call bound on one `khala claude` process: the CLI's own 10 s client timeout.
+ * A synchronous hook makes at most two calls, inside its 30 s registration timeout.
+ */
+export const KHALA_CALL_TIMEOUT_MS = 10_000;
+/** The watcher's `timeout` in `hooks.json`. Claude kills the watcher then, whatever the fence's window. */
+export const WATCHER_HOOK_TIMEOUT_SECONDS = 3_600;
 /** How often a watcher re-reads the pending signal. A notification poll, never a pull. */
 export const WATCH_POLL_MS = 1_000;
 
@@ -170,10 +175,13 @@ async function pull(deps, sessionId) {
   return validFrame(frame) ? { kind: 'batch', frame } : { kind: 'failed', code: 'malformed' };
 }
 
+/** The notification-only pending signal: `pending`, `idle`, `refused` (the binding is gone), or `unavailable`. */
 async function pending(deps, sessionId) {
   const result = await deps.khala('pending', sessionId);
-  const value = result.code === 0 ? parseLine(result.stdout) : null;
-  return value?.ok === true && value.kind === 'pending';
+  const value = parseLine(result.stdout);
+  if (value?.ok === false && value.kind === 'refused') return 'refused';
+  if (result.code !== 0 || value?.ok !== true) return 'unavailable';
+  return value.kind === 'pending' ? 'pending' : 'idle';
 }
 
 /**
@@ -197,9 +205,15 @@ function sessionState(deps, sessionId) {
     dir,
     activity: () => read('activity'),
     setActivity: value => write('activity', value),
-    /** The live watcher's nonce. Written only when a watcher arms; removed on cancel. */
-    owner: () => read('owner'),
-    setOwner: nonce => write('owner', nonce),
+    /** The live watcher's nonce and arm time. Written only when a watcher arms; removed on cancel. */
+    async owner() {
+      const text = await read('owner');
+      try {
+        const value = text === null ? null : JSON.parse(text);
+        return typeof value?.nonce === 'string' && Number.isFinite(value.at) ? value : null;
+      } catch { return null; }
+    },
+    setOwner: (nonce, at) => write('owner', JSON.stringify({ nonce, at })),
     async clearOwner() {
       await fs.rm(file('owner'), { force: true });
     },
@@ -226,13 +240,18 @@ function sessionState(deps, sessionId) {
 /**
  * The session's watcher state for status surfaces: `armed`, `woke`, `expired`,
  * `cancelled`, `orphaned`, `off`, or `null` when none ever ran. A status left by a
- * watcher that no longer owns the session is ignored in favour of the owner's.
+ * watcher that no longer owns the session is ignored in favour of the owner's. An
+ * owner past the hook timeout is `expired`: Claude has killed it, even if it could
+ * not record so.
  */
 export async function readWatcher(deps, sessionId) {
   if (!validSessionId(sessionId)) return null;
   const state = sessionState(deps, sessionId);
   const [owner, status] = await Promise.all([state.owner(), state.watcher()]);
-  if (owner !== null && status?.nonce !== owner) return 'armed';
+  const current = owner !== null && status?.nonce === owner.nonce ? status.state : null;
+  if (owner !== null && (current === null || current === 'armed')) {
+    return deps.now() - owner.at >= WATCHER_HOOK_TIMEOUT_SECONDS * 1000 ? 'expired' : 'armed';
+  }
   return typeof status?.state === 'string' ? status.state : null;
 }
 
@@ -285,7 +304,7 @@ async function userPromptSubmit(input, state, deps) {
   const owner = await state.owner();
   if (owner !== null) {
     await state.clearOwner();
-    await state.setWatcher({ nonce: owner, state: 'cancelled', at: deps.now() });
+    await state.setWatcher({ nonce: owner.nonce, state: 'cancelled', at: deps.now() });
   }
   if (!await state.consumeWake()) return { stdout: '', stderr: '', exitCode: 0 };
   const hook = await hookState(deps, input.sessionId);
@@ -329,7 +348,8 @@ async function stop(input, state, deps) {
  * session with a fresh nonce, so older watchers stand down and exactly one is
  * live. It never pulls: it reads only the fence's notification-only pending
  * signal, and exits 2 with the fixed notice only while the session is idle. Its
- * lifetime is the fence's window; with no window there is no watcher.
+ * lifetime is the fence's window, capped by the hook timeout; with no window there
+ * is no watcher. A revoked binding (decision 36) stands it down at its next poll.
  */
 async function watch(input, state, deps) {
   const nonce = deps.nonce();
@@ -337,9 +357,9 @@ async function watch(input, state, deps) {
   // Ownership lives in its own file, written only here, so no later write of an older
   // watcher can take it back. A status write racing a newer watcher can only leave a
   // stale status, which `readWatcher` discards because its nonce is not the owner's.
-  await state.setOwner(nonce);
+  await state.setOwner(nonce, armedAt);
   await state.setWatcher({ nonce, state: 'armed', at: armedAt });
-  const owns = async () => (await state.owner()) === nonce;
+  const owns = async () => (await state.owner())?.nonce === nonce;
   const record = async (status) => { if (await owns()) await state.setWatcher({ nonce, state: status, at: deps.now() }); };
 
   const hook = await hookState(deps, input.sessionId);
@@ -347,14 +367,19 @@ async function watch(input, state, deps) {
     await record('off');
     return { stdout: '', stderr: '', exitCode: 0 };
   }
-  const deadline = armedAt + hook.watchSeconds * 1000;
+  const deadline = armedAt + Math.min(hook.watchSeconds, WATCHER_HOOK_TIMEOUT_SECONDS) * 1000;
   while (deps.now() < deadline) {
     if (!await owns()) return { stdout: '', stderr: '', exitCode: 0 };
     if (!deps.parentAlive()) {
       await record('orphaned');
       return { stdout: '', stderr: '', exitCode: 0 };
     }
-    if (await state.activity() === 'idle' && await pending(deps, input.sessionId)) {
+    const signal = await state.activity() === 'idle' ? await pending(deps, input.sessionId) : 'idle';
+    if (signal === 'refused') {
+      await record('off');
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }
+    if (signal === 'pending') {
       // Re-check just before waking: a prompt may have made the session busy meanwhile.
       if (await owns() && await state.activity() === 'idle') {
         await state.markWake();

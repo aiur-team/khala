@@ -17,6 +17,7 @@ export type HookResult = Readonly<{ stdout: string; stderr: string; exitCode: 0 
 export const WAKE_NOTICE: string;
 export const MAX_FRAME_BYTES: number;
 export const KHALA_CALL_TIMEOUT_MS: number;
+export const WATCHER_HOOK_TIMEOUT_SECONDS: number;
 export const WATCH_POLL_MS: number;
 export const HOOK_ROLES: Readonly<Record<HookRole, string>>;
 
