@@ -83,6 +83,8 @@ describe('claudeAppRecord', () => {
       row({ mode: 'sync', boundary: 'PostToolUse', delivery: 'model_context_injection' }),
     ]);
     expect(misplaced.capabilities.modes.sync.status).toBe('unknown');
+    // The row is ignored, not allowed to break decoding and blank the inspected tuple.
+    expect(misplaced.appVersion).toBe('1.2.3');
   });
 
   it('falls back to an uninspected tuple when a value cannot be carried', () => {
