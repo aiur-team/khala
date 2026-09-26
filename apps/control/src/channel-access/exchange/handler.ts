@@ -6,15 +6,27 @@
 
 import {
   type AdmissionGrantExchangePort,
+  type CallOptions,
+  type ChannelAccessReadiness,
   type DeviceId,
   type GrantExchangeRejection,
+  type OperationResult,
   type StableAgentPrincipal,
   type TrustedClock,
+  decodeChannelAccessReadiness,
   decodeGrantExchangeRequest,
   decodeSealedGrantEnvelope,
   validateGrantExchangeRequest,
 } from '@khala/contracts/messaging/index';
 import type { RouteRegistration } from '../../runtime/handler';
+
+/** The exchange plus the readiness acknowledgement, as the composed exchange service provides it. */
+export type ConnectorGrantExchangePort = AdmissionGrantExchangePort & Readonly<{
+  acknowledge(
+    input: ChannelAccessReadiness,
+    options?: CallOptions,
+  ): Promise<OperationResult<null, GrantExchangeRejection>>;
+}>;
 
 /**
  * The gateway routes exact paths under reserved prefixes only, so the contract's
@@ -22,6 +34,8 @@ import type { RouteRegistration } from '../../runtime/handler';
  * the operation named once in the query and once in the body.
  */
 export const CONNECTOR_CHANNEL_ACCESS_EXCHANGE_PATH = '/api/agent/channel-access/exchange';
+/** Readiness acknowledgement after local activation; the operation is named the same way. */
+export const CONNECTOR_CHANNEL_ACCESS_READY_PATH = '/api/agent/channel-access/ready';
 
 export type VerifiedExchangeConnector = Readonly<{
   requester: StableAgentPrincipal;
@@ -41,7 +55,7 @@ export type GrantExchangeHandlerDependencies = Readonly<{
   /** Verifies the connector's session and sender-constrained proof for this exact request. */
   authenticateConnector(request: Request): Promise<ConnectorExchangeAuthentication>;
   /** Request-scoped exchange for one authenticated connector. */
-  exchangeFor(connector: Readonly<{ sessionFingerprint: string }>): AdmissionGrantExchangePort;
+  exchangeFor(connector: Readonly<{ sessionFingerprint: string }>): ConnectorGrantExchangePort;
   clock: TrustedClock;
 }>;
 
@@ -80,6 +94,42 @@ export function createGrantExchangeHandler(deps: GrantExchangeHandlerDependencie
 
   return Object.freeze({
     path: CONNECTOR_CHANNEL_ACCESS_EXCHANGE_PATH,
+    methods: Object.freeze(['POST']),
+    handle,
+  });
+}
+
+/**
+ * The connector acknowledges local activation. Only then does the journal report
+ * `connected`, and the stored envelope is deleted. The body is identifiers and
+ * thumbprints only; authority comes from the same connector authentication.
+ */
+export function createGrantReadinessHandler(deps: GrantExchangeHandlerDependencies): RouteRegistration {
+  async function handle(request: Request): Promise<Response> {
+    const operation = readOperation(request);
+    if (operation === null) return rejected(400, 'invalid_request');
+    const auth = await safeCall(() => deps.authenticateConnector(request));
+    if (auth === null || auth.kind === 'unavailable') return unavailable();
+    if (auth.kind === 'rejected') return rejected(auth.code === 'auth_required' ? 401 : 403, auth.code);
+    const body = decodeChannelAccessReadiness(await readJson(request));
+    if (!body.ok) return rejected(400, 'invalid_request');
+    const connector = auth.connector;
+    const readiness = body.value;
+    if (readiness.operationId !== operation) return mapRejection('operation_mismatch');
+    if (readiness.requester !== connector.requester) return mapRejection('wrong_requester');
+    if (readiness.origin !== connector.origin) return mapRejection('wrong_origin');
+    if (readiness.sessionGeneration !== connector.sessionGeneration) return mapRejection('wrong_generation');
+    if (readiness.deviceId !== connector.deviceId) return mapRejection('wrong_device');
+    if (readiness.proofKeyThumbprint !== connector.proofKeyThumbprint) return mapRejection('proof_mismatch');
+    const result = await safeCall(() => deps.exchangeFor({ sessionFingerprint: connector.sessionFingerprint })
+      .acknowledge(readiness, { signal: request.signal }));
+    if (result === null || result.kind === 'unavailable' || result.kind === 'outcome_unknown') return unavailable();
+    if (result.kind === 'rejected') return mapRejection(result.code);
+    return json(200, { v: 1, kind: 'acknowledged' });
+  }
+
+  return Object.freeze({
+    path: CONNECTOR_CHANNEL_ACCESS_READY_PATH,
     methods: Object.freeze(['POST']),
     handle,
   });
