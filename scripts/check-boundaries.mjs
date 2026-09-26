@@ -15,6 +15,13 @@ const testPattern = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const LOCAL_AUTOMATION_MARKER = 'khala:local-automation-authority';
 const localAutomation = /^(?:apps\/internal\/src\/composition\/local-automation\/|packages\/policy\/src\/listening-mode\/limits\.[cm]?[jt]sx?$)/;
 const hostedRoot = /^apps\/(?:web|control|connector)\//;
+// The internal-mode browser entry and its loopback transport. The hosted web graph
+// never reaches them; the internal entry never reaches the hosted-only Matrix,
+// OAuth control API, join, pairing or recovery code.
+const internalEntry = /^apps\/web\/src\/internal\//;
+const localTransport = /^packages\/messaging\/src\/local\//;
+const hostedOnlyWeb = /^(?:apps\/web\/src\/composition\/(?:recovery\/|human\/(?:matrix-browser|browser-api|mount|capabilities|routes|entry)\.)|apps\/web\/src\/features\/(?:join|pairing|recovery)\/|packages\/messaging\/src\/(?:browser-device|recovery)\/)/;
+const hostedOnlyDependency = /^matrix-js-sdk(?:\/|$)/;
 // Shared web primitives other features may import. They may not import features themselves.
 // `channel-create` is the creation operation adapter the channel-request inbox renders.
 const sharedFeatures = new Set(['approval-decision', 'channel-create']);
@@ -130,6 +137,7 @@ export function checkBoundaries(root) {
       if (fromFeature && toFeature && fromFeature !== toFeature && !sharedFeatures.has(toFeature)) errors.add(`${origin}: sibling feature import (${edge.specifier})`);
     }
     const browser = origin.startsWith('apps/web/');
+    const internalBrowser = internalEntry.test(origin);
     const hosted = hostedRoot.test(origin);
     const policy = origin.startsWith('packages/policy/');
     // Browser, policy and contracts graphs must stay pure; hosted server graphs only
@@ -145,12 +153,15 @@ export function checkBoundaries(root) {
         const trace = [...chain, edge.specifier].join(' -> ');
         if (pure && edge.computed) errors.add(`${origin}: unanalyzable import (${trace})`);
         if (pure && (builtins.has(edge.specifier.replace(/^node:/, '')) || serverDependencies.test(edge.specifier))) errors.add(`${origin}: server-only dependency (${trace})`);
+        if (internalBrowser && hostedOnlyDependency.test(edge.specifier)) errors.add(`${origin}: internal entry reaches hosted-only code (${trace})`);
         if (edge.target) {
           // Local modules outside the scanned roots cannot silently end traversal.
           // Third-party internals remain dependency-review scope, not this graph.
           if (pure && !graph.has(edge.target) && !edge.target.split('/').includes('node_modules')) errors.add(`${origin}: local module outside the checked graph (${trace})`);
           if (hosted && (edge.target.startsWith('apps/internal/') || localAutomation.test(edge.target) || marked.has(edge.target))) errors.add(`${origin}: hosted graph reaches local automation (${trace})`);
           if (browser && /^(?:apps\/(?:control|connector)|packages\/(?:connector|harnesses))\//.test(edge.target)) errors.add(`${origin}: browser reaches owner/server code (${trace})`);
+          if (browser && !internalBrowser && (internalEntry.test(edge.target) || localTransport.test(edge.target))) errors.add(`${origin}: hosted browser graph reaches the internal entry (${trace})`);
+          if (internalBrowser && hostedOnlyWeb.test(edge.target)) errors.add(`${origin}: internal entry reaches hosted-only code (${trace})`);
           if (policy && !edge.target.startsWith('packages/policy/') && !edge.target.startsWith('packages/contracts/')) errors.add(`${origin}: policy reaches I/O or implementation (${trace})`);
           walk(edge.target, [...chain, edge.specifier]);
         } else if (policy && !edge.computed) errors.add(`${origin}: policy external dependency is not a contract (${trace})`);
