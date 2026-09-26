@@ -172,6 +172,10 @@ const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     ['GET', '/listening-mode', undefined],
     ['POST', '/listening-mode', { v: 1, commandId: 'agent-as-owner', generation: 1, expectedVersion: 1, requested: 'async', issuedAt: 'probe' }],
     ['POST', '/pause', { v: 1, generation: 1, paused: true }],
+    ...(['grant', 'revoke'] as const).map(op => ['POST', `/experimental-route/${op}`, {
+      v: 1, commandId: `agent-as-owner-${op}`, generation: 1, expectedVersion: 1,
+      mode: 'steer', route: 'probe', harnessVersion: 'probe', evidenceRevision: 'probe', issuedAt: 'probe',
+    }] as const),
   ] as const).map(([method, suffix, body]) => [
     `http-internal:${method} /api/v1/channels/:channelId/bindings/:bindingId${suffix}`,
     (async s => {
