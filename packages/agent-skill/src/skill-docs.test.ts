@@ -23,6 +23,8 @@ const cliClient: CliDependencies['client'] = {
   async status() {
     return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null };
   },
+  async listChannels() { throw new Error('documentation checks should not list channels'); },
+  async listAgents() { throw new Error('documentation checks should not list agents'); },
 };
 
 // Commands whose bare name is not a complete invocation are exercised with their documented subcommand.
@@ -97,7 +99,7 @@ describe('fallback skill documentation', () => {
     expect(combined).toMatch(/never .*release-ID .*set.*deduplic/i);
     expect(combined).toMatch(/async`? arrival alone.*no .*wake.*harness.*send.*receipt/i);
     expect(combined).toMatch(/fallback listener.*distinct/i);
-    expect(cliReadme).toMatch(/exactly three tools, `khala_send`, `khala_read`, and `khala_listening_mode`/);
+    expect(cliReadme).toMatch(/exposes\s+`khala_send`, `khala_read`, and `khala_listening_mode`, plus `khala_list_channels`[^.]*and `khala_list_agents`/);
     expect(cliReadme).toMatch(/explicit.*`khala_read`.*incidental\s+piggyback/is);
     expect(cliReadme).toMatch(/every valid `khala_send` or `khala_listening_mode` result may also select/i);
     expect(cliReadme).toMatch(/arrival alone selects nothing/i);

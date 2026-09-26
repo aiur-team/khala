@@ -20,6 +20,7 @@ async function exchange(tools: ReturnType<typeof createToolRegistry> | undefined
     output,
     send: {} as never,
     read: {} as never,
+    channels: {} as never,
     postprocessResult: async ({ primaryResult }) => primaryResult,
     postprocessReadResult: async () => { throw new Error('unexpected'); },
     ...(tools === undefined ? {} : { tools }),
@@ -29,8 +30,8 @@ async function exchange(tools: ReturnType<typeof createToolRegistry> | undefined
 
 describe('MCP tool registry', () => {
   it('registers exactly the existing tools in list order', () => {
-    expect(MCP_TOOLS.map(entry => entry.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode']);
-    expect(toolRegistry.definitions().map(entry => entry.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode']);
+    expect(MCP_TOOLS.map(entry => entry.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents']);
+    expect(toolRegistry.definitions().map(entry => entry.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents']);
   });
 
   it('rejects a duplicate tool name instead of dropping or overriding it', () => {
@@ -58,7 +59,7 @@ describe('MCP tool registry', () => {
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'khala_probe', arguments: {} } },
     ]);
-    expect(list.result.tools.map((entry: { name: string }) => entry.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_probe']);
+    expect(list.result.tools.map((entry: { name: string }) => entry.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_probe']);
     expect(call.result).toEqual({ content: [{ type: 'text', text: 'hello' }] });
 
     const [refused] = await exchange(undefined, [

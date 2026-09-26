@@ -4,6 +4,7 @@ import { MAX_SEND_BYTES, type SendService } from '../cli/send.js';
 import { ListeningModeOperation } from '../composition/listening-mode.js';
 import { plainObject } from '../cli/validation.js';
 import type { ListeningModeOperationPort } from './listening-mode-tool.js';
+import type { ChannelToolsPort } from './channels/tools.js';
 import type { ReadOperationPort } from './read-tool.js';
 import { toolRegistry, type ToolRegistry } from './registry.js';
 import {
@@ -24,6 +25,7 @@ export type McpServerOptions = Readonly<{
   read: ReadOperationPort;
   /** Absent means no mode control is composed; the tool then refuses with `unavailable`. */
   listeningMode?: ListeningModeOperationPort | undefined;
+  channels: ChannelToolsPort;
   postprocessResult: McpServerResultPostprocessor;
   postprocessReadResult: McpServerReadResultPostprocessor;
   signal?: AbortSignal | undefined;
@@ -34,6 +36,7 @@ type ServerContext = Readonly<{
   send: SendService;
   read: ReadOperationPort;
   listeningMode: ListeningModeOperationPort;
+  channels: ChannelToolsPort;
   postprocessResult: McpServerResultPostprocessor | undefined;
   postprocessReadResult: McpServerReadResultPostprocessor | undefined;
   tools: ToolRegistry;
@@ -44,10 +47,11 @@ type ServerContext = Readonly<{
  * message and each response is one JSON line. The caller owns the streams.
  */
 export async function runMcpServer(options: McpServerOptions): Promise<void> {
-  const { input, output, send, read, postprocessResult, postprocessReadResult, signal } = options;
+  const { input, output, send, read, channels, postprocessResult, postprocessReadResult, signal } = options;
   const context: ServerContext = {
     send,
     read,
+    channels,
     listeningMode: options.listeningMode ?? new ListeningModeOperation({ application: null }),
     postprocessResult,
     postprocessReadResult,
@@ -173,6 +177,7 @@ async function callTool(
     send: context.send,
     read: context.read,
     listeningMode: context.listeningMode,
+    channels: context.channels,
     postprocessResult: context.postprocessResult,
     postprocessReadResult: context.postprocessReadResult,
   };

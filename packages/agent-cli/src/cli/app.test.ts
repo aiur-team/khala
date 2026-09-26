@@ -36,6 +36,8 @@ function client(overrides: Partial<AgentClientPort> = {}): AgentClientPort {
     async connect() { return { kind: 'connected', binding: BINDING, reused: false }; },
     async send(input) { return { kind: 'accepted', clientTxnId: input.clientTxnId, eventId: 'event-1' }; },
     async status() { return { v: 1, connected: true, binding: BINDING, route: 'unknown', sourceCursor: 'source-1' }; },
+    async listChannels() { return { kind: 'unavailable' }; },
+    async listAgents() { return { kind: 'unavailable' }; },
     ...overrides,
   };
 }
@@ -255,7 +257,8 @@ describe('runCli', () => {
       events: [], payloadDigest: `sha256:${'0'.repeat(64)}`, payloadBase64: 'cmVsZWFzZWQ=', receivedAt: '2026-09-19T12:00:00Z' },
       payload: new TextEncoder().encode('released'), nextOffset: 10 };
     let first = true;
-    const inbox: BatchInbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async readBatch() { return null; }, async release() {} }; },
+    const inbox: BatchInbox = { async enqueue() { return 'appended' as const; }, async acquireListener() { return { async readBatch() { return null; }, async nextWake() {}, async release() {} }; },
+      async notifyListener() { return 'unavailable' as const; },
       async readNext() { if (first) { first = false; return item; } return null; },
       async acknowledge() { acknowledged = true; },
       async status() { return { bindingId: BINDING.bindingId, generation: 0, cursor: { v: 1 as const, offset: 0, releaseId: null } }; } };
@@ -401,9 +404,11 @@ describe('runCli', () => {
             const consumer = await durable.acquireListener();
             return {
               readBatch: input => consumer.readBatch(input),
+              nextWake: () => consumer.nextWake(),
               release: async () => { released = true; await consumer.release(); },
             };
           },
+          notifyListener: reason => durable.notifyListener(reason),
           readNext: () => durable.readNext(),
           acknowledge: item => durable.acknowledge(item),
           status: () => durable.status(),
@@ -720,10 +725,11 @@ function replacementBinding(overrides: Record<string, unknown> = { bindingId: 'b
   return decoded.value;
 }
 
-function fakeBatchInbox(acquireListener: BatchInbox['acquireListener']): BatchInbox {
+function fakeBatchInbox(acquireListener: () => Promise<InboxConsumer>): BatchInbox {
   return {
     async enqueue() { return 'appended'; },
-    acquireListener,
+    async acquireListener() { return { ...await acquireListener(), async nextWake() {} }; },
+    async notifyListener() { return 'unavailable'; },
     async readNext() { return null; },
     async acknowledge() {},
     async status() {

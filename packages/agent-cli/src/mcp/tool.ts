@@ -1,6 +1,7 @@
 import type { SendService } from '../cli/send.js';
 import type { InboxBatch } from '../cli/inbox.js';
 import type { ListeningModeOperationPort } from './listening-mode-tool.js';
+import type { ChannelToolsPort } from './channels/tools.js';
 import type { ReadOperationPort } from './read-tool.js';
 import type { McpJsonRpcId, McpToolResult, PreselectedMcpPostprocessOutcome } from './result-postprocessor.js';
 
@@ -49,6 +50,7 @@ export type McpToolContext = Readonly<{
   send: SendService;
   read: ReadOperationPort;
   listeningMode: ListeningModeOperationPort;
+  channels: ChannelToolsPort;
   postprocessResult: McpServerResultPostprocessor | undefined;
   postprocessReadResult: McpServerReadResultPostprocessor | undefined;
 }>;
