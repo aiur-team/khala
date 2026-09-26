@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeHarnessCapabilities } from '@khala/contracts/delivery/index';
+import { initialListeningModeControl, listeningModeView } from '../../../policy/src/listening-mode/store';
 import { limits } from './fakes';
 import { type CodexReceiptProof } from './receipt-conformance';
 import {
@@ -42,11 +43,25 @@ describe('interactive Codex capabilities', () => {
       .modes.sync.reason).toMatch(/^Hook trust unknown:/);
   });
 
-  it('delivers every mode but claims no acknowledgement without a conformance proof', () => {
+  it('delivers steer and sync but claims no acknowledgement or async without a conformance proof', () => {
     const capabilities = interactiveCodexCapabilities('0.156.1', limits, { state: 'trusted' });
+    expect(decodeHarnessCapabilities(capabilities).ok).toBe(true);
     expect(capabilities.support).toBe('tested');
+    expect(capabilities.modes.steer.status).toBe('proven');
     expect(capabilities.modes.sync.status).toBe('proven');
+    expect(capabilities.modes.async.status).toBe('unknown');
     expect(capabilities.acknowledgement).toBe('unknown');
+  });
+
+  it('never leaves async effective while acknowledgement is unknown', () => {
+    const control = {
+      ...initialListeningModeControl({ bindingId: 'b' as never, generation: 1 }, null), requested: 'async' as const,
+    };
+    const unproven = interactiveCodexCapabilities('0.156.1', limits, { state: 'trusted' });
+    expect(listeningModeView(control, unproven).effective).toBeNull();
+    const proven = interactiveCodexCapabilities('0.156.1', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.156.1' });
+    expect(listeningModeView(control, proven).effective).toBe('async');
   });
 
   it.each<[string, CodexReceiptProof]>([

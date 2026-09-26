@@ -49,6 +49,9 @@ export function interactiveCodexCapabilities(
     evidenceRevision: CODEX_INTERACTIVE_EVIDENCE_REVISION,
     reason,
   });
+  // `async` delivers only through khala_read and is unusable without a returned token, so it is
+  // proven only for the exact route and version whose receipt a conformance run proved.
+  const acknowledged = receiptProof.proven && receiptProof.route === 'hook' && receiptProof.version === version;
   return {
     v: 3,
     harness: CODEX_HARNESS,
@@ -70,13 +73,20 @@ export function interactiveCodexCapabilities(
         + `Hard abort is disabled. ${IDLE}`),
       sync: proven('codex-hooks-stop-or-prompt', 'Delivered after the turn at Stop, or with the next prompt; '
         + `tool boundaries stay silent. ${IDLE}`),
-      async: proven('codex-khala-read', 'Delivered only when the agent calls khala_read; hooks inject nothing.'),
+      async: acknowledged
+        ? proven('codex-khala-read', 'Delivered only when the agent calls khala_read; hooks inject nothing.')
+        : {
+          status: 'unknown',
+          route: 'codex-khala-read',
+          testedVersion: version,
+          evidenceRef: CODEX_INTERACTIVE_EVIDENCE_REF,
+          evidenceRevision: CODEX_INTERACTIVE_EVIDENCE_REVISION,
+          reason: `Awaiting a receipt proof: async is not offered until the batch token is proven to come back. ${IDLE}`,
+        },
     },
     // Only the exact hook route and version a conformance run proved; delivery alone is not
     // acknowledgement, and a missing later call stays neutral.
-    acknowledgement: receiptProof.proven && receiptProof.route === 'hook' && receiptProof.version === version
-      ? 'batch_token_next_call'
-      : 'unknown',
+    acknowledgement: acknowledged ? 'batch_token_next_call' : 'unknown',
   };
 }
 

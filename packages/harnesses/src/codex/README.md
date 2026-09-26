@@ -14,7 +14,12 @@ with `existingSession: native_hooks` and every mode `proven`, only when both of 
 - the user has trusted every installed Khala hook in Codex's **Hooks need review**
   dialog.
 
-Otherwise every mode is `unknown`, with the review or version reason.
+Otherwise every mode is `unknown`, with the review or version reason. `async` is
+additionally `unknown` until the receipt proof below is supplied, because it needs a
+returned batch token (`listeningModeView` refuses it while acknowledgement is `unknown`).
+The offline proof is derived from the real `khala codex-hook`, the shared inbox and the
+next-call token echo in `packages/agent-cli/src/codex/receipt-proof.test.ts`; the live
+Codex run stays with the Executor (decision 43).
 
 `acknowledgement` is `batch_token_next_call` only when a `CodexReceiptProof` from
 `assessCodexReceiptConformance` (`receipt-conformance.ts`) is passed for that exact
