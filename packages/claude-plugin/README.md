@@ -18,6 +18,17 @@ src/validate.ts              fails on any departure from them
 
 ## Hook runtime
 
+**Unbound sessions.** Setup enables the plugin user-wide, so these hooks run in
+every Claude session on the machine. Each hook except `SessionEnd` first checks
+for the session's own grant, `$XDG_STATE_HOME/khala/internal/discovery/<principal>/claude-grant.json`.
+The grant must name a binding and carry the transport capability of the current
+`active.json`. That check reads at most two small files and takes about 20 µs.
+A session without a grant is a plain Claude session. Its hooks produce no
+output and write no state, and they never run `khala`, so they make no network
+call. `SessionEnd` only removes the session's own state directory, which an
+unbound session never has. The adapter still makes every decision for a bound
+session.
+
 Each hook reads Claude's hook JSON and uses its `session_id`, never the cwd. It
 reaches Khala only by running `khala claude <hook|pull|pending> --session <id>`
 without a shell. The session ID is the only argv element taken from input, and
