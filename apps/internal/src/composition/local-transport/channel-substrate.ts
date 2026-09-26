@@ -42,7 +42,8 @@ function event(stored: StoredEvent): SubstrateEvent {
 
 function rejection(code: string): ChannelRejection {
   switch (code) {
-    case 'identity_mismatch': return 'forbidden';
+    case 'identity_mismatch':
+    case 'read_only': return 'forbidden';
     case 'not_found': return 'not_found';
     case 'not_joined': return 'not_joined';
     case 'operation_mismatch': return 'operation_mismatch';

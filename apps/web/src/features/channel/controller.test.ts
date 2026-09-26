@@ -16,6 +16,7 @@ function snapshot(generation: number, connection: 'connected' | 'offline'): Agen
       connection,
       routeLabel: connection === 'connected' ? 'Codex CLI' : 'Khala skill',
       lastReceipt: null,
+      acknowledgement: 'unknown',
     }],
   };
 }
@@ -82,6 +83,7 @@ describe('createChannelController', () => {
           connection: 'unknown',
           routeLabel: 'Unsupported',
           lastReceipt: null,
+          acknowledgement: 'unknown',
         }],
       }),
       subscribeAgents: () => () => {},

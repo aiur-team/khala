@@ -45,7 +45,9 @@ test('AE1/AE3/AE5: onboarding, live presence, and injected channel-slot stubs wo
     await page.getByRole('button', { name: 'Simulate agent connection' }).click();
     await page.getByText('Connected', { exact: true }).waitFor();
     await page.getByText('Codex CLI', { exact: true }).waitFor();
-    await page.getByText('Read by the agent').waitFor();
+    await page.getByText('Added to agent context').waitFor();
+    await page.getByText('Batch-token return supported', { exact: true }).waitFor();
+    assert.equal(await page.getByText('Read by the agent').count(), 0, 'context insertion is never labelled read');
     assert.equal(await page.getByRole('button', { name: 'Copy install command' }).count(), 0);
 
     await page.setViewportSize({ width: 390, height: 844 });
