@@ -26,6 +26,7 @@ function inProcessClient(adapter: ClaudeSessionAdapter, credential: string): Cla
     mode: sessionId => adapter.mode(call(sessionId)),
     setMode: (sessionId, input) => adapter.setMode(call(sessionId), input),
     pending: sessionId => adapter.pending(call(sessionId)),
+    hook: sessionId => adapter.hook(call(sessionId)),
   };
 }
 

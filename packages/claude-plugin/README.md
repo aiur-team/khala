@@ -53,12 +53,23 @@ then starts a turn whose synchronous `UserPromptSubmit` pulls the batch. The
 watcher itself never pulls. A delivered batch that the agent has not yet
 acknowledged is not pending again, so the session is never re-woken for it.
 
-**Watcher lifetime.** The fence sets it, through `khala claude hook`. No window
-means no watcher. The watcher also exits when its Claude process is gone. It
-records `armed`, `woke`, `expired`, `cancelled`, `orphaned` or `off` in its
-session state, and `describeDelivery` reports "idle agents receive messages only
-at their next turn" whenever no watcher is live. The `3600` second registration
-timeout is only an upper bound for Claude, not an automation budget.
+**Watcher lifetime.** The fence sets it, through `khala claude hook`, capped at
+the watcher's `3600` second registration timeout, after which Claude kills it.
+No window means no watcher. The watcher also exits when its Claude process is
+gone. It records `armed`, `woke`, `expired`, `cancelled`, `orphaned` or `off` in
+its session state. Status reports a watcher armed more than `3600` seconds ago as
+`expired`, even if Claude killed it before it could record that.
+`describeDelivery` reports "idle agents receive messages only at their next
+turn" whenever no watcher is live.
+
+**Revoked binding.** Stop revokes delivery and never kills the CLI (decision
+36). Once the binding is revoked, the adapter refuses every op, so no hook
+injects context. A live watcher stands down at its next poll and records `off`.
+The runtime signals no process: its only `kill` is the signal-0 liveness probe.
+
+**Timeouts.** Each `khala claude` call is bounded at 10 s, the CLI's own client
+timeout. A synchronous hook makes at most two calls, inside its `30` second
+registration timeout.
 
 **Session state.** Hook state lives under
 `$XDG_STATE_HOME/khala/claude-hooks/<digest of session ID>/`, with a `0700`
@@ -135,6 +146,10 @@ The hook runtime's wrong-implementation tests are:
   after-tool boundary with `steer`.
 - `-t "replaces the watcher on a new prompt"`: fails on a busy wake, a second
   live watcher, or a watcher that pulls.
+- `-t "signals no process once the binding is revoked"`: fails when a hook
+  injects after revocation or a watcher keeps watching a revoked binding.
+- `-t "disarmed past the hook timeout"`: fails when status still claims `armed`
+  after Claude has killed the watcher.
 
 The scaffold's wrong-implementation test is
 `pnpm --filter @khala/claude-plugin test -t "outside the frozen list"`: a
