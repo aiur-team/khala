@@ -21,6 +21,8 @@ khala internal --resume <channel-id>
 khala internal export <channel-id> --format markdown|jsonl --output <path> [--replace]
 khala internal delete <channel-id> [--yes]
 khala codex-hook
+khala --internal-descriptor <absolute-path> status|send|read|listen|mcp-serve
+khala --internal-descriptor <absolute-path> join <channel-url>
 khala claude <pull|read|send|status|mode|pending> --session <claude-session-id>
 ```
 
@@ -107,6 +109,39 @@ before it takes the lock or changes any state. Failures print
 `{"ok":false,"error":<code>}` to stderr and exit 3. When a channel was created
 but its server could not start, the failure also includes `channelId` and
 `resumeCommand`.
+
+### Local agent client
+
+An agent session you start yourself reaches the running launcher with a leading
+`--internal-descriptor <absolute-path>` naming `active.json`. The path is the
+only thing an installed MCP or plugin entry stores; the port and capabilities
+are never passed in arguments, the environment, or configuration. The option
+selects the local client for `status`, `send`, `read`, `listen`, `mcp-serve`,
+and `join`, and is refused for every other command. Other commands never load
+the local client.
+
+- Every operation reopens that exact file without following a symlink and
+  requires a regular file owned by you with mode 0600, version 1, and an exact
+  `http://127.0.0.1:<port>` origin. Anything else reports `status` as
+  `unavailable` and refuses `send` with `transport_unavailable`.
+- A transport-only descriptor cannot read or send channel content: `status`
+  reports `connected: false`, and `send` is refused with `not_connected`.
+  `join <channel-url>` accepts only `<origin>/channels/<channelId>` for the
+  descriptor's own channel, asks the channel-access journal with the transport
+  capability, and prints `{"ok":true,"kind":"access","outcome":...}` without
+  waiting. The owner approves in the channel-requests inbox, and the launcher
+  then adds the granted binding to the same file.
+- A granted descriptor sends with its binding capability. The server derives
+  the sender from that capability and rechecks the grant for every effect.
+  Because the file is reread for every call, a long-lived `mcp-serve` sees Stop
+  and resume on its next call: after Stop, sends are refused with
+  `not_connected` and reads with `binding_not_held`; after resume, sends use the
+  rotated capability, and reads selected under the prior generation fail closed
+  until `mcp-serve` restarts.
+- Local server routes the client uses: `GET /api/v1/agent/binding`,
+  `POST /api/v1/channels/<channelId>/messages`, and
+  `POST /api/agent/channel-access/request`. Until the local server mounts the
+  access journal, `join` fails with `transport_unavailable`.
 
 ## Support row
 
