@@ -1,3 +1,4 @@
+import { ListeningModeOperation } from '../../composition/listening-mode.js';
 import { ReadOperation, sameHeldBinding } from '../../composition/read.js';
 import {
   postprocessMcpResult, postprocessPreselectedMcpResult, type McpPostprocessSuppression,
@@ -35,6 +36,7 @@ export const mcpServeCommand: CliCommand = {
       output: deps.stdout,
       send: new SendService(deps.client),
       read: new ReadOperation({ heldBinding, consumer, currentBinding }),
+      listeningMode: new ListeningModeOperation({ application: deps.listeningMode ?? null }),
       channels: new ChannelListingService(deps.client),
       postprocessResult: input => postprocessMcpResult({
         ...input,

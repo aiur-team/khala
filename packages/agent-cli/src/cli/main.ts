@@ -18,11 +18,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     return await runCli(argv, {
       client: createUnavailableClient(),
+      // No trusted connector composition is installed yet, so mode calls refuse as unavailable.
+      listeningMode: null,
       inbox: (bindingId, generation) => openInbox({
         stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
       }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),
+      internalClient: async descriptorPath =>
+        (await import('../composition/internal.js')).createInternalClient({ descriptorPath }),
     });
   } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
 }

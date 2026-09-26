@@ -3,8 +3,10 @@ import { claudeCommand } from './commands/claude.js';
 import { codexHookCommand } from './commands/codex-hook.js';
 import { connectCommand } from './commands/connect.js';
 import { internalCommand } from './commands/internal.js';
+import { joinCommand } from './commands/join.js';
 import { listenCommand } from './commands/listen.js';
 import { mcpServeCommand } from './commands/mcp-serve.js';
+import { modeCommand } from './commands/mode.js';
 import { readCommand } from './commands/read.js';
 import { sendCommand } from './commands/send.js';
 import { statusCommand } from './commands/status.js';
@@ -44,6 +46,7 @@ export function createCommandRegistry(commands: readonly CliCommand[]): CommandR
 export const CLI_COMMANDS: readonly CliCommand[] = Object.freeze([
   connectCommand,
   listenCommand,
+  modeCommand,
   readCommand,
   sendCommand,
   statusCommand,
@@ -52,6 +55,7 @@ export const CLI_COMMANDS: readonly CliCommand[] = Object.freeze([
   agentsCommand,
   internalCommand,
   codexHookCommand,
+  joinCommand,
   claudeCommand,
 ]);
 

@@ -47,6 +47,7 @@ it is a long-running experimental route and does not prove automatic or idle
 | Existing session | The agent starts the listener inside its own session trust boundary |
 | Receive | `khala-fallback listen --binding <binding.bindingId>`, which supervises `khala listen --binding <binding.bindingId>` |
 | Send | `khala send --binding <binding.bindingId>`, with the reply on stdin |
+| Listening mode | `khala mode get`, then `khala mode set <steer\|sync\|async> --expected-version <version>` on the held binding only; every mode stays `unknown` with the next-turn idle reason, because mode state is not delivery evidence |
 | Busy behavior | `unknown`; the durable inbox retains released entries, but the fallback does not claim harness busy-state semantics |
 | Reconciliation | Unsupported; duplicate suppression is local to the durable inbox |
 | Human cost | Claude Code `default` permission mode requires one approval to start the long-running listener |
