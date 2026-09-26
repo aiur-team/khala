@@ -27,7 +27,11 @@ export function createChannelCreateExchangeAuthority(deps: Readonly<{
   workflow: ChannelCreateWorkflow;
   clock: TrustedClock;
 }>): GrantExchangeAuthority {
-  /** The requester's own create row for this operation, or `null` when the operation is not a creation. */
+  /**
+   * The requester's own create row for this operation, or `null` otherwise. The journal answers `unavailable` for
+   * an access row, another session's row and an outage alike, so each goes to the access authority. That authority
+   * repeats the lookup for an access row, so an outage still stays unavailable and it never authorizes a creation.
+   */
   async function locate(input: ExchangeAuthorityInput, options?: CallOptions) {
     const located = await safe(() => deps.journal.inspectRequester({
       requester: input.requester,
@@ -37,13 +41,11 @@ export function createChannelCreateExchangeAuthority(deps: Readonly<{
       kind: 'create',
       operationId: input.operationId,
     }, options));
-    if (located === null || located.kind === 'unavailable') return 'unavailable' as const;
-    return located.kind === 'found' ? located : null;
+    return located?.kind === 'found' ? located : null;
   }
 
   async function authorize(input: ExchangeAuthorityInput, options?: CallOptions): Promise<ExchangeAuthorityResult> {
     const located = await locate(input, options);
-    if (located === 'unavailable') return { kind: 'unavailable' };
     if (located === null) return await deps.access.authorize(input, options);
     const { context, status } = located;
     if (deps.clock() >= Date.parse(context.deadline) || status.outcome === 'expired') {
@@ -102,7 +104,6 @@ export function createChannelCreateExchangeAuthority(deps: Readonly<{
     options?: CallOptions,
   ): Promise<'connected' | 'closed' | 'unavailable'> {
     const located = await locate(input, options);
-    if (located === 'unavailable') return 'unavailable';
     if (located === null) return await deps.access.markConnected(input, options);
     // A lost acknowledgement response: the row is already connected.
     if (located.status.outcome === 'connected') return 'connected';

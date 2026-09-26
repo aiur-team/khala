@@ -13,7 +13,9 @@ or modal.
 - **The title is the agent's text.** The proposed title appears only as an unverified fact. It is never the
   dialog question, the row subject, or a label, and it cannot add controls or markup.
 - **The server stays authoritative.** Channel creation, reconciliation and the requester-only grant live in
-  `apps/control/src/channel-create/`.
+  `packages/messaging/src/channel-create/`. Each backend injects only its create adapter: hosted in
+  `apps/control/src/composition/agent/channel-create.ts`, internal in
+  `apps/internal/src/composition/channel-discovery/service.ts`.
 
 ```sh
 pnpm --filter @khala/web exec vitest run --config ../../vitest.config.ts src/features/channel-create

@@ -38,7 +38,7 @@ const input: ExchangeAuthorityInput = {
   claimOperationId: 'claim_1',
 };
 
-function authority() {
+function authority(located: 'create' | 'none' = 'create') {
   const accessCalls: string[] = [];
   const access: GrantExchangeAuthority = {
     async authorize() { accessCalls.push('authorize'); return { kind: 'unavailable' }; },
@@ -48,6 +48,8 @@ function authority() {
   // A journal lookup that (wrongly) returns the row to any caller, to isolate this module's own binding check.
   const journal = {
     async inspectRequester() {
+      // The journal answers an access row, another session's row and an outage alike.
+      if (located === 'none') return { kind: 'unavailable' };
       return {
         kind: 'found',
         status: { outcome: 'connecting' },
@@ -102,5 +104,13 @@ describe('create-aware exchange authority', () => {
     const { port } = authority();
 
     expect(await port.authorize({ ...input, ...override })).toEqual({ kind: 'closed', reason: 'closed' });
+  });
+
+  it('hands every operation that is not this session\'s creation to the access authority', async () => {
+    const { port, accessCalls } = authority('none');
+
+    expect(await port.authorize(input)).toEqual({ kind: 'unavailable' });
+    expect(await port.markConnected({ ...input, readyOperationId: 'ready_1' })).toBe('unavailable');
+    expect(accessCalls).toEqual(['authorize', 'markConnected']);
   });
 });

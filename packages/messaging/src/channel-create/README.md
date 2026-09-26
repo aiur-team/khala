@@ -30,10 +30,10 @@ second request store or inbox.
 - **Denial, expiry, revocation.** A denied or expired request creates nothing. A provider refusal closes the row as
   `revoked`, with no channel shared with the agent.
 
-The internal composition injects its own adapter, the `createAdapter` from
-`apps/internal/src/composition/channel-discovery/service.ts`. No production composition root wires
-`composeChannelCreate` yet: hosted channel-access routes are not composed (see `apps/control/src/runtime/discover.ts`),
-and the internal discovery service builds its exchange without the create-aware authority.
+Internal mode runs the workflow. `composeInternalChannelDiscovery`, in
+`apps/internal/src/composition/channel-discovery/service.ts`, composes it with its own `createAdapter`. It serves the
+decorated decision port to the human routes and wraps its exchange authority. Hosted channel-access routes are not
+composed yet (see `apps/control/src/runtime/discover.ts`).
 
 ```sh
 pnpm --filter @khala/messaging exec vitest run --config ../../vitest.config.ts src/channel-create
