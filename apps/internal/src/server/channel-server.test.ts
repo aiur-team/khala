@@ -672,3 +672,53 @@ describe('static routes', () => {
     }
   });
 });
+
+describe('make-external journey routes', () => {
+  const view = {
+    v: 1, channelId, title: 'One', sourceWrite: 'open', roster: [], conversion: null,
+    signIn: { status: 'signed_out', verificationUrl: null, failure: null },
+  } as const;
+
+  function journey() {
+    const calls: Array<{ owner: string; channel: string; action?: string }> = [];
+    return {
+      calls,
+      port: {
+        async view(human: { ownerId: string }, channel: string) {
+          calls.push({ owner: human.ownerId, channel });
+          return { kind: 'ok' as const, value: view };
+        },
+        async act(human: { ownerId: string }, channel: string, action: { kind: string }) {
+          calls.push({ owner: human.ownerId, channel, action: action.kind });
+          return { kind: 'ok' as const, view, rejection: null };
+        },
+      },
+    };
+  }
+
+  it('do not exist when the launch composes no journey', async () => {
+    const h = await start();
+    const reply = await call(h.server.port, { path: `/api/v1/channels/${channelId}/make-external`, headers: await humanSession(h) });
+    expect(reply.status).toBe(404);
+  });
+
+  it('serve the browser human only, with the owner taken from the session', async () => {
+    const j = journey();
+    const h = await start({ makeExternal: j.port });
+    const path = `/api/v1/channels/${channelId}/make-external`;
+    const human = await humanSession(h);
+    expect((await call(h.server.port, { path, headers: human })).json).toEqual(view);
+    const acted = await call(h.server.port, { method: 'POST', path, headers: human, body: { kind: 'sign_in', operationId: 'op-1' } });
+    expect(acted.json).toEqual({ v: 1, view, rejection: null });
+    expect(j.calls).toEqual([{ owner: 'owner-alice', channel: channelId }, { owner: 'owner-alice', channel: channelId, action: 'sign_in' }]);
+
+    for (const credential of [h.fixture.bob.credential]) {
+      expect((await call(h.server.port, { path, headers: bearer(credential) })).status).toBe(403);
+      expect((await call(h.server.port, { method: 'POST', path, headers: bearer(credential), body: { kind: 'commit', operationId: 'op-2' } })).status)
+        .toBe(403);
+    }
+    expect((await call(h.server.port, { path })).status).toBe(401);
+    expect((await call(h.server.port, { method: 'POST', path, headers: human, body: { kind: 'bind', operationId: 'op-3' } })).status).toBe(400);
+    expect(j.calls).toHaveLength(2);
+  });
+});

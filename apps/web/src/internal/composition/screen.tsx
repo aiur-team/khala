@@ -11,6 +11,8 @@ import { KhalaPageFrame } from '../../shell/KhalaPageFrame';
 import type { ShellMode } from '../../shell/types';
 import type { HumanApplicationHandle, HumanRouteContext } from '../../composition/human/application';
 import { HumanScreen } from '../../composition/human/screen';
+import { MakeExternalPage } from '../make-external/MakeExternalPage';
+import type { MakeExternalPort } from '../make-external/port';
 import { LocalRoom, type LocalStopCapability, SessionEnded } from './room';
 import type { LocalRoute, LocalRouteCodec } from './routes';
 
@@ -29,6 +31,8 @@ export type LocalApplicationScreenProps = Readonly<{
   mode?: ShellMode;
   /** The binding Stop control; absent means the channel page shows no Stop. */
   stop?: LocalStopCapability;
+  /** The Make-external journey; without it the channel page offers no such action. */
+  makeExternal?: MakeExternalPort | null;
 }>;
 
 /** Moves focus to a route's heading so a screen-reader user hears the new page. */
@@ -44,7 +48,7 @@ function NotFound() {
 
 function channelIdIn(path: string, routes: LocalRouteCodec): string | null {
   const route = routes.parse(path);
-  return route.kind === 'channel' ? route.roomId : null;
+  return route.kind === 'channel' || route.kind === 'make_external' ? route.roomId : null;
 }
 
 /**
@@ -78,7 +82,7 @@ function RouteLinks({ routes, navigateRoute, children }: {
  * terminal relaunch instruction rather than a sign-in prompt.
  */
 export function LocalApplicationScreen({
-  application, routes, transport, navigateRoute, owner, mode = 'standalone', evidencePort, stop,
+  application, routes, transport, navigateRoute, owner, mode = 'standalone', evidencePort, stop, makeExternal = null,
 }: LocalApplicationScreenProps) {
   const renderRoute = (context: HumanRouteContext, route: LocalRoute): ReactNode => {
     switch (route.kind) {
@@ -98,11 +102,17 @@ export function LocalApplicationScreen({
               transport={transport}
               {...(evidencePort ? { evidencePort } : {})}
               {...(stop ? { stop } : {})}
+              makeExternal={makeExternal}
+              onMakeExternal={() => navigateRoute(routes.makeExternalPath(route.roomId))}
             />
           </>
         );
       case 'channel_settings':
         return <ChannelSettingsRoute settings={owner.settings} roomId={route.roomId} channelHref={routes.roomPath(route.roomId)} />;
+      case 'make_external':
+        return makeExternal
+          ? <MakeExternalPage port={makeExternal} channelId={route.roomId} onBack={() => navigateRoute(routes.roomPath(route.roomId))} />
+          : <NotFound />;
       case 'channel_requests':
         return <ChannelRequestsRoute selectedHandle={route.selectedHandle} />;
       case 'not_found':

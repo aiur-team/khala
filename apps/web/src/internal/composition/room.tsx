@@ -12,6 +12,8 @@ import type { HumanRouteContext } from '../../composition/human/application';
 import { StopControl } from '../controls/StopControl';
 import { createStopController } from '../controls/stop-controller';
 import type { BindingStopPort } from '../controls/stop-port';
+import { MakeExternalEntry, linkedSendReason, useJourneySummary } from '../make-external/ChannelEntry';
+import type { MakeExternalPort } from '../make-external/port';
 import { createPendingSendStore } from './pending-store';
 
 /** The binding Stop control's port and the channel URL a replacement agent joins with. */
@@ -122,14 +124,20 @@ export function SessionEnded({ roomId, headingRef }: {
 /** Receipt projections do not raise channel hints, so evidence is also reread on this interval. */
 export const EVIDENCE_POLL_MS = 5_000;
 
-export function LocalRoom({ context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop }: {
+export function LocalRoom({
+  context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, makeExternal = null, onMakeExternal = () => undefined,
+}: {
   context: HumanRouteContext;
   roomId: RoomId;
   transport: LocalTransport;
   evidencePort?: ReceiptEvidencePort;
   evidencePollMs?: number;
   stop?: LocalStopCapability;
+  /** The Make-external journey port; without it the page offers no such action. */
+  makeExternal?: MakeExternalPort | null;
+  onMakeExternal?: () => void;
 }) {
+  const journey = useJourneySummary(makeExternal, roomId);
   const evidence = useMemo(
     () => (evidencePort ? createReceiptEvidenceController(evidencePort, roomId) : undefined),
     [evidencePort, roomId],
@@ -192,16 +200,19 @@ export function LocalRoom({ context, roomId, transport, evidencePort, evidencePo
             roomPort={context.room}
             roomId={roomId}
             viewer={viewer}
-            sendBlockedReason={sendBlockedReason(state)}
+            sendBlockedReason={linkedSendReason(journey) ?? sendBlockedReason(state)}
             pendingStore={pendingStore}
             {...(evidence ? { evidence } : {})}
           />
         </>
       )}
       renderReview={() => null}
-      renderControls={() => (stop && stopController
-        ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} />
-        : null)}
+      renderControls={() => (
+        <>
+          {stop && stopController ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /> : null}
+          <MakeExternalEntry summary={journey} onOpen={onMakeExternal} />
+        </>
+      )}
     />
   );
 }
