@@ -98,11 +98,13 @@ is the source; `validatePlugin` enforces it.
 | Hook events | synchronous `UserPromptSubmit` (claim hook), `PostToolUse`, `Stop`, `SessionEnd`; the idle watcher is a second `Stop` entry and the only hook allowed `asyncRewake` (#178 amendment) |
 | Hook commands | `hooks/post-tool-use.mjs`, `hooks/stop.mjs`, `hooks/stop-watcher.mjs`, `hooks/session-end.mjs` |
 | Skill and commands | skill `khala`; exact forms `/khala send`, `/khala read`, `/khala create`, `/khala join <channel-url>`, `/khala who` |
-| MCP entry | server `khala`, launched as `khala mcp-serve`; tools `khala_send`, `khala_read`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_list_agents` |
+| MCP entry | server `khala`, launched as `khala mcp-serve`; tools `khala_send`, `khala_read`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_channel_access_status`, `khala_list_agents` |
 
 The command and tool lists are the full planned set from decisions 24 and 30 and
 the claude-plugin, room-discovery and listening-modes contracts. Later tickets
-implement them; adding a name still needs a decision.
+implement them; adding a name still needs a decision. `khala_channel_access_status`
+(#341) is a decided addition, an amendment to decision 27 like the `KHALA_MCP_HARNESS`
+marker (#333).
 
 ## `/khala send` and `/khala read`
 

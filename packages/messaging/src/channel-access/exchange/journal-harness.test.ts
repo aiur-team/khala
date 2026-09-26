@@ -12,10 +12,10 @@ import {
   deriveOkpKeyThumbprint,
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it } from 'vitest';
-import { createChannelAccessPolicy } from '../policy';
-import { createChannelAccessService } from '../service';
-import { createChannelAccessStore } from '../store';
-import { fakeControlStore } from '../support.test';
+import { createChannelAccessPolicy } from '../journal/policy';
+import { createChannelAccessService } from '../journal/service';
+import { createChannelAccessStore } from '../journal/store';
+import { fakeControlStore } from '../journal/support.test';
 
 export const T0 = Date.parse('2026-09-25T12:00:00Z');
 export const DIGEST = 'a'.repeat(43);
