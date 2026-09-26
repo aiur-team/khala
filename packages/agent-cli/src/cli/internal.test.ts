@@ -73,6 +73,30 @@ describe('khala internal arguments', () => {
   });
 });
 
+describe('khala internal discovery arguments', () => {
+  it('parses the discovery grammar with optional untrusted labels', () => {
+    expect(parseInternalArguments(['discovery', '--harness', 'codex', '--session', '019a-7f'])).toEqual({
+      kind: 'discovery', harness: 'codex', sessionId: '019a-7f', displayLabel: null, workspaceLabel: null,
+    });
+    expect(parseInternalArguments(['discovery', '--workspace', 'Khala repo', '--session', 's1', '--label', 'Build agent', '--harness', 'opencode']))
+      .toEqual({ kind: 'discovery', harness: 'opencode', sessionId: 's1', displayLabel: 'Build agent', workspaceLabel: 'Khala repo' });
+  });
+
+  it('rejects missing, repeated, unknown and malformed discovery arguments', () => {
+    for (const args of [
+      ['discovery'], ['discovery', '--harness', 'codex'], ['discovery', '--session', 's1'],
+      ['discovery', '--harness', 'codex', '--session', 's1', '--harness', 'claude'],
+      ['discovery', '--harness', 'codex', '--session', 's1', '--channel', 'ch_1'],
+      ['discovery', '--harness', 'Codex', '--session', 's1'], ['discovery', '--harness', 'codex', '--session', 'has space'],
+      ['discovery', '--harness', 'codex', '--session', 's1', '--label', 'two\nlines'],
+      ['discovery', '--harness', 'codex', '--session', 's1', '--label', ''],
+      ['discovery', '--harness', 'codex', '--session', 's1', '--workspace'],
+    ]) {
+      expect(() => parseInternalArguments(args), args.join(' ')).toThrow(CliError);
+    }
+  });
+});
+
 describe('khala internal delegation', () => {
   it('hands the exact parsed command and process context to the lazily loaded runtime', async () => {
     const io = streams();
