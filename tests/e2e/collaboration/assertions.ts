@@ -1,0 +1,369 @@
+// The KHA-139 acceptance assertions, each a check over live evidence records. Records
+// hold identifiers only. Order is compared within one owner's clock, never across
+// owners, and a relay or transport receipt is never read as model consumption.
+
+import type { EvidenceRecord } from '../harness/evidence';
+import type { CollaborationCase, GateId } from './scenario';
+
+export type Verdict =
+  | Readonly<{ passed: true; evidenceRef: string }>
+  | Readonly<{ passed: false; reason: string }>;
+
+export type AssertionSpec = Readonly<{
+  id: string;
+  /** Plan requirements (R*) and acceptance examples (AE*) this assertion covers. */
+  covers: readonly string[];
+  unit: 'U2' | 'U3' | 'U4';
+  /** Open gates that turn this row into `blocked` instead of checking it. */
+  gates: readonly GateId[];
+  check(records: readonly EvidenceRecord[], acceptance: CollaborationCase): Verdict;
+}>;
+
+const pass = (evidenceRef: string): Verdict => ({ passed: true, evidenceRef });
+const fail = (reason: string): Verdict => ({ passed: false, reason });
+
+/** `<kind>/<operationId>` for one record; the report prefixes the run id. */
+export const ref = (record: EvidenceRecord): string => `${record.kind}/${record.operationId}`;
+
+const owned = (records: readonly EvidenceRecord[], ownerId: string, kind: string) =>
+  records.filter(record => record.ownerId === ownerId && record.kind === kind);
+
+/** Same owner, same clock: `a` happened before `b`. Log order breaks equal readings. */
+function before(records: readonly EvidenceRecord[], a: EvidenceRecord, b: EvidenceRecord): boolean {
+  if (a.clockId !== b.clockId) throw new Error(`cannot order ${ref(a)} and ${ref(b)} across clocks`);
+  return a.at < b.at || (a.at === b.at && records.indexOf(a) < records.indexOf(b));
+}
+
+const first = (records: readonly EvidenceRecord[], candidates: readonly EvidenceRecord[], after?: EvidenceRecord) =>
+  candidates.find(candidate => after === undefined || before(records, after, candidate));
+
+/** Kinds meaning released content entered a model's context. Receipts never do. */
+const CONSUMPTION: readonly string[] = ['model.input', 'context.consumed'];
+
+/**
+ * Everything the owner's model consumed follows that owner's own review release of the
+ * same operation. Under the G-AUTOMATION ruling a human approves every message, so an
+ * automatic release never counts. Another owner's release never counts either.
+ */
+function gatedConsumption(records: readonly EvidenceRecord[], ownerId: string, requireAny: boolean): Verdict {
+  const consumed = records.filter(record => record.ownerId === ownerId && CONSUMPTION.includes(record.kind));
+  if (requireAny && owned(records, ownerId, 'model.input').length === 0) return fail(`no model.input recorded for ${ownerId}`);
+  for (const entry of consumed) {
+    const reviewed = owned(records, ownerId, 'review.released')
+      .some(candidate => candidate.operationId === entry.operationId && before(records, candidate, entry));
+    if (!reviewed) return fail(`${ref(entry)} reached ${ownerId}'s model context without ${ownerId}'s own review release`);
+  }
+  return pass(consumed.length > 0 ? consumed.map(ref).join(',') : `none/${ownerId}`);
+}
+
+function onboarded(records: readonly EvidenceRecord[], ownerId: string): Verdict {
+  for (const kind of ['setup.oauth_signed_in', 'setup.link_joined', 'setup.session_bound']) {
+    if (owned(records, ownerId, kind).length === 0) return fail(`${ownerId} has no ${kind}`);
+  }
+  return pass(`setup/${ownerId}`);
+}
+
+type TaskCheck = (records: readonly EvidenceRecord[], acceptance: CollaborationCase) => Verdict;
+
+/** The P05 plan exchange in order: sender (0 = A, 1 = B) and the `task.<step>` kind it records. */
+const PLAN_STEPS = [
+  ['plan_proposed', 0], ['critique_sent', 1], ['plan_revised', 0], ['plan_confirmed', 1],
+] as const;
+
+type ExchangeMessage = Readonly<{ step: string; sender: string; recipient: string; message: EvidenceRecord }>;
+
+/** The four exchange messages, each recorded exactly once by its sender, or why not. */
+function exchange(records: readonly EvidenceRecord[], acceptance: CollaborationCase): ExchangeMessage[] | string {
+  const ids = [acceptance.owners[0].ownerId, acceptance.owners[1].ownerId];
+  const messages: ExchangeMessage[] = [];
+  for (const [step, from] of PLAN_STEPS) {
+    const sent = records.filter(record => record.kind === `task.${step}`);
+    if (sent.length !== 1) return `expected one task.${step}, found ${sent.length}`;
+    const message = sent[0]!;
+    if (message.ownerId !== ids[from]) return `${ref(message)} was sent by ${message.ownerId}, not ${ids[from]}`;
+    messages.push({ step, sender: ids[from]!, recipient: ids[1 - from]!, message });
+  }
+  return messages;
+}
+
+/**
+ * Checks for the P05 plan-agreement task. Plan hashes travel as `op-planhash-<hex>`
+ * operation ids, so records still hold identifiers only.
+ */
+export const TASK_CHECKS: Readonly<Record<string, TaskCheck>> = Object.freeze({
+  /** Each message is released by the recipient's own review, reaches its model, and the reply follows it. */
+  plan_exchange_reviewed(records, acceptance) {
+    const messages = exchange(records, acceptance);
+    if (typeof messages === 'string') return fail(messages);
+    let previousInput: EvidenceRecord | undefined;
+    for (const { step, sender, recipient, message } of messages) {
+      if (previousInput && !before(records, previousInput, message)) {
+        return fail(`${sender} sent task.${step} before its model consumed the message it answers`);
+      }
+      const same = (candidate: EvidenceRecord) => candidate.operationId === message.operationId;
+      const release = owned(records, recipient, 'review.released').find(same);
+      if (!release) return fail(`${recipient} did not approve delivery of task.${step} (${ref(message)})`);
+      const input = owned(records, recipient, 'model.input').find(candidate => same(candidate) && before(records, release, candidate));
+      if (!input) return fail(`task.${step} never reached ${recipient}'s model after ${recipient} approved it`);
+      previousInput = input;
+    }
+    return pass(messages.map(({ message }) => ref(message)).join(','));
+  },
+  /** A records the hash after its revised plan, and both agents quote it in their final messages. */
+  revised_plan_hash_agreed(records, acceptance) {
+    const messages = exchange(records, acceptance);
+    if (typeof messages === 'string') return fail(messages);
+    const revised = records.filter(record => record.kind === 'task.revised_plan_hash');
+    if (revised.length !== 1) return fail(`expected one task.revised_plan_hash, found ${revised.length}`);
+    const recorded = revised[0]!;
+    const a = acceptance.owners[0].ownerId;
+    if (recorded.ownerId !== a) return fail(`${ref(recorded)} was recorded by ${recorded.ownerId}, not ${a}`);
+    const planRevised = messages.find(({ step }) => step === 'plan_revised')!.message;
+    if (!before(records, planRevised, recorded)) return fail(`${ref(recorded)} is not tied to ${a}'s ${ref(planRevised)}`);
+    const hash = recorded.operationId;
+    const refs = [ref(recorded)];
+    for (const ownerId of [acceptance.owners[0].ownerId, acceptance.owners[1].ownerId]) {
+      const quotes = owned(records, ownerId, 'task.final_plan_quote');
+      if (quotes.length !== 1) return fail(`expected one task.final_plan_quote from ${ownerId}, found ${quotes.length}`);
+      const quote = quotes[0]!;
+      if (quote.operationId !== hash) return fail(`${ownerId} quoted ${quote.operationId}, not the revised plan ${hash}`);
+      const last = messages.filter(({ sender }) => sender === ownerId).at(-1)!.message;
+      if (before(records, quote, last)) return fail(`${ref(quote)} precedes ${ownerId}'s final message ${ref(last)}`);
+      refs.push(ref(quote));
+    }
+    return pass(refs.join(','));
+  },
+  /** D11: a human approval names every agent granted access; no agent admits itself or another. */
+  no_agent_admission(records, acceptance) {
+    const byAgent = records.find(record => record.kind === 'admission.agent_approved');
+    if (byAgent) return fail(`an agent approved an admission (${ref(byAgent)})`);
+    const refs: string[] = [];
+    for (const owner of acceptance.owners.slice(0, 2)) {
+      const grants = owned(records, owner.ownerId, 'admission.granted');
+      if (grants.length === 0) return fail(`${owner.ownerId}'s agent has no recorded admission`);
+      for (const grant of grants) {
+        const approved = owned(records, owner.ownerId, 'admission.human_approved')
+          .some(candidate => candidate.operationId === grant.operationId && before(records, candidate, grant));
+        if (!approved) return fail(`${ref(grant)} was granted without a prior human approval`);
+        refs.push(ref(grant));
+      }
+    }
+    return pass(refs.join(','));
+  },
+  /** Every exchange message shows exactly once in A's and in B's timeline. */
+  exchange_once_per_timeline(records, acceptance) {
+    const messages = exchange(records, acceptance);
+    if (typeof messages === 'string') return fail(messages);
+    for (const owner of acceptance.owners.slice(0, 2)) {
+      for (const { step, message } of messages) {
+        const shown = owned(records, owner.ownerId, 'timeline.shown').filter(record => record.operationId === message.operationId);
+        if (shown.length !== 1) return fail(`task.${step} shows ${shown.length} times in ${owner.ownerId}'s timeline`);
+      }
+    }
+    return pass(`timeline.shown/${messages.length}x2`);
+  },
+});
+
+export const ASSERTIONS: readonly AssertionSpec[] = Object.freeze([
+  {
+    id: 'ordinary_onboarding', covers: ['R1'], unit: 'U2', gates: [],
+    check(records, acceptance) {
+      const configured = records.find(record => record.kind === 'setup.human_configured');
+      if (configured) return fail(`${configured.ownerId} performed technical connector setup (${ref(configured)})`);
+      for (const owner of acceptance.owners) {
+        const verdict = onboarded(records, owner.ownerId);
+        if (!verdict.passed) return verdict;
+      }
+      return pass('setup/all-owners');
+    },
+  },
+  {
+    id: 'exact_review_release', covers: ['R2', 'AE1'], unit: 'U2', gates: [],
+    check(records, acceptance) {
+      const b = acceptance.owners[1].ownerId;
+      const released = owned(records, b, 'review.released');
+      if (released.length === 0) return fail(`${b} released nothing for review`);
+      for (const release of released) {
+        const preview = owned(records, b, 'review.previewed').find(candidate =>
+          candidate.operationId === release.operationId && before(records, candidate, release));
+        if (!preview) return fail(`${ref(release)} was released without ${b} previewing the exact content first`);
+      }
+      return gatedConsumption(records, b, true);
+    },
+  },
+  {
+    id: 'no_unreleased_consumption', covers: ['R2', 'AE1'], unit: 'U2', gates: [],
+    check(records, acceptance) {
+      for (const owner of acceptance.owners) {
+        const verdict = gatedConsumption(records, owner.ownerId, false);
+        if (!verdict.passed) return verdict;
+      }
+      return pass('consumption/all-owners');
+    },
+  },
+  {
+    id: 'session_identity_retained', covers: ['AE1'], unit: 'U2', gates: [],
+    check(records, acceptance) {
+      const changed = records.find(record => record.kind === 'session.identity_changed');
+      if (changed) return fail(`${changed.ownerId}'s session identity changed (${ref(changed)})`);
+      const b = acceptance.owners[1].ownerId;
+      if (owned(records, b, 'model.input').length === 0) return fail(`no model.input recorded for ${b}`);
+      for (const owner of acceptance.owners.slice(0, 2)) {
+        for (const input of owned(records, owner.ownerId, 'model.input')) {
+          const matched = owned(records, owner.ownerId, 'session.identity_matched')
+            .some(candidate => candidate.operationId === input.operationId);
+          if (!matched) return fail(`${ref(input)} has no session.identity_matched for ${owner.ownerId}`);
+        }
+      }
+      return pass('session.identity_matched');
+    },
+  },
+  {
+    id: 'useful_task_result', covers: ['R1', 'AE1'], unit: 'U2', gates: ['G-TASK'],
+    check(records, acceptance) {
+      const refs: string[] = [];
+      for (const id of acceptance.expectedTaskAssertions) {
+        const check = TASK_CHECKS[id];
+        if (!check) return fail(`task assertion ${id} has no check`);
+        const verdict = check(records, acceptance);
+        if (!verdict.passed) return fail(`${id}: ${verdict.reason}`);
+        refs.push(verdict.evidenceRef);
+      }
+      return pass(refs.join(','));
+    },
+  },
+  {
+    id: 'trusted_delivery', covers: ['R2'], unit: 'U3', gates: ['G-AUTOMATION'],
+    check(records, acceptance) {
+      // G-AUTOMATION ruling: hosted `auto` is refused and the local fence may accept it.
+      // Either way the effective state is reported apart from the request, and no
+      // message is released without a human.
+      const b = acceptance.owners[1].ownerId;
+      const requested = owned(records, b, 'trust.requested')[0];
+      if (!requested) return fail(`${b} never requested trusted delivery`);
+      const answer = first(records, records.filter(record => record.ownerId === b
+        && (record.kind === 'trust.effective' || record.kind === 'trust.refused')
+        && record.operationId === requested.operationId), requested);
+      if (!answer) return fail(`${b}'s trusted-mode request has no reported effective state`);
+      const auto = records.find(record => record.kind === 'trust.auto_released');
+      if (auto) return fail(`${ref(auto)} was released automatically; a human approves every message`);
+      return pass(`${ref(requested)},${ref(answer)}`);
+    },
+  },
+  {
+    id: 'rearm_waits', covers: ['R2'], unit: 'U3', gates: ['G-AUTOMATION'],
+    check(records, acceptance) {
+      const b = acceptance.owners[1].ownerId;
+      const rearm = owned(records, b, 'trust.rearmed')[0];
+      if (!rearm) return fail(`${b} never re-armed review`);
+      const leaked = first(records, owned(records, b, 'trust.auto_released'), rearm);
+      if (leaked) return fail(`${ref(leaked)} bypassed review after ${b} re-armed it`);
+      const waiting = first(records, owned(records, b, 'review.pending'), rearm);
+      if (!waiting) return fail(`no message waited for ${b}'s review after re-arm`);
+      const early = owned(records, b, 'model.input').find(input => input.operationId === waiting.operationId
+        && !owned(records, b, 'review.released').some(release =>
+          release.operationId === input.operationId && before(records, release, input)));
+      if (early) return fail(`${ref(early)} reached ${b}'s model before review after re-arm`);
+      return pass(ref(waiting));
+    },
+  },
+  {
+    id: 'third_owner_independent', covers: ['R2'], unit: 'U3', gates: [],
+    check(records, acceptance) {
+      const c = acceptance.owners[2].ownerId;
+      const joined = onboarded(records, c);
+      if (!joined.passed) return joined;
+      // B's trust or releases never stand in for C's own.
+      return gatedConsumption(records, c, true);
+    },
+  },
+  {
+    id: 'third_owner_history', covers: ['R2'], unit: 'U3', gates: ['G-RETENTION'],
+    check(records, acceptance) {
+      const c = acceptance.owners[2].ownerId;
+      const admitted = owned(records, c, 'history.admitted')[0];
+      if (!admitted) return fail(`${c}'s admission point is not recorded`);
+      const earlier = owned(records, c, 'history.pre_admission_read')[0];
+      if (earlier) return fail(`${c} read history from before admission (${ref(earlier)}) under a no-earlier-history link`);
+      return pass(ref(admitted));
+    },
+  },
+  {
+    id: 'busy_notified_then_consumed', covers: ['R3', 'AE2'], unit: 'U4', gates: ['G-AUTOMATION'],
+    check(records) {
+      const refs: string[] = [];
+      for (const busy of records.filter(record => record.kind === 'session.busy')) {
+        const queued = owned(records, busy.ownerId, 'delivery.queued')
+          .find(candidate => candidate.operationId === busy.operationId && before(records, busy, candidate));
+        if (!queued) continue;
+        const consumed = owned(records, busy.ownerId, 'context.consumed')
+          .find(candidate => candidate.operationId === busy.operationId && before(records, queued, candidate));
+        if (!consumed) return fail(`${ref(queued)} was queued for a busy session but consumption was never observed`);
+        refs.push(ref(queued), ref(consumed));
+      }
+      return refs.length > 0 ? pass(refs.join(',')) : fail('no busy recipient was exercised with a queued message');
+    },
+  },
+  {
+    id: 'offline_not_consumed', covers: ['R3', 'AE2'], unit: 'U4', gates: [],
+    check(records) {
+      const episodes = records.filter(record => record.kind === 'presence.offline');
+      if (episodes.length === 0) return fail('no participant went offline');
+      let relayed = 0;
+      for (const offline of episodes) {
+        const own = (kind: string) => owned(records, offline.ownerId, kind);
+        const online = first(records, own('presence.online'), offline);
+        if (!online) return fail(`${offline.ownerId} never came back online to catch up`);
+        const accepted = own('relay.accepted').filter(record => before(records, offline, record) && before(records, record, online));
+        relayed += accepted.length;
+        for (const relay of accepted) {
+          const same = (candidate: EvidenceRecord) => candidate.operationId === relay.operationId;
+          const consumed = own('context.consumed').find(same);
+          if (!consumed) return fail(`${ref(relay)} was never consumed after catch-up`);
+          if (before(records, consumed, online)) return fail(`${ref(consumed)} is credited while ${offline.ownerId} was offline`);
+          const caughtUp = own('delivery.caught_up').find(candidate => same(candidate)
+            && before(records, online, candidate) && before(records, candidate, consumed));
+          if (!caughtUp) return fail(`${ref(consumed)} has no catch-up after ${offline.ownerId} reconnected`);
+          const unknown = own('harness.outcome_unknown').find(candidate => same(candidate) && before(records, candidate, consumed));
+          if (unknown) return fail(`${ref(unknown)} was unknown and later counted as consumed without new evidence`);
+        }
+      }
+      if (relayed === 0) return fail('the relay accepted nothing for an offline participant');
+      return pass(episodes.map(ref).join(','));
+    },
+  },
+  {
+    id: 'browser_closed', covers: ['R3'], unit: 'U4', gates: ['P02'],
+    check(records, acceptance) {
+      // P02 ruling: a message approved before the browser closed still reaches the
+      // session. A new message waits for approval until the owner opens the app again.
+      if (acceptance.browserClosedMode !== 'required') return pass(`decision/${acceptance.browserClosedMode}`);
+      const closed = records.find(record => record.kind === 'browser.closed');
+      if (!closed) return fail('browser-closed operation is required but no browser was closed');
+      const own = (kind: string) => owned(records, closed.ownerId, kind);
+      const reopened = first(records, own('browser.opened'), closed);
+      if (!reopened) return fail(`${closed.ownerId} never opened the app again to approve waiting messages`);
+      const whileClosed = (record: EvidenceRecord) => before(records, closed, record) && before(records, record, reopened);
+      const flowed = own('context.consumed').find(consumed => whileClosed(consumed)
+        && own('review.released').some(release => release.operationId === consumed.operationId && before(records, release, closed)));
+      if (!flowed) return fail(`no message ${closed.ownerId} approved earlier was consumed while the browser was closed`);
+      const early = own('review.released').find(whileClosed);
+      if (early) return fail(`${ref(early)} was approved while ${closed.ownerId}'s browser was closed`);
+      const waiting = own('review.pending').find(whileClosed);
+      if (!waiting) return fail(`no new message arrived for ${closed.ownerId} while the browser was closed`);
+      const approved = own('review.released').find(release => release.operationId === waiting.operationId && before(records, reopened, release));
+      if (!approved) return fail(`${ref(waiting)} was never approved after ${closed.ownerId} opened the app`);
+      return pass(`${ref(flowed)},${ref(waiting)},${ref(approved)}`);
+    },
+  },
+  {
+    id: 'recovery_without_backfill', covers: ['R3'], unit: 'U4', gates: [],
+    check(records) {
+      const recovered = records.find(record => record.kind === 'recovery.completed');
+      if (!recovered) return fail('no recovery was exercised');
+      const backfill = records.find(record => record.kind === 'recovery.backfill');
+      if (backfill) return fail(`${ref(backfill)} restored history, which P14 excludes`);
+      return pass(ref(recovered));
+    },
+  },
+]);
