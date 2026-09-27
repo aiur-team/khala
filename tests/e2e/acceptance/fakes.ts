@@ -32,7 +32,8 @@ export const UNPROVEN_ASYNC_CODEX = interactiveCodexCapabilities(CODEX_VERSION, 
 
 export function profileInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const role = (name: RoleName, model: string) => ({
-    role: name, harness: 'codex', provider: 'openai', model, labels: [`harness:codex`, `model:${model}`], capabilities: PROVEN_CODEX,
+    role: name, harness: 'codex', provider: 'openai', model, cliVersion: CODEX_VERSION,
+    capabilities: PROVEN_CODEX,
   });
   return {
     name: 'offline-pair',
@@ -139,6 +140,10 @@ export function createWorld(
     return {
       sessionId: `native-${role}-${ticket}`, pid: 40_000 + ticket, harness: expected.harness, provider: expected.provider,
       model: expected.model, cliVersion: CODEX_VERSION, launchCommand: `${expected.harness} --model ${expected.model}`, startedAt: iso(),
+      capturedAt: new Date(now - 1_000).toISOString(),
+      repository: profile.repository, runId: RUN_ID, ticket, role, processStartTicks: String(1000 + ticket),
+      bootId: 'boot-offline', executable: '/usr/bin/node', argv: ['codex', '--model', expected.model], tty: '/dev/pts/1',
+      tmuxPane: role === 'a' ? '%1' : '%2',
     };
   };
   const bindingOf = (role: RoleName) => bindings.filter(binding => binding.participantId === `participant_${role}`).at(-1);
@@ -213,6 +218,7 @@ export function createWorld(
         const expected = profile.roles.find(entry => entry.role === role)!;
         requests.set(role, {
           requestHandle: `request_${role}`, revision: '1', outcome: 'pending_owner', harness: expected.harness,
+          createdAt: iso(),
           sessionFingerprint: sessionDigest(expected.harness, session?.sessionId ?? `unrecorded-${role}`),
         });
       }
@@ -309,9 +315,8 @@ export function createWorld(
     status: { async status(spec) { ran.push(`status ${spec}`); return { ok: true, output: { v: 1, connected: false } }; } },
     github,
     aiur: {
-      async session(ticket) {
-        const role = [...ticketOf].find(([, number]) => number === ticket)?.[0];
-        return role ? sessionOf(role) : null;
+      async session(ticket, runId, role) {
+        return runId === RUN_ID && ticketOf.get(role) === ticket ? sessionOf(role) : null;
       },
       async alive(session) { return !signalled.includes(session.pid); },
     },
