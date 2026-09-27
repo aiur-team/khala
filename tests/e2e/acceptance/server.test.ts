@@ -38,6 +38,7 @@ describe('runner server adapters over the real launcher', () => {
     const timeline = await owner.timeline();
     expect(timeline.map(event => [event.eventId, event.authorKind, event.body])).toEqual([[eventId, 'human', 'owner line']]);
     expect(await owner.accessRequests()).toEqual([]);
+    expect(await owner.bindings()).toEqual([]);
 
     // A binding the server never issued, or an old generation of one, is refused before anything is revoked.
     const stale = await owner.stop([{ bindingId: 'binding_never_issued', generation: 1, agentParticipantId: 'participant_nobody' }]);
