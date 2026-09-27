@@ -10,7 +10,7 @@ import type { AgentClientPort } from '../cli/types.js';
 import type { OpenCodeControls } from '../opencode/bridge.js';
 import { type KhalaOpenCodeDependencies, openCodeVersionFromExecPath } from '../opencode/plugin.js';
 import { openOpenCodeBridgeStore } from '../opencode/store.js';
-import { deliveringInbox } from './delivering-inbox.js';
+import { type OpenGenerationInbox, deliveringInbox } from './delivering-inbox.js';
 import { createInternalClient, readInternalDescriptor } from './internal.js';
 import { type InternalActivationOutcome, restoreInternalGrant } from './internal-activation.js';
 import { type InternalDelivery, createInternalDelivery } from './internal-delivery.js';
@@ -109,6 +109,8 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
 
   /** Pulls as `delivery` does, restoring the binding once when its capability is refused. */
   const restoringDelivery = (sessionID: string, delivery: InternalDelivery): InternalDelivery => ({
+    issueBatch: (held, releases) => delivery.issueBatch(held, releases),
+    acknowledge: (held, acknowledgement) => delivery.acknowledge(held, acknowledgement),
     async pull(held, open, signal) {
       const pulled = await delivery.pull(held, open, signal);
       if (pulled !== 'revoked') return pulled;
@@ -134,8 +136,11 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
     async listAgents() { return { kind: 'unavailable' }; },
   });
 
-  const openGeneration = (bindingId: string, generation: number) => openInbox({
+  // The delivering inbox passes the recorder that writes this generation's receipts on the server.
+  const openGeneration: OpenGenerationInbox = (bindingId, generation, inboxOptions) => openInbox({
     stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
+    ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+    ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
   });
 
   return {
