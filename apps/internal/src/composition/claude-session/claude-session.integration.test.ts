@@ -62,8 +62,9 @@ function call(origin: string, input: Readonly<{ method?: string; path: string; h
 
 type ToolResponse = { id: number; result?: { structuredContent: Record<string, unknown>; isError?: boolean }; error?: unknown };
 
-/** The Claude Code version the tests' launcher inspects: installed, and not in the proven list. */
+/** The exact installed mode-proof version, with an adjacent version for grant tests. */
 const INSTALLED_CLAUDE = '2.1.283';
+const EXPERIMENTAL_CLAUDE = '2.1.284';
 
 /** A fresh launch, or with `resume` the same root and channel relaunched on the same port. */
 async function launched(
@@ -310,9 +311,9 @@ describe('Claude mcp-serve against the internal launcher', () => {
     skew += CLAUDE_SETTLE_INTERVAL_MS;
 
     // The next boundary settles the grant itself; the agent never calls the status tool again.
-    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: 'connected' });
     // Reported once; the session stays connected.
-    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: null });
     const [send, who] = await serve(report.descriptorPath, granted, [
       ['khala_send', { message: 'hello without a retry' }], ['khala_list_agents'],
     ]);
@@ -339,8 +340,8 @@ describe('Claude mcp-serve against the internal launcher', () => {
     // The clock never moves: every other boundary stays inside the interval.
     await approvePending(report.origin, owner);
     await expect(hooks.hook(session)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
-    await expect(hooks.hook(session, { stop: true })).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
-    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
+    await expect(hooks.hook(session, { stop: true })).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: 'connected' });
+    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: null });
   });
 
   it('reports a denial at the next hook boundary, and the session stays unbound', async () => {
@@ -821,7 +822,7 @@ describe('Claude delivery through the internal launcher', () => {
   });
 
   it('delivers to a bound session on an experimental route: hook pull, then read, then next-call acknowledgement', async () => {
-    const session = await bound('session-delivered');
+    const session = await bound('session-delivered', async () => EXPERIMENTAL_CLAUDE);
 
     // The route is labelled experimental for the inspected version, never proven.
     const mode = JSON.parse(await session.run('mode'));
@@ -835,7 +836,7 @@ describe('Claude delivery through the internal launcher', () => {
     });
     expect(listed.status).toBe(200);
     expect(listed.json.bindings).toMatchObject([{
-      harnessVersion: INSTALLED_CLAUDE, view: { support: { sync: { status: 'experimental', testedVersion: INSTALLED_CLAUDE } } },
+      harnessVersion: EXPERIMENTAL_CLAUDE, view: { support: { sync: { status: 'experimental', testedVersion: EXPERIMENTAL_CLAUDE } } },
     }]);
 
     await session.post('first from the owner');
@@ -863,7 +864,7 @@ describe('Claude delivery through the internal launcher', () => {
   });
 
   it('arms the bounded idle window and reports only unacknowledged human release presence under the live mode', async () => {
-    const session = await bound('session-idle-fence');
+    const session = await bound('session-idle-fence', async () => EXPERIMENTAL_CLAUDE);
     const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
     const [entry] = (await call(session.report.origin, { path: bindings, headers: session.owner })).json.bindings;
     const binding = `${bindings}/${encodeURIComponent(entry.binding.bindingId)}`;
@@ -928,7 +929,7 @@ describe('Claude delivery through the internal launcher', () => {
   });
 
   it('delivers at the next PostToolUse under steer only after the owner grants the experimental route', async () => {
-    const session = await bound('session-granted');
+    const session = await bound('session-granted', async () => EXPERIMENTAL_CLAUDE);
     const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
     const [entry] = (await call(session.report.origin, { path: bindings, headers: session.owner })).json.bindings;
     const binding = `${bindings}/${encodeURIComponent(entry.binding.bindingId)}`;

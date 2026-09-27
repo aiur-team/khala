@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { type HarnessCapabilities, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import {
   CLAUDE_INTERACTIVE_EVIDENCE_REVISION, CLAUDE_INTERACTIVE_ROUTE, installedClaudeCapabilities,
@@ -27,7 +29,7 @@ type Harness = Readonly<{ fixture: ChannelFixture; server: LoopbackServer }>;
 /** `claim`, when given, is the harness claim every binding is projected through, as a launcher's inspection supplies it. */
 async function start(claim?: HarnessCapabilities,
   idleWake?: (binding: typeof bobBinding, sessionId: string, notBarred: () => boolean) => Promise<void>): Promise<Harness> {
-  const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-modes-'), now: NOW });
+  const fixture = createChannelFixture({ root: fs.mkdtempSync(path.join(os.tmpdir(), 'khala-modes-')), now: NOW });
   cleanups.push(() => fixture.dispose());
   const composed = composeBindingModes({ handle: fixture.handle, store: fixture.store, stateDirectory: fixture.root });
   const modes = { ...composed, control: { ...composed.control,
@@ -214,7 +216,7 @@ describe('owner experimental-route grant', () => {
   const limits = decodeDeliveryLimits({ maxPayloadBytes: 65_536, maxSelectionEvents: 32 });
   if (!limits.ok) throw new Error('invalid test limits');
   /** An inspected Claude Code that is not in the proven list: every mode is experimental. */
-  const EXPERIMENTAL_VERSION = '2.1.283';
+  const EXPERIMENTAL_VERSION = '2.1.284';
   const experimental = installedClaudeCapabilities(EXPERIMENTAL_VERSION, limits.value);
   const GRANT = `/api/v1/channels/${channelId}/bindings/${bobBinding.bindingId}/experimental-route/grant`;
   const REVOKE = `/api/v1/channels/${channelId}/bindings/${bobBinding.bindingId}/experimental-route/revoke`;
