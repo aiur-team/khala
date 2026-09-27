@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { createChannelController } from '../../features/channel/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
@@ -9,17 +8,12 @@ import { Panel } from '../../shell/Panel';
 import { RecoveryPanel } from '../../features/recovery/RecoveryPanel';
 import { createBrowserRecoveryPort } from '../recovery/browser-port';
 import type { HumanRoomRenderer } from './mount';
-import { registerReview } from '../review/register';
+import type { ReviewCapability } from '../review/register';
 import { createReviewController, type ReviewController } from '../../features/review/controller';
 import { ReviewScreen } from '../../features/review/ReviewScreen';
 import type { OwnerReviewBinding } from '../review/owner-mailbox-client';
 import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
 
-const reviewLimits = (() => {
-  const decoded = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
-  if (!decoded.ok) throw new Error('invalid_review_limits');
-  return decoded.value;
-})();
 type ReviewClient = ReturnType<typeof createOwnerMailboxReviewClient>;
 
 const unavailablePresence: ChannelUiPort = {
@@ -33,35 +27,39 @@ export const renderHumanRoom: HumanRoomRenderer = (context, route) => (
 );
 
 /** Production room renderer with the authenticated owner mailbox attached. */
-export function createHumanRoomRenderer(review: ReviewClient): HumanRoomRenderer {
-  return (context, route) => <HumanRoom context={context} roomId={route.roomId} review={review} />;
+export function createHumanRoomRenderer(review: ReviewClient, capability: ReviewCapability): HumanRoomRenderer {
+  return (context, route) => <HumanRoom context={context} roomId={route.roomId} review={review} capability={capability} />;
 }
 
-function ReviewForBinding({ context, roomId, review, binding }: {
+function ReviewForBinding({ context, roomId, capability, binding }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
-  review: ReviewClient;
+  capability: ReviewCapability;
   binding: OwnerReviewBinding;
 }) {
   const [controller, setController] = useState<ReviewController | null>(null);
   useEffect(() => {
-    const capability = registerReview({ client: review.review, limits: reviewLimits,
-      bindingFor: () => binding });
-    const lease = capability.attach(context);
-    const port = capability.portFor(context, roomId);
-    if (!port) { lease.dispose(); return; }
-    const active = createReviewController(port);
-    setController(active);
-    return () => { active.dispose(); lease.dispose(); };
-  }, [binding.bindingId, binding.generation, context, review, roomId]);
+    // The route shell attaches the shared capability in its passive effect.
+    // Run after that effect so its route lease owns this port and teardown.
+    let active: ReviewController | null = null;
+    const timer = setTimeout(() => {
+      const port = capability.portFor(context, roomId, binding);
+      if (port) {
+        active = createReviewController(port);
+        setController(active);
+      }
+    }, 0);
+    return () => { clearTimeout(timer); active?.dispose(); };
+  }, [binding.bindingId, binding.generation, capability, context, roomId]);
   return controller ? <ReviewScreen controller={controller} recipientLabel={binding.agentParticipantId}
     renderContent={content => <span dir="auto">{content.body}</span>} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
 }
 
-function HumanReview({ context, roomId, review }: {
+function HumanReview({ context, roomId, review, capability }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   review: ReviewClient | undefined;
+  capability: ReviewCapability | undefined;
 }) {
   const [bindings, setBindings] = useState<readonly OwnerReviewBinding[] | null>(null);
   useEffect(() => {
@@ -75,16 +73,17 @@ function HumanReview({ context, roomId, review }: {
     const timer = setInterval(refresh, 5_000);
     return () => { abort.abort(); clearInterval(timer); };
   }, [context, roomId, review]);
-  if (!review || bindings === null) return <Panel heading="Recipient review"><p role="status">Review unavailable or loading.</p></Panel>;
+  if (!review || !capability || bindings === null) return <Panel heading="Recipient review"><p role="status">Review unavailable or loading.</p></Panel>;
   if (bindings.length === 0) return <Panel heading="Recipient review"><p role="status">No active agent recipient in this channel.</p></Panel>;
   return <>{bindings.map(binding => <ReviewForBinding key={`${binding.bindingId}:${binding.generation}`} context={context} roomId={roomId}
-    review={review} binding={binding} />)}</>;
+    capability={capability} binding={binding} />)}</>;
 }
 
-function HumanRoom({ context, roomId, review }: {
+function HumanRoom({ context, roomId, review, capability }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   review?: ReviewClient;
+  capability?: ReviewCapability;
 }) {
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -121,7 +120,7 @@ function HumanRoom({ context, roomId, review }: {
       renderTimeline={() => (
         <TimelineScreen controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} />
       )}
-      renderReview={() => <HumanReview context={context} roomId={roomId} review={review} />}
+      renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability} />}
       renderControls={() => (
         <>
           <Panel heading="Agent controls">

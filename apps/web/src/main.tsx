@@ -1,4 +1,5 @@
 import { decodeContentLimits } from '@khala/contracts/messaging/index';
+import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { createHumanApplication } from './composition/human/application';
 import { createHumanBrowserApi } from './composition/human/browser-api';
 import { readHumanEntry } from './composition/human/entry';
@@ -7,6 +8,8 @@ import { createMatrixBrowserPorts } from './composition/human/matrix-browser';
 import { mountKhalaContent } from './composition/human/mount';
 import { createHumanRoomRenderer } from './composition/human/room';
 import { createOwnerMailboxReviewClient } from './composition/review/owner-mailbox-client';
+import { registerReview } from './composition/review/register';
+import { registerHumanCapabilities } from './composition/human/capabilities';
 import { createHumanRouteCodec } from './composition/human/routes';
 import { mountHostedUnavailable } from './composition/human/unavailable';
 import { createChannelAccessInboxController } from './features/channel-access/controller';
@@ -44,6 +47,9 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
 
   const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value });
   const review = createOwnerMailboxReviewClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const deliveryLimits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
+  if (!deliveryLimits.ok) throw new Error('invalid review limits');
+  const reviewCapability = registerReview({ client: review.review, limits: deliveryLimits.value, bindingFor: () => null });
   const matrix = createMatrixBrowserPorts({
     identity: api.identity,
     credentials: api.credentials,
@@ -87,7 +93,8 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     routes,
     createChannelAccess,
     mode: entry.mode,
-    renderRoom: createHumanRoomRenderer(review),
+    capabilities: registerHumanCapabilities(reviewCapability),
+    renderRoom: createHumanRoomRenderer(review, reviewCapability),
     navigateRoute(path) {
       history.pushState(null, '', path);
       application.navigate(path);

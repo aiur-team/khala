@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
+import type { CompareAndSetInput, ControlStore, JsonValue } from '@khala/contracts/messaging/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createOwnerMailbox } from './store';
 
@@ -14,6 +15,67 @@ const principal = { v: 1, ownerId: binding.ownerId, providerIssuer: 'https://id.
 const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 
 describe('metadata-only owner mailbox', () => {
+  it('does not redeliver archived commands when index retirement fails and recovers full capacity', async () => {
+    const state = fakeStore(() => T0);
+    let holdRetirement = true;
+    const store: ControlStore = {
+      read: state.store.read,
+      resolve: state.store.resolve,
+      async compareAndSet<T extends JsonValue>(input: CompareAndSetInput<T>) {
+        const current = state.records.get(input.key)?.value as { entries?: unknown[] } | undefined;
+        const next = input.next.value as { entries?: unknown[] };
+        if (holdRetirement && input.key.startsWith('owner-mailbox.v1.')
+          && current?.entries && next.entries && next.entries.length < current.entries.length) {
+          return { kind: 'unavailable' as const };
+        }
+        return state.store.compareAndSet<T>(input);
+      },
+    };
+    const mailbox = createOwnerMailbox({ store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    const first = { ...command, operationId: 'status_archive_0000' };
+    for (let index = 0; index < 64; index++) {
+      const current = { ...command, operationId: `status_archive_${index.toString().padStart(4, '0')}` };
+      expect((await mailbox.submit(current, principal)).kind).toBe('ok');
+      expect((await mailbox.complete(current.operationId, { ok: false, code: 'forbidden' })).kind).toBe('ok');
+    }
+    expect(await mailbox.pending()).toEqual({ kind: 'ok', value: [] });
+    expect(await mailbox.result(first.operationId)).toMatchObject({ kind: 'ok', value: { outcome: { ok: false,
+      code: 'forbidden' } } });
+    expect(await mailbox.submit({ ...first, body: { bindingId: 'other-binding' } }, principal)).toEqual({ kind: 'conflict' });
+    holdRetirement = false;
+    expect((await mailbox.submit({ ...command, operationId: 'status_after_recovery' }, principal)).kind).toBe('ok');
+    expect(await mailbox.pending()).toMatchObject({ kind: 'ok', value: [{ operationId: 'status_after_recovery' }] });
+    expect(await mailbox.submit(first, principal)).toMatchObject({ kind: 'ok', value: { outcome: { ok: false,
+      code: 'forbidden' } } });
+  });
+  it('keeps exact results after more than 64 sequential approvals without exhausting the poll index', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    const makeApproval = (index: number) => {
+      const operationId = `approval_${index.toString().padStart(8, '0')}`;
+      return { operationId, kind: 'review_approve' as const,
+        body: { v: 1, commandId: operationId, bindingId: binding.bindingId, roomId: '!room:example',
+          expectedPolicyVersion: 3, expectedBindingGeneration: 2, issuedAt: new Date(T0).toISOString(),
+          selection: [{ v: 1, roomId: '!room:example', eventId: 'event_1', authorParticipantId: 'peer_agent',
+            authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` }] } };
+    };
+    for (let index = 0; index < 72; index++) {
+      const approval = makeApproval(index);
+      expect((await mailbox.submit(approval, principal)).kind).toBe('ok');
+      expect(await mailbox.complete(approval.operationId, { ok: true, releaseIds: ['release_12345678'] }))
+        .toMatchObject({ kind: 'ok', value: { outcome: { ok: true, releaseIds: ['release_12345678'] } } });
+    }
+    const first = makeApproval(0);
+    expect(await mailbox.pending()).toEqual({ kind: 'ok', value: [] });
+    expect(await mailbox.submit(first, principal)).toMatchObject({ kind: 'ok', value: { operationId: first.operationId,
+      outcome: { ok: true, releaseIds: ['release_12345678'] } } });
+    expect(await mailbox.submit({ ...first, body: { ...first.body, expectedPolicyVersion: 4 } }, principal))
+      .toEqual({ kind: 'conflict' });
+    expect(await mailbox.complete(first.operationId, { ok: true, releaseIds: ['release_different'] }))
+      .toEqual({ kind: 'conflict' });
+    expect(await mailbox.result(first.operationId)).toMatchObject({ kind: 'ok', value: { outcome: { ok: true,
+      releaseIds: ['release_12345678'] } } });
+  });
   it('compacts completed preview reads while preserving unresolved reads and exact approval/control outcomes', async () => {
     const state = fakeStore(() => T0);
     const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });

@@ -1,8 +1,9 @@
 import { createRoot } from 'react-dom/client';
-import type { ApprovalCommand } from '@khala/contracts/delivery/index';
+import { decodeDeliveryLimits, type ApprovalCommand } from '@khala/contracts/delivery/index';
 import type { ChannelSnapshot, RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { HumanRouteContext } from '../application';
 import { createHumanRoomRenderer } from '../room';
+import { registerReview } from '../../review/register';
 import '../../../features/review/review.css';
 
 const roomId = 'room_1' as never;
@@ -40,5 +41,9 @@ const review = {
 };
 declare global { interface Window { __roomReviewCommand: () => ApprovalCommand | null } }
 window.__roomReviewCommand = () => command;
-createRoot(document.getElementById('app')!).render(createHumanRoomRenderer(review)(context,
+const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
+if (!limits.ok) throw new Error('invalid review limits');
+const capability = registerReview({ client: review.review, limits: limits.value, bindingFor: () => null });
+capability.attach(context);
+createRoot(document.getElementById('app')!).render(createHumanRoomRenderer(review, capability)(context,
   { kind: 'channel', path: '/channels/room_1', roomId }));

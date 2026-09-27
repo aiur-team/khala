@@ -9,7 +9,6 @@ import { sameJsonValue, type AuthPrincipal, type ControlStore, type JsonValue } 
 export const OWNER_MAILBOX_MAX_ENTRIES = 64;
 // Stop must remain queueable after the ordinary command budget is exhausted.
 const OWNER_MAILBOX_STOP_RESERVE = 1;
-const RETAIN_COMPLETED_PREVIEWS = 8;
 export const OWNER_MAILBOX_TTL_MS = 24 * 60 * 60 * 1000;
 export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'review_preview' | 'review_approve' | 'channel_stop';
 export type OwnerMailboxCommand = Readonly<{
@@ -47,6 +46,10 @@ export function createOwnerMailbox(input: Readonly<{
   const { store, binding, roomId, clock, authoritySecret } = input;
   if (authoritySecret.length < 32) throw new Error('owner mailbox authority secret too short');
   const key = `owner-mailbox.v1.${createHash('sha256').update(`${binding.bindingId}\0${binding.generation}`).digest('hex')}`;
+  // Completed commands live at stable per-operation keys. The bounded document
+  // is only a poll index, so a long-lived binding cannot exhaust it with results.
+  const archiveKey = (operationId: string) => `owner-mailbox-result.v1.${createHash('sha256')
+    .update(`${binding.bindingId}\0${binding.generation}\0${operationId}`).digest('hex')}`;
   const initial: Document = { v: 1, bindingId: binding.bindingId, generation: binding.generation,
     ownerId: binding.ownerId, roomId, entries: [] };
   function validPreviewId(command: OwnerMailboxCommand): boolean {
@@ -97,6 +100,36 @@ export function createOwnerMailbox(input: Readonly<{
     if (result.kind === 'conflict') return 'conflict';
     return 'unavailable';
   }
+  async function archived(operationId: string): Promise<MailboxResult<OwnerMailboxEntry | null>> {
+    const found = await store.read<JsonValue>(archiveKey(operationId));
+    if (found.kind === 'unavailable') return { kind: 'unavailable' };
+    if (found.kind === 'absent') return { kind: 'ok', value: null };
+    const parsed = parse({ ...initial, entries: [found.record.value] } as unknown as JsonValue);
+    const entry = parsed?.entries[0];
+    return entry?.operationId === operationId && entry.outcome !== null
+      ? { kind: 'ok', value: entry } : { kind: 'unavailable' };
+  }
+  async function archive(entry: OwnerMailboxEntry, expiresAt: string): Promise<'applied' | 'conflict' | 'unavailable'> {
+    const result = await store.compareAndSet<JsonValue>({ key: archiveKey(entry.operationId), expectedRevision: null,
+      operationId: `mailbox-result.${createHash('sha256').update(JSON.stringify(entry)).digest('base64url')}`,
+      next: { value: entry as unknown as JsonValue, expiresAt },
+    });
+    if (result.kind === 'applied') return 'applied';
+    if (result.kind === 'unavailable') return 'unavailable';
+    const prior = await archived(entry.operationId);
+    return prior.kind === 'ok' && prior.value && sameValue(prior.value as unknown as JsonValue, entry as unknown as JsonValue)
+      ? 'applied' : prior.kind === 'unavailable' ? 'unavailable' : 'conflict';
+  }
+  async function retire(operationId: string): Promise<void> {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const current = await read();
+      if (current.kind !== 'ok' || !current.value.expiresAt) return;
+      const { document, revision, expiresAt } = current.value;
+      if (!document.entries.some(item => item.operationId === operationId)) return;
+      const saved = await write({ ...document, entries: document.entries.filter(item => item.operationId !== operationId) }, revision, expiresAt);
+      if (saved === 'applied' || saved === 'unavailable') return;
+    }
+  }
   return {
     /** Browser route calls only after OIDC cookie+CSRF and active binding/room checks. */
     async submit(command: OwnerMailboxCommand, principal: AuthPrincipal): Promise<MailboxResult<OwnerMailboxEntry>> {
@@ -104,6 +137,11 @@ export function createOwnerMailbox(input: Readonly<{
         || !validPreviewId(command)) return { kind: 'conflict' };
       if (principal.ownerId !== binding.ownerId || !principal.providerIssuer || !principal.providerSubject) return { kind: 'conflict' };
       for (let attempt = 0; attempt < 8; attempt++) {
+        const prior = await archived(command.operationId);
+        if (prior.kind !== 'ok') return prior;
+        if (prior.value) return prior.value.kind === command.kind && sameValue(prior.value.body, command.body)
+          && prior.value.authority.issuer === principal.providerIssuer && prior.value.authority.subject === principal.providerSubject
+          ? { kind: 'ok', value: prior.value } : { kind: 'conflict' };
         const current = await read();
         if (current.kind !== 'ok') return current;
         const { document, revision, expiresAt } = current.value;
@@ -111,14 +149,21 @@ export function createOwnerMailbox(input: Readonly<{
         if (existing) return existing.kind === command.kind && sameValue(existing.body, command.body)
           && existing.authority.issuer === principal.providerIssuer && existing.authority.subject === principal.providerSubject
           ? { kind: 'ok', value: existing } : { kind: 'conflict' };
-        // Completed preview reads are replaceable observations. Their IDs bind
-        // the request body, so eviction cannot turn an old ID into a changed
-        // request. Release/control outcomes and unresolved reads stay durable.
+        // An archive write always precedes removal from this poll index. Legacy
+        // completed previews may be compacted because their IDs bind the body.
         let entries = [...document.entries];
+        if (command.kind !== 'channel_stop'
+          && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
+          for (const entry of entries) {
+            if (entry.kind === 'channel_stop') continue;
+            const completed = await archived(entry.operationId);
+            if (completed.kind !== 'ok') return completed;
+            if (completed.value) entries = entries.filter(item => item.operationId !== entry.operationId);
+          }
+        }
         const replaceable = entries.filter(entry => entry.kind === 'review_preview' && entry.outcome !== null);
-        while (replaceable.length > RETAIN_COMPLETED_PREVIEWS
-          || (command.kind !== 'channel_stop'
-            && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES)) {
+        while (command.kind !== 'channel_stop'
+          && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
           const oldest = replaceable.shift();
           if (!oldest) break;
           entries = entries.filter(entry => entry.operationId !== oldest.operationId);
@@ -144,33 +189,47 @@ export function createOwnerMailbox(input: Readonly<{
     /** Agent route calls only after current DPoP binding/generation authorization. */
     async pending(): Promise<MailboxResult<readonly OwnerMailboxEntry[]>> {
       const current = await read();
-      return current.kind === 'ok' ? { kind: 'ok', value: current.value.document.entries.filter(entry => entry.outcome === null) }
-        : current;
+      if (current.kind !== 'ok') return current;
+      const pending: OwnerMailboxEntry[] = [];
+      for (const entry of current.value.document.entries) {
+        if (entry.outcome !== null) continue;
+        const prior = await archived(entry.operationId);
+        if (prior.kind !== 'ok') return prior;
+        if (!prior.value) pending.push(entry);
+      }
+      return { kind: 'ok', value: pending };
     },
     /** Agent route publishes only typed handler output; retries return the stored first result. */
     async complete(operationId: string, outcome: JsonValue): Promise<MailboxResult<OwnerMailboxEntry>> {
       const encoded = JSON.stringify(outcome);
       if (!ID.test(operationId) || typeof encoded !== 'string' || encoded.length > 32_768) return { kind: 'conflict' };
       for (let attempt = 0; attempt < 8; attempt++) {
+        const prior = await archived(operationId);
+        if (prior.kind !== 'ok') return prior;
+        if (prior.value) return sameValue(prior.value.outcome!, outcome)
+          ? { kind: 'ok', value: prior.value } : { kind: 'conflict' };
         const current = await read();
         if (current.kind !== 'ok') return current;
-        const { document, revision, expiresAt } = current.value;
+        const { document, expiresAt } = current.value;
         const existing = document.entries.find(entry => entry.operationId === operationId);
         if (!existing || !validOutcome(existing.kind, outcome, binding, existing.body)) return { kind: 'conflict' };
-        if (existing.outcome !== null) return sameValue(existing.outcome, outcome)
-          ? { kind: 'ok', value: existing } : { kind: 'conflict' };
+        if (existing.outcome !== null && !sameValue(existing.outcome, outcome)) return { kind: 'conflict' };
         const entry = { ...existing, outcome };
         if (!expiresAt) return { kind: 'unavailable' };
-        const saved = await write({ ...document,
-          entries: document.entries.map(item => item.operationId === operationId ? entry : item) }, revision, expiresAt);
-        if (saved === 'applied') return { kind: 'ok', value: entry };
-        if (saved === 'unavailable') return { kind: 'unavailable' };
+        const saved = await archive(entry, expiresAt);
+        if (saved === 'applied') {
+          if (entry.kind !== 'channel_stop') await retire(operationId);
+          return { kind: 'ok', value: entry };
+        }
+        if (saved !== 'conflict') return { kind: 'unavailable' };
       }
       return { kind: 'unavailable' };
     },
     /** Browser route reads only the exact operation after revalidating owner authority. */
     async result(operationId: string): Promise<MailboxResult<OwnerMailboxEntry | null>> {
       if (!ID.test(operationId)) return { kind: 'conflict' };
+      const prior = await archived(operationId);
+      if (prior.kind !== 'ok' || prior.value) return prior;
       const current = await read();
       return current.kind === 'ok' ? { kind: 'ok', value: current.value.document.entries.find(entry => entry.operationId === operationId) ?? null }
         : current;

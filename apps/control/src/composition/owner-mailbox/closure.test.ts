@@ -36,7 +36,7 @@ describe('protected closure connector aggregate', () => {
     expect((await mailbox.pending())).toMatchObject({ kind: 'ok', value: [{ operationId: request.operationId }] });
     expect((await mailbox.result('status_00000000'))).toMatchObject({ kind: 'ok', value: { outcome: { ok: false, code: 'forbidden' } } });
     expect((await mailbox.submit({ operationId: 'status_extra', kind: 'controls_status', body: { bindingId: binding.bindingId } }, principal)))
-      .toEqual({ kind: 'unavailable' });
+      .toMatchObject({ kind: 'ok', value: { operationId: 'status_extra', outcome: null } });
     expect((await mailbox.complete(request.operationId, { kind: 'stopped', receipt: {
       ...request, bindingId: binding.bindingId, bindingGeneration: binding.generation,
       state: 'stopped', cleanupRequested: true,

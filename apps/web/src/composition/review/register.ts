@@ -18,7 +18,8 @@ export type ReviewCapability = HumanCapability & Readonly<{
    * A review port scoped to the attached route. Null while unavailable, before
    * attachment, after the route ended, or when the human has no agent in the room.
    */
-  portFor(context: HumanRouteContext, roomId: RoomId): BrowserReviewPort | null;
+  portFor(context: HumanRouteContext, roomId: RoomId,
+    bindingOverride?: Readonly<{ bindingId: BindingId; generation: number }>): BrowserReviewPort | null;
 }>;
 
 const UNAVAILABLE: ReviewCapability = Object.freeze({
@@ -58,10 +59,10 @@ export function registerReview(dependencies?: BrowserReviewDependencies): Review
       };
     },
 
-    portFor(context: HumanRouteContext, roomId: RoomId) {
+    portFor(context: HumanRouteContext, roomId: RoomId, bindingOverride) {
       const ports = attached.get(context);
       if (!ports) return null;
-      const binding = dependencies.bindingFor(context, roomId);
+      const binding = bindingOverride ?? dependencies.bindingFor(context, roomId);
       if (binding === null) return null;
       const bindingId = typeof binding === 'string' ? binding : binding.bindingId;
       const bindingGeneration = typeof binding === 'string' ? undefined : binding.generation;
