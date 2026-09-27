@@ -2,6 +2,7 @@ import type { AuthPrincipal, BindingId, ControlStore, JsonValue, OwnerId, RoomId
 import type { AuthService } from '../../auth/index';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
+import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import type { AdmissionGateway } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createOwnerMailbox, type OwnerCommandKind, type OwnerMailboxCommand } from './store';
@@ -47,6 +48,7 @@ export function createOwnerMailboxRoutes(input: Readonly<{
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<Readonly<{ kind: 'joined' | 'absent' | 'unavailable' }>>;
 }>): Readonly<{ human: readonly RouteRegistration[]; agent: readonly RouteRegistration[] }> {
   const bindings = createAgentBindingStore({ store: input.store });
+  const ownerRooms = createOwnerRoomIndex(input.store);
   async function owner(request: Request, bindingId: string, mutate: boolean): Promise<
     Readonly<{ principal: AuthPrincipal; binding: SessionBinding; roomId: RoomId }> | Response
   > {
@@ -61,6 +63,9 @@ export function createOwnerMailboxRoutes(input: Readonly<{
     if (found.kind === 'unavailable') return unavailable();
     if (found.kind !== 'found' || found.record.revokedGeneration !== null
       || found.record.binding.ownerId !== principal.ownerId) return json(403, { code: 'forbidden' });
+    const indexed = await ownerRooms.inspect(principal.ownerId, found.address.roomId);
+    if (indexed.kind !== 'ok') return unavailable();
+    if (indexed.value?.marker) return json(403, { code: 'channel_closing' });
     const membership = await input.gateway.inspectMembership({ roomId: found.address.roomId, principal, history: 'none' });
     if (membership.kind === 'unavailable') return unavailable();
     if (membership.kind !== 'joined') return json(403, { code: 'forbidden' });
@@ -73,7 +78,9 @@ export function createOwnerMailboxRoutes(input: Readonly<{
     const membership = await input.inspectOwnerMembership(authorized.ownerId, authorized.roomId);
     if (membership.kind === 'unavailable') return unavailable();
     if (membership.kind !== 'joined') return json(403, { code: 'owner_membership_required' });
-    return { binding: authorized.binding, roomId: authorized.roomId };
+    const indexed = await ownerRooms.inspect(authorized.ownerId, authorized.roomId);
+    if (indexed.kind !== 'ok') return unavailable();
+    return { binding: authorized.binding, roomId: authorized.roomId, closing: indexed.value?.marker !== null && indexed.value?.marker !== undefined };
   }
   return {
     human: Object.freeze([
@@ -110,7 +117,7 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         if (identity instanceof Response) return identity;
         const result = await createOwnerMailbox({ store: input.store, ...identity, clock: input.clock, authoritySecret: input.authoritySecret }).pending();
         return result.kind === 'ok' ? json(200, { v: 1, bindingId: identity.binding.bindingId,
-          generation: identity.binding.generation, entries: result.value.map(entry => ({
+          generation: identity.binding.generation, entries: result.value.filter(entry => !identity.closing || entry.kind === 'channel_stop').map(entry => ({
             operationId: entry.operationId, kind: entry.kind, body: entry.body, authority: entry.authority,
             outcome: entry.outcome,
           })) }) : unavailable();
@@ -121,7 +128,14 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         let body: ReturnType<typeof readCompletion> = null;
         try { body = readCompletion(await request.json()); } catch { /* malformed */ }
         if (!body || body.bindingId !== identity.binding.bindingId) return json(400, { code: 'invalid_request' });
-        const result = await createOwnerMailbox({ store: input.store, ...identity, clock: input.clock, authoritySecret: input.authoritySecret }).complete(body.operationId, body.outcome);
+        const mailbox = createOwnerMailbox({ store: input.store, binding: identity.binding, roomId: identity.roomId,
+          clock: input.clock, authoritySecret: input.authoritySecret });
+        if (identity.closing) {
+          const queued = await mailbox.result(body.operationId);
+          if (queued.kind !== 'ok') return unavailable();
+          if (queued.value?.kind !== 'channel_stop') return json(403, { code: 'channel_closing' });
+        }
+        const result = await mailbox.complete(body.operationId, body.outcome);
         return result.kind === 'ok' ? json(200, { v: 1, operationId: result.value.operationId })
           : result.kind === 'conflict' ? json(409, { code: 'operation_conflict' }) : unavailable();
       } },

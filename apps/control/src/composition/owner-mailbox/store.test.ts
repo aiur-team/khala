@@ -73,4 +73,19 @@ describe('metadata-only owner mailbox', () => {
     state.records.set(key, { ...record, value });
     expect(await mailbox.pending()).toEqual({ kind: 'unavailable' });
   });
+
+  it('accepts only an exact binding stop receipt for the queued closure', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    const stop = { operationId: 'close_operation_one', kind: 'channel_stop' as const,
+      body: { operationId: 'close_operation_one', ownerId: binding.ownerId, roomId: '!room:example', expectedRoomRevision: 0 } };
+    expect((await mailbox.submit(stop, principal)).kind).toBe('ok');
+    const receipt = { ...stop.body, bindingId: binding.bindingId, bindingGeneration: binding.generation,
+      state: 'stopped', cleanupRequested: true };
+    expect(await mailbox.complete(stop.operationId, { kind: 'stopped', receipt: { ...receipt, bindingId: 'other-binding' } }))
+      .toEqual({ kind: 'conflict' });
+    expect(await mailbox.complete(stop.operationId, { kind: 'stopped', receipt: { ...receipt, operationId: 'other_operation' } }))
+      .toEqual({ kind: 'conflict' });
+    expect((await mailbox.complete(stop.operationId, { kind: 'stopped', receipt })).kind).toBe('ok');
+  });
 });

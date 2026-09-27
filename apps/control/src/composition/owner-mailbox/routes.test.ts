@@ -3,9 +3,11 @@ import type { RoomId, SessionBinding } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../../auth/index';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
+import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import type { AdmissionGateway } from '../../invitations/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createOwnerMailboxRoutes, OWNER_MAILBOX_COMPLETE, OWNER_MAILBOX_POLL, OWNER_MAILBOX_RESULT, OWNER_MAILBOX_SUBMIT } from './routes';
+import { createOwnerMailbox } from './store';
 
 const origin = 'https://khala.aiur.team';
 const binding = { v: 1, bindingId: 'binding-mailbox', ownerId: 'owner-mailbox',
@@ -41,7 +43,7 @@ async function setup() {
     return route.handle(new Request(`${origin}${path}${path === OWNER_MAILBOX_RESULT ? `?binding_id=${binding.bindingId}&operation_id=${command.operationId}` : ''}`,
       { method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) }));
   };
-  return { call, bindings, state, setSignedIn: (value: boolean) => { signedIn = value; },
+  return { call, bindings, state, index: createOwnerRoomIndex(state.store), setSignedIn: (value: boolean) => { signedIn = value; },
     setMember: (value: boolean) => { member = value; }, setAgentAuthorized: (value: boolean) => { agentAuthorized = value; } };
 }
 
@@ -83,5 +85,23 @@ describe('hosted owner mailbox routes', () => {
     expect((await env.call(OWNER_MAILBOX_COMPLETE, 'POST', { bindingId: binding.bindingId,
       operationId: command.operationId, outcome: { ok: true, body: 'pending secret' } })).status).toBe(409);
     expect((await (await env.call(OWNER_MAILBOX_RESULT, 'GET')).json() as { outcome: unknown }).outcome).toBeNull();
+  });
+
+  it('closes ordinary relay commands at the owner-room marker while permitting only the stop receipt', async () => {
+    const env = await setup();
+    expect((await env.index.activate(binding, '!room:example' as RoomId)).kind).toBe('ok');
+    const stop = { operationId: 'close_operation_one', ownerId: binding.ownerId,
+      roomId: '!room:example', expectedRoomRevision: 0 };
+    const mailbox = createOwnerMailbox({ store: env.state.store, binding, roomId: stop.roomId,
+      clock: () => T0, authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes' });
+    expect((await mailbox.submit({ operationId: stop.operationId, kind: 'channel_stop', body: stop }, principal)).kind).toBe('ok');
+    expect((await env.index.markClosing(binding.ownerId, '!room:example' as RoomId, stop.operationId, 0)).kind).toBe('ok');
+    expect((await env.call(OWNER_MAILBOX_SUBMIT, 'POST', command)).status).toBe(403);
+    const pending = await (await env.call(OWNER_MAILBOX_POLL, 'GET')).json() as { entries: Array<{ kind: string }> };
+    expect(pending.entries.map(item => item.kind)).toEqual(['channel_stop']);
+    const receipt = { ...stop, bindingId: binding.bindingId, bindingGeneration: binding.generation,
+      state: 'stopped', cleanupRequested: true };
+    expect((await env.call(OWNER_MAILBOX_COMPLETE, 'POST', { bindingId: binding.bindingId,
+      operationId: stop.operationId, outcome: { kind: 'stopped', receipt } })).status).toBe(200);
   });
 });

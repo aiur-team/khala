@@ -30,6 +30,7 @@ import type { RouteRegistration } from '../runtime/handler';
 import type { PairingGrantPort } from '../pairing/store';
 import { type ProofCheck, checkProof, proofKeyThumbprint } from './proof';
 import { type BindingRecord, createAgentBindingStore } from './store';
+import { createOwnerRoomIndex } from './owner-room-index';
 
 export const DESCRIPTOR_PATH = '/api/agent/bootstrap/descriptor';
 export const AUTHORIZE_PATH = '/api/human/agent-bootstrap/authorize';
@@ -244,6 +245,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   if (typeof deps.legacyMigrationWritesEnabled !== 'boolean') throw new Error('legacy migration write activation must be explicit');
   const store = guardStore(deps.store);
   const bindings = createAgentBindingStore({ store: deps.store, legacyMigrationWritesEnabled: deps.legacyMigrationWritesEnabled });
+  const ownerRooms = createOwnerRoomIndex(store);
   const tokenUrl = `${deps.origin}${TOKEN_PATH}`;
   const redeemUrl = `${deps.origin}${REDEEM_PATH}`;
 
@@ -498,6 +500,9 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const address = {
       ownerId, roomId: inspected.value.roomId, agentParticipantId: inspected.value.agentParticipantId,
     };
+    const roomIndex = await ownerRooms.inspect(ownerId, address.roomId);
+    if (roomIndex.kind !== 'ok') return json(503, { code: 'unavailable' });
+    if (roomIndex.value?.marker) return json(403, { code: 'admission_denied' });
     const current = await bindings.findParticipant(address);
     if (current.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (current.kind === 'found') {
@@ -548,6 +553,11 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const bound = await bindSession(address, held);
     if (bound.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (bound.kind === 'refused') return json(409, { code: bound.code });
+    // This CAS races the close marker in one owner/room record. No capability can
+    // reach a binding that closure omitted from its active snapshot.
+    const indexed = await ownerRooms.activate(bound.binding, address.roomId);
+    if (indexed.kind === 'closed') return json(403, { code: 'admission_denied' });
+    if (indexed.kind !== 'ok') return json(503, { code: 'unavailable' });
 
     const matrixSession = deps.agentDeviceSession
       ? await safeCall(() => deps.agentDeviceSession!.issue(bound.binding, address.roomId))

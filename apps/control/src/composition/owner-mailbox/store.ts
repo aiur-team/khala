@@ -8,7 +8,7 @@ import { sameJsonValue, type AuthPrincipal, type ControlStore, type JsonValue } 
 
 export const OWNER_MAILBOX_MAX_ENTRIES = 64;
 export const OWNER_MAILBOX_TTL_MS = 24 * 60 * 60 * 1000;
-export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'review_preview' | 'review_approve';
+export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'review_preview' | 'review_approve' | 'channel_stop';
 export type OwnerMailboxCommand = Readonly<{
   operationId: string;
   kind: OwnerCommandKind;
@@ -60,10 +60,10 @@ export function createOwnerMailbox(input: Readonly<{
       const entry = item as Record<string, JsonValue>;
       if (Object.keys(entry).sort().join(',') !== 'authority,authorityMac,body,kind,operationId,outcome'
         || typeof entry.operationId !== 'string' || !ID.test(entry.operationId)
-        || !['controls_status', 'controls_set', 'review_preview', 'review_approve'].includes(String(entry.kind))
+        || !['controls_status', 'controls_set', 'review_preview', 'review_approve', 'channel_stop'].includes(String(entry.kind))
         || ids.has(entry.operationId) || !validBody(entry.kind as OwnerCommandKind, entry.body!, binding, roomId)
         || entry.outcome === undefined || !validAuthority(entry, binding, roomId, authoritySecret)
-        || (entry.outcome !== null && !validOutcome(entry.kind as OwnerCommandKind, entry.outcome, binding))) return null;
+        || (entry.outcome !== null && !validOutcome(entry.kind as OwnerCommandKind, entry.outcome, binding, entry.body!))) return null;
       ids.add(entry.operationId);
       entries.push(entry as OwnerMailboxEntry);
     }
@@ -128,7 +128,7 @@ export function createOwnerMailbox(input: Readonly<{
         if (current.kind !== 'ok') return current;
         const { document, revision, expiresAt } = current.value;
         const existing = document.entries.find(entry => entry.operationId === operationId);
-        if (!existing || !validOutcome(existing.kind, outcome, binding)) return { kind: 'conflict' };
+        if (!existing || !validOutcome(existing.kind, outcome, binding, existing.body)) return { kind: 'conflict' };
         if (existing.outcome !== null) return sameValue(existing.outcome, outcome)
           ? { kind: 'ok', value: existing } : { kind: 'conflict' };
         const entry = { ...existing, outcome };
@@ -156,6 +156,9 @@ function plain(input: unknown): input is Record<string, unknown> {
 }
 function validBody(kind: OwnerCommandKind, body: JsonValue, binding: SessionBinding, roomId: string): boolean {
   if (!plain(body)) return false;
+  if (kind === 'channel_stop') return keys(body, ['operationId', 'ownerId', 'roomId', 'expectedRoomRevision'])
+    && typeof body.operationId === 'string' && ID.test(body.operationId)
+    && body.ownerId === binding.ownerId && body.roomId === roomId && body.expectedRoomRevision === 0;
   if (kind === 'controls_set') {
     const decoded = decodePolicySetCommand(body);
     return decoded.ok && decoded.value.bindingId === binding.bindingId && decoded.value.roomId === roomId
@@ -180,8 +183,18 @@ function validBody(kind: OwnerCommandKind, body: JsonValue, binding: SessionBind
 }
 
 /** Accept only the connector handlers' finite metadata results. A DPoP agent cannot put message bodies in Blobs. */
-function validOutcome(kind: OwnerCommandKind, outcome: JsonValue, binding: SessionBinding): boolean {
+function validOutcome(kind: OwnerCommandKind, outcome: JsonValue, binding: SessionBinding, body: JsonValue): boolean {
   if (!plain(outcome)) return false;
+  if (kind === 'channel_stop') {
+    if (!keys(outcome, ['kind', 'receipt']) || outcome.kind !== 'stopped' || !plain(outcome.receipt)) return false;
+    const receipt = outcome.receipt;
+    return keys(receipt, ['operationId', 'ownerId', 'roomId', 'expectedRoomRevision', 'bindingId', 'bindingGeneration', 'state', 'cleanupRequested'])
+      && plain(body) && receipt.operationId === body.operationId
+      && receipt.ownerId === binding.ownerId && receipt.roomId === body.roomId
+      && receipt.expectedRoomRevision === body.expectedRoomRevision && receipt.bindingId === binding.bindingId
+      && receipt.bindingGeneration === binding.generation && receipt.state === 'stopped'
+      && receipt.cleanupRequested === true;
+  }
   if (kind === 'review_approve') return decodeApprovalResult(outcome, DELIVERY_LIMITS).ok;
   if (kind === 'controls_set') {
     if (!keys(outcome, ['ok', 'ack']) || outcome.ok !== true) return keys(outcome, ['ok', 'code'])
