@@ -25,6 +25,7 @@ export type ReviewPreviewRequest = Readonly<{
  * reached the endpoint and its answer is unknown; it is never a definite refusal.
  */
 export interface ReviewControlClient {
+  recoverUnknown?(bindingId: BindingId, roomId: RoomId, generation?: number): ApprovalCommand | null;
   preview(request: ReviewPreviewRequest, signal: AbortSignal): Promise<
     | Readonly<{ kind: 'ok'; body: unknown }>
     | Readonly<{ kind: 'refused'; code: 'forbidden' | 'revoked' | 'unavailable' }>
@@ -39,6 +40,7 @@ export type BrowserReviewPortOptions = Readonly<{
   room: RoomPort;
   roomId: RoomId;
   bindingId: BindingId;
+  bindingGeneration?: number;
   viewerOwnerId: OwnerId;
   limits: DeliveryLimits;
   /** Receipt refresh interval while observed. Defaults to 5 s; 0 disables polling. */
@@ -120,6 +122,7 @@ export function createBrowserReviewPort(options: BrowserReviewPortOptions): Brow
   }
 
   return {
+    recoverUnknown: () => client.recoverUnknown?.(bindingId, roomId, options.bindingGeneration) ?? null,
     snapshot: () => view,
 
     subscribe(listener, signal) {

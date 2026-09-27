@@ -9,6 +9,7 @@ import { sameJsonValue, type AuthPrincipal, type ControlStore, type JsonValue } 
 export const OWNER_MAILBOX_MAX_ENTRIES = 64;
 // Stop must remain queueable after the ordinary command budget is exhausted.
 const OWNER_MAILBOX_STOP_RESERVE = 1;
+const RETAIN_COMPLETED_PREVIEWS = 8;
 export const OWNER_MAILBOX_TTL_MS = 24 * 60 * 60 * 1000;
 export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'review_preview' | 'review_approve' | 'channel_stop';
 export type OwnerMailboxCommand = Readonly<{
@@ -48,6 +49,11 @@ export function createOwnerMailbox(input: Readonly<{
   const key = `owner-mailbox.v1.${createHash('sha256').update(`${binding.bindingId}\0${binding.generation}`).digest('hex')}`;
   const initial: Document = { v: 1, bindingId: binding.bindingId, generation: binding.generation,
     ownerId: binding.ownerId, roomId, entries: [] };
+  function validPreviewId(command: OwnerMailboxCommand): boolean {
+    if (command.kind !== 'review_preview') return true;
+    const digest = createHash('sha256').update(JSON.stringify(command.body)).digest('hex').slice(0, 32);
+    return new RegExp(`^preview_${digest}_[a-f0-9]{8}$`, 'u').test(command.operationId);
+  }
   function parse(raw: JsonValue): Document | null {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
     const value = raw as Record<string, JsonValue>;
@@ -64,6 +70,7 @@ export function createOwnerMailbox(input: Readonly<{
         || typeof entry.operationId !== 'string' || !ID.test(entry.operationId)
         || !['controls_status', 'controls_set', 'review_preview', 'review_approve', 'channel_stop'].includes(String(entry.kind))
         || ids.has(entry.operationId) || !validBody(entry.kind as OwnerCommandKind, entry.body!, binding, roomId)
+        || !validPreviewId(entry as unknown as OwnerMailboxCommand)
         || entry.outcome === undefined || !validAuthority(entry, binding, roomId, authoritySecret)
         || (entry.outcome !== null && !validOutcome(entry.kind as OwnerCommandKind, entry.outcome, binding, entry.body!))) return null;
       ids.add(entry.operationId);
@@ -93,7 +100,8 @@ export function createOwnerMailbox(input: Readonly<{
   return {
     /** Browser route calls only after OIDC cookie+CSRF and active binding/room checks. */
     async submit(command: OwnerMailboxCommand, principal: AuthPrincipal): Promise<MailboxResult<OwnerMailboxEntry>> {
-      if (!ID.test(command.operationId) || !validBody(command.kind, command.body, binding, roomId)) return { kind: 'conflict' };
+      if (!ID.test(command.operationId) || !validBody(command.kind, command.body, binding, roomId)
+        || !validPreviewId(command)) return { kind: 'conflict' };
       if (principal.ownerId !== binding.ownerId || !principal.providerIssuer || !principal.providerSubject) return { kind: 'conflict' };
       for (let attempt = 0; attempt < 8; attempt++) {
         const current = await read();
@@ -103,9 +111,21 @@ export function createOwnerMailbox(input: Readonly<{
         if (existing) return existing.kind === command.kind && sameValue(existing.body, command.body)
           && existing.authority.issuer === principal.providerIssuer && existing.authority.subject === principal.providerSubject
           ? { kind: 'ok', value: existing } : { kind: 'conflict' };
+        // Completed preview reads are replaceable observations. Their IDs bind
+        // the request body, so eviction cannot turn an old ID into a changed
+        // request. Release/control outcomes and unresolved reads stay durable.
+        let entries = [...document.entries];
+        const replaceable = entries.filter(entry => entry.kind === 'review_preview' && entry.outcome !== null);
+        while (replaceable.length > RETAIN_COMPLETED_PREVIEWS
+          || (command.kind !== 'channel_stop'
+            && entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES)) {
+          const oldest = replaceable.shift();
+          if (!oldest) break;
+          entries = entries.filter(entry => entry.operationId !== oldest.operationId);
+        }
         if (command.kind === 'channel_stop'
-          ? document.entries.some(entry => entry.kind === 'channel_stop')
-          : document.entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
+          ? entries.some(entry => entry.kind === 'channel_stop')
+          : entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
           return { kind: 'unavailable' };
         }
         const authority: OwnerAuthority = {
@@ -114,7 +134,7 @@ export function createOwnerMailbox(input: Readonly<{
           authorizationId: `authz_${createHash('sha256').update(`${binding.bindingId}\0${command.operationId}\0${principal.providerIssuer}\0${principal.providerSubject}`).digest('base64url')}` as OwnerAuthority['authorizationId'],
         };
         const entry: OwnerMailboxEntry = { ...command, authority, authorityMac: authorityMac(command, authority, binding, roomId, authoritySecret), outcome: null };
-        const saved = await write({ ...document, entries: [...document.entries, entry] }, revision,
+        const saved = await write({ ...document, entries: [...entries, entry] }, revision,
           expiresAt ?? new Date(clock() + OWNER_MAILBOX_TTL_MS).toISOString());
         if (saved === 'applied') return { kind: 'ok', value: entry };
         if (saved === 'unavailable') return { kind: 'unavailable' };

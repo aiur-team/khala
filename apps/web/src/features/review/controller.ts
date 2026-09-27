@@ -110,7 +110,8 @@ export function createReviewController(port: ReviewUiPort): ReviewController {
   let submission: SubmissionState = EMPTY_SUBMISSION;
   // The exact command last sent, kept for `outcome_unknown` reconciliation —
   // never rebuilt from current selection, which may have moved on.
-  let lastCommand: ApprovalCommand | null = null;
+  let lastCommand: ApprovalCommand | null = port.recoverUnknown?.() ?? null;
+  if (lastCommand) submission = { phase: 'unknown', commandId: lastCommand.commandId, releaseIds: null, error: null };
   let disposed = false;
   const abortController = new AbortController();
 

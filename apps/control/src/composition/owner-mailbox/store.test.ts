@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createOwnerMailbox } from './store';
@@ -13,6 +14,36 @@ const principal = { v: 1, ownerId: binding.ownerId, providerIssuer: 'https://id.
 const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 
 describe('metadata-only owner mailbox', () => {
+  it('compacts completed preview reads while preserving unresolved reads and exact approval/control outcomes', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    const previewBody = { bindingId: binding.bindingId, candidates: [], releaseIds: [] };
+    const digest = createHash('sha256').update(JSON.stringify(previewBody)).digest('hex').slice(0, 32);
+    const preview = (index: number) => ({ operationId: `preview_${digest}_${index.toString(16).padStart(8, '0')}`,
+      kind: 'review_preview' as const, body: previewBody });
+    const controlled = { ...command, operationId: 'status_durable_0001' };
+    expect((await mailbox.submit(controlled, principal)).kind).toBe('ok');
+    expect((await mailbox.complete(controlled.operationId, { ok: false, code: 'forbidden' })).kind).toBe('ok');
+    expect((await mailbox.submit(preview(0), principal)).kind).toBe('ok'); // unresolved
+    for (let index = 1; index < 64; index++) {
+      const observation = preview(index);
+      expect((await mailbox.submit(observation, principal)).kind).toBe('ok');
+      expect((await mailbox.complete(observation.operationId, { ok: false, code: 'forbidden' })).kind).toBe('ok');
+    }
+    const approval = { operationId: 'approve_durable_0001', kind: 'review_approve' as const,
+      body: { v: 1, commandId: 'approve_durable_0001', bindingId: binding.bindingId, roomId: '!room:example',
+        expectedPolicyVersion: 3, expectedBindingGeneration: 2, issuedAt: new Date(T0).toISOString(),
+        selection: [{ v: 1, roomId: '!room:example', eventId: 'event_1', authorParticipantId: 'peer_agent',
+          authorDeviceId: 'peer_device', contentDigest: `sha256:${'a'.repeat(64)}` }] } };
+    expect((await mailbox.submit(approval, principal)).kind).toBe('ok');
+    expect((await mailbox.complete(approval.operationId, { ok: true, releaseIds: ['release_12345678'] })).kind).toBe('ok');
+    expect(await mailbox.result(controlled.operationId)).toMatchObject({ kind: 'ok', value: { outcome: { ok: false, code: 'forbidden' } } });
+    expect(await mailbox.result(approval.operationId)).toMatchObject({ kind: 'ok', value: { outcome: { ok: true, releaseIds: ['release_12345678'] } } });
+    expect(await mailbox.result(preview(0).operationId)).toMatchObject({ kind: 'ok', value: { outcome: null } });
+    expect((await mailbox.submit(preview(1), principal)).kind).toBe('ok'); // read-only replay may be recomputed
+    expect(await mailbox.submit({ ...preview(1), body: { ...previewBody, releaseIds: ['release_other'] } }, principal))
+      .toEqual({ kind: 'conflict' });
+  });
   it('reserves one Stop slot while 64 ordinary commands remain pending', async () => {
     const state = fakeStore(() => T0);
     const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });

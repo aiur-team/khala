@@ -6,7 +6,7 @@ import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import type { AdmissionGateway } from '../../invitations/index';
 import { fakeStore, T0 } from '../../auth/support.test';
-import { createOwnerMailboxRoutes, OWNER_MAILBOX_COMPLETE, OWNER_MAILBOX_POLL, OWNER_MAILBOX_RESULT, OWNER_MAILBOX_SUBMIT } from './routes';
+import { createOwnerMailboxRoutes, OWNER_MAILBOX_COMPLETE, OWNER_MAILBOX_POLL, OWNER_MAILBOX_RESULT, OWNER_MAILBOX_SUBMIT, OWNER_REVIEW_BINDINGS } from './routes';
 import { createOwnerMailbox } from './store';
 
 const origin = 'https://khala.aiur.team';
@@ -39,7 +39,7 @@ async function setup() {
     inspectOwnerMembership: async () => ({ kind: member ? 'joined' : 'absent' }),
   });
   const call = (path: string, method: string, body?: unknown) => {
-    const route = [...routes.human, ...routes.agent].find(item => item.path === path)!;
+    const route = [...routes.human, ...routes.agent].find(item => item.path === path.split('?')[0])!;
     return route.handle(new Request(`${origin}${path}${path === OWNER_MAILBOX_RESULT ? `?binding_id=${binding.bindingId}&operation_id=${command.operationId}` : ''}`,
       { method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) }));
   };
@@ -48,6 +48,21 @@ async function setup() {
 }
 
 describe('hosted owner mailbox routes', () => {
+  it('discovers only active bindings for the authenticated room owner', async () => {
+    const env = await setup();
+    const route = OWNER_REVIEW_BINDINGS + '?room_id=%21room%3Aexample';
+    expect((await env.call(route, 'GET')).status).toBe(200);
+    expect(await (await env.call(route, 'GET')).json()).toEqual({ v: 1, roomId: '!room:example', bindings: [] });
+    expect((await env.index.activate(binding, '!room:example' as RoomId)).kind).toBe('ok');
+    expect(await (await env.call(route, 'GET')).json()).toEqual({ v: 1, roomId: '!room:example', bindings: [
+      { bindingId: binding.bindingId, generation: 2, agentParticipantId: binding.agentParticipantId },
+    ] });
+    env.setMember(false);
+    expect((await env.call(route, 'GET')).status).toBe(403);
+    env.setMember(true);
+    env.setSignedIn(false);
+    expect((await env.call(route, 'GET')).status).toBe(401);
+  });
   it('serves a typed command only after owner submission and current agent authority', async () => {
     const env = await setup();
     expect((await env.call(OWNER_MAILBOX_SUBMIT, 'POST', command)).status).toBe(200);

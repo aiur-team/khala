@@ -16,6 +16,8 @@ import type {
   RoomId,
   ClosureCapability,
   ClosurePort,
+  RevocationPort,
+  RevocationSubject,
 } from '@khala/contracts/messaging/index';
 
 type ChannelClosureContext = Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
@@ -32,6 +34,9 @@ export interface HumanApplicationPorts {
   /** Authenticated participant mapping supplied by the live messaging adapter. */
   readonly participant?: () => ParticipantView | null;
   readonly closure?: (roomId: RoomId) => ChannelClosureContext;
+  readonly revocation?: (roomId: RoomId) => RevocationPort & Readonly<{
+    targets(): readonly (RevocationSubject & Readonly<{ expectedGeneration: number }>)[];
+  }>;
 }
 
 export interface HumanRouteContext extends HumanApplicationPorts {

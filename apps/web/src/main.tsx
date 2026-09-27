@@ -5,7 +5,8 @@ import { readHumanEntry } from './composition/human/entry';
 import { readHostedConfig } from './composition/human/hosted-config';
 import { createMatrixBrowserPorts } from './composition/human/matrix-browser';
 import { mountKhalaContent } from './composition/human/mount';
-import { renderHumanRoom } from './composition/human/room';
+import { createHumanRoomRenderer } from './composition/human/room';
+import { createOwnerMailboxReviewClient } from './composition/review/owner-mailbox-client';
 import { createHumanRouteCodec } from './composition/human/routes';
 import { mountHostedUnavailable } from './composition/human/unavailable';
 import { createChannelAccessInboxController } from './features/channel-access/controller';
@@ -15,6 +16,7 @@ import './shell/shell.css';
 import './features/create-channel/create-channel.css';
 import './features/timeline/timeline.css';
 import './features/channel/channel.css';
+import './features/review/review.css';
 import './features/recovery/recovery.css';
 import './features/approval-decision/approval-decision.css';
 import './features/channel-access/channel-access.css';
@@ -41,6 +43,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   if (entry.path !== `${location.pathname}${location.search}`) history.replaceState(null, '', entry.path);
 
   const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value });
+  const review = createOwnerMailboxReviewClient({ origin: appOrigin, csrf: api.reviewCsrf });
   const matrix = createMatrixBrowserPorts({
     identity: api.identity,
     credentials: api.credentials,
@@ -72,6 +75,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     admission: api.admission,
     participant: matrix.participant,
     closure,
+    ...(api.revocation ? { revocation: api.revocation } : {}),
     limits: decodedLimits.value,
   }, { initialPath: entry.path });
   const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
@@ -83,7 +87,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     routes,
     createChannelAccess,
     mode: entry.mode,
-    renderRoom: renderHumanRoom,
+    renderRoom: createHumanRoomRenderer(review),
     navigateRoute(path) {
       history.pushState(null, '', path);
       application.navigate(path);

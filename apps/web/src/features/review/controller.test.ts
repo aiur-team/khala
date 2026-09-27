@@ -81,6 +81,21 @@ function createFakePort(initial: ReviewView) {
 }
 
 describe('review controller', () => {
+  it('restores an unknown command and reconciles its exact identity without a new selection', async () => {
+    const fake = createFakePort(view());
+    const unresolved = { v: 1, commandId: 'command_unresolved' as never, roomId, bindingId,
+      expectedPolicyVersion: 3, expectedBindingGeneration: 0, selection: [ref('event-a')],
+      issuedAt: '2026-09-17T00:00:00Z' } as ApprovalCommand;
+    fake.port.recoverUnknown = () => unresolved;
+    let received: ApprovalCommand | null = null;
+    fake.setApprove(async command => { received = command; return { kind: 'accepted', releaseIds: ['release_1' as ReleaseId] }; });
+    const controller = createReviewController(fake.port);
+    expect(controller.getSnapshot().submission).toMatchObject({ phase: 'unknown', commandId: unresolved.commandId });
+    await controller.reconcileUnknown();
+    expect(received).toBe(unresolved);
+    expect(controller.getSnapshot().submission.phase).toBe('released');
+    controller.dispose();
+  });
   it('starts idle with an empty selection', () => {
     const fake = createFakePort(view());
     const controller = createReviewController(fake.port);

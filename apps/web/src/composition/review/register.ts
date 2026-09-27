@@ -9,7 +9,7 @@ export type BrowserReviewDependencies = Readonly<{
   client: ReviewControlClient;
   limits: DeliveryLimits;
   /** The signed-in human's own agent binding in a room, or null when they have none there. */
-  bindingFor(context: HumanRouteContext, roomId: RoomId): BindingId | null;
+  bindingFor(context: HumanRouteContext, roomId: RoomId): BindingId | Readonly<{ bindingId: BindingId; generation: number }> | null;
   refreshMs?: number;
 }>;
 
@@ -61,9 +61,11 @@ export function registerReview(dependencies?: BrowserReviewDependencies): Review
     portFor(context: HumanRouteContext, roomId: RoomId) {
       const ports = attached.get(context);
       if (!ports) return null;
-      const bindingId = dependencies.bindingFor(context, roomId);
-      if (bindingId === null) return null;
-      const key = JSON.stringify([roomId, bindingId]);
+      const binding = dependencies.bindingFor(context, roomId);
+      if (binding === null) return null;
+      const bindingId = typeof binding === 'string' ? binding : binding.bindingId;
+      const bindingGeneration = typeof binding === 'string' ? undefined : binding.generation;
+      const key = JSON.stringify([roomId, bindingId, bindingGeneration]);
       const existing = ports.get(key);
       if (existing) return existing;
       const port = createBrowserReviewPort({
@@ -71,6 +73,7 @@ export function registerReview(dependencies?: BrowserReviewDependencies): Review
         room: context.room,
         roomId,
         bindingId,
+        ...(bindingGeneration === undefined ? {} : { bindingGeneration }),
         viewerOwnerId: context.principal.ownerId,
         limits: dependencies.limits,
         ...(dependencies.refreshMs === undefined ? {} : { refreshMs: dependencies.refreshMs }),
