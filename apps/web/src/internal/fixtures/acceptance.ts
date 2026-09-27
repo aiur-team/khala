@@ -47,7 +47,9 @@ export async function khala(argv: readonly string[], options: CliOptions): Promi
   const code = await runCli(argv, {
     client: createUnavailableClient(),
     listeningMode: null,
-    inbox: (bindingId, generation) => openInbox({
+    inbox: (bindingId, generation, inboxOptions) => openInbox({
+      ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+      ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
       stateDirectory: inboxState, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
     }),
     stdin, stdout, stderr,
@@ -58,6 +60,8 @@ export async function khala(argv: readonly string[], options: CliOptions): Promi
     internal: async () => createInternalRuntime({
       bundleDirectory: options.bundleDirectory,
       startPort: options.startPort ?? 0,
+      // This test has no installed Claude route; keep its mode claim independent of the host.
+      claudeVersion: async () => null,
       openBrowser: async () => ({ opened: false, reason: 'test' }),
     }),
     internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
