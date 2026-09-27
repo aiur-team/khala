@@ -32,11 +32,9 @@ function identifier(value: unknown, field: string): string {
 }
 
 function decodeRole(value: unknown, field: string, expected: RoleName): ProfileRole {
-  const record = exactKeys(value, field, ['role', 'harness', 'provider', 'model', 'labels', 'capabilities']);
+  const record = exactKeys(value, field, ['role', 'harness', 'provider', 'model', 'cliVersion', 'capabilities']);
   if (record.role !== expected) fail(`${field}.role`, `must be ${expected}`);
   const harness = identifier(record.harness, `${field}.harness`);
-  if (!Array.isArray(record.labels) || record.labels.length === 0) fail(`${field}.labels`, 'must name the harness/model labels');
-  const labels = record.labels.map((label, index) => identifier(label, `${field}.labels[${index}]`));
   const capabilities = decodeHarnessCapabilities(record.capabilities);
   if (!capabilities.ok) fail(`${field}.capabilities`, `${capabilities.code} at ${capabilities.field}`);
   if (capabilities.value.harness !== harness) fail(`${field}.capabilities.harness`, `must be ${harness}`);
@@ -45,7 +43,7 @@ function decodeRole(value: unknown, field: string, expected: RoleName): ProfileR
     harness,
     provider: identifier(record.provider, `${field}.provider`),
     model: identifier(record.model, `${field}.model`),
-    labels,
+    cliVersion: identifier(record.cliVersion, `${field}.cliVersion`),
     capabilities: capabilities.value,
   };
 }
@@ -79,11 +77,12 @@ export function decodeProfile(input: unknown): Profile {
     fail('timeoutMs', `must be a positive integer of at most ${MAX_TIMEOUT_MS}`);
   }
   const khalaPackage = decodePackage(record.khalaPackage);
+  if (record.dispatchLabel !== 'agent:todo') fail('dispatchLabel', 'must be agent:todo for normal test-driver dispatch');
   if (!Array.isArray(record.roles) || record.roles.length !== 2) fail('roles', 'must hold exactly roles a and b');
   return {
     name: identifier(record.name, 'name'),
     repository: ACCEPTANCE_REPOSITORY,
-    dispatchLabel: identifier(record.dispatchLabel, 'dispatchLabel'),
+    dispatchLabel: 'agent:todo',
     khalaPackage,
     timeoutMs,
     roles: [decodeRole(record.roles[0], 'roles[0]', 'a'), decodeRole(record.roles[1], 'roles[1]', 'b')],

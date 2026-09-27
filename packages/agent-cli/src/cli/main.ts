@@ -86,8 +86,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         const harness = localHarness(() => setupEnvironment(process.env));
         return createInternalClient({ descriptorPath, capabilities: harness.capabilities, observation: harness.observation });
       },
-      internalDelivery: async descriptorPath =>
-        (await import('../composition/internal-delivery.js')).createInternalDelivery({ descriptorPath, stateDirectory }),
+      internalDelivery: async (descriptorPath, onWake) =>
+        (await import('../composition/internal-delivery.js')).createInternalDelivery({ descriptorPath, stateDirectory,
+          ...(onWake ? { onWake } : {}) }),
+      codexBoundary: async (binding, idle, sessionId) => {
+        const { createCodexIdleActivity } = await import('../composition/codex-idle-activity.js');
+        await createCodexIdleActivity(stateDirectory).mark(binding, idle, sessionId);
+      },
+      codexIdleWake: async (sessionId, binding) => {
+        const { createInstalledCodexWake } = await import('../composition/codex-installed-wake.js');
+        return createInstalledCodexWake({ sessionId, binding,
+          descriptorPath: sessionGrants(internalRoot)({ harness: 'codex', sessionId }) });
+      },
     });
   } finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); }
 }

@@ -34,9 +34,15 @@ describe('readServerEnv', () => {
       controlStateNamespace: 'khala-prod',
       matrixServerName: 'matrix.example.test',
       matrixRegistrationSharedSecret: 'registration-secret',
+      matrixRegistrationIngressToken: null,
       matrixPasswordDerivationSecret: 'password-secret',
       invitationHmacSecret: 'invitation-secret',
     });
+  });
+
+  it('keeps the preview registration ingress token server-side and optional', () => {
+    expect(readHumanServerEnv({ ...complete, MATRIX_REGISTRATION_INGRESS_TOKEN: 'preview-ingress-token' }).matrixRegistrationIngressToken)
+      .toBe('preview-ingress-token');
   });
 
   it('fails closed when a required key is missing, naming only the key', () => {

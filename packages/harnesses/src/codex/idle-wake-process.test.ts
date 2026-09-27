@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { SpawnOptions } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { codexIdleWakeArgv } from './idle-wake';
 import { createCodexQueueProcessPort, scrubbedQueueEnv } from './idle-wake-process';
 
@@ -71,5 +71,22 @@ describe('codex queue process port', () => {
     expect(f.kills).toHaveLength(2);
     f.close(null);
     await stopped;
+  });
+
+  it('escalates a stuck queue child but waits for close before Stop can finish', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeSpawn();
+      const port = createCodexQueueProcessPort({ command: '/bin/codex', env: {}, timeoutMs: 10, spawn: f.spawn });
+      const pending = port.run(['queue'], new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(510);
+      expect(f.kills).toEqual(['SIGTERM', 'SIGKILL']);
+      let settled = false;
+      void pending.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      f.close(null);
+      expect(await pending).toEqual({ status: 'lost', cause: 'timeout' });
+    } finally { vi.useRealTimers(); }
   });
 });

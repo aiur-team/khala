@@ -293,7 +293,8 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       bindingControl = composeBindingControl({
         handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,
       });
-      const modes = composeBindingModes({ handle: channel.handle, store: channel.store, claude: claudeRoute });
+      const modes = composeBindingModes({ handle: channel.handle, store: channel.store,
+        stateDirectory: path.dirname(root), claude: claudeRoute });
       const receipts = composeInternalReceipts({ store: channel.handle, logFile: path.join(channel.directory, RECEIPT_LOG_FILE) });
       // Acknowledgements a crash left unprojected reach the owner's evidence before the server listens.
       await receipts.projector.drain().catch(() => undefined);

@@ -9,12 +9,12 @@ import { binding as fixtureBinding, limits } from './fakes';
 const binding = fixtureBinding();
 const MARKER = 'marker-body-7f3a';
 
-function harness(outcome: () => Promise<CodexIdleWakeOutcome> = async () => ({ status: 'queued' })) {
+function harness(outcome: (signal: AbortSignal) => Promise<CodexIdleWakeOutcome> = async () => ({ status: 'queued' })) {
   const runs: { argv: readonly string[]; signal: AbortSignal }[] = [];
   let live = true;
   let idle = true;
   const wake = createCodexIdleWake({
-    port: { run: (argv, signal) => { runs.push({ argv, signal }); return outcome(); } },
+    port: { run: (argv, signal) => { runs.push({ argv, signal }); return outcome(signal); } },
     isCurrent: async () => live,
     isIdle: async () => idle,
     revocationPollMs: 5,
@@ -77,11 +77,13 @@ describe('codex idle wake', () => {
   });
 
   it('aborts a wake already in flight when Stop revokes the binding', async () => {
-    const { wake, runs, revoke } = harness(() => new Promise(() => {}));
+    const { wake, runs, revoke } = harness(signal => new Promise(resolve => {
+      signal.addEventListener('abort', () => resolve({ status: 'not_started' }), { once: true });
+    }));
     const pending = wake.wake(binding, 'sync', '0.154.0');
     await new Promise(resolve => setTimeout(resolve, 0));
     revoke();
-    // The port promise never settles here, so the wake must resolve from the abort alone.
+    // The port settles only after observing abort; Stop waits for that cleanup.
     expect(await pending).toBe('revoked');
     expect(runs[0]!.signal.aborted).toBe(true);
   });

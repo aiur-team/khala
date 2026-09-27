@@ -208,6 +208,23 @@ export const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     expect(own.status).toBe(200);
     add(s, 'POST agent harness own', own);
   },
+  'http-internal:POST /api/v1/agent/idle-wake': async s => {
+    // A foreign session cannot wake this binding and the response carries no
+    // channel content. This fixture has no matching native session to wake.
+    const own = await s.world.http('POST', '/api/v1/agent/idle-wake', { body: { v: 1, sessionId: 'foreign-thread' } });
+    expect(own.status).toBe(200);
+    add(s, 'POST agent idle-wake own', own);
+    const targeted = await s.world.http('POST', '/api/v1/agent/idle-wake', {
+      body: { v: 1, sessionId: 'foreign-thread', bindingId: 'binding-carol' },
+    });
+    expect(targeted.status).toBe(400);
+    add(s, 'POST agent idle-wake targeted', targeted);
+    const anonymous = await s.world.http('POST', '/api/v1/agent/idle-wake', {
+      bearer: null, body: { v: 1, sessionId: 'foreign-thread' },
+    });
+    expect(anonymous.status).toBe(403);
+    add(s, 'POST agent idle-wake unauthenticated', anonymous);
+  },
   // The agent's own mode: mode state only, never a message body, and no target field is accepted.
   'http-internal:GET /api/v1/agent/listening-mode': async s => {
     const own = await s.world.http('GET', '/api/v1/agent/listening-mode');

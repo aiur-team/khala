@@ -11,6 +11,8 @@ import type { ListeningMode } from '../../packages/contracts/src/delivery/listen
 
 export const ACCEPTANCE_REPOSITORY = 'aiur-team/khala';
 export const ACCEPTANCE_LABEL = 'acceptance';
+/** Normal Aiur test-driver dispatch; fixture harness/model are evidence, never dispatch labels. */
+export const DRIVER_MODEL_LABEL = 'model:codex';
 /** An exact published `@aiur/khala` version. */
 export const NPM_PIN = /^@aiur\/khala@\d+\.\d+\.\d+(?:-[0-9a-z.]+)?$/i;
 /** An absolute path to a packed `.tgz`: never a directory or a workspace tree. */
@@ -25,8 +27,8 @@ export type ProfileRole = Readonly<{
   /** Provider and model the durable Aiur evidence must name, e.g. `anthropic` / `claude-opus-5-5`. */
   provider: string;
   model: string;
-  /** Labels that make the normal Executor dispatch this ticket to that harness and model. */
-  labels: readonly string[];
+  /** Exact version observed from the native CLI, not a dispatch label. */
+  cliVersion: string;
   /** The exact route's capabilities; only its declared-supported modes are exercised. */
   capabilities: HarnessCapabilities;
 }>;
@@ -108,11 +110,23 @@ export type NativeSession = Readonly<{
   cliVersion: string;
   launchCommand: string;
   startedAt: string;
+  /** Local capture time written by the trusted capture process, before access request creation. */
+  capturedAt: string;
+  repository: string;
+  runId: string;
+  ticket: number;
+  role: RoleName;
+  processStartTicks: string;
+  bootId: string;
+  executable: string;
+  argv: readonly string[];
+  tty: string;
+  tmuxPane: string;
 }>;
 
 export type AiurPort = Readonly<{
   /** The durable native session the Executor recorded for the ticket, or null while none is recorded. */
-  session(ticket: number): Promise<NativeSession | null>;
+  session(ticket: number, runId: string, role: RoleName): Promise<NativeSession | null>;
   /** Whether that exact process still runs as that session. Never signals it. */
   alive(session: NativeSession): Promise<boolean>;
 }>;
@@ -131,6 +145,7 @@ export type TimelineEvent = Readonly<{
 export type AccessRequest = Readonly<{
   requestHandle: string;
   revision: string;
+  createdAt: string;
   outcome: string;
   harness: string;
   sessionFingerprint: string;
@@ -314,7 +329,8 @@ export type RunReport = Readonly<{
   verdict: Verdict;
   checks: readonly Check[];
   modes: ModePlan;
-  roles: readonly RoleRecord[];
+  /** Secret-free summary; exact argv and session IDs remain in private evidence. */
+  roles: readonly Readonly<{ role: RoleName; ticket: number; session: Pick<NativeSession, 'harness' | 'provider' | 'model' | 'cliVersion' | 'pid'> | null; target: StopTarget | null }>[];
   stop: StopRecord | null;
   launcherClosed: boolean;
   cleanup: readonly Readonly<{ ticket: number; outcome: 'closed' | 'already_closed' | 'refused' | 'failed'; detail: string }>[];
