@@ -444,6 +444,8 @@ export type MatrixBrowserPorts = Readonly<{
   cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
   /** Trusted owner endpoint discards its outbound Megolm session before a new device can receive sends. */
   discardOutboundSession(roomId: RoomId): Promise<boolean>;
+  /** Trusts one server-attested agent Matrix device only after exact SDK fingerprint comparison. */
+  trustAgentDevice(roomId: RoomId, userId: string, deviceId: string, fingerprint: string): Promise<boolean>;
 }>;
 
 /** Binds the selected Matrix SDK to KHA-111/112 without exposing it to UI controllers. */
@@ -523,6 +525,23 @@ export function createMatrixBrowserPorts(input: Readonly<{
       const crypto = active.client.getCrypto();
       if (!crypto) return false;
       try {
+        await crypto.forceDiscardSession(roomId);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async trustAgentDevice(roomId, userId, deviceId, fingerprint) {
+      const active = runtime.active;
+      if (!active?.client.getRoom(roomId)?.hasEncryptionStateEvent()
+        || !userId.startsWith('@') || !deviceId || !/^[A-Za-z0-9+/]{43}=?$/u.test(fingerprint)) return false;
+      const crypto = active.client.getCrypto();
+      if (!crypto) return false;
+      try {
+        const device = (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId);
+        if (!device || device.getFingerprint() !== fingerprint) return false;
+        await crypto.setDeviceVerified(userId, deviceId, true);
+        if (!(await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified()) return false;
         await crypto.forceDiscardSession(roomId);
         return true;
       } catch {
