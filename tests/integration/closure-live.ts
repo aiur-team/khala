@@ -373,7 +373,7 @@ try {
       if (response.status !== 200) throw new Error(`combined_revocation_status_http_${response.status}`);
       return response.json() as Promise<{ kind: string; value?: { control: string; removal: string; rotation: string; endpoint: string } }>;
     };
-    const sendCanary = (body: string) => browserA.page.evaluate(async message =>
+    const sendCanary = (page: BrowserPage, body: string) => page.evaluate(async message =>
       (window as unknown as { closureFixture: { send(body: string): Promise<string> } }).closureFixture.send(message), body);
     const outboundSession = async (eventId: string) => {
       const event = await synapse.api(`/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(eventId)}`,
@@ -384,7 +384,9 @@ try {
       }
       return content.session_id;
     };
-    const beforeSession = combined ? await outboundSession(await sendCanary('before-revocation-canary')) : null;
+    const remainingBrowsers = [{ browser: browserA, login: browserALogin },
+      { browser: browserB, login: browserBLogin }] as const;
+    let beforeSessions: string[] = [];
     if (combined) {
       const firstRevocation = await revoke();
       const firstStatus = await revocationStatus();
@@ -401,6 +403,14 @@ try {
         authorization: `DPoP ${tokenA}`, dpop: signerA.proof('GET', ordinaryPoll, tokenA), origin: appOrigin,
       } });
       if (deniedBeforeClosure.status !== 403) throw new Error('combined_revoked_ordinary_poll_allowed');
+      beforeSessions = await Promise.all(remainingBrowsers.map(async ({ browser, login }) => {
+        const firstSession = await outboundSession(await sendCanary(browser.page,
+          `pre-discard-one-${login.device_id}`));
+        const secondSession = await outboundSession(await sendCanary(browser.page,
+          `pre-discard-two-${login.device_id}`));
+        if (firstSession !== secondSession) throw new Error('combined_sender_baseline_unstable');
+        return secondSession;
+      }));
     }
     const operationId = 'close_live_operation_345';
     const command = { operationId, ownerId, roomId, expectedRoomRevision: 0 };
@@ -458,11 +468,13 @@ try {
       const fence = createRoomSendFence(store);
       const held = await fence.inspect(roomId);
       if (held.kind !== 'found' || held.value.hold?.operationId !== revokeOperationId
-        || !beforeSession) throw new Error('combined_rotation_hold_missing');
-      for (const browser of [browserA, browserB]) {
+        || beforeSessions.length !== remainingBrowsers.length) throw new Error('combined_rotation_hold_missing');
+      for (const [index, { browser, login }] of remainingBrowsers.entries()) {
         await browserCall(browser.page, 'discard');
-        const deviceId = browser === browserA ? browserALogin.device_id : browserBLogin.device_id;
-        const sender = roster.find(item => item.deviceId === deviceId);
+        const rotatedSession = await outboundSession(await sendCanary(browser.page,
+          `after-revocation-${login.device_id}`));
+        if (rotatedSession === beforeSessions[index]) throw new Error('combined_sender_sdk_session_unchanged');
+        const sender = roster.find(item => item.deviceId === login.device_id);
         if (!sender || await fence.acknowledgeRotation(roomId, sender, revokeOperationId,
           held.value.hold.epoch) !== 'applied') throw new Error('combined_sender_rotation_missing');
       }
@@ -474,8 +486,6 @@ try {
         || finalStatus.value.rotation !== 'rotated') {
         throw new Error('combined_revocation_not_rotated');
       }
-      const afterSession = await outboundSession(await sendCanary('after-revocation-canary'));
-      if (afterSession === beforeSession) throw new Error('combined_outbound_session_unchanged');
       await browserCall(browserB.page, 'close');
       await browserB.context.close();
     }
@@ -579,7 +589,7 @@ try {
       ...(combined ? { absentRevokedStop: 'partial_joined_with_other_stop',
         exactDeviceRemoval: 'synapse_verified', localStop: 'durable_control_receipt',
         endpointRemovalAfterReceipt, endpointRemoval, roomSenderRotation: 'all_verified',
-        sdkOutboundSession: 'changed', revocationControl: 'disabled', revocationRotation: 'rotated',
+        sdkOutboundSessions: 'both_changed', revocationControl: 'disabled', revocationRotation: 'rotated',
         revocationEndpoint, ordinaryPollBeforeClosure: 'blocked' }
         : { firstReceipt: 'partial_joined', forgedReceipt: 'rejected' }),
       secondReceipt: 'complete_left', futureAdmission: 'blocked', futureMailboxControl: 'blocked',
