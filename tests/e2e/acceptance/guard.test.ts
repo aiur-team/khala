@@ -38,6 +38,7 @@ describe('runner command guard', () => {
     [['tmux', 'send-keys', '-t', '%7', 'C-c']],
     [['tmux', 'send-keys', '-t', '%7', '-l', '/status']],
     [['tmux', 'capture-pane', '-p', '-t', 'other']],
+    [['tmux', 'display-message', '-p', '-t', '%7', '#{pane_pid}']],
     [['/proc/4242/exe', '--model', 'gpt-6-sol']],
     [['/proc/4242/exe', '--version', 'extra']],
     // The runner acts as the human controller, never as an agent session.
@@ -60,6 +61,7 @@ describe('runner command guard', () => {
     [['npx', '--yes', PACKAGE, 'internal', '--resume', 'channel_abc-123']],
     [['gh', 'api', 'repos/aiur-team/khala/issues']],
     [['tmux', 'display-message', '-p', '-t', '%7', '#{pane_tty}']],
+    [['tmux', 'display-message', '-p', '-t', '%7', '#{pane_title}']],
     [['tmux', 'capture-pane', '-p', '-t', '%7']],
   ])('allows %j', argv => {
     expect(checkCommand(argv, PACKAGE)).toEqual({ ok: true });
