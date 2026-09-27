@@ -262,16 +262,9 @@ function storedEvents(db: DatabaseSync, rows: readonly EventRow[]): readonly Sto
  * acknowledged, server-issued batch can carry provenance into a new send. */
 function causeForAgentSend(
   db: DatabaseSync, channelId: string, participantId: string, deviceId: string,
-  binding: SessionBinding | undefined,
+  binding: SessionBinding | null,
 ): Readonly<{ rootId: string; depth: number; releaseIds: readonly string[] }> | null {
-  if (!binding || binding.agentParticipantId !== participantId || binding.deviceId !== deviceId) return null;
-  const held = db.prepare(`SELECT b.status FROM bindings b
-    JOIN discovery_activations admission ON admission.binding_id = b.binding_id
-      AND admission.generation = b.generation AND admission.channel_id = ?
-    WHERE b.binding_id = ? AND b.generation = ? AND b.participant_id = ? AND b.device_id = ?
-    AND b.generation = (SELECT max(generation) FROM bindings WHERE binding_id = b.binding_id)`)
-    .get(channelId, binding.bindingId, binding.generation, participantId, deviceId) as { status: string } | undefined;
-  if (held?.status !== 'active') return null;
+  if (!binding) return null;
   const latest = db.prepare(`SELECT max(ledger_revision) AS revision FROM agent_acknowledgements
     WHERE binding_id = ? AND generation = ? AND channel_id = ?`)
     .get(binding.bindingId, binding.generation, channelId) as { revision: number | null };
@@ -287,6 +280,20 @@ function causeForAgentSend(
     || !Number.isSafeInteger(cause.depth) || cause.depth < 0)) return null;
   return { rootId, depth: Math.max(...causes.map(cause => cause.depth!)) + 1,
     releaseIds: causes.map(cause => cause.release_id) };
+}
+
+function authenticatedAuthorBinding(
+  db: DatabaseSync, channelId: string, participantId: string, deviceId: string,
+  binding: SessionBinding | undefined,
+): SessionBinding | null {
+  if (!binding || binding.agentParticipantId !== participantId || binding.deviceId !== deviceId) return null;
+  const held = db.prepare(`SELECT b.* FROM bindings b
+    JOIN discovery_activations admission ON admission.binding_id = b.binding_id
+      AND admission.generation = b.generation AND admission.channel_id = ?
+    WHERE b.binding_id = ? AND b.generation = ? AND b.participant_id = ? AND b.device_id = ?
+    AND b.generation = (SELECT max(generation) FROM bindings WHERE binding_id = b.binding_id)`)
+    .get(channelId, binding.bindingId, binding.generation, participantId, deviceId) as BindingRow | undefined;
+  return held?.status === 'active' && sameBinding(held, binding) ? binding : null;
 }
 
 function bindingFromRow(row: BindingRow): StoredBinding {
@@ -773,18 +780,23 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           const author = db.prepare('SELECT kind FROM participants WHERE participant_id = ?')
             .get(input.authorParticipantId) as { kind: 'human' | 'agent' } | undefined;
           if (!author) return { kind: 'unavailable' } as const;
+          const authorBinding = author.kind === 'agent'
+            ? authenticatedAuthorBinding(db, input.channelId, input.authorParticipantId,
+              input.authorDeviceId, input.sourceBinding) : null;
           const cause = author.kind === 'human'
             ? { rootId: input.eventId, depth: 0 }
-            : causeForAgentSend(db, input.channelId, input.authorParticipantId, input.authorDeviceId, input.sourceBinding);
+            : causeForAgentSend(db, input.channelId, input.authorParticipantId, input.authorDeviceId, authorBinding);
           const inserted = db.prepare(`
             INSERT INTO events (
               event_id, channel_id, author_participant_id, author_device_id, client_txn_id,
-              canonical_payload, content_digest, received_at, causal_root_id, causal_depth
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              canonical_payload, content_digest, received_at, causal_root_id, causal_depth,
+              author_binding_id, author_binding_generation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             input.eventId, input.channelId, input.authorParticipantId, input.authorDeviceId,
             input.clientTxnId, canonicalPayload, contentDigest, input.receivedAt,
             cause?.rootId ?? null, cause?.depth ?? null,
+            authorBinding?.bindingId ?? null, authorBinding?.generation ?? null,
           );
           db.prepare(`INSERT INTO automation_arrivals (event_id, binding_id, generation, mode_version)
             SELECT ?, b.binding_id, b.generation, m.version FROM bindings b

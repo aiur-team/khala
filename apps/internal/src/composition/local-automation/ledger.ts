@@ -45,13 +45,19 @@ function activeBinding(db: DatabaseSync, binding: SessionBinding, channelId: str
 }
 
 function senderBinding(db: DatabaseSync, event: PeerEvent): SessionBinding | null {
+  const author = db.prepare(`SELECT author_binding_id AS binding_id,
+    author_binding_generation AS generation FROM events WHERE event_id = ? AND channel_id = ?`)
+    .get(event.eventId, event.channelId) as { binding_id: string | null; generation: number | null } | undefined;
+  if (!author?.binding_id || author.generation === null) return null;
   const rows = db.prepare(`SELECT b.* FROM bindings b
     JOIN memberships member ON member.participant_id = b.participant_id AND member.channel_id = ?
     JOIN discovery_activations admission ON admission.binding_id = b.binding_id
       AND admission.generation = b.generation AND admission.channel_id = member.channel_id
-    WHERE b.participant_id = ? AND b.device_id = ? AND b.status = 'active' AND member.membership = 'joined'
+    WHERE b.binding_id = ? AND b.generation = ? AND b.participant_id = ? AND b.device_id = ?
+      AND b.status = 'active' AND member.membership = 'joined'
       AND b.generation = (SELECT max(newer.generation) FROM bindings newer WHERE newer.binding_id = b.binding_id)`)
-    .all(event.channelId, event.authorParticipantId, event.authorDeviceId) as unknown as BindingRow[];
+    .all(event.channelId, author.binding_id, author.generation,
+      event.authorParticipantId, event.authorDeviceId) as unknown as BindingRow[];
   if (rows.length !== 1) return null;
   const row = rows[0]!;
   return { v: 1, bindingId: row.binding_id as SessionBinding['bindingId'], generation: row.generation,
@@ -138,7 +144,9 @@ export function createLocalAutomationLedger(handle: InternalStoreHandle, provide
           JOIN participants p ON p.participant_id = e.author_participant_id
           JOIN mode_controls control ON control.binding_id = arrival.binding_id
             AND control.generation = arrival.generation AND control.version = arrival.mode_version
-          JOIN bindings sender ON sender.participant_id = e.author_participant_id
+          JOIN bindings sender ON sender.binding_id = e.author_binding_id
+            AND sender.generation = e.author_binding_generation
+            AND sender.participant_id = e.author_participant_id
             AND sender.device_id = e.author_device_id AND sender.status = 'active'
           JOIN discovery_activations admission ON admission.binding_id = sender.binding_id
             AND admission.generation = sender.generation AND admission.channel_id = e.channel_id

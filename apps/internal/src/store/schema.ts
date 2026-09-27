@@ -325,6 +325,8 @@ CREATE INDEX agent_acknowledgements_revision ON agent_acknowledgements (ledger_r
 export const AUTOMATION_SCHEMA_V9_SQL = `
 ALTER TABLE events ADD COLUMN causal_root_id TEXT;
 ALTER TABLE events ADD COLUMN causal_depth INTEGER CHECK (causal_depth >= 0);
+ALTER TABLE events ADD COLUMN author_binding_id TEXT;
+ALTER TABLE events ADD COLUMN author_binding_generation INTEGER;
 CREATE TABLE automation_arrivals (
   event_id TEXT NOT NULL REFERENCES events (event_id) ON DELETE RESTRICT,
   binding_id TEXT NOT NULL,

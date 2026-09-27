@@ -85,7 +85,7 @@ function world() {
   const ledger = createLocalAutomationLedger(handle, createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS));
   const mode = (recipient: SessionBinding): ListeningModeView => ({ bindingId: recipient.bindingId,
     generation: recipient.generation, version: 1, requested: 'sync', effective: 'sync' } as ListeningModeView);
-  return { handle, store, ledger, send, acknowledge, mode, root };
+  return { handle, store, discovery, modes, ledger, send, acknowledge, mode, root };
 }
 
 describe('durable local peer reservation', () => {
@@ -120,10 +120,31 @@ describe('durable local peer reservation', () => {
     try {
       const unsupported = w.send('bob');
       expect(w.ledger.reserve({ recipient: carol, event: unsupported, mode: w.mode(carol) }))
-        .toEqual({ kind: 'held', reason: 'causal_unknown' });
+        .toEqual({ kind: 'held', reason: 'grant' });
       const forged = w.send('bob', carol);
       expect(w.ledger.reserve({ recipient: carol, event: forged, mode: w.mode(carol) }))
-        .toEqual({ kind: 'held', reason: 'causal_unknown' });
+        .toEqual({ kind: 'held', reason: 'grant' });
+    } finally { w.handle.close(); }
+  });
+
+  it('does not promote an old event after its author rebinds on the same participant and device', () => {
+    const w = world();
+    try {
+      const root = w.send('human');
+      w.acknowledge(bob, root);
+      const old = w.send('bob', bob);
+      expect(w.store.revokeBinding({ bindingId: bob.bindingId, generation: bob.generation }))
+        .toMatchObject({ kind: 'done' });
+      const replacement = { ...bob, bindingId: 'binding-bob-replacement',
+        sessionId: internalSessionDigest('codex', 'new-bob-thread') } as SessionBinding;
+      expect(w.discovery.activate({ operationKey: 'grant-bob-replacement', binding: replacement,
+        channelId: room, sessionGeneration: 1, history: 'shared' })).toMatchObject({ kind: 'activated' });
+      expect(w.modes.initialize({ bindingId: replacement.bindingId, generation: replacement.generation,
+        requested: 'sync', version: 1, experimentalGrants: [], hardCancelGrants: [],
+        lastChangedBy: { kind: 'unknown' } })).toBe(true);
+      expect(w.ledger.reserve({ recipient: carol, event: old, mode: w.mode(carol) }))
+        .toEqual({ kind: 'held', reason: 'grant' });
+      expect(w.ledger.nextPending({ recipient: carol, channelId: room, mode: w.mode(carol) })).toBeNull();
     } finally { w.handle.close(); }
   });
 
