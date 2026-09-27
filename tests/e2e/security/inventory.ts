@@ -77,6 +77,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'mcp-tool:khala_request_channel_access': probe('mcp-serve'),
   'mcp-tool:khala_channel_access_status': probe('mcp-serve'),
   'mcp-tool:khala_pair': probe('mcp-serve'),
+  'mcp-tool:khala_connect': probe('mcp-serve'),
   'mcp-tool:khala_create_channel': probe('mcp-serve'),
   'mcp-tool:khala_channel_create_status': probe('mcp-serve'),
   // Claude-bound MCP server (`KHALA_MCP_HARNESS=claude`).

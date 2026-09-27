@@ -146,6 +146,9 @@ importers:
       '@khala/connector':
         specifier: workspace:*
         version: link:../connector
+      '@khala/connector-app':
+        specifier: workspace:*
+        version: link:../../apps/connector
       '@khala/contracts':
         specifier: workspace:*
         version: link:../contracts

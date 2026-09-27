@@ -12,6 +12,9 @@ import { type McpCallCollaborators, runMcpServer } from '../../mcp/server.js';
 import { callScopedConsumer } from '../call-consumer.js';
 import { composeChannelTools } from '../../mcp/channels/tools.js';
 import { PairingService } from '../pair.js';
+import { ConnectService } from '../connect.js';
+import { PAIR_TOOL_NAME } from '../../mcp/pair.js';
+import { CONNECT_TOOL_NAME } from '../../mcp/connect.js';
 import { CliError } from '../errors.js';
 import { publicStatus } from '../runtime.js';
 import { SendService } from '../send.js';
@@ -52,12 +55,14 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
   const { internalClient, internalDelivery } = deps;
   type Routed = { client: AgentClientPort; delivering: DeliveringInbox; bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null };
   const sessions = new Map<string, Routed>();
+  type Hosted = Awaited<ReturnType<NonNullable<CliDependencies['hostedSession']>>>;
+  const hosted = new Map<string, { opened: Hosted; bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null }>();
   try {
     await runMcpServer({
       input: deps.stdin,
       output: deps.stdout,
       signal: deps.signal,
-      async route(meta) {
+      async route(meta, toolName) {
         const session = harnessSessionFromMeta(meta);
         if (session === null) return null;
         const grantPath = grants(session);
@@ -69,19 +74,56 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
           sessions.set(grantPath, routed);
         }
         const current = publicStatus(await routed.client.status(deps.signal));
-        if (!current.connected || current.binding === null) return null;
-        if (routed.bound === null || !sameHeldBinding(routed.bound.binding, current.binding)) {
-          routed.bound = {
-            binding: current.binding,
-            collaborators: await boundCollaborators(deps, routed.client, routed.delivering.inbox, current.binding),
+        if (current.connected && current.binding !== null) {
+          if (routed.bound === null || !sameHeldBinding(routed.bound.binding, current.binding)) {
+            routed.bound = {
+              binding: current.binding,
+              collaborators: await boundCollaborators(deps, routed.client, routed.delivering.inbox, current.binding),
+            };
+          }
+          return routed.bound.collaborators;
+        }
+        if (deps.hostedSession === undefined) return null;
+        let entry = hosted.get(session.sessionId);
+        if (entry === undefined) {
+          entry = { opened: await deps.hostedSession(session), bound: null };
+          hosted.set(session.sessionId, entry);
+        }
+        const hostedStatus = publicStatus(await entry.opened.client.status(deps.signal));
+        if (!hostedStatus.connected || hostedStatus.binding === null) {
+          return toolName === PAIR_TOOL_NAME || toolName === CONNECT_TOOL_NAME
+            ? pairingCollaborators(entry.opened.client) : null;
+        }
+        if (hostedStatus.binding.harness !== session.harness || hostedStatus.binding.sessionId !== session.sessionId) return null;
+        if (entry.bound === null || !sameHeldBinding(entry.bound.binding, hostedStatus.binding)) {
+          entry.bound = {
+            binding: hostedStatus.binding,
+            collaborators: await boundCollaborators(deps, entry.opened.client, entry.opened.inbox, hostedStatus.binding),
           };
         }
-        return routed.bound.collaborators;
+        return entry.bound.collaborators;
       },
     });
   } finally {
-    await Promise.all([...sessions.values()].map(routed => routed.delivering.stop()));
+    await Promise.all([
+      ...[...sessions.values()].map(routed => routed.delivering.stop()),
+      ...[...hosted.values()].map(entry => entry.opened.close()),
+    ]);
   }
+}
+
+/** Pairing has no release or read authority until admission returns a held binding. */
+function pairingCollaborators(client: AgentClientPort): McpCallCollaborators {
+  return {
+    send: new SendService(client),
+    read: { async read() { throw new CliError('not_connected'); } },
+    listeningMode: new ListeningModeOperation({ application: null }),
+    channels: composeChannelTools(client),
+    pair: new PairingService(client),
+    connect: new ConnectService(client),
+    postprocessResult: async input => input.primaryResult,
+    postprocessReadResult: async input => ({ kind: 'composed', result: input.primaryResult }),
+  };
 }
 
 /** Every tool collaborator for one held binding generation of `client`. */
@@ -111,6 +153,7 @@ async function boundCollaborators(
     listeningMode: new ListeningModeOperation({ application: client.listeningModeControl ?? deps.listeningMode ?? null }),
     channels: composeChannelTools(client),
     pair: new PairingService(client),
+    connect: new ConnectService(client),
     postprocessResult: input => postprocessMcpResult({
       ...input,
       consumer,
