@@ -13,7 +13,7 @@ import { createUnavailableClient } from '@aiur/khala/composition/unavailable';
 import { INTERNAL_DISCOVERY_DIRECTORY } from '@khala/contracts/internal/discovery-descriptor';
 import { INTERNAL_CLAUDE_TERMINAL_KEY_FILE } from '@khala/contracts/internal/descriptor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runHook, sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
+import { WAKE_NOTICE, claudeWakeSignalPath as hookSignalPath, runHook, sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
 import { webBundleManifest } from '../../launcher/bundle';
 import { type LaunchReport, launchInternal } from '../../launcher/launcher';
 import { channelDirectory } from '../../lifecycle/paths';
@@ -21,6 +21,7 @@ import { internalReleaseId } from '../../store/release-id';
 import { discoveryPrincipal } from '../channel-discovery/service';
 import { RECEIPT_LOG_FILE } from '../receipt-projection';
 import { CLAUDE_GRANT_FILE, CLAUDE_SETTLE_INTERVAL_MS } from './compose';
+import { claudeWakeSignalPath } from './signal';
 
 // The Claude plugin's `mcp-serve` against the real internal launcher: the transport
 // capability from `active.json`, the channel-access journal, the owner's decision in
@@ -589,6 +590,78 @@ describe('Claude delivery through the internal launcher', () => {
       },
     };
   }
+
+  it('wakes through the private native signal after the Stop watcher is absent, and ACKs only on the next call', async () => {
+    const nativeSession = 'session-file-changed';
+    const session = await bound(nativeSession);
+    const root = path.join(session.parent, 'internal');
+    const signal = claudeWakeSignalPath(root, nativeSession);
+    const hookRoot = path.join(session.parent, 'claude-hooks');
+    expect(signal).toBe(hookSignalPath(hookRoot, nativeSession));
+    const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
+    const [entry] = (await call(session.report.origin, { path: bindings, headers: session.owner })).json.bindings;
+    const binding = `${bindings}/${encodeURIComponent(entry.binding.bindingId)}`;
+    const issuedAt = new Date().toISOString();
+    const set = await call(session.report.origin, { method: 'POST', path: `${binding}/listening-mode`, headers: session.owner,
+      body: { v: 1, commandId: 'filechanged-sync', generation: entry.binding.generation,
+        expectedVersion: entry.view.version, requested: 'sync', issuedAt } });
+    const support = entry.view.support.sync;
+    const grant = await call(session.report.origin, { method: 'POST', path: `${binding}/experimental-route/grant`, headers: session.owner,
+      body: { v: 1, commandId: 'filechanged-grant', generation: entry.binding.generation,
+        expectedVersion: set.json.version, mode: 'sync', route: support.route,
+        harnessVersion: support.testedVersion, evidenceRevision: support.evidenceRevision, issuedAt } });
+    expect(grant.json).toMatchObject({ outcome: 'applied', view: { effective: 'sync' } });
+    const deps = {
+      bound: (sessionId: string) => sessionGranted(root, sessionId),
+      khala: async (op: string) => ({ code: 0, stdout: await session.run(op) }),
+      stateRoot: hookRoot,
+      terminalKeyPath: path.join(root, INTERNAL_CLAUDE_TERMINAL_KEY_FILE),
+      sleep: async () => undefined, now: () => Date.now(), nonce: () => 'nonce', parentAlive: () => true,
+    };
+    // This sets the real hook's idle state, with no Stop watcher process in this test.
+    await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: nativeSession, stop_hook_active: true }), deps);
+    expect(fs.statSync(signal).mode & 0o777).toBe(0o600);
+    const before = fs.readFileSync(signal, 'utf8');
+    await session.post('after the watcher expired');
+    await vi.waitFor(() => expect(fs.readFileSync(signal, 'utf8')).not.toBe(before));
+    const changed = await runHook('file-changed', JSON.stringify({ hook_event_name: 'FileChanged',
+      session_id: nativeSession, file_path: signal, event: 'change' }), deps);
+    expect(changed).toEqual({ stdout: '', stderr: `${WAKE_NOTICE}\n`, exitCode: 2 });
+    expect(await session.facts()).toEqual([]);
+    const delivered = await runHook('user-prompt-submit', JSON.stringify({ hook_event_name: 'UserPromptSubmit',
+      session_id: nativeSession }), deps);
+    expect(delivered.stdout).toContain('after the watcher expired');
+    expect(await session.facts()).toEqual([]);
+    await session.run('status');
+    expect(await session.facts()).toHaveLength(1);
+
+    // A held release cannot wake during pause; resume re-evaluates it without a new send.
+    await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: nativeSession, stop_hook_active: true }), deps);
+    const paused = await call(session.report.origin, { method: 'POST', path: `${binding}/pause`, headers: session.owner,
+      body: { v: 1, generation: entry.binding.generation, paused: true } });
+    expect(paused.json).toMatchObject({ paused: true });
+    const beforeHeldPost = fs.readFileSync(signal, 'utf8');
+    await session.post('held while paused');
+    expect(fs.readFileSync(signal, 'utf8')).toBe(beforeHeldPost);
+    const pausedEvent = await runHook('file-changed', JSON.stringify({ hook_event_name: 'FileChanged',
+      session_id: nativeSession, file_path: signal, event: 'change' }), deps);
+    expect(pausedEvent.exitCode).toBe(0);
+    const heldValue = fs.readFileSync(signal, 'utf8');
+    const resumed = await call(session.report.origin, { method: 'POST', path: `${binding}/pause`, headers: session.owner,
+      body: { v: 1, generation: entry.binding.generation, paused: false } });
+    expect(resumed.json).toMatchObject({ paused: false });
+    await vi.waitFor(() => expect(fs.readFileSync(signal, 'utf8')).not.toBe(heldValue));
+    const resumedEvent = await runHook('file-changed', JSON.stringify({ hook_event_name: 'FileChanged',
+      session_id: nativeSession, file_path: signal, event: 'change' }), deps);
+    expect(resumedEvent.exitCode).toBe(2);
+    await runHook('stop', JSON.stringify({ hook_event_name: 'Stop', session_id: nativeSession, stop_hook_active: true }), deps);
+    const stopped = await call(session.report.origin, { method: 'POST',
+      path: `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/stop`, headers: session.owner,
+      body: { v: 1, targets: null } });
+    expect(stopped.status).toBe(200);
+    expect((await runHook('file-changed', JSON.stringify({ hook_event_name: 'FileChanged',
+      session_id: nativeSession, file_path: signal, event: 'change' }), deps)).exitCode).toBe(0);
+  });
 
   it('renders an explicit MCP read in Claude structured output and acknowledges only on the next call', async () => {
     const session = await bound('session-structured-read');

@@ -706,7 +706,8 @@ describe('installed entries', () => {
     assert.deepEqual(Object.keys(entries.mcp), Object.keys(harnesses));
     const launcher = path.join(dataHome(machine), 'bin', 'khala');
     for (const entry of Object.values(entries.mcp)) assert.equal(entry.command, launcher);
-    assert.equal(entries.claudeHooks.length, 5);
+    assert.deepEqual(entries.claudeHooks.map(handler => handler.event),
+      ['SessionStart', 'FileChanged', 'UserPromptSubmit', 'PostToolUse', 'Stop', 'Stop', 'SessionEnd']);
     assert.deepEqual(entries.codexHooks.map(handler => handler.event),
       harnesses.codex === undefined ? [] : ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop']);
     const env = machineEnvironment(machine);
@@ -760,18 +761,27 @@ describe('installed entries', () => {
       // Hook commands run through `sh -c`, as Claude and Codex run them.
       // A watcher's wake marker, so UserPromptSubmit asks Khala too (the runtime's `sessionState`).
       const session = createHash('sha256').update('acceptance').digest('hex').slice(0, 32);
-      const hookState = path.join(machine.home, '.local', 'state', 'khala', 'claude-hooks', session);
+      const hookRoot = path.join(machine.home, '.local', 'state', 'khala', 'claude-hooks');
+      const hookState = path.join(hookRoot, session);
+      const signal = path.join(hookRoot, `${session}.signal`);
       const hookEnv = { ...env, CLAUDE_PLUGIN_ROOT: entries.pluginRoot };
+      const hookInput = hook => JSON.stringify({ hook_event_name: hook.event, session_id: 'acceptance', stop_hook_active: false,
+        ...(hook.event === 'FileChanged' ? { file_path: signal, event: 'add' } : {}) });
+      assert.equal(fs.statSync(hookRoot).mode & 0o777, 0o700, 'setup seeds the private watch parent');
+      assert.equal(fs.existsSync(signal), false, 'unbound setup creates no session signal');
       // #422: setup enables the plugin for every Claude session, so a session without a grant
-      // gets no output and makes no call.
+      // makes no call. SessionStart returns watcher metadata, never model context.
       for (const hook of entries.claudeHooks) {
         const before = requests.length;
-        const input = JSON.stringify({ hook_event_name: hook.event, session_id: 'acceptance', stop_hook_active: false });
-        const result = await runProcess('/bin/sh', ['-c', hook.command], hookEnv, { input, ms: 2_000 });
+        const result = await runProcess('/bin/sh', ['-c', hook.command], hookEnv, { input: hookInput(hook), ms: 2_000 });
         assert.equal(result.code, 0, `${hook.command} failed unbound: ${result.stderr}`);
-        assert.equal(result.stdout, '', `${hook.command} wrote output in an unbound session`);
+        if (hook.event === 'SessionStart') {
+          assert.deepEqual(JSON.parse(result.stdout).hookSpecificOutput,
+            { hookEventName: 'SessionStart', watchPaths: [signal] });
+        } else assert.equal(result.stdout, '', `${hook.command} wrote output in an unbound session`);
         assert.deepEqual(since(before), [], `${hook.command} reached Khala from an unbound session`);
       }
+      assert.equal(fs.existsSync(signal), false, 'unbound hooks never create a session signal');
       // The launcher's Claude session route grants this session, as `khala_request_access` would.
       const { claudeGrantPath } = await import(pathToFileURL(path.join(entries.pluginRoot, 'hooks', 'lib', 'runtime.mjs')).href);
       const grant = claudeGrantPath(path.join(machine.home, '.local', 'state', 'khala', 'internal'), 'acceptance');
@@ -783,11 +793,10 @@ describe('installed entries', () => {
           fs.mkdirSync(hookState, { recursive: true, mode: 0o700 });
           fs.writeFileSync(path.join(hookState, 'wake'), '');
         }
-        const input = JSON.stringify({ hook_event_name: hook.event, session_id: 'acceptance', stop_hook_active: false });
-        const result = await runProcess('/bin/sh', ['-c', hook.command], hookEnv, { input, ms: 2_000 });
+        const result = await runProcess('/bin/sh', ['-c', hook.command], hookEnv, { input: hookInput(hook), ms: 2_000 });
         assert.ok(result.code !== 127 && result.code !== 126, `${hook.command} did not run: ${result.stderr}`);
-        // SessionEnd only clears the session's hook state; every other hook asks Khala first.
-        if (hook.event !== 'SessionEnd') {
+        // SessionStart returns watcher metadata; FileChanged needs an actual signal, not an adapter call.
+        if (!['SessionStart', 'FileChanged', 'SessionEnd'].includes(hook.event)) {
           assert.ok(since(before).some(headers => headers.includes(transportCapability)), `${hook.command} never reached Khala: ${result.stderr}`);
         }
       }

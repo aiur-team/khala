@@ -303,6 +303,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         peerTerminalChallenge: modes.claudeTerminalChallenge,
         peerTurnEnd: modes.finishClaudeTurn,
       });
+      handoffCleanups.push(async () => claude.close());
       bindingControl = composeBindingControl({
         handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,
       });
@@ -318,7 +319,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         // owner's pause holds the whole feed before any claim.
         releases: modes.releases,
         // Owner and agent mode control over the same SQLite record, plus the owner's pause.
-        bindingModes: modes.control,
+        bindingModes: { ...modes.control, onChanged: claude.controlChanged },
         // A bound agent's next Khala call acknowledges its batch into the ledger, which the
         // projector copies into the owner's receipt evidence; that read is owner-only.
         acknowledgements: receipts.acknowledgements,
