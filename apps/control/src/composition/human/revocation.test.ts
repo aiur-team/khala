@@ -41,12 +41,19 @@ async function setup() {
   const routes = createOwnerRevocationRoutes({ auth, store: state.store, capabilities,
     deviceIdentityKey: async () => key,
     inspectOwnerMembership: async () => ({ kind: member ? 'joined' : 'absent' }),
+    inspectRoomSenderDevices: async () => ({ kind: 'ok', senders: [
+      { senderId: 'owner_device_A', deviceId: 'device_A', deviceKey: 'A'.repeat(43) },
+    ] }),
     protocolFor: () => ({
       async removeDevice() { effects.push('remove'); return { kind: 'refused', reason: 'reauthentication_required' }; },
       async deviceStatus() { effects.push('status'); return { kind: 'present' }; },
       async rotateSessions() { effects.push('rotate'); return { kind: 'unavailable' }; },
     }),
   });
+  const sendFence = createRoomSendFence(state.store);
+  const seeded = { senderId: 'owner_device_A', deviceId: 'device_A', deviceKey: 'A'.repeat(43) };
+  await sendFence.readySender(roomId, seeded);
+  await sendFence.seedRoster(roomId, [seeded]);
   const call = (path: string, method: 'GET' | 'POST', body?: unknown) => {
     const selected = routes.find(route => route.path === path)!;
     const url = path === REVOCATION_TARGETS_PATH ? `${origin}${path}?roomId=${encodeURIComponent(roomId)}`
@@ -55,7 +62,7 @@ async function setup() {
       ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) }));
   };
   const request = { operationId: 'operation_123456', targetKind: 'binding', targetId: binding.bindingId, expectedGeneration: 2 };
-  return { call, request, effects, bindings, sendFence: createRoomSendFence(state.store),
+  return { call, request, effects, bindings, sendFence,
     setOwner(value: string) { owner = person(value); },
     setMember(value: boolean) { member = value; },
     setKey(value: string | null) { key = value; },

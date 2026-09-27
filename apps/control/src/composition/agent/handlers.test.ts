@@ -19,6 +19,8 @@ describe('registerAgentHandlers', () => {
       { path: '/api/agent/owner-device-proof/lookup', methods: ['GET'] },
       { path: '/api/agent/revocation/cleanup', methods: ['GET'] },
       { path: '/api/agent/revocation/result', methods: ['POST'] },
+      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action =>
+        ({ path: `/api/agent/room-send/${action}`, methods: ['POST'] })),
       { path: '/api/agent/pairing/claim', methods: ['POST'] },
       { path: '/api/agent/pairing/result', methods: ['POST'] },
       { path: '/api/agent/channel-access/request', methods: ['POST'] },
@@ -37,11 +39,13 @@ describe('registerAgentHandlers', () => {
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
       expect(await response.json()).toEqual(registration.path.startsWith('/api/agent/revocation/')
         ? { code: 'feature_unavailable' }
+        : registration.path.startsWith('/api/agent/room-send/')
+        ? { code: 'unavailable' }
         : index >= 8 && index < 11
         ? { code: 'unavailable' }
         : index < 8
         ? { code: 'feature_unavailable' }
-        : index < 21
+        : index < 26
           ? { v: 1, kind: 'rejected', code: 'feature_unavailable' }
           : { error: 'feature_unavailable' });
     }
@@ -76,6 +80,7 @@ describe('registerAgentHandlers', () => {
       ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/owner-mailbox/')),
       ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/owner-device-proof/')),
       ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/revocation/')),
+      ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/room-send/')),
       ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/pairing/')),
     ]);
   });

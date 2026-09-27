@@ -1,19 +1,20 @@
 import { createHash } from 'node:crypto';
-import type { ControlStore, JsonValue, OwnerId, SessionBinding } from '@khala/contracts/messaging/index';
+import type { ControlStore, JsonValue, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import { operationJournal } from '@khala/messaging/revocation/journal';
 import type { DeviceRemovalResult, DeviceStatusResult, ProtocolRevocationPort } from '@khala/messaging/revocation/index';
 import { guardStore, settleWrite } from '../../auth/store';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import type { RouteRegistration } from '../../runtime/handler';
+import { createRoomSendFence } from './room-send-fence';
 
 export const REVOCATION_CLEANUP_PATH = '/api/agent/revocation/cleanup';
 export const REVOCATION_RESULT_PATH = '/api/agent/revocation/result';
 
 type Removal = 'removed' | 'replaced' | 'reauthentication_required' | 'forbidden';
 type Cleanup = Readonly<{
-  v: 1; ownerId: OwnerId; operationId: string; bindingId: string; deviceId: string;
+  v: 1; ownerId: OwnerId; operationId: string; bindingId: string; roomId: RoomId; deviceId: string;
   expectedGeneration: number; revokedGeneration: number; deviceKey: string;
-  capabilityDigest: string | null; removal: Removal | null;
+  capabilityDigest: string | null; removal: Removal | null; verifiedRemoval: 'removed' | 'replaced' | null;
 }>;
 const KEY = /^[A-Za-z0-9+/]{43}=?$/u;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -29,15 +30,17 @@ function writeId(record: Cleanup): string {
 function valid(value: JsonValue, ownerId: OwnerId, operationId: string): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const item = value as Record<string, JsonValue>;
-  return Object.keys(item).sort().join(',') === 'bindingId,capabilityDigest,deviceId,deviceKey,expectedGeneration,operationId,ownerId,removal,revokedGeneration,v'
+  return Object.keys(item).sort().join(',') === 'bindingId,capabilityDigest,deviceId,deviceKey,expectedGeneration,operationId,ownerId,removal,revokedGeneration,roomId,v,verifiedRemoval'
     && item.v === 1 && item.ownerId === ownerId && item.operationId === operationId
     && typeof item.bindingId === 'string' && ID.test(item.bindingId)
+    && typeof item.roomId === 'string' && item.roomId.startsWith('!')
     && typeof item.deviceId === 'string' && ID.test(item.deviceId)
     && typeof item.deviceKey === 'string' && KEY.test(item.deviceKey)
     && Number.isSafeInteger(item.expectedGeneration) && Number.isSafeInteger(item.revokedGeneration)
     && item.revokedGeneration === (item.expectedGeneration as number) + 1
     && (item.capabilityDigest === null || typeof item.capabilityDigest === 'string' && /^[a-f0-9]{64}$/u.test(item.capabilityDigest))
-    && (item.removal === null || ['removed', 'replaced', 'reauthentication_required', 'forbidden'].includes(String(item.removal)));
+    && (item.removal === null || ['removed', 'replaced', 'reauthentication_required', 'forbidden'].includes(String(item.removal)))
+    && (item.verifiedRemoval === null || item.verifiedRemoval === 'removed' || item.verifiedRemoval === 'replaced');
 }
 
 export function createRevocationCleanupStore(store: ControlStore) {
@@ -58,11 +61,11 @@ export function createRevocationCleanupStore(store: ControlStore) {
       }
       return read(ownerId, index.record.value);
     },
-    async prepare(record: Omit<Cleanup, 'v' | 'removal'>): Promise<'applied' | 'unavailable'> {
+    async prepare(record: Omit<Cleanup, 'v' | 'removal' | 'verifiedRemoval'>): Promise<'applied' | 'unavailable'> {
       if (!ID.test(record.operationId) || !ID.test(record.bindingId) || !ID.test(record.deviceId)
         || !KEY.test(record.deviceKey) || !Number.isSafeInteger(record.expectedGeneration)
         || record.revokedGeneration !== record.expectedGeneration + 1) return 'unavailable';
-      const next: Cleanup = { ...record, v: 1, removal: null };
+      const next: Cleanup = { ...record, v: 1, removal: null, verifiedRemoval: null };
       const indexKey = bindingKey(record.ownerId, record.bindingId, record.expectedGeneration);
       const indexed = await settleWrite(guarded, { key: indexKey, expectedRevision: null,
         operationId: `revocation-cleanup-index.${createHash('sha256').update(indexKey).digest('hex')}`,
@@ -76,7 +79,8 @@ export function createRevocationCleanupStore(store: ControlStore) {
       const current = result.current.value as unknown as Cleanup;
       return current.bindingId === record.bindingId && current.deviceId === record.deviceId
         && current.deviceKey === record.deviceKey && current.expectedGeneration === record.expectedGeneration
-        && current.revokedGeneration === record.revokedGeneration && current.capabilityDigest === record.capabilityDigest
+        && current.revokedGeneration === record.revokedGeneration && current.roomId === record.roomId
+        && current.capabilityDigest === record.capabilityDigest
         ? 'applied' : 'unavailable';
     },
     async recordRemoval(ownerId: OwnerId, operationId: string, result: Removal): Promise<'applied' | 'unavailable'> {
@@ -92,29 +96,92 @@ export function createRevocationCleanupStore(store: ControlStore) {
       }
       return 'unavailable';
     },
+    async recordVerifiedRemoval(ownerId: OwnerId, operationId: string, result: 'removed' | 'replaced'): Promise<'applied' | 'unavailable'> {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const found = await read(ownerId, operationId);
+        if (found.kind !== 'record' || (found.value.removal !== null
+          && found.value.removal !== 'reauthentication_required' && found.value.removal !== 'forbidden')) return 'unavailable';
+        if (found.value.verifiedRemoval !== null) return found.value.verifiedRemoval === result ? 'applied' : 'unavailable';
+        const next: Cleanup = { ...found.value, verifiedRemoval: result };
+        const saved = await settleWrite(guarded, { key: key(ownerId, operationId), expectedRevision: found.revision,
+          operationId: writeId(next), next: { value: next as unknown as JsonValue, expiresAt: null } });
+        if (saved.kind === 'applied') return 'applied';
+        if (saved.kind !== 'conflict') return 'unavailable';
+      }
+      return 'unavailable';
+    },
   };
 }
 
 /** Never reports removed from a queued command. Only a durable exact-device SDK receipt counts. */
-export function createCleanupProtocolPort(store: ControlStore, ownerId: OwnerId): ProtocolRevocationPort {
+export type UIADeviceRemoval = Readonly<{
+  remove(input: Readonly<{ bindingId: string; roomId: RoomId; deviceId: string; deviceKey: string;
+    expectedGeneration: number; revokedGeneration: number }>): Promise<'removed' | 'replaced' | 'reauthentication_required' | 'forbidden' | 'outcome_unknown' | 'unavailable'>;
+  status(input: Readonly<{ bindingId: string; roomId: RoomId; deviceId: string; deviceKey: string;
+    expectedGeneration: number; revokedGeneration: number }>): Promise<'removed' | 'present' | 'replaced' | 'unavailable'>;
+}>;
+
+export function createCleanupProtocolPort(store: ControlStore, ownerId: OwnerId, uia?: UIADeviceRemoval): ProtocolRevocationPort {
   const cleanup = createRevocationCleanupStore(store);
-  async function removal(input: { operationId: string; deviceId: string; deviceKey: string }): Promise<Removal | null> {
+  const sendFence = createRoomSendFence(store);
+  async function matching(input: { operationId: string; deviceId: string; deviceKey: string }): Promise<Cleanup | null> {
     const found = await cleanup.read(ownerId, input.operationId);
     return found.kind === 'record' && found.value.deviceId === input.deviceId && found.value.deviceKey === input.deviceKey
-      ? found.value.removal : null;
+      ? found.value : null;
+  }
+  function uiaInput(item: Cleanup) { return { bindingId: item.bindingId, roomId: item.roomId,
+    deviceId: item.deviceId, deviceKey: item.deviceKey,
+    expectedGeneration: item.expectedGeneration, revokedGeneration: item.revokedGeneration }; }
+  async function confirmed(item: Cleanup, result: 'removed' | 'replaced'): Promise<DeviceRemovalResult> {
+    return await cleanup.recordVerifiedRemoval(ownerId, item.operationId, result) === 'applied'
+      ? { kind: result } : { kind: 'unavailable' };
   }
   return {
     async removeDevice(input): Promise<DeviceRemovalResult> {
-      const state = await removal(input);
-      return state === 'removed' || state === 'replaced' ? { kind: state }
-        : state === 'forbidden' || state === 'reauthentication_required' ? { kind: 'refused', reason: state }
-        : { kind: 'unavailable' };
+      const item = await matching(input);
+      if (!item) return { kind: 'unavailable' };
+      if (item.verifiedRemoval) return { kind: item.verifiedRemoval };
+      if (await sendFence.beginHold(item.roomId, item.operationId, item.deviceKey) !== 'held'
+        || await sendFence.drained(item.roomId, item.operationId) !== 'drained') return { kind: 'unavailable' };
+      if (item.removal === 'removed' || item.removal === 'replaced') return { kind: item.removal };
+      let refusal: 'reauthentication_required' | 'forbidden' = item.removal === 'forbidden'
+        ? 'forbidden' : 'reauthentication_required';
+      if (uia) {
+        const result = await uia.remove(uiaInput(item));
+        if (result === 'removed' || result === 'replaced') return confirmed(item, result);
+        if (result === 'outcome_unknown') return { kind: 'outcome_unknown' };
+        if (result === 'unavailable') return { kind: 'unavailable' };
+        refusal = result;
+      }
+      if (item.removal === 'forbidden' || item.removal === 'reauthentication_required' || uia) {
+        if (await sendFence.releaseHold(item.roomId, item.operationId, 'refused') !== 'applied') return { kind: 'unavailable' };
+        return { kind: 'refused', reason: refusal };
+      }
+      return { kind: 'unavailable' };
     },
     async deviceStatus(input): Promise<DeviceStatusResult> {
-      const state = await removal(input);
-      return state === 'removed' || state === 'replaced' ? { kind: state } : { kind: 'unavailable' };
+      const item = await matching(input);
+      if (!item) return { kind: 'unavailable' };
+      if (item.verifiedRemoval) return { kind: item.verifiedRemoval };
+      if (item.removal === 'removed' || item.removal === 'replaced') return { kind: item.removal };
+      if (!uia) return { kind: 'unavailable' };
+      const state = await uia.status(uiaInput(item));
+      if (state === 'removed' || state === 'replaced') {
+        const saved = await confirmed(item, state);
+        return saved.kind === state ? { kind: state } : { kind: 'unavailable' };
+      }
+      return { kind: state };
     },
-    async rotateSessions() { return { kind: 'unavailable' as const }; },
+    async rotateSessions(input) {
+      const record = await cleanup.read(ownerId, input.operationId);
+      if (record.kind !== 'record' || record.value.deviceId !== input.deviceId
+        || record.value.deviceKey !== input.deviceKey) return { kind: 'unavailable' as const };
+      if (await sendFence.rotationStatus(record.value.roomId, input.operationId) !== 'rotated') {
+        return { kind: 'unavailable' as const };
+      }
+      return await sendFence.releaseHold(record.value.roomId, input.operationId, 'rotated') === 'applied'
+        ? { kind: 'rotated' as const } : { kind: 'unavailable' as const };
+    },
   };
 }
 

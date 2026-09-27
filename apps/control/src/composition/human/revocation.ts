@@ -11,6 +11,7 @@ import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createRevocationCleanupStore } from './revocation-cleanup';
 import { createRoomSendFence } from './room-send-fence';
+import type { SenderIdentity } from './room-send-fence';
 
 export const REVOCATION_TARGETS_PATH = '/api/human/revocation/targets';
 export const REVOCATION_REVOKE_PATH = '/api/human/revocation/revoke';
@@ -25,6 +26,7 @@ export type OwnerRevocationDependencies = Readonly<{
   /** Public Curve25519 identity key from the selected Matrix account's exact device query. */
   deviceIdentityKey(binding: SessionBinding): Promise<string | null>;
   inspectOwnerMembership: Membership;
+  inspectRoomSenderDevices(ownerId: OwnerId, roomId: RoomId): Promise<Readonly<{ kind: 'ok'; senders: readonly SenderIdentity[] }> | Readonly<{ kind: 'unavailable' }>>;
   /** A real trusted endpoint adapter. No server process can claim an SDK effect on its behalf. */
   protocolFor(ownerId: OwnerId): ProtocolRevocationPort;
 }>;
@@ -32,10 +34,6 @@ export type OwnerRevocationDependencies = Readonly<{
 const headers = { 'cache-control': 'no-store', 'content-type': 'application/json', 'x-content-type-options': 'nosniff' };
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 function json(status: number, body: unknown): Response { return new Response(JSON.stringify(body), { status, headers }); }
-function plain(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
-function exact(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).sort().join(',') === [...keys].sort().join(',');
-}
 
 /** The owner-scoped HTTP surface around KHA-128's durable operation journal. */
 export function createOwnerRevocationRoutes(input: OwnerRevocationDependencies): readonly RouteRegistration[] {
@@ -81,6 +79,14 @@ export function createOwnerRevocationRoutes(input: OwnerRevocationDependencies):
           const located = await bindings.locateBinding(subject.targetId);
           if (located.kind !== 'found' || located.record.binding.ownerId !== principal.ownerId
             || located.record.binding.deviceId !== intent.stored.record.deviceId) return { kind: 'unavailable' };
+          const priorFence = await sendFence.inspect(located.address.roomId);
+          if (priorFence.kind !== 'found') return { kind: 'unavailable' };
+          if (priorFence.value.hold?.operationId !== subject.operationId) {
+            const roster = await input.inspectRoomSenderDevices(principal.ownerId, located.address.roomId);
+            if (roster.kind !== 'ok' || await sendFence.seedRoster(located.address.roomId, roster.senders) !== 'applied') {
+              return { kind: 'unavailable' };
+            }
+          }
           // The hold is durable before control disable and before the first SDK protocol call.
           // A send with an unknown Matrix outcome keeps the operation pending until its
           // original transaction ID is reconciled; a timeout cannot establish safety.
@@ -90,7 +96,7 @@ export function createOwnerRevocationRoutes(input: OwnerRevocationDependencies):
             return { kind: 'unavailable' };
           }
           const prepared = await cleanup.prepare({ ownerId: principal.ownerId, operationId: subject.operationId,
-            bindingId: subject.targetId, deviceId: intent.stored.record.deviceId,
+            bindingId: subject.targetId, roomId: located.address.roomId, deviceId: intent.stored.record.deviceId,
             deviceKey: intent.stored.record.deviceKey, expectedGeneration: subject.expectedGeneration,
             revokedGeneration: subject.revokedGeneration, capabilityDigest: located.record.capability });
           if (prepared !== 'applied') return { kind: 'unavailable' };

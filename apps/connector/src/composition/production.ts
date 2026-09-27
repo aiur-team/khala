@@ -19,6 +19,7 @@ import type { SubscriptionHandle, SubscriptionState } from '@khala/connector/sub
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { createProductionOwnerMailbox } from './agent/owner-mailbox';
 import { createProductionRevocationCleanup } from './agent/revocation-cleanup';
+import { createAgentRoomSendFence } from './agent/room-send-fence';
 import { createLocalClosureFence } from './closure/local-fence';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { createPolicyControlHandler } from './controls/control-handler';
@@ -162,6 +163,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let renewal: ReturnType<typeof createCapabilityRenewal> | null = null;
   let mailbox: ReturnType<typeof createProductionOwnerMailbox> | null = null;
   let revocationCleanup: ReturnType<typeof createProductionRevocationCleanup> | null = null;
+  let roomSend: ReturnType<typeof createAgentRoomSendFence> | null = null;
   let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
   let ownerTrust: ReturnType<typeof createOwnerDeviceTrust> | null = null;
   let harness: HarnessPort | null = null;
@@ -195,6 +197,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       pollTimer = null;
       if (!mailbox || closed) return;
       try {
+        await roomSend?.pollRotation();
         if (await mailbox.pollOnce() === 'revoked') { remoteDenied = true; scheduleCleanup(); }
       } finally {
         polling = null;
@@ -261,6 +264,10 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       quiesce: quiesceDelivery,
       removeOwnDevice: key => substrate.removeOwnDevice(key),
     });
+    roomSend = createAgentRoomSendFence({ appOrigin: input.appOrigin, bindingId: next.bindingId,
+      generation: next.generation, signer: activeSigner,
+      capability: () => capabilityFor(next).ensure(),
+      discardOutboundSession: () => substrate.discardOutboundSession() });
     mailbox = createProductionOwnerMailbox({ appOrigin: input.appOrigin, binding: next, signer: activeSigner,
       capability: () => capabilityFor(next).ensure(), controls, review: () => review,
       stop: request => stop.stop(request),
@@ -437,11 +444,29 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         if (deliveryStopped || remoteDenied || closed) {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
         }
+        const fence = roomSend;
+        if (!fence) return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
+        const permit = await fence.acquire(command.clientTxnId);
+        if (permit?.kind === 'held') {
+          if (permit.operationId !== 'rotation_required') await fence.rotate(permit.operationId, permit.epoch);
+          return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
+        }
+        if (permit?.kind !== 'granted') return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
+        if (deliveryStopped || remoteDenied || closed) {
+          await fence.finish(permit.permitId, { kind: 'cancelled' });
+          return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
+        }
         activeSends += 1;
         try {
           const sent = await substrate.send(command.clientTxnId, command.body);
+          if (!await fence.finish(permit.permitId, { kind: 'complete', eventId: sent.eventId })) {
+            return { kind: 'outcome_unknown' as const, clientTxnId: command.clientTxnId };
+          }
           return { kind: 'accepted' as const, clientTxnId: command.clientTxnId, eventId: sent.eventId };
-        } catch { return { kind: 'outcome_unknown' as const, clientTxnId: command.clientTxnId }; }
+        } catch {
+          await fence.finish(permit.permitId, { kind: 'unknown' });
+          return { kind: 'outcome_unknown' as const, clientTxnId: command.clientTxnId };
+        }
         finally {
           activeSends -= 1;
           if (activeSends === 0) for (const wake of sendWaiters.splice(0)) wake();

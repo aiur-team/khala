@@ -4,6 +4,7 @@ import type { RouteRegistration } from '../../runtime/handler';
 import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { unavailableOwnerDeviceProofRoutes } from './owner-device-proof';
 import { REVOCATION_CLEANUP_PATH, REVOCATION_RESULT_PATH } from '../human/revocation-cleanup';
+import { createLazyRoomSendRoutes } from '../human/room-send-routes';
 
 export type AgentAuthorization = 'allowed' | 'unauthenticated' | 'forbidden';
 export type AgentStatusSnapshot = Readonly<{
@@ -32,6 +33,7 @@ export type AgentHandlerDependencies = Readonly<{
   /** DPoP-bound lookup of an owner-approved browser Matrix key. */
   ownerDeviceProof?: () => readonly RouteRegistration[];
   revocationCleanup?: () => readonly RouteRegistration[];
+  roomSend?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -179,6 +181,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     ...unavailableOwnerMailboxRoutes().agent,
     ...unavailableOwnerDeviceProofRoutes().agent,
     ...unavailableRevocationCleanupRoutes,
+    ...createLazyRoomSendRoutes(() => []).filter(route => route.path.startsWith('/api/agent/')),
     ...unavailablePairingRoutes,
     ...unavailableChannelAccessRoutes,
     ...unavailableChannelAccessExchangeRoutes,
@@ -205,6 +208,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     ...(dependencies.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().agent),
     ...(dependencies.ownerDeviceProof?.() ?? unavailableOwnerDeviceProofRoutes().agent),
     ...(dependencies.revocationCleanup?.() ?? unavailableRevocationCleanupRoutes),
+    ...(dependencies.roomSend?.() ?? createLazyRoomSendRoutes(() => []).filter(route => route.path.startsWith('/api/agent/'))),
     ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies.channelAccessExchange?.() ?? unavailableChannelAccessExchangeRoutes),

@@ -48,6 +48,16 @@ const CLOSURE_PATH = '/api/human/channel-closure';
 const REVOCATION_TARGETS_PATH = '/api/human/revocation/targets';
 const REVOCATION_REVOKE_PATH = '/api/human/revocation/revoke';
 const REVOCATION_STATUS_PATH = '/api/human/revocation/status';
+// khala-terminology-allow: fixed machine route for the Matrix room send fence.
+const ROOM_SEND_PATH = '/api/human/room-send';
+export type BrowserSendProof = Readonly<{ roomId: RoomId; deviceId: string; matrixAccessToken: string }>;
+export type BrowserSendFence = Readonly<{
+  ready(proof: BrowserSendProof): Promise<boolean>;
+  acquire(proof: BrowserSendProof, clientTxnId: string): Promise<Readonly<{ kind: 'granted'; permitId: string }> | Readonly<{ kind: 'held'; operationId: string; epoch: number }> | null>;
+  finish(proof: BrowserSendProof, permitId: string, outcome: Readonly<{ kind: 'complete'; eventId: string }> | Readonly<{ kind: 'unknown' | 'cancelled' }>): Promise<boolean>;
+  rotation(proof: BrowserSendProof, operationId: string, epoch: number): Promise<boolean>;
+  inspect(proof: BrowserSendProof): Promise<Readonly<{ operationId: string; epoch: number }> | null>;
+}>;
 
 type Fetch = typeof globalThis.fetch;
 
@@ -72,6 +82,7 @@ export type HumanBrowserApi = Readonly<{
     currentCapability(): Promise<ClosureCapability | null>;
   }>;
   revocation: (roomId: RoomId) => BrowserRevocation;
+  roomSend: BrowserSendFence;
 }>;
 
 function exactHttpsOrigin(value: string): string {
@@ -507,5 +518,39 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     };
   }
 
-  return { identity, admission, credentials, participants, channelAccess, closure, revocation };
+  const roomSend: BrowserSendFence = {
+    async ready(proof) {
+      const response = await mutation(`${ROOM_SEND_PATH}/ready`, proof);
+      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
+    },
+    async acquire(proof, clientTxnId) {
+      const response = await mutation(`${ROOM_SEND_PATH}/acquire`, { ...proof, clientTxnId });
+      if (!response || (response.status !== 200 && response.status !== 423)) return null;
+      const body = await jsonObject(response);
+      if (response.status === 200 && body?.kind === 'granted' && typeof body.permitId === 'string') {
+        return { kind: 'granted', permitId: body.permitId };
+      }
+      if (response.status === 423 && body?.kind === 'held' && typeof body.operationId === 'string'
+        && Number.isSafeInteger(body.epoch)) return { kind: 'held', operationId: body.operationId, epoch: body.epoch as number };
+      return null;
+    },
+    async finish(proof, permitId, outcome) {
+      const response = await mutation(`${ROOM_SEND_PATH}/finish`, { ...proof, permitId,
+        outcome: outcome.kind, eventId: outcome.kind === 'complete' ? outcome.eventId : null });
+      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
+    },
+    async rotation(proof, operationId, epoch) {
+      const response = await mutation(`${ROOM_SEND_PATH}/rotation`, { ...proof, operationId, epoch });
+      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
+    },
+    async inspect(proof) {
+      const response = await mutation(`${ROOM_SEND_PATH}/inspect`, proof);
+      if (response?.status !== 200) return null;
+      const body = await jsonObject(response);
+      if (body?.kind !== 'ok' || !isObject(body.hold) || typeof body.hold.operationId !== 'string'
+        || !Number.isSafeInteger(body.hold.epoch)) return null;
+      return { operationId: body.hold.operationId, epoch: body.hold.epoch as number };
+    },
+  };
+  return { identity, admission, credentials, participants, channelAccess, closure, revocation, roomSend };
 }

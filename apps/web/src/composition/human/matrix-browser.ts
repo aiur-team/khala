@@ -50,6 +50,7 @@ import {
   type SubstrateUpdate,
 } from '@khala/messaging/rooms/index';
 import { createBrowserRoomJournal } from './room-journal';
+import type { BrowserSendFence, BrowserSendProof } from './browser-api';
 
 const CREATE_EVENT = 'com.aiur.khala.create.v1';
 
@@ -248,11 +249,50 @@ class MatrixRuntime {
 }
 
 class MatrixSubstrate implements RoomSubstrate {
+  private readonly readyRooms = new Set<string>();
+  private readonly rotationReceipts = new Set<string>();
+  private pollCursor = 0;
+  private polling = false;
   constructor(
     private readonly runtime: MatrixRuntime,
     private readonly limits: ContentLimits,
     private readonly participants: ParticipantResolver,
-  ) {}
+    private readonly sendFence: BrowserSendFence | undefined,
+  ) {
+    if (sendFence) globalThis.setInterval(() => { void this.pollRotations(); }, 5_000);
+  }
+
+  private async pollRotations(): Promise<void> {
+    if (this.polling) return;
+    this.polling = true;
+    try { await this.pollRotationsOnce(); } finally { this.polling = false; }
+  }
+
+  private async pollRotationsOnce(): Promise<void> {
+    const active = this.runtime.active;
+    if (!active || !this.sendFence) return;
+    const client = active.client;
+    const crypto = client.getCrypto();
+    const deviceId = client.getDeviceId();
+    const matrixAccessToken = client.getAccessToken();
+    if (!crypto || !deviceId || !matrixAccessToken) return;
+    const rooms = client.getRooms().filter(room => room.getMyMembership() === 'join' && room.hasEncryptionStateEvent());
+    if (rooms.length === 0) return;
+    const count = Math.min(rooms.length, 4);
+    for (let offset = 0; offset < count; offset++) {
+      const room = rooms[(this.pollCursor + offset) % rooms.length]!;
+      const proof: BrowserSendProof = { roomId: room.roomId as RoomId, deviceId, matrixAccessToken };
+      const hold = await this.sendFence.inspect(proof);
+      if (!hold || this.runtime.active?.client !== client) continue;
+      const receipt = `${room.roomId}:${hold.operationId}:${hold.epoch}:${deviceId}`;
+      if (this.rotationReceipts.has(receipt)) continue;
+      try {
+        await crypto.forceDiscardSession(room.roomId);
+        if (await this.sendFence.rotation(proof, hold.operationId, hold.epoch)) this.rotationReceipts.add(receipt);
+      } catch { /* An offline SDK remains pending until the next poll. */ }
+    }
+    this.pollCursor = (this.pollCursor + count) % rooms.length;
+  }
 
   private active(): ActiveClient {
     if (this.runtime.active === null) throw new Error('Matrix client unavailable');
@@ -300,13 +340,48 @@ class MatrixSubstrate implements RoomSubstrate {
 
   async sendEvent(input: Readonly<{ roomId: RoomId; clientTxnId: string; content: MessageContent }>): Promise<SubstrateEffect<{ eventId: EventId; authorDeviceId: DeviceId }>> {
     try {
-      const { client } = this.active();
+      const active = this.active();
+      const { client } = active;
       const room = client.getRoom(input.roomId);
       if (!room?.hasEncryptionStateEvent()) return { kind: 'unavailable' };
-      const response = await client.sendEvent(input.roomId, EventType.RoomMessage, {
-        msgtype: MsgType.Text,
-        body: input.content.body,
-      }, input.clientTxnId);
+      if (!this.sendFence) return { kind: 'unavailable' };
+      const crypto = client.getCrypto();
+      const deviceId = client.getDeviceId();
+      const matrixAccessToken = client.getAccessToken();
+      if (!crypto || !deviceId || !matrixAccessToken) return { kind: 'unavailable' };
+      const proof: BrowserSendProof = { roomId: input.roomId, deviceId, matrixAccessToken };
+      const readyKey = `${client.getUserId()}:${deviceId}:${active.generation}:${input.roomId}`;
+      if (!this.readyRooms.has(readyKey)) {
+        await crypto.forceDiscardSession(input.roomId);
+        if (await this.sendFence.ready(proof)) this.readyRooms.add(readyKey);
+      }
+      const acquired = await this.sendFence.acquire(proof, input.clientTxnId);
+      if (acquired?.kind === 'held') {
+        if (acquired.operationId !== 'rotation_required') {
+          await crypto.forceDiscardSession(input.roomId);
+          await this.sendFence.rotation(proof, acquired.operationId, acquired.epoch);
+        }
+        return { kind: 'unavailable' };
+      }
+      if (acquired?.kind !== 'granted') return { kind: 'unavailable' };
+      this.readyRooms.add(readyKey);
+      if (this.runtime.active?.client !== client || !client.getRoom(input.roomId)?.hasEncryptionStateEvent()) {
+        await this.sendFence.finish(proof, acquired.permitId, { kind: 'cancelled' });
+        return { kind: 'unavailable' };
+      }
+      let response: Awaited<ReturnType<typeof client.sendEvent>>;
+      try {
+        response = await client.sendEvent(input.roomId, EventType.RoomMessage, {
+          msgtype: MsgType.Text,
+          body: input.content.body,
+        }, input.clientTxnId);
+      } catch (error) {
+        await this.sendFence.finish(proof, acquired.permitId, { kind: 'unknown' });
+        return effectFailure(error);
+      }
+      if (!await this.sendFence.finish(proof, acquired.permitId, { kind: 'complete', eventId: response.event_id })) {
+        return { kind: 'unknown' };
+      }
       return {
         kind: 'done',
         value: { eventId: response.event_id as EventId, authorDeviceId: client.getDeviceId() as DeviceId },
@@ -456,6 +531,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
   credentials: CredentialSource;
   limits: ContentLimits;
   participants: ParticipantResolver;
+  sendFence?: BrowserSendFence;
 }>): MatrixBrowserPorts {
   const runtime = new MatrixRuntime(() => device, input.participants);
   const credentialSource: CredentialSource = {
@@ -472,7 +548,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
     locks: createWebLockProvider(),
     engines: runtime.engineFactory(),
   });
-  const substrate = new MatrixSubstrate(runtime, input.limits, input.participants);
+  const substrate = new MatrixSubstrate(runtime, input.limits, input.participants, input.sendFence);
   const journals = new Map<OwnerId, RoomJournal>();
   let current: { ownerId: OwnerId; generation: number; service: ReturnType<typeof createRoomService> } | null = null;
 

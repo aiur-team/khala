@@ -8,8 +8,16 @@ const sender = { senderId: 'owner_device_A', deviceId: 'device_A', deviceKey: 'A
 const excludedKey = 'B'.repeat(43);
 
 describe('durable room send fence', () => {
+  it('refuses revocation protocol admission until a trusted legacy sender inventory is seeded', async () => {
+    const fence = createRoomSendFence(fakeStore(() => T0).store);
+    expect(await fence.beginHold(roomId, 'operation_unseeded', excludedKey)).toBe('unavailable');
+    expect(await fence.acquire(roomId, sender, 'txn_unregistered')).toMatchObject({ kind: 'held',
+      operationId: 'rotation_required' });
+  });
   it('holds a room before revocation protocol work and waits for the active send result', async () => {
     const fence = createRoomSendFence(fakeStore(() => T0).store);
+    expect(await fence.readySender(roomId, sender)).toBe('applied');
+    expect(await fence.seedRoster(roomId, [sender])).toBe('applied');
     const sent = await fence.acquire(roomId, sender, 'txn_1');
     expect(sent.kind).toBe('granted');
     if (sent.kind !== 'granted') return;
@@ -26,6 +34,8 @@ describe('durable room send fence', () => {
 
   it('serializes a racing acquire and hold and rejects wrong sender completion', async () => {
     const fence = createRoomSendFence(fakeStore(() => T0).store);
+    expect(await fence.readySender(roomId, sender)).toBe('applied');
+    expect(await fence.seedRoster(roomId, [sender])).toBe('applied');
     const [acquired, held] = await Promise.all([
       fence.acquire(roomId, sender, 'txn_1'),
       fence.beginHold(roomId, 'operation_1', excludedKey),
@@ -43,5 +53,47 @@ describe('durable room send fence', () => {
       expect(acquired.kind).toBe('held');
       expect(await fence.drained(roomId, 'operation_1')).toBe('drained');
     }
+  });
+
+  it('requires a receipt from every registered surviving sender before releasing the hold', async () => {
+    const fence = createRoomSendFence(fakeStore(() => T0).store);
+    const second = { senderId: 'agent_device_B', deviceId: 'device_B', deviceKey: 'C'.repeat(43) };
+    await fence.readySender(roomId, sender);
+    await fence.readySender(roomId, second);
+    await fence.seedRoster(roomId, [sender, second]);
+    expect(await fence.beginHold(roomId, 'operation_2', excludedKey)).toBe('held');
+    expect(await fence.rotationStatus(roomId, 'operation_2')).toBe('pending');
+    expect(await fence.acknowledgeRotation(roomId, { ...sender, deviceKey: excludedKey }, 'operation_2', 1))
+      .toBe('unavailable');
+    expect(await fence.acknowledgeRotation(roomId, sender, 'operation_2', 1)).toBe('applied');
+    expect(await fence.rotationStatus(roomId, 'operation_2')).toBe('pending');
+    expect(await fence.releaseHold(roomId, 'operation_2', 'rotated')).toBe('unavailable');
+    expect(await fence.acknowledgeRotation(roomId, second, 'operation_2', 1)).toBe('applied');
+    expect(await fence.releaseHold(roomId, 'operation_2', 'rotated')).toBe('applied');
+    expect(await fence.rotationStatus(roomId, 'operation_2')).toBe('rotated');
+    expect(await fence.acquire(roomId, sender, 'txn_after_rotate')).toMatchObject({ kind: 'granted' });
+  });
+
+  it('drains a permit cancelled before invoking the SDK without treating an unknown send as cancelled', async () => {
+    const fence = createRoomSendFence(fakeStore(() => T0).store);
+    await fence.readySender(roomId, sender);
+    await fence.seedRoster(roomId, [sender]);
+    const first = await fence.acquire(roomId, sender, 'txn_cancel');
+    if (first.kind !== 'granted') throw new Error('permit not granted');
+    expect(await fence.finish(roomId, sender.senderId, first.permitId, { kind: 'cancelled' })).toBe('applied');
+    expect(await fence.beginHold(roomId, 'operation_cancel', excludedKey)).toBe('held');
+    expect(await fence.drained(roomId, 'operation_cancel')).toBe('drained');
+    expect(await fence.finish(roomId, sender.senderId, first.permitId, { kind: 'unknown' })).toBe('unavailable');
+  });
+
+  it('uses the current verified Matrix sender snapshot while retaining no hidden legacy sender', async () => {
+    const fence = createRoomSendFence(fakeStore(() => T0).store);
+    const departed = { senderId: 'departed_device', deviceId: 'departed', deviceKey: 'D'.repeat(43) };
+    await fence.readySender(roomId, sender);
+    await fence.readySender(roomId, departed);
+    expect(await fence.seedRoster(roomId, [sender])).toBe('applied');
+    expect(await fence.beginHold(roomId, 'operation_snapshot', excludedKey)).toBe('held');
+    expect(await fence.acknowledgeRotation(roomId, sender, 'operation_snapshot', 1)).toBe('applied');
+    expect(await fence.rotationStatus(roomId, 'operation_snapshot')).toBe('rotated');
   });
 });

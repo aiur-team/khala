@@ -179,6 +179,11 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'GET /api/human/agent-bootstrap/authorize', 'POST /api/human/agent-bootstrap/authorize',
     'GET /api/human/owner-device-proof/challenge', 'POST /api/human/owner-device-proof/register',
     'POST /api/human/owner-mailbox/submit', 'GET /api/human/owner-mailbox/result',
+    'GET /api/human/revocation/targets', 'POST /api/human/revocation/revoke',
+    'GET /api/human/revocation/status',
+    'POST /api/human/room-send/ready', 'POST /api/human/room-send/acquire',
+    'POST /api/human/room-send/finish', 'POST /api/human/room-send/rotation',
+    'POST /api/human/room-send/inspect',
   ].map(route => [`http-control:${route}`, humanOnly('owner-authenticated hosted control route')])),
   ...Object.fromEntries([
     'GET /api/agent/status', 'POST /api/agent/pairing/claim', 'POST /api/agent/pairing/result',
@@ -191,6 +196,10 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'GET /api/agent/device-attestation/challenge', 'POST /api/agent/device-attestation/register',
     'GET /api/agent/owner-device-proof/lookup',
     'GET /api/agent/owner-mailbox/poll', 'POST /api/agent/owner-mailbox/complete',
+    'GET /api/agent/revocation/cleanup', 'POST /api/agent/revocation/result',
+    'POST /api/agent/room-send/ready', 'POST /api/agent/room-send/acquire',
+    'POST /api/agent/room-send/finish', 'POST /api/agent/room-send/rotation',
+    'POST /api/agent/room-send/inspect',
   ].map(route => [`http-control:${route}`, notObserved(CONTROL_NO_CONTENT)])),
   // Harness adapters. Only the Codex adapter is driven, over its fake app-server.
   'harness-adapter:claude': notObserved(ADAPTER_UNDRIVEN),

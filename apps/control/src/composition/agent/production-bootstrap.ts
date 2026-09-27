@@ -10,11 +10,14 @@ import {
 import { createLazyBootstrapRoutes } from './bootstrap-routes';
 import { createDeviceAttestationRoutes, createLazyDeviceAttestationRoutes } from './device-attestation';
 import { createInviteEvidenceReader } from './invite-evidence';
-import { createMatrixAgentAdmission } from './matrix-admission';
+import { agentMatrixIdentity, createMatrixAgentAdmission } from './matrix-admission';
 import { createLazyOwnerMailboxRoutes, createOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { createLazyOwnerDeviceProofRoutes, createMatrixBrowserDeviceVerifier, createOwnerDeviceProofRoutes } from './owner-device-proof';
 import { createOwnerRevocationRoutes, createLazyOwnerRevocationRoutes } from '../human/revocation';
 import { createAgentRevocationCleanupRoutes, createCleanupProtocolPort, createLazyAgentRevocationCleanupRoutes } from '../human/revocation-cleanup';
+import { createLazyRoomSendRoutes, createMatrixBrowserSenderVerifier, createRoomSendRoutes } from '../human/room-send-routes';
+import { senderIdFor } from '../human/room-send-fence';
+import { createAgentBindingStore } from '../../agent-bootstrap/store';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -63,6 +66,16 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       clock: active.clock,
       ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
     });
+    const revocationBindings = createAgentBindingStore({ store: active.store });
+    async function exactRevokedBinding(input: { bindingId: string; roomId: string; deviceId: string;
+      expectedGeneration: number; revokedGeneration: number }) {
+      const located = await revocationBindings.locateBinding(input.bindingId);
+      return located.kind === 'found' && located.address.roomId === input.roomId
+        && located.record.binding.deviceId === input.deviceId
+        && located.record.binding.generation === input.expectedGeneration
+        && located.record.revokedGeneration === input.revokedGeneration
+        ? located.record.binding : null;
+    }
     const admissionFor = (ownerRequest: Request) => createAdmissionService({
       store: active.store,
       identity: active.auth.identityFor(ownerRequest),
@@ -120,12 +133,43 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       auth: active.auth, store: active.store, capabilities: bootstrap.capabilities,
       deviceIdentityKey: binding => matrixAgents.publishedDeviceIdentityKey(binding),
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
-      protocolFor: ownerId => createCleanupProtocolPort(active.store, ownerId),
+      async inspectRoomSenderDevices(ownerId, roomId) {
+        const roster = await active.matrix.inspectRoomSenderDevices(ownerId, roomId);
+        return roster.kind === 'ok' ? { kind: 'ok' as const, senders: roster.senders.map(sender => ({
+          senderId: senderIdFor(sender.matrixUserId, sender.deviceId), deviceId: sender.deviceId,
+          deviceKey: sender.curve25519,
+        })) } : { kind: 'unavailable' as const };
+      },
+      protocolFor: ownerId => createCleanupProtocolPort(active.store, ownerId, {
+        async remove(input) {
+          const binding = await exactRevokedBinding(input);
+          return binding?.ownerId === ownerId
+            ? matrixAgents.removePublishedDeviceWithUIA(binding, input.deviceKey) : 'unavailable';
+        },
+        async status(input) {
+          const binding = await exactRevokedBinding(input);
+          return binding?.ownerId === ownerId
+            ? matrixAgents.inspectPublishedDevice(binding, input.deviceKey) : 'unavailable';
+        },
+      }),
     });
     const revocationCleanup = createAgentRevocationCleanupRoutes({
       store: active.store, capabilities: bootstrap.capabilities,
     });
-    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof, revocation, revocationCleanup };
+    const roomSend = createRoomSendRoutes({
+      store: active.store, auth: active.auth, capabilities: bootstrap.capabilities,
+      inspectOwnerMembership: active.matrix.inspectOwnerMembership,
+      verifyBrowserSender: createMatrixBrowserSenderVerifier({
+        homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
+      }),
+      async agentSender(binding) {
+        const deviceKey = await matrixAgents.publishedDeviceIdentityKey(binding);
+        return deviceKey ? { matrixUserId: agentMatrixIdentity(binding.ownerId, binding,
+          active.env.matrixServerName).userId, deviceKey } : null;
+      },
+    });
+    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof, revocation, revocationCleanup, roomSend };
   };
   const bootstrap = createLazyBootstrapRoutes(() => compose().bootstrap);
   return {
@@ -135,5 +179,9 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     ownerDeviceProof: createLazyOwnerDeviceProofRoutes(() => compose().ownerDeviceProof),
     revocation: createLazyOwnerRevocationRoutes(() => compose().revocation),
     revocationCleanup: createLazyAgentRevocationCleanupRoutes(() => compose().revocationCleanup),
+    roomSend: {
+      human: createLazyRoomSendRoutes(() => compose().roomSend).filter(route => route.path.startsWith('/api/human/')),
+      agent: createLazyRoomSendRoutes(() => compose().roomSend).filter(route => route.path.startsWith('/api/agent/')),
+    },
   };
 }

@@ -185,6 +185,8 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/revocation/targets', methods: ['GET'], domain: 'human' },
       { path: '/api/human/revocation/revoke', methods: ['POST'], domain: 'human' },
       { path: '/api/human/revocation/status', methods: ['GET'], domain: 'human' },
+      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action =>
+        ({ path: `/api/human/room-send/${action}`, methods: ['POST'], domain: 'human' })),
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'], domain: 'human' },
       { path: '/api/human/pairing/decision', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-access/inbox', methods: ['GET'], domain: 'human' },
@@ -208,6 +210,8 @@ describe('renderRouteManifest', () => {
       { path: '/api/agent/owner-device-proof/lookup', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/revocation/cleanup', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/revocation/result', methods: ['POST'], domain: 'agent' },
+      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action =>
+        ({ path: `/api/agent/room-send/${action}`, methods: ['POST'], domain: 'agent' })),
       { path: '/api/agent/pairing/claim', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/pairing/result', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-access/request', methods: ['POST'], domain: 'agent' },

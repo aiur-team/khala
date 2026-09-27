@@ -24,6 +24,7 @@ type MatrixBrowserApi = Readonly<{
   open(input: OpenInput): Promise<{ fingerprint: string; deviceId: string }>;
   trustPeer(userId: string, deviceId: string, expectedEd25519: string): Promise<void>;
   removeOwnDevice(expectedCurve25519: string): Promise<'removed' | 'replaced' | 'reauthentication_required' | 'forbidden' | 'unavailable'>;
+  discardOutboundSession(): Promise<boolean>;
   authorize(): Promise<'ok' | 'revoked' | 'expired' | 'unavailable'>;
   read(cursor: string | null, limit: number): Promise<SyncPage>;
   send(clientTxnId: string, body: string): Promise<{ eventId: string }>;
@@ -156,10 +157,17 @@ window.khalaMatrix = {
       return 'removed';
     } catch (error) {
       const code = typeof error === 'object' && error !== null && 'errcode' in error ? error.errcode : null;
-      if (code === 'M_UNAUTHORIZED') return 'reauthentication_required';
-      if (code === 'M_FORBIDDEN') return 'forbidden';
+      const status = typeof error === 'object' && error !== null && 'httpStatus' in error ? error.httpStatus : null;
+      if (code === 'M_UNAUTHORIZED' || status === 401) return 'reauthentication_required';
+      if (code === 'M_FORBIDDEN' || status === 403) return 'forbidden';
       return 'unavailable';
     }
+  },
+  async discardOutboundSession() {
+    const crypto = client?.getCrypto();
+    if (!crypto || !active) return false;
+    try { await crypto.forceDiscardSession(active.roomId); return true; }
+    catch { return false; }
   },
   async authorize() {
     if (!active) return 'unavailable';

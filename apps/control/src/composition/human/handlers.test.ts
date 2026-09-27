@@ -335,6 +335,8 @@ describe('registerHumanHandlers feature routes', () => {
       { path: '/api/human/revocation/targets', methods: ['GET'] },
       { path: '/api/human/revocation/revoke', methods: ['POST'] },
       { path: '/api/human/revocation/status', methods: ['GET'] },
+      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action =>
+        ({ path: `/api/human/room-send/${action}`, methods: ['POST'] })),
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'] },
       { path: '/api/human/pairing/decision', methods: ['POST'] },
       { path: '/api/human/channel-access/inbox', methods: ['GET'] },
@@ -351,6 +353,7 @@ describe('registerHumanHandlers feature routes', () => {
       const response = await registration.handle(new Request(`https://example.test${registration.path}`));
       expect(response.status).toBe(503);
       expect(await response.json()).toEqual(registration.path.includes('owner-mailbox') || registration.path.includes('owner-device-proof')
+        || registration.path.includes('/room-send/')
         ? { code: 'unavailable' }
         : registration.path.includes('channel-discovery/bootstrap')
         ? { error: 'feature_unavailable' }
@@ -375,6 +378,7 @@ describe('registerHumanHandlers feature routes', () => {
       '/api/human/agent-bootstrap/authorize', '/api/human/owner-mailbox/submit', '/api/human/owner-mailbox/result',
       '/api/human/owner-device-proof/challenge', '/api/human/owner-device-proof/register',
       '/api/human/revocation/targets', '/api/human/revocation/revoke', '/api/human/revocation/status',
+      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action => `/api/human/room-send/${action}`),
       '/api/human/pairing/request', '/api/human/pairing/decision',
     ]);
   });

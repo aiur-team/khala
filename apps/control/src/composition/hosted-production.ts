@@ -36,7 +36,8 @@ export function registerHostedProductionRoutes(
   });
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
-      ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation }),
+      ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,
+      roomSend: () => bootstrap.roomSend.human }),
     ...registerClosureHandlers(),
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
@@ -44,6 +45,7 @@ export function registerHostedProductionRoutes(
       ownerMailbox: () => bootstrap.ownerMailbox.agent,
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.agent,
       revocationCleanup: () => bootstrap.revocationCleanup,
+      roomSend: () => bootstrap.roomSend.agent,
     }),
   ]);
 }
