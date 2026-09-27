@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import {
   type AdmissionPort, type AdmissionRejection, type AuthPrincipal, type BindingId, type CallOptions, type ControlStore, type JsonValue,
   type OperationResult,
-  type OwnerId, type ParticipantId, type RoomId, type SessionBinding, type TrustedClock, isSameOriginReturnPath,
+  type OwnerId, type ParticipantId, type RoomId, type SessionBinding, type TrustedClock, isSameOriginReturnPath, sameJsonValue,
 } from '@khala/contracts/messaging/index';
 import type { Authentication } from '../auth/index';
 import { LOGIN_PATH } from '../auth/callback';
@@ -556,6 +556,12 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       return json(503, { code: 'unavailable' });
     }
 
+    // Pin the original connector proof key before the one-use grant is spent.
+    // An expired bearer alone must never authorize a replacement key later.
+    const pinned = await pinProofKey(bound.binding, held.jkt, true);
+    if (pinned !== 'matched') return json(pinned === 'conflict' ? 409 : 503,
+      { code: pinned === 'conflict' ? 'binding_conflict' : 'unavailable' });
+
     // Spend the grant before minting, so concurrent retries cannot both be issued one.
     const spent = await saveRedemption({ ...tracker.redemption!, issued: true });
     if (spent === 'conflict') return json(401, { code: 'grant_replayed' });
@@ -606,6 +612,21 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   }
 
   /** Mints the binding's only accepted capability. An earlier one for the binding stops working. */
+  async function pinProofKey(binding: SessionBinding, jkt: string, create = false): Promise<'matched' | 'conflict' | 'unavailable'> {
+    const proofKey = key('adapter-proof-key', binding.bindingId);
+    const desired = { bindingId: binding.bindingId, generation: binding.generation, deviceId: binding.deviceId, jkt };
+    const seen = await store.read<JsonValue>(proofKey);
+    if (seen.kind === 'unavailable') return 'unavailable';
+    if (seen.kind === 'record') return sameJsonValue(seen.record.value, desired) ? 'matched' : 'conflict';
+    if (!create) return 'conflict';
+    const stored = await settleWrite<JsonValue>(store, { key: proofKey, expectedRevision: null,
+      operationId: `adapter-proof-key.${binding.bindingId}.${binding.generation}`,
+      next: { value: desired, expiresAt: null } });
+    if (stored.kind === 'applied') return 'matched';
+    if (stored.kind === 'conflict') return stored.current && sameJsonValue(stored.current.value, desired) ? 'matched' : 'conflict';
+    return 'unavailable';
+  }
+
   async function issueCapability(
     ownerId: OwnerId, roomId: RoomId, binding: SessionBinding, jkt: string,
   ): Promise<Readonly<{ kind: 'issued'; token: string; expiresAt: number }> | Readonly<{ kind: 'revoked' | 'unavailable' }>> {
@@ -669,6 +690,9 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
         return { kind: 'refused', code: 'binding_conflict' };
       }
       if (located.record.revokedGeneration !== null) return { kind: 'refused', code: 'binding_revoked' };
+      const pinned = await pinProofKey(binding, input.jkt);
+      if (pinned === 'conflict') return { kind: 'refused', code: 'binding_conflict' };
+      if (pinned !== 'matched') return { kind: 'unavailable' };
       const issued = await issueCapability(input.ownerId, located.address.roomId, binding, input.jkt);
       if (issued.kind === 'revoked') return { kind: 'refused', code: 'binding_revoked' };
       if (issued.kind !== 'issued') return { kind: 'unavailable' };
@@ -846,7 +870,7 @@ function isText(value: unknown): value is string {
 }
 
 /** Store keys never contain a raw secret: codes, grants and capabilities are hashed, other parts digested. */
-function key(kind: 'code' | 'grant' | 'proof' | 'capability', value: string): string {
+function key(kind: 'code' | 'grant' | 'proof' | 'capability' | 'adapter-proof-key', value: string): string {
   return `agent-bootstrap:${kind}:${createHash('sha256').update(`khala.agent-bootstrap.${kind}.v1\u0000${value}`).digest('hex')}`;
 }
 
