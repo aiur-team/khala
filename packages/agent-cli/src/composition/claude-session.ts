@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   BindingId, HarnessCapabilities, ListeningMode, ListeningModeResult, SessionBinding,
 } from '@khala/contracts/delivery/index';
@@ -138,6 +139,8 @@ export type ClaudeSessionAdapterOptions = Readonly<{
   sessions: ClaudeSessionDirectory;
   state: ClaudeSessionStatePort;
   services(binding: SessionBinding): ClaudeBindingServices;
+  /** Native Stop only. The raw token stays in this trusted server process for ledger membership proof. */
+  onTurnEnd?: (binding: SessionBinding, sessionId: string, terminalId: string, batchToken: string) => Promise<void>;
 }>;
 
 export const CLAUDE_SESSION_REFUSALS = [
@@ -486,6 +489,18 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
         // A denial or expiry leaves the session unbound; the boundary still reports it once.
         return resolved.code === 'session_not_bound' && access !== null
           ? { kind: 'hook', effective: null, watchSeconds: null, access } : resolved;
+      }
+      if (settles?.stop === true && options.onTurnEnd !== undefined) {
+        await options.state.envelope(resolved.scope, async retained => {
+          const held = retained.filter(entry => entry.generation === resolved.binding.generation);
+          if (held.length === 1) {
+            const terminalId = createHash('sha256').update(JSON.stringify([
+              'khala.claude.turn-end.v1', resolved.binding.bindingId, resolved.binding.generation, held[0]!.token,
+            ])).digest('base64url');
+            await options.onTurnEnd!(resolved.binding, call.sessionId, terminalId, held[0]!.token);
+          }
+          return { value: null, committed: [], retain: null };
+        });
       }
       // Unlike `mode`, this is not an agent call: no envelope, so nothing is acknowledged.
       const view = await resolved.services.readMode();

@@ -46,6 +46,36 @@ function inboxAdapter(bodies: readonly string[]) {
 }
 
 describe('Claude session adapter', () => {
+  it('reports only an authenticated Stop for the exact bound Claude session', async () => {
+    const onTurnEnd = vi.fn(async (...args: [SessionBinding, string, string, string]) => { void args; });
+    const services = fakeServices();
+    const state = memoryState();
+    const claude = createClaudeSessionAdapter({
+      authenticator: authenticator(), sessions: directory(), state, services: services.services, onTurnEnd,
+    });
+    await claude.hook(A1);
+    await claude.watch(A1);
+    await claude.hook({ credential: CREDENTIAL_B, sessionId: A1.sessionId }, { stop: true });
+    await claude.hook({ credential: CREDENTIAL_A, sessionId: 'unbound-session' }, { stop: true });
+    expect(onTurnEnd).not.toHaveBeenCalled();
+    await expect(claude.hook(A1, { stop: true })).resolves.toMatchObject({ kind: 'hook' });
+    expect(onTurnEnd).not.toHaveBeenCalled(); // Empty Stop proves no offered release.
+    state.tokens.set(S1, retained('old-generation-token', 0));
+    await claude.hook(A1, { stop: true });
+    expect(onTurnEnd).not.toHaveBeenCalled();
+    state.tokens.set(S1, retained('private-batch-token'));
+    await claude.hook(A1);
+    await claude.watch(A1);
+    expect(onTurnEnd).not.toHaveBeenCalled();
+    await expect(claude.hook(A1, { stop: true })).resolves.toMatchObject({ kind: 'hook' });
+    const terminalId = onTurnEnd.mock.calls[0]?.[2];
+    expect(terminalId).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(onTurnEnd).toHaveBeenCalledExactlyOnceWith(BINDINGS['s-1'], A1.sessionId, terminalId, 'private-batch-token');
+    await claude.hook(A1, { stop: true });
+    expect(onTurnEnd.mock.calls[1]?.[2]).toBe(terminalId);
+    expect(state.tokens.get(S1)).toEqual(retained('private-batch-token')); // Neither pull nor ACK.
+  });
+
   it('wrong-implementation test: same-cwd sessions each reach only their own binding through the injected khala_read', async () => {
     const { adapter: claude, services, servicesFor } = adapter();
     const inboxAccess = vi.spyOn(fs.promises, 'open');

@@ -91,6 +91,8 @@ export type OpenCodeBridgeOptions = Readonly<{
   store: OpenCodeBridgeStore;
   runtime: OpenCodeRuntime;
   onReport?: ((report: OpenCodeBridgeReport) => void) | undefined;
+  /** Exact native session.idle event only; server independently verifies completion. */
+  onTurnEnd?: ((binding: SessionBinding, sessionId: string, terminalId: string) => Promise<void>) | undefined;
   now?: (() => Date) | undefined;
 }>;
 
@@ -129,6 +131,7 @@ export class OpenCodeSessionBridge {
   readonly #store: OpenCodeBridgeStore;
   readonly #runtime: OpenCodeRuntime;
   readonly #onReport: ((report: OpenCodeBridgeReport) => void) | undefined;
+  readonly #onTurnEnd: ((binding: SessionBinding, sessionId: string, terminalId: string) => Promise<void>) | undefined;
   readonly #now: () => Date;
   #serial: Promise<void> = Promise.resolve();
 
@@ -141,6 +144,7 @@ export class OpenCodeSessionBridge {
     this.#store = options.store;
     this.#runtime = options.runtime;
     this.#onReport = options.onReport;
+    this.#onTurnEnd = options.onTurnEnd;
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -219,6 +223,15 @@ export class OpenCodeSessionBridge {
       return;
     }
     if (properties?.sessionID !== this.sessionID) return;
+    if (event.type === 'session.idle' && this.#onTurnEnd !== undefined) {
+      await this.#guarded(async () => {
+        const gate = await this.#gate();
+        if (gate?.state.session?.sessionID !== this.sessionID) return;
+        const messages = await this.#session.messages(this.sessionID);
+        const terminal = [...messages].reverse().find(message => message.sessionID === this.sessionID && message.role === 'assistant');
+        if (terminal !== undefined && terminal.id.length > 0) await this.#onTurnEnd!(this.#binding, this.sessionID, terminal.id);
+      });
+    }
     const idle = event.type === 'session.idle'
       || (event.type === 'session.status' && plain(properties.status)?.type === 'idle');
     if (idle) await this.wake('session_idle');
