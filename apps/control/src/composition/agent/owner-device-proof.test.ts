@@ -37,6 +37,7 @@ async function setup() {
   let verifiedFingerprint = fingerprint;
   let challengeCount = 0;
   let owner = principal;
+  let agentBinding = binding;
   const auth = {
     async authenticateRequest() { return signedIn ? { kind: 'authenticated', context: { principal: owner } } : { kind: 'signed_out' }; },
     async requireHumanMutation() { return signedIn && csrf ? { kind: 'authorized', context: { principal: owner } }
@@ -44,9 +45,11 @@ async function setup() {
   } as unknown as AuthService;
   const gateway = { async inspectMembership() { return { kind: member ? 'joined' : 'absent', historyReady: false }; } } as unknown as AdmissionGateway;
   const capabilities = {
-    async authorize() { return { kind: 'authorized', ownerId: binding.ownerId, roomId, binding, action: 'receive_released' }; },
-    async lookupBinding() { return { kind: 'found', ownerId: binding.ownerId, deviceId: binding.deviceId,
-      generation: current ? binding.generation : binding.generation + 1, status: current ? 'active' : 'revoked' }; },
+    async authorize() { return { kind: 'authorized', ownerId: agentBinding.ownerId, roomId,
+      binding: agentBinding, action: 'receive_released' }; },
+    async lookupBinding() { return { kind: 'found', ownerId: agentBinding.ownerId, deviceId: agentBinding.deviceId,
+      generation: current ? agentBinding.generation : agentBinding.generation + 1,
+      status: current ? 'active' : 'revoked' }; },
   } as unknown as AdapterCapabilities;
   const verifiedTokens: string[] = [];
   const routes = createOwnerDeviceProofRoutes({ auth, gateway, capabilities, store: state.store,
@@ -65,17 +68,20 @@ async function setup() {
   }
   async function challenge() {
     const result = await call(OWNER_DEVICE_CHALLENGE, 'GET', undefined,
-      `?room_id=${encodeURIComponent(roomId)}&device_id=${browserDeviceId}`);
+      `?room_id=${encodeURIComponent(roomId)}&device_id=${browserDeviceId}`
+      + `&binding_id=${binding.bindingId}&binding_generation=${binding.generation}`);
     expect(result.status).toBe(200);
     return (await result.json() as { nonce: string }).nonce;
   }
   const registration = (nonce: string, overrides: Record<string, unknown> = {}) => ({ v: 1, roomId,
+    bindingId: binding.bindingId, generation: binding.generation,
     deviceId: browserDeviceId, fingerprint, nonce, matrixAccessToken, ...overrides });
   return { state, bindings, index, call, challenge, registration, verifiedTokens,
     setSignedIn: (value: boolean) => { signedIn = value; },
     setCsrf: (value: boolean) => { csrf = value; },
     setMember: (value: boolean) => { member = value; },
     setCurrent: (value: boolean) => { current = value; },
+    setAgentBinding: (value: SessionBinding) => { agentBinding = value; },
     setOwner: (value: AuthPrincipal) => { owner = value; },
     setBrowserVerified: (value: boolean) => { browserVerified = value; },
     setVerifiedFingerprint: (value: string) => { verifiedFingerprint = value; } };
@@ -140,6 +146,35 @@ describe('owner browser Matrix device proof', () => {
     expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(nonce))).status).toBe(403);
     const second = await env.challenge();
     expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(second, { matrixAccessToken: 'forged-browser-token-000000' }))).status).toBe(403);
+  });
+
+  it('binds the nonce and public key pin to one current agent generation', async () => {
+    const env = await setup();
+    const nonce = await env.challenge();
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(nonce,
+      { generation: binding.generation + 1 }))).status).toBe(403);
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(nonce,
+      { bindingId: 'another-binding' }))).status).toBe(403);
+    const staleChallenge = await env.call(OWNER_DEVICE_CHALLENGE, 'GET', undefined,
+      `?room_id=${encodeURIComponent(roomId)}&device_id=${browserDeviceId}`
+      + `&binding_id=${binding.bindingId}&binding_generation=${binding.generation + 1}`);
+    expect(staleChallenge.status).toBe(403);
+    const foreignChallenge = await env.call(OWNER_DEVICE_CHALLENGE, 'GET', undefined,
+      `?room_id=${encodeURIComponent(roomId)}&device_id=${browserDeviceId}`
+      + '&binding_id=another-binding&binding_generation=0');
+    expect(foreignChallenge.status).toBe(403);
+    expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(nonce))).status).toBe(200);
+    const second = { ...binding, bindingId: 'binding-owner-proof-new',
+      agentParticipantId: 'agent-owner-proof-new', deviceId: 'agent-device-new',
+      sessionId: 'session-owner-proof-new', generation: 0 } as SessionBinding;
+    expect((await env.bindings.putParticipant({ ownerId: binding.ownerId, roomId,
+      agentParticipantId: second.agentParticipantId, expectedBindingId: null,
+      record: { binding: second, revokedGeneration: null, capability: null } })).kind).toBe('applied');
+    expect((await env.index.activate(second, roomId)).kind).toBe('ok');
+    env.setAgentBinding(second);
+    const newBindingPins = await env.call(OWNER_DEVICE_LOOKUP);
+    expect(newBindingPins.status).toBe(200);
+    expect(await newBindingPins.json()).toEqual({ v: 1, roomId, devices: [] });
   });
 
   it('refuses key replacement and stale or revoked bindings on lookup', async () => {

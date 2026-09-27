@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  decodeDeviceId, decodeRoomId,
+  decodeBindingId, decodeDeviceId, decodeRoomId,
   type AuthPrincipal, type ControlStore, type DeviceId, type JsonValue, type OwnerId, type RoomId,
 } from '@khala/contracts/messaging/index';
 import type { AuthService } from '../../auth/index';
@@ -18,7 +18,8 @@ const NONCE = /^[A-Za-z0-9_-]{43}$/u;
 const CHALLENGE_TTL_MS = 60_000;
 
 export type OwnerDeviceProof = Readonly<{
-  v: 1; ownerId: OwnerId; roomId: RoomId; deviceId: DeviceId; fingerprint: string;
+  v: 1; ownerId: OwnerId; roomId: RoomId; bindingId: string; generation: number;
+  deviceId: DeviceId; fingerprint: string;
 }>;
 
 export type OwnerDeviceProofDependencies = Readonly<{
@@ -91,40 +92,47 @@ function json(status: number, value: unknown): Response {
   } });
 }
 function unavailable(): Response { return json(503, { code: 'unavailable' }); }
-function key(ownerId: OwnerId, roomId: RoomId, deviceId: DeviceId): string {
-  return `owner-device-proof.v1.${createHash('sha256').update(JSON.stringify([ownerId, roomId, deviceId])).digest('hex')}`;
+function key(ownerId: OwnerId, roomId: RoomId, bindingId: string, generation: number, deviceId: DeviceId): string {
+  return `owner-device-proof.v2.${createHash('sha256').update(JSON.stringify([ownerId, roomId, bindingId, generation, deviceId])).digest('hex')}`;
 }
-function indexKey(ownerId: OwnerId, roomId: RoomId): string {
-  return `owner-device-index.v1.${createHash('sha256').update(JSON.stringify([ownerId, roomId])).digest('hex')}`;
+function indexKey(ownerId: OwnerId, roomId: RoomId, bindingId: string, generation: number): string {
+  return `owner-device-index.v2.${createHash('sha256').update(JSON.stringify([ownerId, roomId, bindingId, generation])).digest('hex')}`;
 }
 function challengeKey(nonce: string): string {
   return `owner-device-challenge.v1.${createHash('sha256').update(nonce).digest('hex')}`;
 }
-function valid(value: unknown, ownerId: OwnerId, roomId: RoomId, deviceId: DeviceId): value is OwnerDeviceProof {
+function valid(value: unknown, ownerId: OwnerId, roomId: RoomId, bindingId: string, generation: number, deviceId: DeviceId): value is OwnerDeviceProof {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const item = value as Record<string, unknown>;
-  return Object.keys(item).sort().join(',') === 'deviceId,fingerprint,ownerId,roomId,v'
-    && item.v === 1 && item.ownerId === ownerId && item.roomId === roomId && item.deviceId === deviceId
+  return Object.keys(item).sort().join(',') === 'bindingId,deviceId,fingerprint,generation,ownerId,roomId,v'
+    && item.v === 1 && item.ownerId === ownerId && item.roomId === roomId
+    && item.bindingId === bindingId && item.generation === generation && item.deviceId === deviceId
     && typeof item.fingerprint === 'string' && FINGERPRINT.test(item.fingerprint);
 }
-function validIndex(value: unknown, ownerId: OwnerId, roomId: RoomId): value is Readonly<{ v: 1; ownerId: OwnerId; roomId: RoomId; deviceIds: readonly DeviceId[] }> {
+function validIndex(value: unknown, ownerId: OwnerId, roomId: RoomId, bindingId: string, generation: number): value is Readonly<{
+  v: 1; ownerId: OwnerId; roomId: RoomId; bindingId: string; generation: number; deviceIds: readonly DeviceId[] }> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const item = value as Record<string, unknown>;
-  if (Object.keys(item).sort().join(',') !== 'deviceIds,ownerId,roomId,v' || item.v !== 1
-    || item.ownerId !== ownerId || item.roomId !== roomId || !Array.isArray(item.deviceIds)
+  if (Object.keys(item).sort().join(',') !== 'bindingId,deviceIds,generation,ownerId,roomId,v' || item.v !== 1
+    || item.ownerId !== ownerId || item.roomId !== roomId || item.bindingId !== bindingId
+    || item.generation !== generation || !Array.isArray(item.deviceIds)
     || item.deviceIds.length > 32 || new Set(item.deviceIds).size !== item.deviceIds.length) return false;
   return item.deviceIds.every(id => decodeDeviceId(id).ok);
 }
-function registerBody(value: unknown): { roomId: RoomId; deviceId: DeviceId; fingerprint: string; nonce: string; matrixAccessToken: string } | null {
+function registerBody(value: unknown): { roomId: RoomId; bindingId: string; generation: number;
+  deviceId: DeviceId; fingerprint: string; nonce: string; matrixAccessToken: string } | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
-  if (Object.keys(item).sort().join(',') !== 'deviceId,fingerprint,matrixAccessToken,nonce,roomId,v' || item.v !== 1) return null;
+  if (Object.keys(item).sort().join(',') !== 'bindingId,deviceId,fingerprint,generation,matrixAccessToken,nonce,roomId,v' || item.v !== 1) return null;
   const room = decodeRoomId(item.roomId);
+  const binding = decodeBindingId(item.bindingId);
   const device = decodeDeviceId(item.deviceId);
-  return room.ok && device.ok && typeof item.fingerprint === 'string' && FINGERPRINT.test(item.fingerprint)
+  return room.ok && binding.ok && device.ok && Number.isSafeInteger(item.generation) && (item.generation as number) >= 0
+    && typeof item.fingerprint === 'string' && FINGERPRINT.test(item.fingerprint)
     && typeof item.nonce === 'string' && NONCE.test(item.nonce)
     && typeof item.matrixAccessToken === 'string' && item.matrixAccessToken.length >= 16 && item.matrixAccessToken.length <= 4096
-    ? { roomId: room.value, deviceId: device.value, fingerprint: item.fingerprint,
+    ? { roomId: room.value, bindingId: binding.value, generation: item.generation as number,
+      deviceId: device.value, fingerprint: item.fingerprint,
       nonce: item.nonce, matrixAccessToken: item.matrixAccessToken } : null;
 }
 
@@ -135,12 +143,31 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
   const ownerRooms = createOwnerRoomIndex(deps.store);
   const bindings = createAgentBindingStore({ store: deps.store });
 
+  async function humanBinding(ownerId: OwnerId, roomId: RoomId, bindingId: string,
+    generation: number): Promise<Response | null> {
+    const located = await bindings.locateBinding(bindingId as never);
+    if (located.kind === 'unavailable') return unavailable();
+    if (located.kind !== 'found' || located.address.ownerId !== ownerId
+      || located.address.roomId !== roomId || located.record.revokedGeneration !== null
+      || located.record.binding.bindingId !== bindingId || located.record.binding.generation !== generation) {
+      return json(403, { code: 'binding_inactive' });
+    }
+    const current = await deps.capabilities.lookupBinding(bindingId as never);
+    if (current.kind === 'unavailable') return unavailable();
+    if (current.kind !== 'found' || current.status !== 'active' || current.ownerId !== ownerId
+      || current.generation !== generation || current.deviceId !== located.record.binding.deviceId) {
+      return json(403, { code: 'binding_inactive' });
+    }
+    return null;
+  }
+
   async function indexPinnedDevice(proof: OwnerDeviceProof): Promise<boolean> {
-    const name = indexKey(proof.ownerId, proof.roomId);
+    const name = indexKey(proof.ownerId, proof.roomId, proof.bindingId, proof.generation);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const current = await deps.store.read<JsonValue>(name);
       if (current.kind === 'unavailable') return false;
-      if (current.kind === 'record' && !validIndex(current.record.value, proof.ownerId, proof.roomId)) return false;
+      if (current.kind === 'record' && !validIndex(current.record.value,
+        proof.ownerId, proof.roomId, proof.bindingId, proof.generation)) return false;
       const deviceIds = current.kind === 'record' ? [...(current.record.value as { deviceIds: DeviceId[] }).deviceIds] : [];
       if (deviceIds.includes(proof.deviceId)) return true;
       if (deviceIds.length >= 32) return false;
@@ -148,8 +175,9 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
       deviceIds.sort();
       const saved = await deps.store.compareAndSet<JsonValue>({ key: name,
         expectedRevision: current.kind === 'record' ? current.record.revision : null,
-        operationId: `owner-device-index.${createHash('sha256').update(JSON.stringify([proof.ownerId, proof.roomId, deviceIds])).digest('hex')}`,
-        next: { value: { v: 1, ownerId: proof.ownerId, roomId: proof.roomId, deviceIds }, expiresAt: null },
+        operationId: `owner-device-index.${createHash('sha256').update(JSON.stringify([proof.ownerId, proof.roomId, proof.bindingId, proof.generation, deviceIds])).digest('hex')}`,
+        next: { value: { v: 1, ownerId: proof.ownerId, roomId: proof.roomId,
+          bindingId: proof.bindingId, generation: proof.generation, deviceIds }, expiresAt: null },
       });
       if (saved.kind === 'applied') return true;
       if (saved.kind !== 'conflict') return false;
@@ -162,12 +190,18 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     if (signed.kind === 'unavailable') return unavailable();
     if (signed.kind !== 'authenticated') return json(401, { code: 'authentication_required' });
     const search = new URL(request.url).searchParams;
-    if ([...search.keys()].sort().join(',') !== 'device_id,room_id') return json(400, { code: 'invalid_request' });
+    if ([...search.keys()].sort().join(',') !== 'binding_generation,binding_id,device_id,room_id') return json(400, { code: 'invalid_request' });
     const room = decodeRoomId(search.get('room_id'));
+    const binding = decodeBindingId(search.get('binding_id'));
+    const generation = Number(search.get('binding_generation'));
     const device = decodeDeviceId(search.get('device_id'));
-    if (!room.ok || !device.ok) return json(400, { code: 'invalid_request' });
+    if (!room.ok || !binding.ok || !Number.isSafeInteger(generation) || generation < 0 || !device.ok) {
+      return json(400, { code: 'invalid_request' });
+    }
     const open = await roomOpen(signed.context.principal.ownerId, room.value);
     if (open) return open;
+    const heldBinding = await humanBinding(signed.context.principal.ownerId, room.value, binding.value, generation);
+    if (heldBinding) return heldBinding;
     const membership = await deps.gateway.inspectMembership({ roomId: room.value,
       principal: signed.context.principal, history: 'none' });
     if (membership.kind === 'unavailable') return unavailable();
@@ -177,7 +211,7 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     const saved = await deps.store.compareAndSet<JsonValue>({ key: challengeKey(nonce), expectedRevision: null,
       operationId: `owner-device.challenge.${nonce}`,
       next: { value: { v: 1, ownerId: signed.context.principal.ownerId, roomId: room.value,
-        deviceId: device.value, used: false }, expiresAt } });
+        bindingId: binding.value, generation, deviceId: device.value, used: false }, expiresAt } });
     return saved.kind === 'applied' ? json(200, { v: 1, nonce, expiresAt }) : unavailable();
   }
 
@@ -201,6 +235,8 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     const { principal } = signed.context;
     const open = await roomOpen(principal.ownerId, body.roomId);
     if (open) return open;
+    const heldBinding = await humanBinding(principal.ownerId, body.roomId, body.bindingId, body.generation);
+    if (heldBinding) return heldBinding;
     const membership = await deps.gateway.inspectMembership({ roomId: body.roomId, principal, history: 'none' });
     if (membership.kind === 'unavailable') return unavailable();
     if (membership.kind !== 'joined') return json(403, { code: 'owner_membership_required' });
@@ -211,6 +247,7 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     if (typeof challengeValue !== 'object' || challengeValue === null || Array.isArray(challengeValue)) return unavailable();
     const expected = challengeValue as Record<string, JsonValue>;
     if (expected.v !== 1 || expected.ownerId !== principal.ownerId || expected.roomId !== body.roomId
+      || expected.bindingId !== body.bindingId || expected.generation !== body.generation
       || expected.deviceId !== body.deviceId || expected.used !== false) return json(403, { code: 'challenge_mismatch' });
     const consumed = await deps.store.compareAndSet<JsonValue>({ key: challengeKey(body.nonce),
       expectedRevision: held.record.revision,
@@ -223,14 +260,19 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     const stillMember = await deps.gateway.inspectMembership({ roomId: body.roomId, principal, history: 'none' });
     if (stillMember.kind === 'unavailable') return unavailable();
     if (stillMember.kind !== 'joined') return json(403, { code: 'owner_membership_required' });
+    const stillOpen = await roomOpen(principal.ownerId, body.roomId);
+    if (stillOpen) return stillOpen;
+    const stillHeld = await humanBinding(principal.ownerId, body.roomId, body.bindingId, body.generation);
+    if (stillHeld) return stillHeld;
     const proof: OwnerDeviceProof = { v: 1, ownerId: principal.ownerId, roomId: body.roomId,
+      bindingId: body.bindingId, generation: body.generation,
       deviceId: body.deviceId, fingerprint: body.fingerprint };
-    const recordKey = key(proof.ownerId, proof.roomId, proof.deviceId);
+    const recordKey = key(proof.ownerId, proof.roomId, proof.bindingId, proof.generation, proof.deviceId);
     const operationId = `owner-device-proof.${createHash('sha256').update(JSON.stringify(proof)).digest('hex')}`;
     const saved = await deps.store.compareAndSet<JsonValue>({ key: recordKey, expectedRevision: null,
       operationId, next: { value: proof, expiresAt: null } });
     if (saved.kind === 'applied' || (saved.kind === 'conflict'
-      && valid(saved.current?.value, proof.ownerId, proof.roomId, proof.deviceId)
+      && valid(saved.current?.value, proof.ownerId, proof.roomId, proof.bindingId, proof.generation, proof.deviceId)
       && saved.current.value.fingerprint === proof.fingerprint)) {
       return await indexPinnedDevice(proof) ? json(200, { v: 1, kind: 'pinned' }) : unavailable();
     }
@@ -262,14 +304,18 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     if (membership.kind !== 'joined') return json(403, { code: 'owner_membership_required' });
     const search = new URL(request.url).searchParams;
     if ([...search.keys()].length === 0) {
-      const indexed = await deps.store.read<JsonValue>(indexKey(auth.ownerId, auth.roomId));
+      const indexed = await deps.store.read<JsonValue>(indexKey(auth.ownerId, auth.roomId,
+        auth.binding.bindingId, auth.binding.generation));
       if (indexed.kind === 'unavailable') return unavailable();
       if (indexed.kind === 'absent') return json(200, { v: 1, roomId: auth.roomId, devices: [] });
-      if (!validIndex(indexed.record.value, auth.ownerId, auth.roomId)) return unavailable();
+      if (!validIndex(indexed.record.value, auth.ownerId, auth.roomId,
+        auth.binding.bindingId, auth.binding.generation)) return unavailable();
       const devices: Array<{ deviceId: DeviceId; fingerprint: string }> = [];
       for (const deviceId of indexed.record.value.deviceIds) {
-        const found = await deps.store.read<JsonValue>(key(auth.ownerId, auth.roomId, deviceId));
-        if (found.kind !== 'record' || !valid(found.record.value, auth.ownerId, auth.roomId, deviceId)) return unavailable();
+        const found = await deps.store.read<JsonValue>(key(auth.ownerId, auth.roomId,
+          auth.binding.bindingId, auth.binding.generation, deviceId));
+        if (found.kind !== 'record' || !valid(found.record.value, auth.ownerId, auth.roomId,
+          auth.binding.bindingId, auth.binding.generation, deviceId)) return unavailable();
         devices.push({ deviceId, fingerprint: found.record.value.fingerprint });
       }
       return json(200, { v: 1, roomId: auth.roomId, devices });
@@ -277,10 +323,12 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     if ([...search.keys()].join(',') !== 'device_id') return json(400, { code: 'invalid_request' });
     const device = decodeDeviceId(search.get('device_id'));
     if (!device.ok) return json(400, { code: 'invalid_request' });
-    const read = await deps.store.read<JsonValue>(key(auth.ownerId, auth.roomId, device.value));
+    const read = await deps.store.read<JsonValue>(key(auth.ownerId, auth.roomId,
+      auth.binding.bindingId, auth.binding.generation, device.value));
     if (read.kind === 'unavailable') return unavailable();
     if (read.kind !== 'record') return json(404, { code: 'not_found' });
-    if (!valid(read.record.value, auth.ownerId, auth.roomId, device.value)) return unavailable();
+    if (!valid(read.record.value, auth.ownerId, auth.roomId,
+      auth.binding.bindingId, auth.binding.generation, device.value)) return unavailable();
     return json(200, { v: 1, roomId: auth.roomId, deviceId: device.value,
       fingerprint: read.record.value.fingerprint });
   }
