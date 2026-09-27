@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { build } from '../../apps/web/node_modules/vite/dist/node/index.js';
 import { createControlStore } from '../../apps/control/src/runtime/control-store';
+import { ownerMatrixLocalpart, ownerMatrixUserId } from '../../apps/control/src/composition/human/matrix-identity';
 import { createAgentBindingStore } from '../../apps/control/src/agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../apps/control/src/agent-bootstrap/owner-room-index';
 import { createChannelClosureHandlers } from '../../apps/control/src/channel-closure/handler';
@@ -35,15 +36,15 @@ let server: ReturnType<typeof createHttpsServer> | null = null;
 const stores = openClosureFixtureStores(path.join(directory, 'control.sqlite'));
 try {
   const registrationProbe = await synapse.probeSharedSecretRegistration('khala_b3duZXJfcHJvYmU');
-  const escapedRegistrationProbe = await synapse.probeSharedSecretRegistration('khala_b3du=z=x=jf=y2xvc3=vy=z=q');
+  const escapedRegistrationProbe = await synapse.probeSharedSecretRegistration(ownerMatrixLocalpart('owner_probe' as OwnerId));
   if (registrationProbe.status !== 200 || !registrationProbe.lowercaseUserId
     || registrationProbe.loginStatus !== 200 || !registrationProbe.loginUserIdLowercase
     || escapedRegistrationProbe.status !== 200 || !escapedRegistrationProbe.exactUserId
     || escapedRegistrationProbe.loginStatus !== 200 || !escapedRegistrationProbe.loginUserIdExact) {
     throw new Error('production_registration_probes_unexpected');
   }
-  const ownerId = 'rimzoyvjwrhp' as OwnerId;
-  const ownerUserId = `@khala_${Buffer.from(ownerId).toString('base64url')}:${synapse.serverName}`;
+  const ownerId = 'owner_closure' as OwnerId;
+  const ownerUserId = ownerMatrixUserId(ownerId, synapse.serverName);
   const controlLogin = await synapse.provision(ownerUserId, 'KHALA_CONTROL_LIVE');
   const browserALogin = await synapse.loginDevice(ownerUserId, controlLogin.password, 'OWNER_A');
   const browserBLogin = await synapse.loginDevice(ownerUserId, controlLogin.password, 'OWNER_B');
@@ -308,8 +309,9 @@ try {
       liveBrowser = await browserCall(browserA.page, 'status') as typeof liveBrowser;
       if (liveBrowser.successes < 1) await new Promise(resolve => setTimeout(resolve, 500));
     }
-    for (let attempt = 0; attempt < 10 && liveBrowser.roomKnown; attempt++) {
+    for (let attempt = 0; attempt < 10; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 500));
+      await browserCall(browserA.page, 'poll');
       liveBrowser = await browserCall(browserA.page, 'status') as typeof liveBrowser;
     }
     if (liveBrowser.attempts < 1 || liveBrowser.successes < 1 || liveBrowser.roomKnown) {
@@ -323,12 +325,13 @@ try {
       offlineBrowser = await browserCall(restartedBrowser.page, 'status') as typeof offlineBrowser;
       if (offlineBrowser.successes < 1) await new Promise(resolve => setTimeout(resolve, 500));
     }
-    for (let attempt = 0; attempt < 10 && offlineBrowser.roomKnown; attempt++) {
+    for (let attempt = 0; attempt < 10; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 500));
+      await browserCall(restartedBrowser.page, 'poll');
       offlineBrowser = await browserCall(restartedBrowser.page, 'status') as typeof offlineBrowser;
     }
     if (offlineBrowser.attempts < 1 || offlineBrowser.successes < 1 || offlineBrowser.roomKnown) {
-      throw new Error(`restarted_browser_cleanup_failed_${offlineBrowser.attempts}_${offlineBrowser.successes}_${offlineBrowser.roomKnown}`);
+      throw new Error(`restarted_browser_cleanup_failed_${offlineBrowser.attempts}_${offlineBrowser.successes}_${offlineBrowser.roomKnown}_${(offlineBrowser as typeof offlineBrowser & { membership?: string }).membership ?? 'none'}_${(offlineBrowser as typeof offlineBrowser & { syncState?: string }).syncState ?? 'none'}_${(offlineBrowser as typeof offlineBrowser & { absentImmediatelyAfterForget?: boolean }).absentImmediatelyAfterForget ?? 'unknown'}`);
     }
     const repeat = await ownerPost(command);
     const repeatBody = await repeat.json() as { value?: { state: string; operationId: string } };
@@ -347,6 +350,7 @@ try {
       secondReceipt: 'complete_left', futureAdmission: 'blocked', futureMailboxControl: 'blocked',
       connectorLedgers: 'revoked_after_restart', cleanupRequest: 'durable',
       browserDevices: 2, offlineBrowserRestart: 'processed', sdkForget: 'both_succeeded',
+      onlineCleanupAttempts: liveBrowser.attempts, restartedCleanupAttempts: offlineBrowser.attempts,
       retryOperation: 'stable' }));
   } finally { await localA.close(); if (!localBClosed) await localB.close(); }
 } finally {

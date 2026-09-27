@@ -11,6 +11,7 @@ let client: MatrixClient | null = null;
 let consumer: ReturnType<typeof createOwnerCleanupConsumer> | null = null;
 let attempts = 0;
 let successes = 0;
+let absentImmediatelyAfterForget: boolean | null = null;
 let roomId: string | null = null;
 const api = {
   async open(input: OpenInput) {
@@ -37,10 +38,15 @@ const api = {
     consumer = createOwnerCleanupConsumer({
       ownerId: () => input.ownerId as OwnerId,
       requests: ownerId => control.cleanupRequests(ownerId),
+      roomPresent(ownerId, targetRoomId) {
+        return ownerId === input.ownerId && next.getRoom(targetRoomId) !== null;
+      },
       async cleanupRoom(ownerId, targetRoomId) {
         if (ownerId !== input.ownerId || targetRoomId !== input.roomId) return false;
         attempts += 1;
-        try { await next.forget(targetRoomId, true); successes += 1; return true; }
+        try { await next.forget(targetRoomId, true);
+          absentImmediatelyAfterForget = next.getRoom(targetRoomId) === null;
+          successes += 1; return true; }
         catch { return false; }
       },
     });
@@ -49,7 +55,9 @@ const api = {
   },
   start() { if (!consumer) throw new Error('closure_browser_closed'); consumer.start(); },
   async poll() { if (!consumer) throw new Error('closure_browser_closed'); await consumer.poll(); },
-  status() { return { attempts, successes, roomKnown: roomId !== null && client?.getRoom(roomId as RoomId) !== null }; },
+  status() { const room = roomId === null ? null : client?.getRoom(roomId as RoomId);
+    return { attempts, successes, absentImmediatelyAfterForget, roomKnown: room !== null, membership: room?.getMyMembership() ?? null,
+      syncState: client?.getSyncState() ?? null }; },
   close() { consumer?.dispose(); consumer = null; client?.stopClient(); client = null; },
 };
 (window as unknown as { closureFixture: typeof api }).closureFixture = api;
