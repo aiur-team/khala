@@ -27,8 +27,10 @@ export const renderHumanRoom: HumanRoomRenderer = (context, route) => (
 );
 
 /** Production room renderer with the authenticated owner mailbox attached. */
-export function createHumanRoomRenderer(review: ReviewClient, capability: ReviewCapability): HumanRoomRenderer {
-  return (context, route) => <HumanRoom context={context} roomId={route.roomId} review={review} capability={capability} />;
+export function createHumanRoomRenderer(review: ReviewClient, capability: ReviewCapability,
+  trustBinding: (roomId: Parameters<HumanRoomRenderer>[1]['roomId'], binding: OwnerReviewBinding) => Promise<boolean>): HumanRoomRenderer {
+  return (context, route) => <HumanRoom context={context} roomId={route.roomId} review={review}
+    capability={capability} trustBinding={trustBinding} />;
 }
 
 function ReviewForBinding({ context, roomId, capability, binding }: {
@@ -55,35 +57,58 @@ function ReviewForBinding({ context, roomId, capability, binding }: {
     renderContent={content => <span dir="auto">{content.body}</span>} /> : <Panel heading="Recipient review"><p role="status">Loading review…</p></Panel>;
 }
 
-function HumanReview({ context, roomId, review, capability }: {
+function HumanReview({ context, roomId, review, capability, trustBinding }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   review: ReviewClient | undefined;
   capability: ReviewCapability | undefined;
+  trustBinding: ((roomId: Parameters<HumanRoomRenderer>[1]['roomId'], binding: OwnerReviewBinding) => Promise<boolean>) | undefined;
 }) {
-  const [bindings, setBindings] = useState<readonly OwnerReviewBinding[] | null>(null);
+  const [discovery, setDiscovery] = useState<Readonly<{ active: number; bindings: readonly OwnerReviewBinding[] }> | null>(null);
   useEffect(() => {
-    if (!review) return;
+    if (!review || !trustBinding) return;
     const abort = new AbortController();
-    setBindings(null);
-    const refresh = () => { void review.bindings(roomId, abort.signal).then(value => {
-      if (!abort.signal.aborted) setBindings(value);
+    const trusted = new Set<string>();
+    setDiscovery(null);
+    const refresh = () => { void review.bindings(roomId, abort.signal).then(async value => {
+      if (abort.signal.aborted || value === null) { if (!abort.signal.aborted) setDiscovery(null); return; }
+      const currentKeys = new Set(value.filter(binding => binding.device)
+        .map(binding => JSON.stringify([binding.bindingId, binding.generation, binding.device])));
+      setDiscovery(previous => ({ active: value.length, bindings: (previous?.bindings ?? []).filter(binding =>
+        trusted.has(JSON.stringify([binding.bindingId, binding.generation, binding.device]))
+        && currentKeys.has(JSON.stringify([binding.bindingId, binding.generation, binding.device]))) }));
+      const ready: OwnerReviewBinding[] = [];
+      for (const binding of value) {
+        if (!binding.device) continue;
+        const key = JSON.stringify([binding.bindingId, binding.generation, binding.device]);
+        let established = trusted.has(key);
+        if (!established) {
+          try { established = await trustBinding(roomId, binding); } catch { established = false; }
+        }
+        if (established) {
+          trusted.add(key);
+          ready.push(binding);
+        }
+      }
+      if (!abort.signal.aborted) setDiscovery({ active: value.length, bindings: ready });
     }); };
     refresh();
     const timer = setInterval(refresh, 5_000);
     return () => { abort.abort(); clearInterval(timer); };
-  }, [context, roomId, review]);
-  if (!review || !capability || bindings === null) return <Panel heading="Recipient review"><p role="status">Review unavailable or loading.</p></Panel>;
-  if (bindings.length === 0) return <Panel heading="Recipient review"><p role="status">No active agent recipient in this channel.</p></Panel>;
-  return <>{bindings.map(binding => <ReviewForBinding key={`${binding.bindingId}:${binding.generation}`} context={context} roomId={roomId}
+  }, [context, roomId, review, trustBinding]);
+  if (!review || !capability || !trustBinding || discovery === null) return <Panel heading="Recipient review"><p role="status">Review unavailable or loading.</p></Panel>;
+  if (discovery.active === 0) return <Panel heading="Recipient review"><p role="status">No active agent recipient in this channel.</p></Panel>;
+  if (discovery.bindings.length === 0) return <Panel heading="Recipient review"><p role="status">Waiting for verified agent device trust.</p></Panel>;
+  return <>{discovery.bindings.map(binding => <ReviewForBinding key={`${binding.bindingId}:${binding.generation}`} context={context} roomId={roomId}
     capability={capability} binding={binding} />)}</>;
 }
 
-function HumanRoom({ context, roomId, review, capability }: {
+function HumanRoom({ context, roomId, review, capability, trustBinding }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   review?: ReviewClient;
   capability?: ReviewCapability;
+  trustBinding?: (roomId: Parameters<HumanRoomRenderer>[1]['roomId'], binding: OwnerReviewBinding) => Promise<boolean>;
 }) {
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -120,7 +145,8 @@ function HumanRoom({ context, roomId, review, capability }: {
       renderTimeline={() => (
         <TimelineScreen controller={timeline} roomPort={context.room} roomId={roomId} viewer={viewer} />
       )}
-      renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability} />}
+      renderReview={() => <HumanReview context={context} roomId={roomId} review={review} capability={capability}
+        trustBinding={trustBinding} />}
       renderControls={() => (
         <>
           <Panel heading="Agent controls">

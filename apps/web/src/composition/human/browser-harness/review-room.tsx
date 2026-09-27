@@ -31,7 +31,8 @@ const context = { generation: 1, room, principal: { ownerId: 'owner_1' },
   device: { current: () => ({ state: 'ready', deviceId: 'device_1', generation: 1 }), observe: () => () => undefined },
 } as unknown as HumanRouteContext;
 const review = {
-  async bindings() { return [{ bindingId, generation: 0, agentParticipantId: 'My agent' }]; },
+  async bindings() { return [{ bindingId, generation: 0, agentParticipantId: 'My agent',
+    device: { userId: '@agent:example', deviceId: 'AGENT', fingerprint: 'A'.repeat(43) } }]; },
   review: {
     async preview() { return { kind: 'ok' as const, body: { v: 1, bindingId, bindingGeneration: 0,
       policyVersion: 3, pending: items.map(value => value.ref), receipts: [] } }; },
@@ -39,11 +40,17 @@ const review = {
       body: { ok: true, releaseIds: ['release_b'] } }; },
   },
 };
-declare global { interface Window { __roomReviewCommand: () => ApprovalCommand | null } }
+let allowTrust: (() => void) | null = null;
+const trustReady = new Promise<void>(resolve => { allowTrust = resolve; });
+declare global { interface Window { __roomReviewCommand: () => ApprovalCommand | null; __allowReviewTrust: () => void } }
 window.__roomReviewCommand = () => command;
+window.__allowReviewTrust = () => allowTrust?.();
 const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
 if (!limits.ok) throw new Error('invalid review limits');
 const capability = registerReview({ client: review.review, limits: limits.value, bindingFor: () => null });
 capability.attach(context);
-createRoot(document.getElementById('app')!).render(createHumanRoomRenderer(review, capability)(context,
+createRoot(document.getElementById('app')!).render(createHumanRoomRenderer(review, capability, async () => {
+  await trustReady;
+  return true;
+})(context,
   { kind: 'channel', path: '/channels/room_1', roomId }));

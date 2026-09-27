@@ -17,13 +17,15 @@ describe('authenticated owner mailbox review client', () => {
     const fetcher: typeof fetch = async (url, init) => {
       requests.push({ url: String(url), init: init ?? {} });
       if (String(url).includes('review-bindings')) return json(200, { v: 1, roomId: command.roomId,
-        bindings: [{ bindingId: command.bindingId, generation: 2, agentParticipantId: 'agent-1' }] });
+        bindings: [{ bindingId: command.bindingId, generation: 2, agentParticipantId: 'agent-1',
+          device: { userId: '@agent:example', deviceId: 'AGENT', fingerprint: 'A'.repeat(43) } }] });
       return json(200, { v: 1, operationId: command.commandId,
         outcome: { ok: true, releaseIds: ['release_12345678'] } });
     };
     const client = createOwnerMailboxReviewClient({ origin: ORIGIN, csrf: async () => 'csrf-value', fetch: fetcher });
     expect(await client.bindings(command.roomId, new AbortController().signal)).toEqual([
-      { bindingId: command.bindingId, generation: 2, agentParticipantId: 'agent-1' },
+      { bindingId: command.bindingId, generation: 2, agentParticipantId: 'agent-1',
+        device: { userId: '@agent:example', deviceId: 'AGENT', fingerprint: 'A'.repeat(43) } },
     ]);
     expect(await client.review.approve(command)).toEqual({ kind: 'answered', body: { ok: true, releaseIds: ['release_12345678'] } });
     expect(requests[1]?.url).toBe(`${ORIGIN}/api/human/owner-mailbox/submit`);

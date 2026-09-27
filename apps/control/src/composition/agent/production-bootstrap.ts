@@ -10,7 +10,7 @@ import {
 import { createLazyBootstrapRoutes } from './bootstrap-routes';
 import { createDeviceAttestationRoutes, createLazyDeviceAttestationRoutes } from './device-attestation';
 import { createInviteEvidenceReader } from './invite-evidence';
-import { createMatrixAgentAdmission } from './matrix-admission';
+import { agentMatrixIdentity, createMatrixAgentAdmission } from './matrix-admission';
 import { createLazyOwnerMailboxRoutes, createOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { createLazyOwnerDeviceProofRoutes, createMatrixBrowserDeviceVerifier, createOwnerDeviceProofRoutes } from './owner-device-proof';
 
@@ -104,6 +104,13 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       capabilities: bootstrap.capabilities, clock: active.clock,
       authoritySecret: active.env.invitationHmacSecret,
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
+      async lookupAgentDevice(binding) {
+        const registered = await attestation.lookup(binding);
+        if (!registered) return null;
+        const identity = agentMatrixIdentity(binding.ownerId, binding, active.env.matrixServerName);
+        return identity.participantId === binding.agentParticipantId
+          ? { userId: identity.userId, deviceId: binding.deviceId, fingerprint: registered.fingerprint } : null;
+      },
     });
     const ownerDeviceProof = createOwnerDeviceProofRoutes({
       auth: active.auth, gateway: active.matrix.gateway, store: active.store,

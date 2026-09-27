@@ -26,6 +26,7 @@ async function setup() {
   let signedIn = true;
   let member = true;
   let agentAuthorized = true;
+  let attested = true;
   const auth = {
     async requireHumanMutation() { return signedIn ? { kind: 'authorized', context: { principal } } : { kind: 'rejected', code: 'signed_out' }; },
     async authenticateRequest() { return signedIn ? { kind: 'authenticated', context: { principal } } : { kind: 'signed_out' }; },
@@ -37,6 +38,8 @@ async function setup() {
   const routes = createOwnerMailboxRoutes({ auth, gateway, capabilities, store: state.store,
     clock: () => T0, authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes',
     inspectOwnerMembership: async () => ({ kind: member ? 'joined' : 'absent' }),
+    lookupAgentDevice: async () => attested
+      ? { userId: '@agent:example', deviceId: binding.deviceId, fingerprint: 'A'.repeat(43) } : null,
   });
   const call = (path: string, method: string, body?: unknown) => {
     const route = [...routes.human, ...routes.agent].find(item => item.path === path.split('?')[0])!;
@@ -44,7 +47,8 @@ async function setup() {
       { method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) }));
   };
   return { call, bindings, state, index: createOwnerRoomIndex(state.store), setSignedIn: (value: boolean) => { signedIn = value; },
-    setMember: (value: boolean) => { member = value; }, setAgentAuthorized: (value: boolean) => { agentAuthorized = value; } };
+    setMember: (value: boolean) => { member = value; }, setAgentAuthorized: (value: boolean) => { agentAuthorized = value; },
+    setAttested: (value: boolean) => { attested = value; } };
 }
 
 describe('hosted owner mailbox routes', () => {
@@ -54,8 +58,14 @@ describe('hosted owner mailbox routes', () => {
     expect((await env.call(route, 'GET')).status).toBe(200);
     expect(await (await env.call(route, 'GET')).json()).toEqual({ v: 1, roomId: '!room:example', bindings: [] });
     expect((await env.index.activate(binding, '!room:example' as RoomId)).kind).toBe('ok');
+    env.setAttested(false);
     expect(await (await env.call(route, 'GET')).json()).toEqual({ v: 1, roomId: '!room:example', bindings: [
-      { bindingId: binding.bindingId, generation: 2, agentParticipantId: binding.agentParticipantId },
+      { bindingId: binding.bindingId, generation: 2, agentParticipantId: binding.agentParticipantId, device: null },
+    ] });
+    env.setAttested(true);
+    expect(await (await env.call(route, 'GET')).json()).toEqual({ v: 1, roomId: '!room:example', bindings: [
+      { bindingId: binding.bindingId, generation: 2, agentParticipantId: binding.agentParticipantId,
+        device: { userId: '@agent:example', deviceId: binding.deviceId, fingerprint: 'A'.repeat(43) } },
     ] });
     env.setMember(false);
     expect((await env.call(route, 'GET')).status).toBe(403);

@@ -33,7 +33,11 @@ the agent's session.
 
 The signed-in room fetches owner-scoped active bindings through
 `GET /api/human/owner-mailbox/review-bindings`, mounts `ReviewScreen`, and keeps
-message bodies inside the browser's room port. Its client submits only exact
+message bodies inside the browser's room port. The browser registers its current
+Matrix device through the protected owner proof routes, then verifies the
+connector's server-attested device fingerprint in the SDK and discards its old
+outbound session. Review stays unavailable until that trust step succeeds;
+previous history is never re-encrypted for the new device. Its client submits only exact
 references through the CSRF-protected owner mailbox. The mailbox authenticates
 the human, derives authority, and forwards metadata to the connector's real
 review handler, ledger and bounded dispatcher. The browser stores an unresolved

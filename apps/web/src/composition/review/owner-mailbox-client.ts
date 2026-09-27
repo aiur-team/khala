@@ -11,7 +11,8 @@ type Reply = Readonly<{ status: number; body: unknown }>;
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export type OwnerReviewBinding = Readonly<{ bindingId: BindingId; generation: number; agentParticipantId: string }>;
+export type OwnerReviewBinding = Readonly<{ bindingId: BindingId; generation: number; agentParticipantId: string;
+  device: Readonly<{ userId: string; deviceId: string; fingerprint: string }> | null }>;
 
 /** Same-origin, cookie-authenticated human route. Authority is never supplied by this client. */
 export function createOwnerMailboxReviewClient(input: Readonly<{
@@ -147,7 +148,11 @@ export function createOwnerMailboxReviewClient(input: Readonly<{
         const bindings: OwnerReviewBinding[] = [];
         for (const item of response.body.bindings) {
           if (!object(item) || typeof item.bindingId !== 'string' || typeof item.agentParticipantId !== 'string'
-            || !Number.isSafeInteger(item.generation) || (item.generation as number) < 0) return null;
+            || !Number.isSafeInteger(item.generation) || (item.generation as number) < 0
+            || !(item.device === null || (object(item.device) && typeof item.device.userId === 'string'
+              && item.device.userId.startsWith('@') && typeof item.device.deviceId === 'string'
+              && typeof item.device.fingerprint === 'string'
+              && /^[A-Za-z0-9+/]{43}=?$/u.test(item.device.fingerprint)))) return null;
           bindings.push(item as OwnerReviewBinding);
         }
         return bindings;

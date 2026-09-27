@@ -47,6 +47,8 @@ export function createOwnerMailboxRoutes(input: Readonly<{
   clock: () => number;
   authoritySecret: string;
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<Readonly<{ kind: 'joined' | 'absent' | 'unavailable' }>>;
+  /** Existing DPoP attestation, never a Matrix device-list guess. */
+  lookupAgentDevice(binding: SessionBinding): Promise<Readonly<{ userId: string; deviceId: string; fingerprint: string }> | null>;
 }>): Readonly<{ human: readonly RouteRegistration[]; agent: readonly RouteRegistration[] }> {
   const bindings = createAgentBindingStore({ store: input.store });
   const ownerRooms = createOwnerRoomIndex(input.store);
@@ -106,8 +108,9 @@ export function createOwnerMailboxRoutes(input: Readonly<{
           if (found.kind === 'found' && found.record.revokedGeneration === null
             && found.address.ownerId === principal.ownerId && found.address.roomId === roomId
             && found.record.binding.generation === candidate.generation) {
+            const device = await input.lookupAgentDevice(found.record.binding);
             active.push({ bindingId: found.record.binding.bindingId, generation: candidate.generation,
-              agentParticipantId: found.record.binding.agentParticipantId });
+              agentParticipantId: found.record.binding.agentParticipantId, device });
           }
         }
         return json(200, { v: 1, roomId, bindings: active });

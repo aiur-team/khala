@@ -6,7 +6,7 @@ import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser } from '@playwright/test';
 import type { ApprovalCommand } from '@khala/contracts/delivery/index';
 
-declare global { interface Window { __roomReviewCommand: () => ApprovalCommand | null } }
+declare global { interface Window { __roomReviewCommand: () => ApprovalCommand | null; __allowReviewTrust: () => void } }
 
 test('mounted human room reviews only the selected event for its active binding', { timeout: 90_000 }, async () => {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-review-room-'));
@@ -22,6 +22,9 @@ test('mounted human room reviews only the selected event for its active binding'
       headless: true, args: ['--no-sandbox'] });
     const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
     await page.goto(server.resolvedUrls!.local[0]! + 'review-room.html');
+    await page.getByText('Waiting for verified agent device trust.').waitFor();
+    assert.equal(await page.getByRole('list', { name: 'Pending messages' }).count(), 0);
+    await page.evaluate(() => window.__allowReviewTrust());
     await page.getByRole('list', { name: 'Pending messages' }).getByText('Withheld A').waitFor();
     await page.getByRole('list', { name: 'Pending messages' }).getByText('Approved B').waitFor();
     await page.locator('[data-event-id="event_b"] input[type="checkbox"]').check();
