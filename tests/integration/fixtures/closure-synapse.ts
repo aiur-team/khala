@@ -62,9 +62,9 @@ export async function startClosureSynapse() {
         loginStatus: login.status, loginUserIdExact: loginResult.user_id === expectedUserId,
         loginUserIdLowercase: loginResult.user_id === expectedUserId.toLowerCase() };
     }
-    async function provision(userId: string, deviceId: string) {
+    async function provision(userId: string, deviceId: string, suppliedPassword?: string) {
       const username = userId.slice(1, userId.indexOf(':'));
-      const password = randomBytes(24).toString('hex');
+      const password = suppliedPassword ?? randomBytes(24).toString('hex');
       const nonceResponse = await fetch(`${baseUrl}/_synapse/admin/v1/register`);
       const { nonce } = await nonceResponse.json() as { nonce?: string };
       if (!nonceResponse.ok || !nonce) throw new Error('provision_nonce_unavailable');

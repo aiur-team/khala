@@ -54,6 +54,14 @@ const api = {
       deviceId: next.getDeviceId(), fingerprint: (await next.getCrypto()!.getOwnDeviceKeys()).ed25519 };
   },
   start() { if (!consumer) throw new Error('closure_browser_closed'); consumer.start(); },
+  async discard() {
+    if (!client || !roomId) throw new Error('closure_browser_closed');
+    await client.getCrypto()!.forceDiscardSession(roomId);
+  },
+  async send(body: string) {
+    if (!client || !roomId) throw new Error('closure_browser_closed');
+    return (await client.sendTextMessage(roomId, body)).event_id;
+  },
   async poll() { if (!consumer) throw new Error('closure_browser_closed'); await consumer.poll(); },
   status() { const room = roomId === null ? null : client?.getRoom(roomId as RoomId);
     return { attempts, successes, absentImmediatelyAfterForget, roomKnown: room !== null, membership: room?.getMyMembership() ?? null,
