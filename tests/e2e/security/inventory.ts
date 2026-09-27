@@ -121,6 +121,8 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'claude-op:terminal-challenge': probe('claude-session'),
   'claude-op:terminal-complete': probe('claude-session'),
   // Native hook events.
+  'hook-claude:SessionStart': notObserved('SessionStart registers an owner-private signal watch path without exposing channel content'),
+  'hook-claude:FileChanged': notObserved('FileChanged emits only a fixed wake notice; no batch is read or acknowledged'),
   'hook-claude:UserPromptSubmit': notObserved(HOOK_RENDERS_CLI),
   'hook-claude:PostToolUse': notObserved(HOOK_RENDERS_CLI),
   'hook-claude:Stop': notObserved(HOOK_RENDERS_CLI),

@@ -151,6 +151,18 @@ test('the tarball file list is an exact allowlist', () => {
   ]);
 });
 
+test('every configured Claude hook script is in the packed payload allowlist', () => {
+  const plugin = path.join(root, 'packages/claude-plugin');
+  const manifest = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks/hooks.json'), 'utf8'));
+  const configured = Object.values(manifest.hooks).flatMap(groups => groups.flatMap(group => group.hooks.map(hook => {
+    const script = /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/(hooks\/[a-z-]+\.mjs)"$/.exec(hook.command);
+    assert.ok(script, `unexpected Claude hook command ${hook.command}`);
+    return `dist/payload/claude-plugin/${script[1]}`;
+  })));
+  const packed = PAYLOAD_FILES.filter(file => /^dist\/payload\/claude-plugin\/hooks\/[a-z-]+\.mjs$/.test(file));
+  assert.deepEqual([...new Set(configured)].sort(), packed.sort());
+});
+
 test('publish metadata names @aiur/khala with provenance and keeps workspace source unexported', () => {
   assert.ok(manifestErrors({ ...sourceManifest, name: OLD_PACKAGE_NAME }).some(error => error.startsWith('package name is')));
   assert.ok(manifestErrors({ ...sourceManifest, private: true }).includes('package is private'));
