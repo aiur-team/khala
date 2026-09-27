@@ -75,6 +75,7 @@ export function playwrightCopyErrors(extracted, source = path.join(root, 'apps/c
   if (!HAS_SUBSTRATE_BROWSER) return [];
   const destination = path.join(extracted, 'package', PLAYWRIGHT_CORE_DIRECTORY);
   const errors = [];
+  if (!fs.existsSync(destination)) return ['vendored Playwright directory is missing'];
   const sourceRoot = fs.realpathSync(source);
   function filesUnder(directory) {
     const files = [];
@@ -98,7 +99,10 @@ export function playwrightCopyErrors(extracted, source = path.join(root, 'apps/c
       errors.push(`vendored Playwright file differs from pinned workspace package: ${file}`);
     }
   }
-  const manifest = JSON.parse(fs.readFileSync(path.join(destination, 'package.json'), 'utf8'));
+  if (!actual.includes('package.json')) return [...errors, 'vendored Playwright package.json is missing'];
+  let manifest;
+  try { manifest = JSON.parse(fs.readFileSync(path.join(destination, 'package.json'), 'utf8')); }
+  catch { return [...errors, 'vendored Playwright package.json is invalid']; }
   if (manifest.name !== 'playwright-core' || manifest.version !== '1.63.0') errors.push('vendored Playwright identity changed');
   errors.push(...lifecycleHookErrors(manifest, 'vendored Playwright'));
   return errors;

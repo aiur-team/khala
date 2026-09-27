@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  CONSUMER_HOOKS, OLD_PACKAGE_NAME, OPENCODE_EXPORT, closureErrors, PACKED_FILES, PAYLOAD_FILES, gatePackage, manifestErrors, oldIdentityReferences, packedFileErrors,
+  CONSUMER_HOOKS, OLD_PACKAGE_NAME, OPENCODE_EXPORT, closureErrors, PACKED_FILES, PAYLOAD_FILES, gatePackage, manifestErrors, oldIdentityReferences, packedFileErrors, playwrightCopyErrors,
 } from './agent-cli-package-gate.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -107,6 +107,12 @@ test('a transitive postinstall bundled into the CLI fails the gate before releas
     errors.includes('bundled package khala-telemetry declares consumer lifecycle hook "postinstall"'),
     errors.join('\n'),
   );
+});
+
+test('missing vendored Playwright refuses a fixture package without throwing', t => {
+  const extracted = temporary('khala-missing-playwright-');
+  t.after(() => fs.rmSync(extracted, { recursive: true, force: true }));
+  assert.deepEqual(playwrightCopyErrors(extracted), ['vendored Playwright directory is missing']);
 });
 
 test('a runtime dependency that would install a postinstall fails the gate', () => {
