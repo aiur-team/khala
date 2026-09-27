@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -70,7 +71,7 @@ async function launched(
   options: Readonly<{ clock?: () => number; claudeVersion?: () => Promise<string | null> }> = {},
 ) {
   const { clock, claudeVersion = async () => INSTALLED_CLAUDE } = options;
-  const parent = resume?.parent ?? fs.mkdtempSync('/tmp/khala-claude-');
+  const parent = resume?.parent ?? fs.mkdtempSync(path.join(os.tmpdir(), 'khala-claude-'));
   if (resume === undefined) cleanups.push(() => fs.rmSync(parent, { recursive: true, force: true }));
   const outcome = await launchInternal({
     root: path.join(parent, 'internal'), assets: webBundleManifest(fixtureBundle),
@@ -664,7 +665,7 @@ describe('Claude delivery through the internal launcher', () => {
   const tokenOf = (framed: string): string | null => /^batchToken: (\S+)$/m.exec(framed)?.[1] ?? null;
 
   function scratchState(): string {
-    const directory = fs.mkdtempSync('/tmp/khala-cli-state-');
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-cli-state-'));
     cleanups.push(() => fs.rmSync(directory, { recursive: true, force: true }));
     return directory;
   }
