@@ -23,6 +23,7 @@ describe('installed hosted CLI composition', () => {
     expect(input).toMatchObject({
       stateDirectory: '/tmp/home/.local/state/khala/hosted', appOrigin: 'https://preview.example',
       browserBundleDirectory: '/tmp/package/dist/substrate-browser',
+      chromiumExecutablePath: '/tmp/package/dist/chromium/chrome-linux64/chrome',
       session: { harness: 'codex', sessionId: 'thread-1', workdir: '/tmp/project' },
     });
     expect(await input?.inspectHostedCodexHooks()).toBeNull();

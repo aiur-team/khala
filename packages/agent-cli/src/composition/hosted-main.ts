@@ -21,6 +21,7 @@ export function installedHostedSession(input: Readonly<{
     stateDirectory: path.join(input.stateDirectory, 'hosted'),
     appOrigin,
     browserBundleDirectory: path.join(input.distDirectory, 'substrate-browser'),
+    chromiumExecutablePath: path.join(input.distDirectory, 'chromium', 'chrome-linux64', 'chrome'),
     workdir: input.workdir,
     readVersion: () => readInstalledCodexVersion(setupEnvironment(input.environment)),
     inspectHooks: () => inspectHostedCodexHooks(setupEnvironment(input.environment)),

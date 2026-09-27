@@ -2,6 +2,7 @@
 // service behind `khala setup`, `khala remove`, and status configuration. Each adapter also
 // supplies the bytes behind the exact plan it returned, so the executor never writes a hash
 // it cannot back.
+import path from 'node:path';
 import { claudeAppSetupAdapter } from '../setup/adapters/claude-app.js';
 import { createClaudeSetupAdapter } from '../setup/adapters/claude.js';
 import { createCodexSetupAdapter } from '../setup/adapters/codex.js';
@@ -11,6 +12,7 @@ import {
   createSetupService, type ComposedSetupAdapter, type SetupExecute, type SetupService,
 } from '../setup/plan.js';
 import { packagedPayloadSource, readPackagedPayload, type PackagedPayload } from '../setup/payload.js';
+import { createPrivateChromiumAssets } from '../setup/private-chromium.js';
 import type { SetupEnvironment } from '../setup/types.js';
 
 /** Every harness adapter, in harness order. Claude Desktop reports only and plans nothing. */
@@ -61,12 +63,19 @@ export type PackagedSetupOptions = Readonly<{
  */
 export function packagedSetupService(options: PackagedSetupOptions): SetupService {
   let loaded: Promise<SetupService> | undefined;
-  const service = () => loaded ??= readPackagedPayload(options.distDirectory).then(payload => createSetupService({
-    environment: options.environment,
-    adapters: createSetupAdapters(payload, options.nodePath, options.cwd === undefined ? {} : { cwd: options.cwd }),
-    execute: options.execute,
-    payload: packagedPayloadSource(payload, options.nodePath),
-  }));
+  const service = () => loaded ??= readPackagedPayload(options.distDirectory).then(payload => {
+    const browser = createPrivateChromiumAssets({
+      version: payload.version, driverDirectory: path.join(options.distDirectory, 'playwright-core'),
+    });
+    const packaged = packagedPayloadSource(payload, options.nodePath);
+    return createSetupService({
+      environment: options.environment,
+      adapters: createSetupAdapters(payload, options.nodePath, options.cwd === undefined ? {} : { cwd: options.cwd }),
+      execute: options.execute,
+      payload: async environment => [...await packaged(environment), ...await browser.files(environment)],
+      prepareConfirmed: browser.prepareConfirmed,
+    });
+  });
   return Object.freeze({
     configuration: async () => (await service()).configuration(),
     lifecycle: async (command, lifecycleOptions) => (await service()).lifecycle(command, lifecycleOptions),

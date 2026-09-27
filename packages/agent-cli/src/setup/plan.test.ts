@@ -621,6 +621,41 @@ describe('adapter integration', () => {
     expect(drifted).toMatchObject({ state: 'drifted', operations: [] });
     expect(drifted.diagnostics.map(diagnostic => diagnostic.code)).toContain('installer_drifted');
   });
+
+  it('keeps a pinned deferred browser out of dry-run and requires verified bytes after confirmation', async () => {
+    const machine = world();
+    install(machine, 'codex');
+    const file = `${HOME}/.local/share/khala/versions/0.1.0/chromium/chrome-linux64/chrome`;
+    let acquired = 0;
+    let bytes: Uint8Array | undefined;
+    const payload: SetupPayloadSource = async () => [{
+      path: file, component: 'payload', harnesses: ['codex'], postimage: sha('browser'), mode: 0o500,
+      acquisition: 'Confirmation downloads pinned browser into the versioned private directory.',
+      ...(bytes === undefined ? {} : { bytes }),
+    }];
+    const executor = countingExecutor();
+    const setup = createSetupService({ environment: () => environment(machine), adapters: [fakeAdapter('codex')],
+      payload, execute: executor.execute,
+      prepareConfirmed: async () => { acquired += 1; bytes = Buffer.from('browser'); return async () => { bytes = undefined; }; },
+    });
+    const dry = await setup.lifecycle('setup', { dryRun: true, confirm: null });
+    expect(dry.confirmation).toMatchObject({ request: expect.stringContaining('downloads pinned browser') });
+    expect(acquired).toBe(0);
+    await setup.lifecycle('setup', { dryRun: false, confirm: dry.planDigest });
+    expect(acquired).toBe(1);
+    expect(executor.plans[0]?.planDigest).toBe(dry.planDigest);
+    expect(executor.plans[0]?.contents.get(sha('browser'))).toEqual(Buffer.from('browser'));
+    expect(executor.plans[0]?.modes?.get(file)).toBe(0o500);
+    expect(bytes).toBeUndefined();
+
+    const bad = createSetupService({ environment: () => environment(machine), adapters: [fakeAdapter('codex')],
+      payload, execute: executor.execute,
+      prepareConfirmed: async () => { bytes = Buffer.from('wrong'); return async () => { bytes = undefined; }; },
+    });
+    const badDry = await bad.lifecycle('setup', { dryRun: true, confirm: null });
+    expect((await bad.lifecycle('setup', { dryRun: false, confirm: badDry.planDigest })).state).toBe('recovery_required');
+    expect(executor.plans).toHaveLength(1);
+  });
 });
 
 describe('status truth table', () => {

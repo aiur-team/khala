@@ -24,6 +24,7 @@ type OpenProductionConnectorInput = Readonly<{
   stateDirectory: string;
   appOrigin: string;
   browserBundleDirectory: string;
+  chromiumExecutablePath?: string;
   session: SessionClaim;
   sessionInspection: (generationFor: (claim: SessionClaim) => Promise<number | null>) => SessionInspectionPort;
   inspectHostedCodexHooks(): Promise<HarnessCapabilities | null>;
@@ -48,6 +49,7 @@ export function hostedSessionFactory(options: Readonly<{
   stateDirectory: string;
   appOrigin: string;
   browserBundleDirectory: string;
+  chromiumExecutablePath?: string;
   workdir: string;
   readVersion(): Promise<string | null>;
   inspectHooks(): Promise<HarnessCapabilities | null>;
@@ -60,6 +62,7 @@ export function hostedSessionFactory(options: Readonly<{
       stateDirectory: options.stateDirectory,
       appOrigin: options.appOrigin,
       browserBundleDirectory: options.browserBundleDirectory,
+      ...(options.chromiumExecutablePath === undefined ? {} : { chromiumExecutablePath: options.chromiumExecutablePath }),
       session: claim,
       sessionInspection: generationFor => codexMcpSessionInspection({
         session, workdir: claim.workdir, readVersion: options.readVersion,
