@@ -17,6 +17,10 @@ import type { SubscriptionHandle } from '@khala/connector/subscription/index';
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { createProductionOwnerMailbox } from './agent/owner-mailbox';
 import { createLocalClosureFence } from './closure/local-fence';
+import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
+import { createPolicyControlHandler } from './controls/control-handler';
+import { openTrustStateStore } from './controls/trust-store';
+import { createOwnerDeviceTrust } from './agent/owner-device-trust';
 
 function productionLimits() {
   const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
@@ -77,6 +81,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     mode = 'create';
   }
   const storage = await openConnectorStorage({ directory: stateDirectory, mode, limits: productionLimits() });
+  const trust = await openTrustStateStore({ directory: stateDirectory, mode }).catch(async error => {
+    await storage.close();
+    throw error;
+  });
+  const dispatchStorage = createConnectorDispatchStorage(storage);
   const matrix = createMatrixBootstrapDevice({
     stateDirectory: sessionDirectory,
     profileDirectory: path.join(sessionDirectory, 'matrix-profile'),
@@ -90,6 +99,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let signer: ProofSigner | null = null;
   let renewal: ReturnType<typeof createCapabilityRenewal> | null = null;
   let mailbox: ReturnType<typeof createProductionOwnerMailbox> | null = null;
+  let ownerTrust: ReturnType<typeof createOwnerDeviceTrust> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let polling: Promise<void> | null = null;
   let remoteDenied = false;
@@ -143,12 +153,18 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     }
     const activeSigner = signer;
     if (!activeSigner) throw new Error('production_signer_missing');
+    ownerTrust = createOwnerDeviceTrust({ appOrigin: input.appOrigin, binding: next,
+      roomId: session.roomId, ownerUserId: session.ownerUserId, signer: activeSigner,
+      capability: () => capabilityFor(next).ensure(), matrix: substrate });
+    const activeTrust = ownerTrust;
+    const controls = createPolicyControlHandler({ dispatchStorage, trust,
+      roomId: session.roomId as never, bindingId: next.bindingId });
     const stop = createLocalClosureFence({ storage, binding: next, roomId: session.roomId,
       stateDirectory: sessionDirectory, clock: Date.now,
       quiesce: async () => { await subscription?.stop(); },
     });
     mailbox = createProductionOwnerMailbox({ appOrigin: input.appOrigin, binding: next, signer: activeSigner,
-      capability: () => capabilityFor(next).ensure(), stop: request => stop.stop(request),
+      capability: () => capabilityFor(next).ensure(), controls, stop: request => stop.stop(request),
       onRevoked: async () => { remoteDenied = true; },
     });
     const activeMailbox = mailbox;
@@ -158,7 +174,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       guard: async () => {
         if (closed || remoteDenied) return 'revoked';
         const authority = await activeMailbox.authorize();
-        return authority === 'active' ? 'active' : authority === 'unavailable' ? 'unavailable' : 'revoked';
+        if (authority !== 'active') return authority === 'unavailable' ? 'unavailable' : 'revoked';
+        return activeTrust.ensure();
       },
     });
     schedulePoll();
@@ -187,6 +204,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     if (existing && !sameSessionBinding(existing, next)) throw new Error('production_binding_replacement');
     const recorded = await storage.ledger.transaction(tx => tx.putBinding(next));
     if (recorded.kind === 'conflict') throw new Error('production_binding_conflict');
+    const applied = await dispatchStorage.applyEffectivePolicy({ binding: next,
+      policy: { version: 0, armedAt: 0, paused: false, expiresAt: null,
+        listening: { version: 0, requested: 'sync', effective: null, evidenceRevision: null } },
+    });
+    if (applied.kind === 'conflict' && applied.code !== 'stale_version') throw new Error('production_policy_conflict');
     if (existing) { binding = existing; return; }
     const temporary = `${markerFile}.${randomUUID()}.tmp`;
     try {
@@ -247,7 +269,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         if (!held || !sameSessionBinding(held, binding)) {
           return { kind: 'refused' as const, code: 'binding_not_held' as const, clientTxnId: command.clientTxnId };
         }
-        if (!mailbox || await mailbox.authorize() !== 'active') {
+        if (!mailbox || !ownerTrust || await mailbox.authorize() !== 'active' || await ownerTrust.ensure() !== 'active') {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
         }
         const substrate = matrix.substrate();
@@ -261,7 +283,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         if (closed || remoteDenied || !binding || !subscription) return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
         const held = await readBinding().catch(() => null);
         if (!held || !sameSessionBinding(held, binding) || !matrix.substrate() || subscription.state().kind !== 'live'
-          || !mailbox || await mailbox.authorize() !== 'active') {
+          || !mailbox || !ownerTrust || await mailbox.authorize() !== 'active' || await ownerTrust.ensure() !== 'active') {
           return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
         }
         return { v: 1 as const, connected: true, binding: held, route: 'native_cli_queue' as const, sourceCursor: null };
@@ -275,7 +297,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         mailbox?.close();
         if (pollTimer) clearTimeout(pollTimer);
         await polling?.catch(() => undefined);
-        try { await subscription?.stop(); await matrix.close(); } finally { await storage.close(); }
+        try { await subscription?.stop(); await matrix.close(); } finally { trust.close(); await storage.close(); }
       },
     };
   } catch (error) {
@@ -285,7 +307,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     activeMailbox?.close();
     if (pollTimer) clearTimeout(pollTimer);
     await activePoll?.catch(() => undefined);
-    try { await active?.stop(); await matrix.close(); } finally { await storage.close(); }
+    try { await active?.stop(); await matrix.close(); } finally { trust.close(); await storage.close(); }
     throw error;
   }
 }

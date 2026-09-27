@@ -113,6 +113,10 @@ describe('owner browser Matrix device proof', () => {
     const result = await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, `?device_id=${browserDeviceId}`);
     expect(result.status).toBe(200);
     expect(await result.json()).toEqual({ v: 1, roomId, deviceId: browserDeviceId, fingerprint });
+    const listed = await env.call(OWNER_DEVICE_LOOKUP);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({ v: 1, roomId,
+      devices: [{ deviceId: browserDeviceId, fingerprint }] });
     expect(env.verifiedTokens).toEqual([matrixAccessToken]);
     expect([...env.state.records.values()].some(record => JSON.stringify(record.value).includes(matrixAccessToken))).toBe(false);
     expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, '?device_id=UNREGISTERED')).status).toBe(404);
@@ -148,6 +152,7 @@ describe('owner browser Matrix device proof', () => {
       { fingerprint: 'B'.repeat(43) }))).status).toBe(409);
     env.setCurrent(false);
     expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, `?device_id=${browserDeviceId}`)).status).toBe(403);
+    expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(403);
     env.setCurrent(true);
     expect(await env.bindings.updateBinding(binding.bindingId, record => ({ ...record, revokedGeneration: 3 }))).toBe('applied');
     expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, `?device_id=${browserDeviceId}`)).status).toBe(403);
@@ -159,6 +164,7 @@ describe('owner browser Matrix device proof', () => {
     expect((await env.call(OWNER_DEVICE_REGISTER, 'POST', env.registration(nonce))).status).toBe(200);
     env.setMember(false);
     expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, `?device_id=${browserDeviceId}`)).status).toBe(403);
+    expect((await env.call(OWNER_DEVICE_LOOKUP)).status).toBe(403);
     env.setMember(true);
     expect((await env.index.markClosing(binding.ownerId, roomId, 'close_owner_proof', 0)).kind).toBe('ok');
     expect((await env.call(OWNER_DEVICE_LOOKUP, 'GET', undefined, `?device_id=${browserDeviceId}`)).status).toBe(403);

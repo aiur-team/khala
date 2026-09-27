@@ -94,6 +94,9 @@ function unavailable(): Response { return json(503, { code: 'unavailable' }); }
 function key(ownerId: OwnerId, roomId: RoomId, deviceId: DeviceId): string {
   return `owner-device-proof.v1.${createHash('sha256').update(JSON.stringify([ownerId, roomId, deviceId])).digest('hex')}`;
 }
+function indexKey(ownerId: OwnerId, roomId: RoomId): string {
+  return `owner-device-index.v1.${createHash('sha256').update(JSON.stringify([ownerId, roomId])).digest('hex')}`;
+}
 function challengeKey(nonce: string): string {
   return `owner-device-challenge.v1.${createHash('sha256').update(nonce).digest('hex')}`;
 }
@@ -103,6 +106,14 @@ function valid(value: unknown, ownerId: OwnerId, roomId: RoomId, deviceId: Devic
   return Object.keys(item).sort().join(',') === 'deviceId,fingerprint,ownerId,roomId,v'
     && item.v === 1 && item.ownerId === ownerId && item.roomId === roomId && item.deviceId === deviceId
     && typeof item.fingerprint === 'string' && FINGERPRINT.test(item.fingerprint);
+}
+function validIndex(value: unknown, ownerId: OwnerId, roomId: RoomId): value is Readonly<{ v: 1; ownerId: OwnerId; roomId: RoomId; deviceIds: readonly DeviceId[] }> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).sort().join(',') !== 'deviceIds,ownerId,roomId,v' || item.v !== 1
+    || item.ownerId !== ownerId || item.roomId !== roomId || !Array.isArray(item.deviceIds)
+    || item.deviceIds.length > 32 || new Set(item.deviceIds).size !== item.deviceIds.length) return false;
+  return item.deviceIds.every(id => decodeDeviceId(id).ok);
 }
 function registerBody(value: unknown): { roomId: RoomId; deviceId: DeviceId; fingerprint: string; nonce: string; matrixAccessToken: string } | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
@@ -123,6 +134,28 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
 }> {
   const ownerRooms = createOwnerRoomIndex(deps.store);
   const bindings = createAgentBindingStore({ store: deps.store });
+
+  async function indexPinnedDevice(proof: OwnerDeviceProof): Promise<boolean> {
+    const name = indexKey(proof.ownerId, proof.roomId);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const current = await deps.store.read<JsonValue>(name);
+      if (current.kind === 'unavailable') return false;
+      if (current.kind === 'record' && !validIndex(current.record.value, proof.ownerId, proof.roomId)) return false;
+      const deviceIds = current.kind === 'record' ? [...(current.record.value as { deviceIds: DeviceId[] }).deviceIds] : [];
+      if (deviceIds.includes(proof.deviceId)) return true;
+      if (deviceIds.length >= 32) return false;
+      deviceIds.push(proof.deviceId);
+      deviceIds.sort();
+      const saved = await deps.store.compareAndSet<JsonValue>({ key: name,
+        expectedRevision: current.kind === 'record' ? current.record.revision : null,
+        operationId: `owner-device-index.${createHash('sha256').update(JSON.stringify([proof.ownerId, proof.roomId, deviceIds])).digest('hex')}`,
+        next: { value: { v: 1, ownerId: proof.ownerId, roomId: proof.roomId, deviceIds }, expiresAt: null },
+      });
+      if (saved.kind === 'applied') return true;
+      if (saved.kind !== 'conflict') return false;
+    }
+    return false;
+  }
 
   async function challenge(request: Request): Promise<Response> {
     const signed = await deps.auth.authenticateRequest(request);
@@ -196,9 +229,11 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     const operationId = `owner-device-proof.${createHash('sha256').update(JSON.stringify(proof)).digest('hex')}`;
     const saved = await deps.store.compareAndSet<JsonValue>({ key: recordKey, expectedRevision: null,
       operationId, next: { value: proof, expiresAt: null } });
-    if (saved.kind === 'applied') return json(200, { v: 1, kind: 'pinned' });
-    if (saved.kind === 'conflict' && valid(saved.current?.value, proof.ownerId, proof.roomId, proof.deviceId)
-      && saved.current.value.fingerprint === proof.fingerprint) return json(200, { v: 1, kind: 'pinned' });
+    if (saved.kind === 'applied' || (saved.kind === 'conflict'
+      && valid(saved.current?.value, proof.ownerId, proof.roomId, proof.deviceId)
+      && saved.current.value.fingerprint === proof.fingerprint)) {
+      return await indexPinnedDevice(proof) ? json(200, { v: 1, kind: 'pinned' }) : unavailable();
+    }
     if (saved.kind === 'conflict') return json(409, { code: 'key_replacement_refused' });
     return unavailable();
   }
@@ -226,6 +261,19 @@ export function createOwnerDeviceProofRoutes(deps: OwnerDeviceProofDependencies)
     if (membership.kind === 'unavailable') return unavailable();
     if (membership.kind !== 'joined') return json(403, { code: 'owner_membership_required' });
     const search = new URL(request.url).searchParams;
+    if ([...search.keys()].length === 0) {
+      const indexed = await deps.store.read<JsonValue>(indexKey(auth.ownerId, auth.roomId));
+      if (indexed.kind === 'unavailable') return unavailable();
+      if (indexed.kind === 'absent') return json(200, { v: 1, roomId: auth.roomId, devices: [] });
+      if (!validIndex(indexed.record.value, auth.ownerId, auth.roomId)) return unavailable();
+      const devices: Array<{ deviceId: DeviceId; fingerprint: string }> = [];
+      for (const deviceId of indexed.record.value.deviceIds) {
+        const found = await deps.store.read<JsonValue>(key(auth.ownerId, auth.roomId, deviceId));
+        if (found.kind !== 'record' || !valid(found.record.value, auth.ownerId, auth.roomId, deviceId)) return unavailable();
+        devices.push({ deviceId, fingerprint: found.record.value.fingerprint });
+      }
+      return json(200, { v: 1, roomId: auth.roomId, devices });
+    }
     if ([...search.keys()].join(',') !== 'device_id') return json(400, { code: 'invalid_request' });
     const device = decodeDeviceId(search.get('device_id'));
     if (!device.ok) return json(400, { code: 'invalid_request' });
