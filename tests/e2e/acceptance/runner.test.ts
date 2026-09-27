@@ -36,7 +36,10 @@ describe('live acceptance runner', () => {
       { bindingId: 'binding_a', mode }, { bindingId: 'binding_b', mode },
     ]));
     expect(world.issues.size).toBe(2);
-    for (const issue of world.issues.values()) expect(issue.labels).toEqual(expect.arrayContaining(['acceptance', 'agent:todo']));
+    for (const issue of world.issues.values()) {
+      expect(issue.labels).toEqual(['acceptance', 'agent:todo', 'model:codex']);
+      expect(issue.labels).not.toContain('model:gpt-5.5-codex');
+    }
     // Stop names exactly the two recorded bindings, never "every binding".
     expect(world.stopCalls).toEqual([[
       { bindingId: 'binding_a', generation: 1, agentParticipantId: 'participant_a' },
@@ -49,6 +52,8 @@ describe('live acceptance runner', () => {
     expectCleanTail(world, report);
     // Markers are correlation labels; they never reach the report.
     expect(JSON.stringify(report)).not.toContain(world.markers.run);
+    expect(JSON.stringify(report)).not.toContain('native-a-1001');
+    expect(JSON.stringify(report)).not.toContain('launchCommand');
   });
 
   it('does not pass timed sends that carry no event-linked read/ack evidence', async () => {
@@ -105,6 +110,22 @@ describe('live acceptance runner', () => {
     expectCleanTail(world, report);
   });
 
+  it('refuses a Khala access request created before native fixture capture', async () => {
+    const world = createWorld();
+    const original = world.deps.aiur.session;
+    const report = await run({ ...world, deps: { ...world.deps, aiur: {
+      ...world.deps.aiur,
+      async session(ticket, runId, role) {
+        const session = await original(ticket, runId, role);
+        return session ? { ...session, capturedAt: '2026-09-26T10:00:01.000Z' } : null;
+      },
+    } } });
+    expect(report.errors.join('\n')).toMatch(/requested Khala access before/);
+    expect(report.verdict).toBe('fail');
+    expect(world.stopCalls).toEqual([]);
+    expectCleanTail(world, report);
+  });
+
   it('refuses without touching GitHub or the launcher when another run holds the repository lock', async () => {
     const world = createWorld({ lockHeld: true });
     const report = await run(world);
@@ -135,6 +156,24 @@ describe('live acceptance runner', () => {
     expect(status(report, 'alive-at-barrier')).toBe('fail');
     expect(world.stopCalls).toHaveLength(1);
     expect(report.verdict).toBe('fail');
+  });
+
+  it('refreshes native identity before hold and fails a replaced process identity', async () => {
+    const world = createWorld();
+    let reads = 0;
+    const original = world.deps.aiur.session;
+    const report = await run({ ...world, deps: { ...world.deps, aiur: {
+      ...world.deps.aiur,
+      async session(ticket, runId, role) {
+        const session = await original(ticket, runId, role);
+        reads += 1;
+        return reads > 2 && role === 'a' && session ? { ...session, processStartTicks: 'reused-pid' } : session;
+      },
+      async alive(session) { return session.processStartTicks !== 'reused-pid'; },
+    } } });
+    expect(report.verdict).toBe('fail');
+    expect(status(report, 'alive-at-barrier')).toBe('fail');
+    expectCleanTail(world, report);
   });
 
   it('refuses a stale-generation Stop target locally and never sends it', async () => {

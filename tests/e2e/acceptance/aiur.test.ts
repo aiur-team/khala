@@ -1,45 +1,167 @@
-// The Executor-side session evidence: only a complete structured `native_session`
-// payload in Aiur's per-ticket log counts; prose never does.
-
+// Private Executor fixture capture: scope, complete observation, and process
+// identity must all agree. Agent prose and daemon logs are irrelevant.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { aiurLogs, nativeSessionFromLog, ticketLog } from '../../../scripts/acceptance/adapters/aiur';
+import { aiurRecords, captureNativeSession, decodeNativeSession, observeProcess, type ProcessSnapshot } from '../../../scripts/acceptance/adapters/aiur';
 
-const SESSION = {
-  session_id: 'native-7', os_pid: 4242, harness: 'codex', provider: 'openai', model: 'gpt-5.5-codex',
-  cli_version: '0.156.1', launch_command: 'codex --model gpt-5.5-codex', started_at: '2026-09-26T10:00:00Z',
+const OBSERVATION = {
+  source: 'executor-native-tmux-fixture', repository: 'aiur-team/khala', runId: '0123456789ab',
+  ticket: 1001, role: 'a', sessionId: '01a0e073-8cbc-7d50-9375-f71092d876f0', pid: 4242,
+  harness: 'codex', provider: 'openai', model: 'gpt-6-sol', cliVersion: '0.156.1',
+  versionOutput: 'codex-cli 0.156.1',
+  startedAt: '2026-09-26T10:00:00Z', capturedAt: '2026-09-26T10:01:00Z', processStartTicks: '123456', bootId: 'boot-7',
+  executable: '/usr/bin/node', argv: ['codex', '--model', 'gpt-6-sol'], tty: '/dev/pts/7', tmuxPane: '%7',
 };
-const line = (payload: unknown, body = 'x') => JSON.stringify({ body, msg_id: 'm', payload, role: 'tool', sequence: 1, timestamp: 't', turn_id: 'u' });
+const PROCESS: ProcessSnapshot = {
+  pid: 4242, processStartTicks: '123456', bootId: 'boot-7', executable: '/usr/bin/node',
+  argv: ['codex', '--model', 'gpt-6-sol'], tty: '/dev/pts/7',
+};
+const STATUS = '│  Model: GPT-6-Sol (reasoning medium) │\n│  Model provider: openai │\n│  Session: 01a0e073-8cbc-7d50-9375-f71092d876f0 │';
+const status = () => STATUS;
+const version = () => 'codex-cli 0.156.1\n';
+const roots: string[] = [];
+function root() { const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-acceptance-native-')); roots.push(directory); return directory; }
+afterEach(() => { for (const directory of roots.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 
-const directories: string[] = [];
-afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
-
-describe('Aiur native-session evidence', () => {
-  it('reads one complete native_session payload', () => {
-    expect(nativeSessionFromLog([line(null), line({ native_session: SESSION })].join('\n'))).toEqual({
-      sessionId: 'native-7', pid: 4242, harness: 'codex', provider: 'openai', model: 'gpt-5.5-codex',
-      cliVersion: '0.156.1', launchCommand: 'codex --model gpt-5.5-codex', startedAt: '2026-09-26T10:00:00Z',
-    });
+describe('Executor native fixture evidence', () => {
+  it('captures one private scoped native process and reads only its exact run, ticket, and role', async () => {
+    const directory = root();
+    captureNativeSession(directory, OBSERVATION, () => PROCESS, () => true, undefined, status, version);
+    const port = aiurRecords(directory, 'aiur-team/khala', () => PROCESS, () => true);
+    expect((await port.session(1001, OBSERVATION.runId, 'a'))?.sessionId).toBe(OBSERVATION.sessionId);
+    expect(await port.session(1002, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await port.session(1001, 'ffffffffffff', 'a')).toBeNull();
+    expect(await port.session(1001, OBSERVATION.runId, 'b')).toBeNull();
+    expect(await aiurRecords(directory, 'foreign/repo', () => PROCESS, () => true).session(1001, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await port.alive(decodeNativeSession(OBSERVATION)!)).toBe(true);
+    const recordFile = path.join(directory, Buffer.from('aiur-team/khala').toString('base64url'), OBSERVATION.runId, '1001-a.json');
+    expect(fs.statSync(recordFile).mode & 0o077).toBe(0);
+    const oldRecord = JSON.parse(fs.readFileSync(recordFile, 'utf8'));
+    delete oldRecord.nativeIdentityProof;
+    fs.writeFileSync(recordFile, JSON.stringify(oldRecord));
+    expect(await port.session(1001, OBSERVATION.runId, 'a')).toBeNull();
   });
 
-  it('ignores agent prose, partial records and ambiguous sessions', () => {
-    expect(nativeSessionFromLog(line(null, `my session is ${JSON.stringify(SESSION)}`))).toBeNull();
-    expect(nativeSessionFromLog(line({ native_session: { ...SESSION, model: undefined } }))).toBeNull();
-    expect(nativeSessionFromLog([line({ native_session: SESSION }), line({ native_session: { ...SESSION, session_id: 'native-8' } })].join('\n'))).toBeNull();
+  it('rejects partial, claimed-only, app-server, and mismatched process observations', () => {
+    const directory = root();
+    expect(decodeNativeSession({ ...OBSERVATION, model: undefined })).toBeNull();
+    expect(decodeNativeSession({ ...OBSERVATION, source: 'worker-prose' })).toBeNull();
+    expect(decodeNativeSession({ ...OBSERVATION, argv: ['codex', 'app-server'] })).toBeNull();
+    expect(() => captureNativeSession(directory, OBSERVATION, () => ({ ...PROCESS, processStartTicks: '999999' }), () => true, undefined, status, version)).toThrow();
+    expect(() => captureNativeSession(directory, OBSERVATION, () => ({ ...PROCESS, argv: ['codex', 'app-server'] }), () => true, undefined, status, version)).toThrow();
+    expect(() => captureNativeSession(directory, OBSERVATION, () => null, () => true, undefined, status, version)).toThrow();
+    expect(() => captureNativeSession(directory, OBSERVATION, () => PROCESS, () => false, undefined, status, version)).toThrow(/tmux pane/);
+    expect(() => captureNativeSession(directory, { ...OBSERVATION, argv: ['node', 'other.js', 'codex', '--model', 'gpt-6-sol'] },
+      () => ({ ...PROCESS, argv: ['node', 'other.js', 'codex', '--model', 'gpt-6-sol'] }), () => true, undefined, status, version)).toThrow(/native harness/);
   });
 
-  it('finds the newest run log for the ticket in the acceptance repository', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-acceptance-aiur-'));
-    directories.push(root);
-    const name = `github-${Buffer.from('aiur-team/khala').toString('base64url')}.1001.agent_events.jsonl`;
-    for (const [run, session] of [['20260925T000000Z-1', { ...SESSION, session_id: 'old' }], ['20260926T000000Z-2', SESSION]] as const) {
-      fs.mkdirSync(path.join(root, run, 'log'), { recursive: true });
-      fs.writeFileSync(path.join(root, run, 'log', name), line({ native_session: session }));
-    }
-    expect(ticketLog(root, 'aiur-team/khala', 1001)).toBe(path.join(root, '20260926T000000Z-2', 'log', name));
-    expect((await aiurLogs(root, 'aiur-team/khala').session(1001))?.sessionId).toBe('native-7');
-    expect(await aiurLogs(root, 'aiur-team/khala').session(1002)).toBeNull();
+  it('refuses a second participant for one ticket and PID reuse or death', async () => {
+    const directory = root();
+    captureNativeSession(directory, OBSERVATION, () => PROCESS, () => true, undefined, status, version);
+    expect(() => captureNativeSession(directory, { ...OBSERVATION, sessionId: 'native-8' }, () => PROCESS, () => true, undefined, status, version)).toThrow();
+    const reused = aiurRecords(directory, 'aiur-team/khala', () => ({ ...PROCESS, processStartTicks: '999999' }), () => true);
+    expect(await reused.session(1001, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await reused.alive(decodeNativeSession(OBSERVATION)!)).toBe(false);
+    expect(await aiurRecords(directory, 'aiur-team/khala', () => null, () => true).session(1001, OBSERVATION.runId, 'a')).toBeNull();
   });
+
+  it('refuses tampered model or CLI version against the native process command and expected profile', () => {
+    const directory = root();
+    expect(() => captureNativeSession(directory, { ...OBSERVATION, model: 'wrong-model' }, () => PROCESS, () => true, undefined, status, version)).toThrow();
+    expect(decodeNativeSession({ ...OBSERVATION, cliVersion: '' })).toBeNull();
+    expect(() => captureNativeSession(directory, OBSERVATION, () => PROCESS, () => true,
+      undefined, status, () => 'prefix codex-cli 0.156.1')).toThrow(/CLI version is unproven/);
+  });
+
+  it('rejects a substituted driver ID even with genuine process, pane, and model evidence', () => {
+    const directory = root();
+    const driverId = '01a0e073-0000-7000-8000-000000000001';
+    expect(() => captureNativeSession(directory, { ...OBSERVATION, sessionId: driverId },
+      () => PROCESS, () => true, undefined, status, version)).toThrow(/session ID is unproven/);
+    expect(() => captureNativeSession(directory, OBSERVATION,
+      () => PROCESS, () => true, undefined, () => null)).toThrow(/session ID is unproven/);
+    expect(() => captureNativeSession(directory, { ...OBSERVATION, harness: 'claude', provider: 'anthropic', argv: ['claude', '--model', 'gpt-6-sol'] },
+      () => ({ ...PROCESS, argv: ['claude', '--model', 'gpt-6-sol'] }), () => true)).toThrow(/session ID is unproven/);
+  });
+
+  it.skipIf(process.platform !== 'linux' || !fs.existsSync('/usr/bin/script'))(
+    'rejects a driver ID substituted for a genuine unrelated PTY process', async () => {
+      const directory = root();
+      const fixture = path.join(directory, 'codex.js');
+      const pidFile = path.join(directory, 'pid');
+      fs.writeFileSync(fixture, `import fs from 'node:fs'; fs.writeFileSync(process.argv[2], String(process.pid)); setInterval(() => {}, 1000);`);
+      const pty = spawn('/usr/bin/script', ['-q', '-e', '-c',
+        `${process.execPath} ${fixture} ${pidFile} --model gpt-6-sol`, '/dev/null'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      pty.stdout.on('data', chunk => { output += String(chunk); });
+      pty.stderr.on('data', chunk => { output += String(chunk); });
+      let pid = 0;
+      try {
+        for (let attempt = 0; attempt < 50 && !pid; attempt++) {
+          if (fs.existsSync(pidFile)) pid = Number(fs.readFileSync(pidFile, 'utf8'));
+          else await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(pid, `PTY child did not start; script exit ${pty.exitCode}: ${output}`).toBeGreaterThan(1);
+        const live = observeProcess(pid);
+        expect(live, `PTY child ${pid} was not observable`).not.toBeNull();
+        expect(live?.tty).toMatch(/^\/dev\/pts\/\d+$/);
+        const observation = {
+          ...OBSERVATION, pid, executable: live!.executable, argv: live!.argv,
+          processStartTicks: live!.processStartTicks, bootId: live!.bootId, tty: live!.tty,
+          sessionId: '01a0e073-0000-7000-8000-000000000001',
+        };
+        expect(() => captureNativeSession(directory, observation, observeProcess, () => true,
+          undefined, status, version)).toThrow(/session ID is unproven/);
+        expect(captureNativeSession(directory, { ...observation, sessionId: OBSERVATION.sessionId },
+          observeProcess, () => true, undefined, status, version).sessionId).toBe(OBSERVATION.sessionId);
+      } finally {
+        if (pid) { try { process.kill(pid, 'SIGTERM'); } catch { /* already exited */ } }
+        pty.kill('SIGTERM');
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'linux' || !fs.existsSync('/usr/bin/tmux') || !fs.existsSync('/usr/bin/cc'))(
+    'reads a live native image and pane, rejecting forged ID and version', async () => {
+      const directory = root();
+      // Unix socket paths cap at 108 bytes; the workspace-local scratch root is shorter than TMPDIR.
+      const socket = path.join(process.cwd(), `.aiur239-${process.pid}-${Math.random().toString(36).slice(2, 8)}.sock`);
+      const fixture = path.join(directory, 'codex');
+      const source = path.join(directory, 'codex.c');
+      fs.writeFileSync(source, `#include <stdio.h>\n#include <string.h>\n#include <unistd.h>\nint main(int argc, char **argv) { if (argc == 2 && strcmp(argv[1], "--version") == 0) { puts("codex-cli 0.156.1"); return 0; } fputs(${JSON.stringify(`${STATUS}\n`)}, stdout); fflush(stdout); for (;;) sleep(1); }`);
+      execFileSync('/usr/bin/cc', [source, '-o', fixture]);
+      const tmux = (...args: string[]) => execFileSync('/usr/bin/tmux', ['-S', socket, ...args], { encoding: 'utf8' }).trim();
+      const previousTmux = process.env.TMUX;
+      try {
+        tmux('new-session', '-d', '-s', 'native', `${fixture} --model gpt-6-sol`);
+        process.env.TMUX = `${socket},0,0`;
+        const pane = tmux('list-panes', '-t', 'native', '-F', '#{pane_id}');
+        const pid = Number(tmux('list-panes', '-t', 'native', '-F', '#{pane_pid}'));
+        let live: ProcessSnapshot | null = null;
+        for (let attempt = 0; attempt < 50; attempt++) {
+          live = observeProcess(pid);
+          if (live && tmux('capture-pane', '-p', '-t', pane).includes(OBSERVATION.sessionId)) break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(live).not.toBeNull();
+        const observation = {
+          ...OBSERVATION, pid, tmuxPane: pane, executable: live!.executable, argv: live!.argv,
+          processStartTicks: live!.processStartTicks, bootId: live!.bootId, tty: live!.tty,
+        };
+        expect(() => captureNativeSession(directory, { ...observation, sessionId: '01a0e073-0000-7000-8000-000000000001' }))
+          .toThrow(/session ID is unproven/);
+        expect(() => captureNativeSession(directory, { ...observation, cliVersion: '0.157.1', versionOutput: 'codex-cli 0.157.1' }))
+          .toThrow(/CLI version is unproven/);
+        expect(captureNativeSession(directory, observation).sessionId).toBe(OBSERVATION.sessionId);
+        expect(observeProcess(pid)?.processStartTicks).toBe(live!.processStartTicks);
+      } finally {
+        if (previousTmux === undefined) delete process.env.TMUX;
+        else process.env.TMUX = previousTmux;
+        try { tmux('kill-server'); } catch { /* fixture may already have exited */ }
+      }
+    },
+  );
 });

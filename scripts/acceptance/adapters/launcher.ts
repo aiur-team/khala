@@ -103,6 +103,7 @@ export async function ownerSessionFor(report: LaunchReport): Promise<OwnerSessio
         .map((request): AccessRequest => ({
           requestHandle: text(request.requestHandle),
           revision: text(request.revision),
+          createdAt: text(request.createdAt),
           outcome: text(request.outcome),
           harness: text(record(request.requester).harness),
           sessionFingerprint: text(record(request.requester).sessionFingerprint),
