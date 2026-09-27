@@ -17,6 +17,33 @@ const secret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 const request = { operationId: 'close_operation_one', ownerId: binding.ownerId, roomId, expectedRoomRevision: 0 };
 
 describe('protected closure connector aggregate', () => {
+  it('queues Stop after 64 completed owner commands without losing their durable results', async () => {
+    const state = fakeStore(() => T0);
+    const bindings = createAgentBindingStore({ store: state.store });
+    const index = createOwnerRoomIndex(state.store);
+    expect((await bindings.putParticipant({ ownerId: binding.ownerId, roomId, agentParticipantId: binding.agentParticipantId,
+      expectedBindingId: null, record: { binding, revokedGeneration: null, capability: null } })).kind).toBe('applied');
+    expect((await index.activate(binding, roomId)).kind).toBe('ok');
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId, clock: () => T0, authoritySecret: secret });
+    for (let i = 0; i < 64; i++) {
+      const command = { operationId: `status_${i.toString().padStart(8, '0')}`, kind: 'controls_status' as const,
+        body: { bindingId: binding.bindingId } };
+      expect((await mailbox.submit(command, principal)).kind).toBe('ok');
+      expect((await mailbox.complete(command.operationId, { ok: false, code: 'forbidden' })).kind).toBe('ok');
+    }
+    const closure = createOwnerRoomClosureConnector({ store: state.store, principal, clock: () => T0, authoritySecret: secret });
+    expect(await closure.stopDelivery(request)).toEqual({ kind: 'pending' });
+    expect((await mailbox.pending())).toMatchObject({ kind: 'ok', value: [{ operationId: request.operationId }] });
+    expect((await mailbox.result('status_00000000'))).toMatchObject({ kind: 'ok', value: { outcome: { ok: false, code: 'forbidden' } } });
+    expect((await mailbox.submit({ operationId: 'status_extra', kind: 'controls_status', body: { bindingId: binding.bindingId } }, principal)))
+      .toEqual({ kind: 'unavailable' });
+    expect((await mailbox.complete(request.operationId, { kind: 'stopped', receipt: {
+      ...request, bindingId: binding.bindingId, bindingGeneration: binding.generation,
+      state: 'stopped', cleanupRequested: true,
+    } })).kind).toBe('ok');
+    expect(await closure.stopDelivery(request)).toMatchObject({ kind: 'stopped', receipt: { activeBindingCount: 1 } });
+  });
+
   it('stays pending until every indexed endpoint records its exact durable stop', async () => {
     const state = fakeStore(() => T0);
     const bindings = createAgentBindingStore({ store: state.store });

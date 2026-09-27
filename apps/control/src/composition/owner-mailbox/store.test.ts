@@ -13,6 +13,27 @@ const principal = { v: 1, ownerId: binding.ownerId, providerIssuer: 'https://id.
 const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 
 describe('metadata-only owner mailbox', () => {
+  it('reserves one Stop slot while 64 ordinary commands remain pending', async () => {
+    const state = fakeStore(() => T0);
+    const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });
+    for (let i = 0; i < 64; i++) {
+      expect((await mailbox.submit({ ...command, operationId: `pending_${i.toString().padStart(8, '0')}` }, principal)).kind).toBe('ok');
+    }
+    const stop = { operationId: 'close_operation_one', kind: 'channel_stop' as const,
+      body: { operationId: 'close_operation_one', ownerId: binding.ownerId, roomId: '!room:example', expectedRoomRevision: 0 } };
+    expect((await mailbox.submit(stop, principal)).kind).toBe('ok');
+    expect((await mailbox.submit(stop, principal)).kind).toBe('ok');
+    const pending = await mailbox.pending();
+    expect(pending.kind).toBe('ok');
+    if (pending.kind !== 'ok') throw new Error('pending mailbox unavailable');
+    expect(pending.value).toHaveLength(65);
+    expect(pending.value.map(entry => entry.operationId)).toContain('pending_00000000');
+    expect(pending.value.map(entry => entry.operationId)).toContain('pending_00000063');
+    expect(pending.value.map(entry => entry.operationId)).toContain(stop.operationId);
+    expect(await mailbox.submit({ ...stop, operationId: 'another_stop_0001',
+      body: { ...stop.body, operationId: 'another_stop_0001' } }, principal)).toEqual({ kind: 'unavailable' });
+  });
+
   it('keeps one exact command/result under CAS and refuses changed retries and stale generations', async () => {
     const state = fakeStore(() => T0);
     const mailbox = createOwnerMailbox({ store: state.store, binding, roomId: '!room:example', clock: () => T0, authoritySecret });

@@ -7,6 +7,8 @@ import {
 import { sameJsonValue, type AuthPrincipal, type ControlStore, type JsonValue } from '@khala/contracts/messaging/index';
 
 export const OWNER_MAILBOX_MAX_ENTRIES = 64;
+// Stop must remain queueable after the ordinary command budget is exhausted.
+const OWNER_MAILBOX_STOP_RESERVE = 1;
 export const OWNER_MAILBOX_TTL_MS = 24 * 60 * 60 * 1000;
 export type OwnerCommandKind = 'controls_status' | 'controls_set' | 'review_preview' | 'review_approve' | 'channel_stop';
 export type OwnerMailboxCommand = Readonly<{
@@ -52,7 +54,7 @@ export function createOwnerMailbox(input: Readonly<{
     if (Object.keys(value).sort().join(',') !== 'bindingId,entries,generation,ownerId,roomId,v'
       || value.v !== 1 || value.bindingId !== binding.bindingId || value.generation !== binding.generation
       || value.ownerId !== binding.ownerId || value.roomId !== roomId || !Array.isArray(value.entries)
-      || value.entries.length > OWNER_MAILBOX_MAX_ENTRIES) return null;
+      || value.entries.length > OWNER_MAILBOX_MAX_ENTRIES + OWNER_MAILBOX_STOP_RESERVE) return null;
     const entries: OwnerMailboxEntry[] = [];
     const ids = new Set<string>();
     for (const item of value.entries) {
@@ -67,6 +69,8 @@ export function createOwnerMailbox(input: Readonly<{
       ids.add(entry.operationId);
       entries.push(entry as OwnerMailboxEntry);
     }
+    if (entries.filter(entry => entry.kind === 'channel_stop').length > OWNER_MAILBOX_STOP_RESERVE
+      || entries.filter(entry => entry.kind !== 'channel_stop').length > OWNER_MAILBOX_MAX_ENTRIES) return null;
     return { ...initial, entries };
   }
   async function read(): Promise<MailboxResult<Readonly<{ document: Document; revision: string | null; expiresAt: string | null }>>> {
@@ -99,7 +103,11 @@ export function createOwnerMailbox(input: Readonly<{
         if (existing) return existing.kind === command.kind && sameValue(existing.body, command.body)
           && existing.authority.issuer === principal.providerIssuer && existing.authority.subject === principal.providerSubject
           ? { kind: 'ok', value: existing } : { kind: 'conflict' };
-        if (document.entries.length >= OWNER_MAILBOX_MAX_ENTRIES) return { kind: 'unavailable' };
+        if (command.kind === 'channel_stop'
+          ? document.entries.some(entry => entry.kind === 'channel_stop')
+          : document.entries.filter(entry => entry.kind !== 'channel_stop').length >= OWNER_MAILBOX_MAX_ENTRIES) {
+          return { kind: 'unavailable' };
+        }
         const authority: OwnerAuthority = {
           ownerId: binding.ownerId, issuer: principal.providerIssuer, subject: principal.providerSubject,
           authenticatedAt: new Date(clock()).toISOString(),
