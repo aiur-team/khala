@@ -40,6 +40,12 @@ function domainsFor(repoRoot: string): readonly Domain[] {
       exportName: 'registerHumanHandlers',
     },
     {
+      key: 'closure',
+      prefix: '/api/human/',
+      modulePath: path.join(repoRoot, 'apps/control/src/channel-closure/production.ts'),
+      exportName: 'registerClosureHandlers',
+    },
+    {
       key: 'agent',
       prefix: '/api/agent/',
       modulePath: path.join(repoRoot, 'apps/control/src/composition/agent/handlers.ts'),
@@ -107,7 +113,8 @@ export async function discoverRoutes(repoRoot: string): Promise<DiscoveryResult>
     presentDomains.push(domain);
   }
 
-  return { presentDomains, absentPrefixes, routeManifest };
+  const presentPrefixes = new Set(presentDomains.map(domain => domain.prefix));
+  return { presentDomains, absentPrefixes: [...new Set(absentPrefixes)].filter(prefix => !presentPrefixes.has(prefix)), routeManifest };
 }
 
 /** Netlify's functions input directory (`[functions].directory` in netlify.toml). */

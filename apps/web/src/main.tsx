@@ -15,6 +15,7 @@ import './shell/shell.css';
 import './features/create-channel/create-channel.css';
 import './features/timeline/timeline.css';
 import './features/channel/channel.css';
+import './features/recovery/recovery.css';
 import './features/approval-decision/approval-decision.css';
 import './features/channel-access/channel-access.css';
 import './main.css';
@@ -46,12 +47,31 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     participants: api.participants,
     limits: decodedLimits.value,
   });
+  const closure = (roomId: Parameters<typeof api.closure>[0]) => {
+    const port = api.closure(roomId);
+    return {
+      currentCapability: port.currentCapability,
+      async closeRoom(input: Parameters<typeof port.closeRoom>[0], options?: Parameters<typeof port.closeRoom>[1]) {
+        const result = await port.closeRoom(input, options);
+        if (result.kind === 'ok' && (result.value.state === 'complete'
+          || result.value.reason === 'local_cleanup_failed')) await matrix.cleanupRoom(input.ownerId, roomId);
+        return result;
+      },
+      async inspectClosure(operationId: string, options?: Parameters<typeof port.inspectClosure>[1]) {
+        const ownerId = matrix.participant()?.ownerId;
+        const result = await port.inspectClosure(operationId, options);
+        if (ownerId && result.kind === 'ok' && result.value.reason === 'local_cleanup_failed') await matrix.cleanupRoom(ownerId, roomId);
+        return result;
+      },
+    };
+  };
   const application = createHumanApplication({
     identity: api.identity,
     device: matrix.device,
     room: matrix.room,
     admission: api.admission,
     participant: matrix.participant,
+    closure,
     limits: decodedLimits.value,
   }, { initialPath: entry.path });
   const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });

@@ -1,10 +1,10 @@
 import {
-  type AuthPrincipal, type BindingId, type DevicePort, type DeviceView, type IdentityPort, type IdentityState, type OwnerId,
+  CLOSURE_CONSEQUENCES, type AuthPrincipal, type BindingId, type DevicePort, type DeviceView, type IdentityPort, type IdentityState, type OwnerId,
   ok,
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it, vi } from 'vitest';
 import type { HumanRouteContext } from '../human/application';
-import { type BrowserRevocation, createBrowserRecoveryPort } from './browser-port';
+import { type BrowserClosure, type BrowserRevocation, createBrowserRecoveryPort } from './browser-port';
 import { projectRecovery } from './projection';
 import { registerRecovery } from './register';
 
@@ -123,6 +123,29 @@ describe('createBrowserRecoveryPort', () => {
     expect(await wired.ui.inspectRevocation('revoke-1')).toEqual({ kind: 'ok', value: progress });
     expect(await wired.ui.closeRoom({ operationId: 'close-1', ownerId: principal.ownerId, roomId: 'room_1' as never, expectedRoomRevision: 1 }))
       .toEqual({ kind: 'unavailable', retryable: true });
+  });
+
+  it('offers only the current owner channel and delegates the typed closure identity', async () => {
+    const device = fakeDevice(ready);
+    const capability = {
+      ownerId: principal.ownerId, roomId: 'room_1' as never, expectedRoomRevision: 0,
+      available: true, unavailableReason: null, consequences: CLOSURE_CONSEQUENCES,
+    } as const;
+    const closure: BrowserClosure = {
+      currentCapability: vi.fn(async () => capability),
+      closeRoom: vi.fn(async input => ok({ operationId: input.operationId, state: 'partial' as const, reason: 'local_cleanup_failed' as const })),
+      inspectClosure: vi.fn(async operationId => ok({ operationId, state: 'partial' as const, reason: 'local_cleanup_failed' as const })),
+    };
+    const ports = createBrowserRecoveryPort({ principal, identity: identity(), device: device.port, closure });
+    await settled();
+    expect(ports.ui.snapshot().closure).toEqual(capability);
+    const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId: capability.roomId, expectedRoomRevision: 0 };
+    expect(await ports.ui.closeRoom(command)).toMatchObject({ kind: 'ok', value: { state: 'partial' } });
+    expect(closure.closeRoom).toHaveBeenCalledWith(command, undefined);
+    expect(await ports.ui.closeRoom({ ...command, roomId: 'room_2' as never })).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await ports.ui.closeRoom({ ...command, expectedRoomRevision: 1 })).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(closure.closeRoom).toHaveBeenCalledTimes(1);
+    expect(await ports.ui.inspectClosure('close_1')).toMatchObject({ kind: 'ok', value: { state: 'partial' } });
   });
 
   it('ignores a device view from a replaced generation and publishes the current one', async () => {

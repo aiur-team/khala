@@ -15,7 +15,7 @@ import { listFiles } from './fixtures';
 import { REPO_ROOT } from './inventory';
 
 /**
- * The relay is reached only through the human browser flow. Proving server records and
+ * The relay is reached through the human browser and owner-authorized closure flow. Proving server records and
  * logs hold no plaintext or key material needs a disposable Synapse deployment with
  * database and log access. The KHA-132 descriptor (tests/integration/human) gives API
  * access only, and no such environment was available to write this case against.

@@ -9,8 +9,10 @@ KHA-129 recovery service to the KHA-127 panel's `RecoveryPorts`.
 - **Revocation.** Delegated to an optional owner-scoped `BrowserRevocation`, which lists the owner's
   targets with their control-plane generation. Without it, no target is offered and `revoke` answers
   `unavailable`.
-- **Closure (P13).** No approved closure command exists, so `closure` is `null` and `closeRoom`
-  answers `unavailable`. Nothing here deletes storage in its place.
+- **Closure (P13).** An optional owner-scoped control port supplies the current channel capability,
+  executes the typed closure command and inspects retries. Without the registered protected route,
+  the capability remains `null`; when the route exists without a protected connector stop mailbox,
+  its capability is unavailable. No local storage deletion is used as a substitute.
 - **Lifecycle.** Device views from a replaced generation are ignored. `dispose` closes only this
   port's observers and discards identity or capability reads still in flight. The shared device and
   messaging lifecycle stay owned by KHA-132.
@@ -19,13 +21,14 @@ KHA-129 recovery service to the KHA-127 panel's `RecoveryPorts`.
 ID and kind, device state, history, the recovery refusal and allowed actions. No key, password,
 SDK token or principal can reach it.
 
-`registerRecovery({ render, revocation })` is `ready` only when it is given a `render` slot. The
-human route has no recovery slot yet, so `registerHumanCapabilities` keeps it unavailable.
+`registerRecovery({ render, revocation, closure })` is `ready` only when it is given a `render` slot.
+The hosted channel room mounts `RecoveryPanel` directly with its owner-scoped browser closure port.
+The generic capability slot remains unavailable until it has a separate render host.
 
 ## Not wired here
 
-- The human route exposes no slot to render the panel into.
+- The generic human capability registry exposes no separate slot to render the panel into.
 - The control plane serves no owner revocation route. The binding-side ports exist
   (`lookupBinding`, `disableBinding`, `revokeAdapterCapability` in `@khala/control/agent-bootstrap`);
   a route also needs a Matrix `ProtocolRevocationPort` and a device-key lookup.
-- KHA-130 defines no typed closure command.
+- The protected connector stop mailbox must be bound before the production closure capability is offered.

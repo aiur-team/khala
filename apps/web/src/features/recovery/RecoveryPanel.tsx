@@ -19,7 +19,8 @@ import type { ClosureConsequences, RecoveryPorts, RevocationCapability } from '.
 export interface RecoveryPanelProps {
   ports: RecoveryPorts;
   config: RecoveryControllerConfig;
-  onClosureComplete: () => void;
+  /** Leave is confirmed, even if cleanup remains unconfirmed. Remove the owner view. */
+  onClosureParticipationEnded: () => void;
   /** Test/composition seam for a controller whose lifetime is owned by its caller. */
   controller?: RecoveryController;
 }
@@ -128,7 +129,7 @@ const OPERATION_PRESENTATIONS: Record<string, OperationPresentation> = {
       label: 'Closure complete', tone: 'positive', message: 'New messages stopped and the channel was removed from your view. Local cleanup was requested.', alert: false,
     },
     'closure:partial': {
-      label: 'Closure partially complete', tone: 'caution', message: 'Completed: new messages stopped and the channel was removed from your view. Remaining: local cleanup did not complete on every owner device.', alert: true,
+      label: 'Closure partially complete', tone: 'caution', message: 'Completed: new messages stopped and the channel was removed from your view. Remaining: local cleanup is not confirmed on every owner device.', alert: true,
     },
     'closure:failed': {
       label: 'Closure failed', tone: 'critical', message: 'No complete channel closure was confirmed.', alert: true,
@@ -197,7 +198,7 @@ type RecoveryPanelContentProps = Omit<RecoveryPanelProps, 'ports' | 'controller'
 
 function RecoveryPanelContent({
   config,
-  onClosureComplete,
+  onClosureParticipationEnded,
   controller,
 }: RecoveryPanelContentProps) {
   const completedClosures = useRef(new WeakMap<RecoveryController, string>());
@@ -212,11 +213,13 @@ function RecoveryPanelContent({
   }, [config.roomId, config.roomRevision, controller]);
 
   useEffect(() => {
-    if (view.operation.kind !== 'closure' || view.operation.state !== 'complete') return;
+    if (view.operation.kind !== 'closure'
+      || (view.operation.state !== 'complete'
+        && !(view.operation.state === 'partial' && view.operation.reason === 'local_cleanup_failed'))) return;
     if (completedClosures.current.get(controller) === view.operation.operationId) return;
     completedClosures.current.set(controller, view.operation.operationId);
-    onClosureComplete();
-  }, [controller, onClosureComplete, view.operation]);
+    onClosureParticipationEnded();
+  }, [controller, onClosureParticipationEnded, view.operation]);
 
   const history = HISTORY_PRESENTATION[view.history];
   const busy = operationIsPending(view.operation);
@@ -385,7 +388,7 @@ function RecoveryPanelContent({
 function OwnedRecoveryPanel({
   ports,
   config,
-  onClosureComplete,
+  onClosureParticipationEnded,
 }: Omit<RecoveryPanelProps, 'controller'>) {
   const [owned, setOwned] = useState<Readonly<{
     controller: RecoveryController;
@@ -422,7 +425,7 @@ function OwnedRecoveryPanel({
   return (
     <RecoveryPanelContent
       config={config}
-      onClosureComplete={onClosureComplete}
+      onClosureParticipationEnded={onClosureParticipationEnded}
       controller={controller}
     />
   );
@@ -431,18 +434,18 @@ function OwnedRecoveryPanel({
 export function RecoveryPanel({
   ports,
   config,
-  onClosureComplete,
+  onClosureParticipationEnded,
   controller,
 }: RecoveryPanelProps) {
   if (controller) {
     return (
       <RecoveryPanelContent
         config={config}
-        onClosureComplete={onClosureComplete}
+        onClosureParticipationEnded={onClosureParticipationEnded}
         controller={controller}
       />
     );
   }
 
-  return <OwnedRecoveryPanel ports={ports} config={config} onClosureComplete={onClosureComplete} />;
+  return <OwnedRecoveryPanel ports={ports} config={config} onClosureParticipationEnded={onClosureParticipationEnded} />;
 }

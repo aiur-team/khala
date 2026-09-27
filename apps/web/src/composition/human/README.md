@@ -51,3 +51,9 @@ control API maps a canonical local Matrix account to its authenticated Khala
 owner and participant ID. It then matches the event's claimed Ed25519 key to a
 Matrix device ID. A missing mapping or key match fails closed; sender strings
 and display names never become owner authority.
+
+The hosted channel room also mounts the recovery panel. Closure appears only
+when the protected control API returns a capability for the signed-in owner and
+current channel. A partial result means local cleanup is still unconfirmed;
+the panel keeps the operation identity for inspection. Closure never promises
+erasure of transport, other owners' devices, or model provider copies.
