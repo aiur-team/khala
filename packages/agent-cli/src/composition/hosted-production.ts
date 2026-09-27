@@ -28,6 +28,7 @@ type OpenProductionConnectorInput = Readonly<{
   session: SessionClaim;
   sessionInspection: (generationFor: (claim: SessionClaim) => Promise<number | null>) => SessionInspectionPort;
   inspectHostedCodexHooks(): Promise<HarnessCapabilities | null>;
+  resolveCodexExecutable(): Promise<string | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: OpenGenerationInbox;
 }>;
@@ -53,6 +54,7 @@ export function hostedSessionFactory(options: Readonly<{
   workdir: string;
   readVersion(): Promise<string | null>;
   inspectHooks(): Promise<HarnessCapabilities | null>;
+  resolveCodexExecutable(): Promise<string | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: OpenGenerationInbox;
 }>): NonNullable<CliDependencies['hostedSession']> {
@@ -69,6 +71,7 @@ export function hostedSessionFactory(options: Readonly<{
         generation: named => generationFor({ ...named, workdir: claim.workdir }),
       }),
       inspectHostedCodexHooks: async () => session.harness === 'codex' ? options.inspectHooks() : null,
+      resolveCodexExecutable: async () => session.harness === 'codex' ? options.resolveCodexExecutable() : null,
       openBrowser: options.openBrowser,
       openInbox: options.openInbox,
     });

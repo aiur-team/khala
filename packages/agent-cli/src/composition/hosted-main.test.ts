@@ -27,6 +27,7 @@ describe('installed hosted CLI composition', () => {
       session: { harness: 'codex', sessionId: 'thread-1', workdir: '/tmp/project' },
     });
     expect(await input?.inspectHostedCodexHooks()).toBeNull();
+    expect(await input?.resolveCodexExecutable()).toBeNull();
   });
 
   it('refuses a non-HTTPS preview origin before opening the endpoint', () => {

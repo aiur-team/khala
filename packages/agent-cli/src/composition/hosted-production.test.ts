@@ -29,6 +29,7 @@ describe('installed hosted connector factory', () => {
       stateDirectory: '/tmp/khala-state/hosted', appOrigin: 'https://khala.aiur.team',
       browserBundleDirectory: '/tmp/package/dist/substrate-browser', workdir: '/tmp/project',
       readVersion: async () => '0.154.0', inspectHooks: async () => null,
+      resolveCodexExecutable: async () => '/usr/bin/codex',
       async openBrowser() {}, async openInbox() { throw new Error('no binding'); },
     });
     const opened = await factory(SESSION);
@@ -45,6 +46,7 @@ describe('installed hosted connector factory', () => {
     });
     expect(generationFor).toHaveBeenCalledExactlyOnceWith({ ...SESSION, workdir: '/tmp/project' });
     expect(await input?.inspectHostedCodexHooks()).toBeNull();
+    expect(await input?.resolveCodexExecutable()).toBe('/usr/bin/codex');
     expect((await opened.client.status()).connected).toBe(false);
     await opened.close();
     expect(close).toHaveBeenCalledOnce();

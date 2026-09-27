@@ -24,6 +24,7 @@ export function installedHostedSession(input: Readonly<{
     chromiumExecutablePath: path.join(input.distDirectory, 'chromium', 'chrome-linux64', 'chrome'),
     workdir: input.workdir,
     readVersion: () => readInstalledCodexVersion(setupEnvironment(input.environment)),
+    resolveCodexExecutable: () => setupEnvironment(input.environment).probe.resolveExecutable('codex'),
     inspectHooks: () => inspectHostedCodexHooks(setupEnvironment(input.environment)),
     openBrowser: url => openDefaultBrowser(url, appOrigin),
     openInbox: input.openInbox,
