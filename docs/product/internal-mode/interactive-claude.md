@@ -4,6 +4,8 @@ Status: research and installed-version proof complete, 2026-09-24; re-proven und
 
 ## Verdict
 
+The installed internal-mode route has a separate [Claude Code 2.1.283 native mode run](../../../experiments/internal-mode/listening-modes/claude/README.md). It proves `steer`, `sync`, and `async` on the exact `claude-interactive-hooks` route for human-authored releases; the earlier 2.1.282 research below is not the current installed-version claim. Idle `steer` and `sync` wake was observed 46 seconds after Stop, while the watcher was live. Its local limit is 3,000 seconds, after which messages wait until the next native turn. The static `immediateNotification` field stays `unknown`; neither unbounded idle wake nor autonomous agent-to-agent release is claimed.
+
 Claude Code 2.1.282 delivers all three Khala listening modes into an already-running interactive CLI session, and wakes an idle session for `steer` and `sync`. Khala does not need to launch, host, or resume Claude. Every proof session was **agent-launched with default settings**: the proof harness started the normal interactive TUI in a terminal it controlled, with no flags. No human started these sessions, so they are not "user-started"; they exercise the same binary, settings sources, and trust prompts a user's own session uses.
 
 - `steer`: a synchronous `PostToolUse` hook pulls one bounded batch and returns it as `additionalContext` at the next tool boundary. `Stop` is the fallback when the turn uses no more tools. Hard abort stays off.

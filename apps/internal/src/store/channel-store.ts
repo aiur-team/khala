@@ -103,6 +103,9 @@ export type SubscriptionReadResult =
   | Readonly<{ kind: 'rejected'; code: 'binding_mismatch' | 'binding_revoked' | 'stale_binding' | 'not_joined' | 'invalid_cursor' | 'invalid_input' }>
   | Readonly<{ kind: 'unavailable' }>;
 
+/** Notification state only: no event, body, release, cursor, or token leaves this query. */
+export type PendingHumanReleaseResult = Readonly<{ kind: 'pending'; pending: boolean }> | Readonly<{ kind: 'unavailable' }>;
+
 export type ChannelUpdate = Readonly<{ channel: StoredChannel; events: readonly StoredEvent[] }>;
 
 type ParticipantRow = Readonly<{
@@ -406,6 +409,7 @@ export interface ChannelStore {
     cursor: string | null;
     limit: number;
   }>): SubscriptionReadResult;
+  pendingHumanRelease(input: Readonly<{ channelId: RoomId; binding: TrustedBinding }>): PendingHumanReleaseResult;
   subscribeChannel(
     input: Readonly<{ channelId: RoomId; participantId: ParticipantId }>,
     listener: (update: ChannelUpdate) => void,
@@ -839,6 +843,30 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           } as const;
         });
       } catch { return unavailable(); }
+    },
+
+    pendingHumanRelease(input) {
+      try {
+        return handle.read(db => {
+          const row = db.prepare('SELECT * FROM bindings WHERE binding_id = ? AND generation = ?')
+            .get(input.binding.bindingId, input.binding.generation) as BindingRow | undefined;
+          if (!row || !sameBinding(row, input.binding) || row.status !== 'active') return { kind: 'unavailable' } as const;
+          if (channelFor(db, input.channelId, row.participant_id).kind !== 'found') return { kind: 'unavailable' } as const;
+          const start = admissionStart(db, { kind: 'binding', binding: input.binding }, input.channelId);
+          if (start === null) return { kind: 'unavailable' } as const;
+          const pending = db.prepare(`
+            SELECT 1 FROM events e
+            JOIN participants p ON p.participant_id = e.author_participant_id
+            WHERE e.channel_id = ? AND e.sequence > ? AND e.author_participant_id <> ? AND p.kind = 'human'
+              AND NOT EXISTS (
+                SELECT 1 FROM agent_acknowledgements a
+                WHERE a.binding_id = ? AND a.generation = ? AND a.channel_id = e.channel_id AND a.event_id = e.event_id
+              )
+            LIMIT 1
+          `).get(input.channelId, start, row.participant_id, row.binding_id, row.generation);
+          return { kind: 'pending', pending: pending !== undefined } as const;
+        });
+      } catch { return { kind: 'unavailable' }; }
     },
 
     subscribeChannel(input, listener) {

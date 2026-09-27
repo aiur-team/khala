@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "claim": {
+    "harness": "claude",
+    "version": "2.1.283",
+    "route": "claude-interactive-hooks",
+    "model": "claude-sonnet-5",
+    "ordinaryUserStartedCli": false,
+    "normalFolderTrust": true,
+    "permissionOverride": false,
+    "sameNativeSession": true,
+    "source": "human-authored-channel-messages",
+    "watchWindowSeconds": 3000,
+    "immediateNotification": "unknown"
+  },
+  "builds": {
+    "hook": {
+      "commit": "7e6be40013d317f4f8c49553668d718c550fc2f9",
+      "tarballSha256": "f2485beb0f350436003c897095840ee35310495e6796202f6826211f668e46e1"
+    },
+    "mcpRepair": {
+      "commit": "08bac82f78f3691c19fd0fb1b81270c4a72d0ecd",
+      "tarballSha256": "5e328f733c89a947cd06d4559d0d89b56986e0b55eb3451100b9fe843dc66f8f"
+    }
+  },
+  "cases": {
+    "idleSync": {
+      "sentAt": "2026-09-27T03:10:17.831369Z",
+      "nativeJournalOccurrences": 2,
+      "firstNativeAt": "2026-09-27T03:10:19.096Z",
+      "lastNativeAt": "2026-09-27T03:10:23.058Z",
+      "idleBeforeSendSeconds": 46,
+      "nativeContextAt": "2026-09-27T03:10:19.096Z",
+      "nativeAssistantAt": "2026-09-27T03:10:23.058Z",
+      "sameSession": true,
+      "bodySeenInNativeContextAndResponse": true
+    },
+    "busySync": {
+      "sentAt": "2026-09-27T03:13:05.683860Z",
+      "nativeJournalOccurrences": 4,
+      "firstNativeAt": "2026-09-27T03:13:06.530Z",
+      "lastNativeAt": "2026-09-27T03:13:09.118Z",
+      "toolFinishedAt": "2026-09-27T03:13:05.731Z",
+      "nativeContextAt": "2026-09-27T03:13:06.530Z",
+      "nativeAssistantAt": "2026-09-27T03:13:09.118Z",
+      "receiptsBeforeNextCall": 1,
+      "receiptsAfterNextCall": 2
+    },
+    "busySteer": {
+      "sentAt": "2026-09-27T03:14:41.275296Z",
+      "nativeJournalOccurrences": 9,
+      "firstNativeAt": "2026-09-27T03:14:56.268Z",
+      "lastNativeAt": "2026-09-27T03:15:04.348Z",
+      "toolStartedAt": "2026-09-27T03:14:35.047Z",
+      "toolFinishedAt": "2026-09-27T03:14:56.269Z",
+      "postToolContextAt": "2026-09-27T03:14:56.268Z",
+      "nextToolAt": "2026-09-27T03:14:57.261Z",
+      "nativeAssistantAt": "2026-09-27T03:15:01.292Z",
+      "receiptsBeforeNextCall": 2,
+      "receiptsAfterNextCall": 3
+    },
+    "idleSteer": {
+      "sentAt": "2026-09-27T03:20:18.793782Z",
+      "nativeJournalOccurrences": 2,
+      "firstNativeAt": "2026-09-27T03:20:19.529Z",
+      "lastNativeAt": "2026-09-27T03:20:21.967Z",
+      "idleBeforeSendSeconds": 46,
+      "sameWatcherNonce": true,
+      "nativeContextAt": "2026-09-27T03:20:19.529Z",
+      "nativeAssistantAt": "2026-09-27T03:20:21.967Z",
+      "receiptsBeforeNextCall": 3,
+      "receiptsAfterNextCall": 4
+    },
+    "async": {
+      "sentAt": "2026-09-27T03:29:57.215899Z",
+      "nativeJournalOccurrences": 2,
+      "firstNativeAt": "2026-09-27T03:30:57.190Z",
+      "lastNativeAt": "2026-09-27T03:30:58.032Z",
+      "noAutomaticDeliverySeconds": 46.000952,
+      "noAutomaticDeliveryAcrossToolsAndStop": true,
+      "nativeToolCallsBeforeRead": 2,
+      "nativeStopBoundariesBeforeRead": 1,
+      "nativeReadAt": "2026-09-27T03:30:57.190Z",
+      "nativeAssistantAt": "2026-09-27T03:30:58.032Z",
+      "bodySeenInNativeReadAndResponse": true,
+      "receiptFactsBeforeNextCall": 5,
+      "freshEventAbsentBeforeNextCall": true,
+      "receiptFactsAfterNextCall": 6,
+      "freshEventAcknowledgedAfterNextCall": true
+    },
+    "pauseResume": {
+      "sentAt": "2026-09-27T03:31:36.551214Z",
+      "nativeJournalOccurrences": 4,
+      "firstNativeAt": "2026-09-27T03:32:44.791Z",
+      "lastNativeAt": "2026-09-27T03:32:46.846Z",
+      "heldAcrossToolsStopAndRead": true,
+      "pausedReadAt": "2026-09-27T03:32:19.224Z",
+      "pausedReadKind": "empty",
+      "receiptsWhilePaused": 6,
+      "resumedNativeContextAt": "2026-09-27T03:32:44.791Z",
+      "resumedNativeAssistantAt": "2026-09-27T03:32:46.846Z",
+      "receiptsAfterNextCall": 7
+    },
+    "restartRejoin": {
+      "sameNativeSession": true,
+      "oldLaunchCapabilityRefused": true,
+      "approvedOperationReused": true,
+      "reactivatedAfterExplicitNativeRequest": true
+    },
+    "stop": {
+      "stoppedBindings": 1,
+      "remainingBindings": 0,
+      "nativeReadAt": "2026-09-27T03:33:15.911Z",
+      "nativeReadRefusedUnbound": true,
+      "postStopMarkerAbsent": true,
+      "receiptsAfterStop": 7,
+      "sameCliAlive": true,
+      "nativeBashAfterStopCompleted": true
+    }
+  },
+  "limitations": {
+    "previousAsyncBatchExcluded": true,
+    "finalApplicationCandidate": false,
+    "unboundedIdleWakeProven": false,
+    "agentToAgentAutomaticWakeProven": false,
+    "privateRawRetainedOutsideRepository": true
+  }
+}

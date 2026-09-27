@@ -115,6 +115,24 @@ function send(store: ChannelStore, input: Readonly<{
 }
 
 describe('channel store identity and authority', () => {
+  it('answers pending human release presence with a metadata-only query fenced to admission and generation', () => {
+    const sql: string[] = [];
+    const { store, handle } = fresh(statement => sql.push(statement));
+    seed(store);
+    expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'unavailable' });
+    admitWithSharedHistory(handle, bobBinding, channelId);
+    expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'pending', pending: false });
+    send(store, { eventId: '1', author: 'bob' });
+    expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'pending', pending: false });
+    send(store, { eventId: '2', author: 'alice', body: 'secret stays out of notification' });
+    expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'pending', pending: true });
+    expect(store.pendingHumanRelease({ channelId, binding: { ...bobBinding, generation: 5 } })).toEqual({ kind: 'unavailable' });
+    const query = sql.find(statement => statement.includes('FROM events e'));
+    expect(query).toContain('SELECT 1 FROM events e');
+    expect(query).not.toContain('canonical_payload');
+    expect(store.revokeBinding({ bindingId: bobBinding.bindingId, generation: bobBinding.generation })).toMatchObject({ kind: 'done' });
+    expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'unavailable' });
+  });
   it('persists roster, immutable device ownership and exact binding history across restart', () => {
     const { directory, handle, store } = fresh();
     seed(store);

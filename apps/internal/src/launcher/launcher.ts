@@ -287,14 +287,15 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       // Claude sessions present the transport capability from `active.json` and join as themselves.
       // One inspection of the installed Claude Code backs both the owner's view and the session route.
       const claudeRoute = await inspectClaudeRoute(options.claudeVersion);
+      const modes = composeBindingModes({ handle: channel.handle, store: channel.store,
+        stateDirectory: path.dirname(root), claude: claudeRoute });
       const claude = await composeClaudeSession({
         root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
+        pause: modes.pause,
       });
       bindingControl = composeBindingControl({
         handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,
       });
-      const modes = composeBindingModes({ handle: channel.handle, store: channel.store,
-        stateDirectory: path.dirname(root), claude: claudeRoute });
       const receipts = composeInternalReceipts({ store: channel.handle, logFile: path.join(channel.directory, RECEIPT_LOG_FILE) });
       // Acknowledgements a crash left unprojected reach the owner's evidence before the server listens.
       await receipts.projector.drain().catch(() => undefined);

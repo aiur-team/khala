@@ -9,11 +9,9 @@
 // channel no Claude session is granted; the `approved` canary sits in the granted
 // session's own channel. An unbound bystander session must carry neither.
 //
-// This world's launcher claims an installed Claude Code that is not in the proven list,
-// so the route is experimental (#418): `pull` and `read` deliver with batch-token
-// acknowledgement, and every mode is labelled experimental. The default `sync` request
-// is not effective without the owner's experimental-route grant, so hooks deliver
-// nothing on their own. The approved canary is the
+// This world's launcher claims the exact Claude Code version with a proven native
+// route: `pull` and `read` deliver with batch-token acknowledgement, and the default
+// `sync` request is effective. The approved canary is the
 // positive control: it reaches the granted session's own delivery surfaces, and only
 // those. The pending canary reaches nothing, and the bystander carries neither. The
 // granted session's own sends landing in its channel, and only there, show the probes
@@ -122,25 +120,24 @@ describe('Claude session surfaces never carry content the session was not releas
     // The hook pull runs first and delivers it; the agent's own read then acknowledges it.
     expect(carrying).toContain(`claude-op:pull ${GRANTED}`);
     const granted = (surface: string) => seed.capture.text(`${surface} ${GRANTED}`);
-    // Every mode is labelled experimental: the default `sync` request needs the owner's
-    // experimental-route grant, so nothing is effective and hooks deliver nothing.
+    // The exact-version sync route is effective; its content-free hook may arm
+    // the finite watcher, but neither it nor the bystander can see pending content.
     for (const surface of ['claude-op:hook', 'claude-op:watch']) {
-      expect(granted(surface), surface).toContain('"kind":"hook","effective":null');
+      expect(granted(surface), surface).toContain('"kind":"hook","effective":"sync","watchSeconds":3000');
     }
     // Surfaces are driven in sorted order, so `khala_mode_get` reads before `khala_mode_set` writes.
     for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_mode_get']) {
       const text = granted(surface).replaceAll('\\"', '"');
-      expect(text, surface).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
-      expect(text, surface).toContain('"support":{"steer":"experimental","sync":"experimental","async":"experimental"}');
+      expect(text, surface).toContain('"kind":"mode","requested":"sync","effective":"sync","effectiveReason":null');
+      expect(text, surface).toContain('"support":{"steer":"proven","sync":"proven","async":"proven"}');
       expect(text, surface).toContain('"acknowledgement":"batch_token_next_call"');
     }
-    // The agent may request a mode on its own (decision 42), but an experimental route never becomes
-    // effective without the owner's grant: it stays null, with the honest reason (decisions 34 and 37).
+    // The agent may request the proven mode on its own (decision 42).
     const set = granted('claude-mcp-tool:khala_mode_set').replaceAll('\\"', '"');
-    expect(set).toContain('"kind":"applied","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required","version":2');
+    expect(set).toContain('"kind":"applied","requested":"sync","effective":"sync","effectiveReason":null,"version":2');
     const status = granted('claude-mcp-tool:khala_status').replaceAll('\\"', '"');
-    expect(status).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
-    expect(status).toContain('"support":{"steer":"experimental","sync":"experimental","async":"experimental"}');
+    expect(status).toContain('"kind":"mode","requested":"sync","effective":"sync","effectiveReason":null');
+    expect(status).toContain('"support":{"steer":"proven","sync":"proven","async":"proven"}');
   });
 
   it('the granted binding is real: its sends reach its own channel only, and the bystander\'s reach nothing', async () => {
