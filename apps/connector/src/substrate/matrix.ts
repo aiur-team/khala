@@ -5,12 +5,13 @@
 // the review/release pipeline decides what the bound agent may see.
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
+import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, writeFile, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Page } from 'playwright-core';
-import { chromium } from 'playwright-core';
+import type { chromium as Chromium } from 'playwright-core';
 import { encodeMessageContent, type DeviceId, type EventId, type ParticipantId, type RoomId } from '@khala/contracts/messaging/index';
 import type { ConnectorDevicePort, DeviceActivation, DeviceStatus } from '@khala/connector/bootstrap/ports';
 import type { AuthorityCheck, SourceEvent, SourceListener, SourceRead, SubscriptionSource } from '@khala/connector/subscription/adapter';
@@ -35,6 +36,8 @@ export type MatrixConnectorInput = Readonly<{
   participantIdFor: (matrixUserId: string) => ParticipantId | null;
   chromiumExecutablePath?: string;
   browserBundleDirectory?: string;
+  /** Exact, packaged Playwright 1.63.0 package root for the installed CLI. */
+  browserDriverDirectory?: string;
 }>;
 
 export type MatrixConnectorSubstrate = Readonly<{
@@ -106,7 +109,7 @@ async function staticServer(root: string, port: number): Promise<{ server: Serve
 
 async function call<T>(page: Page, method: string, ...args: unknown[]): Promise<T> {
   return page.evaluate(async ([name, values]) => {
-    const api = (window as unknown as { khalaMatrix: Record<string, (...values: unknown[]) => Promise<unknown>> }).khalaMatrix;
+    const api = (globalThis as unknown as { khalaMatrix: Record<string, (...values: unknown[]) => Promise<unknown>> }).khalaMatrix;
     if (!api || typeof api[name] !== 'function') throw new Error('matrix_browser_method_missing');
     return api[name](...values);
   }, [method, args] as const) as Promise<T>;
@@ -132,6 +135,13 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
   if (!input.baseUrl.startsWith('https://') && !input.baseUrl.startsWith('http://127.0.0.1:'))
     throw new Error('matrix_origin_untrusted');
   await mkdir(input.profileDirectory, { recursive: true, mode: 0o700 });
+  const requireDriver = createRequire(import.meta.url);
+  // The packaged path is fixed by the installed composition. Never discover a
+  // different driver from an agent-controlled cwd or NODE_PATH.
+  const driverPath = input.browserDriverDirectory
+    ? path.join(input.browserDriverDirectory, 'index.js') : requireDriver.resolve('playwright-core');
+  const driver = requireDriver(driverPath) as { chromium: typeof Chromium };
+  if (!driver.chromium || typeof driver.chromium.launchPersistentContext !== 'function') throw new Error('matrix_browser_driver_invalid');
   const lockPath = fileFor(input.profileDirectory, 'writer.lock');
   const lock: FileHandle = await open(lockPath, 'wx', 0o600).catch(() => { throw new Error('matrix_device_locked'); });
   await lock.writeFile(String(process.pid));
@@ -155,7 +165,7 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
     }
     const serving = await staticServer(path.resolve(input.browserBundleDirectory ?? bundleDirectory()), previous?.port ?? 0);
     server = serving.server;
-    context = await chromium.launchPersistentContext(profile, {
+    context = await driver.chromium.launchPersistentContext(profile, {
       executablePath: input.chromiumExecutablePath ?? '/usr/bin/chromium',
       headless: true, args: ['--no-sandbox'],
     });
@@ -165,7 +175,7 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
       for (const listener of listeners) { if (lost) listener.lost(); else listener.hint(); }
     });
     await page.goto(serving.origin);
-    await page.waitForFunction(() => typeof (window as unknown as { khalaMatrix?: unknown }).khalaMatrix === 'object');
+    await page.waitForFunction(() => typeof (globalThis as unknown as { khalaMatrix?: unknown }).khalaMatrix === 'object');
     const identity = await call<BrowserOpen>(page, 'open', {
       baseUrl: input.baseUrl, userId: input.userId, deviceId: input.deviceId, accessToken: input.accessToken,
       roomId: input.roomId, storeName: 'khala-owner-connector',

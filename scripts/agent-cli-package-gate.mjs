@@ -6,6 +6,7 @@
 // workspace, and an `@aiur/khala/opencode` export that imports from that prefix. The
 // release workflow publishes the tarball this gate accepted.
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,6 +23,7 @@ export const OLD_PACKAGE_NAME = ['@khala', 'agent-cli'].join('/');
 // names vary per build, so only the directory prefix and its entry document are fixed.
 export const INTERNAL_WEB_DIRECTORY = 'dist/internal-web/';
 export const SUBSTRATE_BROWSER_DIRECTORY = 'dist/substrate-browser/';
+export const PLAYWRIGHT_CORE_DIRECTORY = 'dist/playwright-core/';
 const HAS_SUBSTRATE_BROWSER = fs.existsSync(path.join(root, 'apps/connector/vite.matrix.config.mjs'));
 // `dist/payload/` holds the reviewed assets `khala setup` installs: the Claude plugin's shipped
 // files and the Codex skill.
@@ -39,7 +41,7 @@ export const PAYLOAD_FILES = [
   'dist/payload/claude-plugin/skills/khala/SKILL.md',
   'dist/payload/codex/SKILL.md',
 ];
-export const PACKED_FILES = ['README.md', 'dist/khala-internal.js', 'dist/khala.js', 'dist/opencode.js', ...PAYLOAD_FILES, 'dist/internal-web/index.html', ...(HAS_SUBSTRATE_BROWSER ? ['dist/substrate-browser/index.html'] : []), 'package.json'];
+export const PACKED_FILES = ['README.md', 'dist/khala-internal.js', 'dist/khala.js', 'dist/opencode.js', ...PAYLOAD_FILES, 'dist/internal-web/index.html', ...(HAS_SUBSTRATE_BROWSER ? ['dist/substrate-browser/index.html', 'dist/playwright-core/package.json', 'dist/playwright-core/index.js', 'dist/playwright-core/browsers.json'] : []), 'package.json'];
 export const OPENCODE_EXPORT = `${PACKAGE_NAME}/opencode`;
 export const BUNDLES =['dist/khala.js', 'dist/khala-internal.js', 'dist/opencode.js'];
 export const REPOSITORY_URL = 'git+https://github.com/aiur-team/khala.git';
@@ -59,12 +61,47 @@ export function packedFileErrors(files) {
   const actual = [...files].sort();
   const extra = actual.filter(file => !PACKED_FILES.includes(file)
     && !file.startsWith(INTERNAL_WEB_DIRECTORY)
-    && !(HAS_SUBSTRATE_BROWSER && file.startsWith(SUBSTRATE_BROWSER_DIRECTORY)));
+    && !(HAS_SUBSTRATE_BROWSER && file.startsWith(SUBSTRATE_BROWSER_DIRECTORY))
+    && !(HAS_SUBSTRATE_BROWSER && file.startsWith(PLAYWRIGHT_CORE_DIRECTORY)));
   const missing = PACKED_FILES.filter(file => !actual.includes(file));
   return [
     ...extra.map(file => `tarball contains non-allowlisted file ${file}`),
     ...missing.map(file => `tarball is missing ${file}`),
   ];
+}
+
+/** Exact vendored driver copy, including its original package metadata. */
+export function playwrightCopyErrors(extracted, source = path.join(root, 'apps/connector/node_modules/playwright-core')) {
+  if (!HAS_SUBSTRATE_BROWSER) return [];
+  const destination = path.join(extracted, 'package', PLAYWRIGHT_CORE_DIRECTORY);
+  const errors = [];
+  const sourceRoot = fs.realpathSync(source);
+  function filesUnder(directory) {
+    const files = [];
+    function walk(current, relative) {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const name = path.posix.join(relative, entry.name);
+        if (entry.isDirectory()) walk(path.join(current, entry.name), name);
+        else if (entry.isFile()) files.push(name);
+        else errors.push(`vendored Playwright has a nonregular path ${name}`);
+      }
+    }
+    walk(directory, '');
+    return files.sort();
+  }
+  const expected = filesUnder(sourceRoot);
+  const actual = filesUnder(destination);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) errors.push('vendored Playwright file list differs from pinned workspace package');
+  for (const file of expected.filter(name => actual.includes(name))) {
+    const digest = filename => createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
+    if (digest(path.join(sourceRoot, file)) !== digest(path.join(destination, file))) {
+      errors.push(`vendored Playwright file differs from pinned workspace package: ${file}`);
+    }
+  }
+  const manifest = JSON.parse(fs.readFileSync(path.join(destination, 'package.json'), 'utf8'));
+  if (manifest.name !== 'playwright-core' || manifest.version !== '1.63.0') errors.push('vendored Playwright identity changed');
+  errors.push(...lifecycleHookErrors(manifest, 'vendored Playwright'));
+  return errors;
 }
 
 /** Checks identity, publish/provenance metadata and self-containment of the packed manifest. */
@@ -183,6 +220,7 @@ export function gatePackage({ packageDirectory = path.join(root, 'packages/agent
   fs.mkdirSync(extracted);
   execFileSync('tar', ['-xzf', tarball, '-C', extracted]);
   errors.push(...manifestErrors(JSON.parse(fs.readFileSync(path.join(extracted, 'package/package.json'), 'utf8'))));
+  errors.push(...playwrightCopyErrors(extracted));
 
   for (const bundled of BUNDLES) {
     const metafilePath = path.join(packageDirectory, `${bundled}.meta.json`);

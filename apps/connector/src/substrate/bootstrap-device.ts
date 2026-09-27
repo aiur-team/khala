@@ -11,6 +11,7 @@ export function createMatrixBootstrapDevice(input: Readonly<{
   profileDirectory: string;
   chromiumExecutablePath?: string;
   browserBundleDirectory?: string;
+  browserDriverDirectory?: string;
   open?: typeof openMatrixConnectorSubstrate;
 }>): Readonly<{
   devices: ConnectorDevicePort;
@@ -84,6 +85,7 @@ export function createMatrixBootstrapDevice(input: Readonly<{
         : userId === candidate.ownerUserId ? candidate.ownerParticipantId as ParticipantId : null,
       ...(input.chromiumExecutablePath ? { chromiumExecutablePath: input.chromiumExecutablePath } : {}),
       ...(input.browserBundleDirectory ? { browserBundleDirectory: input.browserBundleDirectory } : {}),
+      ...(input.browserDriverDirectory ? { browserDriverDirectory: input.browserDriverDirectory } : {}),
     });
     currentSession = candidate;
     return substrate;

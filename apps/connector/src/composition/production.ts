@@ -58,6 +58,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     stateDirectory: sessionDirectory,
     profileDirectory: path.join(sessionDirectory, 'matrix-profile'),
     browserBundleDirectory: input.browserBundleDirectory,
+    browserDriverDirectory: path.join(path.dirname(input.browserBundleDirectory), 'playwright-core'),
   });
   let closed = false;
   let binding: SessionBinding | null = null;

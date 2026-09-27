@@ -23,6 +23,7 @@ const packageDirectory = fileURLToPath(new URL('..', import.meta.url));
 export const INTERNAL_WEB_SOURCE = path.resolve(packageDirectory, '../../apps/web/dist/internal-web');
 export const SUBSTRATE_BROWSER_SOURCE = path.resolve(packageDirectory, '../../apps/connector/dist/substrate-browser');
 export const SUBSTRATE_BROWSER_CONFIG = path.resolve(packageDirectory, '../../apps/connector/vite.matrix.config.mjs');
+export const PLAYWRIGHT_CORE_SOURCE = path.resolve(packageDirectory, '../../apps/connector/node_modules/playwright-core');
 
 export const INTERNAL_ENTRY_POINT = path.resolve(packageDirectory, '../../apps/internal/src/composition/internal-cli.ts');
 /** Top-level Claude plugin entries that ship; sources, tests, and package metadata do not. */
@@ -99,6 +100,15 @@ export async function bundle({
       throw new Error(`connector browser bundle missing at ${SUBSTRATE_BROWSER_SOURCE} and build failed`);
     }
     await fs.cp(SUBSTRATE_BROWSER_SOURCE, path.join(path.dirname(outfile), 'substrate-browser'), { recursive: true });
+    const driverManifest = JSON.parse(await fs.readFile(path.join(PLAYWRIGHT_CORE_SOURCE, 'package.json'), 'utf8'));
+    if (driverManifest.name !== 'playwright-core' || driverManifest.version !== '1.63.0'
+      || driverManifest.scripts?.prepare || driverManifest.scripts?.postinstall) {
+      throw new Error('packaged Playwright driver identity or lifecycle changed');
+    }
+    // Playwright's supported package entry needs its own __dirname and
+    // browsers.json. Preserve that package root beside the versioned CLI,
+    // rather than flattening its CommonJS closure into an ESM bin.
+    await fs.cp(PLAYWRIGHT_CORE_SOURCE, path.join(path.dirname(outfile), 'playwright-core'), { recursive: true, dereference: true });
   }
   await copyPayload(absWorkingDir, path.dirname(outfile));
   return metafile;
