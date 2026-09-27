@@ -38,6 +38,7 @@ import type { BindingPauseStore } from '../../store/pause-store';
 import { discoveryPrincipal, sessionDigest } from '../channel-discovery/service';
 import { issueDiscoveryDescriptor } from '../discovery-descriptor';
 import { createLocalAutomationProvider, localClaudeWatchWindow } from '../local-automation/provider';
+import { ensureClaudeWakeSignal, pulseClaudeWakeSignal } from './signal';
 
 // The Claude plugin's session route in the internal launcher's server. Hooks and the
 // plugin's `mcp-serve` present the launch's transport capability from `active.json`
@@ -118,7 +119,10 @@ export async function inspectClaudeRoute(version?: () => Promise<string | null>)
   return installedClaudeCapabilities(found, DELIVERY_LIMITS);
 }
 
-export type ClaudeSessionComposition = Readonly<{ adapter: ClaudeSessionAdapter; route: AgentSessionRoute }>;
+export type ClaudeSessionComposition = Readonly<{
+  adapter: ClaudeSessionAdapter; route: AgentSessionRoute; close(): void;
+  controlChanged(binding: SessionBinding): void;
+}>;
 
 export async function composeClaudeSession(options: ClaudeSessionCompositionOptions): Promise<ClaudeSessionComposition> {
   const { root, store } = options;
@@ -351,8 +355,46 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
 
   const capabilities = async (): Promise<HarnessCapabilities> => options.capabilities;
   const inboxRoot = path.join(root, INBOX_DIRECTORY);
+  const signals = new Map<string, Readonly<{ bindingId: string; generation: number; channelId: string; unsubscribe(): void }>>();
+
+  /** Register one event source for an approved native session, rechecking authority on every hint. */
+  function registerSignal(binding: SessionBinding): void {
+    const descriptor = grant(binding.sessionId);
+    if (descriptor === null || descriptor.bindingId !== binding.bindingId) return;
+    const current = signals.get(binding.sessionId);
+    if (current?.bindingId === binding.bindingId && current.generation === binding.generation
+      && current.channelId === descriptor.channelId) {
+      // SessionEnd removes ephemeral state; a resumed Claude session reuses its ID.
+      ensureClaudeWakeSignal(root, binding.sessionId);
+      return;
+    }
+    current?.unsubscribe();
+    signals.delete(binding.sessionId);
+    if (!ensureClaudeWakeSignal(root, binding.sessionId)) return;
+    const expected = { bindingId: binding.bindingId, generation: binding.generation, channelId: descriptor.channelId };
+    const unsubscribe = store.subscribeHints(descriptor.channelId as RoomId, () => {
+      void notify(binding.sessionId, expected);
+    });
+    signals.set(binding.sessionId, { ...expected, unsubscribe });
+    // Covers a pending release carried across a launch or grant activation.
+    void notify(binding.sessionId, expected);
+  }
+
+  async function notify(sessionId: string, expected: Readonly<{ bindingId: string; generation: number; channelId: string }>): Promise<void> {
+    const current = signals.get(sessionId);
+    if (current?.bindingId !== expected.bindingId || current.generation !== expected.generation
+      || current.channelId !== expected.channelId) return;
+    const state = await adapter.pending({ credential: options.transportCapability, sessionId }).catch(() => null);
+    if (state?.kind !== 'pending') return;
+    const live = bound(sessionId);
+    const descriptor = grant(sessionId);
+    if (live?.bindingId !== expected.bindingId || live.generation !== expected.generation
+      || descriptor?.channelId !== expected.channelId) return;
+    pulseClaudeWakeSignal(root, sessionId, expected.generation);
+  }
 
   function services(binding: SessionBinding): ClaudeBindingServices {
+    registerSignal(binding);
     const { grantPath } = paths(binding.sessionId);
     const client = createInternalClient({
       descriptorPath: grantPath,
@@ -500,6 +542,17 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
 
   return {
     adapter,
+    controlChanged(binding) {
+      for (const [sessionId, expected] of signals) {
+        if (expected.bindingId === binding.bindingId && expected.generation === binding.generation) {
+          void notify(sessionId, expected);
+        }
+      }
+    },
+    close() {
+      for (const entry of signals.values()) entry.unsubscribe();
+      signals.clear();
+    },
     route: {
       path: CLAUDE_SESSION_PATH,
       handle: input => handleClaudeSessionRequest(adapter, {

@@ -47,6 +47,8 @@ const MAX_INPUT_BYTES = 1024 * 1024;
 
 /** Each hook script's role and the only Claude event it answers. */
 export const HOOK_ROLES = {
+  'session-start': 'SessionStart',
+  'file-changed': 'FileChanged',
   'user-prompt-submit': 'UserPromptSubmit',
   'post-tool-use': 'PostToolUse',
   stop: 'Stop',
@@ -79,7 +81,10 @@ export function decodeHookInput(role, raw) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   if (value.hook_event_name !== HOOK_ROLES[role] || !validSessionId(value.session_id)) return null;
   if (!(value.stop_hook_active === undefined || typeof value.stop_hook_active === 'boolean')) return null;
-  return { event: value.hook_event_name, sessionId: value.session_id, stopHookActive: value.stop_hook_active === true };
+  if (role === 'file-changed' && (typeof value.file_path !== 'string' || !path.isAbsolute(value.file_path)
+    || !['change', 'add', 'unlink'].includes(value.event))) return null;
+  return { event: value.hook_event_name, sessionId: value.session_id, stopHookActive: value.stop_hook_active === true,
+    filePath: role === 'file-changed' ? value.file_path : null, fileEvent: role === 'file-changed' ? value.event : null };
 }
 
 /**
@@ -326,6 +331,7 @@ function sessionState(deps, sessionId) {
   }
   return {
     dir,
+    signalPath: claudeWakeSignalPath(deps.stateRoot, sessionId),
     activity: () => read('activity'),
     setActivity: value => write('activity', value),
     /** The live watcher's nonce and arm time. Written only when a watcher arms; removed on cancel. */
@@ -346,7 +352,18 @@ function sessionState(deps, sessionId) {
     },
     /** A watcher's last recorded status. It never decides ownership. */
     setWatcher: value => write('watcher', JSON.stringify(value)),
-    markWake: () => write('wake', ''),
+    /** One native path wins when FileChanged and the Stop watcher race to wake. */
+    async markWake() {
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      try {
+        const handle = await fs.open(file('wake'), constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+        await handle.close();
+        return true;
+      } catch (error) {
+        if (error?.code === 'EEXIST') return false;
+        throw error;
+      }
+    },
     /** Removes the wake marker; true only for the one caller that removed it. */
     async consumeWake() {
       try {
@@ -358,6 +375,20 @@ function sessionState(deps, sessionId) {
     },
     remove: () => fs.rm(dir, { recursive: true, force: true }),
   };
+}
+
+/** Shared path recipe for the launcher's content-free, per-session change notification. */
+export function claudeWakeSignalPath(stateRoot, sessionId) {
+  if (!validSessionId(sessionId) || typeof stateRoot !== 'string' || !path.isAbsolute(stateRoot)) return null;
+  return path.join(stateRoot, `${createHash('sha256').update(sessionId).digest('hex').slice(0, 32)}.signal`);
+}
+
+async function safeSignalFile(file) {
+  try {
+    const stat = await fs.lstat(file);
+    return stat.isFile() && stat.nlink === 1 && (stat.mode & 0o777) === 0o600
+      && (typeof process.getuid !== 'function' || stat.uid === process.getuid());
+  } catch { return false; }
 }
 
 /**
@@ -394,6 +425,16 @@ export async function runHook(role, raw, deps) {
   // An unbound session is a plain Claude session: no output, no state, no `khala` call.
   // One with an access request outstanding is engaged, so its grant can reach it.
   // SessionEnd still removes the session's own state, which an unbound one never has.
+  if (role === 'session-start') {
+    // The launcher creates the private signal only after binding. An unrelated
+    // Claude session registers its path but writes no state and calls no adapter.
+    // A bound resumed session must discard activity left by an interrupted CLI.
+    if (await deps.bound(input.sessionId).catch(() => false)) {
+      await state.setActivity('active');
+      await state.consumeWake();
+    }
+    return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', watchPaths: [state.signalPath] } }), stderr: '', exitCode: 0 };
+  }
   if (role !== 'session-end' && !await deps.bound(input.sessionId).catch(() => false)) {
     return { stdout: '', stderr: '', exitCode: 0 };
   }
@@ -403,6 +444,7 @@ export async function runHook(role, raw, deps) {
       case 'post-tool-use': return await postToolUse(input, deps);
       case 'stop': return await stop(input, state, deps);
       case 'stop-watcher': return await watch(input, state, deps);
+      case 'file-changed': return await fileChanged(input, state, deps);
       case 'session-end':
         // Ephemeral state only: Khala's batch and token state is untouched.
         await state.remove();
@@ -412,6 +454,22 @@ export async function runHook(role, raw, deps) {
   } catch {
     return { stdout: '', stderr: diagnostic(role, 'hook_failed'), exitCode: 0 };
   }
+}
+
+/** Native filesystem notification: authority stays in the adapter and no batch is claimed here. */
+async function fileChanged(input, state, deps) {
+  if (!['add', 'change'].includes(input.fileEvent) || input.filePath !== state.signalPath
+    || !await safeSignalFile(state.signalPath) || await state.activity() !== 'idle') {
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
+  const hook = await hookState(deps, input.sessionId, 'watch');
+  if (hook?.effective !== 'steer' && hook?.effective !== 'sync') return { stdout: '', stderr: '', exitCode: 0 };
+  if (await pending(deps, input.sessionId) !== 'pending' || await state.activity() !== 'idle') {
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
+  if (!await state.markWake()) return { stdout: '', stderr: '', exitCode: 0 };
+  await state.setActivity('woken');
+  return { stdout: '', stderr: `${WAKE_NOTICE}\n`, exitCode: 2 };
 }
 
 /**
@@ -524,7 +582,7 @@ async function watch(input, state, deps) {
     if (signal === 'pending') {
       // Re-check just before waking: a prompt may have made the session busy meanwhile.
       if (await owns() && await state.activity() === 'idle') {
-        await state.markWake();
+        if (!await state.markWake()) return { stdout: '', stderr: '', exitCode: 0 };
         await state.setActivity('woken');
         await record('woke');
         return { stdout: '', stderr: `${WAKE_NOTICE}\n`, exitCode: 2 };
