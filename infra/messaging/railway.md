@@ -132,6 +132,11 @@ set `/data` ownership to UID/GID 991 before invoking `/start.py run`; the entryp
 then drops the long-running process to that identity. A Railway volume surviving replacement is persistence evidence, not a
 backup or restore result. KHA-109 owns backup sets and restore rehearsal.
 
+The disposable KHA-134 hosted preview's derived Synapse image, runtime secret
+injection, ingress boundary and teardown are described in
+[`../preview/hosted.md`](../preview/hosted.md). They have local replacement
+evidence, not a hosted deployment record.
+
 Before production mutation, record approval for the Matrix `server_name`, public
 Matrix domain, DNS/TLS, hosting account and budget, license choice, secret/file
 delivery, ingress rules, resource sizing, monitoring and upgrade policy. None of

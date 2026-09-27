@@ -177,7 +177,9 @@ async function discardBody(response: Response): Promise<void> {
   }
 }
 
-export async function probeBoundary(origin: string, fetchImpl: FetchLike = fetch, serverName = 'matrix.invalid'): Promise<{ ready: true; reason: string }> {
+export async function probeBoundary(
+  origin: string, fetchImpl: FetchLike = fetch, serverName = 'matrix.invalid', registrationIngressToken?: string,
+): Promise<{ ready: true; reason: string }> {
   const health = await request(fetchImpl, origin, '/health');
   await discardBody(health);
   if (health.status !== 200) throw new CheckError('service-unavailable');
@@ -210,8 +212,13 @@ export async function probeBoundary(origin: string, fetchImpl: FetchLike = fetch
   if (registration.status >= 500) throw new CheckError('database-unavailable');
   if (registration.status !== 403) throw new CheckError('registration-not-rejected');
 
+  if (registrationIngressToken) {
+    const anonymous = await request(fetchImpl, origin, '/_synapse/admin/v1/register');
+    await discardBody(anonymous);
+    if (anonymous.status !== 403) throw new CheckError('registration-ingress-unrestricted');
+  }
   const sharedSecretRegistration = await request(fetchImpl, origin, '/_synapse/admin/v1/register', {
-    headers: { accept: 'application/json' },
+    headers: { accept: 'application/json', ...(registrationIngressToken ? { 'X-Khala-Registration-Ingress': registrationIngressToken } : {}) },
   });
   let sharedSecretBody;
   try {
@@ -249,7 +256,12 @@ async function run(argv = process.argv.slice(2), env: Environment = process.env)
   let health = { ready: false, reason: 'not-probed' };
   if (!args.renderOnly) {
     if (!inputs.checkOrigin) throw new CheckError('missing-check-origin');
-    health = await probeBoundary(inputs.checkOrigin, fetch, inputs.serverName);
+    const ingressToken = env.KHALA_MATRIX_REGISTRATION_INGRESS_TOKEN;
+    if (ingressToken && ingressToken.length < 32) throw new CheckError('weak-registration-ingress-token');
+    if (inputs.environment === 'preview' && new URL(inputs.checkOrigin).protocol === 'https:' && !ingressToken) {
+      throw new CheckError('missing-registration-ingress-token');
+    }
+    health = await probeBoundary(inputs.checkOrigin, fetch, inputs.serverName, ingressToken);
   }
   return {
     environment: inputs.environment,
