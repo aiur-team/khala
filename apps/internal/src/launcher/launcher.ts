@@ -300,6 +300,8 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
         pause: modes.pause,
         ...(modes.control.peerPending ? { peerPending: modes.control.peerPending } : {}),
+        peerTerminalChallenge: modes.claudeTerminalChallenge,
+        peerTurnEnd: modes.finishClaudeTurn,
       });
       bindingControl = composeBindingControl({
         handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,

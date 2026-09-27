@@ -11,6 +11,7 @@ import { createInternalClient } from '@aiur/khala/composition/internal';
 import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import { createUnavailableClient } from '@aiur/khala/composition/unavailable';
 import { INTERNAL_DISCOVERY_DIRECTORY } from '@khala/contracts/internal/discovery-descriptor';
+import { INTERNAL_CLAUDE_TERMINAL_KEY_FILE } from '@khala/contracts/internal/descriptor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHook, sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
 import { webBundleManifest } from '../../launcher/bundle';
@@ -951,6 +952,53 @@ describe('Claude delivery through the internal launcher', () => {
     const pending = await recipient.run('pending');
     expect(JSON.parse(pending)).toEqual({ ok: true, kind: 'pending' });
     expect(pending).not.toContain('peer causal reply');
+
+    const hookRoot = path.join(recipient.parent, 'claude-peer-hooks');
+    const hookDeps = {
+      bound: (sessionId: string) => sessionGranted(path.join(recipient.parent, 'internal'), sessionId),
+      khala: async (op: string, sessionId: string, flags: string[] = [], input = '') => {
+        const stdout = new PassThrough();
+        let output = '';
+        stdout.on('data', chunk => { output += chunk; });
+        const code = await runCli(['claude', op, '--session', sessionId, ...flags], {
+          client: createUnavailableClient(),
+          inbox: vi.fn(async () => { throw new Error('the Claude hook never opens inbox storage'); }),
+          claude: createClaudeSessionClient({ descriptorPath: recipient.report.descriptorPath }),
+          stdin: Readable.from([input]), stdout, stderr: new PassThrough(),
+        });
+        return { code, stdout: output };
+      },
+      stateRoot: hookRoot,
+      terminalKeyPath: path.join(recipient.parent, 'internal', INTERNAL_CLAUDE_TERMINAL_KEY_FILE),
+      sleep: async () => undefined,
+      now: () => Date.now(),
+      nonce: () => 'peer-stop-nonce',
+      parentAlive: () => true,
+    };
+    const stop = (continued: boolean) => runHook('stop', JSON.stringify({
+      hook_event_name: 'Stop', session_id: 'session-peer-recipient', stop_hook_active: continued,
+    }), hookDeps);
+
+    // The plain CLI has no proof. The first native Stop pulls the peer release;
+    // only the follow-up Stop can authenticate completion of that retained batch.
+    expect(JSON.parse(await recipient.run('terminal-challenge'))).toMatchObject({ kind: 'empty' });
+    const firstStop = await stop(false);
+    expect(firstStop.stdout).toContain('peer causal reply');
+    const challenge = JSON.parse(await recipient.run('terminal-challenge')) as { kind: string; nonce: string };
+    expect(challenge).toMatchObject({ kind: 'terminal_challenge' });
+    expect((await hookDeps.khala('terminal-complete', 'session-peer-recipient', [],
+      JSON.stringify({ nonce: challenge.nonce, proof: 'A'.repeat(43) }))).code).toBe(3);
+    const [nextSent] = await serve(recipient.report.descriptorPath, senderId,
+      [['khala_send', { message: 'second peer causal reply' }]]);
+    expect(nextSent).toMatchObject({ kind: 'accepted' });
+    expect(JSON.parse(await recipient.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    const secondStop = await stop(true);
+    expect(secondStop).toEqual({ stdout: '', stderr: '', exitCode: 0 });
+    expect(JSON.parse(await recipient.run('terminal-challenge'))).toMatchObject({ kind: 'empty' });
+    // Completion releases the active slot; the ordinary next call acknowledges
+    // the previous batch before the watcher may announce the queued event.
+    await recipient.run('status');
+    expect(JSON.parse(await recipient.run('pending'))).toEqual({ ok: true, kind: 'pending' });
   });
 
   it('delivers at the next PostToolUse under steer only after the owner grants the experimental route', async () => {
@@ -964,6 +1012,7 @@ describe('Claude delivery through the internal launcher', () => {
       bound: sessionId => sessionGranted(path.join(session.parent, 'internal'), sessionId),
       khala: async op => ({ code: 0, stdout: await session.run(op) }),
       stateRoot: path.join(session.parent, 'claude-hooks'),
+      terminalKeyPath: path.join(session.parent, 'internal', INTERNAL_CLAUDE_TERMINAL_KEY_FILE),
       sleep: async () => undefined,
       now: () => Date.now(),
       nonce: () => 'nonce',
