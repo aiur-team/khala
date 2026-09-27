@@ -22,6 +22,7 @@ export type HumanServerEnv = Readonly<{
   controlStateNamespace: string;
   matrixServerName: string;
   matrixRegistrationSharedSecret: string;
+  matrixRegistrationIngressToken: string | null;
   matrixPasswordDerivationSecret: string;
   invitationHmacSecret: string;
 }>;
@@ -74,6 +75,7 @@ export function readHumanServerEnv(env: Readonly<Record<string, string | undefin
     controlStateNamespace: env.CONTROL_STATE_NAMESPACE as string,
     matrixServerName: env.MATRIX_SERVER_NAME as string,
     matrixRegistrationSharedSecret: env.MATRIX_REGISTRATION_SHARED_SECRET as string,
+    matrixRegistrationIngressToken: env.MATRIX_REGISTRATION_INGRESS_TOKEN || null,
     matrixPasswordDerivationSecret: env.MATRIX_PASSWORD_DERIVATION_SECRET as string,
     invitationHmacSecret: env.INVITATION_HMAC_SECRET as string,
   };
