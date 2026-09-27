@@ -53,7 +53,8 @@ export const mcpServeCommand: CliCommand = {
 async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants): Promise<void> {
   if (!deps.internalClient || !deps.internalDelivery) throw new CliError('internal_unavailable');
   const { internalClient, internalDelivery } = deps;
-  type Routed = { client: AgentClientPort; delivering: DeliveringInbox; bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null };
+  type Routed = { client: AgentClientPort; delivering: DeliveringInbox; wake: (() => Promise<void>) | null;
+    bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null };
   const sessions = new Map<string, Routed>();
   type Hosted = Awaited<ReturnType<NonNullable<CliDependencies['hostedSession']>>>;
   const hosted = new Map<string, { opened: Hosted; bound: { binding: SessionBinding; collaborators: McpCallCollaborators } | null }>();
@@ -69,13 +70,22 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
         let routed = sessions.get(grantPath);
         if (routed === undefined) {
           const client = await internalClient(grantPath);
-          const delivering = deliveringInbox(deps.inbox, await internalDelivery(grantPath), deps.signal ? { signal: deps.signal } : {});
-          routed = { client, delivering, bound: null };
+          const delivering = deliveringInbox(deps.inbox,
+            await internalDelivery(grantPath, async () => { await routed?.wake?.(); }),
+            deps.signal ? { signal: deps.signal } : {});
+          routed = { client, delivering, wake: null, bound: null };
           sessions.set(grantPath, routed);
         }
         const current = publicStatus(await routed.client.status(deps.signal));
         if (current.connected && current.binding !== null) {
           if (routed.bound === null || !sameHeldBinding(routed.bound.binding, current.binding)) {
+            try {
+              routed.wake = session.harness === 'codex' && deps.codexIdleWake
+                ? await deps.codexIdleWake(session.sessionId, current.binding) : null;
+            } catch {
+              // Optional notification never prevents an explicit Khala tool call.
+              routed.wake = null;
+            }
             routed.bound = {
               binding: current.binding,
               collaborators: await boundCollaborators(deps, routed.client, routed.delivering.inbox, current.binding),

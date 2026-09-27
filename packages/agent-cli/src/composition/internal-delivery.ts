@@ -49,6 +49,8 @@ export type InternalDeliveryOptions = Readonly<{
   maxPages?: number;
   /** Test seam: runs after a page is durable in the inbox and before its cursor commits. */
   beforeCursorCommit?: () => Promise<void> | void;
+  /** Content-free notification after a new, eligible release is durable. */
+  onWake?: (held: HeldGeneration) => Promise<void> | void;
 }>;
 
 export type InternalDelivery = Readonly<{
@@ -231,7 +233,12 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
           }
           // Hinted as soon as the releases are durable: the hint names only the
           // binding generation and a reason, and a spare wake just re-reads the inbox.
-          if (wake) await inbox.notifyListener('released').catch(() => 'unavailable' as const);
+          if (wake) {
+            await inbox.notifyListener('released').catch(() => 'unavailable' as const);
+            // Queueing is best effort. The pull lock protects only durable inbox/cursor work;
+            // a native process must never hold it while waiting for a reply.
+            if (options.onWake) void Promise.resolve().then(() => options.onWake!(held)).catch(() => undefined);
+          }
           await options.beforeCursorCommit?.();
           if (page.nextCursor !== null && page.nextCursor !== cursor) {
             await writeCursor(cursorFile, directory, page.nextCursor);

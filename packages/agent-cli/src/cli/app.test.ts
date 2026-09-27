@@ -44,6 +44,45 @@ function client(overrides: Partial<AgentClientPort> = {}): AgentClientPort {
 function unusedInbox(): Promise<BatchInbox> { throw new Error('inbox should not be opened'); }
 
 describe('runCli', () => {
+  it('routes installed session inbox arrivals through the native wake composition', async () => {
+    const call = mcpCall(1);
+    (call.params as Record<string, unknown>)._meta = { threadId: 'native-thread-one' };
+    const io = streams(JSON.stringify(call) + '\n');
+    const calls: string[] = [];
+    const result = await runCli(['mcp-serve'], {
+      client: client(), inbox: async () => fakeBatchInbox(async () => ({ async readBatch() { return null; }, async release() {} })),
+      sessionGrants: session => { calls.push(`grant:${session.sessionId}`); return '/private/grant.json'; },
+      internalClient: async () => client(),
+      internalDelivery: async (_path, onWake) => ({ pull: async () => {
+        calls.push('durable');
+        await onWake?.();
+        return 'caught_up';
+      }, acknowledge: async () => {}, issueBatch: async () => 'server-issued-token' }),
+      codexIdleWake: async (sessionId, binding) => {
+        calls.push(`bound:${sessionId}:${binding.bindingId}`);
+        return async () => { calls.push('queue'); };
+      },
+      ...io,
+    });
+    expect(result).toBe(0);
+    expect(calls.slice(0, 4)).toEqual([
+      'grant:native-thread-one', 'bound:native-thread-one:binding-1', 'durable', 'queue',
+    ]);
+  });
+  it('keeps installed MCP tools usable when native wake setup fails', async () => {
+    const call = mcpCall(1);
+    (call.params as Record<string, unknown>)._meta = { threadId: 'native-thread-one' };
+    const io = streams(JSON.stringify(call) + '\n');
+    expect(await runCli(['mcp-serve'], {
+      client: client(), inbox: async () => fakeBatchInbox(async () => ({ async readBatch() { return null; }, async release() {} })),
+      sessionGrants: () => '/private/grant.json', internalClient: async () => client(),
+      internalDelivery: async () => ({ pull: async () => 'caught_up',
+        acknowledge: async () => {}, issueBatch: async () => 'server-issued-token' }),
+      codexIdleWake: async () => { throw new Error('version probe unavailable'); },
+      ...io,
+    })).toBe(0);
+    expect(mcpResponses(io.output())[0]?.result.structuredContent).toMatchObject({ kind: 'accepted' });
+  });
   it('connects with a validated HTTPS link', async () => {
     const io = streams();
     expect(await runCli(['connect', 'https://chat.example/i/abc'], { client: client(), inbox: unusedInbox, ...io })).toBe(0);

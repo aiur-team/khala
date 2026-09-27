@@ -10,7 +10,8 @@ export const codexHookCommand: CliCommand = {
   name: 'codex-hook',
   async run(args, deps) {
     if (args.length !== 0) throw new CliError('invalid_arguments');
-    const io = { stdin: deps.stdin, stdout: deps.stdout, stderr: deps.stderr, signal: deps.signal };
+    const io = { stdin: deps.stdin, stdout: deps.stdout, stderr: deps.stderr, signal: deps.signal,
+      ...(deps.codexBoundary ? { onBoundary: deps.codexBoundary } : {}) };
     if (deps.sessionGrants === undefined) {
       await runCodexHook({ ...io, ...hookPorts(deps, deps.client, deps.inbox) });
       return 0;

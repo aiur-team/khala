@@ -31,14 +31,18 @@ step is missing, the value stays `unknown`: queue acceptance, `item/started`, co
 insertion and the batch response never establish it, and no later call stays neutral.
 Evidence holds booleans and labels only, never token bytes. `steer`
 means the next tool boundary, and hard abort is disabled. `immediateNotification`
-is `native_cli_queue` only while the idle wake works (`createCodexIdleWake`): for an
-idle `steer` or `sync` session it runs `codex queue --thread <sessionId> --message
-<constant notice>`, so the same TUI starts a turn and its `UserPromptSubmit` hook does
-the shared pull. The argv holds no body, token or peer name; concurrent wakes for one
-binding coalesce, `async` is never woken, and no wake starts or continues once Stop
-revokes the binding. For an unsupported version or a failed queue command the
-capability stays `unknown` and idle agents receive messages only at their next turn;
-there is no fallback that launches Codex or types into a screen.
+remains `unknown` until the live installed-TUI proof establishes the wake route.
+The owner server notices accepted human messages even when the idle session has
+never called a Khala MCP tool. The Stop hook records the native session privately;
+the server then asks `codex queue --thread <native session ID> --message
+<constant notice>` inside Stop's revocation barrier. A completed Stop hook records
+idleness; the server rechecks the exact generation, pause, requested and effective
+mode, supported version, and idle interval before queuing. The resulting
+`UserPromptSubmit` hook performs the shared pull. The queue argv and scrubbed
+environment contain no body, batch token or peer name. `async` is never woken;
+unsupported versions and failed queue commands retain the next-turn-only claim.
+The MCP entry starts its inbox poll after that session's first Khala tool call.
+There is no fallback that launches Codex or types into a screen.
 
 The routes below are the earlier Khala-hosted and notification-only adapters.
 
