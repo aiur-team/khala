@@ -16,6 +16,8 @@ import type { MatrixSessionIssuer } from './matrix';
 import { createProductionHumanServiceLoader } from './production';
 import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { unavailableOwnerDeviceProofRoutes } from '../agent/owner-device-proof';
+import { REVOCATION_REVOKE_PATH, REVOCATION_STATUS_PATH, REVOCATION_TARGETS_PATH } from './revocation';
+import { createLazyRoomSendRoutes } from './room-send-routes';
 
 export const ME_PATH = '/api/human/me';
 export const LOGOUT_PATH = '/api/human/auth/logout';
@@ -361,6 +363,9 @@ export type HumanHandlerDependencies = Readonly<{
   ownerMailbox?: () => readonly RouteRegistration[];
   /** Explicit signed-in browser Matrix device key pin. */
   ownerDeviceProof?: () => readonly RouteRegistration[];
+  /** Authenticated owner binding revocation and durable operation status. */
+  revocation?: () => readonly RouteRegistration[];
+  roomSend?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -384,6 +389,11 @@ function unavailableRoute(path: string, methods: readonly string[]): RouteRegist
 const unavailablePairingRoutes = Object.freeze([
   unavailableRoute('/api/human/pairing/request', ['POST', 'GET']),
   unavailableRoute('/api/human/pairing/decision', ['POST']),
+]);
+const unavailableRevocationRoutes = Object.freeze([
+  unavailableRoute(REVOCATION_TARGETS_PATH, ['GET']),
+  unavailableRoute(REVOCATION_REVOKE_PATH, ['POST']),
+  unavailableRoute(REVOCATION_STATUS_PATH, ['GET']),
 ]);
 
 const unavailableBootstrapRoutes = Object.freeze([
@@ -418,6 +428,8 @@ export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): 
     ...(dependencies?.bootstrap?.() ?? unavailableBootstrapRoutes),
     ...(dependencies?.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().human),
     ...(dependencies?.ownerDeviceProof?.() ?? unavailableOwnerDeviceProofRoutes().human),
+    ...(dependencies?.revocation?.() ?? unavailableRevocationRoutes),
+    ...(dependencies?.roomSend?.() ?? createLazyRoomSendRoutes(() => []).filter(route => route.path.startsWith('/api/human/'))),
     ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),

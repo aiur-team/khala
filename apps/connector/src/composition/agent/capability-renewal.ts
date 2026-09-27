@@ -151,6 +151,8 @@ export function createCapabilityRenewal(input: Readonly<{
   }
 
   return {
+    /** Cleanup after revocation may use the still-live old token, never mint a new one. */
+    existing: persisted,
     async acceptInitial(value: AdapterCapability): Promise<void> {
       if (value.bindingId !== input.binding.bindingId || value.generation !== input.binding.generation
         || !TOKEN.test(value.token) || value.expiresAt <= clock()) throw new Error('capability_invalid');

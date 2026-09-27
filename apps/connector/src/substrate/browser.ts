@@ -23,6 +23,8 @@ declare global {
 type MatrixBrowserApi = Readonly<{
   open(input: OpenInput): Promise<{ fingerprint: string; deviceId: string }>;
   trustPeer(userId: string, deviceId: string, expectedEd25519: string): Promise<void>;
+  removeOwnDevice(expectedCurve25519: string): Promise<'removed' | 'replaced' | 'reauthentication_required' | 'forbidden' | 'unavailable'>;
+  discardOutboundSession(): Promise<boolean>;
   authorize(): Promise<'ok' | 'revoked' | 'expired' | 'unavailable'>;
   read(cursor: string | null, limit: number): Promise<SyncPage>;
   send(clientTxnId: string, body: string): Promise<{ eventId: string }>;
@@ -140,6 +142,32 @@ window.khalaMatrix = {
     await crypto.setDeviceVerified(userId, deviceId, true);
     if (!(await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified()) throw new Error('matrix_verification_failed');
     if (active) await crypto.forceDiscardSession(active.roomId);
+  },
+  async removeOwnDevice(expectedCurve25519) {
+    const matrix = client;
+    const opened = active;
+    const crypto = matrix?.getCrypto();
+    if (!matrix || !opened || !crypto) return 'unavailable';
+    const own = await crypto.getOwnDeviceKeys();
+    if (own.curve25519 !== expectedCurve25519) return 'replaced';
+    const published = (await crypto.getUserDeviceInfo([opened.userId], true)).get(opened.userId)?.get(opened.deviceId);
+    if (!published || published.getIdentityKey() !== expectedCurve25519) return 'replaced';
+    try {
+      await matrix.deleteDevice(opened.deviceId);
+      return 'removed';
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null && 'errcode' in error ? error.errcode : null;
+      const status = typeof error === 'object' && error !== null && 'httpStatus' in error ? error.httpStatus : null;
+      if (code === 'M_UNAUTHORIZED' || status === 401) return 'reauthentication_required';
+      if (code === 'M_FORBIDDEN' || status === 403) return 'forbidden';
+      return 'unavailable';
+    }
+  },
+  async discardOutboundSession() {
+    const crypto = client?.getCrypto();
+    if (!crypto || !active) return false;
+    try { await crypto.forceDiscardSession(active.roomId); return true; }
+    catch { return false; }
   },
   async authorize() {
     if (!active) return 'unavailable';

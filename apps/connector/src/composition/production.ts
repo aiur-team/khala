@@ -18,6 +18,8 @@ import { startProductionSubscription } from './agent/subscription';
 import type { SubscriptionHandle, SubscriptionState } from '@khala/connector/subscription/index';
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { createProductionOwnerMailbox } from './agent/owner-mailbox';
+import { createProductionRevocationCleanup } from './agent/revocation-cleanup';
+import { createAgentRoomSendFence } from './agent/room-send-fence';
 import { createLocalClosureFence } from './closure/local-fence';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { createPolicyControlHandler } from './controls/control-handler';
@@ -160,6 +162,9 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let signer: ProofSigner | null = null;
   let renewal: ReturnType<typeof createCapabilityRenewal> | null = null;
   let mailbox: ReturnType<typeof createProductionOwnerMailbox> | null = null;
+  let revocationCleanup: ReturnType<typeof createProductionRevocationCleanup> | null = null;
+  let roomSend: ReturnType<typeof createAgentRoomSendFence> | null = null;
+  let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
   let ownerTrust: ReturnType<typeof createOwnerDeviceTrust> | null = null;
   let harness: HarnessPort | null = null;
   let dispatcher: Dispatcher | null = null;
@@ -192,7 +197,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       pollTimer = null;
       if (!mailbox || closed) return;
       try {
-        if (await mailbox.pollOnce() === 'revoked') remoteDenied = true;
+        await roomSend?.pollRotation();
+        if (await mailbox.pollOnce() === 'revoked') { remoteDenied = true; scheduleCleanup(); }
       } finally {
         polling = null;
         if (!closed && !remoteDenied) {
@@ -202,6 +208,20 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       }
     };
     polling = run();
+  }
+
+  function scheduleCleanup(): void {
+    if (closed || !remoteDenied || !revocationCleanup || cleanupTimer) return;
+    const run = async () => {
+      cleanupTimer = null;
+      if (closed || !revocationCleanup) return;
+      const outcome = await revocationCleanup.pollOnce().catch(() => 'unavailable' as const);
+      if (outcome !== 'complete' && !closed) {
+        cleanupTimer = setTimeout(() => { void run(); }, 5_000);
+        cleanupTimer.unref?.();
+      }
+    };
+    void run();
   }
 
   async function matrixSession(): Promise<MatrixDeviceSession> {
@@ -238,10 +258,20 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       stateDirectory: sessionDirectory, clock: Date.now,
       quiesce: quiesceDelivery,
     });
+    revocationCleanup = createProductionRevocationCleanup({
+      appOrigin: input.appOrigin, binding: next, signer: activeSigner,
+      existingCapability: () => capabilityFor(next).existing(),
+      quiesce: quiesceDelivery,
+      removeOwnDevice: key => substrate.removeOwnDevice(key),
+    });
+    roomSend = createAgentRoomSendFence({ appOrigin: input.appOrigin, bindingId: next.bindingId,
+      generation: next.generation, signer: activeSigner,
+      capability: () => capabilityFor(next).ensure(),
+      discardOutboundSession: () => substrate.discardOutboundSession() });
     mailbox = createProductionOwnerMailbox({ appOrigin: input.appOrigin, binding: next, signer: activeSigner,
       capability: () => capabilityFor(next).ensure(), controls, review: () => review,
       stop: request => stop.stop(request),
-      onRevoked: async () => { remoteDenied = true; deliveryStopped = true; },
+      onRevoked: async () => { remoteDenied = true; deliveryStopped = true; scheduleCleanup(); },
     });
     const activeMailbox = mailbox;
     await trust.update(next.bindingId, current => {
@@ -414,11 +444,29 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         if (deliveryStopped || remoteDenied || closed) {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
         }
+        const fence = roomSend;
+        if (!fence) return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
+        const permit = await fence.acquire(command.clientTxnId);
+        if (permit?.kind === 'held') {
+          if (permit.operationId !== 'rotation_required') await fence.rotate(permit.operationId, permit.epoch);
+          return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
+        }
+        if (permit?.kind !== 'granted') return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
+        if (deliveryStopped || remoteDenied || closed) {
+          await fence.finish(permit.permitId, { kind: 'cancelled' });
+          return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
+        }
         activeSends += 1;
         try {
           const sent = await substrate.send(command.clientTxnId, command.body);
+          if (!await fence.finish(permit.permitId, { kind: 'complete', eventId: sent.eventId })) {
+            return { kind: 'outcome_unknown' as const, clientTxnId: command.clientTxnId };
+          }
           return { kind: 'accepted' as const, clientTxnId: command.clientTxnId, eventId: sent.eventId };
-        } catch { return { kind: 'outcome_unknown' as const, clientTxnId: command.clientTxnId }; }
+        } catch {
+          await fence.finish(permit.permitId, { kind: 'unknown' });
+          return { kind: 'outcome_unknown' as const, clientTxnId: command.clientTxnId };
+        }
         finally {
           activeSends -= 1;
           if (activeSends === 0) for (const wake of sendWaiters.splice(0)) wake();
@@ -498,6 +546,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         closed = true;
         mailbox?.close();
         if (pollTimer) clearTimeout(pollTimer);
+        if (cleanupTimer) clearTimeout(cleanupTimer);
         await polling?.catch(() => undefined);
         try {
           review?.dispose();
@@ -517,6 +566,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     const activeHarness = harness as HarnessPort | null;
     activeMailbox?.close();
     if (pollTimer) clearTimeout(pollTimer);
+    if (cleanupTimer) clearTimeout(cleanupTimer);
     await activePoll?.catch(() => undefined);
     try {
       activeReview?.dispose();

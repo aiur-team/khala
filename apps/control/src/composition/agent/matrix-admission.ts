@@ -28,7 +28,16 @@ export type MatrixAgentAdmission = Readonly<{
   agents: AgentAdmissionPort;
   deviceSession: AgentDeviceSessionPort;
   publishedDeviceFingerprint(binding: SessionBinding): Promise<string | null>;
+  publishedDeviceIdentityKey(binding: SessionBinding): Promise<string | null>;
+  inspectPublishedDevice(binding: SessionBinding, expectedCurve25519: string): Promise<MatrixDeviceStatus>;
+  /** Caller owns authorization, endpoint quiescence and admission/send fencing. */
+  removePublishedDeviceWithUIA(binding: SessionBinding, expectedCurve25519: string): Promise<MatrixDeviceRemoval>;
 }>;
+
+export type MatrixDeviceStatus = 'removed' | 'present' | 'replaced' | 'unavailable';
+
+export type MatrixDeviceRemoval = 'removed' | 'replaced' | 'reauthentication_required'
+  | 'forbidden' | 'unavailable' | 'outcome_unknown';
 
 function textObject(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -203,7 +212,7 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
       } catch { return null; }
     },
   };
-  async function publishedDeviceFingerprint(binding: SessionBinding): Promise<string | null> {
+  async function publishedDeviceKey(binding: SessionBinding, algorithm: 'ed25519' | 'curve25519'): Promise<string | null> {
     try {
       const identity = agentMatrixIdentity(binding.ownerId, binding, options.serverName);
       if (identity.participantId !== binding.agentParticipantId) return null;
@@ -218,11 +227,95 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
       const devices = textObject(users?.[identity.userId]);
       const device = textObject(devices?.[binding.deviceId]);
       const keys = textObject(device?.keys);
-      const fingerprint = keys?.[`ed25519:${binding.deviceId}`];
+      const fingerprint = keys?.[`${algorithm}:${binding.deviceId}`];
       return device?.user_id === identity.userId && device.device_id === binding.deviceId
         && typeof fingerprint === 'string' && /^[A-Za-z0-9+/]{43}=?$/u.test(fingerprint)
         ? fingerprint : null;
     } catch { return null; }
   }
-  return { agents, deviceSession, publishedDeviceFingerprint };
+  const normalize = (key: unknown): string | null => {
+    if (typeof key !== 'string' || !/^[A-Za-z0-9+/]{43}=?$/u.test(key)) return null;
+    const bytes = Buffer.from(key, 'base64');
+    const canonical = bytes.toString('base64').replace(/=+$/u, '');
+    return bytes.length === 32 && canonical === key.replace(/=+$/u, '') ? canonical : null;
+  };
+  async function inspectWithToken(binding: SessionBinding, userId: string, token: string, expected: string): Promise<MatrixDeviceStatus> {
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const path = `/_matrix/client/v3/devices/${encodeURIComponent(binding.deviceId)}`;
+    try {
+      const device = await call(path, { headers });
+      if (device.status === 404 && device.body?.errcode === 'M_NOT_FOUND') return 'removed';
+      if (device.status !== 200 || device.body?.device_id !== binding.deviceId) return 'unavailable';
+      const queried = await call('/_matrix/client/v3/keys/query', { method: 'POST', headers,
+        body: JSON.stringify({ device_keys: { [userId]: [binding.deviceId] } }) });
+      const failures = queried.body?.failures === undefined ? {} : textObject(queried.body.failures);
+      if (queried.status !== 200 || !failures || Object.keys(failures).length) return 'unavailable';
+      const users = textObject(queried.body?.device_keys);
+      const devices = textObject(users?.[userId]);
+      const published = textObject(devices?.[binding.deviceId]);
+      if (published?.user_id !== userId || published.device_id !== binding.deviceId) return 'unavailable';
+      const key = normalize(textObject(published.keys)?.[`curve25519:${binding.deviceId}`]);
+      return key === null ? 'unavailable' : key === expected ? 'present' : 'replaced';
+    } catch { return 'unavailable'; }
+  }
+  async function inspectPublishedDevice(binding: SessionBinding, expectedCurve25519: string): Promise<MatrixDeviceStatus> {
+    try {
+      const identity = agentMatrixIdentity(binding.ownerId, binding, options.serverName);
+      const expected = normalize(expectedCurve25519);
+      if (identity.participantId !== binding.agentParticipantId || !expected) return 'unavailable';
+      const token = await login(identity.userId, password(identity.userId), `KHALA_JOIN_${digest(identity.userId).slice(0, 24)}`);
+      return token ? inspectWithToken(binding, identity.userId, token, expected) : 'unavailable';
+    } catch { return 'unavailable'; }
+  }
+  async function removePublishedDeviceWithUIA(binding: SessionBinding, expectedCurve25519: string): Promise<MatrixDeviceRemoval> {
+    const identity = agentMatrixIdentity(binding.ownerId, binding, options.serverName);
+    const controlId = `KHALA_JOIN_${digest(identity.userId).slice(0, 24)}`;
+    if (identity.participantId !== binding.agentParticipantId || binding.deviceId === controlId) return 'forbidden';
+    const expected = normalize(expectedCurve25519);
+    if (!expected) return 'unavailable';
+    let attempted = false;
+    try {
+      const secret = password(identity.userId);
+      const token = await login(identity.userId, secret, controlId);
+      if (!token) return 'unavailable';
+      const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+      const path = `/_matrix/client/v3/devices/${encodeURIComponent(binding.deviceId)}`;
+      const inspect = () => inspectWithToken(binding, identity.userId, token, expected);
+      const before = await inspect();
+      if (before !== 'present') return before;
+      let response: Awaited<ReturnType<typeof call>>;
+      try {
+        attempted = true;
+        response = await call(path, { method: 'DELETE', headers, body: '{}' });
+        if (response.status === 401) {
+          const session = response.body?.session;
+          const flows = response.body?.flows;
+          if (typeof session !== 'string' || !session || session.length > 4096 || !Array.isArray(flows)
+            || !flows.some(flow => {
+              const stages = textObject(flow)?.stages;
+              return Array.isArray(stages) && stages.length === 1 && stages[0] === 'm.login.password';
+            })) return 'reauthentication_required';
+          // UIA may take time: do not delete a replacement found after the challenge.
+          const challenged = await inspect();
+          if (challenged !== 'present') return challenged;
+          response = await call(path, { method: 'DELETE', headers, body: JSON.stringify({ auth: {
+            type: 'm.login.password', session, identifier: { type: 'm.id.user', user: identity.userId }, password: secret,
+          } }) });
+        }
+      } catch {
+        const observed = await inspect();
+        return observed === 'removed' || observed === 'replaced' ? observed : 'outcome_unknown';
+      }
+      if (response.status === 401) return 'reauthentication_required';
+      if (response.status === 403) return 'forbidden';
+      const observed = await inspect();
+      return observed === 'removed' || observed === 'replaced' ? observed : 'outcome_unknown';
+    } catch { return attempted ? 'outcome_unknown' : 'unavailable'; }
+  }
+  return {
+    agents, deviceSession,
+    removePublishedDeviceWithUIA, inspectPublishedDevice,
+    publishedDeviceFingerprint: binding => publishedDeviceKey(binding, 'ed25519'),
+    publishedDeviceIdentityKey: binding => publishedDeviceKey(binding, 'curve25519'),
+  };
 }
