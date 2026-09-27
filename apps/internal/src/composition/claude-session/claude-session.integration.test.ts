@@ -311,9 +311,9 @@ describe('Claude mcp-serve against the internal launcher', () => {
     skew += CLAUDE_SETTLE_INTERVAL_MS;
 
     // The next boundary settles the grant itself; the agent never calls the status tool again.
-    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: 'connected' });
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
     // Reported once; the session stays connected.
-    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: null });
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
     const [send, who] = await serve(report.descriptorPath, granted, [
       ['khala_send', { message: 'hello without a retry' }], ['khala_list_agents'],
     ]);
@@ -340,8 +340,8 @@ describe('Claude mcp-serve against the internal launcher', () => {
     // The clock never moves: every other boundary stays inside the interval.
     await approvePending(report.origin, owner);
     await expect(hooks.hook(session)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
-    await expect(hooks.hook(session, { stop: true })).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: 'connected' });
-    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: null });
+    await expect(hooks.hook(session, { stop: true })).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
+    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
   });
 
   it('reports a denial at the next hook boundary, and the session stays unbound', async () => {
