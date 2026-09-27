@@ -19,10 +19,12 @@ export const codexHookCommand: CliCommand = {
     // The installed hook serves every Codex session of this user: each invocation acts
     // only as the session its input names, through that session's own `grant.json`.
     const delivering: DeliveringInbox[] = [];
+    const hosted: Array<{ close(): Promise<void> }> = [];
     try {
-      await runCodexHook({ ...io, session: sessionId => sessionPorts(deps, deps.sessionGrants!, sessionId, delivering) });
+      await runCodexHook({ ...io, session: sessionId => sessionPorts(deps, deps.sessionGrants!, sessionId, delivering, hosted) });
     } finally {
       await Promise.all(delivering.map(each => each.stop()));
+      await Promise.all(hosted.map(each => each.close()));
     }
     return 0;
   },
@@ -30,13 +32,29 @@ export const codexHookCommand: CliCommand = {
 
 async function sessionPorts(
   deps: CliDependencies, grants: SessionGrants, sessionId: string, delivering: DeliveringInbox[],
+  hosted: Array<{ close(): Promise<void> }>,
 ): Promise<CodexHookPorts | null> {
-  if (!deps.internalClient || !deps.internalDelivery) return null;
-  const grantPath = grants({ harness: CODEX_HARNESS, sessionId });
-  const client = await deps.internalClient(grantPath);
-  const inbox = deliveringInbox(deps.inbox, await deps.internalDelivery(grantPath), deps.signal ? { signal: deps.signal } : {});
-  delivering.push(inbox);
-  return hookPorts(deps, client, inbox.inbox);
+  if (deps.internalClient && deps.internalDelivery) {
+    const grantPath = grants({ harness: CODEX_HARNESS, sessionId });
+    const client = await deps.internalClient(grantPath);
+    if (publicStatus(await client.status(deps.signal)).connected) {
+      const inbox = deliveringInbox(deps.inbox, await deps.internalDelivery(grantPath), deps.signal ? { signal: deps.signal } : {});
+      delivering.push(inbox);
+      return hookPorts(deps, client, inbox.inbox);
+    }
+  }
+  if (!deps.hostedSession) return null;
+  const opened = await deps.hostedSession({ harness: CODEX_HARNESS, sessionId });
+  hosted.push(opened);
+  // An unbound or policy-unconfigured hosted session cannot turn a global hook
+  // into a release pull. The hook rechecks the exact binding and mode at output.
+  const latest = publicStatus(await opened.client.status(deps.signal));
+  if (!latest.connected || latest.binding === null || latest.binding.harness !== CODEX_HARNESS
+    || latest.binding.sessionId !== sessionId || !opened.client.listeningMode) return null;
+  const mode = await opened.client.listeningMode(deps.signal);
+  if (mode.bindingId !== latest.binding.bindingId || mode.generation !== latest.binding.generation
+    || mode.effective === null) return null;
+  return hookPorts(deps, opened.client, opened.inbox);
 }
 
 function hookPorts(deps: CliDependencies, client: AgentClientPort, inbox: CliDependencies['inbox']): CodexHookPorts {

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { BootstrapPorts, SessionClaim, SessionInspectionPort } from '@khala/connector/bootstrap/index';
+import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
 import type { AgentClientPort, CliDependencies } from '../cli/types.js';
 import type { OpenGenerationInbox } from './delivering-inbox.js';
 import type { HarnessSession } from './session-grant.js';
@@ -25,6 +26,7 @@ type OpenProductionConnectorInput = Readonly<{
   browserBundleDirectory: string;
   session: SessionClaim;
   sessionInspection: (generationFor: (claim: SessionClaim) => Promise<number | null>) => SessionInspectionPort;
+  inspectHostedCodexHooks(): Promise<HarnessCapabilities | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: OpenGenerationInbox;
 }>;
@@ -34,6 +36,7 @@ type ProductionConnector = Readonly<{
   status: AgentClientPort['status'];
   listChannels: AgentClientPort['listChannels'];
   listAgents: AgentClientPort['listAgents'];
+  listeningMode?: AgentClientPort['listeningMode'];
   inbox: OpenGenerationInbox;
   close(): Promise<void>;
 }>;
@@ -47,6 +50,7 @@ export function hostedSessionFactory(options: Readonly<{
   browserBundleDirectory: string;
   workdir: string;
   readVersion(): Promise<string | null>;
+  inspectHooks(): Promise<HarnessCapabilities | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: OpenGenerationInbox;
 }>): NonNullable<CliDependencies['hostedSession']> {
@@ -61,6 +65,7 @@ export function hostedSessionFactory(options: Readonly<{
         session, workdir: claim.workdir, readVersion: options.readVersion,
         generation: named => generationFor({ ...named, workdir: claim.workdir }),
       }),
+      inspectHostedCodexHooks: async () => session.harness === 'codex' ? options.inspectHooks() : null,
       openBrowser: options.openBrowser,
       openInbox: options.openInbox,
     });
@@ -69,6 +74,7 @@ export function hostedSessionFactory(options: Readonly<{
         ports: connector.ports, session: claim,
         send: connector.send, status: connector.status,
         listChannels: connector.listChannels, listAgents: connector.listAgents,
+        ...(connector.listeningMode ? { listeningMode: connector.listeningMode } : {}),
       }),
       inbox: connector.inbox,
       close: connector.close,

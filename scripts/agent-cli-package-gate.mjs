@@ -207,6 +207,20 @@ export function gatePackage({ packageDirectory = path.join(root, 'packages/agent
   if (status.status !== 0 || report?.v !== 1 || report?.connected !== false) {
     errors.push(`npx ${PACKAGE_NAME} status failed in a fresh prefix (exit ${status.status}): ${status.stderr.trim() || status.stdout.trim()}`);
   }
+  // The installed MCP entry must expose both owner-consented bootstrap paths
+  // from its packed bin, before any session-specific tool call or network access.
+  const mcp = run('npx', ['--offline', PACKAGE_NAME, 'mcp-serve'], {
+    cwd: prefix,
+    env: { ...env, HOME: home, XDG_STATE_HOME: path.join(home, 'state'), NODE_PATH: '' },
+    input: `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })}\n`,
+  });
+  let listed;
+  try { listed = JSON.parse(mcp.stdout.trim()); } catch { listed = undefined; }
+  const tools = listed?.result?.tools;
+  const names = Array.isArray(tools) ? tools.map(tool => tool?.name) : [];
+  if (mcp.status !== 0 || !names.includes('khala_connect') || !names.includes('khala_pair')) {
+    errors.push(`npx ${PACKAGE_NAME} mcp-serve did not advertise both installed bootstrap tools (exit ${mcp.status})`);
+  }
   const installed = fs.realpathSync(path.join(prefix, 'node_modules', PACKAGE_NAME, 'dist/khala.js'));
   if (!installed.startsWith(fs.realpathSync(prefix) + path.sep)) errors.push(`installed bin resolves outside the prefix (${installed})`);
   errors.push(...openCodeExportErrors(prefix, env));

@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   decodeSessionBinding, type EventRef, type ListeningMode, type SessionBinding,
 } from '@khala/contracts/delivery/index';
 import { runCli } from '../cli/app.js';
 import { callScopedConsumer } from '../cli/call-consumer.js';
 import { openInbox, type BatchInbox } from '../cli/inbox.js';
+import { createUnavailableClient } from '../composition/unavailable.js';
 import type { AgentClientPort, AgentListeningModeStatus, InboxDelivery } from '../cli/types.js';
 import {
   CODEX_HOOK_EVENTS, type CodexHookEvent, codexHookDelivery, codexOfferScope, decodeCodexHookInput,
@@ -168,6 +169,54 @@ describe('khala codex-hook', () => {
     await hook(w, 'Stop', { turn: 'turn-2', stopHookActive: true });
     expect(w.boundaries.slice(-2)).toEqual([false, true]);
   });
+
+  it('delivers through a held hosted session, and closes the connector after the hook', async () => {
+    const w = world('steer');
+    await enqueue(w, 'release-1');
+    const close = vi.fn(async () => undefined);
+    const hostedSession = vi.fn(async () => ({ client: client(w), inbox: async () => open(w), close }));
+    const stdin = new PassThrough();
+    stdin.end(JSON.stringify({ hook_event_name: 'PreToolUse', session_id: BINDING.sessionId, turn_id: 't' }));
+    const stdout = new PassThrough(); const stderr = new PassThrough(); let out = '';
+    stdout.on('data', chunk => { out += String(chunk); });
+    expect(await runCli(['codex-hook'], {
+      client: createUnavailableClient(), inbox: async () => { throw new Error('internal inbox opened'); },
+      stdin, stdout, stderr, sessionGrants: () => '/missing/grant.json',
+      internalClient: async () => createUnavailableClient(),
+      internalDelivery: async () => { throw new Error('internal delivery opened'); },
+      hostedSession,
+    })).toBe(0);
+    expect(out).toContain(MARKER);
+    expect(hostedSession).toHaveBeenCalledExactlyOnceWith({ harness: 'codex', sessionId: BINDING.sessionId });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the hosted hook silent without an exact binding and applied mode', async () => {
+    const w = world('steer');
+    await enqueue(w, 'release-1');
+    const attempts = [
+      { ...createUnavailableClient(), async status() { return client(w).status(); } },
+      { ...client(w), async listeningMode() { return { v: 1 as const, bindingId: BINDING.bindingId,
+        generation: BINDING.generation, effective: null }; } },
+      { ...client(w), async status() { return { v: 1 as const, connected: true,
+        binding: { ...BINDING, sessionId: 'foreign-session' }, route: 'native_cli_queue' as const, sourceCursor: null }; } },
+    ];
+    for (const attempt of attempts) {
+      const stdin = new PassThrough();
+      stdin.end(JSON.stringify({ hook_event_name: 'PreToolUse', session_id: BINDING.sessionId, turn_id: 't' }));
+      const stdout = new PassThrough(); const stderr = new PassThrough(); let out = '';
+      stdout.on('data', chunk => { out += String(chunk); });
+      const close = vi.fn(async () => undefined);
+      expect(await runCli(['codex-hook'], {
+        client: createUnavailableClient(), inbox: async () => { throw new Error('internal inbox opened'); },
+        stdin, stdout, stderr, sessionGrants: () => '/missing/grant.json',
+        hostedSession: async () => ({ client: attempt, inbox: async () => { throw new Error('hosted inbox opened'); }, close }),
+      })).toBe(0);
+      expect(out).toBe('');
+      expect(close).toHaveBeenCalledOnce();
+    }
+  });
+
   it('steer blocks the next tool with the framed batch and never acknowledges it', async () => {
     const w = world('steer');
     await enqueue(w, 'release-1');

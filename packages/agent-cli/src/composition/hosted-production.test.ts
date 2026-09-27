@@ -28,7 +28,8 @@ describe('installed hosted connector factory', () => {
     const factory = hostedSessionFactory({ openConnector,
       stateDirectory: '/tmp/khala-state/hosted', appOrigin: 'https://khala.aiur.team',
       browserBundleDirectory: '/tmp/package/dist/substrate-browser', workdir: '/tmp/project',
-      readVersion: async () => '0.154.0', async openBrowser() {}, async openInbox() { throw new Error('no binding'); },
+      readVersion: async () => '0.154.0', inspectHooks: async () => null,
+      async openBrowser() {}, async openInbox() { throw new Error('no binding'); },
     });
     const opened = await factory(SESSION);
     const input = openConnector.mock.calls[0]?.[0];
@@ -43,6 +44,7 @@ describe('installed hosted connector factory', () => {
       kind: 'verified', session: { ...SESSION, generation: 4 },
     });
     expect(generationFor).toHaveBeenCalledExactlyOnceWith({ ...SESSION, workdir: '/tmp/project' });
+    expect(await input?.inspectHostedCodexHooks()).toBeNull();
     expect((await opened.client.status()).connected).toBe(false);
     await opened.close();
     expect(close).toHaveBeenCalledOnce();
