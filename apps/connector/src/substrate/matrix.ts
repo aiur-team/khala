@@ -167,7 +167,7 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
     server = serving.server;
     context = await driver.chromium.launchPersistentContext(profile, {
       executablePath: input.chromiumExecutablePath ?? '/usr/bin/chromium',
-      headless: true, args: ['--no-sandbox'],
+      headless: true,
     });
     page = await context.newPage();
     const listeners = new Set<SourceListener>();
