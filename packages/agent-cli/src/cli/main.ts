@@ -4,12 +4,15 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INTERNAL_ACTIVE_DESCRIPTOR_FILE } from '@khala/contracts/internal/descriptor';
+import { openProductionConnector } from '@khala/connector-app/composition/production';
 import { runCli } from './app.js';
 import { openInbox } from './inbox.js';
 import { bundledInternalRuntime } from './internal.js';
 import { MAX_SEND_BYTES } from './send.js';
 import { isClaudeMcpEntry } from '../composition/claude-mcp.js';
 import { createClaudeSessionClient } from '../composition/claude-session-http.js';
+import type { OpenGenerationInbox } from '../composition/delivering-inbox.js';
+import { installedHostedSession } from '../composition/hosted-main.js';
 import { sessionGrants } from '../composition/session-grant.js';
 import { packagedSetupService } from '../composition/setup.js';
 import { createUnavailableClient } from '../composition/unavailable.js';
@@ -57,17 +60,22 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     execute: setupExecute(process.env),
     cwd: process.cwd(),
   }) : undefined;
+  const openGenerationInbox: OpenGenerationInbox = (bindingId, generation, inboxOptions) => openInbox({
+    stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
+    ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+    ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
+  });
   try {
     return await runCli(argv, {
       client: createUnavailableClient(),
-      // No trusted connector composition is installed yet, so mode calls refuse as unavailable.
+      // A shell invocation has no provider-named session; hosted calls are scoped separately below.
       // Under `--internal-descriptor` the descriptor client supplies its own binding's mode control.
       listeningMode: null,
       // An internal descriptor's delivering inbox supplies the recorder that writes its receipts.
-      inbox: (bindingId, generation, inboxOptions) => openInbox({
-        stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
-        ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
-        ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
+      inbox: openGenerationInbox,
+      hostedSession: installedHostedSession({
+        openConnector: openProductionConnector, environment: process.env, stateDirectory,
+        distDirectory, workdir: process.cwd(), openInbox: openGenerationInbox,
       }),
       ...(setup === undefined ? {} : { setup }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,
