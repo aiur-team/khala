@@ -106,7 +106,7 @@ export function captureNativeSession(
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
   const file = recordPath(root, session.repository, session.runId, session.ticket, session.role);
-  const finalRecord = { ...captured, capturedAt: new Date(now()).toISOString() };
+  const finalRecord = { ...(captured as Record<string, unknown>), capturedAt: new Date(now()).toISOString() };
   const finalSession = decodeNativeSession(finalRecord);
   if (!finalSession) throw new Error('native fixture observation changed during capture');
   fs.writeFileSync(file, JSON.stringify(finalRecord), { flag: 'wx', mode: 0o600 });
