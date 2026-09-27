@@ -20,7 +20,7 @@ async function setup() {
   const cleanup = createRevocationCleanupStore(store);
   expect(await cleanup.prepare({ ownerId, operationId, bindingId: 'binding_B', roomId,
     deviceId: senderB.deviceId, deviceKey: senderB.deviceKey, expectedGeneration: 2,
-    revokedGeneration: 3, capabilityDigest: 'a'.repeat(64) })).toBe('applied');
+    revokedGeneration: 3, capabilityDigest: 'a'.repeat(43) })).toBe('applied');
   return { store, fence, cleanup, protocol: createCleanupProtocolPort(store, ownerId) };
 }
 

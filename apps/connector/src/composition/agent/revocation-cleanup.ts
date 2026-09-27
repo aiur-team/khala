@@ -46,6 +46,7 @@ export function createProductionRevocationCleanup(input: Readonly<{
     try {
       const response = await transport(target, { method,
         headers: { accept: 'application/json', authorization: `DPoP ${capability.token}`,
+          'x-khala-binding-id': input.binding.bindingId,
           dpop: input.signer.proof(method, target, capability.token),
           ...(method === 'POST' ? { origin: input.appOrigin, 'content-type': 'application/json' } : {}) },
         ...(method === 'POST' ? { body: JSON.stringify(payload) } : {}),

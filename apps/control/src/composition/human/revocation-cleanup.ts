@@ -58,7 +58,7 @@ function valid(value: JsonValue, ownerId: OwnerId, operationId: string): boolean
     && typeof item.deviceKey === 'string' && KEY.test(item.deviceKey)
     && Number.isSafeInteger(item.expectedGeneration) && Number.isSafeInteger(item.revokedGeneration)
     && item.revokedGeneration === (item.expectedGeneration as number) + 1
-    && (item.capabilityDigest === null || typeof item.capabilityDigest === 'string' && /^[a-f0-9]{64}$/u.test(item.capabilityDigest))
+    && (item.capabilityDigest === null || typeof item.capabilityDigest === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(item.capabilityDigest))
     && (item.removal === null || ['removed', 'replaced', 'reauthentication_required', 'forbidden'].includes(String(item.removal)))
     && (item.verifiedRemoval === null || item.verifiedRemoval === 'removed' || item.verifiedRemoval === 'replaced');
 }
@@ -100,7 +100,9 @@ export function createRevocationCleanupStore(store: ControlStore) {
     },
     async prepare(record: Omit<Cleanup, 'v' | 'removal' | 'verifiedRemoval'>): Promise<'applied' | 'unavailable'> {
       if (!ID.test(record.operationId) || !ID.test(record.bindingId) || !ID.test(record.deviceId)
-        || !KEY.test(record.deviceKey) || !Number.isSafeInteger(record.expectedGeneration)
+        || !KEY.test(record.deviceKey)
+        || record.capabilityDigest !== null && !/^[A-Za-z0-9_-]{43}$/u.test(record.capabilityDigest)
+        || !Number.isSafeInteger(record.expectedGeneration)
         || record.revokedGeneration !== record.expectedGeneration + 1) return 'unavailable';
       const next: Cleanup = { ...record, v: 1, removal: null, verifiedRemoval: null };
       const indexKey = bindingKey(record.ownerId, record.bindingId, record.expectedGeneration);
@@ -241,7 +243,8 @@ export function createAgentRevocationCleanupRoutes(input: Readonly<{
     if (found.kind !== 'record') return json(found.kind === 'absent' ? 404 : 503, { code: 'unavailable' });
     const item = found.value;
     if (operationId !== null && item.operationId !== operationId) return json(403, { code: 'forbidden' });
-    if (item.bindingId !== checked.binding.bindingId || item.deviceId !== checked.binding.deviceId
+    if (item.ownerId !== checked.ownerId || item.roomId !== checked.roomId
+      || item.bindingId !== checked.binding.bindingId || item.deviceId !== checked.binding.deviceId
       || item.expectedGeneration !== checked.binding.generation || item.revokedGeneration !== checked.revokedGeneration
       || item.capabilityDigest === null || item.capabilityDigest !== checked.capabilityDigest) return json(403, { code: 'forbidden' });
     const journal = await operationJournal(checked.ownerId, input.store).load(item.operationId);

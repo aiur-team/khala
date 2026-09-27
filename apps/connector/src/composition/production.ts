@@ -268,7 +268,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     });
     revocationCleanup = createProductionRevocationCleanup({
       appOrigin: input.appOrigin, binding: next, signer: activeSigner,
-      existingCapability: () => capabilityFor(next).existing(),
+      existingCapability: () => capabilityFor(next).existingForCleanup(),
       stop: operationId => stop.stop({ operationId, ownerId: next.ownerId,
         roomId: session.roomId, expectedRoomRevision: 0 }),
       removeOwnDevice: key => substrate.removeOwnDevice(key),
@@ -423,7 +423,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         deliveryStopped = true;
         revocationCleanup = createProductionRevocationCleanup({ appOrigin: input.appOrigin,
           binding: stoppedBinding, signer: activeSigner,
-          existingCapability: () => capabilityFor(stoppedBinding).existing(),
+          existingCapability: () => capabilityFor(stoppedBinding).existingForCleanup(),
           stop: async operationId => await hasLocalRevocationStop({ stateDirectory: sessionDirectory,
             binding: stoppedBinding, roomId: session.roomId, operationId })
             ? stop.stop({ operationId, ownerId: stoppedBinding.ownerId, roomId: session.roomId, expectedRoomRevision: 0 })

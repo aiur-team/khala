@@ -802,8 +802,23 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       if (presented === null) return refuse(401, 'capability_required');
       const read = await store.read<CapabilityRecord>(key('capability', presented));
       if (read.kind === 'unavailable') return { kind: 'unavailable' };
-      if (read.kind === 'absent') return refuse(401, 'invalid_capability');
-      const held = read.record.value;
+      let held: CapabilityRecord;
+      if (read.kind === 'absent') {
+        // The ordinary capability envelope expires after an hour. Its prepared
+        // revocation cleanup is durable and may be retried much later, but only
+        // by the original pinned proof key and token digest.
+        const bindingId = request.headers.get('x-khala-binding-id');
+        if (!bindingId || !OPERATION_ID.test(bindingId)) return refuse(401, 'invalid_capability');
+        const located = await bindings.locateBinding(bindingId);
+        if (located.kind === 'unavailable') return { kind: 'unavailable' };
+        if (located.kind !== 'found' || located.record.revokedGeneration !== located.record.binding.generation + 1) {
+          return refuse(401, 'binding_superseded');
+        }
+        const jkt = proofKeyThumbprint(request.headers.get('dpop'));
+        if (!jkt || await pinProofKey(located.record.binding, jkt) !== 'matched') return refuse(401, 'proof_key_mismatch');
+        held = { ownerId: located.address.ownerId, roomId: located.address.roomId,
+          bindingId, generation: located.record.binding.generation, jkt, scope: [] };
+      } else held = read.record.value;
       let target: URL;
       try { target = new URL(request.url); } catch { return refuse(401, 'proof_target_mismatch'); }
       if (target.origin !== deps.origin || ![

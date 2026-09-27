@@ -34,12 +34,14 @@ describe('installed hosted connector composition', () => {
       sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
       inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
       openBrowser: vi.fn(async () => undefined), openInbox: vi.fn(async () => undefined) };
-    const requests: Array<{ method: string; path: string; payload: Record<string, unknown> | null }> = [];
+    const requests: Array<{ method: string; path: string; bindingHint: string | null;
+      payload: Record<string, unknown> | null }> = [];
     const reply = (value: unknown) => new Response(JSON.stringify(value), { status: 200,
       headers: { 'content-type': 'application/json' } });
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const payload = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
-      requests.push({ method: init?.method ?? 'GET', path: new URL(String(url)).pathname, payload });
+      requests.push({ method: init?.method ?? 'GET', path: new URL(String(url)).pathname,
+        bindingHint: new Headers(init?.headers).get('x-khala-binding-id'), payload });
       if (new URL(String(url)).pathname.endsWith('/cleanup')) return reply({ v: 1,
         operationId: 'revocation-restart', deviceId: binding.deviceId, deviceKey: 'B'.repeat(43),
         generation: binding.generation, removal: removalState === 'removed' ? 'removed' : null });
@@ -53,9 +55,10 @@ describe('installed hosted connector composition', () => {
       const trust = await openTrustStateStore({ directory: stateDirectory, mode: 'create' });
       expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
       const { signer } = await createBootstrapPersistence(storage);
-      await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin, binding, signer }).acceptInitial({
+      await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin, binding, signer,
+        clock: () => Date.now() - 7_200_000 }).acceptInitial({
         token: 'C'.repeat(43), bindingId: binding.bindingId, generation: binding.generation,
-        scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: Date.now() + 3_600_000,
+        scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: Date.now() - 3_600_000,
       });
       const stop = createLocalClosureFence({ storage, binding, roomId, stateDirectory: sessionDirectory,
         clock: Date.now, quiesce: async () => undefined });
@@ -74,6 +77,7 @@ describe('installed hosted connector composition', () => {
       expect(requests.map(item => item.path)).toEqual([
         '/api/agent/revocation/cleanup', '/api/agent/revocation/result',
       ]);
+      expect(requests.map(item => item.bindingHint)).toEqual([binding.bindingId, binding.bindingId]);
       expect(requests[1]?.payload).toMatchObject({ operationId: 'revocation-restart',
         removal: null, localStop: { operationId: revokeId, bindingId: binding.bindingId,
           bindingGeneration: binding.generation, roomId, state: 'stopped' } });

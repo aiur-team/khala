@@ -50,10 +50,10 @@ function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function capability(value: unknown, binding: SessionBinding, now: number): AdapterCapability | null {
+function capability(value: unknown, binding: SessionBinding, now: number, allowExpired = false): AdapterCapability | null {
   if (!object(value) || !TOKEN.test(String(value.token)) || value.token_type !== 'DPoP'
     || value.binding_id !== binding.bindingId || value.generation !== binding.generation
-    || !Number.isSafeInteger(value.expires_at) || (value.expires_at as number) <= now
+    || !Number.isSafeInteger(value.expires_at) || !allowExpired && (value.expires_at as number) <= now
     || !Array.isArray(value.scope) || value.scope.length !== CAPABILITY_SCOPE.length
     || !CAPABILITY_SCOPE.every(item => (value.scope as unknown[]).includes(item))) return null;
   return { token: value.token as string, scope: CAPABILITY_SCOPE, bindingId: binding.bindingId,
@@ -79,11 +79,11 @@ export function createCapabilityRenewal(input: Readonly<{
   const refreshUrl = `${input.appOrigin}${REFRESH_PATH}`;
   let renewing: Promise<AdapterCapability | null> | null = null;
 
-  async function persisted(): Promise<AdapterCapability | null> {
+  async function persisted(allowExpired = false): Promise<AdapterCapability | null> {
     const stored = await load(capabilityFile);
     if (!object(stored) || stored.v !== 1 || stored.bindingId !== input.binding.bindingId
       || stored.generation !== input.binding.generation || stored.jkt !== input.signer.jkt) return null;
-    return capability(stored.capability, input.binding, clock());
+    return capability(stored.capability, input.binding, clock(), allowExpired);
   }
 
   async function challenge(): Promise<RefreshPlan | null> {
@@ -151,8 +151,8 @@ export function createCapabilityRenewal(input: Readonly<{
   }
 
   return {
-    /** Cleanup after revocation may use the still-live old token, never mint a new one. */
-    existing: persisted,
+    /** Only the revoked cleanup route may reconcile with the old token after TTL. */
+    existingForCleanup: () => persisted(true),
     async acceptInitial(value: AdapterCapability): Promise<void> {
       if (value.bindingId !== input.binding.bindingId || value.generation !== input.binding.generation
         || !TOKEN.test(value.token) || value.expiresAt <= clock()) throw new Error('capability_invalid');

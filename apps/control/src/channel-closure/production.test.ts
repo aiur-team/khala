@@ -41,7 +41,7 @@ describe('production closure mailbox adapter', () => {
     expect(await revocations.prepare({ ownerId: principal.ownerId, operationId: revokeId,
       bindingId: first.bindingId, roomId, deviceId: first.deviceId, deviceKey,
       expectedGeneration: first.generation, revokedGeneration: first.generation + 1,
-      capabilityDigest: 'a'.repeat(64) })).toBe('applied');
+      capabilityDigest: 'a'.repeat(43) })).toBe('applied');
     const record: OperationRecord = { v: 2, ownerId: principal.ownerId, operationId: revokeId,
       targetKind: 'binding', targetId: first.bindingId, expectedGeneration: first.generation,
       revokedGeneration: first.generation + 1, deviceId: first.deviceId, deviceKey,
@@ -80,7 +80,7 @@ describe('production closure mailbox adapter', () => {
     expect(await service.closeRoom(request)).toEqual(partial);
     const resultRoute = createAgentRevocationCleanupRoutes({ store, capabilities: {
       async authorizeRevocationCleanup() { return { kind: 'authorized' as const, ownerId: principal.ownerId,
-        roomId, binding: first, revokedGeneration: first.generation + 1, capabilityDigest: 'a'.repeat(64) }; },
+        roomId, binding: first, revokedGeneration: first.generation + 1, capabilityDigest: 'a'.repeat(43) }; },
     } }).find(route => route.path === REVOCATION_RESULT_PATH)!;
     const report = (localStop: unknown) => resultRoute.handle(new Request(`https://khala.aiur.team${REVOCATION_RESULT_PATH}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
