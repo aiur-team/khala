@@ -112,6 +112,34 @@ export const HTTP_PROBES: Readonly<Record<string, Probe>> = {
       add(s, `GET receipts ${id}`, receipts);
     }
   },
+  'http-internal:POST /api/v1/channels/:channelId/acknowledgement-batches': async s => {
+    const pendingEvent = s.world.say(otherChannelId, `unissuable ${s.pending.text}`);
+    const binding = s.world.binding();
+    const body = {
+      v: 1, bindingId: binding.bindingId, generation: binding.generation,
+      releases: [{ releaseId: `rel_${pendingEvent}`, eventIds: [pendingEvent], proof: 'invented-proof' }],
+    };
+    const other = await s.world.http('POST', channelRoute(otherChannelId, '/acknowledgement-batches'), { body });
+    expect(other.status).toBe(403);
+    add(s, 'POST batch issuance other', other);
+    const forged = await s.world.http('POST', channelRoute(channelId, '/acknowledgement-batches'), { body });
+    expect([400, 401]).toContain(forged.status);
+    add(s, 'POST batch issuance forged', forged);
+  },
+  'http-internal:POST /api/v1/channels/:channelId/acknowledgements': async s => {
+    const pendingEvent = s.world.say(otherChannelId, `unacknowledgeable ${s.pending.text}`);
+    const binding = s.world.binding();
+    const body = {
+      v: 1, bindingId: binding.bindingId, generation: binding.generation, token: 'invented-batch-token',
+      releases: [{ releaseId: `rel_${pendingEvent}`, eventIds: [pendingEvent] }],
+    };
+    const other = await s.world.http('POST', channelRoute(otherChannelId, '/acknowledgements'), { body });
+    expect(other.status).toBe(403);
+    add(s, 'POST acknowledgements other', other);
+    const forged = await s.world.http('POST', channelRoute(channelId, '/acknowledgements'), { body });
+    expect([400, 401]).toContain(forged.status);
+    add(s, 'POST acknowledgements forged', forged);
+  },
   'http-internal:POST /api/v1/channels/:channelId/stop': async s => {
     // Human-only Stop: the agent binding cannot revoke bindings in either channel, and its own read still works.
     for (const id of [channelId, otherChannelId]) {

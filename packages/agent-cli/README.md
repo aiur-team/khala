@@ -341,13 +341,23 @@ payloads or capabilities.
 
 `openInbox` accepts an optional `recordAcknowledgement` hook. When the exact
 token for the outstanding batch comes back, the inbox passes the held binding
-and that batch's release IDs (never the token) to the hook and moves the cursor
-only after the hook resolves. The connector's `acceptBatchAcknowledgement`
-records one `agent_acknowledged` receipt per release there. If the hook
-throws, the cursor stays put and the same batch replays; a replayed
-acknowledgement returns the receipts already recorded. Without a hook, no
-receipt is recorded. The authenticated local client composition supplies the
-hook.
+and that batch's release IDs, each with its event IDs (never the token), to the
+hook and moves the cursor only after the hook resolves. The connector's
+`acceptBatchAcknowledgement` records one `agent_acknowledged` receipt per
+release there. If the hook throws, the cursor stays put and the same batch
+replays; a replayed acknowledgement returns the receipts already recorded.
+Without a hook, no receipt is recorded. The authenticated local client
+composition supplies the hook.
+
+In internal mode every inbox gets its hook from the same place its releases
+come from: `InternalDelivery.acknowledge` posts the acknowledgement to the
+local server's `POST /api/v1/channels/<channel>/acknowledgements` with the
+granted binding capability. The server recomputes each release ID for that
+binding generation, records the receipts in its acknowledgement ledger, and
+projects them into the owner's receipt evidence before answering. The Claude
+session route, the OpenCode plugin, and every `--internal-descriptor` or
+session-grant command (`read`, `listen`, `mcp-serve`, `codex-hook`) open their
+inbox with it.
 
 ## Ordered explicit pull
 
