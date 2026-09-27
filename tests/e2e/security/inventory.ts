@@ -119,6 +119,8 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'claude-op:pending': probe('claude-session'),
   'claude-op:hook': probe('claude-session'),
   'claude-op:watch': probe('claude-session'),
+  'claude-op:terminal-challenge': probe('claude-session'),
+  'claude-op:terminal-complete': probe('claude-session'),
   // Native hook events.
   'hook-claude:UserPromptSubmit': notObserved(HOOK_RENDERS_CLI),
   'hook-claude:PostToolUse': notObserved(HOOK_RENDERS_CLI),

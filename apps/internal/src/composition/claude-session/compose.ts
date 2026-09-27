@@ -93,6 +93,14 @@ export type ClaudeSessionCompositionOptions = Readonly<{
   /** The route claim for the installed Claude Code, from `inspectClaudeRoute`. */
   capabilities: HarnessCapabilities;
   pause: BindingPauseStore;
+  /** Durable local peer backlog for this exact admitted binding. */
+  peerPending?: (binding: SessionBinding, channelId: string) => boolean;
+  /** Challenge for the exact retained, server-issued peer batch. */
+  peerTerminalChallenge?: (binding: SessionBinding, channelId: string, batchToken: string) =>
+    Readonly<{ nonce: string; bindingId: string; generation: number; channelId: string }> | null;
+  /** Proof-authenticated native Stop completion; no generic terminal command is authority. */
+  peerTurnEnd?: (binding: SessionBinding, nativeSessionId: string, channelId: string,
+    terminalId: string, batchToken: string, nonce: string, proof: string) => boolean;
 }>;
 
 const limits = decodeDeliveryLimits({ maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32 });
@@ -422,9 +430,9 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
         if (stored === null || stored.bindingId !== binding.bindingId || stored.generation !== binding.generation)
           return { pending: false };
         const signal = store.pendingHumanRelease({ channelId: descriptor.channelId as RoomId, binding: stored });
-        if (signal.kind !== 'pending') return { pending: false };
+        const peer = options.peerPending?.(stored, descriptor.channelId) ?? false;
         // Stop, rebind or pause may have happened while the metadata query ran.
-        return { pending: signal.pending && await window() !== null };
+        return { pending: (signal.kind === 'pending' && signal.pending || peer) && await window() !== null };
       },
       watchWindow: window,
       roster: async () => {
@@ -471,6 +479,23 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
     state: await openClaudeSessionState(path.join(root, STATE_DIRECTORY)),
     services,
     access,
+    ...(options.peerTerminalChallenge ? { onTerminalChallenge: async (binding, sessionId, batchToken) => {
+      if (binding.sessionId !== sessionId) return null;
+      const stored = bound(sessionId);
+      const descriptor = grant(sessionId);
+      if (stored === null || descriptor === null || descriptor.bindingId !== binding.bindingId
+        || stored.bindingId !== binding.bindingId || stored.generation !== binding.generation) return null;
+      return options.peerTerminalChallenge?.(stored, descriptor.channelId, batchToken) ?? null;
+    } } : {}),
+    ...(options.peerTurnEnd ? { onTurnEnd: async (binding, sessionId, terminalId, batchToken, nonce, proof) => {
+      if (binding.sessionId !== sessionId) return false;
+      const stored = bound(sessionId);
+      const descriptor = grant(sessionId);
+      if (stored === null || descriptor === null || descriptor.bindingId !== binding.bindingId
+        || stored.bindingId !== binding.bindingId || stored.generation !== binding.generation) return false;
+      return options.peerTurnEnd?.(stored, sessionId, descriptor.channelId,
+        terminalId, batchToken, nonce, proof) ?? false;
+    } } : {}),
   });
 
   return {

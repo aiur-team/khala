@@ -36,6 +36,9 @@ function client(overrides: Partial<ClaudeSessionClient> = {}): ClaudeSessionClie
     accessStatus: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
     requestCreate: vi.fn(async () => ({ kind: 'refused' as const, code: 'unavailable' as const })),
     hook: vi.fn(async () => ({ kind: 'hook' as const, effective: 'sync' as const, watchSeconds: 3000, access: null })),
+    terminalChallenge: vi.fn(async () => ({ kind: 'terminal_challenge' as const,
+      nonce: 'A'.repeat(32), bindingId: 'binding-1', generation: 1, channelId: 'channel-1' })),
+    terminalComplete: vi.fn(async () => ({ kind: 'terminal' as const })),
     watch: vi.fn(async () => ({ kind: 'hook' as const, effective: 'sync' as const, watchSeconds: 3000, access: null })),
     ...overrides,
   };
@@ -54,6 +57,8 @@ describe('khala claude command registration', () => {
       ['claude'], ['claude', 'read'], ['claude', 'read', '--session'], ['claude', 'ack', '--session', 's-1'],
       ['claude', 'read', '--session', 's-1', '--ack', 'token'], ['claude', 'read', '--cwd', '/work'],
       ['claude', 'watch', '--session', 's-1', '--stop'], ['claude', 'hook', '--session', 's-1', '--stop', '--stop'],
+      ['claude', 'terminal-challenge', '--session', 's-1', '--stop'],
+      ['claude', 'terminal-complete', '--session', 's-1', '--stop'],
       ['claude', 'hook', '--session', 's-1', '--final'],
     ]) {
       await expect(run(argv, composed)).resolves.toMatchObject({ code: 2, err: '{"ok":false,"error":"invalid_arguments"}\n' });
@@ -91,6 +96,17 @@ describe('khala claude command registration', () => {
     await expect(run(['claude', 'hook', '--session', 's-1', '--stop'], composed)).resolves.toMatchObject({ code: 0 });
     expect(composed.hook).toHaveBeenNthCalledWith(1, 's-1', { stop: false }, undefined);
     expect(composed.hook).toHaveBeenNthCalledWith(2, 's-1', { stop: true }, undefined);
+    await expect(run(['claude', 'terminal-challenge', '--session', 's-1'], composed)).resolves.toEqual({
+      code: 0, out: `{"ok":true,"kind":"terminal_challenge","nonce":"${'A'.repeat(32)}","bindingId":"binding-1","generation":1,"channelId":"channel-1"}\n`, err: '',
+    });
+    expect(composed.terminalChallenge).toHaveBeenCalledExactlyOnceWith('s-1', undefined);
+    const proof = JSON.stringify({ nonce: 'A'.repeat(32), proof: `${'B'.repeat(42)}A` });
+    await expect(run(['claude', 'terminal-complete', '--session', 's-1'], composed, proof)).resolves.toEqual({
+      code: 0, out: '{"ok":true,"kind":"terminal"}\n', err: '',
+    });
+    expect(composed.terminalComplete).toHaveBeenCalledExactlyOnceWith('s-1', { nonce: 'A'.repeat(32), proof: `${'B'.repeat(42)}A` }, undefined);
+    await expect(run(['claude', 'terminal-complete', '--session', 's-1'], composed, '{"nonce":"A"}'))
+      .resolves.toMatchObject({ code: 2, err: '{"ok":false,"error":"invalid_arguments"}\n' });
   });
 
   it('exits 4 on an unknown send outcome so callers never retry it', async () => {

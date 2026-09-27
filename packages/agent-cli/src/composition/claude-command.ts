@@ -4,7 +4,9 @@ import { MAX_SEND_BYTES } from '../cli/send.js';
 import { validIdentifier } from '../cli/validation.js';
 import type { ClaudeSessionClient } from './claude-session-http.js';
 
-export const CLAUDE_COMMAND_OPS = ['pull', 'read', 'send', 'status', 'mode', 'pending', 'hook', 'watch'] as const;
+export const CLAUDE_COMMAND_OPS = [
+  'pull', 'read', 'send', 'status', 'mode', 'pending', 'hook', 'watch', 'terminal-challenge', 'terminal-complete',
+] as const;
 
 export type ClaudeCommandDependencies = Readonly<{
   /** Absent until the live local-server composition exists: the command fails closed. */
@@ -18,7 +20,8 @@ export type ClaudeCommandDependencies = Readonly<{
  * the `/khala` skill call. Hooks use `pull` (never acknowledges), `pending`, `hook`
  * (effective mode, the fence's watcher window, and an access outcome it settled; the
  * `Stop` hook adds `--stop`, which settles regardless of the per-session throttle) and
- * `watch` (the watcher's `hook`, which never settles), all content-free; the
+ * `watch` (the watcher's `hook`, which never settles), and the two terminal
+ * proof phases (which neither settle nor pull), all content-free; the
  * agent's own calls, `read`, `send`, `status` and `mode`, acknowledge what hooks
  * delivered. The session ID is a selector only; the loopback server authenticates
  * the installation. Output never carries a token.
@@ -43,6 +46,18 @@ export async function runClaudeCommand(args: readonly string[], deps: ClaudeComm
     outcome = await client.mode(sessionId, deps.signal);
   } else if (op === 'hook') {
     outcome = await client.hook(sessionId, { stop }, deps.signal);
+  } else if (op === 'terminal-challenge') {
+    outcome = await client.terminalChallenge(sessionId, deps.signal);
+  } else if (op === 'terminal-complete') {
+    let input: unknown;
+    try { input = JSON.parse(await deps.readStdin(deps.stdin, 256)); } catch { throw new CliError('invalid_arguments'); }
+    if (!input || typeof input !== 'object' || Array.isArray(input)
+      || Object.keys(input).length !== 2 || !('nonce' in input) || !('proof' in input)
+      || typeof input.nonce !== 'string' || !/^[A-Za-z0-9_-]{32}$/u.test(input.nonce)
+      || typeof input.proof !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(input.proof)) {
+      throw new CliError('invalid_arguments');
+    }
+    outcome = await client.terminalComplete(sessionId, { nonce: input.nonce, proof: input.proof }, deps.signal);
   } else if (op === 'watch') {
     outcome = await client.watch(sessionId, deps.signal);
   } else {

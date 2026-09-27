@@ -17,6 +17,7 @@ import { type InternalDelivery, createInternalDelivery } from './internal-delive
 import { internalSessionDigest } from './internal-session.js';
 import { LOCAL_DELIVERY_LIMITS } from './local-harness-capabilities.js';
 import { sessionGrants } from './session-grant.js';
+import { sendInternalTurnEnd } from './internal-turn-end.js';
 
 // The installed OpenCode plugin's live composition over local internal-mode state. An
 // OpenCode session becomes bound when its agent joins a channel, which leaves that
@@ -202,5 +203,10 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
       }
     },
     openStore: binding => openOpenCodeBridgeStore({ stateDirectory, bindingId: binding.bindingId, generation: binding.generation }),
+    async onTurnEnd(binding, sessionId, terminalId) {
+      const file = grantOf(sessionId);
+      if (file !== null) await sendInternalTurnEnd({ descriptorPath: file, stateDirectory,
+        ...(options.fetch ? { fetch: options.fetch } : {}) }, binding, sessionId, terminalId);
+    },
   };
 }

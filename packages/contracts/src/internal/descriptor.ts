@@ -11,6 +11,8 @@ export const INTERNAL_DESCRIPTOR_VERSION = 1;
 
 /** Stable descriptor file name below the private internal root. */
 export const INTERNAL_ACTIVE_DESCRIPTOR_FILE = 'active.json';
+/** Owner-private per-launch proof key read only by the installed Claude hook runtime. */
+export const INTERNAL_CLAUDE_TERMINAL_KEY_FILE = 'claude-terminal.key';
 
 /** Largest descriptor a reader accepts, in UTF-8 bytes. */
 export const MAX_INTERNAL_DESCRIPTOR_BYTES = 4_096;

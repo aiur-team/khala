@@ -1,10 +1,13 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { INTERNAL_ACTIVE_DESCRIPTOR_FILE, parseInternalDescriptor } from '@khala/contracts/internal/descriptor';
+import {
+  INTERNAL_ACTIVE_DESCRIPTOR_FILE, INTERNAL_CLAUDE_TERMINAL_KEY_FILE, parseInternalDescriptor,
+} from '@khala/contracts/internal/descriptor';
 import { LAUNCH_RECORD_FILE } from '../descriptor/write';
 import { channelDirectory } from '../lifecycle/paths';
 import { createChannelStore } from '../store/channel-store';
@@ -21,7 +24,7 @@ afterEach(async () => {
 });
 
 function makeRoot(): string {
-  const base = fs.mkdtempSync(path.join('/tmp', 'khala-launcher-'));
+  const base = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-launcher-'));
   fs.chmodSync(base, 0o700);
   cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
   return path.join(base, 'internal');
@@ -100,6 +103,9 @@ describe('internal launcher', () => {
       v: 1, channelId: report.channelId, origin: report.origin, transportCapability: expect.any(String),
     });
     expect(mode(report.descriptorPath)).toBe(0o600);
+    const terminalKey = path.join(root, INTERNAL_CLAUDE_TERMINAL_KEY_FILE);
+    expect(mode(terminalKey)).toBe(0o600);
+    expect(fs.readFileSync(terminalKey, 'utf8')).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     const channelDir = channelDirectory(root, report.channelId)!;
     const launchFile = path.join(channelDir, LAUNCH_RECORD_FILE);
     expect(mode(launchFile)).toBe(0o600);
@@ -131,6 +137,7 @@ describe('internal launcher', () => {
     await launched.shutdown();
 
     expect(fs.existsSync(report.descriptorPath)).toBe(false);
+    expect(fs.existsSync(path.join(root, INTERNAL_CLAUDE_TERMINAL_KEY_FILE))).toBe(false);
     expect(fs.existsSync(path.join(channelDirectory(root, report.channelId)!, LAUNCH_RECORD_FILE))).toBe(false);
     await expect(call(report.origin, { path: '/' })).rejects.toMatchObject({ code: 'ECONNREFUSED' });
     const lease = acquireRootLease(root);

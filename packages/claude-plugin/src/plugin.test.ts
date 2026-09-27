@@ -105,13 +105,13 @@ describe('claude plugin scaffold', () => {
   it('reaches Khala only through the khala adapter command: no network, inbox, or acknowledgement path', () => {
     const source = fs.readFileSync(path.join(root, 'hooks/lib/runtime.mjs'), 'utf8');
     const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map(match => match[1]).sort();
-    expect(imports).toEqual(['node:child_process', 'node:crypto', 'node:fs/promises', 'node:os', 'node:path']);
+    expect(imports).toEqual(['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:os', 'node:path']);
     const code = source.replace(/^\s*\/\/.*$/gm, '').replace(/^\s*\*.*$/gm, '');
     expect(code).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|require)\b|node:(?:https?|net|tls|dgram)/);
     expect(code).not.toMatch(/inbox|ackBatchToken|--ack|exec\(|shell:\s*true/);
     // Only the non-acknowledging adapter ops; `read`, `send`, `status` and `mode` are agent calls.
-    const ops = [...code.matchAll(/(?:deps\.khala\(|hookState\(deps, input\.sessionId, )'([a-z]+)'/g)].map(match => match[1]);
-    expect([...new Set(ops)].sort()).toEqual(['hook', 'pending', 'pull', 'watch']);
+    const ops = [...code.matchAll(/(?:deps\.khala\(|hookState\(deps, input\.sessionId, )'([a-z-]+)'/g)].map(match => match[1]);
+    expect([...new Set(ops)].sort()).toEqual(['hook', 'pending', 'pull', 'terminal-challenge', 'terminal-complete', 'watch']);
   });
 
   it('carries no dangerous flags or isolated setting sources', () => {

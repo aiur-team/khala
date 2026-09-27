@@ -102,6 +102,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       codexBoundary: async (binding, idle, sessionId) => {
         const { createCodexIdleActivity } = await import('../composition/codex-idle-activity.js');
         await createCodexIdleActivity(stateDirectory).mark(binding, idle, sessionId);
+        if (idle) {
+          const { createInstalledCodexTurnEnd } = await import('../composition/codex-installed-wake.js');
+          await createInstalledCodexTurnEnd({ sessionId, binding,
+            descriptorPath: sessionGrants(internalRoot)({ harness: 'codex', sessionId }) })().catch(() => undefined);
+        }
       },
       codexIdleWake: async (sessionId, binding) => {
         const { createInstalledCodexWake } = await import('../composition/codex-installed-wake.js');

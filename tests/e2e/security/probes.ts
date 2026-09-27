@@ -225,6 +225,26 @@ export const HTTP_PROBES: Readonly<Record<string, Probe>> = {
     expect(anonymous.status).toBe(403);
     add(s, 'POST agent idle-wake unauthenticated', anonymous);
   },
+  'http-internal:POST /api/v1/agent/automation-turn-end': async s => {
+    // A binding bearer cannot invent a native end or target another binding.
+    // This route returns control state only, even for a plausible session ID.
+    const route = '/api/v1/agent/automation-turn-end';
+    const own = await s.world.http('POST', route, {
+      body: { v: 1, sessionId: 'foreign-thread', channelId },
+    });
+    expect(own.status).toBe(403);
+    add(s, 'POST agent turn-end without native evidence', own);
+    const targeted = await s.world.http('POST', route, {
+      body: { v: 1, sessionId: 'foreign-thread', channelId, bindingId: 'binding-carol' },
+    });
+    expect(targeted.status).toBe(400);
+    add(s, 'POST agent turn-end targeted', targeted);
+    const anonymous = await s.world.http('POST', route, {
+      bearer: null, body: { v: 1, sessionId: 'foreign-thread', channelId },
+    });
+    expect(anonymous.status).toBe(403);
+    add(s, 'POST agent turn-end unauthenticated', anonymous);
+  },
   // The agent's own mode: mode state only, never a message body, and no target field is accepted.
   'http-internal:GET /api/v1/agent/listening-mode': async s => {
     const own = await s.world.http('GET', '/api/v1/agent/listening-mode');

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import {
@@ -53,7 +54,7 @@ function fresh(onReadPrepare?: (sql: string) => void): Readonly<{
   handle: InternalStoreHandle;
   store: ChannelStore;
 }> {
-  const root = fs.mkdtempSync('/tmp/khala-channel-store-');
+  const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-channel-store-'));
   roots.push(root);
   fs.chmodSync(root, 0o700);
   const directory = path.join(root, 'state');
@@ -123,6 +124,17 @@ describe('channel store identity and authority', () => {
     admitWithSharedHistory(handle, bobBinding, channelId);
     expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'pending', pending: false });
     send(store, { eventId: '1', author: 'bob' });
+    expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'pending', pending: false });
+    const peer = { participantId: 'participant-carol' as ParticipantId, ownerId: 'owner-carol' as OwnerId,
+      kind: 'agent' as const, displayName: 'Carol' };
+    const peerDevice = 'device-carol' as DeviceId;
+    expect(store.registerParticipant(peer)).toMatchObject({ kind: 'done' });
+    expect(store.registerDevice({ deviceId: peerDevice, participantId: peer.participantId })).toMatchObject({ kind: 'done' });
+    expect(store.setMembership({ channelId, participantId: peer.participantId, membership: 'joined' }))
+      .toMatchObject({ kind: 'done' });
+    expect(store.send({ channelId, eventId: 'peer-event' as EventId, authorParticipantId: peer.participantId,
+      authorDeviceId: peerDevice, clientTxnId: 'peer-txn', content: text('peer-only'),
+      receivedAt: '2026-09-24T20:00:02.000Z' })).toMatchObject({ kind: 'stored' });
     expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'pending', pending: false });
     send(store, { eventId: '2', author: 'alice', body: 'secret stays out of notification' });
     expect(store.pendingHumanRelease({ channelId, binding: bobBinding })).toEqual({ kind: 'pending', pending: true });

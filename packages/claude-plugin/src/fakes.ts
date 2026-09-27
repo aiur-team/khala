@@ -54,6 +54,8 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
     }
     if (bound === undefined) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"session_not_bound"}\n' };
     if (bound.revoked) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"binding_not_held"}\n' };
+    if (op === 'terminal-challenge') return { code: 0, stdout: '{"ok":true,"kind":"empty"}\n' };
+    if (op === 'terminal-complete') return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"unavailable"}\n' };
     if (op === 'hook' || op === 'watch') {
       const watchSeconds = bound.mode === 'steer' || bound.mode === 'sync' ? bound.watchSeconds : null;
       return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: bound.mode, watchSeconds, access })}\n` };
@@ -72,8 +74,9 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
     return { code: 0, stdout: `${frame(bound.outstanding)}\n` };
   }
 
-  const khala = (op: KhalaOp, sessionId: string, flags: readonly string[] = []): Promise<KhalaResult> => {
+  const khala = (op: KhalaOp, sessionId: string, flags: readonly string[] = [], stdin = ''): Promise<KhalaResult> => {
     calls.push(flags.length > 0 ? { op, sessionId, flags } : { op, sessionId });
+    void stdin;
     const run = async () => {
       await new Promise(resolve => setImmediate(resolve));
       return answer(op, sessionId);
@@ -146,6 +149,7 @@ export function hookDeps(khala: HookDependencies['khala'], bound: (sessionId: st
   const deps: HookDependencies = {
     bound: async sessionId => { checks.push(sessionId); return bound(sessionId); },
     khala,
+    terminalKeyPath: path.join(stateRoot, 'claude-terminal.key'),
     stateRoot,
     now: () => clock.now,
     nonce: () => `nonce-${++nonces}`,
