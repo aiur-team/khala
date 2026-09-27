@@ -38,6 +38,8 @@ describe('runner command guard', () => {
     [['tmux', 'send-keys', '-t', '%7', 'C-c']],
     [['tmux', 'send-keys', '-t', '%7', '-l', '/status']],
     [['tmux', 'capture-pane', '-p', '-t', 'other']],
+    [['/proc/4242/exe', '--model', 'gpt-6-sol']],
+    [['/proc/4242/exe', '--version', 'extra']],
     // The runner acts as the human controller, never as an agent session.
     [['npx', '--yes', PACKAGE, 'send', 'hello']],
     [['khala', 'join', 'http://127.0.0.1:4870/channels/x']],
@@ -61,6 +63,11 @@ describe('runner command guard', () => {
     [['tmux', 'capture-pane', '-p', '-t', '%7']],
   ])('allows %j', argv => {
     expect(checkCommand(argv, PACKAGE)).toEqual({ ok: true });
+  });
+
+  it('allows only a fixture image version query outside package commands', () => {
+    expect(checkCommand(['/proc/4242/exe', '--version'], null)).toEqual({ ok: true });
+    expect(checkCommand(['/proc/4242/exe', '--version'], PACKAGE).ok).toBe(false);
   });
 
   it('starts processes only from adapters that check every command first', () => {

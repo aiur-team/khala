@@ -1,5 +1,6 @@
 // Every process the live runner starts passes this allowlist first. The runner
-// may call `gh`, read one tmux pane TTY, `npx <staged build> status` and `npx <staged build> internal
+// may call `gh`, read one tmux pane, query the verified fixture image's version,
+// `npx <staged build> status` and `npx <staged build> internal
 // [--resume <channel-id>]`, where the staged build is an exact npm pin or the
 // digest-checked tarball copy. It never starts, wraps or hosts an agent:
 // `khala run <cli>` and any agent CLI are refused by name, and anything else is
@@ -36,6 +37,12 @@ export function checkCommand(argv: readonly string[], khalaPackage: string | nul
   const name = basename(command);
   if (AGENT_COMMANDS.has(name)) return { ok: false, reason: `${name} is an agent CLI; the Executor, not the runner, starts agents` };
   if (argv.some(argument => /\bapp-server\b/.test(argument))) return { ok: false, reason: 'hosted agent routes are never started by the runner' };
+  // Fixture capture may ask the exact running image for its version. This path
+  // follows the verified PID, never a caller-provided executable or PATH entry.
+  if (/^\/proc\/[1-9][0-9]*\/exe$/.test(command)) {
+    return khalaPackage === null && args.length === 1 && args[0] === '--version'
+      ? { ok: true } : { ok: false, reason: 'native image may only report its version' };
+  }
   if (name === 'khala') return khalaArguments(args);
   if (name === 'tmux') {
     const pane = (value: string | undefined) => /^%[0-9]+$/.test(value ?? '');

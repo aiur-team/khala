@@ -50,6 +50,20 @@ function statusMatchesProfile(status: string | null, session: NativeSession): bo
   return model === session.model.toLowerCase() && provider === session.provider;
 }
 
+/** Query the kernel's executable link for this PID, not argv[0] or PATH. */
+function nativeVersion(session: NativeSession): string | null {
+  if (session.harness !== 'codex') return null;
+  try {
+    const argv = [`/proc/${session.pid}/exe`, '--version'];
+    assertCommand(argv, null);
+    return execFileSync(argv[0]!, argv.slice(1), { encoding: 'utf8', timeout: 2_000, maxBuffer: 512 });
+  } catch { return null; }
+}
+
+function codexVersion(output: string | null): string | null {
+  return /^codex-cli ([0-9]+\.[0-9]+\.[0-9]+)\n?$/.exec(output ?? '')?.[1] ?? null;
+}
+
 function nativeCommand(session: NativeSession): boolean {
   const name = (value: string) => path.basename(value).replace(/\.(?:c?m?js)$/, '');
   const command = name(session.argv[0]!);
@@ -124,7 +138,7 @@ function recordPath(root: string, repository: string, runId: string, ticket: num
 /** Capture from a trusted Executor harness observation, cross-checking live /proc. */
 export function captureNativeSession(
   root: string, value: unknown, observe = observeProcess, paneIsTty = verifiedPane, now = Date.now,
-  status = nativeStatus,
+  status = nativeStatus, version = nativeVersion,
 ): NativeSession {
   const captured = value && typeof value === 'object' ? { ...value, capturedAt: new Date(now()).toISOString() } : value;
   const session = decodeNativeSession(captured);
@@ -138,6 +152,12 @@ export function captureNativeSession(
     || !paneIsTty(session.tmuxPane, session.tty)) {
     throw new Error('native session ID is unproven by the live fixture status');
   }
+  const imageOutput = version(session);
+  const imageVersion = codexVersion(imageOutput);
+  if (!imageVersion || imageVersion !== session.cliVersion || !sameProcess(session, observe(session.pid))
+    || !paneIsTty(session.tmuxPane, session.tty)) {
+    throw new Error('native CLI version is unproven by the running executable');
+  }
   const directory = recordDir(root, session.repository, session.runId);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
@@ -145,7 +165,8 @@ export function captureNativeSession(
   const finalRecord = {
     ...(captured as Record<string, unknown>),
     capturedAt: new Date(now()).toISOString(),
-    nativeIdentityProof: { method: 'codex-status-v1', sessionId: nativeId },
+    versionOutput: imageOutput!.trim(),
+    nativeIdentityProof: { method: 'codex-status-image-v2', sessionId: nativeId, cliVersion: imageVersion },
   };
   const finalSession = decodeNativeSession(finalRecord);
   if (!finalSession) throw new Error('native fixture observation changed during capture');
@@ -167,8 +188,9 @@ export function aiurRecords(root: string, repository: string, observe = observeP
         if (!session || session.repository !== repository || session.runId !== runId || session.ticket !== ticket || session.role !== role) return null;
         const proof = (record as Record<string, unknown>).nativeIdentityProof;
         if (!proof || typeof proof !== 'object' || Array.isArray(proof)
-          || (proof as Record<string, unknown>).method !== 'codex-status-v1'
-          || (proof as Record<string, unknown>).sessionId !== session.sessionId) return null;
+          || (proof as Record<string, unknown>).method !== 'codex-status-image-v2'
+          || (proof as Record<string, unknown>).sessionId !== session.sessionId
+          || (proof as Record<string, unknown>).cliVersion !== session.cliVersion) return null;
         if (!sameProcess(session, observe(session.pid)) || !paneIsTty(session.tmuxPane, session.tty)) return null;
         const other = role === 'a' ? 'b' : 'a';
         const sibling = recordPath(root, repository, runId, ticket, other);
