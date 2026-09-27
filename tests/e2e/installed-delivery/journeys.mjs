@@ -284,6 +284,64 @@ async function cursor({ install, machine, launch, status }) {
   }
 }
 
+/**
+ * OpenCode outlives `khala internal --resume`: capabilities are launch-scoped, so the
+ * resumed launcher refuses the one the running plugin holds, although the binding is
+ * still live (#456). The plugin must restore that binding by itself and deliver the next
+ * message to the idle session: no `join`, no hook, no OpenCode restart. Stop on the
+ * resumed launch still ends delivery for good.
+ */
+export async function opencodeAcrossResume(install) {
+  const h = 'opencode';
+  const sessionId = 'ses_resumed_opencode';
+  const { machine } = await step(h, 'khala setup', () => setUpMachine(install));
+  let launch = await step(h, 'khala internal starts', () => startInternal(install, machine));
+  const session = await step(h, 'OpenCode loads the installed plugin', () =>
+    openCodeSession(machine, openCodeEntries(machine).plugin, { sessionId, version: VERSIONS.opencode }));
+  try {
+    const joined = join(install, machine, h, sessionId, launch.channelUrl);
+    await step(h, 'the owner approves the request', () => launch.owner.approve(h));
+    await step(h, 'the approved join connects', () => assert.equal(joined.again()?.outcome, 'connected'));
+    await session.afterTool('bash');
+    await launch.owner.say('before the resume');
+    await step(h, 'the plugin delivers before the resume', async () => {
+      const [prompt] = await eventually(() => session.prompts, list => list.length === 1, { what: 'promptAsync' });
+      const token = /"batchToken":"([^"]+)"/.exec(prompt.text)?.[1];
+      const sent = JSON.parse(await session.tool(SEND_TOOL, { message: 'acknowledged', ackBatchToken: token }));
+      assert.equal(sent.kind, 'accepted', JSON.stringify(sent));
+    });
+    const { channelId } = launch.report;
+    await launch.stop();
+    launch = await step(h, 'khala internal --resume starts', () => startInternal(install, machine, { resume: channelId }));
+    await launch.owner.say('after the resume');
+    const token = await step(h, 'the still-running plugin delivers after the resume', async () => {
+      // Nothing touches the plugin here: its own pull must restore the binding and wake the session.
+      const prompts = await eventually(() => session.prompts, list => list.length === 2, { what: 'promptAsync after the resume' });
+      assert.match(prompts[1].text, /after the resume/);
+      assert.doesNotMatch(prompts[1].text, /before the resume/);
+      return /"batchToken":"([^"]+)"/.exec(prompts[1].text)?.[1];
+    });
+    await step(h, 'khala_send after the resume reaches the owner', async () => {
+      const sent = JSON.parse(await session.tool(SEND_TOOL, { message: 'opencode after the resume', ackBatchToken: token }));
+      assert.equal(sent.kind, 'accepted', JSON.stringify(sent));
+      assert.deepEqual(JSON.parse(await session.tool(READ_TOOL)), { kind: 'empty' });
+      assert.match(await launch.owner.timeline(), /opencode after the resume/);
+    });
+    await step(h, 'Stop on the resumed launch ends delivery', async () => {
+      const stopped = await launch.owner.stopAll();
+      assert.deepEqual(stopped.stopped.map(entry => entry.harness), [h]);
+      await launch.owner.say('after Stop');
+      await session.afterTool('bash');
+      assert.deepEqual(JSON.parse(await session.tool(READ_TOOL)), { kind: 'refused', code: 'not_connected' });
+      await new Promise(resolve => setTimeout(resolve, 1_500));
+      assert.equal(session.prompts.length, 2, 'the plugin prompted after Stop');
+    });
+  } finally {
+    await session.close();
+    await launch.stop();
+  }
+}
+
 /** Every harness setup installs an entry for, with the journey that proves it. */
 export const JOURNEYS = Object.freeze({ claude, codex, opencode, cursor });
 
