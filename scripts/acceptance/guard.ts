@@ -46,11 +46,11 @@ export function checkCommand(argv: readonly string[], khalaPackage: string | nul
   if (name === 'khala') return khalaArguments(args);
   if (name === 'tmux') {
     const pane = (value: string | undefined) => /^%[0-9]+$/.test(value ?? '');
-    const tty = args.length === 5 && args[0] === 'display-message' && args[1] === '-p'
-      && args[2] === '-t' && pane(args[3]) && args[4] === '#{pane_tty}';
+    const paneField = args.length === 5 && args[0] === 'display-message' && args[1] === '-p'
+      && args[2] === '-t' && pane(args[3]) && (args[4] === '#{pane_tty}' || args[4] === '#{pane_title}');
     const screen = args.length === 4 && args[0] === 'capture-pane' && args[1] === '-p'
       && args[2] === '-t' && pane(args[3]);
-    return tty || screen ? { ok: true } : { ok: false, reason: 'tmux may only inspect the fixture pane' };
+    return paneField || screen ? { ok: true } : { ok: false, reason: 'tmux may only inspect the fixture pane' };
   }
   if (name === 'gh') {
     return args[0] !== undefined && GH_SUBCOMMANDS.has(args[0]) ? { ok: true } : { ok: false, reason: `gh ${args[0] ?? ''} is not a runner command` };
