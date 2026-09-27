@@ -2,7 +2,8 @@
 // the Khala plugin's hooks and MCP entry. Khala never starts, hosts or signals Claude here.
 
 import {
-  type DeliveryLimits, type HarnessCapabilities, type ModeSupport, decodeHarnessCapabilities, unknownModeSupportMap,
+  type DeliveryLimits, type HarnessCapabilities, type ListeningMode, type ModeSupport,
+  decodeHarnessCapabilities, unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import { CLAUDE_HARNESS, claudeCapabilities } from './capabilities';
 
@@ -11,6 +12,8 @@ export const CLAUDE_INTERACTIVE_ADAPTER_VERSION = 'claude-session-adapter-1';
 export const CLAUDE_INTERACTIVE_EVIDENCE_REF = 'experiments/internal-mode/read-receipts/claude/evidence.json';
 /** Changes whenever the route's evidence changes, so an owner's experimental grant lapses with it. */
 export const CLAUDE_INTERACTIVE_EVIDENCE_REVISION = 'interactive-claude-2026-09-27';
+export const CLAUDE_INTERACTIVE_MODE_EVIDENCE_REF = 'experiments/internal-mode/listening-modes/claude/evidence.json';
+export const CLAUDE_INTERACTIVE_MODE_EVIDENCE_REVISION = 'interactive-claude-modes-2026-09-27';
 
 /** One exact Claude Code version and delivery route that passed the receipt conformance run. */
 export type ClaudeProvenRoute = Readonly<{ version: string; route: typeof CLAUDE_INTERACTIVE_ROUTE }>;
@@ -24,30 +27,42 @@ export const CLAUDE_INTERACTIVE_PROVEN: readonly ClaudeProvenRoute[] = [
   { version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE },
 ];
 
+/** Native, normal-trust mode cells retained separately from the receipt proof. */
+export type ClaudeProvenMode = ClaudeProvenRoute & Readonly<{ mode: ListeningMode }>;
+export const CLAUDE_INTERACTIVE_MODE_PROVEN: readonly ClaudeProvenMode[] = [
+  { version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE, mode: 'steer' },
+  { version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE, mode: 'sync' },
+  { version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE, mode: 'async' },
+];
+
 const IDLE = 'Idle agents receive messages only at their next turn.';
+const WATCHER = 'Idle wake works only while the Stop-armed watcher is live, for at most 3000 seconds after arming;'
+  + ' after it expires, messages wait until the next native turn. Proof covers human-authored releases only.';
 
 /**
  * Declares the interactive route for one inspected Claude Code version. An exact
  * version/route pair in `proven` is `tested`. Any other inspected version on this route
  * is `experimental` (decisions 34 and 37): it delivers with batch-token acknowledgement,
- * but its modes are labelled experimental and take effect only under the owner's
- * experimental-route grant. Another route claims nothing.
+ * but its modes need the owner's experimental-route grant. Each mode has its own
+ * normal-trust proof registry; receipt proof alone cannot promote one. Another
+ * route claims nothing.
  */
 export function interactiveClaudeCapabilities(
   version: string,
   route: string,
   limits: DeliveryLimits,
   proven: readonly ClaudeProvenRoute[] = CLAUDE_INTERACTIVE_PROVEN,
+  modeProven: readonly ClaudeProvenMode[] = CLAUDE_INTERACTIVE_MODE_PROVEN,
 ): HarnessCapabilities {
   if (route !== CLAUDE_INTERACTIVE_ROUTE) {
     return closed(version, limits, `Claude Code ${version} on route ${route} is not a Khala delivery route. ${IDLE}`);
   }
   const tested = proven.some(pair => pair.version === version && pair.route === route);
   const reason = tested
-    // Receipt proof says nothing about mode delivery, which the hook proofs decide.
+    // A separate mode proof is required even when the receipt route is tested.
     ? `Mode delivery is proven separately; until then this mode is experimental. ${IDLE}`
     : `Claude Code ${version} on route ${route} has no retained read-receipt proof, so this route is experimental. ${IDLE}`;
-  const experimental = (mode: string): ModeSupport => ({
+  const experimental = (mode: ListeningMode): ModeSupport => ({
     status: 'experimental',
     route: `${route}-${mode}`,
     testedVersion: version,
@@ -55,6 +70,17 @@ export function interactiveClaudeCapabilities(
     evidenceRevision: CLAUDE_INTERACTIVE_EVIDENCE_REVISION,
     reason,
   });
+  const modeSupport = (mode: ListeningMode): ModeSupport => tested
+    && modeProven.some(pair => pair.version === version && pair.route === route && pair.mode === mode)
+    ? {
+        status: 'proven', route: `${route}-${mode}`, testedVersion: version,
+        evidenceRef: CLAUDE_INTERACTIVE_MODE_EVIDENCE_REF,
+        evidenceRevision: CLAUDE_INTERACTIVE_MODE_EVIDENCE_REVISION,
+        reason: mode === 'async'
+          ? 'Agent-chosen native read only; hooks do not automatically deliver in async mode. Proof covers human-authored releases only.'
+          : WATCHER,
+      }
+    : experimental(mode);
   return {
     v: 3,
     harness: CLAUDE_HARNESS,
@@ -68,7 +94,7 @@ export function interactiveClaudeCapabilities(
     reconcileByReleaseId: 'unsupported',
     limits,
     evidenceRef: CLAUDE_INTERACTIVE_EVIDENCE_REF,
-    modes: { steer: experimental('steer'), sync: experimental('sync'), async: experimental('async') },
+    modes: { steer: modeSupport('steer'), sync: modeSupport('sync'), async: modeSupport('async') },
     acknowledgement: 'batch_token_next_call',
   };
 }

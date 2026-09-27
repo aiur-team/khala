@@ -12,14 +12,19 @@ import type { AutomationAuthority } from '@khala/policy/trust/gate';
 import { type PolicyChange, evaluatePolicyChange } from '@khala/policy/trust/transitions';
 import type { BindingStatus, PolicyActor, TrustState } from '@khala/policy/trust/types';
 import type { PolicySetCommand } from '@khala/contracts/delivery/index';
+import type { ListeningModeView, SessionBinding } from '@khala/contracts/delivery/index';
+import { sameSessionBinding } from '@khala/contracts/delivery/index';
 
 /** Stable marker the boundary check looks for: no hosted graph may contain it. */
 export const LOCAL_AUTOMATION_MARKER = 'khala:local-automation-authority';
+/** The proved Stop-armed Claude watcher lifetime; shorter than its 3600-second hook registration. */
+export const LOCAL_CLAUDE_WATCH_SECONDS = 3_000;
 
 export type LocalAutomationProvider = Readonly<{
   marker: typeof LOCAL_AUTOMATION_MARKER;
   authority: AutomationAuthority;
   limits: LocalAutomationLimits;
+  claudeWatchSeconds: number;
 }>;
 
 /** What the local release ledger has recorded, supplied by the caller that owns it. */
@@ -59,7 +64,21 @@ export function createLocalAutomationProvider(limits: LocalAutomationLimits): Lo
     marker: LOCAL_AUTOMATION_MARKER,
     authority: Object.freeze({ approvedAutomation: () => config }),
     limits: frozen,
+    claudeWatchSeconds: LOCAL_CLAUDE_WATCH_SECONDS,
   });
+}
+
+/** One content-free watcher window, only for the active unpaused binding's effective safe mode. */
+export function localClaudeWatchWindow(
+  provider: LocalAutomationProvider,
+  held: SessionBinding,
+  current: SessionBinding | null,
+  mode: ListeningModeView | null,
+  paused: boolean | 'unavailable',
+): Readonly<{ seconds: number }> | null {
+  if (current === null || !sameSessionBinding(held, current) || paused !== false || mode === null
+    || mode.requested === 'async' || (mode.effective !== 'steer' && mode.effective !== 'sync')) return null;
+  return { seconds: provider.claudeWatchSeconds };
 }
 
 /** An owner policy change evaluated under the local authority. */

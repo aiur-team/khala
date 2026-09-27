@@ -14,9 +14,11 @@ export {
   CLAUDE_ADAPTER_VERSION, CLAUDE_EVIDENCE_REF, CLAUDE_HARNESS, CLAUDE_TESTED_VERSION, claudeCapabilities,
 } from './capabilities';
 export {
-  CLAUDE_INTERACTIVE_PROVEN, CLAUDE_INTERACTIVE_ROUTE, installedClaudeCapabilities, interactiveClaudeCapabilities,
+  CLAUDE_INTERACTIVE_PROVEN, CLAUDE_INTERACTIVE_ROUTE, CLAUDE_INTERACTIVE_MODE_PROVEN,
+  CLAUDE_INTERACTIVE_MODE_EVIDENCE_REF, CLAUDE_INTERACTIVE_MODE_EVIDENCE_REVISION,
+  installedClaudeCapabilities, interactiveClaudeCapabilities,
 } from './interactive';
-export type { ClaudeProvenRoute } from './interactive';
+export type { ClaudeProvenRoute, ClaudeProvenMode } from './interactive';
 export type {
   ClaudeNativeProbe, ClaudeNativeRouteOutcome, ClaudeNativeRoutePort, ClaudeRouteSubmission, ClaudeSessionState,
 } from './native-cli';

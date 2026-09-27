@@ -70,13 +70,14 @@ describe('local harness capabilities', () => {
     expect(await localHarnessCapabilities(() => environment({}))(binding('opencode'))).toBeNull();
   });
 
-  it('claims tested receipts for the inspected proven Claude version while modes stay experimental', async () => {
+  it('claims exact-version Claude receipt and mode proof without an unbounded idle claim', async () => {
     const runs: string[] = [];
     const claude = await localHarnessCapabilities(() => environment({ claude: '2.1.283', runs }))(binding('claude'));
     expect(claude).toMatchObject({
       harness: 'claude', version: '2.1.283', support: 'tested', acknowledgement: 'batch_token_next_call',
     });
-    expect(Object.values(claude!.modes).map(mode => mode.status)).toEqual(['experimental', 'experimental', 'experimental']);
+    expect(Object.values(claude!.modes).map(mode => mode.status)).toEqual(['proven', 'proven', 'proven']);
+    expect(claude!.immediateNotification).toBe('unknown');
     expect(runs).toEqual(['/usr/bin/claude --version']);
   });
 

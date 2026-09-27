@@ -16,7 +16,7 @@ const runtime = createInternalRuntime({
   bundleDirectory: path.join(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/internal/src/launcher/fixtures/internal-web'),
   startPort: 0,
   openBrowser: async () => ({ opened: false, reason: 'disabled in tests' }),
-  // The installed Claude Code this world's launcher claims: inspected, and not proven.
+  // The exact installed Claude Code version with a native mode proof.
   claudeVersion: async () => INSTALLED_CLAUDE,
 });
 const write = (stream: NodeJS.WritableStream) => ({

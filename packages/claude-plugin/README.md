@@ -193,6 +193,14 @@ There is no binding argument. The session is the only selector, and a
 caller-named binding would be a second one. `join` never admits the agent:
 only the human grant does.
 
+After the channel owner restarts `khala internal --resume <channel-id>`, the
+previous launch's grant is inactive. In the same Claude session, run
+`/khala join <channel-url>` again. For an active binding, this resumes its
+original approved access operation and obtains a grant for the new launch;
+the owner does not decide again. Hooks and ordinary send/read calls stay
+unbound until that explicit recovery completes. A revoked binding requires a
+new owner approval.
+
 Who edits what: #252 owns `hooks/` (and the runtime), #253 owns `skills/khala/`, and #259 lives
 outside this package.
 

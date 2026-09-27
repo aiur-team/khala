@@ -320,15 +320,18 @@ export async function runClaudeMcpServer(options: ClaudeMcpServerOptions): Promi
 }
 
 /**
- * The finite outcome first, then any batch as its own content item. A token never
- * reaches this point: the adapter renders batches without one.
+ * The finite outcome first, then any batch as its own content item. Claude Code
+ * renders structuredContent in preference to additional content items, so that
+ * same framed batch must also be present there. A token never reaches this
+ * point: the adapter renders batches without one.
  */
 function toolResult(outcome: Outcome): McpToolResult {
   const { batch, ...safe } = outcome;
   const content: { type: 'text'; text: string }[] = [{ type: 'text', text: JSON.stringify(safe) }];
   if (typeof batch === 'string') content.push({ type: 'text', text: batch });
+  const structured = typeof batch === 'string' ? { ...safe, batch } : safe;
   const failed = safe.kind === 'refused' || safe.kind === 'outcome_unknown' || safe.kind === 'conflict';
-  return { content, structuredContent: safe, ...(failed ? { isError: true } : {}) };
+  return { content, structuredContent: structured, ...(failed ? { isError: true } : {}) };
 }
 
 async function guard(run: () => Promise<Outcome>): Promise<Outcome> {
