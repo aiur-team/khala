@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { AuthPrincipal, CallOptions, DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, CallOptions, ClosureConnectorStopResult, ClosureRequest, DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import type { MatrixSessionIssuer } from '../composition/human/matrix';
 import type { ClosureTransport } from './service';
 
@@ -11,6 +11,8 @@ export function createMatrixClosureTransport(input: Readonly<{
   principal: AuthPrincipal;
   sessions: MatrixSessionIssuer;
   homeserverOrigin: string;
+  /** #42 protected connector mailbox; no mailbox means closure cannot end delivery. */
+  connector?: Readonly<{ stopDelivery(request: ClosureRequest, options?: CallOptions): Promise<ClosureConnectorStopResult> }>;
   fetch?: typeof globalThis.fetch;
 }>): ClosureTransport {
   const origin = new URL(input.homeserverOrigin);
@@ -42,7 +44,9 @@ export function createMatrixClosureTransport(input: Readonly<{
   }
 
   return {
+    connectorConfigured: input.connector !== undefined,
     membership,
+    stopConnectorDelivery: (request, options) => input.connector?.stopDelivery(request, options) ?? Promise.resolve({ kind: 'unavailable' as const }),
     async leave(ownerId, roomId, options) {
       try {
         const active = await session(ownerId, options);
@@ -59,8 +63,8 @@ export function createMatrixClosureTransport(input: Readonly<{
       } catch { return 'unknown'; }
     },
     async requestLocalCleanup() {
-      // The server cannot attest that an offline browser or connector cleared
-      // local state. The caller receives `partial` until a real cleanup receipt
+      // The server cannot attest that an offline browser cleared its local
+      // state. The caller receives `partial` until a real cleanup request receipt
       // is integrated; transport leave alone never upgrades this to complete.
       return 'unavailable';
     },

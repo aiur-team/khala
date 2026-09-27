@@ -1,5 +1,5 @@
 // U2: what each server-side store and log holds. The encrypted relay (Synapse) is
-// reached only from the human browser flow, and only a disposable live deployment
+// reached from the human browser and owner-authorized control flows, and only a disposable live deployment
 // can show its records and logs; this suite had none, so relay confidentiality is
 // not observed here. A tripwire fails when a new relay path appears. What runs
 // in-process is inspected: the internal-mode loopback server's store and logs, and
@@ -7,7 +7,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AuthPrincipal, DeviceId, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import { createMatrixClosureTransport } from '../../../apps/control/src/channel-closure/matrix';
+import type { MatrixSessionIssuer } from '../../../apps/control/src/composition/human/matrix';
 import { describeLeaks, mintCanary, scanTree } from './fixtures';
 import { closeHostedWorlds, runGatedRelease } from './hosted-world';
 import { REPO_ROOT, relayAdapterEvidence } from './inventory';
@@ -71,12 +74,51 @@ describe('server-side stores and logs', () => {
     expect(outside, describeLeaks(outside)).toEqual([]);
   });
 
-  it('the relay is reached only from the human browser flow, which creates encrypted rooms', () => {
-    // KHA-132 wires the browser to Synapse; no connector or agent path reaches the relay. A new
-    // relay path (for example a connector Matrix adapter) fails here, so its ciphertext, logs and
-    // keys get a case in this suite before anyone reads the gap as a pass.
+  it('limits owner-authorized closure relay traffic to membership and leave without message content', async () => {
+    const canary = mintCanary('relay');
+    const ownerId = 'owner_relay_probe' as OwnerId;
+    const roomId = '!room:matrix.example' as RoomId;
+    const principal: AuthPrincipal = {
+      v: 1, ownerId, providerIssuer: 'https://issuer.example', providerSubject: 'relay-probe',
+      verifiedEmail: 'relay@example.test', sessionExpiresAt: '2030-01-01T00:00:00Z',
+    };
+    const sessions = { issue: vi.fn(async () => ({ kind: 'ok' as const, session: {
+      homeserverOrigin: 'https://matrix.example', userId: '@relay:matrix.example',
+      accessToken: 'control-session-token', deviceId: 'device_relay' as DeviceId, publishedFingerprint: null,
+    } })) } as unknown as MatrixSessionIssuer;
+    const calls: { url: string; method: string; body: string | null; authorization: string | null }[] = [];
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push({ url, method: init?.method ?? 'GET', body: typeof init?.body === 'string' ? init.body : null,
+        authorization: headers.get('authorization') });
+      return init?.method === 'POST' ? new Response('{}', { status: 200 })
+        : new Response(JSON.stringify({ membership: 'join', ignored: canary.text }), { status: 200 });
+    });
+    const transport = createMatrixClosureTransport({
+      principal, sessions, homeserverOrigin: 'https://matrix.example', fetch: fetch as typeof globalThis.fetch,
+    });
+
+    expect(await transport.membership(ownerId, roomId)).toBe('joined');
+    expect(await transport.leave(ownerId, roomId)).toBe('left');
+    expect(await transport.membership('owner_other' as OwnerId, roomId)).toBe('unavailable');
+    expect(await transport.leave('owner_other' as OwnerId, roomId)).toBe('unknown');
+    expect(calls).toHaveLength(2);
+    expect(calls.map(({ url, method, body }) => ({ url, method, body }))).toEqual([
+      { url: 'https://matrix.example/_matrix/client/v3/rooms/!room%3Amatrix.example/state/m.room.member/%40relay%3Amatrix.example', method: 'GET', body: null },
+      { url: 'https://matrix.example/_matrix/client/v3/rooms/!room%3Amatrix.example/leave', method: 'POST', body: '{}' },
+    ]);
+    expect(calls.every(call => call.authorization === 'Bearer control-session-token')).toBe(true);
+    expect(JSON.stringify(calls.map(({ url, method, body }) => ({ url, method, body })))).not.toContain(canary.core);
+    expect(JSON.stringify(calls.map(({ url, body }) => ({ url, body })))).not.toContain('control-session-token');
+  });
+
+  it('inventories browser and owner-authorized control access to the relay', () => {
+    // KHA-132 wires the browser to Synapse; P13 closure adds an owner-account
+    // control adapter for membership and leave. A connector or agent relay path
+    // still changes this inventory and needs its own confidentiality evidence.
     expect(relayAdapterEvidence()).toEqual([
       'apps/web: matrix-js-sdk',
+      'apps/control/src/channel-closure/matrix.ts',
       'apps/control/src/composition/human/matrix.ts',
       'apps/web/src/composition/human/matrix-browser.ts',
     ]);

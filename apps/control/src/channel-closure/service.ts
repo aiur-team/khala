@@ -1,15 +1,20 @@
 import { createHash } from 'node:crypto';
 import {
   CLOSURE_CONSEQUENCES, decodeClosureRequest, ok, outcomeUnknown, rejected, unavailable,
-  type AuthPrincipal, type CallOptions, type ClosureCapability, type ClosurePort, type ClosureRequest,
-  type ClosureStatus, type ControlStore, type OwnerId, type RoomId,
+  decodeClosureConnectorReceipt, type AuthPrincipal, type CallOptions, type ClosureCapability,
+  type ClosureConnectorStopResult, type ClosurePort, type ClosureRequest, type ClosureStatus,
+  type ControlStore, type OwnerId, type RoomId,
 } from '@khala/contracts/messaging/index';
 
 /** A server-side owner account adapter. `leave` must be safe to repeat. */
 export interface ClosureTransport {
+  /** A protected mailbox client is installed; runtime availability is checked per command. */
+  readonly connectorConfigured: boolean;
   membership(ownerId: OwnerId, roomId: RoomId, options?: CallOptions): Promise<'joined' | 'left' | 'forbidden' | 'unavailable'>;
+  /** A durable connector receipt: stop this exact owner/channel/generation's intake and model dispatch before leave. */
+  stopConnectorDelivery(request: ClosureRequest, options?: CallOptions): Promise<ClosureConnectorStopResult>;
   leave(ownerId: OwnerId, roomId: RoomId, options?: CallOptions): Promise<'left' | 'forbidden' | 'unknown'>;
-  /** Best-effort signal to clear this owner's local browser/connector state. */
+  /** Best-effort request for remaining owner-device cleanup after connector stop. */
   requestLocalCleanup(ownerId: OwnerId, roomId: RoomId, options?: CallOptions): Promise<'requested' | 'unavailable'>;
 }
 
@@ -63,6 +68,10 @@ export function createChannelClosureService(input: Readonly<{
 
   return {
     async capability(roomId, options) {
+      if (!transport.connectorConfigured) return ok({
+        ownerId: principal.ownerId, roomId, expectedRoomRevision: 0,
+        available: false, unavailableReason: 'not_configured', consequences: CLOSURE_CONSEQUENCES,
+      });
       const current = await store.read<Marker>(channelKey(principal.ownerId, roomId), options);
       if (current.kind === 'unavailable') return unavailable();
       const membership = await transport.membership(principal.ownerId, roomId, options).catch(() => 'unavailable' as const);
@@ -80,6 +89,7 @@ export function createChannelClosureService(input: Readonly<{
       if (!decoded.ok) return rejected('forbidden');
       if (request.ownerId !== principal.ownerId) return rejected('forbidden');
       if (request.expectedRoomRevision !== 0) return rejected('stale_room');
+      if (!transport.connectorConfigured) return unavailable();
 
       const opKey = operationKey(request.operationId);
       const known = await store.read<Marker>(opKey, options);
@@ -113,13 +123,24 @@ export function createChannelClosureService(input: Readonly<{
       if (!existing || existing.operationId !== request.operationId || !matches(existing, request)) return rejected('stale_room');
       if (existing.state === 'complete') return ok(status(existing));
 
+      // Fence the connector before leaving the owner's Matrix account. A
+      // server-side leave alone does not stop an agent still subscribed to the
+      // channel, so an absent mailbox receipt must leave the outcome partial.
+      const previouslyLeft = existing.state === 'partial' && existing.reason === 'local_cleanup_failed';
+      const connector = previouslyLeft
+        ? null
+        : await transport.stopConnectorDelivery(request, options).catch(() => ({ kind: 'unavailable' as const }));
+      const receipt = connector?.kind === 'stopped' ? decodeClosureConnectorReceipt(connector.receipt) : null;
+      const connectorStopped = previouslyLeft || (receipt?.ok === true
+        && receipt.value.operationId === request.operationId
+          && receipt.value.ownerId === request.ownerId && receipt.value.roomId === request.roomId
+          && receipt.value.expectedRoomRevision === request.expectedRoomRevision);
       // Never claim completion from a local record alone: the transport may be
       // offline, and a marker cannot remove a remote participant by itself.
-      // Once leave was confirmed, a cleanup retry must never leave a later
-      // participation that may have joined the same Matrix room.
-      const left = existing.state === 'partial' && existing.reason === 'local_cleanup_failed'
-        ? 'left' as const
-        : await transport.leave(request.ownerId, request.roomId, options).catch(() => 'unknown' as const);
+      // Once leave was confirmed, a cleanup retry must not leave a later join.
+      const left = !connectorStopped ? 'unknown' as const
+        : previouslyLeft ? 'left' as const
+          : await transport.leave(request.ownerId, request.roomId, options).catch(() => 'unknown' as const);
       const cleanup = left === 'left'
         ? await transport.requestLocalCleanup(request.ownerId, request.roomId, options).catch(() => 'unavailable' as const)
         : 'unavailable';

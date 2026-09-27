@@ -21,6 +21,8 @@ describe('Matrix channel closure transport', () => {
       : new Response('{"membership":"join"}', { status: 200 }));
     const transport = createMatrixClosureTransport({ principal, sessions, homeserverOrigin: 'https://matrix.example', fetch: fetch as typeof globalThis.fetch });
 
+    expect(transport.connectorConfigured).toBe(false);
+    expect(await transport.stopConnectorDelivery({ operationId: 'close_1', ownerId, roomId, expectedRoomRevision: 0 })).toEqual({ kind: 'unavailable' });
     expect(await transport.membership(ownerId, roomId)).toBe('joined');
     expect(await transport.leave(ownerId, roomId)).toBe('left');
     expect(fetch.mock.calls[1]?.[0]).toBe('https://matrix.example/_matrix/client/v3/rooms/!room%3Amatrix.example/leave');

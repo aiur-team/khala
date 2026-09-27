@@ -11,7 +11,8 @@ KHA-129 recovery service to the KHA-127 panel's `RecoveryPorts`.
   `unavailable`.
 - **Closure (P13).** An optional owner-scoped control port supplies the current channel capability,
   executes the typed closure command and inspects retries. Without the registered protected route,
-  the capability remains `null`; no local storage deletion is used as a substitute.
+  the capability remains `null`; when the route exists without a protected connector stop mailbox,
+  its capability is unavailable. No local storage deletion is used as a substitute.
 - **Lifecycle.** Device views from a replaced generation are ignored. `dispose` closes only this
   port's observers and discards identity or capability reads still in flight. The shared device and
   messaging lifecycle stay owned by KHA-132.
@@ -30,4 +31,4 @@ The generic capability slot remains unavailable until it has a separate render h
 - The control plane serves no owner revocation route. The binding-side ports exist
   (`lookupBinding`, `disableBinding`, `revokeAdapterCapability` in `@khala/control/agent-bootstrap`);
   a route also needs a Matrix `ProtocolRevocationPort` and a device-key lookup.
-- The production control route and browser API adapter must be registered before closure is offered.
+- The protected connector stop mailbox must be bound before the production closure capability is offered.

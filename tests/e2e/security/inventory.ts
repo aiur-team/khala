@@ -172,6 +172,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'GET /api/human/channel-discovery/bootstrap/authorize', 'POST /api/human/channel-discovery/bootstrap/authorize',
     'PUT /api/human/channel-discovery/settings', 'POST /api/human/channel-discovery/allowlist',
     'PUT /api/human/channel-discovery/rollout',
+    'GET /api/human/channel-closure', 'POST /api/human/channel-closure',
   ].map(route => [`http-control:${route}`, humanOnly('owner-authenticated hosted control route')])),
   ...Object.fromEntries([
     'GET /api/agent/status', 'POST /api/agent/pairing/claim', 'POST /api/agent/pairing/result',
@@ -253,8 +254,8 @@ export function internalServerRoutes(
 /**
  * Where the encrypted relay (Matrix/Synapse) is reached from: relay or E2EE SDK
  * dependencies in runtime manifests, and source paths named for a relay, homeserver or
- * Matrix. Today that is the human browser flow and its control session issuer
- * (KHA-132). This is a heuristic, not a proof of absence: a relay client under another
+ * Matrix. Today that is the human browser flow, its control session issuer,
+ * and the owner-authorized closure adapter. This is a heuristic, not a proof of absence: a relay client under another
  * name, for example one built directly on `libsodium-wrappers`, would not appear.
  */
 export function relayAdapterEvidence(): string[] {

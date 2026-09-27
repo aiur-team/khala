@@ -2,7 +2,7 @@
 // owner's participation; it does not erase transport or recipient copies.
 
 import { type Decoded, decodeWith, fail, identifier, literal, object, safeInteger } from './decode';
-import { type OwnerId, type RoomId, readId } from './ids';
+import { type BindingId, type OwnerId, type RoomId, readId } from './ids';
 import type { CallOptions, OperationResult } from './outcomes';
 
 export const CLOSURE_CONSEQUENCES = Object.freeze({
@@ -34,9 +34,22 @@ export type ClosureRequest = Readonly<{
   expectedRoomRevision: number;
 }>;
 
+/** Connector acknowledgement for the exact close operation. It is emitted only
+ * after a durable intake/dispatch fence is active and local cleanup is queued. */
+export type ClosureConnectorReceipt = ClosureRequest & Readonly<{
+  bindingId: BindingId;
+  bindingGeneration: number;
+  state: 'stopped';
+  cleanupRequested: true;
+}>;
+
+export type ClosureConnectorStopResult =
+  | Readonly<{ kind: 'stopped'; receipt: ClosureConnectorReceipt }>
+  | Readonly<{ kind: 'pending' | 'unavailable' }>;
+
 export type ClosureStatus = Readonly<{
   operationId: string;
-  /** Partial means participation ended but local cleanup remains unconfirmed. */
+  /** Partial may mean delivery stop or leave is unconfirmed, or only local cleanup remains. Inspect `reason`. */
   state: 'pending' | 'complete' | 'partial' | 'failed';
   reason: ClosureFailureReason | null;
 }>;
@@ -57,6 +70,26 @@ export function decodeClosureRequest(input: unknown): Decoded<ClosureRequest> {
       ownerId: readId<'OwnerId'>(r.field('ownerId'), r.at('ownerId')),
       roomId: readId<'RoomId'>(r.field('roomId'), r.at('roomId')),
       expectedRoomRevision: safeInteger(r.field('expectedRoomRevision'), r.at('expectedRoomRevision')),
+    };
+  });
+}
+
+export function decodeClosureConnectorReceipt(input: unknown): Decoded<ClosureConnectorReceipt> {
+  return decodeWith(() => {
+    const r = object(input, '', [
+      'operationId', 'ownerId', 'roomId', 'expectedRoomRevision',
+      'bindingId', 'bindingGeneration', 'state', 'cleanupRequested',
+    ]);
+    if (r.field('cleanupRequested') !== true) fail(r.at('cleanupRequested'), 'mismatch');
+    return {
+      operationId: identifier(r.field('operationId'), r.at('operationId')),
+      ownerId: readId<'OwnerId'>(r.field('ownerId'), r.at('ownerId')),
+      roomId: readId<'RoomId'>(r.field('roomId'), r.at('roomId')),
+      expectedRoomRevision: safeInteger(r.field('expectedRoomRevision'), r.at('expectedRoomRevision')),
+      bindingId: readId<'BindingId'>(r.field('bindingId'), r.at('bindingId')),
+      bindingGeneration: safeInteger(r.field('bindingGeneration'), r.at('bindingGeneration')),
+      state: literal(r.field('state'), r.at('state'), ['stopped']),
+      cleanupRequested: true,
     };
   });
 }

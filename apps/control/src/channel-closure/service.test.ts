@@ -29,7 +29,12 @@ function blobs(): BlobsStoreLike {
 function setup() {
   const store = createControlStore({ records: blobs(), operations: blobs(), clock: () => 0 });
   const transport: ClosureTransport = {
+    connectorConfigured: true,
     membership: vi.fn(async () => 'joined' as const),
+    stopConnectorDelivery: vi.fn(async input => ({ kind: 'stopped' as const, receipt: {
+      ...input, bindingId: 'binding_alice' as never, bindingGeneration: 1,
+      state: 'stopped' as const, cleanupRequested: true as const,
+    } })),
     leave: vi.fn(async () => 'left' as const),
     requestLocalCleanup: vi.fn(async () => 'requested' as const),
   };
@@ -75,5 +80,41 @@ describe('channel closure service', () => {
       operationId: 'close_1', state: 'complete', reason: null,
     } });
     expect(transport.leave).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not leave the human account while connector delivery remains live or unconfirmed', async () => {
+    const { service, transport } = setup();
+    vi.mocked(transport.stopConnectorDelivery).mockResolvedValueOnce({ kind: 'pending' });
+    expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: {
+      operationId: 'close_1', state: 'partial', reason: 'dependency_unavailable',
+    } });
+    expect(transport.leave).not.toHaveBeenCalled();
+    expect(transport.requestLocalCleanup).not.toHaveBeenCalled();
+    expect(await service.closeRoom(request)).toMatchObject({ kind: 'ok', value: { state: 'complete' } });
+    expect(transport.stopConnectorDelivery).toHaveBeenCalledWith(request, undefined);
+    expect(transport.leave).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not offer closure or create an intent without a protected connector mailbox', async () => {
+    const { transport, store } = setup();
+    const service = createChannelClosureService({ principal, store, transport: { ...transport, connectorConfigured: false } });
+    expect(await service.capability(roomId)).toMatchObject({ kind: 'ok', value: {
+      available: false, unavailableReason: 'not_configured',
+    } });
+    expect(await service.closeRoom(request)).toMatchObject({ kind: 'unavailable' });
+    expect(transport.membership).not.toHaveBeenCalled();
+    expect(transport.leave).not.toHaveBeenCalled();
+  });
+
+  it('does not leave for a connector receipt from another channel', async () => {
+    const { service, transport } = setup();
+    vi.mocked(transport.stopConnectorDelivery).mockResolvedValueOnce({ kind: 'stopped', receipt: {
+      ...request, roomId: 'room_other' as RoomId, bindingId: 'binding_alice' as never,
+      bindingGeneration: 1, state: 'stopped', cleanupRequested: true,
+    } });
+    expect(await service.closeRoom(request)).toMatchObject({ kind: 'ok', value: {
+      state: 'partial', reason: 'dependency_unavailable',
+    } });
+    expect(transport.leave).not.toHaveBeenCalled();
   });
 });
