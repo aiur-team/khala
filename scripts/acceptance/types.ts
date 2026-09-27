@@ -11,6 +11,8 @@ import type { ListeningMode } from '../../packages/contracts/src/delivery/listen
 
 export const ACCEPTANCE_REPOSITORY = 'aiur-team/khala';
 export const ACCEPTANCE_LABEL = 'acceptance';
+/** Normal Aiur test-driver dispatch; fixture harness/model are evidence, never dispatch labels. */
+export const DRIVER_MODEL_LABEL = 'model:codex';
 /** An exact published `@aiur/khala` version. */
 export const NPM_PIN = /^@aiur\/khala@\d+\.\d+\.\d+(?:-[0-9a-z.]+)?$/i;
 /** An absolute path to a packed `.tgz`: never a directory or a workspace tree. */
@@ -27,8 +29,6 @@ export type ProfileRole = Readonly<{
   model: string;
   /** Exact version observed from the native CLI, not a dispatch label. */
   cliVersion: string;
-  /** Labels that make the normal Executor dispatch this ticket to that harness and model. */
-  labels: readonly string[];
   /** The exact route's capabilities; only its declared-supported modes are exercised. */
   capabilities: HarnessCapabilities;
 }>;
@@ -110,6 +110,8 @@ export type NativeSession = Readonly<{
   cliVersion: string;
   launchCommand: string;
   startedAt: string;
+  /** Local capture time written by the trusted capture process, before access request creation. */
+  capturedAt: string;
   repository: string;
   runId: string;
   ticket: number;
@@ -119,6 +121,7 @@ export type NativeSession = Readonly<{
   executable: string;
   argv: readonly string[];
   tty: string;
+  tmuxPane: string;
 }>;
 
 export type AiurPort = Readonly<{
@@ -142,6 +145,7 @@ export type TimelineEvent = Readonly<{
 export type AccessRequest = Readonly<{
   requestHandle: string;
   revision: string;
+  createdAt: string;
   outcome: string;
   harness: string;
   sessionFingerprint: string;

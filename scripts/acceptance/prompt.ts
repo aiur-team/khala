@@ -69,7 +69,7 @@ export function ticketPrompt(input: Readonly<{
   return [
     ownershipLine(markers, role.role, profile),
     '',
-    'The normal Aiur worker drives one separate ordinary interactive CLI fixture started by the Executor for this ticket. Only that fixture joins the channel; the worker session never joins.',
+    'Normal Aiur dispatch runs this test driver on Codex GPT-6 Sol. The Executor starts one separate ordinary interactive CLI fixture for this ticket. Only that fixture joins the channel; the driver session never joins.',
     'The Executor captures the fixture native process/session identity before its first Khala operation. Use the trusted native capture command described in scripts/acceptance/README.md; never substitute an app-server or SDK process.',
     'Send the exact participant prompt below to the native CLI fixture. Do not edit code, create a branch, commit, push, or open a pull request for this ticket.',
     '',

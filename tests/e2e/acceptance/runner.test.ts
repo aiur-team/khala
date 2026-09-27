@@ -36,7 +36,10 @@ describe('live acceptance runner', () => {
       { bindingId: 'binding_a', mode }, { bindingId: 'binding_b', mode },
     ]));
     expect(world.issues.size).toBe(2);
-    for (const issue of world.issues.values()) expect(issue.labels).toEqual(expect.arrayContaining(['acceptance', 'agent:todo']));
+    for (const issue of world.issues.values()) {
+      expect(issue.labels).toEqual(['acceptance', 'agent:todo', 'model:codex']);
+      expect(issue.labels).not.toContain('model:gpt-5.5-codex');
+    }
     // Stop names exactly the two recorded bindings, never "every binding".
     expect(world.stopCalls).toEqual([[
       { bindingId: 'binding_a', generation: 1, agentParticipantId: 'participant_a' },
@@ -104,6 +107,22 @@ describe('live acceptance runner', () => {
     expect(report.roles.every(role => role.target === null)).toBe(true);
     expect(world.stopCalls).toEqual([]);
     expect(report.verdict).toBe('fail');
+    expectCleanTail(world, report);
+  });
+
+  it('refuses a Khala access request created before native fixture capture', async () => {
+    const world = createWorld();
+    const original = world.deps.aiur.session;
+    const report = await run({ ...world, deps: { ...world.deps, aiur: {
+      ...world.deps.aiur,
+      async session(ticket, runId, role) {
+        const session = await original(ticket, runId, role);
+        return session ? { ...session, capturedAt: '2026-09-26T10:00:01.000Z' } : null;
+      },
+    } } });
+    expect(report.errors.join('\n')).toMatch(/requested Khala access before/);
+    expect(report.verdict).toBe('fail');
+    expect(world.stopCalls).toEqual([]);
     expectCleanTail(world, report);
   });
 

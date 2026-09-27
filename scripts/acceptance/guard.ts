@@ -1,5 +1,5 @@
 // Every process the live runner starts passes this allowlist first. The runner
-// may call `gh`, `npx <staged build> status` and `npx <staged build> internal
+// may call `gh`, read one tmux pane TTY, `npx <staged build> status` and `npx <staged build> internal
 // [--resume <channel-id>]`, where the staged build is an exact npm pin or the
 // digest-checked tarball copy. It never starts, wraps or hosts an agent:
 // `khala run <cli>` and any agent CLI are refused by name, and anything else is
@@ -37,6 +37,11 @@ export function checkCommand(argv: readonly string[], khalaPackage: string | nul
   if (AGENT_COMMANDS.has(name)) return { ok: false, reason: `${name} is an agent CLI; the Executor, not the runner, starts agents` };
   if (argv.some(argument => /\bapp-server\b/.test(argument))) return { ok: false, reason: 'hosted agent routes are never started by the runner' };
   if (name === 'khala') return khalaArguments(args);
+  if (name === 'tmux') {
+    return args.length === 5 && args[0] === 'display-message' && args[1] === '-p'
+      && args[2] === '-t' && /^%[0-9]+$/.test(args[3]!) && args[4] === '#{pane_tty}'
+      ? { ok: true } : { ok: false, reason: 'tmux may only read one pane TTY' };
+  }
   if (name === 'gh') {
     return args[0] !== undefined && GH_SUBCOMMANDS.has(args[0]) ? { ok: true } : { ok: false, reason: `gh ${args[0] ?? ''} is not a runner command` };
   }

@@ -98,6 +98,9 @@ describe('acceptance verdict', () => {
     const shared = { ...input, roles: input.roles.map(role => role.role === 'b'
       ? { ...role, session: { ...role.session!, pid: input.roles[0]!.session!.pid } } : role) };
     expect(statusOf(shared, 'distinct-native-sessions')).toBe('fail');
+    const differentHarness = { ...input, roles: input.roles.map(role => role.role === 'b'
+      ? { ...role, session: { ...role.session!, harness: 'claude', sessionId: input.roles[0]!.session!.sessionId } } : role) };
+    expect(statusOf(differentHarness, 'distinct-native-sessions')).toBe('pass');
   });
 
   it('fails a duplicate client transaction in the store', async () => {

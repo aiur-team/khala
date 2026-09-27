@@ -10,7 +10,7 @@ import type { ListeningMode } from '../../packages/contracts/src/delivery/listen
 import { planModes } from './profile';
 import { controllerLine, markersFor, ownershipLine, ticketPrompt, ticketTitle } from './prompt';
 import {
-  ACCEPTANCE_LABEL, type AccessRequest, type ChannelSnapshot, type IssueRecord, type LaunchedServer, type Markers,
+  ACCEPTANCE_LABEL, DRIVER_MODEL_LABEL, type AccessRequest, type ChannelSnapshot, type IssueRecord, type LaunchedServer, type Markers,
   type ModeRequest, type OwnerSession, type Profile, type ProfileRole, type RoleName, type RoleRecord, type RunReport,
   type RunnerDeps, type StagedPackage, type StopRecord, type StopTarget, type TimelineEvent,
 } from './types';
@@ -107,7 +107,7 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
       // Before any process starts: a tarball whose digest does not match refuses the run.
       staged = await deps.package.stage(profile.khalaPackage);
       status = (await deps.status.status(staged.spec)).output;
-      const labels = [ACCEPTANCE_LABEL, profile.dispatchLabel, ...profile.roles.flatMap(role => role.labels)];
+      const labels = [ACCEPTANCE_LABEL, profile.dispatchLabel, DRIVER_MODEL_LABEL];
       await deps.github.preflight(profile.repository, [...new Set(labels)]);
     } catch (error) {
       throw new Refused(`preflight failed: ${(error as Error).message}`);
@@ -125,7 +125,7 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
           repository: profile.repository,
           title: ticketTitle(profile, role, markers),
           body: ticketPrompt({ profile, role, markers, plan, channelUrl: owner.channelUrl }),
-          labels: [ACCEPTANCE_LABEL, profile.dispatchLabel, ...role.labels],
+          labels: [ACCEPTANCE_LABEL, profile.dispatchLabel, DRIVER_MODEL_LABEL],
         });
         roles.push({ role: role.role, ticket: issue.number, session: null, target: null, granted: false });
         controller.note(`created #${issue.number} for role ${role.role.toUpperCase()}`);
@@ -234,6 +234,9 @@ async function grantPair(
         request = candidates[0];
       }
       if (!request) continue;
+      if (record.session && !(Date.parse(request.createdAt) > Date.parse(record.session.capturedAt))) {
+        throw new Refused(`role ${record.role} requested Khala access before its native fixture was captured`);
+      }
       const confirmed = await deps.controller.confirmGrant({
         ticket: record.ticket, role: record.role, harness: role.harness, sessionFingerprint: request.sessionFingerprint, verified,
       });

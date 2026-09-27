@@ -33,6 +33,7 @@ describe('runner command guard', () => {
     [['sqlite3', '/home/me/.local/state/khala/internal/channels/x/room.sqlite']],
     [['sh', '-c', 'khala run claude']],
     [['gh', 'pr', 'create']],
+    [['tmux', 'new-session', '-d']],
     // The runner acts as the human controller, never as an agent session.
     [['npx', '--yes', PACKAGE, 'send', 'hello']],
     [['khala', 'join', 'http://127.0.0.1:4870/channels/x']],
@@ -52,16 +53,17 @@ describe('runner command guard', () => {
     [['npx', '--yes', PACKAGE, 'internal']],
     [['npx', '--yes', PACKAGE, 'internal', '--resume', 'channel_abc-123']],
     [['gh', 'api', 'repos/aiur-team/khala/issues']],
+    [['tmux', 'display-message', '-p', '-t', '%7', '#{pane_tty}']],
   ])('allows %j', argv => {
     expect(checkCommand(argv, PACKAGE)).toEqual({ ok: true });
   });
 
   it('starts processes only from adapters that check every command first', () => {
     const starters = sources(SCRIPTS).filter(file => /node:child_process/.test(fs.readFileSync(file, 'utf8')));
-    expect(starters.map(file => path.relative(SCRIPTS, file)).sort()).toEqual(['adapters/github.ts', 'adapters/launcher.ts', 'main.ts']);
+    expect(starters.map(file => path.relative(SCRIPTS, file)).sort()).toEqual(['adapters/aiur.ts', 'adapters/github.ts', 'adapters/launcher.ts', 'main.ts']);
     for (const file of starters) {
       const text = fs.readFileSync(file, 'utf8');
-      const starts = text.match(/\b(?:spawn|execFile|exec|fork)\(|promisify\(execFile\)/g) ?? [];
+      const starts = text.match(/\b(?:spawn|execFile|execFileSync|exec|fork)\(|promisify\(execFile\)/g) ?? [];
       expect(starts.length, file).toBeGreaterThan(0);
       expect((text.match(/assertCommand\(argv/g) ?? []).length, file).toBeGreaterThanOrEqual(1);
       expect(text, file).not.toMatch(/['"`]run['"`]/);

@@ -53,7 +53,7 @@ describe('acceptance ticket prompt', () => {
   });
 
   it('keeps the driver separate from the native participant prompt', () => {
-    expect(pair().driver).toContain('normal Aiur worker drives one separate ordinary interactive CLI fixture');
+    expect(pair().driver).toContain('Normal Aiur dispatch runs this test driver on Codex GPT-6 Sol.');
     expect(pair().driver).toContain('## Native participant prompt\n\n' + pair().a);
     expect(pair().a).not.toContain('The normal Aiur worker drives');
   });
@@ -85,6 +85,7 @@ describe('acceptance profile', () => {
     expect(() => decodeProfile(profileInput({ repository: 'aiur-team/aiur' }))).toThrow(/repository/);
     expect(() => decodeProfile(profileInput({ khalaPackage: '@aiur/khala@latest' }))).toThrow(/khalaPackage/);
     expect(() => decodeProfile(profileInput({ timeoutMs: 0 }))).toThrow(/timeoutMs/);
+    expect(() => decodeProfile(profileInput({ dispatchLabel: 'agent:human-review' }))).toThrow(/dispatchLabel/);
     expect(() => decodeProfile(profileInput({ launcher: 'khala run codex' }))).toThrow(/keys must be exactly/);
   });
 
