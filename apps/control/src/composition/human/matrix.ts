@@ -1,4 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
+import { createAgentBindingStore } from '../../agent-bootstrap/store';
+import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
+import { agentMatrixIdentity } from '../agent/matrix-admission';
 import { decodeOwnerId } from '@khala/contracts/messaging/index';
 import type {
   AuthPrincipal,
@@ -66,7 +69,13 @@ export type MatrixHumanServices = Readonly<{
   gateway: AdmissionGateway;
   /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
+  /** Inventory only: callers must hold/fence adapter sends before trusting a rotation result. */
+  inspectRoomSenderDevices(ownerId: OwnerId, roomId: RoomId, call?: CallOptions): Promise<
+    Readonly<{ kind: 'ok'; senders: readonly MatrixRoomSenderDevice[] }> | Readonly<{ kind: 'unavailable' }>
+  >;
 }>;
+
+export type MatrixRoomSenderDevice = Readonly<{ matrixUserId: string; deviceId: string; curve25519: string }>;
 
 type MatrixLogin = Readonly<{ userId: string; accessToken: string; deviceId: DeviceId }>;
 
@@ -345,6 +354,91 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     }
   }
 
+  async function inspectRoomSenderDevices(ownerId: OwnerId, roomId: RoomId, call?: CallOptions): Promise<
+    Readonly<{ kind: 'ok'; senders: readonly MatrixRoomSenderDevice[] }> | Readonly<{ kind: 'unavailable' }>
+  > {
+    const unavailable = { kind: 'unavailable' } as const;
+    const session = await login(ownerId, controlDevice(ownerId), call);
+    if (!session) return unavailable;
+    const headers = { authorization: `Bearer ${session.accessToken}` };
+    async function joinedUsers(): Promise<readonly string[] | null> {
+      const response = await request(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members`, { headers }, call);
+      if (response.status !== 200) return null;
+      const joined = safeObject((await body(response))?.joined);
+      if (!joined || !Object.hasOwn(joined, session!.userId) || Object.keys(joined).length > 100
+        || Object.values(joined).some(member => !safeObject(member))) return null;
+      return Object.keys(joined).sort();
+    }
+    try {
+      const users = await joinedUsers();
+      if (!users) return unavailable;
+      const index = createOwnerRoomIndex(options.store);
+      const bindings = createAgentBindingStore({ store: options.store });
+      const humans = users.map(participantFor).filter((item): item is MatrixParticipant => item !== null);
+      const expected = new Map<string, Set<string> | null>(humans.map(human => [human.matrixUserId, null]));
+      const knownAgents = new Set<string>();
+      const snapshots: { ownerId: OwnerId; value: string }[] = [];
+      for (const human of humans) {
+        const indexed = await index.inspect(human.ownerId, roomId);
+        if (indexed.kind !== 'ok') return unavailable;
+        snapshots.push({ ownerId: human.ownerId, value: JSON.stringify(indexed.value) });
+        for (const item of indexed.value?.bindings ?? []) {
+          const found = await bindings.locateBinding(item.bindingId);
+          if (found.kind !== 'found' || found.address.roomId !== roomId
+            || found.record.binding.ownerId !== human.ownerId || found.record.binding.generation !== item.generation) return unavailable;
+          const binding = found.record.binding;
+          const identity = agentMatrixIdentity(human.ownerId, binding, serverName);
+          if (identity.participantId !== binding.agentParticipantId) return unavailable;
+          knownAgents.add(identity.userId);
+          if (found.record.revokedGeneration !== null) continue;
+          if (!users.includes(identity.userId)) return unavailable;
+          const devices = expected.get(identity.userId) ?? new Set<string>();
+          devices.add(binding.deviceId); expected.set(identity.userId, devices);
+        }
+      }
+      // Unknown local managed identities may be legacy senders. External Matrix
+      // clients are outside this adapter's inventory, but never skip its own users.
+      if (users.some(user => user.startsWith('@khala_') && user.endsWith(`:${serverName}`)
+        && !expected.has(user) && !knownAgents.has(user))) return unavailable;
+      const response = await request('/_matrix/client/v3/keys/query', {
+        method: 'POST', headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ device_keys: Object.fromEntries([...expected.keys()].map(user => [user, []])) }),
+      }, call);
+      if (response.status !== 200) return unavailable;
+      const value = await body(response);
+      const failures = value?.failures === undefined ? {} : safeObject(value.failures);
+      const deviceKeys = safeObject(value?.device_keys);
+      if (!failures || Object.keys(failures).length || !deviceKeys
+        || Object.keys(deviceKeys).length !== expected.size) return unavailable;
+      const senders: MatrixRoomSenderDevice[] = [];
+      for (const [userId, required] of expected) {
+        const devices = safeObject(deviceKeys[userId]);
+        if (!devices || Object.keys(devices).length > 128) return unavailable;
+        for (const needed of required ?? []) if (!Object.hasOwn(devices, needed)) return unavailable;
+        for (const [deviceId, raw] of Object.entries(devices)) {
+          const device = safeObject(raw);
+          if (!device || device.user_id !== userId || device.device_id !== deviceId
+            || !deviceId || deviceId.length > 255) return unavailable;
+          const keys = safeObject(device.keys);
+          const curve = keys?.[`curve25519:${deviceId}`];
+          if (deviceId.startsWith('KHALA_CONTROL_') && (!keys || Object.keys(keys).length === 0)) continue;
+          if (required && !required.has(deviceId)) return unavailable;
+          if (typeof curve !== 'string' || !/^[A-Za-z0-9+/]{43}$/u.test(curve)
+            || Buffer.from(curve, 'base64').length !== 32
+            || Buffer.from(curve, 'base64').toString('base64').replace(/=+$/u, '') !== curve) return unavailable;
+          senders.push({ matrixUserId: userId, deviceId, curve25519: curve });
+          if (senders.length > 512) return unavailable;
+        }
+      }
+      if (JSON.stringify(await joinedUsers()) !== JSON.stringify(users)) return unavailable;
+      for (const snapshot of snapshots) {
+        const current = await index.inspect(snapshot.ownerId, roomId);
+        if (current.kind !== 'ok' || JSON.stringify(current.value) !== snapshot.value) return unavailable;
+      }
+      return { kind: 'ok', senders };
+    } catch { return unavailable; }
+  }
+
   const membership = (principal: AuthPrincipal, roomId: RoomId, call?: CallOptions) =>
     membershipForOwner(principal.ownerId, roomId, call);
 
@@ -425,5 +519,5 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     },
   };
 
-  return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner };
+  return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner, inspectRoomSenderDevices };
 }
