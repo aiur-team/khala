@@ -209,6 +209,28 @@ test('accepts healthy client and closed registration/admin boundaries', async ()
   assert.deepEqual(seen.slice(3), ['/_matrix/client/v3/register', '/_synapse/admin/v1/register', '/_synapse/admin/v2/users']);
 });
 
+test('hosted ingress denies an anonymous nonce and strips the checker credential from other routes', async () => {
+  const token = 'checker-ingress-token-more-than-32-bytes';
+  const seen: string[] = [];
+  const fetchImpl = async (url: URL, init?: RequestInit) => {
+    const credential = new Headers(init?.headers).get('X-Khala-Registration-Ingress');
+    if (url.pathname === '/_synapse/admin/v1/register') {
+      seen.push(credential === token ? 'credentialed' : 'anonymous');
+      return credential === token ? response(200, { nonce: 'nonce' }) : response(403);
+    }
+    assert.equal(credential, null);
+    if (url.pathname === '/health') return new Response('OK', { status: 200 });
+    if (url.pathname === '/_matrix/client/versions') return response(200, { versions: ['v1.11'] });
+    if (url.pathname.startsWith('/_matrix/client/v3/profile/')) return response(404);
+    if (url.pathname === '/_matrix/client/v3/register') return response(403);
+    if (url.pathname === '/_synapse/admin/v2/users') return response(403);
+    return response(404);
+  };
+  assert.deepEqual(await probeBoundary('https://matrix.preview.test/', fetchImpl, 'matrix.preview.test', token),
+    { ready: true, reason: 'boundary-checks-pass' });
+  assert.deepEqual(seen, ['anonymous', 'credentialed']);
+});
+
 test('fails closed when registration, admin or database boundaries are wrong', async () => {
   const scenario = async (registrationStatus: number, adminStatus: number, profileStatus = 404) => probeBoundary('https://matrix.preview.test/', async (url: URL) => {
     if (url.pathname === '/health') return new Response('OK', { status: 200 });

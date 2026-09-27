@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { readInputs, renderDex, writeDex } from './render-dex.ts';
+import { readInputs, renderDex, renderHostedDex, writeDex } from './render-dex.ts';
 
 function environment(configDir: string): NodeJS.ProcessEnv {
   return {
@@ -45,4 +45,16 @@ test('rejects an untrusted non-loopback HTTP issuer and duplicate users', () => 
   env.KHALA_PREVIEW_OIDC_USER_B_EMAIL = 'b@preview.test';
   env.KHALA_PREVIEW_OIDC_USER_B_BCRYPT_HASH = '$2b$05$' + 'b'.repeat(53);
   assert.throws(() => readInputs(env), /Invalid static OIDC user B/);
+});
+
+test('hosted Dex requires HTTPS and persists signing state in its own volume', () => {
+  const env = environment('/tmp/khala-dex-hosted-test');
+  assert.throws(() => renderHostedDex(env), /HTTPS/);
+  env.KHALA_PREVIEW_OIDC_ISSUER = 'https://issuer.preview.test/dex';
+  env.KHALA_PREVIEW_OIDC_CALLBACK = 'https://app.preview.test/api/human/auth/callback';
+  const yaml = renderHostedDex(env);
+  assert.match(yaml, /type: sqlite3\n  config:\n    file: \/data\/dex.db/);
+  assert.match(yaml, /issuer: "https:\/\/issuer.preview.test\/dex"/);
+  assert.match(yaml, /https:\/\/app.preview.test\/api\/human\/auth\/callback/);
+  assert.doesNotMatch(yaml, /type: memory/);
 });

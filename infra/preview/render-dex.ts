@@ -58,12 +58,12 @@ export function readInputs(env: NodeJS.ProcessEnv): Inputs {
   return { issuer, callback, clientId: required(env, 'KHALA_PREVIEW_OIDC_CLIENT_ID'), clientSecret, users, configDir };
 }
 
-export function renderDex(inputs: Inputs): string {
+export function renderDex(inputs: Inputs, storage: 'memory' | 'hosted-sqlite' = 'memory'): string {
   const quoted = (value: string) => JSON.stringify(value);
   return [
     `issuer: ${quoted(inputs.issuer)}`,
     'storage:',
-    '  type: memory', // Local only; hosted Dex requires durable storage.
+    ...(storage === 'memory' ? ['  type: memory'] : ['  type: sqlite3', '  config:', '    file: /data/dex.db']),
     'web:',
     '  http: 0.0.0.0:5556',
     'oauth2:',
@@ -88,6 +88,15 @@ export function renderDex(inputs: Inputs): string {
     ]),
     '',
   ].join('\n');
+}
+
+/** Hosted preview keeps its signing keys and replay state on a dedicated volume. */
+export function renderHostedDex(env: NodeJS.ProcessEnv): string {
+  const inputs = readInputs(env);
+  if (!inputs.issuer.startsWith('https://') || !inputs.callback.startsWith('https://')) {
+    throw new Error('Hosted OIDC issuer and callback must use HTTPS');
+  }
+  return renderDex(inputs, 'hosted-sqlite');
 }
 
 export async function writeDex(inputs: Inputs): Promise<string> {
