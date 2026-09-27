@@ -36,13 +36,22 @@ inbox's `#recordAcknowledgement` call removed, the same ten fail.
 pnpm --filter @aiur/khala exec vitest run --config ../../vitest.config.ts src/opencode/receipts.test.ts
 ```
 
-## What is not yet proven
+## Native proof retained
 
-No live run is retained by this change, so it advertises no capability change.
-Main already advertises `batch_token_next_call` for OpenCode `1.17.10`, which comes
-from #180's agent-launched, default-settings TUI run. Under decisions 33 and 43 the
-Executor runs the live OpenCode + DeepSeek run later and retains it here as
-`evidence/live-run.json`; the offline tests above do not replace it.
+The Executor ran OpenCode `1.17.10` with `deepseek/deepseek-flash` in the normal
+interactive TUI on 2026-09-27 UTC. The run is honestly labelled
+`agent-launched-default-settings` under decisions 33 and 43. Its ten required
+cases pass in [`evidence/live-run.json`](evidence/live-run.json); the observed
+steps and limits are in [`evidence/live-run-2026-09-27.md`](evidence/live-run-2026-09-27.md).
+
+All positive acknowledgements, the missing argument, and the duplicate argument
+were actual model-initiated plugin calls. Wrong-token, wrong-binding and
+wrong-generation negatives used authenticated HTTP diagnostics against the
+actual pending native batch. Normal TUI reconnect and owner restart passed;
+Stop left the native CLI alive and prevented later delivery. Main already
+advertises this exact version's route; no new version or capability is enabled.
+This receipt-integrated component build does not replace final hosted application
+or cross-harness acceptance.
 
 `verify.mjs` defines the retained-report contract: a run honestly labelled
 `user-started-tui` or `agent-launched-default-settings`, default trust settings (any
