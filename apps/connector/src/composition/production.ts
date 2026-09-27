@@ -261,7 +261,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     revocationCleanup = createProductionRevocationCleanup({
       appOrigin: input.appOrigin, binding: next, signer: activeSigner,
       existingCapability: () => capabilityFor(next).existing(),
-      quiesce: quiesceDelivery,
+      stop: operationId => stop.stop({ operationId, ownerId: next.ownerId,
+        roomId: session.roomId, expectedRoomRevision: 0 }),
       removeOwnDevice: key => substrate.removeOwnDevice(key),
     });
     roomSend = createAgentRoomSendFence({ appOrigin: input.appOrigin, bindingId: next.bindingId,

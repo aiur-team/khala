@@ -11,6 +11,10 @@ export const REVOCATION_CLEANUP_PATH = '/api/agent/revocation/cleanup';
 export const REVOCATION_RESULT_PATH = '/api/agent/revocation/result';
 
 type Removal = 'removed' | 'replaced' | 'reauthentication_required' | 'forbidden';
+export type RevocationLocalStop = Readonly<{
+  operationId: string; ownerId: OwnerId; roomId: RoomId; expectedRoomRevision: 0;
+  bindingId: string; bindingGeneration: number; state: 'stopped'; cleanupRequested: true;
+}>;
 type Cleanup = Readonly<{
   v: 1; ownerId: OwnerId; operationId: string; bindingId: string; roomId: RoomId; deviceId: string;
   expectedGeneration: number; revokedGeneration: number; deviceKey: string;
@@ -23,6 +27,22 @@ function key(ownerId: OwnerId, operationId: string): string {
 }
 function bindingKey(ownerId: OwnerId, bindingId: string, generation: number): string {
   return `revocation-cleanup-binding.v1.${createHash('sha256').update(JSON.stringify([ownerId, bindingId, generation])).digest('hex')}`;
+}
+function stopKey(ownerId: OwnerId, operationId: string): string {
+  return `revocation-local-stop.v1.${createHash('sha256').update(JSON.stringify([ownerId, operationId])).digest('hex')}`;
+}
+export function revocationStopId(operationId: string, bindingId: string): string {
+  return `revoke_${createHash('sha256').update(JSON.stringify([operationId, bindingId])).digest('hex').slice(0, 40)}`;
+}
+function validStop(value: unknown, item: Cleanup): value is RevocationLocalStop {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const stop = value as Record<string, unknown>;
+  return Object.keys(stop).sort().join(',') === 'bindingGeneration,bindingId,cleanupRequested,expectedRoomRevision,operationId,ownerId,roomId,state'
+    && stop.operationId === revocationStopId(item.operationId, item.bindingId)
+    && stop.ownerId === item.ownerId && stop.roomId === item.roomId
+    && stop.expectedRoomRevision === 0 && stop.bindingId === item.bindingId
+    && stop.bindingGeneration === item.expectedGeneration && stop.state === 'stopped'
+    && stop.cleanupRequested === true;
 }
 function writeId(record: Cleanup): string {
   return `revocation-cleanup.${createHash('sha256').update(JSON.stringify(record)).digest('base64url')}`;
@@ -54,6 +74,23 @@ export function createRevocationCleanupStore(store: ControlStore) {
   }
   return {
     read,
+    async localStop(item: Cleanup) {
+      const found = await guarded.read<JsonValue>(stopKey(item.ownerId, item.operationId));
+      if (found.kind !== 'record') return found;
+      return validStop(found.record.value, item)
+        ? { kind: 'record' as const, value: found.record.value as unknown as RevocationLocalStop }
+        : { kind: 'unavailable' as const };
+    },
+    async recordLocalStop(item: Cleanup, receipt: unknown): Promise<'applied' | 'unavailable'> {
+      if (!validStop(receipt, item)) return 'unavailable';
+      const saved = await settleWrite(guarded, { key: stopKey(item.ownerId, item.operationId), expectedRevision: null,
+        operationId: `revocation-local-stop.${createHash('sha256').update(JSON.stringify(receipt)).digest('hex')}`,
+        next: { value: receipt as unknown as JsonValue, expiresAt: null } });
+      if (saved.kind === 'applied') return 'applied';
+      if (saved.kind !== 'conflict') return 'unavailable';
+      const prior = await guarded.read<JsonValue>(stopKey(item.ownerId, item.operationId));
+      return prior.kind === 'record' && validStop(prior.record.value, item) ? 'applied' : 'unavailable';
+    },
     async findForBinding(ownerId: OwnerId, bindingId: string, generation: number) {
       const index = await guarded.read<JsonValue>(bindingKey(ownerId, bindingId, generation));
       if (index.kind !== 'record' || typeof index.record.value !== 'string' || !ID.test(index.record.value)) {
@@ -227,7 +264,8 @@ export function createAgentRevocationCleanupRoutes(input: Readonly<{
       if ((request.headers.get('content-type') ?? '').split(';')[0]?.trim() !== 'application/json') return json(400, { code: 'invalid_request' });
       let body: unknown;
       try { body = await request.json(); } catch { return json(400, { code: 'invalid_request' }); }
-      if (!object(body) || Object.keys(body).sort().join(',') !== 'deviceId,deviceKey,generation,operationId,removal'
+      if (!object(body) || !['deviceId,deviceKey,generation,operationId,removal',
+        'deviceId,deviceKey,generation,localStop,operationId,removal'].includes(Object.keys(body).sort().join(','))
         || typeof body.operationId !== 'string' || !ID.test(body.operationId)
         || typeof body.removal !== 'string' || !['removed', 'replaced', 'reauthentication_required', 'forbidden'].includes(body.removal)) {
         return json(400, { code: 'invalid_request' });
@@ -237,6 +275,8 @@ export function createAgentRevocationCleanupRoutes(input: Readonly<{
       if (body.deviceId !== item.deviceId || body.deviceKey !== item.deviceKey || body.generation !== item.expectedGeneration) {
         return json(403, { code: 'forbidden' });
       }
+      const stopped = !('localStop' in body) || await cleanup.recordLocalStop(item, body.localStop) === 'applied';
+      if (!stopped) return json(503, { code: 'unavailable' });
       const result = await cleanup.recordRemoval(item.ownerId, item.operationId, body.removal as Removal);
       return result === 'applied' ? json(200, { v: 1, operationId: item.operationId, removal: body.removal })
         : json(503, { code: 'unavailable' });

@@ -2,6 +2,8 @@ import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { AdapterCapability } from '@khala/connector/bootstrap/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { readBounded } from '@khala/connector/bootstrap/discovery';
+import type { LocalStopReceipt } from '../closure/local-fence';
+import { createHash } from 'node:crypto';
 
 const CLEANUP = '/api/agent/revocation/cleanup';
 const RESULT = '/api/agent/revocation/result';
@@ -29,7 +31,7 @@ async function body(response: Response): Promise<unknown | null> {
 export function createProductionRevocationCleanup(input: Readonly<{
   appOrigin: string; binding: SessionBinding; signer: ProofSigner;
   existingCapability(): Promise<AdapterCapability | null>;
-  quiesce(): Promise<void>;
+  stop(operationId: string): Promise<Readonly<{ kind: 'stopped'; receipt: LocalStopReceipt }> | Readonly<{ kind: 'unavailable' }>>;
   removeOwnDevice(expectedCurve25519: string): Promise<Removal>;
   fetch?: typeof fetch;
 }>) {
@@ -58,12 +60,15 @@ export function createProductionRevocationCleanup(input: Readonly<{
       const response = await call('GET', CLEANUP);
       if (!response || response.status !== 200 || !command(response.value, input.binding)) return 'unavailable';
       const instruction = response.value;
-      if (instruction.removal !== null) { completed = true; return 'complete'; }
-      await input.quiesce();
-      const removal = await input.removeOwnDevice(instruction.deviceKey);
+      const stopped = await input.stop(`revoke_${createHash('sha256').update(JSON.stringify([
+        instruction.operationId, input.binding.bindingId,
+      ])).digest('hex').slice(0, 40)}`).catch(() => ({ kind: 'unavailable' as const }));
+      if (stopped.kind !== 'stopped') return 'pending';
+      const removal = instruction.removal ?? await input.removeOwnDevice(instruction.deviceKey);
       if (removal === 'unavailable') return 'pending';
       const receipt = { operationId: instruction.operationId, deviceId: instruction.deviceId,
-        deviceKey: instruction.deviceKey, generation: instruction.generation, removal };
+        deviceKey: instruction.deviceKey, generation: instruction.generation, removal,
+        localStop: stopped.receipt };
       const posted = await call('POST', RESULT, receipt);
       if (!posted || posted.status !== 200 || !object(posted.value)
         || posted.value.operationId !== instruction.operationId || posted.value.removal !== removal) return 'pending';

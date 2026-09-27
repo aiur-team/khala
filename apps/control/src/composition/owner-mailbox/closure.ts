@@ -1,6 +1,8 @@
 import type { AuthPrincipal, ControlStore, OwnerId, RoomId } from '@khala/contracts/messaging/index';
+import { operationJournal } from '@khala/messaging/revocation/journal';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
+import { createRevocationCleanupStore } from '../human/revocation-cleanup';
 import { createOwnerMailbox } from './store';
 
 type ClosureRequest = Readonly<{
@@ -22,6 +24,7 @@ export function createOwnerRoomClosureConnector(input: Readonly<{
 }>): Readonly<{ stopDelivery(request: ClosureRequest): Promise<StopResult> }> {
   const index = createOwnerRoomIndex(input.store);
   const bindings = createAgentBindingStore({ store: input.store });
+  const revocations = createRevocationCleanupStore(input.store);
   return {
     async stopDelivery(request) {
       if (request.ownerId !== input.principal.ownerId || request.expectedRoomRevision !== 0) return { kind: 'unavailable' };
@@ -33,6 +36,31 @@ export function createOwnerRoomClosureConnector(input: Readonly<{
         const found = await bindings.locateBinding(item.bindingId);
         if (found.kind !== 'found' || found.address.ownerId !== request.ownerId || found.address.roomId !== request.roomId
           || found.record.binding.generation !== item.generation) return { kind: 'unavailable' };
+        if (found.record.revokedGeneration !== null) {
+          // A revoked connector cannot use the ordinary mailbox. Its separately
+          // authenticated cleanup may have already fsynced the same local fence.
+          if (found.record.revokedGeneration !== item.generation + 1) return { kind: 'unavailable' };
+          const cleanup = await revocations.findForBinding(request.ownerId, item.bindingId, item.generation);
+          if (cleanup.kind !== 'record') { pending = true; continue; }
+          const proof = cleanup.value;
+          if (proof.ownerId !== request.ownerId || proof.roomId !== request.roomId
+            || proof.bindingId !== item.bindingId || proof.deviceId !== found.record.binding.deviceId
+            || proof.expectedGeneration !== item.generation || proof.revokedGeneration !== found.record.revokedGeneration
+            || proof.capabilityDigest === null) {
+            return { kind: 'unavailable' };
+          }
+          const journal = await operationJournal(request.ownerId, input.store).load(proof.operationId);
+          if (journal.kind !== 'found' || journal.stored.record.control !== 'disabled'
+            || journal.stored.record.targetKind !== 'binding' || journal.stored.record.targetId !== item.bindingId
+            || journal.stored.record.deviceId !== proof.deviceId || journal.stored.record.deviceKey !== proof.deviceKey
+            || journal.stored.record.expectedGeneration !== item.generation
+            || journal.stored.record.revokedGeneration !== found.record.revokedGeneration) return { kind: 'unavailable' };
+          const stopped = await revocations.localStop(proof);
+          if (proof.removal === null || stopped.kind === 'absent') { pending = true; continue; }
+          if (stopped.kind !== 'record') return { kind: 'unavailable' };
+          fenced.push(item);
+          continue;
+        }
         const mailbox = createOwnerMailbox({ store: input.store, binding: found.record.binding, roomId: request.roomId,
           clock: input.clock, authoritySecret: input.authoritySecret });
         const submitted = await mailbox.submit({ operationId: request.operationId, kind: 'channel_stop', body: request }, input.principal);

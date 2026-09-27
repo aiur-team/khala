@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
+import { revocationStopId } from '../../../../control/src/composition/human/revocation-cleanup';
 import { createProductionRevocationCleanup } from './revocation-cleanup';
 
 const origin = 'https://khala.aiur.team';
@@ -12,9 +13,17 @@ const command = { v: 1, operationId: 'operation_revocation', deviceId: binding.d
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status,
   headers: { 'content-type': 'application/json' } });
 
-function setup(answer: unknown = command) {
-  const removed = vi.fn(async () => 'removed' as const);
-  const quiesce = vi.fn(async () => undefined);
+function setup(answer: unknown = command, stopAvailable = true) {
+  const order: string[] = [];
+  const removed = vi.fn(async () => { order.push('remove'); return 'removed' as const; });
+  const stop = vi.fn(async (operationId: string) => {
+    order.push('stop');
+    if (!stopAvailable) return { kind: 'unavailable' as const };
+    return { kind: 'stopped' as const, receipt: {
+    operationId, ownerId: binding.ownerId, roomId: '!room:example', expectedRoomRevision: 0,
+    bindingId: binding.bindingId, bindingGeneration: binding.generation,
+    state: 'stopped' as const, cleanupRequested: true as const,
+  } }; });
   const requests: Array<{ path: string; body: unknown }> = [];
   const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
@@ -26,20 +35,26 @@ function setup(answer: unknown = command) {
     signer: { proof: () => 'signed-proof' } as unknown as ProofSigner,
     existingCapability: async () => ({ token: 'C'.repeat(43), bindingId: binding.bindingId,
       generation: binding.generation, scope: [], expiresAt: Date.now() + 60_000 }),
-    quiesce, removeOwnDevice: removed, fetch });
-  return { cleanup, removed, quiesce, requests };
+    stop, removeOwnDevice: removed, fetch });
+  return { cleanup, removed, stop, requests, order };
 }
 
 describe('revoked connector SDK cleanup', () => {
-  it('quiesces before deleting the exact published key and submits one typed receipt', async () => {
+  it('persists local Stop before deleting the exact published key and submits its typed receipt', async () => {
     const h = setup();
     expect(await h.cleanup.pollOnce()).toBe('complete');
-    expect(h.quiesce).toHaveBeenCalledOnce();
+    expect(h.stop).toHaveBeenCalledOnce();
+    expect(h.stop).toHaveBeenCalledExactlyOnceWith(revocationStopId(command.operationId, binding.bindingId));
     expect(h.removed).toHaveBeenCalledExactlyOnceWith(command.deviceKey);
+    expect(h.order).toEqual(['stop', 'remove']);
     expect(h.requests).toEqual([
       { path: '/api/agent/revocation/cleanup', body: null },
       { path: '/api/agent/revocation/result', body: { operationId: command.operationId,
-        deviceId: binding.deviceId, deviceKey: command.deviceKey, generation: 3, removal: 'removed' } },
+        deviceId: binding.deviceId, deviceKey: command.deviceKey, generation: 3, removal: 'removed',
+        localStop: { operationId: revocationStopId(command.operationId, binding.bindingId),
+          ownerId: binding.ownerId, roomId: '!room:example', expectedRoomRevision: 0,
+          bindingId: binding.bindingId, bindingGeneration: binding.generation,
+          state: 'stopped', cleanupRequested: true } } },
     ]);
     expect(await h.cleanup.pollOnce()).toBe('complete');
     expect(h.removed).toHaveBeenCalledOnce();
@@ -48,7 +63,15 @@ describe('revoked connector SDK cleanup', () => {
   it('never calls the SDK for another device or an invented removal result', async () => {
     const h = setup({ ...command, deviceId: 'other-device' });
     expect(await h.cleanup.pollOnce()).toBe('unavailable');
-    expect(h.quiesce).not.toHaveBeenCalled();
+    expect(h.stop).not.toHaveBeenCalled();
     expect(h.removed).not.toHaveBeenCalled();
+  });
+
+  it('keeps cleanup pending when the local Stop cannot be synced', async () => {
+    const h = setup(command, false);
+    expect(await h.cleanup.pollOnce()).toBe('pending');
+    expect(h.stop).toHaveBeenCalledOnce();
+    expect(h.removed).not.toHaveBeenCalled();
+    expect(h.requests).toEqual([{ path: '/api/agent/revocation/cleanup', body: null }]);
   });
 });
