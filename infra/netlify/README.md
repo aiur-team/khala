@@ -69,6 +69,13 @@ per-owner password, registers through Synapse's nonce/HMAC shared-secret
 endpoint, exchanges the password server-side for a device access token, and
 returns only that token. Keep the two Matrix secrets independent and at least
 32 characters; neither secret nor the derived password may enter browser code.
+For an isolated Matrix ingress, set the separate server-only
+`MATRIX_REGISTRATION_INGRESS_TOKEN` on the Netlify site and the matching
+`KHALA_REGISTRATION_INGRESS_TOKEN` at ingress. Only the registration nonce and
+HMAC requests carry it; the ingress strips it before forwarding to Synapse.
+`KHALA_ADMISSION_MODE=explicit_browser_consent` is an optional fail-closed
+agent-admission setting for #42. Keep it unset pending the operator's
+G-ADMISSION ruling; absent or invalid mode returns bootstrap 503.
 
 ## Routing
 
