@@ -410,6 +410,12 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           || !mailbox || !ownerTrust || await mailbox.authorize() !== 'active' || await ownerTrust.ensure() !== 'active') {
           return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
         }
+        const activeHarness = harness as HarnessPort | null;
+        const activeListening = listening as ReturnType<typeof createHostedListeningControl> | null;
+        if (!activeHarness || !activeListening || (await activeHarness.inspect(held)).support !== 'tested'
+          || (await activeListening.status()).effective === null) {
+          return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
+        }
         return { v: 1 as const, connected: true, binding: held, route: 'native_cli_queue' as const, sourceCursor: null };
       },
       async listChannels() { return { kind: 'unavailable' as const }; },

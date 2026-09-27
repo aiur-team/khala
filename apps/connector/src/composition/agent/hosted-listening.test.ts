@@ -43,11 +43,18 @@ describe('hosted listening mode projection', () => {
         generation: 0, policyVersion: 0,
       }), result: undefined }));
       let current = true;
+      let trustedHooks = false;
       const hosted = createHostedListeningControl({ binding, trust, dispatch,
-        current: async () => current, capabilities: async () => capabilities });
+        current: async () => current, capabilities: async () => trustedHooks ? capabilities : null });
+      expect(await hosted.status()).toMatchObject({ effective: null });
+      trustedHooks = true;
       expect(await hosted.status()).toMatchObject({ bindingId: binding.bindingId, effective: 'sync' });
       const projected = await dispatch.ledger.transact(tx => tx.policy(binding.bindingId));
-      expect(projected?.listening).toMatchObject({ version: 1, effective: 'sync', evidenceRevision: 'hook-revision' });
+      expect(projected?.listening).toMatchObject({ version: 2, effective: 'sync', evidenceRevision: 'hook-revision' });
+      trustedHooks = false;
+      expect(await hosted.status()).toMatchObject({ effective: null });
+      expect((await dispatch.ledger.transact(tx => tx.policy(binding.bindingId)))?.listening)
+        .toMatchObject({ version: 3, effective: null, evidenceRevision: null });
       current = false;
       expect(await hosted.application.read()).toEqual({ ok: false, code: 'unavailable' });
       expect(await hosted.status()).toMatchObject({ effective: null });
