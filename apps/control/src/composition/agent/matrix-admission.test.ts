@@ -146,3 +146,99 @@ describe('Matrix agent admission production adapter', () => {
     })).kind).toBe('rejected');
   });
 });
+
+describe('control-side service-agent device removal', () => {
+  const curve = Buffer.alloc(32, 7).toString('base64').replace(/=+$/u, '');
+  const replacement = Buffer.alloc(32, 8).toString('base64').replace(/=+$/u, '');
+  function fixture(mode = 'password') {
+    const ownerId = 'owner_1' as OwnerId;
+    const session = { harness: 'codex', sessionId: 'uia-session', generation: 1 };
+    const identity = agentMatrixIdentity(ownerId, session, serverName);
+    const binding = { v: 1, bindingId: 'binding_uia', ownerId, agentParticipantId: identity.participantId,
+      deviceId: 'AGENT_DEVICE', ...session } as SessionBinding;
+    let deleted = mode === 'absent';
+    let challenged = false;
+    let deletes = 0;
+    const requests: { path: string; body: Record<string, unknown> }[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      requests.push({ path, body });
+      const reply = (status: number, value: unknown) => new Response(JSON.stringify(value), { status });
+      if (path.endsWith('/login')) {
+        expect(body.password).toBe(createHmac('sha256', passwordDerivationSecret)
+          .update('khala-matrix-agent-password-v1\0').update(identity.userId).digest('base64url'));
+        expect(body.identifier).toEqual({ type: 'm.id.user', user: identity.userId });
+        expect(body.device_id).not.toBe(binding.deviceId);
+        return reply(200, { user_id: identity.userId, device_id: body.device_id, access_token: 'uia-private-token' });
+      }
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer uia-private-token');
+      if (path.endsWith('/keys/query')) {
+        const key = mode === 'replacement' || (mode === 'replace-at-challenge' && challenged) ? replacement : curve;
+        return reply(200, { device_keys: { [identity.userId]: deleted || mode === 'missing-key' ? {} : {
+          [binding.deviceId]: { user_id: identity.userId, device_id: binding.deviceId,
+            keys: { [`curve25519:${binding.deviceId}`]: key } },
+        } }, failures: mode === 'partial-keys' ? { remote: {} } : {} });
+      }
+      if (path.endsWith(`/devices/${binding.deviceId}`) && init?.method !== 'DELETE') {
+        if (mode === 'unknown' && deletes > 0) return reply(503, {});
+        return deleted ? reply(404, { errcode: 'M_NOT_FOUND' }) : reply(200, { device_id: binding.deviceId });
+      }
+      if (path.endsWith(`/devices/${binding.deviceId}`) && init?.method === 'DELETE') {
+        deletes++;
+        if (mode === 'forbidden') return reply(403, { errcode: 'M_FORBIDDEN' });
+        if (mode === 'unknown') throw new Error('lost response');
+        if (mode === 'lost-after-delete') { deleted = true; throw new Error('lost response'); }
+        if (mode === 'direct') { deleted = true; return reply(200, {}); }
+        if (!body.auth) {
+          challenged = true;
+          return reply(401, { session: 'uia-session-id', flows: [{ stages: [mode === 'unsupported' ? 'm.login.sso' : 'm.login.password'] }] });
+        }
+        expect(body.auth).toEqual({ type: 'm.login.password', session: 'uia-session-id',
+          identifier: { type: 'm.id.user', user: identity.userId },
+          password: createHmac('sha256', passwordDerivationSecret)
+            .update('khala-matrix-agent-password-v1\0').update(identity.userId).digest('base64url') });
+        deleted = mode !== 'still-present';
+        return reply(200, {});
+      }
+      throw new Error('unexpected endpoint');
+    });
+    const h = harness();
+    const adapter = createMatrixAgentAdmission({ homeserverOrigin, serverName, registrationSharedSecret,
+      passwordDerivationSecret, invitationHmacSecret: SECRET, store: h.store.store, clock: () => T0, fetch });
+    return { adapter, binding, requests, deletes: () => deletes };
+  }
+  it('rejects mismatched binding identity and invalid keys before issuing credentials', async () => {
+    const f = fixture();
+    const wrong = { ...f.binding, agentParticipantId: 'agent_wrong' } as SessionBinding;
+    expect(await f.adapter.removePublishedDeviceWithUIA(wrong, curve)).toBe('forbidden');
+    expect(await f.adapter.inspectPublishedDevice(wrong, curve)).toBe('unavailable');
+    expect(await f.adapter.removePublishedDeviceWithUIA(f.binding, 'invalid')).toBe('unavailable');
+    expect(f.requests).toEqual([]);
+  });
+  it.each([['password', 'present'], ['absent', 'removed'], ['replacement', 'replaced'],
+    ['missing-key', 'unavailable'], ['partial-keys', 'unavailable']] as const)(
+    'read-only reconciliation of %s never attempts deletion', async (mode, expected) => {
+      const f = fixture(mode);
+      expect(await f.adapter.inspectPublishedDevice(f.binding, curve)).toBe(expected);
+      expect(f.deletes()).toBe(0);
+    },
+  );
+  it.each(['password', 'direct', 'lost-after-delete', 'absent'])('verifies actual absence for %s', async mode => {
+    const f = fixture(mode);
+    expect(await f.adapter.removePublishedDeviceWithUIA(f.binding, curve)).toBe('removed');
+    expect(f.requests.some(request => request.path.includes('/admin/'))).toBe(false);
+    if (mode === 'absent') expect(f.deletes()).toBe(0);
+    if (mode === 'password') expect(f.deletes()).toBe(2);
+  });
+  it.each([
+    ['replacement', 'replaced', 0], ['replace-at-challenge', 'replaced', 1],
+    ['unsupported', 'reauthentication_required', 1], ['forbidden', 'forbidden', 1],
+    ['unknown', 'outcome_unknown', 1], ['still-present', 'outcome_unknown', 2],
+    ['missing-key', 'unavailable', 0], ['partial-keys', 'unavailable', 0],
+  ] as const)('reports %s without falsely accepting removal', async (mode, expected, count) => {
+    const f = fixture(mode);
+    expect(await f.adapter.removePublishedDeviceWithUIA(f.binding, curve)).toBe(expected);
+    expect(f.deletes()).toBe(count);
+  });
+});
