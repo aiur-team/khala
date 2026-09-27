@@ -588,6 +588,21 @@ describe('Claude delivery through the internal launcher', () => {
     };
   }
 
+  it('renders an explicit MCP read in Claude structured output and acknowledges only on the next call', async () => {
+    const session = await bound('session-structured-read');
+    const eventId = await session.post('structured read canary');
+    const [read] = await serve(session.report.descriptorPath, 'session-structured-read', [['khala_read']]);
+    expect(read).toEqual({ kind: 'batch', batch: expect.stringContaining('structured read canary') });
+    expect(JSON.stringify(read)).not.toContain('batchToken:');
+    expect(await session.facts()).toEqual([]);
+
+    const [sent] = await serve(session.report.descriptorPath, 'session-structured-read', [
+      ['khala_send', { message: 'ordinary next reply' }],
+    ]);
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    expect((await session.facts()).some(fact => fact.events.some(event => event.eventId === eventId))).toBe(true);
+  });
+
   // Wrong-implementation test (#443): a feed that starts at sequence 0 hands the rejoined
   // binding every earlier message, including the one sent while no agent was bound.
   it('delivers a session that rejoins after Stop only what was said after it rejoined, under history: none', async () => {
