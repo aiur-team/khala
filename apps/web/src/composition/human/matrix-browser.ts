@@ -442,6 +442,8 @@ export type MatrixBrowserPorts = Readonly<{
   participant(): ParticipantView | null;
   /** Requests SDK cleanup of this owner's local room state after protected closure. */
   cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
+  /** Trusted owner endpoint discards its outbound Megolm session before a new device can receive sends. */
+  discardOutboundSession(roomId: RoomId): Promise<boolean>;
 }>;
 
 /** Binds the selected Matrix SDK to KHA-111/112 without exposing it to UI controllers. */
@@ -510,6 +512,18 @@ export function createMatrixBrowserPorts(input: Readonly<{
       if (active?.principal.ownerId !== ownerId || !active.client.getRoom(roomId)) return false;
       try {
         await active.client.forget(roomId, true);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async discardOutboundSession(roomId) {
+      const active = runtime.active;
+      if (!active?.client.getRoom(roomId)?.hasEncryptionStateEvent()) return false;
+      const crypto = active.client.getCrypto();
+      if (!crypto) return false;
+      try {
+        await crypto.forceDiscardSession(roomId);
         return true;
       } catch {
         return false;
