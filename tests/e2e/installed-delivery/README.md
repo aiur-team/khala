@@ -39,6 +39,13 @@ suite asserts that receipt in a `todo` subtest because internal mode records no
 acknowledgement yet (#442). Node reports the subtest as a failing todo until #442 lands.
 Then remove the `todo` so a missing receipt fails the journey.
 
+OpenCode also has a restart journey, because OpenCode outlives the launcher (#456). The
+plugin is bound, delivers one message, and has it acknowledged. Then `khala internal`
+closes and `khala internal --resume <channel-id>` reopens the channel. The resumed launch
+refuses the capability the plugin still holds. The plugin must restore that same binding
+by itself and wake the idle session for the next message, with no `join`, no hook and no
+OpenCode restart. Stop on the resumed launch must still end delivery.
+
 Two more checks keep the suite honest:
 
 - **Coverage.** The harnesses setup installs entries for must equal the journeys here.
@@ -60,4 +67,5 @@ Each regression below was made in source and repacked, and then the suite ran:
 | --- | --- |
 | The OpenCode plugin built with `unavailableOpenCodeDependencies()` (#430, `main` before #432) | `[opencode] the plugin delivers the message to the idle session: timed out waiting for promptAsync` |
 | `launcher.ts` claims the Claude route for an uninspected version, `inspectClaudeRoute(async () => null)` (the #418 class) | `[claude] khala_read delivers the message: {"kind":"refused","code":"unproven"}` |
+| The OpenCode plugin stops pulling for good once its capability is refused (`main` before #456) | `[opencode] the still-running plugin delivers after the resume: timed out waiting for promptAsync after the resume` |
 | `cli/main.ts` no longer composes `sessionGrants` for the bare `mcp-serve` entry | `[codex] the MCP entry starts as Khala: MCP entry exited 2: {"ok":false,"error":"not_connected"}`, and the same for `[cursor]`, which runs that entry too |
