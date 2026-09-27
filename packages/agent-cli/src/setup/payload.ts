@@ -25,6 +25,8 @@ export type PackagedPayload = Readonly<{
   openCodePlugin: Uint8Array;
   /** Browser substrate files, relative to `dist/substrate-browser`; staged beside the runtime. */
   browserAssets: ReadonlyMap<string, Uint8Array>;
+  /** Exact Playwright runtime files copied into `dist/playwright-core` by the package build. */
+  playwrightAssets: ReadonlyMap<string, Uint8Array>;
   claudePlugin: ReadonlyMap<string, Uint8Array>;
   codexSkill: Uint8Array;
 }>;
@@ -38,13 +40,14 @@ export async function readPackagedPayload(distDirectory: string): Promise<Packag
     version: manifest.version,
     runtime: await read('khala.js'),
     openCodePlugin: await read('opencode.js'),
-    browserAssets: await readBrowserAssets(path.join(distDirectory, 'substrate-browser')),
+    browserAssets: await readDirectoryAssets(path.join(distDirectory, 'substrate-browser'), 'index.html'),
+    playwrightAssets: await readDirectoryAssets(path.join(distDirectory, 'playwright-core'), 'package.json'),
     claudePlugin: await readClaudePluginAssets(path.join(distDirectory, PAYLOAD_DIRECTORY, PAYLOAD_CLAUDE_PLUGIN)),
     codexSkill: await read(PAYLOAD_DIRECTORY, ...PAYLOAD_CODEX_SKILL.split('/')),
   };
 }
 
-async function readBrowserAssets(directory: string): Promise<ReadonlyMap<string, Uint8Array>> {
+async function readDirectoryAssets(directory: string, required: string): Promise<ReadonlyMap<string, Uint8Array>> {
   const files = new Map<string, Uint8Array>();
   let top: import('node:fs').Dirent[];
   try { top = await fs.readdir(directory, { withFileTypes: true }); }
@@ -54,16 +57,16 @@ async function readBrowserAssets(directory: string): Promise<ReadonlyMap<string,
   }
   async function visit(entries: readonly import('node:fs').Dirent[], parts: readonly string[]): Promise<void> {
     for (const entry of entries) {
-      if (entry.name === '.' || entry.name === '..') throw new Error('invalid browser asset name');
+      if (entry.name === '.' || entry.name === '..') throw new Error('invalid runtime asset name');
       const next = [...parts, entry.name];
       const file = path.join(directory, ...next);
       if (entry.isDirectory()) await visit(await fs.readdir(file, { withFileTypes: true }), next);
       else if (entry.isFile()) files.set(next.join('/'), new Uint8Array(await fs.readFile(file)));
-      else throw new Error('browser assets must contain regular files only');
+      else throw new Error('runtime assets must contain regular files only');
     }
   }
   await visit(top, []);
-  if (!files.has('index.html')) throw new Error('browser assets lack index.html');
+  if (!files.has(required)) throw new Error(`runtime assets lack ${required}`);
   return files;
 }
 
@@ -86,6 +89,10 @@ export function installerFiles(
     { path: runtime, component: 'payload', bytes: payload.runtime, harnesses: LAUNCHER_HARNESSES },
     ...[...payload.browserAssets].map(([name, bytes]) => ({
       path: path.join(path.dirname(runtime), 'substrate-browser', ...name.split('/')),
+      component: 'payload' as const, bytes, harnesses: LAUNCHER_HARNESSES,
+    })),
+    ...[...payload.playwrightAssets].map(([name, bytes]) => ({
+      path: path.join(path.dirname(runtime), 'playwright-core', ...name.split('/')),
       component: 'payload' as const, bytes, harnesses: LAUNCHER_HARNESSES,
     })),
     { path: path.join(root, 'bin', 'khala'), component: 'launcher', bytes: launcherScript(nodePath, runtime), harnesses: LAUNCHER_HARNESSES },
