@@ -20,6 +20,7 @@ import { composeBindingModes } from '../../../apps/internal/src/composition/bind
 import { FakeHostedProvider } from '../../../apps/internal/src/composition/fixtures/make-external-provider';
 import { composeMakeExternal } from '../../../apps/internal/src/composition/make-external';
 import { createInternalReleaseFeed } from '../../../apps/internal/src/composition/internal-delivery/release-feed';
+import { composeInternalReceipts } from '../../../apps/internal/src/composition/receipt-projection';
 import { startChannelServer } from '../../../apps/internal/src/server/channel-server';
 import type { ChannelStore } from '../../../apps/internal/src/store/channel-store';
 import { createDiscoveryStore } from '../../../apps/internal/src/store/discovery-store';
@@ -112,6 +113,7 @@ export async function startInternalWorld(options: Readonly<{
     newId: () => `id-${++id}`,
     clock: () => NOW,
     log: event => logs.push(event),
+    acknowledgements: composeInternalReceipts({ store: fixture.handle, logFile: path.join(root, 'receipts.ndjson') }).acknowledgements,
     receipts: createReceiptReadModel(fixture.handle),
     // Composed as the launcher composes it, so the human-only Stop route is mounted and probed.
     stop: composeBindingControl({ handle: fixture.handle, root: path.join(root, 'state') }),
@@ -164,7 +166,9 @@ export async function startInternalWorld(options: Readonly<{
     const deps: CliDependencies = {
       client: options.client === 'internal' ? await createInternalClient({ descriptorPath }) : createUnavailableClient(),
       listeningMode: null,
-      inbox: (bindingId, generation) => openInbox({
+      inbox: (bindingId, generation, inboxOptions) => openInbox({
+        ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+        ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
         stateDirectory: agentState, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
       }),
       stdin, stdout, stderr, signal: abort.signal, env: {}, cwd: root,

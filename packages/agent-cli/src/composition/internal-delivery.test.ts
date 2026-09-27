@@ -214,6 +214,8 @@ describe('delivering inbox', () => {
     const pulls: string[] = [];
     const delivery: InternalDelivery = {
       async pull(generation) { pulls.push(`${generation.bindingId}:${generation.generation}`); return 'caught_up'; },
+      async acknowledge() {},
+      async issueBatch() { return 'batch-test'; },
     };
     const opened: string[] = [];
     const wrapped = deliveringInbox(async (bindingId, generation) => {
@@ -235,6 +237,8 @@ describe('delivering inbox', () => {
     let pulls = 0;
     const wrapped = deliveringInbox(async () => ({} as BatchInbox), {
       async pull() { pulls += 1; return outcomes.shift() ?? 'caught_up'; },
+      async acknowledge() {},
+      async issueBatch() { return 'batch-test'; },
     }, { intervalMs: 60_000 });
     await wrapped.inbox('binding-bob', 3);
     await wrapped.stop();
@@ -245,6 +249,8 @@ describe('delivering inbox', () => {
     let pulls = 0;
     const wrapped = deliveringInbox(async () => ({} as BatchInbox), {
       async pull() { pulls += 1; return 'revoked'; },
+      async acknowledge() {},
+      async issueBatch() { return 'batch-test'; },
     }, { intervalMs: 1 });
     await wrapped.inbox('binding-bob', 3);
     await new Promise(resolve => setTimeout(resolve, 20));

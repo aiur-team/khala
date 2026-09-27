@@ -57,7 +57,7 @@ describe('runCli', () => {
         calls.push('durable');
         await onWake?.();
         return 'caught_up';
-      } }),
+      }, acknowledge: async () => {}, issueBatch: async () => 'server-issued-token' }),
       codexIdleWake: async (sessionId, binding) => {
         calls.push(`bound:${sessionId}:${binding.bindingId}`);
         return async () => { calls.push('queue'); };
@@ -76,7 +76,8 @@ describe('runCli', () => {
     expect(await runCli(['mcp-serve'], {
       client: client(), inbox: async () => fakeBatchInbox(async () => ({ async readBatch() { return null; }, async release() {} })),
       sessionGrants: () => '/private/grant.json', internalClient: async () => client(),
-      internalDelivery: async () => ({ pull: async () => 'caught_up' }),
+      internalDelivery: async () => ({ pull: async () => 'caught_up',
+        acknowledge: async () => {}, issueBatch: async () => 'server-issued-token' }),
       codexIdleWake: async () => { throw new Error('version probe unavailable'); },
       ...io,
     })).toBe(0);
