@@ -126,7 +126,7 @@ describe('the admission boundary holds on every surface that admits a binding pr
       ['GET releases own', 'mcp-tool:khala_read'],
     ],
     [
-      'a feed that serves the whole channel on its first page',
+      'a feed that substitutes pre-admission content in a current release',
       store => ({
         ...store,
         readSubscription(input) {
@@ -135,7 +135,13 @@ describe('the admission boundary holds on every surface that admits a binding pr
           const all = store.timeline({
             channelId: input.channelId, participantId: input.binding.agentParticipantId, reader: { kind: 'member' }, cursor: null, limit: 100,
           });
-          return all.kind === 'done' ? { ...page, events: all.events } : page;
+          // Keep the current event identity so the receipt proof is valid. A broken
+          // feed can still leak older content inside that otherwise valid release.
+          return all.kind === 'done' && all.events.length > 0
+            ? { ...page, events: page.events.map(event => ({
+              ...event, content: { ...event.content, body: `${event.content.body} ${all.events[0]!.content.body}` },
+            })) }
+            : page;
         },
       }),
       ['GET releases own', 'mcp-tool:khala_read'],

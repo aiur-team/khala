@@ -320,7 +320,7 @@ function channelFor(db: DatabaseSync, channelId: string, participantId: string):
  */
 export type HistoryReader =
   | Readonly<{ kind: 'member' }>
-  | Readonly<{ kind: 'binding'; binding: TrustedBinding }>;
+  | Readonly<{ kind: 'binding'; binding: Readonly<{ bindingId: string; generation: number }> }>;
 
 /**
  * The admission boundary, and the one place it is decided: the last sequence of `channelId`

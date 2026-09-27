@@ -10,14 +10,13 @@
 // feed behind its cursor. A revoked or stale generation is refused by the store.
 
 import { createHash } from 'node:crypto';
-import type { BindingId, EventRef, ReleaseId, SessionBinding } from '@khala/contracts/delivery/index';
+import type { BindingId, EventRef, SessionBinding } from '@khala/contracts/delivery/index';
 import { encodeReleasePayload } from '@khala/policy/release/codec';
 import type { SqliteListeningModeRepository } from '../../listening-mode-store/sqlite';
 import type { AgentRelease, AgentReleaseFeed, AgentReleaseRead } from '../../server/channel-server';
 import type { ChannelStore, StoredEvent } from '../../store/channel-store';
 import { decodeSubscriptionCursor, encodeSubscriptionCursor } from '../../store/cursors';
-
-const RELEASE_ID_DOMAIN = 'khala.internal.release.v1';
+import { internalReleaseId } from '../../store/release-id';
 /** The internal channel has no trust-policy versions; its releases are all version 0. */
 const INTERNAL_POLICY_VERSION = 0;
 /** The inbox's record limit. A release whose encoded payload exceeds it could never be enqueued. */
@@ -45,13 +44,7 @@ export type InternalReleaseFeedInput = Readonly<{
   maxPagePayloadBytes?: number;
 }>;
 
-/** Deterministic per binding generation and event, never random or time-derived. */
-export function internalReleaseId(binding: Pick<SessionBinding, 'bindingId' | 'generation'>, eventId: string): ReleaseId {
-  const digest = createHash('sha256')
-    .update(JSON.stringify([RELEASE_ID_DOMAIN, binding.bindingId, binding.generation, eventId]))
-    .digest('base64url');
-  return `rel_${digest}` as ReleaseId;
-}
+export { internalReleaseId };
 
 function eventRef(event: StoredEvent): EventRef {
   return {
