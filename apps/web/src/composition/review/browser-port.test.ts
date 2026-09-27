@@ -281,6 +281,7 @@ describe('browser review registration', () => {
     const capability = registerReview({ client, limits, refreshMs: 0, bindingFor: () => bindingId });
 
     expect(capability.state).toBe('ready');
+    expect(registerHumanCapabilities(capability).find(item => item.id === 'review')).toBe(capability);
     expect(capability.portFor(context, roomId)).toBeNull();
     const attachment = capability.attach(context);
     const review = capability.portFor(context, roomId);

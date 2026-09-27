@@ -32,6 +32,8 @@ export type ApprovalUiResult =
   | Readonly<{ kind: 'outcome_unknown'; commandId: CommandId }>;
 
 export interface ReviewUiPort {
+  /** A metadata-only command whose previous write may have committed before a page reload. */
+  recoverUnknown?(): ApprovalCommand | null;
   /** Cached-safe: returns the current `ReviewView` synchronously. */
   snapshot(): ReviewView;
   /** Notifies on any `ReviewView` change. Registration is released when `signal` aborts. */

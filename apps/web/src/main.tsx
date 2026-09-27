@@ -1,11 +1,16 @@
 import { decodeContentLimits } from '@khala/contracts/messaging/index';
+import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { createHumanApplication } from './composition/human/application';
 import { createHumanBrowserApi } from './composition/human/browser-api';
 import { readHumanEntry } from './composition/human/entry';
 import { readHostedConfig } from './composition/human/hosted-config';
 import { createMatrixBrowserPorts } from './composition/human/matrix-browser';
 import { mountKhalaContent } from './composition/human/mount';
-import { renderHumanRoom } from './composition/human/room';
+import { createHumanRoomRenderer } from './composition/human/room';
+import { createOwnerMailboxReviewClient } from './composition/review/owner-mailbox-client';
+import { createOwnerDeviceClient } from './composition/review/owner-device-client';
+import { registerReview } from './composition/review/register';
+import { registerHumanCapabilities } from './composition/human/capabilities';
 import { createHumanRouteCodec } from './composition/human/routes';
 import { mountHostedUnavailable } from './composition/human/unavailable';
 import { createChannelAccessInboxController } from './features/channel-access/controller';
@@ -15,6 +20,7 @@ import './shell/shell.css';
 import './features/create-channel/create-channel.css';
 import './features/timeline/timeline.css';
 import './features/channel/channel.css';
+import './features/review/review.css';
 import './features/recovery/recovery.css';
 import './features/approval-decision/approval-decision.css';
 import './features/channel-access/channel-access.css';
@@ -41,6 +47,11 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
   if (entry.path !== `${location.pathname}${location.search}`) history.replaceState(null, '', entry.path);
 
   const api = createHumanBrowserApi({ origin: appOrigin, homeserverOrigin, limits: decodedLimits.value });
+  const review = createOwnerMailboxReviewClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const ownerDevice = createOwnerDeviceClient({ origin: appOrigin, csrf: api.reviewCsrf });
+  const deliveryLimits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
+  if (!deliveryLimits.ok) throw new Error('invalid review limits');
+  const reviewCapability = registerReview({ client: review.review, limits: deliveryLimits.value, bindingFor: () => null });
   const matrix = createMatrixBrowserPorts({
     identity: api.identity,
     credentials: api.credentials,
@@ -72,6 +83,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     admission: api.admission,
     participant: matrix.participant,
     closure,
+    ...(api.revocation ? { revocation: api.revocation } : {}),
     limits: decodedLimits.value,
   }, { initialPath: entry.path });
   const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
@@ -83,7 +95,19 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     routes,
     createChannelAccess,
     mode: entry.mode,
-    renderRoom: renderHumanRoom,
+    capabilities: registerHumanCapabilities(reviewCapability),
+    renderRoom: createHumanRoomRenderer(review, reviewCapability, async (context, roomId, binding) => {
+      if (!binding.device) return false;
+      const currentOwner = () => matrix.participant()?.ownerId === context.principal.ownerId
+        && matrix.device.current().generation === context.deviceView.generation;
+      if (!currentOwner()) return false;
+      const proof = await matrix.ownerDeviceProof();
+      if (!proof || !currentOwner() || !await ownerDevice.register(roomId, binding.bindingId, binding.generation, proof)
+        || !currentOwner()) return false;
+      const established = await matrix.trustAgentDevice(roomId, binding.device.userId,
+        binding.device.deviceId, binding.device.fingerprint);
+      return established && currentOwner();
+    }),
     navigateRoute(path) {
       history.pushState(null, '', path);
       application.navigate(path);

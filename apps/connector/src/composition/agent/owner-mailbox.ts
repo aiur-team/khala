@@ -67,9 +67,20 @@ export function createProductionOwnerMailbox(input: Readonly<{
   let inFlight: Promise<'ok' | 'unavailable' | 'revoked'> | null = null;
 
   function validPoll(value: unknown): value is Record<string, unknown> & { closing: boolean; entries: unknown[] } {
-    return object(value) && value.v === 1 && value.bindingId === input.binding.bindingId
-      && value.generation === input.binding.generation && typeof value.closing === 'boolean'
-      && Array.isArray(value.entries) && value.entries.length <= 64;
+    if (!object(value) || value.v !== 1 || value.bindingId !== input.binding.bindingId
+      || value.generation !== input.binding.generation || typeof value.closing !== 'boolean'
+      || !Array.isArray(value.entries) || value.entries.length > 65) return false;
+    const seen = new Set<string>();
+    let ordinary = 0;
+    let stops = 0;
+    for (const raw of value.entries) {
+      const entry = command(raw, input.binding);
+      if (!entry || seen.has(entry.operationId)) return false;
+      seen.add(entry.operationId);
+      if (entry.kind === 'channel_stop') stops += 1;
+      else ordinary += 1;
+    }
+    return ordinary <= 64 && stops <= 1 && (!value.closing || ordinary === 0);
   }
 
   async function call(method: 'GET' | 'POST', target: string, body?: unknown): Promise<Readonly<{ status: number; body: unknown | null }> | null> {

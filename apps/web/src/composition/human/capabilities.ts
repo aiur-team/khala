@@ -1,6 +1,6 @@
 import { registerControls } from '../controls/register';
 import { registerRecovery } from '../recovery/register';
-import { registerReview } from '../review/register';
+import { registerReview, type ReviewCapability } from '../review/register';
 import type { HumanRouteContext } from './application';
 import type { Disposer } from '@khala/contracts/messaging/index';
 
@@ -16,8 +16,8 @@ export type HumanCapability = {
  * Keep this list literal: URLs and other request data must never select code
  * to load. Follow-on owners replace their registration module in place.
  */
-export function registerHumanCapabilities(): readonly HumanCapability[] {
-  return [registerReview(), registerControls(), registerRecovery()];
+export function registerHumanCapabilities(review: ReviewCapability = registerReview()): readonly HumanCapability[] {
+  return [review, registerControls(), registerRecovery()];
 }
 
 /** Attaches only compiled, ready capabilities to one route-scoped context. */
