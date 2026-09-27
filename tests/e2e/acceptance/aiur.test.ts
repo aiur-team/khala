@@ -93,6 +93,18 @@ describe('Executor native fixture evidence', () => {
     expect(await port.alive(captured)).toBe(false);
   });
 
+  it('keeps a captured fixture available for exact grant correlation while its status view is dismissed', async () => {
+    const directory = root();
+    captureNativeSession(directory, OBSERVATION, () => PROCESS, () => true, undefined, status, version);
+    let image = version();
+    const port = aiurRecords(directory, OBSERVATION.repository, () => PROCESS, () => true, () => null, () => image);
+    expect((await port.capturedSession(OBSERVATION.ticket, OBSERVATION.runId, 'a'))?.sessionId).toBe(OBSERVATION.sessionId);
+    expect(await port.session(OBSERVATION.ticket, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await port.alive(decodeNativeSession(OBSERVATION)!)).toBe(false);
+    image = 'codex-cli 0.157.1\n';
+    expect(await port.capturedSession(OBSERVATION.ticket, OBSERVATION.runId, 'a')).toBeNull();
+  });
+
   it('refuses tampered model or CLI version against the native process command and expected profile', () => {
     const directory = root();
     expect(() => captureNativeSession(directory, { ...OBSERVATION, model: 'wrong-model' }, () => PROCESS, () => true, undefined, status, version)).toThrow();

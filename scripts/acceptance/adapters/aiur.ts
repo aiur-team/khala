@@ -263,36 +263,49 @@ function holdsNativeIdentity(
     && paneIsTty(session.tmuxPane, session.tty);
 }
 
+/** The captured proof stays usable for request correlation while /status is dismissed. */
+function holdsCapturedProcess(
+  session: NativeSession, observe: typeof observeProcess, paneIsTty: typeof verifiedPane,
+  version: typeof nativeVersion,
+): boolean {
+  if (!sameProcess(session, observe(session.pid)) || !paneIsTty(session.tmuxPane, session.tty)) return false;
+  if (parsedVersion(session.harness, version(session)) !== session.cliVersion) return false;
+  return sameProcess(session, observe(session.pid)) && paneIsTty(session.tmuxPane, session.tty);
+}
+
 /** Exact run/ticket/role lookup; a second participant makes the record ambiguous. */
 export function aiurRecords(
   root: string, repository: string, observe = observeProcess, paneIsTty = verifiedPane,
   status = nativeStatus, version = nativeVersion,
 ): AiurPort {
+  const readRecord = async (ticket: number, runId: string, role: RoleName, fresh: boolean): Promise<NativeSession | null> => {
+    if (!RUN.test(runId) || (role !== 'a' && role !== 'b')) return null;
+    const file = recordPath(root, repository, runId, ticket, role);
+    try {
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 0o077 || stat.uid !== process.getuid?.()) return null;
+      const observation: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const session = decodeNativeSession(observation);
+      if (!session || session.repository !== repository || session.runId !== runId || session.ticket !== ticket || session.role !== role) return null;
+      const proof = (observation as Record<string, unknown>).nativeIdentityProof;
+      const expectedMethod: Record<NativeSession['harness'], string> = {
+        codex: 'codex-status-image-v2', claude: 'claude-status-image-v1', opencode: 'opencode-pane-sqlite-image-v1',
+      };
+      if (!proof || typeof proof !== 'object' || Array.isArray(proof)
+        || (proof as Record<string, unknown>).method !== expectedMethod[session.harness]
+        || (proof as Record<string, unknown>).sessionId !== session.sessionId
+        || (proof as Record<string, unknown>).cliVersion !== session.cliVersion) return null;
+      if (fresh ? !holdsNativeIdentity(session, observe, paneIsTty, status, version)
+        : !holdsCapturedProcess(session, observe, paneIsTty, version)) return null;
+      const other = role === 'a' ? 'b' : 'a';
+      const sibling = recordPath(root, repository, runId, ticket, other);
+      if (fs.existsSync(sibling)) return null;
+      return session;
+    } catch { return null; }
+  };
   return {
-    async session(ticket, runId, role) {
-      if (!RUN.test(runId) || (role !== 'a' && role !== 'b')) return null;
-      const file = recordPath(root, repository, runId, ticket, role);
-      try {
-        const stat = fs.lstatSync(file);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 0o077 || stat.uid !== process.getuid?.()) return null;
-        const record: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const session = decodeNativeSession(record);
-        if (!session || session.repository !== repository || session.runId !== runId || session.ticket !== ticket || session.role !== role) return null;
-        const proof = (record as Record<string, unknown>).nativeIdentityProof;
-        const expectedMethod: Record<NativeSession['harness'], string> = {
-          codex: 'codex-status-image-v2', claude: 'claude-status-image-v1', opencode: 'opencode-pane-sqlite-image-v1',
-        };
-        if (!proof || typeof proof !== 'object' || Array.isArray(proof)
-          || (proof as Record<string, unknown>).method !== expectedMethod[session.harness]
-          || (proof as Record<string, unknown>).sessionId !== session.sessionId
-          || (proof as Record<string, unknown>).cliVersion !== session.cliVersion) return null;
-        if (!holdsNativeIdentity(session, observe, paneIsTty, status, version)) return null;
-        const other = role === 'a' ? 'b' : 'a';
-        const sibling = recordPath(root, repository, runId, ticket, other);
-        if (fs.existsSync(sibling)) return null;
-        return session;
-      } catch { return null; }
-    },
+    capturedSession: (ticket, runId, role) => readRecord(ticket, runId, role, false),
+    session: (ticket, runId, role) => readRecord(ticket, runId, role, true),
     async alive(session) { return holdsNativeIdentity(session, observe, paneIsTty, status, version); },
   };
 }

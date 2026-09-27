@@ -30,24 +30,43 @@ const DEFAULT_POLL_MS = 2_000;
 type MutableRole = { role: RoleName; ticket: number; session: RoleRecord['session']; target: StopTarget | null; granted: boolean };
 
 function readyPattern(markers: Markers, role: RoleName): RegExp {
-  return new RegExp(`^${markers.ready(role)} binding=([A-Za-z0-9_-]{1,256}) generation=(0|[1-9][0-9]{0,8})$`);
+  return new RegExp(`^${markers.ready(role)}$`);
 }
 
-/** Each role's latest binding announcement, attributed by the server, never by the text. */
-export function announcedTargets(timeline: readonly TimelineEvent[], markers: Markers): Map<RoleName, StopTarget | 'ambiguous'> {
-  const targets = new Map<RoleName, StopTarget | 'ambiguous'>();
+/** READY is only a marker. The author comes from the authenticated server timeline. */
+export function announcedParticipants(timeline: readonly TimelineEvent[], markers: Markers): Map<RoleName, string | 'ambiguous'> {
+  const targets = new Map<RoleName, string | 'ambiguous'>();
   for (const role of ['a', 'b'] as const) {
     const pattern = readyPattern(markers, role);
     for (const event of timeline) {
-      const match = event.authorKind === 'agent' ? pattern.exec(event.body) : null;
-      if (!match) continue;
+      if (event.authorKind !== 'agent' || !pattern.test(event.body)) continue;
       const previous = targets.get(role);
       if (previous === 'ambiguous') continue;
-      if (previous && previous.agentParticipantId !== event.authorParticipantId) {
+      if (previous && previous !== event.authorParticipantId) {
         targets.set(role, 'ambiguous');
         continue;
       }
-      targets.set(role, { bindingId: match[1]!, generation: Number(match[2]), agentParticipantId: event.authorParticipantId });
+      targets.set(role, event.authorParticipantId);
+    }
+  }
+  return targets;
+}
+
+async function resolveTargets(owner: OwnerSession, roles: readonly MutableRole[], markers: Markers): Promise<Map<RoleName, StopTarget | 'ambiguous'>> {
+  const participants = announcedParticipants(await owner.timeline(), markers);
+  const bindings = await owner.bindings();
+  const targets = new Map<RoleName, StopTarget | 'ambiguous'>();
+  for (const record of roles) {
+    const participant = participants.get(record.role);
+    if (participant === 'ambiguous') { targets.set(record.role, 'ambiguous'); continue; }
+    if (!participant || !record.session) continue;
+    const matching = bindings.filter(binding => binding.agentParticipantId === participant
+      && binding.harness === record.session!.harness
+      && binding.sessionDigest === sessionDigest(record.session!.harness, record.session!.sessionId));
+    if (matching.length > 1) targets.set(record.role, 'ambiguous');
+    else if (matching.length === 1) {
+      const { bindingId, generation, agentParticipantId } = matching[0]!;
+      targets.set(record.role, { bindingId, generation, agentParticipantId });
     }
   }
   return targets;
@@ -134,11 +153,11 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
 
       await grantPair(deps, owner, profile, options.runId, roles, waitFor);
 
-      await waitFor('both binding announcements', async () => {
-        const announced = announcedTargets(await owner!.timeline(), markers);
+      await waitFor('both server-attributed bindings', async () => {
+        const announced = await resolveTargets(owner!, roles, markers);
         for (const record of roles) {
           const target = announced.get(record.role);
-          if (target === 'ambiguous') throw new Error(`two participants announced role ${record.role}`);
+          if (target === 'ambiguous') throw new Error(`ambiguous participant or binding for role ${record.role}`);
           record.target = target ?? null;
         }
         return roles.every(record => record.target) ? true : null;
@@ -154,7 +173,13 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
         await waitFor(`the ${mode} handshake`, async () => ((await owner!.timeline()).some(event => event.body === final) ? true : null));
       }
       await owner.say(controllerLine.hold(markers), `acc-${options.runId}-hold`);
-      for (const record of roles) record.session = await deps.aiur.session(record.ticket, options.runId, record.role);
+      controller.note('Hold barrier: Executor driver, open /status in each Claude or Codex native TUI and leave it visible; keep each OpenCode pane on its bound session. The runner will read the panes without sending keys.');
+      await waitFor('both fresh native identities at hold', async () => {
+        const current = await Promise.all(roles.map(record => deps.aiur.session(record.ticket, options.runId, record.role)));
+        if (current.some(session => session === null)) return null;
+        for (const [index, session] of current.entries()) roles[index]!.session = session;
+        return true;
+      });
       stop = await guardedStop(deps, owner, server, roles, markers, options.runId);
     } catch (error) {
       if (error instanceof Refused) refused = error.message;
@@ -218,27 +243,22 @@ async function grantPair(
 ): Promise<void> {
   const expected = (record: MutableRole): ProfileRole => profile.roles.find(role => role.role === record.role)!;
   await waitFor('both access grants', async () => {
-    for (const record of roles) record.session = await deps.aiur.session(record.ticket, runId, record.role);
+    for (const record of roles) record.session = await deps.aiur.capturedSession(record.ticket, runId, record.role);
     const pending = (await owner.accessRequests()).filter(request => request.outcome === 'pending_owner');
     for (const record of roles.filter(entry => !entry.granted)) {
       const role = expected(record);
       const candidates = pending.filter(request => request.harness === role.harness);
-      let request: AccessRequest | undefined;
-      let verified = false;
-      if (record.session) {
-        // The request is tied to the ticket through the Executor's own session record.
-        request = candidates.find(entry => entry.sessionFingerprint === sessionDigest(role.harness, record.session!.sessionId));
-        verified = request !== undefined;
-      } else if (candidates.length === 1 && !roles.some(other => other !== record && expected(other).harness === role.harness)) {
-        // No durable identity yet: the human may still grant, and the verdict stays unproven.
-        request = candidates[0];
-      }
+      // The request is tied to this ticket by the Executor's private capture and
+      // the server's fingerprint, even while the native /status view is dismissed.
+      const request: AccessRequest | undefined = record.session
+        ? candidates.find(entry => entry.sessionFingerprint === sessionDigest(role.harness, record.session!.sessionId))
+        : undefined;
       if (!request) continue;
       if (record.session && !(Date.parse(request.createdAt) > Date.parse(record.session.capturedAt))) {
         throw new Refused(`role ${record.role} requested Khala access before its native fixture was captured`);
       }
       const confirmed = await deps.controller.confirmGrant({
-        ticket: record.ticket, role: record.role, harness: role.harness, sessionFingerprint: request.sessionFingerprint, verified,
+        ticket: record.ticket, role: record.role, harness: role.harness, sessionFingerprint: request.sessionFingerprint, verified: true,
       });
       if (!confirmed) throw new Refused(`the human declined the grant for role ${record.role}`);
       await owner.approve(request, `acc-grant-${record.ticket}`);
@@ -272,7 +292,7 @@ async function guardedStop(
   }
   // Refuse a stale or mismatched target before the server is asked: the latest
   // server-attributed announcement must still name exactly the recorded binding.
-  const latest = announcedTargets(await owner.timeline(), markers);
+  const latest = await resolveTargets(owner, roles, markers);
   const stale = roles.find(record => {
     const current = latest.get(record.role);
     return !current || current === 'ambiguous' || !sameTarget(current, record.target!);

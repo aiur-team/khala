@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { assertCommand, npxArgv } from '../guard';
 import type {
-  AccessRequest, LaunchedServer, LauncherPort, ModeRequest, OwnerSession, StopReply, StopTarget, TimelineEvent,
+  AccessRequest, LaunchedServer, LauncherPort, ModeRequest, OwnerBinding, OwnerSession, StopReply, StopTarget, TimelineEvent,
 } from '../types';
 
 export type LaunchReport = Readonly<{ channelId: string; origin: string; url: string }>;
@@ -108,6 +108,18 @@ export async function ownerSessionFor(report: LaunchReport): Promise<OwnerSessio
           harness: text(record(request.requester).harness),
           sessionFingerprint: text(record(request.requester).sessionFingerprint),
         }));
+    },
+    async bindings(): Promise<readonly OwnerBinding[]> {
+      const reply = await call(`/api/v1/channels/${channelId}/bindings`);
+      if (reply.status !== 200) throw new Error(`owner binding read failed: ${reply.status}`);
+      return (Array.isArray(record(reply.json).bindings) ? record(reply.json).bindings as unknown[] : []).map(entry => {
+        const binding = record(record(entry).binding);
+        return {
+          bindingId: text(binding.bindingId), generation: Number(binding.generation),
+          agentParticipantId: text(binding.agentParticipantId), harness: text(binding.harness),
+          sessionDigest: text(binding.sessionId),
+        };
+      });
     },
     async approve(request, operationId) {
       const reply = await call(`/api/human/channel-access-requests/${request.requestHandle}/decision`, {

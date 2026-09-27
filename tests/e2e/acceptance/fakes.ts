@@ -172,7 +172,7 @@ export function createWorld(
       const binding = bindingOf(role);
       if (!binding || binding.status !== 'active' || announced.has(role)) continue;
       announced.set(role, binding.generation);
-      post(binding.participantId, 'agent', `${markers.ready(role)} binding=${binding.bindingId} generation=${binding.generation}`, `ready-${role}-${binding.generation}`);
+      post(binding.participantId, 'agent', markers.ready(role), `ready-${role}-${binding.generation}`);
     }
     if (!knobs.handshake) return;
     for (const mode of ['steer', 'sync', 'async'] as const satisfies readonly ListeningMode[]) {
@@ -223,6 +223,12 @@ export function createWorld(
         });
       }
       return [...requests.values()].map(request => ({ ...request }));
+    },
+    async bindings() {
+      return bindings.filter(binding => binding.status === 'active')
+        .filter(binding => bindings.filter(candidate => candidate.bindingId === binding.bindingId && candidate.status === 'active').at(-1) === binding)
+        .map(binding => ({ bindingId: binding.bindingId, generation: binding.generation,
+          agentParticipantId: binding.participantId, harness: binding.harness, sessionDigest: binding.sessionDigest }));
     },
     async approve(request) {
       const role = request.requestHandle.endsWith('_a') ? 'a' : 'b';
@@ -315,6 +321,9 @@ export function createWorld(
     status: { async status(spec) { ran.push(`status ${spec}`); return { ok: true, output: { v: 1, connected: false } }; } },
     github,
     aiur: {
+      async capturedSession(ticket, runId, role) {
+        return runId === RUN_ID && ticketOf.get(role) === ticket ? sessionOf(role) : null;
+      },
       async session(ticket, runId, role) {
         return runId === RUN_ID && ticketOf.get(role) === ticket ? sessionOf(role) : null;
       },
