@@ -10,7 +10,8 @@ const packageDirectory = fileURLToPath(new URL('../..', import.meta.url));
 const bundleScript = fileURLToPath(new URL('../../scripts/bundle.mjs', import.meta.url));
 const temporaryDirectory = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-cli-link-'));
 const linkedEntrypoint = path.join(temporaryDirectory, 'khala');
-const sqliteExperimentalWarning = /^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n/u;
+// Node may flush its warning after the CLI has written its JSON error.
+const sqliteExperimentalWarning = /^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n/mu;
 const withoutSqliteWarning = (stderr: string): string => stderr.replace(sqliteExperimentalWarning, '');
 
 describe('bundled CLI entrypoint', () => {
@@ -18,7 +19,10 @@ describe('bundled CLI entrypoint', () => {
     const sqlite = '(node:1234) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n'
       + '(Use `node --trace-warnings ...` to show where the warning was created)\n';
     expect(withoutSqliteWarning(sqlite + '{"ok":false}\n')).toBe('{"ok":false}\n');
+    expect(withoutSqliteWarning('{"ok":false}\n' + sqlite)).toBe('{"ok":false}\n');
     expect(withoutSqliteWarning(sqlite + 'unexpected warning\n')).toBe('unexpected warning\n');
+    expect(withoutSqliteWarning('unexpected warning\n' + sqlite)).toBe('unexpected warning\n');
+    expect(withoutSqliteWarning('prefix ' + sqlite)).toBe('prefix ' + sqlite);
   });
   beforeAll(() => {
     const build = spawnSync(process.execPath, [bundleScript], {
