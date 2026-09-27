@@ -14,6 +14,17 @@ Recorded 2026-09-26 on Linux 7.1.4-arch1-1 x86_64, Node 24.18.0, pnpm 10.34.5, V
 
 ## What "local composition" means here
 
+KHA-133 inventory update: the production connector now adds a Matrix SDK endpoint
+(`apps/connector/src/substrate/matrix.ts`) and agent admission transport
+(`apps/control/src/composition/agent/matrix-admission.ts`). The checked surface
+inventory also includes its 16 bootstrap, device-proof and owner-mailbox routes.
+The six human routes require owner authentication; the ten agent routes carry
+bootstrap/control metadata and remain **not observed by this security suite**.
+Mailbox previews carry event references and receipt metadata, not message bodies.
+Route and store unit tests are not a substitute for the final hosted canary run.
+These inventory additions do not promote the historical results below or satisfy
+KHA-138's still-required live relay database/log, exact-release and key-loss rows.
+
 At the recorded evidence date, no production entry point composed the hosted connector: nothing outside tests called `createConnectorRuntime` (see the KHA-136 README). P13 later added an owner-authorized control adapter for Matrix membership and leave beside the human browser flow (KHA-132: `apps/web/src/composition/human/matrix-browser.ts` and its control session issuer). The recorded suite did not drive that adapter against a live relay. No connector or agent relay path was observed in this inventory. The suite drove two real compositions in-process, and the shipped `khala internal` runtime as its own process:
 
 - **Internal mode.** This is the real SQLite channel store, loopback channel server and release feed (`apps/internal`). The agent CLI, MCP server, inbox and delivery (`@aiur/khala`) are composed as `cli/main.ts` composes them. Only the clock and IDs are fixed.

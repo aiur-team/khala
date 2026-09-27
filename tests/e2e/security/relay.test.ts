@@ -113,12 +113,15 @@ describe('server-side stores and logs', () => {
   });
 
   it('inventories browser and owner-authorized control access to the relay', () => {
-    // KHA-132 wires the browser to Synapse; P13 closure adds an owner-account
-    // control adapter for membership and leave. A connector or agent relay path
-    // still changes this inventory and needs its own confidentiality evidence.
+    // KHA-133 also wires the connector's encrypted Matrix endpoint and its
+    // admission adapter. Inventory inclusion is not live confidentiality proof:
+    // the final relay database/log canary scenario remains required by KHA-138.
     expect(relayAdapterEvidence()).toEqual([
+      'apps/connector: matrix-js-sdk',
       'apps/web: matrix-js-sdk',
+      'apps/connector/src/substrate/matrix.ts',
       'apps/control/src/channel-closure/matrix.ts',
+      'apps/control/src/composition/agent/matrix-admission.ts',
       'apps/control/src/composition/human/matrix.ts',
       'apps/web/src/composition/human/matrix-browser.ts',
     ]);
