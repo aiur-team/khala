@@ -33,6 +33,12 @@ export type BindingModesComposition = Readonly<{
   releases: AgentReleaseFeed;
   /** Owner and agent mode control, plus the owner's pause. */
   control: BindingModeOptions;
+  /** Challenge is bound internally to one retained, issued peer batch. */
+  claudeTerminalChallenge(binding: SessionBinding, channelId: string, batchToken: string):
+    Readonly<{ nonce: string; bindingId: string; generation: number; channelId: string }> | null;
+  /** Exact Claude Stop proof; a bare CLI call cannot free a peer slot. */
+  finishClaudeTurn(binding: SessionBinding, nativeSessionId: string, channelId: string,
+    terminalId: string, batchToken: string, nonce: string, proof: string): boolean;
 }>;
 
 function terminalEpoch(terminalId: string): string {
@@ -44,6 +50,8 @@ export function composeBindingModes(input: Readonly<{
   handle: InternalStoreHandle;
   store: ChannelStore;
   stateDirectory: string;
+  /** Fresh private per-launch key shared only with the installed Claude hook. */
+  claudeTerminalKey?: Uint8Array;
   /** The launch's Claude route claim; absent, Claude is unproven. */
   claude?: HarnessCapabilities;
   /** Injected external inspection and queue effects for composition tests. */
@@ -57,7 +65,8 @@ export function composeBindingModes(input: Readonly<{
   const harnesses = createServerHarnessCapabilities(input.claude, {
     handle: input.handle, ...(input.codexWake ? { inspectCodex: input.codexWake.inspect } : {}),
   });
-  const automation = createLocalAutomationLedger(input.handle, createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS));
+  const automation = createLocalAutomationLedger(input.handle, createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS),
+    input.claudeTerminalKey);
   const codexActivity = createCodexIdleActivity(input.stateDirectory);
   const modeView = (binding: SessionBinding) => {
     const control = listeningModes.read(binding);
@@ -88,6 +97,21 @@ export function composeBindingModes(input: Readonly<{
   return {
     listeningModes,
     pause,
+    claudeTerminalChallenge(binding, channelId, batchToken) {
+      if (binding.harness !== 'claude' || !batchToken) return null;
+      const live = input.store.sessionBinding({ bindingId: binding.bindingId, harness: binding.harness,
+        sessionId: binding.sessionId });
+      if (live.kind !== 'done' || live.binding?.generation !== binding.generation
+        || input.store.channel({ channelId: channelId as RoomId,
+          participantId: binding.agentParticipantId }).kind !== 'done') return null;
+      return automation.issueClaudeChallenge({ recipient: binding, channelId, batchToken });
+    },
+    finishClaudeTurn(binding, nativeSessionId, channelId, terminalId, batchToken, nonce, proof) {
+      if (binding.harness !== 'claude' || binding.sessionId !== internalSessionDigest('claude', nativeSessionId)
+        || !terminalId || !batchToken) return false;
+      return automation.completeClaudeChallenge({ recipient: binding, channelId, nativeSessionId,
+        terminalId, batchToken, nonce, proof });
+    },
     releases: createInternalReleaseFeed({ store: input.store, listeningModes, paused: binding => pause.read(binding),
       peerAutomation: { reserve(binding, event) {
         const result = reservePeer(binding, event);

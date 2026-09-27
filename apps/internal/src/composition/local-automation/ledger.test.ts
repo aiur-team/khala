@@ -1,3 +1,4 @@
+import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,8 @@ import { createLocalAutomationLedger } from './ledger';
 import { composeBindingModes } from '../binding-modes/index';
 import { createCodexIdleActivity } from '@aiur/khala/composition/codex-idle-activity';
 import { internalSessionDigest } from '@aiur/khala/composition/internal-session';
+import { sendInternalTurnEnd } from '@aiur/khala/composition/internal-turn-end';
+import { encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
 import { startChannelServer } from '../../server/channel-server';
 import { mintCredential } from '../../server/credentials';
 import { composeBindingControl } from '../binding-control/index';
@@ -30,6 +33,7 @@ const carol = { ...bob, bindingId: 'binding-carol', agentParticipantId: 'agent-c
   deviceId: 'device-carol', sessionId: internalSessionDigest('codex', 'carol-thread') } as SessionBinding;
 const idleEpoch = '11111111-1111-4111-8111-111111111111';
 const endedEpoch = '22222222-2222-4222-8222-222222222222';
+const terminalKey = Buffer.alloc(32, 7);
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 
@@ -82,7 +86,7 @@ function world() {
     expect(acknowledgements.recordBatchAcknowledgement({ principal, channelId: room, token: token!, releases: [release] }))
       .toMatchObject({ kind: 'recorded' });
   };
-  const ledger = createLocalAutomationLedger(handle, createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS));
+  const ledger = createLocalAutomationLedger(handle, createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS), terminalKey);
   const mode = (recipient: SessionBinding): ListeningModeView => ({ bindingId: recipient.bindingId,
     generation: recipient.generation, version: 1, requested: 'sync', effective: 'sync' } as ListeningModeView);
   return { handle, store, discovery, modes, ledger, send, acknowledge, mode, root };
@@ -211,6 +215,67 @@ describe('durable local peer reservation', () => {
     } finally { w.handle.close(); }
   });
 
+  it('requires a one-use hook proof bound to the exact issued Claude peer batch', () => {
+    const w = world();
+    try {
+      expect(w.store.revokeBinding({ bindingId: carol.bindingId, generation: carol.generation }))
+        .toMatchObject({ kind: 'done' });
+      const claude = { ...carol, bindingId: 'binding-claude', harness: 'claude',
+        sessionId: internalSessionDigest('claude', 'claude-native') } as SessionBinding;
+      expect(w.discovery.activate({ operationKey: 'grant-claude', binding: claude,
+        channelId: room, sessionGeneration: 1, history: 'shared' })).toMatchObject({ kind: 'activated' });
+      expect(w.modes.initialize({ bindingId: claude.bindingId, generation: claude.generation,
+        requested: 'sync', version: 1, experimentalGrants: [], hardCancelGrants: [],
+        lastChangedBy: { kind: 'unknown' } })).toBe(true);
+      const root = w.send('human');
+      w.acknowledge(bob, root);
+      const peer = w.send('bob', bob);
+      expect(w.ledger.reserve({ recipient: claude, event: peer, mode: w.mode(claude) }))
+        .toMatchObject({ kind: 'reserved' });
+      expect(w.ledger.issueClaudeChallenge({ recipient: claude, channelId: room, batchToken: 'unissued' }))
+        .toBeNull();
+      const ack = createAgentAcknowledgementLedger(w.handle);
+      const principal = { bindingId: claude.bindingId, generation: claude.generation };
+      const release = { releaseId: internalReleaseId(claude, peer.eventId), eventIds: [peer.eventId] };
+      const issued = ack.issueRelease({ principal, channelId: room, release });
+      const token = ack.issueBatch({ principal, channelId: room, releases: [{ ...release, proof: issued }] });
+      expect(token).not.toBeNull();
+      const expired = w.ledger.issueClaudeChallenge({ recipient: claude, channelId: room, batchToken: token! });
+      expect(expired).not.toBeNull();
+      w.handle.transaction(db => db.prepare('UPDATE automation_terminal_challenges SET expires_at = 0 WHERE nonce = ?')
+        .run(expired!.nonce));
+      const expiredProof = createHmac('sha256', terminalKey).update(JSON.stringify([
+        'khala.claude.terminal.v1', expired!.nonce, 'claude-native', claude.bindingId, claude.generation, room,
+      ])).digest('base64url');
+      const challenge = w.ledger.issueClaudeChallenge({ recipient: claude, channelId: room, batchToken: token! });
+      expect(challenge).toMatchObject({ bindingId: claude.bindingId, generation: claude.generation, channelId: room });
+      const terminalId = createHash('sha256').update(JSON.stringify([
+        'khala.claude.turn-end.v1', claude.bindingId, claude.generation, token,
+      ])).digest('base64url');
+      const proof = createHmac('sha256', terminalKey).update(JSON.stringify([
+        'khala.claude.terminal.v1', challenge!.nonce, 'claude-native', claude.bindingId, claude.generation, room,
+      ])).digest('base64url');
+      const complete = (overrides: Partial<Parameters<typeof w.ledger.completeClaudeChallenge>[0]> = {}) =>
+        w.ledger.completeClaudeChallenge({ recipient: claude, channelId: room, nativeSessionId: 'claude-native',
+          batchToken: token!, terminalId, nonce: challenge!.nonce, proof, ...overrides });
+      expect(complete({ nonce: expired!.nonce, proof: expiredProof })).toBe(false);
+      expect(complete({ proof: 'A'.repeat(43) })).toBe(false);
+      expect(complete({ recipient: { ...claude, generation: 2 } })).toBe(false);
+      expect(complete({ batchToken: 'other-issued-token' })).toBe(false);
+      const replacementKeyLedger = createLocalAutomationLedger(w.handle,
+        createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS), Buffer.alloc(32, 8));
+      expect(replacementKeyLedger.completeClaudeChallenge({ recipient: claude, channelId: room,
+        nativeSessionId: 'claude-native', batchToken: token!, terminalId, nonce: challenge!.nonce, proof }))
+        .toBe(false);
+      expect(w.handle.read(db => db.prepare('SELECT state FROM automation_releases WHERE release_id = ?')
+        .get(release.releaseId))).toEqual({ state: 'reserved' });
+      expect(complete()).toBe(true);
+      expect(complete()).toBe(false);
+      expect(w.handle.read(db => db.prepare('SELECT state FROM automation_releases WHERE release_id = ?')
+        .get(release.releaseId))).toEqual({ state: 'finished' });
+    } finally { w.handle.close(); }
+  });
+
   it('composes a real two-agent SQLite pull and native notice from server-derived peer authority', async () => {
     const w = world();
     try {
@@ -318,6 +383,63 @@ describe('durable local peer reservation', () => {
       expect((await end('carol-thread')).status).toBe(200);
       expect(w.handle.read(db => db.prepare('SELECT state FROM automation_releases WHERE event_id = ?')
         .get('event-server-peer'))).toEqual({ state: 'finished' });
+    } finally { await server.close(); stop.close(); w.handle.close(); }
+  });
+
+  it('finishes an OpenCode peer job only after an exact private native-idle marker and issued batch', async () => {
+    const w = world();
+    expect(w.store.revokeBinding({ bindingId: carol.bindingId, generation: carol.generation }))
+      .toMatchObject({ kind: 'done' });
+    const openCode = { ...carol, bindingId: 'binding-open-code', harness: 'opencode',
+      sessionId: internalSessionDigest('opencode', 'native-open-code') } as SessionBinding;
+    expect(w.discovery.activate({ operationKey: 'grant-open-code', binding: openCode,
+      channelId: room, sessionGeneration: 1, history: 'shared' })).toMatchObject({ kind: 'activated' });
+    expect(w.modes.initialize({ bindingId: openCode.bindingId, generation: openCode.generation,
+      requested: 'sync', version: 1, experimentalGrants: [], hardCancelGrants: [],
+      lastChangedBy: { kind: 'unknown' } })).toBe(true);
+    const composed = composeBindingModes({ handle: w.handle, store: w.store, stateDirectory: w.root });
+    composed.control.observe(openCode, { version: '1.17.10', hookReview: 'unknown' });
+    const credential = mintCredential();
+    const stop = composeBindingControl({ handle: w.handle, root: w.root });
+    const server = await startChannelServer({ store: w.store, bootstrap: [],
+      bindings: [{ credential, binding: openCode, channels: [room] }],
+      releases: composed.releases, bindingModes: composed.control, stop,
+      newId: () => 'open-code-event', clock: () => Date.parse('2026-09-27T00:00:03.000Z'), startPort: 0 });
+    try {
+      const grant = path.join(w.root, 'opencode-grant.json');
+      fs.writeFileSync(grant, encodeInternalDescriptor({ v: 1, channelId: room, origin: server.origin,
+        transportCapability: 'A'.repeat(43), grantRef: 'grant-open-code',
+        bindingId: openCode.bindingId, bindingCapability: credential }), { mode: 0o600 });
+      const root = w.send('human');
+      w.acknowledge(bob, root);
+      const peer = w.send('bob', bob);
+      expect(composed.control.peerPending?.(openCode, room)).toBe(true);
+      const release = { releaseId: internalReleaseId(openCode, peer.eventId), eventIds: [peer.eventId] };
+      const ack = createAgentAcknowledgementLedger(w.handle);
+      const principal = { bindingId: openCode.bindingId, generation: openCode.generation };
+      const proof = ack.issueRelease({ principal, channelId: room, release });
+      expect(ack.issueBatch({ principal, channelId: room, releases: [{ ...release, proof }] })).not.toBeNull();
+      expect(await sendInternalTurnEnd({ descriptorPath: grant, stateDirectory: w.root },
+        openCode, 'wrong-native', 'assistant-1')).toBe(false);
+      expect(w.handle.read(db => db.prepare('SELECT state FROM automation_releases WHERE release_id = ?')
+        .get(release.releaseId))).toEqual({ state: 'reserved' });
+      expect(await sendInternalTurnEnd({ descriptorPath: grant, stateDirectory: w.root },
+        { ...openCode, sessionId: 'native-open-code' }, 'native-open-code', 'assistant-1')).toBe(true);
+      expect(w.handle.read(db => db.prepare('SELECT state FROM automation_releases WHERE release_id = ?')
+        .get(release.releaseId))).toEqual({ state: 'finished' });
+      const next = w.send('bob', bob);
+      expect(composed.control.peerPending?.(openCode, room)).toBe(true);
+      const nextRelease = { releaseId: internalReleaseId(openCode, next.eventId), eventIds: [next.eventId] };
+      const nextProof = ack.issueRelease({ principal, channelId: room, release: nextRelease });
+      expect(ack.issueBatch({ principal, channelId: room, releases: [{ ...nextRelease, proof: nextProof }] })).not.toBeNull();
+      expect(await sendInternalTurnEnd({ descriptorPath: grant, stateDirectory: w.root },
+        { ...openCode, sessionId: 'native-open-code' }, 'native-open-code', 'assistant-1')).toBe(true);
+      expect(w.handle.read(db => db.prepare('SELECT state FROM automation_releases WHERE release_id = ?')
+        .get(nextRelease.releaseId))).toEqual({ state: 'reserved' });
+      expect(await sendInternalTurnEnd({ descriptorPath: grant, stateDirectory: w.root },
+        { ...openCode, sessionId: 'native-open-code' }, 'native-open-code', 'assistant-2')).toBe(true);
+      expect(w.handle.read(db => db.prepare('SELECT state FROM automation_releases WHERE release_id = ?')
+        .get(nextRelease.releaseId))).toEqual({ state: 'finished' });
     } finally { await server.close(); stop.close(); w.handle.close(); }
   });
 });

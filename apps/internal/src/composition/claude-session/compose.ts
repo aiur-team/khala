@@ -93,6 +93,8 @@ export type ClaudeSessionCompositionOptions = Readonly<{
   /** The route claim for the installed Claude Code, from `inspectClaudeRoute`. */
   capabilities: HarnessCapabilities;
   pause: BindingPauseStore;
+  /** Durable local peer backlog for this exact admitted binding. */
+  peerPending?: (binding: SessionBinding, channelId: string) => boolean;
 }>;
 
 const limits = decodeDeliveryLimits({ maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32 });
@@ -422,9 +424,9 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
         if (stored === null || stored.bindingId !== binding.bindingId || stored.generation !== binding.generation)
           return { pending: false };
         const signal = store.pendingHumanRelease({ channelId: descriptor.channelId as RoomId, binding: stored });
-        if (signal.kind !== 'pending') return { pending: false };
+        const peer = options.peerPending?.(stored, descriptor.channelId) ?? false;
         // Stop, rebind or pause may have happened while the metadata query ran.
-        return { pending: signal.pending && await window() !== null };
+        return { pending: (signal.kind === 'pending' && signal.pending || peer) && await window() !== null };
       },
       watchWindow: window,
       roster: async () => {

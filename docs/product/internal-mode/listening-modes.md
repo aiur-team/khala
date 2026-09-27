@@ -311,6 +311,18 @@ binding generation, mode revision and pause before a native notice. It does not
 mint a hosted approval command or connector policy acknowledgement. Hosted
 `approvedAutomation()` remains `null`.
 
+The local peer ledger pins each agent event to the binding that sent it, records
+one reservation per causal release, and keeps its single active job until an
+authenticated causal reply or a trusted native terminal observation. Inbox ACK
+alone does not finish a job. OpenCode's installed plugin reports the latest
+assistant-message ID after an exact-session idle event; the server compares it
+with the private marker captured at reservation. Claude's installed Stop hook
+uses a short-lived, one-use challenge over the exact issued batch and a
+launch-scoped private key. The hook sees neither the batch token nor message
+content. This proves the installed helper's participation within the existing
+same-user host trust boundary; it is not cryptographic attestation by Claude
+Code against arbitrary same-UID process or file access.
+
 Pause and wake use the internal release feed and native boundaries:
 
 1. An owner pause holds the feed. Once effective, no new claim may

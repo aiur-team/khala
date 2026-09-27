@@ -112,7 +112,8 @@ describe('openChannelStore', () => {
     const second = open(directory, 'existing');
     expect(second.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all()
       .map(row => (row as { name: string }).name))).toEqual([
-      'admission_operations', 'agent_acknowledgements', 'automation_arrivals', 'automation_releases', 'automation_turn_ends',
+      'admission_operations', 'agent_acknowledgements', 'automation_arrivals', 'automation_releases',
+      'automation_terminal_challenges', 'automation_turn_ends',
       'bindings', 'channel_operations', 'channels',
       'control_operations', 'control_records',
       'devices', 'discovery_activations', 'discovery_agents', 'discovery_allowlist', 'discovery_operations', 'discovery_visibility', 'events',
@@ -281,8 +282,9 @@ describe('openChannelStore', () => {
       unchanged.close();
       const handle = open(directory, 'existing');
       expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: SCHEMA_VERSION });
-      expect(handle.read(db => db.prepare('SELECT causal_root_id, causal_depth FROM events WHERE event_id = ?').get('old-event')))
-        .toEqual({ causal_root_id: null, causal_depth: null });
+      expect(handle.read(db => db.prepare(`SELECT causal_root_id, causal_depth, author_binding_id,
+        author_binding_generation FROM events WHERE event_id = ?`).get('old-event')))
+        .toEqual({ causal_root_id: null, causal_depth: null, author_binding_id: null, author_binding_generation: null });
       expect(handle.read(db => db.prepare('SELECT count(*) AS n FROM automation_releases').get())).toEqual({ n: 0 });
       handle.close();
     }

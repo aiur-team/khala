@@ -356,6 +356,17 @@ CREATE TABLE automation_turn_ends (
   PRIMARY KEY (binding_id, generation, epoch),
   FOREIGN KEY (binding_id, generation) REFERENCES bindings (binding_id, generation) ON DELETE RESTRICT
 ) STRICT;
+CREATE TABLE automation_terminal_challenges (
+  nonce TEXT PRIMARY KEY,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  release_id TEXT NOT NULL REFERENCES automation_releases (release_id) ON DELETE RESTRICT,
+  token_digest TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0 CHECK (used IN (0, 1)),
+  FOREIGN KEY (binding_id, generation) REFERENCES bindings (binding_id, generation) ON DELETE RESTRICT
+) STRICT;
 `;
 
 export type MigrationStage =

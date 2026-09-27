@@ -1,3 +1,4 @@
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ListeningModeView, SessionBinding } from '@khala/contracts/delivery/index';
 import type { StoredEvent } from '../../store/channel-store';
@@ -24,7 +25,26 @@ export type LocalAutomationLedger = Readonly<{
   /** Called only after the provider's exact-session terminal boundary was verified. */
   finishEnded(input: Readonly<{ recipient: SessionBinding; channelId: string; epoch: string;
     batchToken?: string | null }>): number;
+  issueClaudeChallenge(input: Readonly<{ recipient: SessionBinding; channelId: string;
+    batchToken: string }>): Readonly<{ nonce: string; bindingId: string; generation: number; channelId: string }> | null;
+  completeClaudeChallenge(input: Readonly<{ recipient: SessionBinding; channelId: string;
+    nativeSessionId: string; batchToken: string; terminalId: string; nonce: string; proof: string }>): boolean;
 }>;
+
+const TERMINAL_CHALLENGE_MS = 2 * 60_000;
+const terminalDigest = (token: string) => createHash('sha256').update(token).digest('hex');
+const terminalEpoch = (terminalId: string) => {
+  const hash = createHash('sha256').update('khala-local-terminal-v1\0').update(terminalId).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+};
+const claudeTerminalId = (binding: SessionBinding, token: string) => createHash('sha256').update(JSON.stringify([
+  'khala.claude.turn-end.v1', binding.bindingId, binding.generation, token,
+])).digest('base64url');
+
+function proofMessage(nonce: string, recipient: SessionBinding, channelId: string, nativeSessionId: string): string {
+  return JSON.stringify(['khala.claude.terminal.v1', nonce, nativeSessionId,
+    recipient.bindingId, recipient.generation, channelId]);
+}
 
 type BindingRow = Readonly<{
   binding_id: string; generation: number; owner_id: string; participant_id: string;
@@ -77,7 +97,10 @@ function paused(db: DatabaseSync, binding: SessionBinding): boolean | 'unavailab
 }
 
 /** Same SQLite transaction checks grant, mode revision, pause and shared causal counters before reserving. */
-export function createLocalAutomationLedger(handle: InternalStoreHandle, provider: LocalAutomationProvider): LocalAutomationLedger {
+export function createLocalAutomationLedger(
+  handle: InternalStoreHandle, provider: LocalAutomationProvider, claudeTerminalKey?: Uint8Array,
+): LocalAutomationLedger {
+  const terminalKey = claudeTerminalKey?.length === 32 ? Buffer.from(claudeTerminalKey) : null;
   const ledger: LocalAutomationLedger = {
     reserve({ recipient, event, mode, claimedIdleEpoch }) {
       try {
@@ -199,6 +222,78 @@ export function createLocalAutomationLedger(handle: InternalStoreHandle, provide
           return Number(changed.changes);
         });
       } catch { return 0; }
+    },
+    issueClaudeChallenge({ recipient, channelId, batchToken }) {
+      if (terminalKey === null || recipient.harness !== 'claude' || !batchToken) return null;
+      try {
+        return handle.transaction(db => {
+          if (!activeBinding(db, recipient, channelId)) return null;
+          const jobs = db.prepare(`SELECT ar.release_id FROM automation_releases ar
+            JOIN events event ON event.event_id = ar.event_id
+            JOIN issued_agent_batch_members issued ON issued.release_id = ar.release_id
+              AND issued.binding_id = ar.binding_id AND issued.generation = ar.generation
+            WHERE ar.binding_id = ? AND ar.generation = ? AND ar.state = 'reserved'
+              AND event.channel_id = ? AND issued.channel_id = ? AND issued.token = ?`)
+            .all(recipient.bindingId, recipient.generation, channelId, channelId, batchToken) as unknown as { release_id: string }[];
+          if (jobs.length !== 1) return null;
+          const nonce = randomBytes(24).toString('base64url');
+          // One live challenge per current job; old replies remain harmless and
+          // completed jobs do not accumulate challenge rows indefinitely.
+          db.prepare(`DELETE FROM automation_terminal_challenges
+            WHERE used = 1 OR expires_at < ? OR release_id = ?`)
+            .run(Date.now(), jobs[0]!.release_id);
+          db.prepare(`INSERT INTO automation_terminal_challenges
+            (nonce, binding_id, generation, channel_id, release_id, token_digest, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`)
+            .run(nonce, recipient.bindingId, recipient.generation, channelId, jobs[0]!.release_id,
+              terminalDigest(batchToken), Date.now() + TERMINAL_CHALLENGE_MS);
+          return { nonce, bindingId: recipient.bindingId, generation: recipient.generation, channelId };
+        });
+      } catch { return null; }
+    },
+    completeClaudeChallenge({ recipient, channelId, nativeSessionId, batchToken, terminalId, nonce, proof }) {
+      if (terminalKey === null || recipient.harness !== 'claude' || !batchToken
+        || terminalId !== claudeTerminalId(recipient, batchToken)
+        || !/^[A-Za-z0-9_-]{32}$/u.test(nonce) || !/^[A-Za-z0-9_-]{43}$/u.test(proof)) return false;
+      const expected = createHmac('sha256', terminalKey)
+        .update(proofMessage(nonce, recipient, channelId, nativeSessionId)).digest();
+      const presented = Buffer.from(proof, 'base64url');
+      if (presented.length !== expected.length || !timingSafeEqual(expected, presented)) return false;
+      try {
+        return handle.transaction(db => {
+          if (!activeBinding(db, recipient, channelId)) return false;
+          const challenge = db.prepare(`SELECT release_id, token_digest, expires_at, used
+            FROM automation_terminal_challenges WHERE nonce = ? AND binding_id = ?
+              AND generation = ? AND channel_id = ?`)
+            .get(nonce, recipient.bindingId, recipient.generation, channelId) as {
+              release_id: string; token_digest: string; expires_at: number; used: number;
+            } | undefined;
+          if (!challenge || challenge.used !== 0 || challenge.expires_at < Date.now()
+            || challenge.token_digest !== terminalDigest(batchToken)) return false;
+          const epoch = terminalEpoch(terminalId);
+          const end = db.prepare(`INSERT INTO automation_turn_ends (binding_id, generation, epoch)
+            VALUES (?, ?, ?) ON CONFLICT DO NOTHING`).run(recipient.bindingId, recipient.generation, epoch);
+          if (end.changes !== 1) return false;
+          const finished = db.prepare(`UPDATE automation_releases SET state = 'finished'
+            WHERE release_id = ? AND binding_id = ? AND generation = ? AND state = 'reserved'
+              AND (claimed_idle_epoch IS NULL OR claimed_idle_epoch <> ?)
+              AND EXISTS (SELECT 1 FROM issued_agent_batch_members issued
+                JOIN events event ON event.event_id = automation_releases.event_id
+                WHERE issued.release_id = automation_releases.release_id
+                  AND issued.binding_id = automation_releases.binding_id
+                  AND issued.generation = automation_releases.generation
+                  AND issued.channel_id = ? AND issued.token = ? AND event.channel_id = ?)`)
+            .run(challenge.release_id, recipient.bindingId, recipient.generation,
+              epoch, channelId, batchToken, channelId);
+          if (finished.changes !== 1) {
+            // Roll back the epoch insert with the rest of this attempt. A later
+            // current challenge can reconcile a lost or raced terminal reply.
+            throw new Error('terminal_job_not_current');
+          }
+          db.prepare('UPDATE automation_terminal_challenges SET used = 1 WHERE nonce = ?').run(nonce);
+          return true;
+        });
+      } catch { return false; }
     },
   };
   return ledger;
