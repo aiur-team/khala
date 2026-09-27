@@ -34,10 +34,11 @@ export function registerHostedProductionRoutes(
     },
   });
   return Object.freeze([
-    ...registerHumanHandlers({ bootstrap: () => bootstrap.human }),
+    ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human }),
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
       deviceAttestation: () => bootstrap.deviceAttestation,
+      ownerMailbox: () => bootstrap.ownerMailbox.agent,
     }),
   ]);
 }

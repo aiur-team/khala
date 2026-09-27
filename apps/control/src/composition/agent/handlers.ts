@@ -1,6 +1,7 @@
 import type { AcknowledgementSupport, ReceiptKindV2 } from '@khala/contracts/delivery/index';
 import { decodeRoomId, type RoomId } from '@khala/contracts/messaging/ids';
 import type { RouteRegistration } from '../../runtime/handler';
+import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 
 export type AgentAuthorization = 'allowed' | 'unauthenticated' | 'forbidden';
 export type AgentStatusSnapshot = Readonly<{
@@ -24,6 +25,8 @@ export type AgentHandlerDependencies = Readonly<{
   bootstrap?: () => readonly RouteRegistration[];
   /** Proof-bound published Matrix key registration for the exact admitted device. */
   deviceAttestation?: () => readonly RouteRegistration[];
+  /** Proof-bound connector poll and result submission. */
+  ownerMailbox?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -156,6 +159,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     unavailableStatus,
     ...unavailableBootstrapRoutes,
     ...unavailableDeviceAttestationRoutes,
+    ...unavailableOwnerMailboxRoutes().agent,
     ...unavailablePairingRoutes,
     ...unavailableChannelAccessRoutes,
     ...unavailableChannelAccessExchangeRoutes,
@@ -179,6 +183,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     status,
     ...(dependencies.bootstrap?.() ?? unavailableBootstrapRoutes),
     ...(dependencies.deviceAttestation?.() ?? unavailableDeviceAttestationRoutes),
+    ...(dependencies.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().agent),
     ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies.channelAccessExchange?.() ?? unavailableChannelAccessExchangeRoutes),

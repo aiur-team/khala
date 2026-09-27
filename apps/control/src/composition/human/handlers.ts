@@ -14,6 +14,7 @@ import type { AdmissionService } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
 import type { MatrixSessionIssuer } from './matrix';
 import { createProductionHumanServiceLoader } from './production';
+import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 
 export const ME_PATH = '/api/human/me';
 export const LOGOUT_PATH = '/api/human/auth/logout';
@@ -355,6 +356,8 @@ const loadProductionServices = createProductionHumanServiceLoader();
 export type HumanHandlerDependencies = Readonly<{
   /** Signed-in owner consent for the exact existing session and invite. */
   bootstrap?: () => readonly RouteRegistration[];
+  /** Same-origin authenticated owner command mailbox. */
+  ownerMailbox?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -410,6 +413,7 @@ export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): 
   return Object.freeze([
     ...createHumanHandlers(loadProductionServices),
     ...(dependencies?.bootstrap?.() ?? unavailableBootstrapRoutes),
+    ...(dependencies?.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().human),
     ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),
