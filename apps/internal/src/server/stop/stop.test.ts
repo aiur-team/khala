@@ -297,8 +297,9 @@ describe('binding Stop', () => {
       const refused = await call(port, { method: 'POST', path: STOP_PATH, headers: human, body: { v: 1, targets } });
       expect(refused.status, JSON.stringify(targets)).toBe(409);
     }
-    for (const credential of [h.fixture.bob.credential, h.fixture.carol.credential]) {
-      expect((await call(port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(credential) })).status).toBe(200);
+    // Each agent still reads the channel it was admitted to.
+    for (const [credential, channel] of [[h.fixture.bob.credential, channelId], [h.fixture.carol.credential, otherChannelId]] as const) {
+      expect((await call(port, { path: `/api/v1/channels/${channel}/timeline`, headers: bearer(credential) })).status).toBe(200);
     }
     for (const binding of [bobBinding, carolBinding]) {
       const row = h.fixture.store.binding(binding);
@@ -311,7 +312,7 @@ describe('binding Stop', () => {
     expect(reply.json.stopped.map((entry: { bindingId: string }) => entry.bindingId)).toEqual(['binding-bob']);
     expect((await call(port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(h.fixture.bob.credential) })).status)
       .toBe(401);
-    expect((await call(port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(h.fixture.carol.credential) })).status)
+    expect((await call(port, { path: `/api/v1/channels/${otherChannelId}/timeline`, headers: bearer(h.fixture.carol.credential) })).status)
       .toBe(200);
   });
 

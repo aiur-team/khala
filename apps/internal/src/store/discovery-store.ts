@@ -82,6 +82,12 @@ export type ActivationInput = Readonly<{
   binding: SessionBinding;
   channelId: string;
   sessionGeneration: number;
+  /**
+   * What the owner shared of the channel's earlier history: `none` starts the binding after the
+   * channel head at activation, `shared` gives it the whole channel. Channel access admits with
+   * `none` only.
+   */
+  history: 'none' | 'shared';
 }>;
 
 export type StoredActivation = Readonly<{
@@ -505,8 +511,8 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
             binding.bindingId, binding.generation, binding.ownerId, binding.agentParticipantId,
             binding.deviceId, binding.harness, binding.sessionId,
           );
-          // Admission shares no history: the feed starts after the channel's head right now.
-          const head = (db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM events WHERE channel_id = ?')
+          // Without shared history, every read of this binding starts after the channel's head right now.
+          const head = input.history === 'shared' ? 0 : (db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM events WHERE channel_id = ?')
             .get(input.channelId) as { value: number }).value;
           db.prepare(`
             INSERT INTO discovery_activations (operation_key, binding_id, generation, channel_id, session_generation, start_sequence)

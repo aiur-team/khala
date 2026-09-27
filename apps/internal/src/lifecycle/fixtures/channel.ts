@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { DeviceId, EventId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { createChannelStore } from '../../store/channel-store';
+import { createDiscoveryStore } from '../../store/discovery-store';
 import { bindLifecycleChannel } from '../../store/lifecycle-snapshot';
 import { type InternalStoreHandle, openChannelStore } from '../../store/open';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../paths';
@@ -75,7 +76,6 @@ export function seedChannel(
       sessionId: 'CANARY-SESSION',
       generation: 1,
     };
-    if (store.registerBinding(binding).kind !== 'done') throw new Error('fixture binding');
     const created = store.createChannel({
       operationId: 'CANARY-OPERATION',
       channelId: channelId as RoomId,
@@ -87,6 +87,10 @@ export function seedChannel(
     });
     if (created.kind !== 'created') throw new Error('fixture channel');
     store.setMembership({ channelId: channelId as RoomId, participantId: bob.participantId, membership: 'joined' });
+    const admitted = createDiscoveryStore(handle).activate({
+      operationKey: 'CANARY-ACTIVATION', binding, channelId, sessionGeneration: 1, history: 'shared',
+    });
+    if (admitted.kind !== 'activated') throw new Error('fixture binding');
     messages.forEach((message, index) => {
       const author = message.author === 'alice'
         ? { participantId: alice.participantId, deviceId: aliceDevice }
