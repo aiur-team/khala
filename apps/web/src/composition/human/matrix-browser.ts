@@ -446,6 +446,8 @@ export type MatrixBrowserPorts = Readonly<{
   discardOutboundSession(roomId: RoomId): Promise<boolean>;
   /** Trusts one server-attested agent Matrix device only after exact SDK fingerprint comparison. */
   trustAgentDevice(roomId: RoomId, userId: string, deviceId: string, fingerprint: string): Promise<boolean>;
+  /** Transient proof material for the protected owner-device registration request. */
+  ownerDeviceProof(): Promise<Readonly<{ deviceId: string; fingerprint: string; matrixAccessToken: string }> | null>;
 }>;
 
 /** Binds the selected Matrix SDK to KHA-111/112 without exposing it to UI controllers. */
@@ -546,6 +548,22 @@ export function createMatrixBrowserPorts(input: Readonly<{
         return true;
       } catch {
         return false;
+      }
+    },
+    async ownerDeviceProof() {
+      const active = runtime.active;
+      const view = device.current();
+      if (!active || view.state !== 'ready' || active.generation !== view.generation) return null;
+      const crypto = active.client.getCrypto();
+      const deviceId = active.client.getDeviceId();
+      const matrixAccessToken = active.client.getAccessToken();
+      if (!crypto || !deviceId || !matrixAccessToken) return null;
+      try {
+        const fingerprint = (await crypto.getOwnDeviceKeys()).ed25519;
+        return /^[A-Za-z0-9+/]{43}=?$/u.test(fingerprint)
+          ? { deviceId, fingerprint, matrixAccessToken } : null;
+      } catch {
+        return null;
       }
     },
   };
