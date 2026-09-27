@@ -99,6 +99,8 @@ export type BindingModeOptions = Readonly<{
   peerWake?: (binding: SessionBinding, event: StoredEvent) => boolean;
   /** Rechecks a durable peer backlog after a terminal turn or resume. */
   peerPending?: (binding: SessionBinding, channelId: string) => boolean;
+  /** A committed mode, route-grant or pause change may expose an already pending release. */
+  onChanged?: (binding: SessionBinding) => void;
 }>;
 
 export type OwnerBindings =
@@ -256,7 +258,9 @@ async function ownerRoute(context: RouteContext<Principal>, deps: BindingModeDep
       requested: body!.requested,
       issuedAt: body!.issuedAt,
     };
-    sendJson(response, 200, await deps.options.modes.set(authority, { binding, status }, capabilities, command));
+    const result = await deps.options.modes.set(authority, { binding, status }, capabilities, command);
+    if (result.outcome === 'applied') deps.options.onChanged?.(binding);
+    sendJson(response, 200, result);
     return;
   }
 
@@ -284,6 +288,7 @@ async function ownerRoute(context: RouteContext<Principal>, deps: BindingModeDep
     const result = grant
       ? await modes.grantExperimentalRoute(authority, { binding, status }, capabilities, decoded.value)
       : await modes.revokeExperimentalRoute(authority, { binding, status }, capabilities, decoded.value);
+    if (result.outcome === 'applied') deps.options.onChanged?.(binding);
     sendJson(response, 200, { v: 1, commandId: decoded.value.commandId, ...identity, ...result });
     return;
   }
@@ -303,6 +308,7 @@ async function ownerRoute(context: RouteContext<Principal>, deps: BindingModeDep
     fail(response, 503, 'outcome_unknown');
     return;
   }
+  deps.options.onChanged?.(binding);
   sendJson(response, 200, { v: 1, ...identity, paused: written.paused });
 }
 
@@ -391,7 +397,9 @@ async function agentRoute(context: RouteContext<Principal>, deps: BindingModeDep
   // Committed through the revocation barrier: Stop drains this write before it reports the binding stopped.
   const pending = deps.commitAgent(context, () => deps.options.modes.set(authority, { binding, status: 'active' }, capabilities, command));
   if (pending === null) return;
-  sendJson(response, 200, await pending);
+  const result = await pending;
+  if (result.outcome === 'applied') deps.options.onChanged?.(binding);
+  sendJson(response, 200, result);
 }
 
 export async function handleBindingMode(context: RouteContext<Principal>, deps: BindingModeDeps): Promise<void> {

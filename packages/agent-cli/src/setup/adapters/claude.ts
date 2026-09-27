@@ -60,6 +60,8 @@ export type ClaudePaths = Readonly<{
   marketplaceRoot: string;
   catalog: string;
   pluginRoot: string;
+  /** Empty setup-owned anchor creates the private parent before SessionStart registers an absent signal file. */
+  wakeDirectoryAnchor: string;
   /** The staged launcher the installed MCP entry and hooks run by absolute path. */
   launcher: string;
   manifest: string;
@@ -76,6 +78,7 @@ export function claudePaths(environment: Pick<SetupEnvironment, 'home' | 'xdgCon
     marketplaceRoot,
     catalog: path.join(marketplaceRoot, '.claude-plugin', 'marketplace.json'),
     pluginRoot: path.join(marketplaceRoot, 'plugins', CLAUDE_PLUGIN_NAME),
+    wakeDirectoryAnchor: path.join(environment.xdgStateHome, 'khala', 'claude-hooks', '.setup-anchor'),
     launcher: path.join(environment.xdgDataHome, 'khala', 'bin', 'khala'),
     manifest: setupStatePaths(environment).manifest,
   };
@@ -359,6 +362,7 @@ export class ClaudeSetupAdapter implements SetupAdapter {
     const settingsPostimage = next === null ? null : encodeJson(next);
 
     const desired: { path: string; component: SetupComponent; bytes: Uint8Array }[] = [
+      { path: paths.wakeDirectoryAnchor, component: 'plugin', bytes: new Uint8Array() },
       { path: paths.catalog, component: 'marketplace', bytes: claudeCatalog() },
       ...[...installedPluginAssets(this.#options.assets, { launcher: paths.launcher, nodePath: this.#options.nodePath })]
         .map(([name, bytes]) => ({ path: path.join(paths.pluginRoot, ...name.split('/')), component: 'plugin' as const, bytes })),
