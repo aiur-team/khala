@@ -54,6 +54,7 @@ export function fakeKhala(options: Readonly<{ maxItems?: number }> = {}) {
     }
     if (bound === undefined) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"session_not_bound"}\n' };
     if (bound.revoked) return { code: 3, stdout: '{"ok":false,"kind":"refused","code":"binding_not_held"}\n' };
+    if (op === 'terminal') return { code: 0, stdout: '{"ok":true,"kind":"terminal"}\n' };
     if (op === 'hook' || op === 'watch') {
       const watchSeconds = bound.mode === 'steer' || bound.mode === 'sync' ? bound.watchSeconds : null;
       return { code: 0, stdout: `${JSON.stringify({ ok: true, kind: 'hook', effective: bound.mode, watchSeconds, access })}\n` };

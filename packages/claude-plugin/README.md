@@ -55,7 +55,7 @@ both up on PATH.
 |---|---|---|---|
 | `PostToolUse` | pulls; the batch is `additionalContext` | nothing | nothing |
 | `Stop` | fallback pull when the turn used no more tools | pulls; `decision: block` with the batch as `reason` | nothing |
-| `Stop` with `stop_hook_active` | never pulls; marks the session idle | same | same |
+| `Stop` with `stop_hook_active` | content-free terminal check; never pulls; marks the session idle | same | same |
 | `Stop` watcher (`asyncRewake`) | wakes an idle session | same | never armed |
 | `UserPromptSubmit` | marks the session busy, cancels the watcher, and pulls only for a watcher's wake | same | no pull |
 | `SessionEnd` | removes the session's hook state | same | same |
@@ -79,7 +79,9 @@ session learns the outcome at its next prompt.
 It never interrupts. Each pull delivers the bounded batch that Khala hands out
 at that moment, in order, and any overflow waits for the next boundary. A
 delivered `Stop` batch keeps the session active for one continuation. The
-following `stop_hook_active` Stop never pulls, which rules out a stop loop.
+following `stop_hook_active` Stop checks the exact bound session for a retained
+batch token without settling access, pulling, or acknowledging. It never returns
+context, which rules out a stop loop.
 
 **Idle wake.** Every `Stop` arms one watcher, following the #178 amendment in
 `docs/product/internal-mode/interactive-claude.md`. A fresh owner nonce

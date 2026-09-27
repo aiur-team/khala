@@ -104,7 +104,7 @@ describe('hook processes', () => {
     expect(stop).toEqual({ code: 0, stdout: '', stderr: '' });
     const watcher = await runScript('stop-watcher.mjs', hookInput('Stop', 'session-idle', { stop_hook_active: true }), env);
     expect(watcher).toEqual({ code: 2, stdout: '', stderr: `${WAKE_NOTICE}\n` });
-    expect(fake.calls().map(call => call.argv[1])).toEqual(['watch', 'pending']);
+    expect(fake.calls().map(call => call.argv[1])).toEqual(['terminal', 'watch', 'pending']);
 
     const claim = await runScript('user-prompt-submit.mjs', hookInput('UserPromptSubmit', 'session-idle', { prompt: WAKE_NOTICE }), env);
     expect(claim.code).toBe(0);

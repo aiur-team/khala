@@ -132,11 +132,27 @@ describe('mode boundaries', () => {
   });
 
   it('never pulls or returns context when stop_hook_active is set', async () => {
-    const { khala, stop } = setup();
+    const { khala, stop, postTool } = setup();
     khala.bind(A, 'sync');
     khala.release(A, 'must wait');
+    khala.decide(A, 'connected');
     await expect(stop(A, true)).resolves.toEqual(silent);
-    expect(khala.ops(A)).toEqual([]);
+    expect(khala.ops(A)).toEqual(['terminal']);
+    // The probe did not consume the queued batch or settle an access outcome.
+    expect(context(await postTool(A))).toContain(ACCESS_NOTICES.connected);
+    expect(reason(await stop(A))).toContain('must wait');
+  });
+
+  it('checks the exact session only after a sync batch has reached its native continuation', async () => {
+    const { khala, stop } = setup();
+    khala.bind(A, 'sync');
+    khala.bind(B, 'sync');
+    khala.release(A, 'peer release');
+    expect(reason(await stop(A))).toContain('peer release');
+    expect(khala.ops(A)).toEqual(['hook', 'pull']);
+    await expect(stop(A, true)).resolves.toEqual(silent);
+    expect(khala.ops(A)).toEqual(['hook', 'pull', 'terminal']);
+    expect(khala.ops(B)).toEqual([]);
   });
 
   it('injects the bounded batch available at claim time, in order, and leaves overflow queued', async () => {
@@ -606,6 +622,7 @@ describe('access outcomes', () => {
       { op: 'hook', sessionId: A, flags: ['--stop'] },
       { op: 'pull', sessionId: A },
       { op: 'watch', sessionId: A },
+      { op: 'terminal', sessionId: A },
     ]);
   });
 

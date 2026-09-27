@@ -55,8 +55,11 @@ describe('Claude session adapter', () => {
     });
     await claude.hook(A1);
     await claude.watch(A1);
+    await claude.terminal(A1);
     await claude.hook({ credential: CREDENTIAL_B, sessionId: A1.sessionId }, { stop: true });
     await claude.hook({ credential: CREDENTIAL_A, sessionId: 'unbound-session' }, { stop: true });
+    await expect(claude.terminal({ credential: CREDENTIAL_A, sessionId: 'unbound-session' }))
+      .resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
     expect(onTurnEnd).not.toHaveBeenCalled();
     await expect(claude.hook(A1, { stop: true })).resolves.toMatchObject({ kind: 'hook' });
     expect(onTurnEnd).not.toHaveBeenCalled(); // Empty Stop proves no offered release.
@@ -73,6 +76,9 @@ describe('Claude session adapter', () => {
     expect(onTurnEnd).toHaveBeenCalledExactlyOnceWith(BINDINGS['s-1'], A1.sessionId, terminalId, 'private-batch-token');
     await claude.hook(A1, { stop: true });
     expect(onTurnEnd.mock.calls[1]?.[2]).toBe(terminalId);
+    await expect(claude.terminal(A1)).resolves.toEqual({ kind: 'terminal' });
+    expect(onTurnEnd.mock.calls[2]?.[2]).toBe(terminalId);
+    expect(onTurnEnd.mock.calls[2]?.[3]).toBe('private-batch-token');
     expect(state.tokens.get(S1)).toEqual(retained('private-batch-token')); // Neither pull nor ACK.
   });
 

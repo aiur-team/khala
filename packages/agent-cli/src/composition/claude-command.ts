@@ -4,7 +4,7 @@ import { MAX_SEND_BYTES } from '../cli/send.js';
 import { validIdentifier } from '../cli/validation.js';
 import type { ClaudeSessionClient } from './claude-session-http.js';
 
-export const CLAUDE_COMMAND_OPS = ['pull', 'read', 'send', 'status', 'mode', 'pending', 'hook', 'watch'] as const;
+export const CLAUDE_COMMAND_OPS = ['pull', 'read', 'send', 'status', 'mode', 'pending', 'hook', 'watch', 'terminal'] as const;
 
 export type ClaudeCommandDependencies = Readonly<{
   /** Absent until the live local-server composition exists: the command fails closed. */
@@ -18,7 +18,8 @@ export type ClaudeCommandDependencies = Readonly<{
  * the `/khala` skill call. Hooks use `pull` (never acknowledges), `pending`, `hook`
  * (effective mode, the fence's watcher window, and an access outcome it settled; the
  * `Stop` hook adds `--stop`, which settles regardless of the per-session throttle) and
- * `watch` (the watcher's `hook`, which never settles), all content-free; the
+ * `watch` (the watcher's `hook`, which never settles), and `terminal` (the
+ * native follow-up Stop, which neither settles nor pulls), all content-free; the
  * agent's own calls, `read`, `send`, `status` and `mode`, acknowledge what hooks
  * delivered. The session ID is a selector only; the loopback server authenticates
  * the installation. Output never carries a token.
@@ -43,6 +44,8 @@ export async function runClaudeCommand(args: readonly string[], deps: ClaudeComm
     outcome = await client.mode(sessionId, deps.signal);
   } else if (op === 'hook') {
     outcome = await client.hook(sessionId, { stop }, deps.signal);
+  } else if (op === 'terminal') {
+    outcome = await client.terminal(sessionId, deps.signal);
   } else if (op === 'watch') {
     outcome = await client.watch(sessionId, deps.signal);
   } else {

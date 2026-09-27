@@ -417,11 +417,15 @@ async function postToolUse(input, deps) {
 /**
  * `sync` delivery, and the `steer` fallback when the turn used no more tools. A
  * delivered batch keeps the session active for one continuation; the following
- * `stop_hook_active` Stop never pulls and marks the session idle, which is the
- * only point a watcher may wake it.
+ * `stop_hook_active` Stop makes one content-free terminal check, never pulls,
+ * and marks the session idle, which is the only point a watcher may wake it.
  */
 async function stop(input, state, deps) {
   if (input.stopHookActive) {
+    // The preceding Stop may have pulled a batch only after its hook-state call.
+    // This check observes that retained token after Claude's continuation ends;
+    // it cannot settle access, pull, acknowledge, or return model context.
+    await deps.khala('terminal', input.sessionId);
     await state.setActivity('idle');
     return { stdout: '', stderr: '', exitCode: 0 };
   }
