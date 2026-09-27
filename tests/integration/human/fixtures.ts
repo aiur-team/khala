@@ -14,6 +14,7 @@ type RawLiveEnvironment = Readonly<{
   synapseVersion: string;
   oauth: Readonly<{
     usernameLabel: string;
+    usernamePlaceholder?: string;
     passwordLabel: string;
     submitName: string;
   }>;
@@ -99,6 +100,9 @@ export function readLiveHumanEnvironment(): LiveHumanEnvironment {
     synapseVersion: nonEmpty(raw.synapseVersion, 'synapseVersion'),
     oauth: Object.freeze({
       usernameLabel: nonEmpty(raw.oauth.usernameLabel, 'oauth.usernameLabel'),
+      ...(raw.oauth.usernamePlaceholder === undefined ? {} : {
+        usernamePlaceholder: nonEmpty(raw.oauth.usernamePlaceholder, 'oauth.usernamePlaceholder'),
+      }),
       passwordLabel: nonEmpty(raw.oauth.passwordLabel, 'oauth.passwordLabel'),
       submitName: nonEmpty(raw.oauth.submitName, 'oauth.submitName'),
     }),
@@ -115,7 +119,10 @@ export function readLiveHumanEnvironment(): LiveHumanEnvironment {
 
 export async function signIn(page: Page, environment: LiveHumanEnvironment, user: LiveUser): Promise<void> {
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.getByLabel(environment.oauth.usernameLabel).fill(user.username);
+  const username = environment.oauth.usernamePlaceholder
+    ? page.getByPlaceholder(environment.oauth.usernamePlaceholder)
+    : page.getByLabel(environment.oauth.usernameLabel);
+  await username.fill(user.username);
   await page.getByLabel(environment.oauth.passwordLabel).fill(user.password);
   await page.getByRole('button', { name: environment.oauth.submitName }).click();
   await page.waitForURL(url => url.origin === environment.appOrigin);
@@ -131,12 +138,12 @@ export function syntheticCanary(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-export async function rawRoomMessages(environment: LiveHumanEnvironment, roomId: string): Promise<readonly Record<string, unknown>[]> {
+export async function rawRoomMessages(environment: LiveHumanEnvironment, roomId: string, accessToken: string): Promise<readonly Record<string, unknown>[]> {
   const response = await fetch(
     `${environment.homeserverOrigin}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages?dir=b&limit=100`,
-    { headers: { authorization: `Bearer ${environment.observer.accessToken}` } },
+    { headers: { authorization: `Bearer ${accessToken}` } },
   );
-  if (!response.ok) throw new Error(`Matrix observer request failed with ${response.status}`);
+  if (!response.ok) throw new Error(`Matrix event request failed with ${response.status}`);
   const body = await response.json() as { chunk?: unknown };
   if (!Array.isArray(body.chunk)) throw new Error('Matrix observer response did not contain a chunk');
   return body.chunk.filter((value): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value));

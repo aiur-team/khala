@@ -8,7 +8,15 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
   const bobContext = await browser.newContext();
   try {
     const alice = await freshPage(aliceContext, environment);
+    // The control runtime issues the creator's Matrix session to this browser.
+    // Capture it only in test memory; a room outsider cannot read joined history.
+    const creatorSessionResponse = alice.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/human/messaging/session' && response.status() === 200,
+    );
     await signIn(alice, environment, environment.users[0]);
+    const creatorSession = await (await creatorSessionResponse).json() as { session?: { accessToken?: unknown } };
+    const creatorAccessToken = creatorSession.session?.accessToken;
+    expect(typeof creatorAccessToken).toBe('string');
 
     const intro = syntheticCanary('intro');
     await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
@@ -26,6 +34,11 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     const roomId = roomText.replace(/^Channel:\s*/u, '');
     expect(roomId).not.toBe('');
 
+    // The disposable observer has not been admitted. A 403 proves private
+    // history is inaccessible; it is not a source of ciphertext evidence.
+    await expect(rawRoomMessages(environment, roomId, environment.observer.accessToken))
+      .rejects.toThrow('Matrix event request failed with 403');
+
     await bob.getByRole('button', { name: 'Open channel' }).click();
     await expect(bob).toHaveURL(`${environment.appOrigin}/channels/${encodeURIComponent(roomId)}`);
     // The current product default is link admission with no earlier history.
@@ -40,8 +53,8 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await expect(alice.getByText(reply)).toBeVisible();
     await expect(alice.getByText(intro)).toBeVisible();
 
-    const rawEvents = await rawRoomMessages(environment, roomId);
-    expect(rawEvents.some(event => event.type === 'm.room.encrypted')).toBe(true);
+    const rawEvents = await rawRoomMessages(environment, roomId, creatorAccessToken as string);
+    expect(rawEvents.filter(event => event.type === 'm.room.encrypted').length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(rawEvents)).not.toContain(intro);
     expect(JSON.stringify(rawEvents)).not.toContain(reply);
 
