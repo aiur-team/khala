@@ -46,39 +46,60 @@ function inboxAdapter(bodies: readonly string[]) {
 }
 
 describe('Claude session adapter', () => {
-  it('reports only an authenticated Stop for the exact bound Claude session', async () => {
-    const onTurnEnd = vi.fn(async (...args: [SessionBinding, string, string, string]) => { void args; });
+  it('requires a one-use proof for the exact retained batch, never a bare Stop or challenge', async () => {
+    const nonce = 'A'.repeat(32);
+    const proof = `${'B'.repeat(42)}A`;
+    const onTerminalChallenge = vi.fn(async (bound: SessionBinding, sessionId: string, token: string) => {
+      void sessionId;
+      return token === 'private-batch-token'
+        ? { nonce, bindingId: bound.bindingId, generation: bound.generation, channelId: 'channel-1' } : null;
+    });
+    let unused = true;
+    const onTurnEnd = vi.fn(async (_binding: SessionBinding, _sessionId: string, _terminalId: string,
+      _token: string, challengedNonce: string, presentedProof: string) => {
+      if (!unused || challengedNonce !== nonce || presentedProof !== proof) return false;
+      unused = false;
+      return true;
+    });
     const services = fakeServices();
     const state = memoryState();
     const claude = createClaudeSessionAdapter({
-      authenticator: authenticator(), sessions: directory(), state, services: services.services, onTurnEnd,
+      authenticator: authenticator(), sessions: directory(), state, services: services.services,
+      onTerminalChallenge, onTurnEnd,
     });
     await claude.hook(A1);
     await claude.watch(A1);
-    await claude.terminal(A1);
+    await expect(claude.terminalChallenge(A1)).resolves.toEqual({ kind: 'empty' });
     await claude.hook({ credential: CREDENTIAL_B, sessionId: A1.sessionId }, { stop: true });
     await claude.hook({ credential: CREDENTIAL_A, sessionId: 'unbound-session' }, { stop: true });
-    await expect(claude.terminal({ credential: CREDENTIAL_A, sessionId: 'unbound-session' }))
+    await expect(claude.terminalChallenge({ credential: CREDENTIAL_A, sessionId: 'unbound-session' }))
       .resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
     expect(onTurnEnd).not.toHaveBeenCalled();
     await expect(claude.hook(A1, { stop: true })).resolves.toMatchObject({ kind: 'hook' });
     expect(onTurnEnd).not.toHaveBeenCalled(); // Empty Stop proves no offered release.
     state.tokens.set(S1, retained('old-generation-token', 0));
     await claude.hook(A1, { stop: true });
+    await expect(claude.terminalChallenge(A1)).resolves.toEqual({ kind: 'empty' });
     expect(onTurnEnd).not.toHaveBeenCalled();
     state.tokens.set(S1, retained('private-batch-token'));
     await claude.hook(A1);
     await claude.watch(A1);
     expect(onTurnEnd).not.toHaveBeenCalled();
     await expect(claude.hook(A1, { stop: true })).resolves.toMatchObject({ kind: 'hook' });
-    const terminalId = onTurnEnd.mock.calls[0]?.[2];
+    expect(onTurnEnd).not.toHaveBeenCalled();
+    await expect(claude.terminalChallenge(A1)).resolves.toEqual({
+      kind: 'terminal_challenge', nonce, bindingId: 'binding-1', generation: 1, channelId: 'channel-1',
+    });
+    expect(onTerminalChallenge).toHaveBeenCalledExactlyOnceWith(BINDINGS['s-1'], A1.sessionId, 'private-batch-token');
+    await expect(claude.terminalComplete(A1, { nonce, proof: `${'C'.repeat(42)}A` }))
+      .resolves.toEqual({ kind: 'refused', code: 'unavailable' });
+    await expect(claude.terminalComplete(A1, { nonce, proof })).resolves.toEqual({ kind: 'terminal' });
+    const terminalId = onTurnEnd.mock.calls[1]?.[2];
     expect(terminalId).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(onTurnEnd).toHaveBeenCalledExactlyOnceWith(BINDINGS['s-1'], A1.sessionId, terminalId, 'private-batch-token');
-    await claude.hook(A1, { stop: true });
-    expect(onTurnEnd.mock.calls[1]?.[2]).toBe(terminalId);
-    await expect(claude.terminal(A1)).resolves.toEqual({ kind: 'terminal' });
-    expect(onTurnEnd.mock.calls[2]?.[2]).toBe(terminalId);
-    expect(onTurnEnd.mock.calls[2]?.[3]).toBe('private-batch-token');
+    expect(onTurnEnd).toHaveBeenNthCalledWith(2, BINDINGS['s-1'], A1.sessionId, terminalId,
+      'private-batch-token', nonce, proof);
+    await expect(claude.terminalComplete(A1, { nonce, proof }))
+      .resolves.toEqual({ kind: 'refused', code: 'unavailable' });
     expect(state.tokens.get(S1)).toEqual(retained('private-batch-token')); // Neither pull nor ACK.
   });
 

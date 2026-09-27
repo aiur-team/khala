@@ -1,5 +1,5 @@
 export type HookRole = 'user-prompt-submit' | 'post-tool-use' | 'stop' | 'stop-watcher' | 'session-end';
-export type KhalaOp = 'pull' | 'hook' | 'watch' | 'pending' | 'terminal';
+export type KhalaOp = 'pull' | 'hook' | 'watch' | 'pending' | 'terminal-challenge' | 'terminal-complete';
 export type KhalaResult = Readonly<{ code: number; stdout: string }>;
 
 export type HookDependencies = Readonly<{
@@ -9,7 +9,9 @@ export type HookDependencies = Readonly<{
    */
   bound(sessionId: string): Promise<boolean>;
   /** One `khala claude <op> --session <id> [flags]` call; only the first `Stop`'s `hook` passes `--stop`. */
-  khala(op: KhalaOp, sessionId: string, flags?: readonly string[]): Promise<KhalaResult>;
+  khala(op: KhalaOp, sessionId: string, flags?: readonly string[], stdin?: string): Promise<KhalaResult>;
+  /** Owner-private per-launch key. Only the hook runtime reads it. */
+  terminalKeyPath: string;
   stateRoot: string;
   sleep(ms: number): Promise<void>;
   now(): number;

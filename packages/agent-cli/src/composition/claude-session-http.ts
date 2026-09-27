@@ -8,7 +8,7 @@ import { MAX_SEND_BYTES } from '../cli/send.js';
 import { plainObject, validIdentifier, validUtcTimestamp } from '../cli/validation.js';
 import { readRuntimeDescriptor, type RuntimeDescriptorFailure } from './claude-descriptor.js';
 import {
-  CLAUDE_ACCESS_NOTICES, CLAUDE_SESSION_REFUSALS, type ClaudeAccessNotice, type ClaudeAccessOutcome, type ClaudeHookInput, type ClaudeHookOutcome, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome, type ClaudeTerminalOutcome,
+  CLAUDE_ACCESS_NOTICES, CLAUDE_SESSION_REFUSALS, type ClaudeAccessNotice, type ClaudeAccessOutcome, type ClaudeHookInput, type ClaudeHookOutcome, type ClaudeModeOutcome, type ClaudeModeSetOutcome, type ClaudePendingOutcome, type ClaudeTerminalChallengeOutcome, type ClaudeTerminalOutcome,
   type ClaudeReadOutcome, type ClaudeSendOutcome, type ClaudeSessionAdapter, type ClaudeSessionRefusal,
   type ClaudeRosterOutcome, type ClaudeStatusOutcome, type ModeSetInput,
 } from './claude-session.js';
@@ -27,7 +27,8 @@ export type ClaudeSessionRequest =
     v: 1; op: 'mode_set'; sessionId: string;
     commandId: string; expectedVersion: number; requested: ListeningMode; issuedAt: string;
   }>
-  | Readonly<{ v: 1; op: 'pending' | 'watch' | 'terminal'; sessionId: string }>
+  | Readonly<{ v: 1; op: 'pending' | 'watch' | 'terminal_challenge'; sessionId: string }>
+  | Readonly<{ v: 1; op: 'terminal_complete'; sessionId: string; nonce: string; proof: string }>
   | Readonly<{ v: 1; op: 'hook'; sessionId: string; stop?: true }>
   | (Readonly<{ v: 1; op: 'channels'; sessionId: string }> & ChannelListInput)
   | (Readonly<{ v: 1; op: 'access_request'; sessionId: string }> & AccessRequestInput)
@@ -62,7 +63,8 @@ export async function handleClaudeSessionRequest(
     }); break;
     case 'pending': outcome = await adapter.pending(call); break;
     case 'hook': outcome = await adapter.hook(call, { stop: request.stop === true }); break;
-    case 'terminal': outcome = await adapter.terminal(call); break;
+    case 'terminal_challenge': outcome = await adapter.terminalChallenge(call); break;
+    case 'terminal_complete': outcome = await adapter.terminalComplete(call, { nonce: request.nonce, proof: request.proof }); break;
     case 'watch': outcome = await adapter.watch(call); break;
     case 'roster': outcome = await adapter.roster(call); break;
     case 'channels': outcome = await adapter.listChannels(call, { origin: request.origin, cursor: request.cursor }); break;
@@ -83,8 +85,11 @@ function decodeRequest(value: unknown): ClaudeSessionRequest | null {
   const only = (...extra: string[]) => keys.every(key => ['v', 'op', 'sessionId', ...extra].includes(key));
   const sessionId = value.sessionId;
   switch (value.op) {
-    case 'pull': case 'read': case 'status': case 'roster': case 'mode': case 'pending': case 'watch': case 'terminal':
+    case 'pull': case 'read': case 'status': case 'roster': case 'mode': case 'pending': case 'watch': case 'terminal_challenge':
       return only() ? { v: 1, op: value.op, sessionId } : null;
+    case 'terminal_complete':
+      return only('nonce', 'proof') && canonicalBase64(value.nonce, 24) && canonicalBase64(value.proof, 32)
+        ? { v: 1, op: 'terminal_complete', sessionId, nonce: value.nonce, proof: value.proof } : null;
     case 'hook':
       if (!only('stop') || (value.stop !== undefined && value.stop !== true)) return null;
       return value.stop === true ? { v: 1, op: 'hook', sessionId, stop: true } : { v: 1, op: 'hook', sessionId };
@@ -127,6 +132,13 @@ function optional(value: unknown, valid: (candidate: unknown) => boolean): boole
   return value === undefined || value === null || valid(value);
 }
 
+function canonicalBase64(value: unknown, bytes: number): value is string {
+  if (typeof value !== 'string' || value.length !== Math.ceil(bytes * 8 / 6)
+    || !/^[A-Za-z0-9_-]+$/u.test(value)) return false;
+  const decoded = Buffer.from(value, 'base64url');
+  return decoded.length === bytes && decoded.toString('base64url') === value;
+}
+
 export type ClaudeClientRefusal =
   | ClaudeSessionRefusal
   | Readonly<{ kind: 'refused'; code: RuntimeDescriptorFailure }>;
@@ -150,8 +162,10 @@ export interface ClaudeSessionClient {
    * this boundary. Never acknowledges. `stop` marks the turn-ending boundary, which settles unthrottled.
    */
   hook(sessionId: string, input?: ClaudeHookInput, signal?: AbortSignal): Promise<Result<ClaudeHookOutcome>>;
-  /** Content-free native follow-up Stop check; never pulls, acknowledges, or settles access. */
-  terminal(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeTerminalOutcome>>;
+  /** Content-free challenge for a retained peer batch; never pulls, acknowledges, or settles access. */
+  terminalChallenge(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeTerminalChallengeOutcome>>;
+  /** Signed native Stop proof; nonce and proof travel only in the POST body. */
+  terminalComplete(sessionId: string, input: Readonly<{ nonce: string; proof: string }>, signal?: AbortSignal): Promise<Result<ClaudeTerminalOutcome>>;
   /** The idle watcher's boundary state: as `hook`, but it never settles access. */
   watch(sessionId: string, signal?: AbortSignal): Promise<Result<ClaudeHookOutcome>>;
   /** The session's own channel roster, undecoded. The session selects the binding; no argument names one. */
@@ -288,8 +302,20 @@ export function createClaudeSessionClient(options: ClaudeSessionClientOptions): 
     },
     hook: (sessionId, input, signal) => hookCall(
       input?.stop === true ? { v: 1, op: 'hook', sessionId, stop: true } : { v: 1, op: 'hook', sessionId }, signal),
-    terminal: async (sessionId, signal) => {
-      const value = await call({ v: 1, op: 'terminal', sessionId }, signal);
+    terminalChallenge: async (sessionId, signal) => {
+      const value = await call({ v: 1, op: 'terminal_challenge', sessionId }, signal);
+      if (plainObject(value) && Object.keys(value).length === 1 && value.kind === 'empty') return { kind: 'empty' };
+      if (plainObject(value) && Object.keys(value).length === 5 && value.kind === 'terminal_challenge'
+        && canonicalBase64(value.nonce, 24) && validIdentifier(value.bindingId)
+        && Number.isSafeInteger(value.generation) && (value.generation as number) >= 0
+        && validIdentifier(value.channelId)) {
+        return { kind: 'terminal_challenge', nonce: value.nonce, bindingId: value.bindingId,
+          generation: value.generation as number, channelId: value.channelId };
+      }
+      return refusal(value);
+    },
+    terminalComplete: async (sessionId, input, signal) => {
+      const value = await call({ v: 1, op: 'terminal_complete', sessionId, nonce: input.nonce, proof: input.proof }, signal);
       return plainObject(value) && Object.keys(value).length === 1 && value.kind === 'terminal'
         ? { kind: 'terminal' } : refusal(value);
     },

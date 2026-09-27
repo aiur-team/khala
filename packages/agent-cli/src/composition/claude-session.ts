@@ -139,8 +139,11 @@ export type ClaudeSessionAdapterOptions = Readonly<{
   sessions: ClaudeSessionDirectory;
   state: ClaudeSessionStatePort;
   services(binding: SessionBinding): ClaudeBindingServices;
-  /** Native Stop only. The raw token stays in this trusted server process for ledger membership proof. */
-  onTurnEnd?: (binding: SessionBinding, sessionId: string, terminalId: string, batchToken: string) => Promise<void>;
+  /** Server-issued challenge only for a retained current-generation peer batch. */
+  onTerminalChallenge?: (binding: SessionBinding, sessionId: string, batchToken: string) => Promise<ClaudeTerminalChallenge | null>;
+  /** The raw token stays in this trusted process; the server verifies the one-use hook proof. */
+  onTurnEnd?: (binding: SessionBinding, sessionId: string, terminalId: string,
+    batchToken: string, nonce: string, proof: string) => Promise<boolean>;
 }>;
 
 export const CLAUDE_SESSION_REFUSALS = [
@@ -182,7 +185,13 @@ export type ClaudeRosterOutcome = Readonly<{ kind: 'roster'; roster: unknown }> 
 /** The raw port result of a session-bound discovery or access call, undecoded. */
 export type ClaudeAccessOutcome = Readonly<{ kind: 'access'; result: unknown }> | ClaudeSessionRefusal;
 export type ClaudePendingOutcome = Readonly<{ kind: 'pending' | 'idle' }> | ClaudeSessionRefusal;
-/** A native follow-up Stop checked the exact binding without pulling or settling access. */
+/** A one-use server challenge bound to the exact native session's retained peer batch. */
+export type ClaudeTerminalChallenge = Readonly<{
+  nonce: string; bindingId: string; generation: number; channelId: string;
+}>;
+export type ClaudeTerminalChallengeOutcome = (ClaudeTerminalChallenge & Readonly<{ kind: 'terminal_challenge' }>)
+  | Readonly<{ kind: 'empty' }> | ClaudeSessionRefusal;
+/** A native Stop whose private hook proof was accepted by the server. */
 export type ClaudeTerminalOutcome = Readonly<{ kind: 'terminal' }> | ClaudeSessionRefusal;
 /**
  * What a hook needs to pick its boundary, and nothing else: the effective mode, the
@@ -212,8 +221,10 @@ export interface ClaudeSessionAdapter {
   pending(call: ClaudeSessionCall): Promise<ClaudePendingOutcome>;
   /** A synchronous hook's boundary state; it settles the session's access requests first. */
   hook(call: ClaudeSessionCall, input?: ClaudeHookInput): Promise<ClaudeHookOutcome>;
-  /** The `stop_hook_active` boundary: no pull, acknowledgement, or access settlement. */
-  terminal(call: ClaudeSessionCall): Promise<ClaudeTerminalOutcome>;
+  /** A native Stop asks only whether an exact retained peer batch has a challenge. */
+  terminalChallenge(call: ClaudeSessionCall): Promise<ClaudeTerminalChallengeOutcome>;
+  /** One native Stop completes only with the hook runtime's private proof. */
+  terminalComplete(call: ClaudeSessionCall, input: Readonly<{ nonce: string; proof: string }>): Promise<ClaudeTerminalOutcome>;
   /** The idle watcher's boundary state: the same answer, but it never settles, so `access` is `null`. */
   watch(call: ClaudeSessionCall): Promise<ClaudeHookOutcome>;
   roster(call: ClaudeSessionCall): Promise<ClaudeRosterOutcome>;
@@ -476,28 +487,36 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
     },
 
     hook: (call, input) => hookState(call, { stop: input?.stop === true }),
-    terminal: call => guarded(async () => {
+    terminalChallenge: call => guarded(async () => {
       const resolved = await resolve(call);
       if ('kind' in resolved) return resolved;
-      await reportTurnEnd(resolved, call.sessionId);
-      return { kind: 'terminal' };
+      if (options.onTerminalChallenge === undefined) return { kind: 'empty' };
+      return options.state.envelope(resolved.scope, async retained => {
+        const held = retained.filter(entry => entry.generation === resolved.binding.generation);
+        const challenge = held.length === 1
+          ? await options.onTerminalChallenge!(resolved.binding, call.sessionId, held[0]!.token) : null;
+        return { value: challenge === null ? { kind: 'empty' as const }
+          : { kind: 'terminal_challenge' as const, ...challenge }, committed: [], retain: null };
+      });
     }),
-    watch: call => hookState(call, null),
-  };
-
-  async function reportTurnEnd(resolved: Resolved, sessionId: string): Promise<void> {
-    if (options.onTurnEnd === undefined) return;
-    await options.state.envelope(resolved.scope, async retained => {
-      const held = retained.filter(entry => entry.generation === resolved.binding.generation);
-      if (held.length === 1) {
+    terminalComplete: (call, input) => guarded(async () => {
+      const resolved = await resolve(call);
+      if ('kind' in resolved) return resolved;
+      if (options.onTurnEnd === undefined) return refused('unavailable');
+      const completed = await options.state.envelope(resolved.scope, async retained => {
+        const held = retained.filter(entry => entry.generation === resolved.binding.generation);
+        if (held.length !== 1) return { value: false, committed: [], retain: null };
         const terminalId = createHash('sha256').update(JSON.stringify([
           'khala.claude.turn-end.v1', resolved.binding.bindingId, resolved.binding.generation, held[0]!.token,
         ])).digest('base64url');
-        await options.onTurnEnd!(resolved.binding, sessionId, terminalId, held[0]!.token);
-      }
-      return { value: null, committed: [], retain: null };
-    });
-  }
+        const accepted = await options.onTurnEnd!(resolved.binding, call.sessionId, terminalId,
+          held[0]!.token, input.nonce, input.proof);
+        return { value: accepted, committed: [], retain: null };
+      });
+      return completed ? { kind: 'terminal' } : refused('unavailable');
+    }),
+    watch: call => hookState(call, null),
+  };
 
   /**
    * A synchronous hook settles access before resolving the binding, so the boundary that
@@ -514,7 +533,6 @@ export function createClaudeSessionAdapter(options: ClaudeSessionAdapterOptions)
         return resolved.code === 'session_not_bound' && access !== null
           ? { kind: 'hook', effective: null, watchSeconds: null, access } : resolved;
       }
-      if (settles?.stop === true) await reportTurnEnd(resolved, call.sessionId);
       // Unlike `mode`, this is not an agent call: no envelope, so nothing is acknowledged.
       const view = await resolved.services.readMode();
       if (!view.ok) return refused(view.code === 'unavailable' ? 'unavailable' : 'binding_not_held');

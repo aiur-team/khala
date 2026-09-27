@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -137,7 +137,7 @@ describe('mode boundaries', () => {
     khala.release(A, 'must wait');
     khala.decide(A, 'connected');
     await expect(stop(A, true)).resolves.toEqual(silent);
-    expect(khala.ops(A)).toEqual(['terminal']);
+    expect(khala.ops(A)).toEqual([]); // No owner-private key, so no challenge is requested.
     // The probe did not consume the queued batch or settle an access outcome.
     expect(context(await postTool(A))).toContain(ACCESS_NOTICES.connected);
     expect(reason(await stop(A))).toContain('must wait');
@@ -151,8 +151,52 @@ describe('mode boundaries', () => {
     expect(reason(await stop(A))).toContain('peer release');
     expect(khala.ops(A)).toEqual(['hook', 'pull']);
     await expect(stop(A, true)).resolves.toEqual(silent);
-    expect(khala.ops(A)).toEqual(['hook', 'pull', 'terminal']);
+    expect(khala.ops(A)).toEqual(['hook', 'pull']);
     expect(khala.ops(B)).toEqual([]);
+  });
+
+  it('signs only an exact peer challenge after the native Stop, through stdin and a private hook key', async () => {
+    const khala = fakeKhala();
+    khala.bind(A, 'sync');
+    khala.bind(B, 'sync');
+    khala.release(A, 'peer release');
+    const key = Buffer.alloc(32, 7);
+    const nonce = 'A'.repeat(32);
+    const challenge = { ok: true, kind: 'terminal_challenge', nonce,
+      bindingId: 'binding-1', generation: 1, channelId: 'channel-1' };
+    const calls: Array<{ op: string; sessionId: string; flags?: readonly string[]; stdin?: string }> = [];
+    let offered = false;
+    const adapter = async (op: Parameters<typeof khala.khala>[0], sessionId: string, flags: readonly string[] = [], stdin = '') => {
+      calls.push({ op, sessionId, ...(flags.length ? { flags } : {}), ...(stdin ? { stdin } : {}) });
+      if (op === 'terminal-challenge') return { code: 0, stdout: `${JSON.stringify(offered && sessionId === A
+        ? challenge : { ok: true, kind: 'empty' })}\n` };
+      if (op === 'terminal-complete') return { code: 0, stdout: '{"ok":true,"kind":"terminal"}\n' };
+      const result = await khala.khala(op, sessionId, flags);
+      if (op === 'pull' && sessionId === A) offered = true;
+      return result;
+    };
+    const { deps } = hookDeps(adapter, khala.engaged);
+    fs.writeFileSync(deps.terminalKeyPath, key.toString('base64url'), { mode: 0o600 });
+    const stop = (sessionId: string, active = false) => runHook('stop', hookInput('Stop', sessionId, { stop_hook_active: active }), deps);
+    expect(reason(await stop(A))).toContain('peer release');
+    expect(calls.map(call => call.op)).toEqual(['hook', 'terminal-challenge', 'pull']);
+    await expect(stop(A, true)).resolves.toEqual(silent);
+    expect(calls.map(call => call.op)).toEqual(['hook', 'terminal-challenge', 'pull', 'terminal-challenge', 'terminal-complete']);
+    const completion = calls.at(-1)!;
+    expect(completion.sessionId).toBe(A);
+    expect(completion.flags).toBeUndefined();
+    const body = JSON.parse(completion.stdin!) as { nonce: string; proof: string };
+    expect(body).toEqual({ nonce, proof: createHmac('sha256', key).update(JSON.stringify([
+      'khala.claude.terminal.v1', nonce, A, challenge.bindingId, challenge.generation, challenge.channelId,
+    ])).digest('base64url') });
+    expect(JSON.stringify(calls.map(call => [call.op, call.sessionId, call.flags]))).not.toContain(body.proof);
+    expect(JSON.stringify(calls.map(call => [call.op, call.sessionId, call.flags]))).not.toContain(key.toString('base64url'));
+    await expect(stop(B, true)).resolves.toEqual(silent);
+    expect(calls.at(-1)?.op).not.toBe('terminal-complete');
+    fs.chmodSync(deps.terminalKeyPath, 0o644);
+    const before = calls.length;
+    await expect(stop(A, true)).resolves.toEqual(silent);
+    expect(calls).toHaveLength(before); // A loose key cannot authorize even the challenge.
   });
 
   it('injects the bounded batch available at claim time, in order, and leaves overflow queued', async () => {
@@ -622,7 +666,6 @@ describe('access outcomes', () => {
       { op: 'hook', sessionId: A, flags: ['--stop'] },
       { op: 'pull', sessionId: A },
       { op: 'watch', sessionId: A },
-      { op: 'terminal', sessionId: A },
     ]);
   });
 
