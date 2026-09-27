@@ -34,4 +34,15 @@ describe('installed hosted connector composition', () => {
       openInbox: async () => undefined,
     })).rejects.toThrow('production_origin_invalid');
   });
+
+  it('refuses a relative browser executable supplied by the installed launcher', async () => {
+    await expect(openProductionConnector({ stateDirectory: '/tmp/khala-invalid',
+      appOrigin: 'https://khala.aiur.team', browserBundleDirectory: '/tmp/bundle',
+      chromiumExecutablePath: '../browser/chrome',
+      session: { harness: 'codex', sessionId: 'thread-owned-1', workdir: '/project' },
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      inspectHostedCodexHooks: async () => null, openBrowser: async () => undefined,
+      openInbox: async () => undefined,
+    })).rejects.toThrow('production_path_invalid');
+  });
 });

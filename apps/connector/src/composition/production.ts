@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { access, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import {
   createDiscovery, createHttpAdmission, createLoopbackOwnership, createPairingOwnership,
@@ -32,6 +33,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   stateDirectory: string;
   appOrigin: string;
   browserBundleDirectory: string;
+  /** Versioned setup-owned browser path, when no supported system Chromium exists. */
+  chromiumExecutablePath?: string;
   session: SessionClaim;
   sessionInspection: (generationFor: (claim: SessionClaim) => Promise<number | null>) => SessionInspectionPort;
   inspectHostedCodexHooks(): Promise<unknown>;
@@ -45,6 +48,22 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   if (!path.isAbsolute(input.stateDirectory) || !path.isAbsolute(input.browserBundleDirectory)) {
     throw new Error('production_path_invalid');
   }
+  if (input.chromiumExecutablePath && !path.isAbsolute(input.chromiumExecutablePath)) {
+    throw new Error('production_path_invalid');
+  }
+  const systemBrowsers = process.platform === 'linux'
+    ? ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable']
+    : process.platform === 'darwin'
+      ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium']
+      : [];
+  let chromiumExecutablePath: string | null = null;
+  for (const candidate of [...systemBrowsers, ...(input.chromiumExecutablePath ? [input.chromiumExecutablePath] : [])]) {
+    try {
+      await access(candidate, constants.X_OK);
+      if ((await stat(candidate)).isFile()) { chromiumExecutablePath = candidate; break; }
+    } catch { /* Try the next installed executable. */ }
+  }
+  if (!chromiumExecutablePath) throw new Error('chromium_unavailable_run_khala_setup');
   const sessionDirectory = path.join(input.stateDirectory, createHash('sha256').update(JSON.stringify([
     'khala.hosted.session.v1', input.session.harness, input.session.sessionId, input.session.workdir,
   ])).digest('hex'));
@@ -63,6 +82,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     profileDirectory: path.join(sessionDirectory, 'matrix-profile'),
     browserBundleDirectory: input.browserBundleDirectory,
     browserDriverDirectory: path.join(path.dirname(input.browserBundleDirectory), 'playwright-core'),
+    chromiumExecutablePath,
   });
   let closed = false;
   let binding: SessionBinding | null = null;
