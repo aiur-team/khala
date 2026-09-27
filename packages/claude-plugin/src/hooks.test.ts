@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  ACCESS_NOTICES, KHALA_CALL_TIMEOUT_MS, WAKE_NOTICE, WATCHER_HOOK_TIMEOUT_SECONDS, WATCH_POLL_MS, claudeGrantPath, describeDelivery, readWatcher,
+  ACCESS_NOTICES, KHALA_CALL_TIMEOUT_MS, WAKE_NOTICE, WATCHER_HOOK_TIMEOUT_SECONDS, WATCH_POLL_MS, claudeGrantPath, claudeWakeSignalPath, describeDelivery, readWatcher,
   runHook, sessionGranted, validFrame,
   type HookResult,
 } from '../hooks/lib/runtime.mjs';
@@ -37,6 +37,79 @@ function setup(options: Parameters<typeof fakeKhala>[0] = {}) {
 
 
 describe('session keying', () => {
+  it('registers a separate private signal path per session without writing state or calling Khala', async () => {
+    const { hook, khala, stateRoot } = setup();
+    const a = await hook('session-start', 'SessionStart', A);
+    const b = await hook('session-start', 'SessionStart', B);
+    const watch = (result: HookResult) => JSON.parse(result.stdout).hookSpecificOutput.watchPaths as string[];
+    expect(watch(a)).toEqual([claudeWakeSignalPath(stateRoot, A)]);
+    expect(watch(b)).toEqual([claudeWakeSignalPath(stateRoot, B)]);
+    expect(watch(a)).not.toEqual(watch(b));
+    expect(fs.readdirSync(stateRoot)).toEqual([]);
+    expect(khala.calls).toEqual([]);
+  });
+
+  it('wakes only the authorized idle session on its own signal, once, without pulling in the FileChanged hook', async () => {
+    const { khala, hook, stop, prompt, stateRoot } = setup();
+    khala.bind(A, 'sync');
+    khala.bind(B, 'sync');
+    await stop(A);
+    await stop(B);
+    khala.release(A, 'for a');
+    const signal = claudeWakeSignalPath(stateRoot, A)!;
+    fs.writeFileSync(signal, '1', { mode: 0o600 });
+    const changed = (sessionId: string, filePath: string, event = 'change') =>
+      hook('file-changed', 'FileChanged', sessionId, { file_path: filePath, event });
+    await expect(changed(B, signal)).resolves.toEqual(silent);
+    await expect(changed(A, '/tmp/forged')).resolves.toEqual(silent);
+    expect(khala.ops(A)).toEqual(['hook', 'pull']);
+    await expect(changed(A, signal)).resolves.toEqual({ stdout: '', stderr: `${WAKE_NOTICE}\n`, exitCode: 2 });
+    await expect(changed(A, signal)).resolves.toEqual(silent);
+    expect(khala.ops(A)).toEqual(['hook', 'pull', 'watch', 'pending']);
+    expect(context(await prompt(A))).toContain('for a');
+    expect(khala.ops(A).filter(op => op === 'pull')).toHaveLength(2);
+    expect(khala.ops(B)).toEqual(['hook', 'pull']);
+  });
+
+  it('rejects missing signals, busy sessions, async mode and revoked bindings', async () => {
+    const { khala, hook, stop, prompt, stateRoot } = setup();
+    khala.bind(A, 'sync');
+    const signal = claudeWakeSignalPath(stateRoot, A)!;
+    const changed = (event = 'add') => hook('file-changed', 'FileChanged', A, { file_path: signal, event });
+    await expect(changed()).resolves.toEqual(silent);
+    await stop(A);
+    const target = path.join(stateRoot, 'other-file');
+    fs.writeFileSync(target, '1', { mode: 0o600 });
+    fs.symlinkSync(target, signal);
+    await expect(changed()).resolves.toEqual(silent);
+    fs.unlinkSync(signal);
+    fs.writeFileSync(signal, '1', { mode: 0o600 });
+    await expect(changed('unlink')).resolves.toEqual(silent);
+    await expect(changed('change')).resolves.toEqual(silent);
+    await prompt(A);
+    khala.release(A, 'busy');
+    await expect(changed()).resolves.toEqual(silent);
+    khala.bind(A, 'async');
+    await stop(A);
+    await expect(changed()).resolves.toEqual(silent);
+    khala.bind(A, 'sync');
+    khala.revoke(A);
+    await expect(changed()).resolves.toEqual(silent);
+  });
+
+  it('does not reuse idle activity from a crashed session when Claude resumes the same ID', async () => {
+    const { khala, hook, stop, stateRoot } = setup();
+    khala.bind(A, 'sync');
+    await stop(A);
+    const signal = claudeWakeSignalPath(stateRoot, A)!;
+    fs.writeFileSync(signal, '1', { mode: 0o600 });
+    khala.release(A, 'pending on resume');
+    const start = await hook('session-start', 'SessionStart', A, { source: 'resume' });
+    expect(JSON.parse(start.stdout).hookSpecificOutput.watchPaths).toEqual([signal]);
+    await expect(hook('file-changed', 'FileChanged', A, { file_path: signal, event: 'change' })).resolves.toEqual(silent);
+    expect(khala.ops(A)).toEqual(['hook', 'pull']);
+  });
+
   // Wrong-implementation test: a cwd-keyed runtime fails it.
   it('delivers zero cross-session releases for two sessions in one cwd racing pulls', async () => {
     const { khala, postTool, stop, prompt } = setup();
@@ -611,8 +684,9 @@ describe('timeouts', () => {
     }).hooks;
     for (const [event, entries] of Object.entries(registered)) {
       for (const hook of entries.flatMap(entry => entry.hooks)) {
-        if (hook.asyncRewake) expect(hook.timeout).toBe(WATCHER_HOOK_TIMEOUT_SECONDS);
-        else if (event !== 'SessionEnd') expect(hook.timeout * 1000).toBeGreaterThan(2 * KHALA_CALL_TIMEOUT_MS);
+        if (hook.command.includes('stop-watcher')) expect(hook.timeout).toBe(WATCHER_HOOK_TIMEOUT_SECONDS);
+        else if (event === 'FileChanged') expect(hook.timeout * 1000).toBeGreaterThan(2 * KHALA_CALL_TIMEOUT_MS);
+        else if (event !== 'SessionEnd' && event !== 'SessionStart') expect(hook.timeout * 1000).toBeGreaterThan(2 * KHALA_CALL_TIMEOUT_MS);
       }
     }
   });

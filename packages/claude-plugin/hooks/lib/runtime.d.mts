@@ -1,4 +1,4 @@
-export type HookRole = 'user-prompt-submit' | 'post-tool-use' | 'stop' | 'stop-watcher' | 'session-end';
+export type HookRole = 'session-start' | 'file-changed' | 'user-prompt-submit' | 'post-tool-use' | 'stop' | 'stop-watcher' | 'session-end';
 export type KhalaOp = 'pull' | 'hook' | 'watch' | 'pending' | 'terminal-challenge' | 'terminal-complete';
 export type KhalaResult = Readonly<{ code: number; stdout: string }>;
 
@@ -32,7 +32,7 @@ export const HOOK_ROLES: Readonly<Record<HookRole, string>>;
 export function validSessionId(value: unknown): value is string;
 export function decodeHookInput(
   role: HookRole, raw: string,
-): Readonly<{ event: string; sessionId: string; stopHookActive: boolean }> | null;
+): Readonly<{ event: string; sessionId: string; stopHookActive: boolean; filePath: string | null; fileEvent: string | null }> | null;
 export function validFrame(text: unknown): boolean;
 export function renderDelivery(frame: string): string;
 export function describeDelivery(input: Readonly<{
@@ -43,6 +43,7 @@ export function describeDelivery(input: Readonly<{
 export function readWatcher(deps: HookDependencies, sessionId: string): Promise<string | null>;
 export function defaultDependencies(env?: Readonly<Record<string, string | undefined>>, command?: string): HookDependencies;
 export function claudeGrantPath(internalRoot: string, sessionId: string): string;
+export function claudeWakeSignalPath(stateRoot: string, sessionId: string): string | null;
 export function sessionGranted(internalRoot: string, sessionId: string): Promise<boolean>;
 export function claudeOutstandingPath(internalRoot: string, sessionId: string): string;
 export function sessionEngaged(internalRoot: string, sessionId: string): Promise<boolean>;

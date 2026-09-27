@@ -83,7 +83,7 @@ async function apply(instance: ClaudeSetupAdapter, desired: 'present' | 'absent'
   return planned.operations;
 }
 
-/** Everything under the synthetic root except Khala state (executor state, descriptor) and the fake PATH. */
+/** Everything under the synthetic root except Khala state (executor state, watcher parent) and fake PATH. */
 const userState = () => snapshot(root, { exclude: [path.join(roots.xdgStateHome, 'khala'), binDirectory] });
 
 /** Every path that changed, appeared, or disappeared between two snapshots, ignoring directories. */
@@ -92,7 +92,8 @@ function changedFiles(before: Snapshot, after: Snapshot): string[] {
   return [...keys].filter(key => before[key] !== after[key] && !(before[key] ?? after[key])!.startsWith('dir ')).sort();
 }
 
-const planPaths = (operations: readonly SetupOperation[]) => new Set(operations.map(operation => operation.path));
+const planPaths = (operations: readonly SetupOperation[]) => new Set(operations.map(operation => operation.path)
+  .filter(target => target !== paths().wakeDirectoryAnchor));
 
 async function allBytes(directory: string): Promise<string> {
   const files = await snapshot(directory);
@@ -150,7 +151,10 @@ describe('claude setup adapter: footprint', () => {
     const after = await userState();
     // Every changed path is planned, and every planned path changed.
     expect(changedFiles(before, after)).toEqual([...planPaths(operations)].sort());
-    const foreign = operations.filter(operation => !operation.path.startsWith(path.join(roots.xdgDataHome, 'khala') + path.sep));
+    expect(await read(paths().wakeDirectoryAnchor)).toBe('');
+    expect((await fsp.stat(path.dirname(paths().wakeDirectoryAnchor))).mode & 0o777).toBe(0o700);
+    const foreign = operations.filter(operation => !operation.path.startsWith(path.join(roots.xdgDataHome, 'khala') + path.sep)
+      && operation.path !== paths().wakeDirectoryAnchor);
     expect(foreign.map(operation => operation.path)).toEqual([paths().settings]);
 
     const settings = JSON.parse(await read(paths().settings));
@@ -174,6 +178,7 @@ describe('claude setup adapter: footprint', () => {
     expect(again.plan({ desired: 'present', observation: await observe(again) })).toEqual([]);
 
     await apply(adapter(), 'absent');
+    expect(await exists(paths().wakeDirectoryAnchor)).toBe(false);
     expect(await userState()).toEqual(before);
     expect(await exists(paths().claudeDirectory)).toBe(false);
   });
@@ -248,7 +253,7 @@ describe('claude setup adapter: installed entries never depend on PATH', () => {
     expect(paths().launcher).toBe(path.join(roots.xdgDataHome, 'khala', 'bin', 'khala'));
     const hooks = JSON.parse(await read(path.join(paths().pluginRoot, 'hooks', 'hooks.json'))) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
     const commands = Object.values(hooks.hooks).flatMap(groups => groups.flatMap(group => group.hooks.map(hook => hook.command)));
-    expect(commands).toHaveLength(5);
+    expect(commands).toHaveLength(7);
     for (const command of commands) {
       expect(command).toMatch(new RegExp(`^'${NODE}' "\\$\\{CLAUDE_PLUGIN_ROOT\\}/hooks/[a-z-]+\\.mjs" '${paths().launcher}'$`));
     }

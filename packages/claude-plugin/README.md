@@ -96,6 +96,17 @@ then starts a turn whose synchronous `UserPromptSubmit` pulls the batch. The
 watcher itself never pulls. A delivered batch that the agent has not yet
 acknowledged is not pending again, so the session is never re-woken for it.
 
+`SessionStart` also registers a private, session-specific signal path with
+Claude's native file watcher. Setup creates the owner-private parent directory
+before Claude starts; the unbound hook creates no file or state. The launcher
+creates the session file only for an approved binding and changes it when an
+authorized release becomes pending. Its
+`FileChanged` hook verifies the exact path, idle state, effective mode and current
+pending state before emitting the same fixed notice. It never pulls or
+acknowledges; the synchronous hook still delivers. This is the candidate rearm
+path after the Stop watcher expires. Installed proof across the actual 3,000-second
+expiry is still required before `sync` can be claimed proven.
+
 **Watcher lifetime.** The fence sets it, through `khala claude hook`, capped at
 the watcher's `3600` second registration timeout, after which Claude kills it.
 No window means no watcher. The watcher also exits when its Claude process is
@@ -119,8 +130,9 @@ completion remains unproven and the server retains the reservation.
 
 **Session state.** Hook state lives under
 `$XDG_STATE_HOME/khala/claude-hooks/<digest of session ID>/`, with a `0700`
-directory and `0600` files. It holds only activity, watcher ownership and a wake
-marker.
+directory and `0600` files. It holds only activity, watcher ownership, a wake
+marker and the content-free native change signal. An unbound session registers
+its signal path without writing any file.
 
 **Untrusted content.** Delivered context is a fixed preamble followed by the
 shared `<khala-channel-batch-v1>` frame, unchanged. Release JSON appears only
@@ -159,8 +171,8 @@ is the source; `validatePlugin` enforces it.
 | Surface | Frozen names |
 |---|---|
 | Plugin | `khala` |
-| Hook events | synchronous `UserPromptSubmit` (claim hook), `PostToolUse`, `Stop`, `SessionEnd`; the idle watcher is a second `Stop` entry and the only hook allowed `asyncRewake` (#178 amendment) |
-| Hook commands | `hooks/post-tool-use.mjs`, `hooks/stop.mjs`, `hooks/stop-watcher.mjs`, `hooks/session-end.mjs` |
+| Hook events | `SessionStart`, `FileChanged`, synchronous `UserPromptSubmit` (claim hook), `PostToolUse`, `Stop`, `SessionEnd`; the `Stop` watcher and `FileChanged` notice use `asyncRewake` |
+| Hook commands | `hooks/session-start.mjs`, `hooks/file-changed.mjs`, `hooks/post-tool-use.mjs`, `hooks/stop.mjs`, `hooks/stop-watcher.mjs`, `hooks/session-end.mjs` |
 | Skill and commands | skill `khala`; exact forms `/khala send`, `/khala read`, `/khala create`, `/khala join <channel-url>`, `/khala who` |
 | MCP entry | server `khala`, launched as `khala mcp-serve` (the staged launcher by absolute path once installed); tools `khala_send`, `khala_read`, `khala_status` (carries tokens), `khala_listening_mode`, `khala_mode_get` and `khala_mode_set` (both carry tokens), `khala_create_channel`, `khala_list_channels`, `khala_request_channel_access`, `khala_channel_access_status`, `khala_list_agents` |
 

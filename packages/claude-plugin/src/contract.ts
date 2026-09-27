@@ -6,18 +6,22 @@
 
 /**
  * Hook events the manifest may register, and the stubs each one runs. `Stop`
- * carries the synchronous delivery hook and the `asyncRewake` idle watcher armed
- * on it (the #178 amendment); there is no `UserPromptSubmit` registration.
+ * carries the synchronous delivery hook and the bounded `asyncRewake` watcher.
+ * `SessionStart` registers a private file path; `FileChanged` adds native event
+ * notification when the launcher changes it after an authorized pending release.
  */
 export const FROZEN_HOOK_EVENTS = {
+  SessionStart: ['hooks/session-start.mjs'],
+  FileChanged: ['hooks/file-changed.mjs'],
   UserPromptSubmit: ['hooks/user-prompt-submit.mjs'],
   PostToolUse: ['hooks/post-tool-use.mjs'],
   Stop: ['hooks/stop.mjs', 'hooks/stop-watcher.mjs'],
   SessionEnd: ['hooks/session-end.mjs'],
 } as const;
 
-/** The hook command that must be registered with `asyncRewake: true`. */
+/** Hook commands that must be registered with `asyncRewake: true`. */
 export const FROZEN_WATCHER_SCRIPT = 'hooks/stop-watcher.mjs';
+export const FILE_CHANGED_WAKE_SCRIPT = 'hooks/file-changed.mjs';
 
 /** The one bundled skill, and the exact `/khala <verb>` forms it resolves. */
 export const FROZEN_SKILL_NAME = 'khala';

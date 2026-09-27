@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  CLAUDE_MCP_ENV, FROZEN_HOOK_EVENTS, FROZEN_MCP_SERVER, FROZEN_PLUGIN_NAME, FROZEN_SKILL_NAME, FROZEN_WATCHER_SCRIPT, SKILL_FILE,
+  CLAUDE_MCP_ENV, FILE_CHANGED_WAKE_SCRIPT, FROZEN_HOOK_EVENTS, FROZEN_MCP_SERVER, FROZEN_PLUGIN_NAME, FROZEN_SKILL_NAME, FROZEN_WATCHER_SCRIPT, SKILL_FILE,
 } from './contract';
 
 type Json = Record<string, unknown>;
@@ -29,8 +29,8 @@ export function validatePlugin(root: string): string[] {
     for (const script of scripts) {
       const hook = registered.find(entry => String(entry.command ?? '').includes(script));
       if (!hook) errors.push(`hook event ${event} must run ${script}`);
-      else if ((script === FROZEN_WATCHER_SCRIPT) !== (hook.asyncRewake === true)) {
-        errors.push(`${script} must ${script === FROZEN_WATCHER_SCRIPT ? '' : 'not '}set asyncRewake`);
+      else if ([FROZEN_WATCHER_SCRIPT, FILE_CHANGED_WAKE_SCRIPT].includes(script) !== (hook.asyncRewake === true)) {
+        errors.push(`${script} must ${[FROZEN_WATCHER_SCRIPT, FILE_CHANGED_WAKE_SCRIPT].includes(script) ? '' : 'not '}set asyncRewake`);
       }
       if (!fs.existsSync(path.join(root, script))) errors.push(`missing hook script ${script}`);
     }
