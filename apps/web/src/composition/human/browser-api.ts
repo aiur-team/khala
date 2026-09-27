@@ -30,6 +30,7 @@ import type {
   InboxRejection,
   MuteRejection,
 } from '../../features/channel-access/ports';
+import type { BrowserRevocation } from '../recovery/browser-port';
 
 const ME_PATH = '/api/human/me';
 const LOGIN_PATH = '/api/human/auth/login';
@@ -56,6 +57,9 @@ export type HumanBrowserApiOptions = Readonly<{
 }>;
 
 export type HumanBrowserApi = Readonly<{
+  reviewCsrf(): Promise<string | null>;
+  /** Filled by the dedicated revocation composition when available. */
+  revocation?: (roomId: RoomId) => BrowserRevocation;
   identity: IdentityPort;
   admission: AdmissionPort;
   credentials: CredentialSource;
@@ -434,5 +438,10 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     };
   }
 
-  return { identity, admission, credentials, participants, channelAccess, closure };
+  return { identity, admission, credentials, participants, channelAccess, closure,
+    async reviewCsrf() {
+      if (csrfToken !== null) return csrfToken;
+      return (await readCurrent()).kind === 'signed_in' ? csrfToken : null;
+    },
+  };
 }

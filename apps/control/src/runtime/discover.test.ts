@@ -178,6 +178,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/messaging/session', methods: ['POST'], domain: 'human' },
       { path: '/api/human/messaging/participants', methods: ['POST'], domain: 'human' },
       { path: '/api/human/agent-bootstrap/authorize', methods: ['GET', 'POST'], domain: 'human' },
+      { path: '/api/human/owner-mailbox/review-bindings', methods: ['GET'], domain: 'human' },
       { path: '/api/human/owner-mailbox/submit', methods: ['POST'], domain: 'human' },
       { path: '/api/human/owner-mailbox/result', methods: ['GET'], domain: 'human' },
       { path: '/api/human/owner-device-proof/challenge', methods: ['GET'], domain: 'human' },

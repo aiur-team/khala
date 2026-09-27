@@ -29,28 +29,30 @@ the agent's session.
 | The browser sends exact references only, never bodies or owner identity. It shows only digest-exact pending items, drops late old-generation answers, and clears the preview on revocation | `apps/web/src/composition/review/browser-port.test.ts` |
 | Approval JSON inside a message body stays inert; closing a browser wait does not cancel the write or change its command ID | `browser-port.test.ts` |
 
-## Not yet proven, and why
+## Production path and remaining proof
 
-No `*.spec.ts` lives here yet. A live spec needs pieces that do not exist in this
-repository, and a skipped or fixture-backed spec must not count as a pass:
+The signed-in room fetches owner-scoped active bindings through
+`GET /api/human/owner-mailbox/review-bindings`, mounts `ReviewScreen`, and keeps
+message bodies inside the browser's room port. The browser registers its current
+Matrix device through the protected owner proof routes, then verifies the
+connector's server-attested device fingerprint in the SDK and discards its old
+outbound session. Review stays unavailable until that trust step succeeds;
+previous history is never re-encrypted for the new device. Its client submits only exact
+references through the CSRF-protected owner mailbox. The mailbox authenticates
+the human, derives authority, and forwards metadata to the connector's real
+review handler, ledger and bounded dispatcher. The browser stores an unresolved
+command's metadata in session storage and reconciles through the result route
+without resubmitting after an unknown write. A response from another command
+cannot become success. `review-room.browser.spec.ts` exercises the mounted room,
+selection and approval action in Chromium; route and client tests cover their
+respective authenticated seams.
 
-- **Protected human control transport (KTD2).** No same-origin or connector route
-  authenticates the human and forwards `OwnerAuthority` to the connector's review
-  handler. `ReviewProtectedTransportPort` (connector) and `ReviewControlClient`
-  (browser) are the seams for it. Until its owner supplies it, both registrations
-  stay `unavailable` in production, and review readiness is never claimed.
-- **Route mount.** `HumanCapability.attach` has no render slot, and
-  `composition/human/room.tsx` still renders the "review is not available" panel.
-  The KHA-132 composition owner must mount `ReviewScreen` over
-  `registerReview(...).portFor(context, roomId)`, with `renderMessageContent` as its
-  `renderContent`.
-- **Binding lookup.** The browser needs the signed-in human's binding ID for a room
-  (`BrowserReviewDependencies.bindingFor`). No contract exposes it yet.
-- **Connector process.** Nothing in production calls `createConnectorRuntime`. The
-  review capability starts only inside a runtime that supplies the ledger, dispatcher
-  intake and trusted room membership through `ReviewCapabilityDependencies.control`.
-- **Real harness session.** Selected-only delivery must be repeated against a
-  supported, already-running Claude or Codex session, using the KHA-133 adapters.
+These local tests still do not demonstrate a hosted four-actor run. #134 must
+repeat selected-only delivery against a deployed protected route, real Matrix
+devices, and an already-running supported harness session. A harness queue
+receipt alone does not prove that the model consumed the content. The result
+must preserve that distinction, and no skipped or fixture-backed live spec may
+be reported as acceptance.
 
 ## Known limitation
 
