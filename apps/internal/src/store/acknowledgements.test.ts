@@ -181,4 +181,16 @@ describe('internal agent-acknowledgement ledger', () => {
       .toMatchObject({ kind: 'recorded' });
   });
 
+  it('refuses issuance and recording without an admission for the binding generation', async () => {
+    const { handle, store, ledger } = world();
+    const eventId = send(store, 'e1');
+    handle.transaction(db => db.prepare('DELETE FROM discovery_activations WHERE binding_id = ? AND generation = ?')
+      .run(PRINCIPAL.bindingId, PRINCIPAL.generation));
+    expect(() => ledger.issueRelease({ principal: PRINCIPAL, channelId, release: release(eventId) })).toThrow();
+    expect(ledger.issueBatch({ principal: PRINCIPAL, channelId, releases: [{ ...release(eventId), proof: 'invented' }] }))
+      .toBeNull();
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: 'unissued', releases: [release(eventId)] }))
+      .toEqual({ kind: 'refused', code: 'invalid_input' });
+  });
+
 });

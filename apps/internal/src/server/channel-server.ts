@@ -5,7 +5,7 @@ import {
   decodeContentLimits, decodeMessageContent,
 } from '@khala/contracts/messaging/index';
 import type { AgentAcknowledgementInput, AgentAcknowledgementResult } from '../store/acknowledgements';
-import type { ChannelStore, StoredChannel, StoredEvent } from '../store/channel-store';
+import type { ChannelStore, HistoryReader, StoredChannel, StoredEvent } from '../store/channel-store';
 import type { InternalReceiptReadModel } from '../store/receipts';
 import { type MakeExternalJourneyPort, createMakeExternalRoutes, isMakeExternalRoute } from './make-external';
 import { type AssetLimits, type AssetManifest, type AssetTable, DEFAULT_ASSET_LIMITS, loadAssets } from './assets';
@@ -236,6 +236,16 @@ function actor(principal: Principal): Readonly<{ participantId: ParticipantId; d
   if (principal.kind === 'human') return { participantId: principal.human.participantId, deviceId: principal.human.deviceId };
   if (principal.kind === 'binding') return { participantId: principal.binding.agentParticipantId, deviceId: principal.binding.deviceId };
   // Channel routes admit only human and binding principals; see `admits`.
+  throw new Error('channel route reached without a channel principal');
+}
+
+/**
+ * Whose history a channel route reads: a human member reads all of it, a binding only what
+ * its admission shares. Every route that returns channel events reads through this.
+ */
+function historyReader(principal: Principal): HistoryReader {
+  if (principal.kind === 'human') return { kind: 'member' };
+  if (principal.kind === 'binding') return { kind: 'binding', binding: principal.binding };
   throw new Error('channel route reached without a channel principal');
 }
 
@@ -596,8 +606,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     const result = store.timeline({
       channelId: params.channelId as RoomId,
       participantId: actor(principal!).participantId,
-      // A bound agent reads only what was said after its admission; humans read everything.
-      ...(principal!.kind === 'binding' ? { binding: principal!.binding } : {}),
+      reader: historyReader(principal!),
       cursor: page.cursor,
       limit: page.limit,
     });
