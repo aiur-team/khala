@@ -2,9 +2,24 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { openProductionConnector, supportedBrowserVersion } from './production';
+import { openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
 
 describe('installed hosted connector composition', () => {
+  it('distinguishes offline recovery, unsupported substrate, and unknown catch-up from live intake', () => {
+    expect(subscriptionDiagnostic({ kind: 'offline', retryAt: null })).toEqual({
+      prerequisite: 'offline', errorCode: 'subscription_offline',
+    });
+    expect(subscriptionDiagnostic({ kind: 'blocked', code: 'unsupported' })).toEqual({
+      prerequisite: 'unsupported', errorCode: 'subscription_unsupported',
+    });
+    expect(subscriptionDiagnostic({ kind: 'blocked', code: 'missing_keys' })).toEqual({
+      prerequisite: 'blocked', errorCode: 'subscription_missing_keys',
+    });
+    expect(subscriptionDiagnostic({ kind: 'catching_up', streamId: 'stream-1' })).toEqual({
+      prerequisite: 'unknown', errorCode: 'subscription_starting',
+    });
+    expect(subscriptionDiagnostic({ kind: 'live', streamId: 'stream-1' })).toBeNull();
+  });
   it('admits only the browser majors proven with the pinned driver', () => {
     expect(supportedBrowserVersion('Chromium 150.0.7871.128')).toBe(true);
     expect(supportedBrowserVersion('Google Chrome for Testing 153.0.8010.12')).toBe(true);
@@ -24,8 +39,16 @@ describe('installed hosted connector composition', () => {
       const first = await openProductionConnector(input);
       const key = first.ports.pairing?.jkt;
       expect(key).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-      expect(await first.status()).toMatchObject({ connected: false, binding: null });
+      expect(await first.status()).toMatchObject({ connected: false, binding: null, readiness: {
+        phase: 'degraded', errorCode: 'binding_not_established', prerequisites: {
+          storage: 'ready', device: 'blocked', bootstrap: 'blocked',
+          harness: 'unknown', dispatch: 'blocked', recovery: 'unknown',
+        },
+      } });
       await first.close();
+      expect(await first.status()).toMatchObject({ connected: false, readiness: {
+        phase: 'stopped', errorCode: 'connector_closed', prerequisites: { storage: 'offline' },
+      } });
       const restarted = await openProductionConnector(input);
       expect(restarted.ports.pairing?.jkt).toBe(key);
       await restarted.close();

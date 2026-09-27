@@ -15,7 +15,7 @@ import { openConnectorStorage } from '@khala/connector/storage/open';
 import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { createMatrixBootstrapDevice } from '../substrate/bootstrap-device';
 import { startProductionSubscription } from './agent/subscription';
-import type { SubscriptionHandle } from '@khala/connector/subscription/index';
+import type { SubscriptionHandle, SubscriptionState } from '@khala/connector/subscription/index';
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { createProductionOwnerMailbox } from './agent/owner-mailbox';
 import { createLocalClosureFence } from './closure/local-fence';
@@ -44,6 +44,14 @@ const execFileAsync = promisify(execFile);
 export function supportedBrowserVersion(output: string): boolean {
   const match = /^(?:Chromium|Google Chrome(?: for Testing)?) (\d+)\./u.exec(output.trim());
   return match !== null && Number(match[1]) >= 150 && Number(match[1]) <= 153;
+}
+
+export function subscriptionDiagnostic(state: SubscriptionState) {
+  if (state.kind === 'live') return null;
+  if (state.kind === 'offline') return { prerequisite: 'offline' as const, errorCode: 'subscription_offline' as const };
+  if (state.kind === 'blocked') return { prerequisite: state.code === 'unsupported' ? 'unsupported' as const : 'blocked' as const,
+    errorCode: `subscription_${state.code}` as const };
+  return { prerequisite: 'unknown' as const, errorCode: 'subscription_starting' as const };
 }
 
 /**
@@ -404,19 +412,54 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         }
       },
       async status() {
-        if (closed || remoteDenied || deliveryStopped || !binding || !subscription) return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
+        const prerequisites = { storage: 'ready', device: 'blocked', bootstrap: 'blocked',
+          subscription: 'blocked', controls: 'blocked', harness: 'unknown',
+          dispatch: 'blocked', review: 'blocked', recovery: 'unknown' } as const;
+        type State = 'ready' | 'blocked' | 'offline' | 'unsupported' | 'unknown';
+        type Prerequisites = Record<keyof typeof prerequisites, State>;
+        const unavailable = <T extends string>(errorCode: T, changes: Partial<Prerequisites> = {},
+          phase: 'degraded' | 'stopped' = 'degraded') => ({ v: 1 as const,
+          connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null,
+          readiness: { phase, prerequisites: { ...prerequisites, ...changes }, errorCode } });
+        if (closed) return unavailable('connector_closed', { storage: 'offline' }, 'stopped');
+        if (!binding) return unavailable('binding_not_established');
+        if (deliveryStopped) return unavailable('channel_closing', { bootstrap: 'blocked' });
+        if (remoteDenied) return unavailable('binding_revoked', { bootstrap: 'blocked' });
         const held = await readBinding().catch(() => null);
-        if (!held || !sameSessionBinding(held, binding) || !matrix.substrate() || subscription.state().kind !== 'live'
-          || !mailbox || !ownerTrust || await mailbox.authorize() !== 'active' || await ownerTrust.ensure() !== 'active') {
-          return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
-        }
+        if (!held || !sameSessionBinding(held, binding)) return unavailable('binding_revoked');
+        const activeDevice = matrix.substrate();
+        if (!activeDevice || !subscription) return unavailable('device_unavailable', { device: 'offline', bootstrap: 'ready' });
+        const core = { device: 'ready', bootstrap: 'ready' } as const;
+        const source = subscriptionDiagnostic(subscription.state());
+        if (source) return unavailable(source.errorCode, { ...core, subscription: source.prerequisite });
+        const receiving = { ...core, subscription: 'ready' } as const;
+        if (!mailbox || !ownerTrust) return unavailable('authority_unavailable', { ...receiving, controls: 'offline' });
+        const authority = await mailbox.authorize();
+        if (authority === 'closing') return unavailable('channel_closing', { ...receiving, controls: 'blocked' });
+        if (authority === 'revoked') return unavailable('binding_revoked', { ...receiving, controls: 'blocked' });
+        if (authority !== 'active') return unavailable('authority_unavailable', { ...receiving, controls: 'offline' });
+        const trusted = await ownerTrust.ensure();
+        if (trusted !== 'active') return unavailable(trusted === 'revoked' ? 'binding_revoked' : 'owner_device_unverified',
+          { ...receiving, controls: trusted === 'revoked' ? 'blocked' : 'unknown' });
+        const controlled = { ...receiving, controls: 'ready' } as const;
         const activeHarness = harness as HarnessPort | null;
+        if (!activeHarness) return unavailable('harness_unsupported', { ...controlled, harness: 'unsupported' });
+        const inspected = await activeHarness.inspect(held);
+        if (inspected.support !== 'tested') return unavailable(inspected.support === 'unsupported'
+          ? 'harness_unsupported' : 'harness_unknown', { ...controlled,
+          harness: inspected.support === 'unsupported' ? 'unsupported' : 'unknown' });
+        const proved = { ...controlled, harness: 'ready' } as const;
         const activeListening = listening as ReturnType<typeof createHostedListeningControl> | null;
-        if (!activeHarness || !activeListening || (await activeHarness.inspect(held)).support !== 'tested'
-          || (await activeListening.status()).effective === null) {
-          return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
+        if (!activeListening || (await activeListening.status()).effective === null) {
+          return unavailable('listening_mode_unavailable', { ...proved });
         }
-        return { v: 1 as const, connected: true, binding: held, route: 'native_cli_queue' as const, sourceCursor: null };
+        if (!review) return unavailable('review_unavailable', { ...proved });
+        if (!dispatcher) return unavailable('dispatch_unavailable', { ...proved, review: 'ready' });
+        return { v: 1 as const, connected: true, binding: held,
+          route: 'native_cli_queue' as const, sourceCursor: null,
+          readiness: { phase: 'ready' as const, prerequisites: { storage: 'ready' as const, ...proved,
+            review: 'ready' as const, dispatch: 'ready' as const, recovery: 'unknown' as const }, errorCode: null },
+        };
       },
       async listChannels() { return { kind: 'unavailable' as const }; },
       async listAgents() { return { kind: 'unavailable' as const }; },
