@@ -7,7 +7,7 @@ call returns it. Only then may `interactiveClaudeCapabilities` report the route 
 and only for the exact version/route pair in `evidence.json` `provenPairs` (mirrored in
 `CLAUDE_INTERACTIVE_PROVEN`).
 
-**Status: proven for receipts on the exact Claude Code 2.1.283 interactive-hooks route.** Three Executor live runs on 2026-09-26 used that version. The latest run and its follow-up diagnostics are documented in [live-run-2026-09-26.md](live-run-2026-09-26.md). Decision 43 permits an Executor-launched TUI under normal trust; the person-started fixture of #236 remains separate. The later, separately retained [installed native mode proof](../../listening-modes/claude/README.md) covers `steer`, `sync`, and `async` on that exact version and route.
+**Status: proven for receipts on the exact Claude Code 2.1.283 interactive-hooks route.** Three Executor live runs on 2026-09-26 used that version. The latest run and its follow-up diagnostics are documented in [live-run-2026-09-26.md](live-run-2026-09-26.md). Decision 43 permits an Executor-launched TUI under normal trust; the person-started fixture of #236 remains separate. The later, separately retained [installed native mode run](../../listening-modes/claude/README.md) proves `steer` and `async` and observes `sync` within its finite watcher window. The required native rearm after timeout remains unproven for `sync`.
 
 - The first run failed because the server composed the Claude session route as unproven. Every hook
   pull and `khala_read` was refused before any batch or token existed.

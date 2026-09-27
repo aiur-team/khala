@@ -76,7 +76,7 @@ describe('local harness capabilities', () => {
     expect(claude).toMatchObject({
       harness: 'claude', version: '2.1.283', support: 'tested', acknowledgement: 'batch_token_next_call',
     });
-    expect(Object.values(claude!.modes).map(mode => mode.status)).toEqual(['proven', 'proven', 'proven']);
+    expect(Object.values(claude!.modes).map(mode => mode.status)).toEqual(['proven', 'experimental', 'proven']);
     expect(claude!.immediateNotification).toBe('unknown');
     expect(runs).toEqual(['/usr/bin/claude --version']);
   });
