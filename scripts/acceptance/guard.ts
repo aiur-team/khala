@@ -43,11 +43,7 @@ export function checkCommand(argv: readonly string[], khalaPackage: string | nul
       && args[2] === '-t' && pane(args[3]) && args[4] === '#{pane_tty}';
     const screen = args.length === 4 && args[0] === 'capture-pane' && args[1] === '-p'
       && args[2] === '-t' && pane(args[3]);
-    const key = args.length === 4 && args[0] === 'send-keys' && args[1] === '-t'
-      && pane(args[2]) && ['C-l', 'C-c', 'Enter'].includes(args[3]!);
-    const status = args.length === 5 && args[0] === 'send-keys' && args[1] === '-t'
-      && pane(args[2]) && args[3] === '-l' && args[4] === '/status';
-    return tty || screen || key || status ? { ok: true } : { ok: false, reason: 'tmux may only inspect the fixture pane and request /status' };
+    return tty || screen ? { ok: true } : { ok: false, reason: 'tmux may only inspect the fixture pane' };
   }
   if (name === 'gh') {
     return args[0] !== undefined && GH_SUBCOMMANDS.has(args[0]) ? { ok: true } : { ok: false, reason: `gh ${args[0] ?? ''} is not a runner command` };

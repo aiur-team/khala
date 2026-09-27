@@ -28,23 +28,12 @@ function tmux(argv: string[]): string {
   return execFileSync(command[0]!, command.slice(1), { encoding: 'utf8', timeout: 2_000 });
 }
 
-/** Ask the exact Codex TUI for its own session ID. Other CLIs need their own verified route. */
+/** Read the visible native status view; fixture operator opens /status before capture. */
 function nativeStatus(session: NativeSession): string | null {
   if (session.harness !== 'codex') return null;
   try {
-    const pane = session.tmuxPane;
-    tmux(['send-keys', '-t', pane, 'C-l']);
-    tmux(['send-keys', '-t', pane, 'C-c']);
-    if (/\bSession:\s+[0-9a-f-]{36}\b/i.test(tmux(['capture-pane', '-p', '-t', pane]))) return null;
-    tmux(['send-keys', '-t', pane, '-l', '/status']);
-    tmux(['send-keys', '-t', pane, 'Enter']);
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const screen = tmux(['capture-pane', '-p', '-t', pane]);
-      if (/\bSession:\s+[0-9a-f-]{36}\b/i.test(screen)) return screen;
-      if (attempt === 4) tmux(['send-keys', '-t', pane, 'Enter']);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-    }
-  } catch { /* An unsupported or interrupted status view is unproven. */ }
+    return tmux(['capture-pane', '-p', '-t', session.tmuxPane]);
+  } catch { /* An unavailable pane is unproven. */ }
   return null;
 }
 

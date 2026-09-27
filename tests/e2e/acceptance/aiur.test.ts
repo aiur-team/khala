@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { aiurRecords, captureNativeSession, decodeNativeSession, observeProcess, type ProcessSnapshot } from '../../../scripts/acceptance/adapters/aiur';
 
@@ -117,6 +117,43 @@ describe('Executor native fixture evidence', () => {
       } finally {
         if (pid) { try { process.kill(pid, 'SIGTERM'); } catch { /* already exited */ } }
         pty.kill('SIGTERM');
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'linux' || !fs.existsSync('/usr/bin/tmux'))(
+    'reads a live pane without sending keys, accepting its ID and rejecting a forged ID', async () => {
+      const directory = root();
+      // Unix socket paths cap at 108 bytes; the workspace-local scratch root is shorter than TMPDIR.
+      const socket = path.join(process.cwd(), `.aiur239-${process.pid}-${Math.random().toString(36).slice(2, 8)}.sock`);
+      const fixture = path.join(directory, 'codex.js');
+      fs.writeFileSync(fixture, `process.stdout.write(${JSON.stringify(STATUS)} + '\\n'); setInterval(() => {}, 1000);`);
+      const tmux = (...args: string[]) => execFileSync('/usr/bin/tmux', ['-S', socket, ...args], { encoding: 'utf8' }).trim();
+      const previousTmux = process.env.TMUX;
+      try {
+        tmux('new-session', '-d', '-s', 'native', `${process.execPath} ${fixture} --model gpt-6-sol`);
+        process.env.TMUX = `${socket},0,0`;
+        const pane = tmux('list-panes', '-t', 'native', '-F', '#{pane_id}');
+        const pid = Number(tmux('list-panes', '-t', 'native', '-F', '#{pane_pid}'));
+        let live: ProcessSnapshot | null = null;
+        for (let attempt = 0; attempt < 50; attempt++) {
+          live = observeProcess(pid);
+          if (live && tmux('capture-pane', '-p', '-t', pane).includes(OBSERVATION.sessionId)) break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(live).not.toBeNull();
+        const observation = {
+          ...OBSERVATION, pid, tmuxPane: pane, executable: live!.executable, argv: live!.argv,
+          processStartTicks: live!.processStartTicks, bootId: live!.bootId, tty: live!.tty,
+        };
+        expect(() => captureNativeSession(directory, { ...observation, sessionId: '01a0e073-0000-7000-8000-000000000001' }))
+          .toThrow(/session ID is unproven/);
+        expect(captureNativeSession(directory, observation).sessionId).toBe(OBSERVATION.sessionId);
+        expect(observeProcess(pid)?.processStartTicks).toBe(live!.processStartTicks);
+      } finally {
+        if (previousTmux === undefined) delete process.env.TMUX;
+        else process.env.TMUX = previousTmux;
+        try { tmux('kill-server'); } catch { /* fixture may already have exited */ }
       }
     },
   );
