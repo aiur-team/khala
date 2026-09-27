@@ -110,12 +110,76 @@ describe('live acceptance runner', () => {
     expectCleanTail(world, report);
   });
 
-  it('refuses a Khala access request created before native fixture capture', async () => {
+  it('never grants a unique-harness request without a captured native identity', async () => {
+    const base = offlineProfile();
+    const world = createWorld({ sessions: false }, {
+      ...base, roles: [base.roles[0], { ...base.roles[1], harness: 'claude', provider: 'anthropic', model: 'opus' }],
+    });
+    const report = await run(world);
+    expect(report.errors.join('\n')).toMatch(/timed out waiting for both access grants/);
+    expect(world.stopCalls).toEqual([]);
+  });
+
+  it('never grants a request whose server fingerprint differs from the captured native session', async () => {
     const world = createWorld();
-    const original = world.deps.aiur.session;
+    const original = world.deps.aiur.capturedSession;
     const report = await run({ ...world, deps: { ...world.deps, aiur: {
       ...world.deps.aiur,
-      async session(ticket, runId, role) {
+      async capturedSession(ticket, runId, role) {
+        const session = await original(ticket, runId, role);
+        return role === 'a' && session ? { ...session, sessionId: 'different-native-session' } : session;
+      },
+    } } });
+    expect(report.errors.join('\n')).toMatch(/timed out waiting for both access grants/);
+    expect(world.stopCalls).toEqual([]);
+  });
+
+  it('does not accept a READY marker whose owner binding has another session fingerprint', async () => {
+    const world = createWorld();
+    const launcher = world.deps.launcher;
+    const report = await run({ ...world, deps: { ...world.deps, launcher: {
+      async start(spec, resume) {
+        const server = await launcher.start(spec, resume);
+        return { ...server, async owner() {
+          const owner = await server.owner();
+          return { ...owner, async bindings() {
+            return (await owner.bindings()).map(binding => binding.agentParticipantId === 'participant_a'
+              ? { ...binding, sessionDigest: 'other-native-session' } : binding);
+          } };
+        } };
+      },
+    } } });
+    expect(report.errors.join('\n')).toMatch(/timed out waiting for both server-attributed bindings/);
+    expect(world.stopCalls).toEqual([]);
+    expect(report.verdict).toBe('fail');
+  });
+
+  it('refuses two owner bindings for one READY participant and native fingerprint', async () => {
+    const world = createWorld();
+    const launcher = world.deps.launcher;
+    const report = await run({ ...world, deps: { ...world.deps, launcher: {
+      async start(spec, resume) {
+        const server = await launcher.start(spec, resume);
+        return { ...server, async owner() {
+          const owner = await server.owner();
+          return { ...owner, async bindings() {
+            const current = await owner.bindings();
+            const first = current.find(binding => binding.agentParticipantId === 'participant_a');
+            return first ? [...current, { ...first, bindingId: 'duplicate_binding' }] : current;
+          } };
+        } };
+      },
+    } } });
+    expect(report.errors.join('\n')).toMatch(/ambiguous participant or binding for role a/);
+    expect(world.stopCalls).toEqual([]);
+  });
+
+  it('refuses a Khala access request created before native fixture capture', async () => {
+    const world = createWorld();
+    const original = world.deps.aiur.capturedSession;
+    const report = await run({ ...world, deps: { ...world.deps, aiur: {
+      ...world.deps.aiur,
+      async capturedSession(ticket, runId, role) {
         const session = await original(ticket, runId, role);
         return session ? { ...session, capturedAt: '2026-09-26T10:00:01.000Z' } : null;
       },
@@ -150,6 +214,23 @@ describe('live acceptance runner', () => {
     expect(report.stop!.aliveBefore).toEqual([true, true]);
   });
 
+  it('approves by captured fingerprint while status is dismissed, then waits for fresh status at hold', async () => {
+    const world = createWorld();
+    const original = world.deps.aiur.session;
+    let liveLookups = 0;
+    const report = await run({ ...world, deps: { ...world.deps, aiur: {
+      ...world.deps.aiur,
+      async session(ticket, runId, role) {
+        liveLookups += 1;
+        return liveLookups <= 2 ? null : original(ticket, runId, role);
+      },
+    } } });
+    expect(liveLookups).toBeGreaterThan(2);
+    expect(report.verdict).toBe('pass');
+    expect(report.stop?.aliveBefore).toEqual([true, true]);
+    expect(report.stop?.aliveAfter).toEqual([true, true]);
+  });
+
   it('fails a run whose session is gone at the hold barrier, and still stops its bindings', async () => {
     const world = createWorld();
     const report = await run({ ...world, deps: { ...world.deps, aiur: { ...world.deps.aiur, alive: async () => false } } });
@@ -160,14 +241,12 @@ describe('live acceptance runner', () => {
 
   it('refreshes native identity before hold and fails a replaced process identity', async () => {
     const world = createWorld();
-    let reads = 0;
     const original = world.deps.aiur.session;
     const report = await run({ ...world, deps: { ...world.deps, aiur: {
       ...world.deps.aiur,
       async session(ticket, runId, role) {
         const session = await original(ticket, runId, role);
-        reads += 1;
-        return reads > 2 && role === 'a' && session ? { ...session, processStartTicks: 'reused-pid' } : session;
+        return role === 'a' && session ? { ...session, processStartTicks: 'reused-pid' } : session;
       },
       async alive(session) { return session.processStartTicks !== 'reused-pid'; },
     } } });
