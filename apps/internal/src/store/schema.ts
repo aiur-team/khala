@@ -277,6 +277,31 @@ UPDATE discovery_activations SET start_sequence = (
  * the owner's read model, exactly as it drains the connector outbox.
  */
 export const ACKNOWLEDGEMENT_SCHEMA_V8_SQL = `
+CREATE TABLE issued_agent_releases (
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  release_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  proof TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (binding_id, generation, channel_id, release_id)
+) STRICT;
+CREATE TABLE issued_agent_batches (
+  token TEXT PRIMARY KEY,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  releases TEXT NOT NULL,
+  fingerprint TEXT NOT NULL UNIQUE
+) STRICT;
+CREATE TABLE issued_agent_batch_members (
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  release_id TEXT NOT NULL,
+  token TEXT NOT NULL REFERENCES issued_agent_batches (token) ON DELETE RESTRICT,
+  PRIMARY KEY (binding_id, generation, channel_id, release_id)
+) STRICT;
 CREATE TABLE agent_acknowledgements (
   receipt_id TEXT PRIMARY KEY,
   release_id TEXT NOT NULL,

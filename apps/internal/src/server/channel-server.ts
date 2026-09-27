@@ -82,6 +82,8 @@ export type AgentReleaseFeed = Readonly<{
 
 /** Composition-supplied recorder of a bound agent's batch acknowledgements. */
 export type AgentAcknowledgementPort = Readonly<{
+  issueRelease?(input: Readonly<{ principal: AgentAcknowledgementInput['principal']; channelId: string; release: AgentAcknowledgementInput['releases'][number] }>): string;
+  issueBatch?(input: Readonly<{ principal: AgentAcknowledgementInput['principal']; channelId: string; releases: readonly (AgentAcknowledgementInput['releases'][number] & { proof: string })[] }>): string | null;
   /** Commits the acknowledgement for the authenticated binding, or refuses it; synchronous so Stop can drain it. */
   record(input: AgentAcknowledgementInput): AgentAcknowledgementResult;
   /** Runs after a commit, before the reply; copies committed receipts to the owner's evidence. */
@@ -156,6 +158,7 @@ const ROUTES = {
   releases: { method: 'GET', path: '/api/v1/channels/:channelId/releases', admission: 'authenticated', allowQuery: true },
   receipts: { method: 'GET', path: '/api/v1/channels/:channelId/receipts', admission: 'authenticated' },
   acknowledgements: { method: 'POST', path: '/api/v1/channels/:channelId/acknowledgements', admission: 'authenticated' },
+  acknowledgementBatches: { method: 'POST', path: '/api/v1/channels/:channelId/acknowledgement-batches', admission: 'authenticated' },
   channelDocument: { method: 'GET', path: '/channels/:channelId', admission: 'public' },
   settingsDocument: { method: 'GET', path: '/channels/:channelId/settings', admission: 'public' },
   /** The same application document, so a reload of the Make-external page resumes it. */
@@ -249,7 +252,7 @@ function admits(route: RouteSpec, principal: Principal, agentSession: RouteSpec 
     return principal.kind === 'human';
   }
   // Only a bound agent acknowledges, and only for its own binding.
-  if (route === ROUTES.acknowledgements) return principal.kind === 'binding';
+  if (route === ROUTES.acknowledgements || route === ROUTES.acknowledgementBatches) return principal.kind === 'binding';
   return principal.kind === 'human' || principal.kind === 'binding';
 }
 
@@ -292,7 +295,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
   ];
   if (options.releases) routes.push(ROUTES.releases);
   if (options.receipts) routes.push(ROUTES.receipts);
-  if (options.acknowledgements) routes.push(ROUTES.acknowledgements);
+  if (options.acknowledgements) routes.push(ROUTES.acknowledgements, ROUTES.acknowledgementBatches);
   if (options.stop) routes.push(STOP_ROUTE);
   if (options.bindingModes) routes.push(...BINDING_MODE_ROUTES);
   // Every binding effect commits through this barrier; Stop raises it before revoking durably.
@@ -636,6 +639,12 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           releases: result.releases.map(release => ({
             releaseId: release.releaseId,
             events: release.events,
+            ...(options.acknowledgements?.issueRelease === undefined ? {} : {
+              receiptProof: options.acknowledgements.issueRelease({
+                principal: identity, channelId: params.channelId!,
+                release: { releaseId: release.releaseId, eventIds: release.events.map(event => event.eventId) },
+              }),
+            }),
             payloadDigest: release.payloadDigest,
             payloadBase64: Buffer.from(release.payload).toString('base64'),
             releasedAt: release.releasedAt,
@@ -700,7 +709,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     }
     const port = options.acknowledgements;
     const body = await readJsonObject(context, limits.maxBodyBytes);
-    if (!exactKeys(body, ['v', 'bindingId', 'generation', 'releases']) || body.v !== 1 || !Array.isArray(body.releases)
+    if (!exactKeys(body, ['v', 'bindingId', 'generation', 'token', 'releases']) || body.v !== 1 || !Array.isArray(body.releases)
       || !body.releases.every(release => release !== null && typeof release === 'object' && !Array.isArray(release)
         && exactKeys(release as Record<string, unknown>, ['releaseId', 'eventIds']))) {
       fail(response, failure(400, 'invalid_request'));
@@ -713,14 +722,16 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     }
     const releases = body.releases as AgentAcknowledgementInput['releases'];
     const result = commitAuthorized(context, () => port.record({
-      principal: { bindingId: held.bindingId, generation: held.generation }, channelId: params.channelId!, releases,
+      principal: { bindingId: held.bindingId, generation: held.generation }, channelId: params.channelId!, token: body.token as string, releases,
     }));
     if (result === null) return;
     switch (result.kind) {
       case 'recorded':
       case 'duplicate':
-        // The receipt is durable; a failed projection is retried by the next one.
-        await port.project?.().catch(() => undefined);
+        // The ledger is durable, but the inbox must retain this exact batch token
+        // until the owner's evidence is available. A retry is idempotent.
+        try { await port.project?.(); }
+        catch { fail(response, failure(503, 'unavailable')); return; }
         sendJson(response, 200, { v: 1, outcome: result.kind });
         return;
       case 'refused':
@@ -728,6 +739,29 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           : result.code === 'not_joined' ? failure(403, 'not_joined') : failure(400, 'invalid_request'));
         return;
     }
+  }
+
+  async function acknowledgementBatches(context: RouteContext<Principal>): Promise<void> {
+    const { principal, params, response } = context;
+    if (principal?.kind !== 'binding' || !options.acknowledgements?.issueBatch) {
+      fail(response, failure(403, 'forbidden')); return;
+    }
+    const body = await readJsonObject(context, limits.maxBodyBytes);
+    if (!exactKeys(body, ['v', 'bindingId', 'generation', 'releases']) || body.v !== 1 || !Array.isArray(body.releases)
+      || !body.releases.every(release => release !== null && typeof release === 'object' && !Array.isArray(release)
+        && exactKeys(release as Record<string, unknown>, ['releaseId', 'eventIds', 'proof']))) {
+      fail(response, failure(400, 'invalid_request')); return;
+    }
+    const held = principal.binding;
+    if (body.bindingId !== held.bindingId || body.generation !== held.generation) {
+      fail(response, failure(401, 'unauthenticated')); return;
+    }
+    const token = commitAuthorized(context, () => options.acknowledgements!.issueBatch!({
+      principal: { bindingId: held.bindingId, generation: held.generation }, channelId: params.channelId!,
+      releases: body.releases as (AgentAcknowledgementInput['releases'][number] & { proof: string })[],
+    }));
+    if (token === null) { fail(response, failure(400, 'invalid_request')); return; }
+    sendJson(response, 200, { v: 1, token });
   }
 
   async function send(context: RouteContext<Principal>): Promise<void> {
@@ -875,6 +909,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
           case ROUTES.releases: return releases(context);
           case ROUTES.receipts: return receipts(context);
           case ROUTES.acknowledgements: return await acknowledgements(context);
+          case ROUTES.acknowledgementBatches: return await acknowledgementBatches(context);
           case agentSession: return await agentSessionCall(context);
           case STOP_ROUTE: return await handleStop(context, { service: stopService, maxBodyBytes: limits.maxBodyBytes, humanMayStop });
           default:

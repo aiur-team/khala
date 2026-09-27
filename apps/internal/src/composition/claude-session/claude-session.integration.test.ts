@@ -621,7 +621,10 @@ describe('Claude delivery through the internal launcher', () => {
       client: createUnavailableClient(),
       inbox: (bindingId, generation, inboxOptions) => openInbox({
         stateDirectory, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
-        ...(dropRecorder ? {} : inboxOptions),
+        ...(dropRecorder ? {} : {
+          ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+          ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
+        }),
       }),
       stdin: Readable.from([]), stdout, stderr,
       internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
@@ -663,6 +666,48 @@ describe('Claude delivery through the internal launcher', () => {
     // A repeated call has nothing left to acknowledge and records nothing more.
     expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 0 });
     expect(await session.facts()).toHaveLength(1);
+  });
+
+  it('refuses a held caller that constructs an undelivered release ID without an issued batch token', async () => {
+    const session = await bound('session-invented-receipt');
+    const eventId = await session.post('unseen by agent');
+    const grant = JSON.parse(fs.readFileSync(session.grantPath, 'utf8')) as { bindingId: string; bindingCapability: string };
+    const route = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}`;
+    const headers = { authorization: `Bearer ${grant.bindingCapability}` };
+    const binding = await call(session.report.origin, { path: '/api/v1/agent/binding', headers });
+    expect(binding.status).toBe(200);
+    const generation = binding.json.binding.generation as number;
+    const releaseId = internalReleaseId({ bindingId: grant.bindingId, generation }, eventId);
+    const releases = [{ releaseId, eventIds: [eventId] }];
+    const forged = await call(session.report.origin, {
+      method: 'POST', path: `${route}/acknowledgements`, headers,
+      body: { v: 1, bindingId: grant.bindingId, generation, token: 'invented-batch-token', releases },
+    });
+    expect(forged.status).toBe(400);
+    const forgedBatch = await call(session.report.origin, {
+      method: 'POST', path: `${route}/acknowledgement-batches`, headers,
+      body: { v: 1, bindingId: grant.bindingId, generation, releases: [{ ...releases[0], proof: 'invented-proof' }] },
+    });
+    expect(forgedBatch.status).toBe(400);
+    expect(await session.facts()).toEqual([]);
+  });
+
+  it('retries one transient projection failure with the same token and no new batch', async () => {
+    const session = await bound('session-projection-retry');
+    await session.post('receipt after retry');
+    expect(await session.run('read')).toContain('receipt after retry');
+    fs.mkdirSync(session.receiptLog);
+    // The ledger commits, but an unwritable observation path must not acknowledge the inbox.
+    const failed = await session.run('status');
+    expect(failed).not.toContain('"acknowledged":1');
+    expect(await session.facts()).toHaveLength(1);
+    expect(fs.existsSync(session.receiptLog) && fs.statSync(session.receiptLog).isDirectory()).toBe(true);
+    fs.rmdirSync(session.receiptLog);
+    expect(JSON.parse(await session.run('status'))).toEqual({ ok: true, kind: 'status', acknowledged: 1 });
+    const facts = await session.facts();
+    expect(facts).toHaveLength(1);
+    expect(new Set(facts.map(fact => fact.evidenceRef)).size).toBe(1);
+    expect(fs.readFileSync(session.receiptLog, 'utf8').trim().split('\n')).toHaveLength(1);
   });
 
   it('records a descriptor read\'s acknowledgement only for the exact outstanding token', async () => {

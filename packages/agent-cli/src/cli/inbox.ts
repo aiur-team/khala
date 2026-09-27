@@ -100,11 +100,12 @@ export interface BatchInbox extends Inbox {
 /**
  * A content-free acknowledgement of one outstanding batch: the held binding and the
  * release IDs of that batch's committed prefix, in order, each with the IDs of the
- * events it carried. It never carries the token.
+ * events it carried. The token is passed only to the authenticated receipt writer.
  */
 export type BatchAcknowledgement = Readonly<{
   bindingId: BindingId;
   generation: number;
+  token: string;
   releaseIds: readonly string[];
   releases: readonly Readonly<{ releaseId: string; eventIds: readonly string[] }>[];
 }>;
@@ -122,6 +123,8 @@ export type OpenInboxOptions = Readonly<{
   maxPayloadBytes: number;
   maxSelectionEvents: number;
   recordAcknowledgement?: BatchAcknowledgementRecorder;
+  /** Internal mode exchanges server-issued release proofs for one authoritative batch token. */
+  issueBatch?: (releases: readonly Readonly<{ releaseId: string; eventIds: readonly string[]; proof: string }>[]) => Promise<string>;
 }>;
 
 type ValidatedOptions = Omit<OpenInboxOptions, 'bindingId'> & Readonly<{ bindingId: BindingId }>;
@@ -365,7 +368,10 @@ class FileInbox implements BatchInbox {
         v: 1,
         bindingId: this.#options.bindingId,
         generation: this.#options.generation,
-        token: randomUUID(),
+        token: this.#options.issueBatch === undefined ? randomUUID() : await this.#options.issueBatch(items.map(item => {
+          if (item.record.receiptProof === undefined) throw new CliError('storage_failed');
+          return { releaseId: item.record.releaseId, eventIds: item.record.events.map(event => event.eventId), proof: item.record.receiptProof };
+        })),
         startOffset: cursor.offset,
         endOffset: offset,
         releaseId,
@@ -385,6 +391,7 @@ class FileInbox implements BatchInbox {
       await record({
         bindingId: this.#options.bindingId,
         generation: this.#options.generation,
+        token: batch.token,
         releaseIds: batch.items.map(item => item.record.releaseId),
         releases: batch.items.map(item => ({
           releaseId: item.record.releaseId, eventIds: item.record.events.map(event => event.eventId),
@@ -432,7 +439,8 @@ function validateOptions(options: OpenInboxOptions): ValidatedOptions {
     || options.maxPayloadBytes > 64 * 1024 * 1024
     || !Number.isSafeInteger(options.maxSelectionEvents) || options.maxSelectionEvents < 1
     || options.maxSelectionEvents > 10_000
-    || !(options.recordAcknowledgement === undefined || typeof options.recordAcknowledgement === 'function')) {
+    || !(options.recordAcknowledgement === undefined || typeof options.recordAcknowledgement === 'function')
+    || !(options.issueBatch === undefined || typeof options.issueBatch === 'function')) {
     throw new CliError('invalid_input');
   }
   return { ...options, bindingId: options.bindingId as BindingId };
@@ -541,7 +549,8 @@ function recordFromDelivery(delivery: InboxDelivery, options: ValidatedOptions):
     || delivery.events.length > options.maxSelectionEvents
     || !(delivery.payload instanceof Uint8Array) || delivery.payload.byteLength > options.maxPayloadBytes
     || !validDigest(delivery.payloadDigest) || digest(delivery.payload) !== delivery.payloadDigest
-    || !validUtcTimestamp(delivery.receivedAt)) {
+    || !validUtcTimestamp(delivery.receivedAt)
+    || !(delivery.receiptProof === undefined || validIdentifier(delivery.receiptProof))) {
     throw new CliError('invalid_input');
   }
   for (const event of delivery.events) if (!validEventRef(event)) throw new CliError('invalid_input');
@@ -554,6 +563,7 @@ function recordFromDelivery(delivery: InboxDelivery, options: ValidatedOptions):
     payloadDigest: delivery.payloadDigest,
     payloadBase64: Buffer.from(delivery.payload).toString('base64'),
     receivedAt: delivery.receivedAt,
+    ...(delivery.receiptProof === undefined ? {} : { receiptProof: delivery.receiptProof }),
   };
 }
 
@@ -566,7 +576,9 @@ function decodeRecord(line: string, options: ValidatedOptions): { record: InboxR
   }
   if (!plainObject(value)) throw new CliError('storage_failed');
   const keys = ['v', 'releaseId', 'bindingId', 'generation', 'events', 'payloadDigest', 'payloadBase64', 'receivedAt'];
-  if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) throw new CliError('storage_failed');
+  const proof = Object.hasOwn(value, 'receiptProof');
+  if (Object.keys(value).length !== keys.length + (proof ? 1 : 0)
+    || keys.some(key => !Object.hasOwn(value, key)) || (proof && !validIdentifier(value.receiptProof))) throw new CliError('storage_failed');
   if (value.v !== 1 || value.bindingId !== options.bindingId || value.generation !== options.generation
     || !validIdentifier(value.releaseId) || !Array.isArray(value.events) || value.events.length === 0
     || value.events.length > options.maxSelectionEvents
@@ -586,6 +598,7 @@ function decodeRecord(line: string, options: ValidatedOptions): { record: InboxR
     payloadDigest: value.payloadDigest,
     payloadBase64: value.payloadBase64,
     receivedAt: value.receivedAt,
+    ...(proof ? { receiptProof: value.receiptProof as string } : {}),
   };
   const payload = decodeBase64(record.payloadBase64);
   if (payload === null || payload.byteLength > options.maxPayloadBytes || digest(payload) !== record.payloadDigest) {

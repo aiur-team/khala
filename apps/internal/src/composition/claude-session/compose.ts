@@ -353,6 +353,7 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       stateDirectory: inboxRoot, ...held, maxPayloadBytes: DELIVERY_LIMITS.maxPayloadBytes, maxSelectionEvents: DELIVERY_LIMITS.maxSelectionEvents,
       // The session's own binding capability records the receipts before its cursor moves.
       recordAcknowledgement: acknowledgement => delivery.acknowledge(held, acknowledgement),
+      issueBatch: releases => delivery.issueBatch(held, releases),
     });
     const current = async (): Promise<SessionBinding | null> => {
       const found = bound(binding.sessionId);

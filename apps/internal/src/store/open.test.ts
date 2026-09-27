@@ -113,7 +113,8 @@ describe('openChannelStore', () => {
       .map(row => (row as { name: string }).name))).toEqual([
       'admission_operations', 'agent_acknowledgements', 'bindings', 'channel_operations', 'channels', 'control_operations', 'control_records',
       'devices', 'discovery_activations', 'discovery_agents', 'discovery_allowlist', 'discovery_operations', 'discovery_visibility', 'events',
-      'memberships', 'meta', 'mode_controls', 'mode_operations', 'participants', 'receipt_fact_events', 'receipt_facts',
+      'issued_agent_batch_members', 'issued_agent_batches', 'issued_agent_releases', 'memberships', 'meta', 'mode_controls',
+      'mode_operations', 'participants', 'receipt_fact_events', 'receipt_facts',
       'receipt_projection_checkpoints', 'sqlite_sequence',
     ]);
   });

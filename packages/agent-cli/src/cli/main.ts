@@ -67,6 +67,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       inbox: (bindingId, generation, inboxOptions) => openInbox({
         stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
         ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+        ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
       }),
       ...(setup === undefined ? {} : { setup }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,

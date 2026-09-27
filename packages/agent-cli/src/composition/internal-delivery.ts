@@ -63,6 +63,7 @@ export type InternalDelivery = Readonly<{
    * receipt is not durable, so the inbox keeps the batch outstanding and replays it.
    */
   acknowledge(held: HeldGeneration, acknowledgement: BatchAcknowledgement): Promise<void>;
+  issueBatch(held: HeldGeneration, releases: readonly Readonly<{ releaseId: string; eventIds: readonly string[]; proof: string }>[]): Promise<string>;
 }>;
 
 const DELIVERY_DIRECTORY = 'internal-delivery';
@@ -136,7 +137,33 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
     }
   }
 
+  async function postBatch(descriptor: GrantedDescriptor, body: string): Promise<string | null> {
+    const target = `/api/v1/channels/${encodeURIComponent(descriptor.channelId)}/acknowledgement-batches`;
+    try {
+      const response = await fetcher(new URL(target, descriptor.origin), {
+        method: 'POST', redirect: 'error',
+        headers: { authorization: `Bearer ${descriptor.bindingCapability}`, 'content-type': 'application/json' },
+        body, signal: AbortSignal.timeout(timeoutMs),
+      });
+      const result: unknown = await response.json();
+      return response.status === 200 && plainObject(result) && result.v === 1 && validIdentifier(result.token)
+        ? result.token : null;
+    } catch { return null; }
+  }
+
   return {
+    async issueBatch(held, releases) {
+      const grant = currentGrant(readDescriptor, options.descriptorPath, held);
+      if (typeof grant !== 'object') throw new CliError(grant === 'revoked' ? 'binding_not_held' : 'transport_unavailable');
+      const body = JSON.stringify({ v: 1, bindingId: held.bindingId, generation: held.generation, releases });
+      let token = await postBatch(grant, body);
+      if (token === null) {
+        const reread = currentGrant(readDescriptor, options.descriptorPath, held);
+        if (typeof reread === 'object' && reread.bindingCapability !== grant.bindingCapability) token = await postBatch(reread, body);
+      }
+      if (token === null) throw new CliError('transport_unavailable');
+      return token;
+    },
     async acknowledge(held, acknowledgement) {
       // The hook is bound to one held generation; an acknowledgement for any other is never sent.
       if (acknowledgement.bindingId !== held.bindingId || acknowledgement.generation !== held.generation) {
@@ -146,7 +173,7 @@ export function createInternalDelivery(options: InternalDeliveryOptions): Intern
       if (grant === 'revoked') throw new CliError('binding_not_held');
       if (grant === 'unavailable') throw new CliError('transport_unavailable');
       const body = JSON.stringify({
-        v: 1, bindingId: held.bindingId, generation: held.generation,
+        v: 1, bindingId: held.bindingId, generation: held.generation, token: acknowledgement.token,
         releases: acknowledgement.releases.map(release => ({ releaseId: release.releaseId, eventIds: release.eventIds })),
       });
       let status = await postAcknowledgement(grant, body);
@@ -250,7 +277,9 @@ function decodePage(body: unknown, held: HeldGeneration): Page {
 }
 
 function decodeRelease(value: unknown, held: HeldGeneration): Release | null {
-  if (!plainObject(value) || !exactKeys(value, RELEASE_KEYS) || !validIdentifier(value.releaseId)
+  if (!plainObject(value) || !(exactKeys(value, RELEASE_KEYS) || exactKeys(value, [...RELEASE_KEYS, 'receiptProof']))
+    || !validIdentifier(value.releaseId)
+    || !(value.receiptProof === undefined || validIdentifier(value.receiptProof))
     || !Array.isArray(value.events) || value.events.length === 0 || !value.events.every(validEventRef)
     || !validDigest(value.payloadDigest) || typeof value.payloadBase64 !== 'string'
     || !validUtcTimestamp(value.releasedAt) || typeof value.wake !== 'boolean') return null;
@@ -268,6 +297,7 @@ function decodeRelease(value: unknown, held: HeldGeneration): Release | null {
       payload: new Uint8Array(payload),
       // The server's release time, so a re-pulled record is byte-identical.
       receivedAt: value.releasedAt,
+      ...(value.receiptProof === undefined ? {} : { receiptProof: value.receiptProof }),
     },
   };
 }

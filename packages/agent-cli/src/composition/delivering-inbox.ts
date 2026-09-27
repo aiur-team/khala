@@ -1,9 +1,11 @@
-import type { BatchInbox, BatchAcknowledgementRecorder } from '../cli/inbox.js';
+import type { BatchInbox, BatchAcknowledgementRecorder, OpenInboxOptions } from '../cli/inbox.js';
 import type { HeldGeneration, InternalDelivery } from './internal-delivery.js';
 
 /** Opens one binding generation's inbox; `recordAcknowledgement` records its batch acknowledgements. */
 export type OpenGenerationInbox = (
-  bindingId: string, generation: number, options?: Readonly<{ recordAcknowledgement?: BatchAcknowledgementRecorder }>,
+  bindingId: string, generation: number, options?: Readonly<{
+    recordAcknowledgement?: BatchAcknowledgementRecorder; issueBatch?: OpenInboxOptions['issueBatch'];
+  }>,
 ) => Promise<BatchInbox>;
 
 // Kept apart from `internal-delivery.ts` so the CLI entry can wrap its inbox
@@ -49,6 +51,7 @@ export function deliveringInbox(
       const held = { bindingId, generation };
       const openHeld = () => open(bindingId, generation, {
         recordAcknowledgement: acknowledgement => delivery.acknowledge(held, acknowledgement),
+        issueBatch: releases => delivery.issueBatch(held, releases),
       });
       const key = JSON.stringify([bindingId, generation]);
       if (!loops.has(key) && !signal.aborted) {

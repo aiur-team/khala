@@ -81,6 +81,8 @@ export function composeInternalReceipts(input: Readonly<{
     ledger,
     projector,
     acknowledgements: {
+      issueRelease: input => ledger.issueRelease(input),
+      issueBatch: input => ledger.issueBatch(input),
       record: acknowledgement => ledger.recordBatchAcknowledgement(acknowledgement),
       async project() { await projector.drain(); },
     },

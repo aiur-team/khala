@@ -105,11 +105,11 @@ export interface AgentClientPort {
 }
 export type InboxDelivery = Readonly<{
   v: 1; releaseId: string; bindingId: BindingId; generation: number; events: readonly EventRef[];
-  payloadDigest: string; payload: Uint8Array; receivedAt: string;
+  payloadDigest: string; payload: Uint8Array; receivedAt: string; receiptProof?: string;
 }>;
 export type InboxRecord = Readonly<{
   v: 1; releaseId: string; bindingId: BindingId; generation: number; events: readonly EventRef[];
-  payloadDigest: string; payloadBase64: string; receivedAt: string;
+  payloadDigest: string; payloadBase64: string; receivedAt: string; receiptProof?: string;
 }>;
 export type InboxCursor = Readonly<{ v: 1; offset: number; releaseId: string | null }>;
 /** Lazily loads the application-owned `khala internal` runtime; called only for that command. */

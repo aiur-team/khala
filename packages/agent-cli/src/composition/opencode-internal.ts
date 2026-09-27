@@ -109,6 +109,8 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
 
   /** Pulls as `delivery` does, restoring the binding once when its capability is refused. */
   const restoringDelivery = (sessionID: string, delivery: InternalDelivery): InternalDelivery => ({
+    issueBatch: (held, releases) => delivery.issueBatch(held, releases),
+    acknowledge: (held, acknowledgement) => delivery.acknowledge(held, acknowledgement),
     async pull(held, open, signal) {
       const pulled = await delivery.pull(held, open, signal);
       if (pulled !== 'revoked') return pulled;
@@ -138,6 +140,7 @@ export function internalOpenCodeDependencies(options: InternalOpenCodeOptions): 
   const openGeneration: OpenGenerationInbox = (bindingId, generation, inboxOptions) => openInbox({
     stateDirectory, bindingId, generation, maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32,
     ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+    ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
   });
 
   return {

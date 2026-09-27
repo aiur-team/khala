@@ -47,6 +47,9 @@ function world() {
     creatorDeviceId: aliceDevice, createdAt: '2026-09-26T00:00:00.000Z',
   })).toMatchObject({ kind: 'created' });
   expect(store.setMembership({ channelId, participantId: bob.participantId, membership: 'joined' })).toMatchObject({ kind: 'done' });
+  handle.transaction(db => db.prepare(`INSERT INTO discovery_activations
+    (operation_key, binding_id, generation, channel_id, session_generation, start_sequence)
+    VALUES ('op', 'binding-bob', 4, ?, 1, 0)`).run(channelId));
   let evidence = 0;
   const ledger = createAgentAcknowledgementLedger(handle, {
     now: () => new Date('2026-09-26T10:00:00.000Z'), newEvidenceRef: () => `ack_${++evidence}`,
@@ -64,12 +67,19 @@ function send(store: ChannelStore, eventId: string, author: 'alice' | 'bob' = 'a
 }
 
 const release = (eventId: string, principal = PRINCIPAL) => ({ releaseId: internalReleaseId(principal, eventId), eventIds: [eventId] });
+function issuedToken(ledger: ReturnType<typeof createAgentAcknowledgementLedger>, releases: ReturnType<typeof release>[]): string {
+  const withProof = releases.map(item => ({ ...item, proof: ledger.issueRelease({ principal: PRINCIPAL, channelId, release: item }) }));
+  const token = ledger.issueBatch({ principal: PRINCIPAL, channelId, releases: withProof });
+  if (token === null) throw new Error('batch was not issued');
+  return token;
+}
 
 describe('internal agent-acknowledgement ledger', () => {
   it('records one receipt per release of the batch, under the connector\'s receipt identity, and pages it by revision', async () => {
     const { store, ledger } = world();
     const events = [send(store, 'e1'), send(store, 'e2')];
-    const recorded = ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases: events.map(id => release(id)) });
+    const releases = events.map(id => release(id));
+    const recorded = ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: issuedToken(ledger, releases), releases });
     expect(recorded).toMatchObject({ kind: 'recorded', evidenceRef: 'ack_1' });
     if (recorded.kind !== 'recorded') throw new Error('not recorded');
     expect(recorded.receipts.map(receipt => receipt.receiptId))
@@ -89,12 +99,34 @@ describe('internal agent-acknowledgement ledger', () => {
   it('answers a replayed acknowledgement with the receipts already recorded, and refuses a partial overlap', async () => {
     const { store, ledger } = world();
     const [e1, e2] = [send(store, 'e1'), send(store, 'e2')];
-    const first = ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases: [release(e1)] });
-    const again = ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases: [release(e1)] });
+    const token = issuedToken(ledger, [release(e1)]);
+    const first = ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token, releases: [release(e1)] });
+    const again = ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token, releases: [release(e1)] });
     expect(again).toEqual({ ...first, kind: 'duplicate' });
-    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases: [release(e1), release(e2)] }))
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token, releases: [release(e1), release(e2)] }))
       .toEqual({ kind: 'refused', code: 'invalid_input' });
     expect(await ledger.readReceiptOutbox()).toHaveLength(1);
+  });
+
+  it('binds one issued token to exactly its release set and refuses replay reassociation', async () => {
+    const { store, ledger } = world();
+    const [e1, e2] = [send(store, 'e1'), send(store, 'e2')];
+    const first = release(e1);
+    const second = release(e2);
+    const proof = ledger.issueRelease({ principal: PRINCIPAL, channelId, release: first });
+    const token = ledger.issueBatch({ principal: PRINCIPAL, channelId, releases: [{ ...first, proof }] });
+    expect(token).toMatch(/^batch_/);
+    expect(ledger.issueBatch({ principal: PRINCIPAL, channelId, releases: [{ ...first, proof }] })).toBe(token);
+    expect(ledger.issueBatch({ principal: PRINCIPAL, channelId, releases: [{ ...first, proof: 'wrong' }] })).toBeNull();
+    const secondProof = ledger.issueRelease({ principal: PRINCIPAL, channelId, release: second });
+    expect(ledger.issueBatch({ principal: PRINCIPAL, channelId, releases: [
+      { ...first, proof }, { ...second, proof: secondProof },
+    ] })).toBeNull();
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: token!, releases: [second] }))
+      .toEqual({ kind: 'refused', code: 'invalid_input' });
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: 'wrong', releases: [first] }))
+      .toEqual({ kind: 'refused', code: 'invalid_input' });
+    expect(await ledger.readReceiptOutbox()).toEqual([]);
   });
 
   it('records nothing for a release made for another binding generation, an unknown event or the agent\'s own event', async () => {
@@ -109,7 +141,7 @@ describe('internal agent-acknowledgement ledger', () => {
       [release(own)],
       [],
     ]) {
-      expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases }))
+      expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: 'unissued-token', releases }))
         .toEqual({ kind: 'refused', code: 'invalid_input' });
     }
     expect(await ledger.readReceiptOutbox()).toEqual([]);
@@ -119,14 +151,14 @@ describe('internal agent-acknowledgement ledger', () => {
     const { store, ledger } = world();
     const e1 = send(store, 'e1');
     const refused = { kind: 'refused', code: 'binding_not_held' };
-    expect(ledger.recordBatchAcknowledgement({ principal: { bindingId: 'binding-other', generation: 4 }, channelId, releases: [release(e1)] }))
+    expect(ledger.recordBatchAcknowledgement({ principal: { bindingId: 'binding-other', generation: 4 }, channelId, token: 'unissued-token', releases: [release(e1)] }))
       .toEqual(refused);
     // A newer generation makes generation 4 stale even though its row is still active.
     expect(store.registerBinding(binding(5))).toMatchObject({ kind: 'done' });
-    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases: [release(e1)] })).toEqual(refused);
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: 'unissued-token', releases: [release(e1)] })).toEqual(refused);
     const current = { bindingId: 'binding-bob', generation: 5 };
     expect(store.revokeBinding(current)).toMatchObject({ kind: 'done' });
-    expect(ledger.recordBatchAcknowledgement({ principal: current, channelId, releases: [release(e1, current)] })).toEqual(refused);
+    expect(ledger.recordBatchAcknowledgement({ principal: current, channelId, token: 'unissued-token', releases: [release(e1, current)] })).toEqual(refused);
     expect(await ledger.readReceiptOutbox()).toEqual([]);
   });
 
@@ -134,19 +166,28 @@ describe('internal agent-acknowledgement ledger', () => {
     const { store, ledger } = world();
     const e1 = send(store, 'e1');
     expect(store.setMembership({ channelId, participantId: bob.participantId, membership: 'left' })).toMatchObject({ kind: 'done' });
-    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases: [release(e1)] }))
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: 'unissued-token', releases: [release(e1)] }))
       .toEqual({ kind: 'refused', code: 'not_joined' });
   });
 
   it('never acknowledges an event from before the binding\'s activation start', async () => {
     const { handle, store, ledger } = world();
     const before = send(store, 'e-before');
-    handle.transaction(db => db.prepare(`INSERT INTO discovery_activations (operation_key, binding_id, generation, channel_id, session_generation, start_sequence)
-      VALUES ('op', 'binding-bob', 4, ?, 1, 1)`).run(channelId));
+    handle.transaction(db => db.prepare(`UPDATE discovery_activations SET start_sequence = 1 WHERE binding_id = 'binding-bob' AND generation = 4`).run());
     const after = send(store, 'e-after');
-    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases: [release(before)] }))
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: 'unissued-token', releases: [release(before)] }))
       .toEqual({ kind: 'refused', code: 'invalid_input' });
-    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, releases: [release(after)] }))
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: issuedToken(ledger, [release(after)]), releases: [release(after)] }))
       .toMatchObject({ kind: 'recorded' });
+  });
+
+  it('denies receipt issuance and recording when the binding has no activation for the channel', async () => {
+    const { handle, store, ledger } = world();
+    const eventId = send(store, 'e1');
+    handle.transaction(db => db.prepare('DELETE FROM discovery_activations WHERE binding_id = ? AND generation = ?')
+      .run(PRINCIPAL.bindingId, PRINCIPAL.generation));
+    expect(() => ledger.issueRelease({ principal: PRINCIPAL, channelId, release: release(eventId) })).toThrow();
+    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: 'unissued', releases: [release(eventId)] }))
+      .toEqual({ kind: 'refused', code: 'invalid_input' });
   });
 });

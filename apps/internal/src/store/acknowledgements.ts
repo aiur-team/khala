@@ -33,6 +33,7 @@ export type AcknowledgedRelease = Readonly<{ releaseId: string; eventIds: readon
 export type AgentAcknowledgementInput = Readonly<{
   principal: AgentPrincipal;
   channelId: string;
+  token: string;
   /** The committed prefix of the acknowledged batch, in inbox order. */
   releases: readonly AcknowledgedRelease[];
 }>;
@@ -51,6 +52,10 @@ export type AcknowledgementOutboxEntry = Readonly<{
 }>;
 
 export interface AgentAcknowledgementLedger {
+  /** Records the server's release of one event and returns its opaque delivery proof. */
+  issueRelease(input: Readonly<{ principal: AgentPrincipal; channelId: string; release: AcknowledgedRelease }>): string;
+  /** Exchanges proofs from actual release responses for one exact, durable inbox batch. */
+  issueBatch(input: Readonly<{ principal: AgentPrincipal; channelId: string; releases: readonly (AcknowledgedRelease & { proof: string })[] }>): string | null;
   /** Commits one receipt per release, or nothing. */
   recordBatchAcknowledgement(input: AgentAcknowledgementInput): AgentAcknowledgementResult;
   /** Entries after `afterRevision`, oldest first; the projection owns checkpoints. */
@@ -79,7 +84,7 @@ const isIdentifier = (value: unknown): value is string =>
 function validInput(input: AgentAcknowledgementInput): boolean {
   return input !== null && typeof input === 'object' && input.principal !== null && typeof input.principal === 'object'
     && isIdentifier(input.principal.bindingId) && Number.isSafeInteger(input.principal.generation)
-    && input.principal.generation >= 0 && isIdentifier(input.channelId)
+    && input.principal.generation >= 0 && isIdentifier(input.channelId) && isIdentifier(input.token)
     && Array.isArray(input.releases) && input.releases.length > 0 && input.releases.length <= MAX_ACKNOWLEDGED_RELEASES
     && input.releases.every(release => release !== null && typeof release === 'object' && isIdentifier(release.releaseId)
       && Array.isArray(release.eventIds) && release.eventIds.length === 1 && isIdentifier(release.eventIds[0]))
@@ -95,6 +100,12 @@ function heldParticipant(db: DatabaseSync, principal: AgentPrincipal): string | 
   const latest = db.prepare('SELECT max(generation) AS generation FROM bindings WHERE binding_id = ?')
     .get(principal.bindingId) as { generation: number | null };
   return row !== undefined && row.status === 'active' && latest.generation === principal.generation ? row.participant_id : null;
+}
+
+function admissionStart(db: DatabaseSync, principal: AgentPrincipal, channelId: string): number | null {
+  return (db.prepare(`SELECT start_sequence FROM discovery_activations
+    WHERE binding_id = ? AND generation = ? AND channel_id = ?`)
+    .get(principal.bindingId, principal.generation, channelId) as { start_sequence: number } | undefined)?.start_sequence ?? null;
 }
 
 function parseReceipt(json: string): DeliveryReceiptTransport {
@@ -117,6 +128,68 @@ export function createAgentAcknowledgementLedger(
   const newEvidenceRef = options.newEvidenceRef ?? (() => `ack_${randomUUID()}`);
 
   return {
+    issueRelease(input) {
+      const { principal, channelId, release } = input;
+      if (!isIdentifier(channelId) || !isIdentifier(release.releaseId) || release.eventIds.length !== 1
+        || !isIdentifier(release.eventIds[0])) throw new StoreError('transaction_aborted');
+      return handle.transaction(db => {
+        const participant = heldParticipant(db, principal);
+        const start = admissionStart(db, principal, channelId);
+        if (participant === null || start === null) throw new StoreError('transaction_aborted');
+        const event = db.prepare('SELECT sequence, author_participant_id FROM events WHERE channel_id = ? AND event_id = ?')
+          .get(channelId, release.eventIds[0]!) as { sequence: number; author_participant_id: string } | undefined;
+        if (!event || event.sequence <= start || event.author_participant_id === participant
+          || internalReleaseId(principal, release.eventIds[0]!) !== release.releaseId) throw new StoreError('transaction_aborted');
+        const existing = db.prepare(`SELECT proof, event_id FROM issued_agent_releases
+          WHERE binding_id = ? AND generation = ? AND channel_id = ? AND release_id = ?`)
+          .get(principal.bindingId, principal.generation, channelId, release.releaseId) as { proof: string; event_id: string } | undefined;
+        if (existing) {
+          if (existing.event_id !== release.eventIds[0]) throw new StoreError('corrupt');
+          return existing.proof;
+        }
+        const proof = `issued_${randomUUID()}`;
+        db.prepare(`INSERT INTO issued_agent_releases (binding_id, generation, channel_id, release_id, event_id, proof)
+          VALUES (?, ?, ?, ?, ?, ?)`).run(principal.bindingId, principal.generation, channelId, release.releaseId, release.eventIds[0]!, proof);
+        return proof;
+      });
+    },
+    issueBatch(input) {
+      const { principal, channelId, releases } = input;
+      if (!isIdentifier(channelId) || !Array.isArray(releases) || releases.length < 1
+        || releases.length > MAX_ACKNOWLEDGED_RELEASES || releases.some(release => !isIdentifier(release.releaseId)
+          || !isIdentifier(release.proof) || !Array.isArray(release.eventIds) || release.eventIds.length !== 1
+          || !isIdentifier(release.eventIds[0])) || new Set(releases.map(release => release.releaseId)).size !== releases.length) return null;
+      return handle.transaction(db => {
+        const participant = heldParticipant(db, principal);
+        if (participant === null || admissionStart(db, principal, channelId) === null) return null;
+        const membership = db.prepare('SELECT membership FROM memberships WHERE channel_id = ? AND participant_id = ?')
+          .get(channelId, participant) as { membership: string } | undefined;
+        if (membership?.membership !== 'joined') return null;
+        for (const release of releases) {
+          const issued = db.prepare(`SELECT proof, event_id FROM issued_agent_releases
+            WHERE binding_id = ? AND generation = ? AND channel_id = ? AND release_id = ?`)
+            .get(principal.bindingId, principal.generation, channelId, release.releaseId) as { proof: string; event_id: string } | undefined;
+          if (!issued || issued.proof !== release.proof || issued.event_id !== release.eventIds[0]) return null;
+        }
+        const members = releases.map(({ releaseId, eventIds }) => ({ releaseId, eventIds }));
+        const encoded = JSON.stringify(members);
+        const fingerprint = createHash('sha256').update(JSON.stringify([principal.bindingId, principal.generation, channelId, encoded])).digest('base64url');
+        const prior = db.prepare('SELECT token FROM issued_agent_batches WHERE fingerprint = ?').get(fingerprint) as { token: string } | undefined;
+        if (prior) return prior.token;
+        for (const release of releases) {
+          if (db.prepare(`SELECT token FROM issued_agent_batch_members
+            WHERE binding_id = ? AND generation = ? AND channel_id = ? AND release_id = ?`)
+            .get(principal.bindingId, principal.generation, channelId, release.releaseId)) return null;
+        }
+        const token = `batch_${randomUUID()}`;
+        db.prepare(`INSERT INTO issued_agent_batches (token, binding_id, generation, channel_id, releases, fingerprint)
+          VALUES (?, ?, ?, ?, ?, ?)`).run(token, principal.bindingId, principal.generation, channelId, encoded, fingerprint);
+        const insert = db.prepare(`INSERT INTO issued_agent_batch_members (binding_id, generation, channel_id, release_id, token)
+          VALUES (?, ?, ?, ?, ?)`);
+        for (const release of releases) insert.run(principal.bindingId, principal.generation, channelId, release.releaseId, token);
+        return token;
+      });
+    },
     recordBatchAcknowledgement(input) {
       if (!validInput(input)) return REFUSED_INPUT;
       const principal = { bindingId: input.principal.bindingId, generation: input.principal.generation };
@@ -128,11 +201,13 @@ export function createAgentAcknowledgementLedger(
         const membership = db.prepare('SELECT membership FROM memberships WHERE channel_id = ? AND participant_id = ?')
           .get(input.channelId, participantId) as { membership: string } | undefined;
         if (membership?.membership !== 'joined') return { kind: 'refused', code: 'not_joined' };
+        const issued = db.prepare(`SELECT releases FROM issued_agent_batches
+          WHERE token = ? AND binding_id = ? AND generation = ? AND channel_id = ?`)
+          .get(input.token, principal.bindingId, principal.generation, input.channelId) as { releases: string } | undefined;
+        if (!issued || issued.releases !== JSON.stringify(input.releases)) return REFUSED_INPUT;
         // As the release feed does: an admitted binding is never released what preceded its activation.
-        const start = (db.prepare(`
-          SELECT start_sequence FROM discovery_activations WHERE binding_id = ? AND generation = ? AND channel_id = ?
-        `).get(principal.bindingId, principal.generation, input.channelId) as { start_sequence: number } | undefined)
-          ?.start_sequence ?? 0;
+        const start = admissionStart(db, principal, input.channelId);
+        if (start === null) return REFUSED_INPUT;
         for (const release of input.releases) {
           const eventId = release.eventIds[0]!;
           const event = db.prepare('SELECT sequence, author_participant_id FROM events WHERE channel_id = ? AND event_id = ?')
