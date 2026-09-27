@@ -33,12 +33,13 @@ type World = {
   binding: SessionBinding | null;
   mode: ListeningMode | null;
   inboxOpened: number;
+  boundaries: boolean[];
 };
 
 function world(mode: ListeningMode | null): World {
   const parent = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-codex-hook-'));
   roots.push(parent);
-  return { stateDirectory: path.join(parent, 'state'), binding: BINDING, mode, inboxOpened: 0 };
+  return { stateDirectory: path.join(parent, 'state'), binding: BINDING, mode, inboxOpened: 0, boundaries: [] };
 }
 
 function open(w: World): Promise<BatchInbox> {
@@ -86,6 +87,7 @@ async function hook(
   const code = await runCli(['codex-hook'], {
     client: client(w),
     inbox: async () => { w.inboxOpened += 1; return open(w); },
+    codexBoundary: async (_binding, idle) => { w.boundaries.push(idle); },
     stdin, stdout, stderr,
   });
   return { code, out, err, json: out === '' ? null : JSON.parse(out) as Record<string, unknown> };
@@ -154,6 +156,18 @@ describe('codex hook boundary mapping', () => {
 });
 
 describe('khala codex-hook', () => {
+  it('marks only an unblocked Stop idle, and clears it at the next turn', async () => {
+    const w = world('sync');
+    await hook(w, 'Stop');
+    expect(w.boundaries).toEqual([false, true]);
+    await hook(w, 'UserPromptSubmit', { turn: 'turn-2' });
+    expect(w.boundaries).toEqual([false, true, false]);
+    await enqueue(w, 'release-1');
+    await hook(w, 'Stop', { turn: 'turn-2' });
+    expect(w.boundaries.at(-1)).toBe(false);
+    await hook(w, 'Stop', { turn: 'turn-2', stopHookActive: true });
+    expect(w.boundaries.slice(-2)).toEqual([false, true]);
+  });
   it('steer blocks the next tool with the framed batch and never acknowledges it', async () => {
     const w = world('steer');
     await enqueue(w, 'release-1');

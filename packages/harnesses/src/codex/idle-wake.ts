@@ -68,18 +68,19 @@ export function createCodexIdleWake(deps: CodexIdleWakeDeps): CodexIdleWake {
   async function run(binding: SessionBinding): Promise<CodexIdleWakeResult> {
     if (!await current(binding)) return 'revoked';
     if (!await deps.isIdle(binding).catch(() => false)) return 'not_idle';
+    // The final current check is adjacent to process creation. In the owner
+    // server it reads Stop's barrier synchronously, so Stop cannot interleave.
+    if (!await current(binding)) return 'revoked';
     const abort = new AbortController();
     const watch = setInterval(() => {
       void current(binding).then(live => { if (!live) abort.abort(); });
     }, pollMs);
     try {
-      const revoked = new Promise<'revoked'>(resolve => abort.signal.addEventListener('abort', () => resolve('revoked')));
-      const outcome = await Promise.race([
-        deps.port.run(codexIdleWakeArgv(binding.sessionId), abort.signal)
-          .catch((): CodexIdleWakeOutcome => ({ status: 'lost', cause: 'disconnected' })),
-        revoked,
-      ]);
-      if (outcome === 'revoked' || abort.signal.aborted) return 'revoked';
+      const outcome = await deps.port.run(codexIdleWakeArgv(binding.sessionId), abort.signal)
+        .catch((): CodexIdleWakeOutcome => ({ status: 'lost', cause: 'disconnected' }));
+      // The port resolves only after its queue child has stopped. Stop drains this
+      // promise before reporting the binding revoked.
+      if (abort.signal.aborted) return 'revoked';
       return outcome.status === 'queued' ? 'queued' : 'queue_failed';
     } finally {
       clearInterval(watch);
