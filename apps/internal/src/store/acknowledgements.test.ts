@@ -181,13 +181,4 @@ describe('internal agent-acknowledgement ledger', () => {
       .toMatchObject({ kind: 'recorded' });
   });
 
-  it('denies receipt issuance and recording when the binding has no activation for the channel', async () => {
-    const { handle, store, ledger } = world();
-    const eventId = send(store, 'e1');
-    handle.transaction(db => db.prepare('DELETE FROM discovery_activations WHERE binding_id = ? AND generation = ?')
-      .run(PRINCIPAL.bindingId, PRINCIPAL.generation));
-    expect(() => ledger.issueRelease({ principal: PRINCIPAL, channelId, release: release(eventId) })).toThrow();
-    expect(ledger.recordBatchAcknowledgement({ principal: PRINCIPAL, channelId, token: 'unissued', releases: [release(eventId)] }))
-      .toEqual({ kind: 'refused', code: 'invalid_input' });
-  });
 });

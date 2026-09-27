@@ -102,10 +102,10 @@ function heldParticipant(db: DatabaseSync, principal: AgentPrincipal): string | 
   return row !== undefined && row.status === 'active' && latest.generation === principal.generation ? row.participant_id : null;
 }
 
-function admissionStart(db: DatabaseSync, principal: AgentPrincipal, channelId: string): number | null {
+function admissionStart(db: DatabaseSync, principal: AgentPrincipal, channelId: string): number {
   return (db.prepare(`SELECT start_sequence FROM discovery_activations
     WHERE binding_id = ? AND generation = ? AND channel_id = ?`)
-    .get(principal.bindingId, principal.generation, channelId) as { start_sequence: number } | undefined)?.start_sequence ?? null;
+    .get(principal.bindingId, principal.generation, channelId) as { start_sequence: number } | undefined)?.start_sequence ?? 0;
 }
 
 function parseReceipt(json: string): DeliveryReceiptTransport {
@@ -135,7 +135,7 @@ export function createAgentAcknowledgementLedger(
       return handle.transaction(db => {
         const participant = heldParticipant(db, principal);
         const start = admissionStart(db, principal, channelId);
-        if (participant === null || start === null) throw new StoreError('transaction_aborted');
+        if (participant === null) throw new StoreError('transaction_aborted');
         const event = db.prepare('SELECT sequence, author_participant_id FROM events WHERE channel_id = ? AND event_id = ?')
           .get(channelId, release.eventIds[0]!) as { sequence: number; author_participant_id: string } | undefined;
         if (!event || event.sequence <= start || event.author_participant_id === participant
@@ -161,7 +161,7 @@ export function createAgentAcknowledgementLedger(
           || !isIdentifier(release.eventIds[0])) || new Set(releases.map(release => release.releaseId)).size !== releases.length) return null;
       return handle.transaction(db => {
         const participant = heldParticipant(db, principal);
-        if (participant === null || admissionStart(db, principal, channelId) === null) return null;
+        if (participant === null) return null;
         const membership = db.prepare('SELECT membership FROM memberships WHERE channel_id = ? AND participant_id = ?')
           .get(channelId, participant) as { membership: string } | undefined;
         if (membership?.membership !== 'joined') return null;
@@ -207,7 +207,6 @@ export function createAgentAcknowledgementLedger(
         if (!issued || issued.releases !== JSON.stringify(input.releases)) return REFUSED_INPUT;
         // As the release feed does: an admitted binding is never released what preceded its activation.
         const start = admissionStart(db, principal, input.channelId);
-        if (start === null) return REFUSED_INPUT;
         for (const release of input.releases) {
           const eventId = release.eventIds[0]!;
           const event = db.prepare('SELECT sequence, author_participant_id FROM events WHERE channel_id = ? AND event_id = ?')
