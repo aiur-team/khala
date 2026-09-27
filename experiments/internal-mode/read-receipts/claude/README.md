@@ -7,15 +7,16 @@ call returns it. Only then may `interactiveClaudeCapabilities` report the route 
 and only for the exact version/route pair in `evidence.json` `provenPairs` (mirrored in
 `CLAUDE_INTERACTIVE_PROVEN`).
 
-**Status: unproven.** Two Executor live runs on 2026-09-26 used Claude Code 2.1.283.
+**Status: unproven.** Three Executor live runs on 2026-09-26 used Claude Code 2.1.283. The latest result is documented in [live-run-2026-09-26.md](live-run-2026-09-26.md).
 
 - The first run failed because the server composed the Claude session route as unproven. Every hook
   pull and `khala_read` was refused before any batch or token existed.
-- The second run is recorded in `evidence.json`. It used origin/main `ce39721`, after #418 and #425.
+- The second run was previously recorded in `evidence.json`. It used origin/main `ce39721`, after #418 and #425.
   Delivery, framing, idle and busy behaviour, reconnect and Stop all behaved as specified. The agent's
   next Khala call moved the inbox cursor. However, the owner's receipts never held an
   `agent_acknowledged` fact, because the internal Claude read port records no acknowledgement. Wrong
   token and wrong generation could not be reached live.
+- The third run used merged receipt build `d389c79` and an ordinary native TUI under normal trust. Native next-call acknowledgements were recorded, including after reconnect and owner Stop/rejoin. Its PTY was launched by the assistant, and live missing-token and duplicate-token cases were not exercised. The exact version/route pair therefore remains unproven and is not promoted.
 
 Until then every inspected version stays `experimental`. It delivers with `batch_token_next_call` so
 that a live run can exercise it, and it is labelled experimental rather than proven (decisions 34

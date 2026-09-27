@@ -3,107 +3,35 @@
   "route": "claude-interactive-hooks",
   "claudeCodeVersion": "2.1.283",
   "platform": "linux-x64",
-  "capturedAt": "2026-09-26T15:11:00Z",
+  "capturedAt": "2026-09-27T02:10:00Z",
   "ordinaryUserStartedCli": false,
   "provenPairs": [],
   "scenarios": [
-    {
-      "scenario": "binding",
-      "label": "join approved by owner, next prompt hook reported connected with no access-status retry",
-      "present": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "batch-delivered",
-      "label": "hook delivered the framed batch at Stop and at PostToolUse under the owner experimental grant in steer",
-      "present": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "idle-delivery",
-      "label": "owner message while idle, 90 s with no wake as advertised (watcher off, idle delivery unproven), delivered at the next turn Stop",
-      "present": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "busy-delivery",
-      "label": "owner message during a 3-tool turn in steer, delivered as PostToolUse context at the first boundary after the send",
-      "present": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "explicit-read",
-      "label": "khala_read returned empty and moved the inbox cursor past the delivered batch",
-      "present": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "untrusted-content-framing",
-      "label": "fixed preamble, channel batch frame and trust line present, no token line, model relayed it as untrusted and did not act on it",
-      "present": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "next-call-acknowledges",
-      "label": "khala_status, khala_read and khala_send each moved the inbox cursor, but the owner receipts route never held an agent_acknowledged fact",
-      "present": false,
-      "result": "failed"
-    },
-    {
-      "scenario": "no-later-call",
-      "label": "delivered batch replayed at the next Stop, cursor unmoved, no receipt, no re-wake",
-      "present": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "missing-token",
-      "label": "hook pulls carry no token and never moved the inbox cursor across the run, inbox level only since no receipt facts exist",
-      "present": false,
-      "result": "passed"
-    },
-    {
-      "scenario": "duplicate-token",
-      "label": "second agent call after an acknowledgement left the cursor unchanged and replayed nothing, inbox level only",
-      "equal": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "wrong-token",
-      "label": "no live surface lets a caller name a token, tokens stayed in server state and never reached the session",
-      "result": "not_observed"
-    },
-    {
-      "scenario": "wrong-binding",
-      "label": "unbound bystander session refused session_not_bound for status and read, and a rebound session never moved the old binding cursor",
-      "present": false,
-      "result": "passed"
-    },
-    {
-      "scenario": "wrong-generation",
-      "label": "Stop then a new request produced a new binding at generation 1, no live path replaced a generation of the same binding",
-      "result": "not_observed"
-    },
-    {
-      "scenario": "reconnect",
-      "label": "claude --continue kept the session and binding, the outstanding batch replayed, and khala_send moved the cursor",
-      "present": true,
-      "result": "passed"
-    },
-    {
-      "scenario": "stop-ends-delivery",
-      "label": "after owner Stop no hook delivered, agent calls refused session_not_bound, watcher off, CLI kept running, observed twice",
-      "present": false,
-      "result": "passed"
-    }
+    { "scenario": "binding", "label": "native plugin request and owner approval", "present": true, "result": "passed" },
+    { "scenario": "batch-delivered", "label": "Stop and PostToolUse frames in native TUI", "present": true, "result": "passed" },
+    { "scenario": "untrusted-content-framing", "label": "trust preamble and framed batch in native TUI", "present": true, "result": "passed" },
+    { "scenario": "idle-next-turn", "label": "idle message delivered on next native turn", "present": true, "result": "passed" },
+    { "scenario": "idle-wake", "label": "independent wake while CLI stayed idle", "result": "not_observed" },
+    { "scenario": "busy-delivery", "label": "two busy messages crossed tool boundaries", "present": true, "result": "passed" },
+    { "scenario": "next-call-acknowledges", "label": "native status call advanced owner receipt count", "present": true, "result": "passed" },
+    { "scenario": "no-later-call", "label": "receipt count stayed fixed before next call", "equal": true, "result": "passed" },
+    { "scenario": "missing-token", "label": "plugin omission on a native call", "result": "not_observed" },
+    { "scenario": "duplicate-token", "label": "duplicate native token submission", "result": "not_observed" },
+    { "scenario": "wrong-token", "label": "direct diagnostic request rejected", "present": false, "result": "passed" },
+    { "scenario": "wrong-binding", "label": "direct diagnostic request rejected", "present": false, "result": "passed" },
+    { "scenario": "wrong-generation", "label": "direct diagnostic request rejected", "present": false, "result": "passed" },
+    { "scenario": "reconnect", "label": "native continue reused session and delivered batch", "present": true, "result": "passed" },
+    { "scenario": "stop-ends-delivery", "label": "Stop revoked binding without ending native CLI", "present": false, "result": "passed" },
+    { "scenario": "post-stop-rejoin", "label": "new owner approval and native next-call receipt", "present": true, "result": "passed" }
   ],
   "limitations": [
-    "Live run 2026-09-26 on origin/main ce39721, tarball aiur-khala-0.1.0.tgz, Claude Code 2.1.283, agent-launched in tmux (not an ordinary user-started CLI), user default settings (auto mode), no permission bypass.",
-    "Acknowledgement is not recorded: the internal Claude read port opens its inbox without a recordAcknowledgement callback and the launcher composes no receipt ledger or projection, so the owner receipts route stayed empty. Negative scenarios hold at the inbox cursor, where acknowledgement happens, and hold vacuously for receipt facts.",
-    "Idle wake is not claimed for this route. The owner view reports idle delivery unproven and the watcher stays off, so an idle session receives messages at its next turn.",
-    "Wrong token is not reachable live: no agent tool or hook op accepts a token. Retained token bytes were checked absent from the Claude transcripts and captures. Wrong generation is covered offline only.",
-    "A session that re-requests access after Stop gets its original revoked request back, because the default operation ID is per session and target. The rejoin used an explicit new operation ID.",
-    "A newly admitted binding received every earlier channel message on its first pull, although the access request carried history none.",
-    "Setup ran with a PATH that omitted Codex and OpenCode, to keep shared Aiur worker config untouched.",
-    "Offline conformance is component evidence, never a support claim."
+    "This authorized interactive PTY was launched by the assistant, so user-started provenance is not established.",
+    "The live build was the merged receipt candidate at d389c79, not the final application candidate.",
+    "The normal trust native TUI used the installed plugin and the owner experimental steer grant.",
+    "Idle wake is not advertised; delivery happened on the next native turn.",
+    "Wrong identity inputs were direct local HTTP diagnostics, not native plugin calls.",
+    "Missing and duplicate token cases were not exercised live.",
+    "Only redacted results are retained here; private raw captures stay outside the repository.",
+    "No version and route pair is promoted by this evidence."
   ]
 }
