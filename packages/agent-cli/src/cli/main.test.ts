@@ -16,10 +16,11 @@ describe('bundled CLI entrypoint', () => {
     const build = spawnSync(process.execPath, [bundleScript], {
       cwd: packageDirectory,
       encoding: 'utf8',
+      timeout: 60_000,
     });
     expect(build.status, build.stderr).toBe(0);
     fs.symlinkSync(path.join(packageDirectory, 'dist/khala.js'), linkedEntrypoint);
-  });
+  }, 70_000);
 
   afterAll(() => fs.rmSync(temporaryDirectory, { recursive: true, force: true }));
 
