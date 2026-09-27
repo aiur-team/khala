@@ -34,6 +34,8 @@ describe('runner command guard', () => {
     [['sh', '-c', 'khala run claude']],
     [['gh', 'pr', 'create']],
     [['tmux', 'new-session', '-d']],
+    [['tmux', 'send-keys', '-t', '%7', 'hello']],
+    [['tmux', 'capture-pane', '-p', '-t', 'other']],
     // The runner acts as the human controller, never as an agent session.
     [['npx', '--yes', PACKAGE, 'send', 'hello']],
     [['khala', 'join', 'http://127.0.0.1:4870/channels/x']],
@@ -54,6 +56,8 @@ describe('runner command guard', () => {
     [['npx', '--yes', PACKAGE, 'internal', '--resume', 'channel_abc-123']],
     [['gh', 'api', 'repos/aiur-team/khala/issues']],
     [['tmux', 'display-message', '-p', '-t', '%7', '#{pane_tty}']],
+    [['tmux', 'capture-pane', '-p', '-t', '%7']],
+    [['tmux', 'send-keys', '-t', '%7', '-l', '/status']],
   ])('allows %j', argv => {
     expect(checkCommand(argv, PACKAGE)).toEqual({ ok: true });
   });

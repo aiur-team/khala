@@ -38,9 +38,16 @@ export function checkCommand(argv: readonly string[], khalaPackage: string | nul
   if (argv.some(argument => /\bapp-server\b/.test(argument))) return { ok: false, reason: 'hosted agent routes are never started by the runner' };
   if (name === 'khala') return khalaArguments(args);
   if (name === 'tmux') {
-    return args.length === 5 && args[0] === 'display-message' && args[1] === '-p'
-      && args[2] === '-t' && /^%[0-9]+$/.test(args[3]!) && args[4] === '#{pane_tty}'
-      ? { ok: true } : { ok: false, reason: 'tmux may only read one pane TTY' };
+    const pane = (value: string | undefined) => /^%[0-9]+$/.test(value ?? '');
+    const tty = args.length === 5 && args[0] === 'display-message' && args[1] === '-p'
+      && args[2] === '-t' && pane(args[3]) && args[4] === '#{pane_tty}';
+    const screen = args.length === 4 && args[0] === 'capture-pane' && args[1] === '-p'
+      && args[2] === '-t' && pane(args[3]);
+    const key = args.length === 4 && args[0] === 'send-keys' && args[1] === '-t'
+      && pane(args[2]) && ['C-l', 'C-c', 'Enter'].includes(args[3]!);
+    const status = args.length === 5 && args[0] === 'send-keys' && args[1] === '-t'
+      && pane(args[2]) && args[3] === '-l' && args[4] === '/status';
+    return tty || screen || key || status ? { ok: true } : { ok: false, reason: 'tmux may only inspect the fixture pane and request /status' };
   }
   if (name === 'gh') {
     return args[0] !== undefined && GH_SUBCOMMANDS.has(args[0]) ? { ok: true } : { ok: false, reason: `gh ${args[0] ?? ''} is not a runner command` };

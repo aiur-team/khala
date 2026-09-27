@@ -22,6 +22,45 @@ function verifiedPane(pane: string, tty: string): boolean {
   } catch { return false; }
 }
 
+function tmux(argv: string[]): string {
+  const command = ['tmux', ...argv];
+  assertCommand(command, null);
+  return execFileSync(command[0]!, command.slice(1), { encoding: 'utf8', timeout: 2_000 });
+}
+
+/** Ask the exact Codex TUI for its own session ID. Other CLIs need their own verified route. */
+function nativeStatus(session: NativeSession): string | null {
+  if (session.harness !== 'codex') return null;
+  try {
+    const pane = session.tmuxPane;
+    tmux(['send-keys', '-t', pane, 'C-l']);
+    tmux(['send-keys', '-t', pane, 'C-c']);
+    if (/\bSession:\s+[0-9a-f-]{36}\b/i.test(tmux(['capture-pane', '-p', '-t', pane]))) return null;
+    tmux(['send-keys', '-t', pane, '-l', '/status']);
+    tmux(['send-keys', '-t', pane, 'Enter']);
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const screen = tmux(['capture-pane', '-p', '-t', pane]);
+      if (/\bSession:\s+[0-9a-f-]{36}\b/i.test(screen)) return screen;
+      if (attempt === 4) tmux(['send-keys', '-t', pane, 'Enter']);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
+  } catch { /* An unsupported or interrupted status view is unproven. */ }
+  return null;
+}
+
+function observedSessionId(status: string | null): string | null {
+  if (!status) return null;
+  const ids = [...status.matchAll(/\bSession:\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi)];
+  return ids.length === 1 ? ids[0]![1]!.toLowerCase() : null;
+}
+
+function statusMatchesProfile(status: string | null, session: NativeSession): boolean {
+  if (!status) return false;
+  const model = status.match(/\bModel:\s+([^\n(│]+)/)?.[1]?.trim().toLowerCase();
+  const provider = status.match(/\bModel provider:\s+([a-z]+)\b/)?.[1];
+  return model === session.model.toLowerCase() && provider === session.provider;
+}
+
 function nativeCommand(session: NativeSession): boolean {
   const name = (value: string) => path.basename(value).replace(/\.(?:c?m?js)$/, '');
   const command = name(session.argv[0]!);
@@ -96,17 +135,29 @@ function recordPath(root: string, repository: string, runId: string, ticket: num
 /** Capture from a trusted Executor harness observation, cross-checking live /proc. */
 export function captureNativeSession(
   root: string, value: unknown, observe = observeProcess, paneIsTty = verifiedPane, now = Date.now,
+  status = nativeStatus,
 ): NativeSession {
   const captured = value && typeof value === 'object' ? { ...value, capturedAt: new Date(now()).toISOString() } : value;
   const session = decodeNativeSession(captured);
   if (!session || !sameProcess(session, observe(session.pid))) throw new Error('native fixture observation is incomplete or disagrees with the live process');
   if (!nativeCommand(session)) throw new Error('native harness and explicit model flag are absent from exact launch argv');
   if (!paneIsTty((captured as { tmuxPane: string }).tmuxPane, session.tty)) throw new Error('native process does not use the recorded tmux pane TTY');
+  const screen = status(session);
+  const nativeId = observedSessionId(screen);
+  if (!nativeId || nativeId !== session.sessionId || !statusMatchesProfile(screen, session)
+    || !sameProcess(session, observe(session.pid))
+    || !paneIsTty(session.tmuxPane, session.tty)) {
+    throw new Error('native session ID is unproven by the live fixture status');
+  }
   const directory = recordDir(root, session.repository, session.runId);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
   const file = recordPath(root, session.repository, session.runId, session.ticket, session.role);
-  const finalRecord = { ...(captured as Record<string, unknown>), capturedAt: new Date(now()).toISOString() };
+  const finalRecord = {
+    ...(captured as Record<string, unknown>),
+    capturedAt: new Date(now()).toISOString(),
+    nativeIdentityProof: { method: 'codex-status-v1', sessionId: nativeId },
+  };
   const finalSession = decodeNativeSession(finalRecord);
   if (!finalSession) throw new Error('native fixture observation changed during capture');
   fs.writeFileSync(file, JSON.stringify(finalRecord), { flag: 'wx', mode: 0o600 });
@@ -122,8 +173,13 @@ export function aiurRecords(root: string, repository: string, observe = observeP
       try {
         const stat = fs.lstatSync(file);
         if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 0o077 || stat.uid !== process.getuid?.()) return null;
-        const session = decodeNativeSession(JSON.parse(fs.readFileSync(file, 'utf8')));
+        const record: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const session = decodeNativeSession(record);
         if (!session || session.repository !== repository || session.runId !== runId || session.ticket !== ticket || session.role !== role) return null;
+        const proof = (record as Record<string, unknown>).nativeIdentityProof;
+        if (!proof || typeof proof !== 'object' || Array.isArray(proof)
+          || (proof as Record<string, unknown>).method !== 'codex-status-v1'
+          || (proof as Record<string, unknown>).sessionId !== session.sessionId) return null;
         if (!sameProcess(session, observe(session.pid)) || !paneIsTty(session.tmuxPane, session.tty)) return null;
         const other = role === 'a' ? 'b' : 'a';
         const sibling = recordPath(root, repository, runId, ticket, other);
