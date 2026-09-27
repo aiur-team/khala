@@ -9,7 +9,7 @@ describe('owner browser cleanup consumer', () => {
   it('discovers an offline device request at startup and retries a failed SDK forget', async () => {
     const cleanupRoom = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const requests = vi.fn(async () => [request]);
-    const consumer = createOwnerCleanupConsumer({ ownerId: () => ownerId, requests, cleanupRoom });
+    const consumer = createOwnerCleanupConsumer({ ownerId: () => ownerId, requests, cleanupRoom, roomPresent: () => false });
     await consumer.poll();
     expect(cleanupRoom).toHaveBeenCalledTimes(1);
     await consumer.poll();
@@ -23,7 +23,7 @@ describe('owner browser cleanup consumer', () => {
     const cleanupRoom = vi.fn(async () => true);
     let activeOwner = ownerId;
     const requests = vi.fn(async () => [{ ...request, ownerId: 'peer_owner' as OwnerId }]);
-    const consumer = createOwnerCleanupConsumer({ ownerId: () => activeOwner, requests, cleanupRoom });
+    const consumer = createOwnerCleanupConsumer({ ownerId: () => activeOwner, requests, cleanupRoom, roomPresent: () => false });
     await consumer.poll();
     expect(cleanupRoom).not.toHaveBeenCalled();
     requests.mockImplementationOnce(async () => [request]);
@@ -39,7 +39,8 @@ describe('owner browser cleanup consumer', () => {
       addEventListener: (name: string, listener: () => void) => listeners.set(name, listener),
       removeEventListener: (name: string) => listeners.delete(name) });
     const cleanupRoom = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    const consumer = createOwnerCleanupConsumer({ ownerId: () => ownerId, requests: async () => [request], cleanupRoom });
+    const consumer = createOwnerCleanupConsumer({ ownerId: () => ownerId, requests: async () => [request], cleanupRoom,
+      roomPresent: () => false });
     consumer.start();
     await vi.waitFor(() => expect(cleanupRoom).toHaveBeenCalledTimes(1));
     listeners.get('visibilitychange')?.();
@@ -47,5 +48,23 @@ describe('owner browser cleanup consumer', () => {
     consumer.dispose();
     expect(listeners.size).toBe(0);
     vi.unstubAllGlobals();
+  });
+
+  it('retries a successful forget if sync later restores the room, then stops once absent', async () => {
+    let present = false;
+    const cleanupRoom = vi.fn(async () => true);
+    const consumer = createOwnerCleanupConsumer({ ownerId: () => ownerId, requests: async () => [request], cleanupRoom,
+      roomPresent: () => present });
+    await consumer.poll();
+    expect(cleanupRoom).toHaveBeenCalledTimes(1);
+    await consumer.poll();
+    expect(cleanupRoom).toHaveBeenCalledTimes(1);
+    present = true;
+    await consumer.poll();
+    expect(cleanupRoom).toHaveBeenCalledTimes(2);
+    present = false;
+    await consumer.poll();
+    expect(cleanupRoom).toHaveBeenCalledTimes(2);
+    consumer.dispose();
   });
 });

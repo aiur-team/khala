@@ -94,6 +94,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     },
     requests: api.cleanupRequests,
     cleanupRoom: matrix.cleanupRoom,
+    roomPresent: matrix.roomPresent,
   });
   const unsubscribeCleanup = application.subscribe(() => { void cleanupConsumer?.poll(); });
   cleanupConsumer.start();

@@ -4,6 +4,7 @@ type CleanupPorts = Readonly<{
   ownerId(): OwnerId | null;
   requests(ownerId: OwnerId): Promise<readonly ClosureRequest[] | null>;
   cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
+  roomPresent(ownerId: OwnerId, roomId: RoomId): boolean;
 }>;
 
 /** Each browser processes its own durable requests when it is available; a failed SDK forget is retried. */
@@ -26,7 +27,12 @@ export function createOwnerCleanupConsumer(ports: CleanupPorts) {
         if (disposed || ports.ownerId() !== ownerId) return;
         if (request.ownerId !== ownerId || request.expectedRoomRevision !== 0) continue;
         const key = JSON.stringify([ownerId, request.roomId, request.operationId]);
-        if (processed.has(key)) continue;
+        // A concurrent Matrix sync can re-add a room after the SDK's forget
+        // promise resolves. Keep checking its actual local state on later polls.
+        if (processed.has(key)) {
+          if (!ports.roomPresent(ownerId, request.roomId)) continue;
+          processed.delete(key);
+        }
         try {
           if (await ports.cleanupRoom(ownerId, request.roomId)) processed.add(key);
         } catch { /* Keep this request retryable on this device. */ }

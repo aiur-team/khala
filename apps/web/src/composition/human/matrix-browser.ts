@@ -517,6 +517,8 @@ export type MatrixBrowserPorts = Readonly<{
   participant(): ParticipantView | null;
   /** Requests SDK cleanup of this owner's local room state after protected closure. */
   cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
+  /** Detect a sync race that restored a room after local cleanup resolved. */
+  roomPresent(ownerId: OwnerId, roomId: RoomId): boolean;
   /** Trusted owner endpoint discards its outbound Megolm session before a new device can receive sends. */
   discardOutboundSession(roomId: RoomId): Promise<boolean>;
   /** Trusts one server-attested agent Matrix device only after exact SDK fingerprint comparison. */
@@ -587,6 +589,10 @@ export function createMatrixBrowserPorts(input: Readonly<{
 
   return {
     device, room, participant: () => runtime.active?.actor ?? null,
+    roomPresent(ownerId, roomId) {
+      const active = runtime.active;
+      return active?.principal.ownerId === ownerId && active.client.getRoom(roomId) !== null;
+    },
     async cleanupRoom(ownerId, roomId) {
       const active = runtime.active;
       if (active?.principal.ownerId !== ownerId) return false;
