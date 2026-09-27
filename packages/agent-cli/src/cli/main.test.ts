@@ -70,8 +70,11 @@ describe('bundled CLI entrypoint', () => {
   it('keeps the internal runtime out of the main bundle and loads it only for internal', () => {
     const main = JSON.parse(fs.readFileSync(path.join(packageDirectory, 'dist/khala.js.meta.json'), 'utf8'));
     expect(Object.keys(main.inputs).filter(input => input.includes('apps/internal'))).toEqual([]);
+    expect(Object.keys(main.inputs).some(input => input.endsWith('/connector/src/storage/open.ts'))).toBe(true);
     const imports = Object.values(main.outputs as Record<string, { imports: { path: string }[] }>).flatMap(output => output.imports.map(entry => entry.path));
-    expect(imports).not.toContain('node:sqlite');
+    // The hosted connector's own durable ledger uses SQLite; source inventory still
+    // proves the separate internal application is excluded from this entrypoint.
+    expect(imports).toContain('node:sqlite');
 
     // node:sqlite prints an ExperimentalWarning of its own; the result is the one JSON line.
     const result = (stderr: string) => JSON.parse(stderr.split('\n').find(line => line.startsWith('{'))!);
