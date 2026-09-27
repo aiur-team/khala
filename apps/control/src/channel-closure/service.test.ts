@@ -55,6 +55,7 @@ describe('channel closure service', () => {
     expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: { operationId: 'close_1', state: 'complete', reason: null } });
     expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: { operationId: 'close_1', state: 'complete', reason: null } });
     expect(transport.leave).toHaveBeenCalledTimes(1);
+    expect(transport.requestLocalCleanup).toHaveBeenCalledWith(request, undefined);
     expect(await service.inspectClosure('close_1')).toEqual({ kind: 'ok', value: { operationId: 'close_1', state: 'complete', reason: null } });
     expect(await service.capability(roomId)).toMatchObject({ kind: 'ok', value: { available: false } });
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AuthPrincipal, RoomId, SessionBinding } from '@khala/contracts/messaging/index';
+import type { AuthPrincipal, ControlStore, RoomId, SessionBinding } from '@khala/contracts/messaging/index';
 import { createAgentBindingStore } from '../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../agent-bootstrap/owner-room-index';
 import { fakeStore, T0 } from '../auth/support.test';
@@ -20,7 +20,12 @@ const request = { operationId: 'closure-operation', ownerId: first.ownerId, room
 
 describe('production closure mailbox adapter', () => {
   it('keeps Matrix leave pending until every active binding acknowledges its stop', async () => {
-    const { store } = fakeStore(() => T0);
+    const state = fakeStore(() => T0);
+    let failCleanupWrite = false;
+    const store: ControlStore = { ...state.store, compareAndSet: input => {
+      if (failCleanupWrite && input.key.startsWith('channel-closure:cleanup:')) return Promise.resolve({ kind: 'unavailable' });
+      return state.store.compareAndSet(input);
+    } };
     const bindings = createAgentBindingStore({ store });
     const index = createOwnerRoomIndex(store);
     for (const binding of [first, second]) {
@@ -49,9 +54,17 @@ describe('production closure mailbox adapter', () => {
         ...request, bindingId: binding.bindingId, bindingGeneration: binding.generation,
         state: 'stopped', cleanupRequested: true,
       } })).kind).toBe('ok');
-      expect(await service.closeRoom(request)).toEqual(last
-        ? { kind: 'ok', value: { operationId: request.operationId, state: 'complete', reason: null } }
-        : partial);
+      if (last) {
+        failCleanupWrite = true;
+        expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: {
+          operationId: request.operationId, state: 'partial', reason: 'local_cleanup_failed',
+        } });
+        expect(await cleanup.list()).toEqual({ kind: 'ok', requests: [] });
+        failCleanupWrite = false;
+        expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: {
+          operationId: request.operationId, state: 'complete', reason: null,
+        } });
+      } else expect(await service.closeRoom(request)).toEqual(partial);
       expect(leave).toHaveBeenCalledTimes(last ? 1 : 0);
     }
     expect(await cleanup.list()).toEqual({ kind: 'ok', requests: [request] });

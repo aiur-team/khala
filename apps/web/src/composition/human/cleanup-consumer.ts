@@ -45,9 +45,11 @@ export function createOwnerCleanupConsumer(ports: CleanupPorts) {
     },
     dispose() {
       disposed = true;
-      if (timer !== null) clearInterval(timer);
+      if (timer !== null) {
+        clearInterval(timer);
+        document.removeEventListener('visibilitychange', onVisible);
+      }
       timer = null;
-      document.removeEventListener('visibilitychange', onVisible);
     },
   };
 }

@@ -513,7 +513,7 @@ export function createMatrixBrowserPorts(input: Readonly<{
     device, room, participant: () => runtime.active?.actor ?? null,
     async cleanupRoom(ownerId, roomId) {
       const active = runtime.active;
-      if (active?.principal.ownerId !== ownerId || !active.client.getRoom(roomId)) return false;
+      if (active?.principal.ownerId !== ownerId) return false;
       try {
         await active.client.forget(roomId, true);
         return true;

@@ -177,6 +177,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'GET /api/human/channel-discovery/bootstrap/authorize', 'POST /api/human/channel-discovery/bootstrap/authorize',
     'PUT /api/human/channel-discovery/settings', 'POST /api/human/channel-discovery/allowlist',
     'PUT /api/human/channel-discovery/rollout',
+    // GET also serves ?cleanup=1: an owner-authenticated, metadata-only durable request list after Matrix leave.
     'GET /api/human/channel-closure', 'POST /api/human/channel-closure',
     'GET /api/human/agent-bootstrap/authorize', 'POST /api/human/agent-bootstrap/authorize',
     'GET /api/human/owner-device-proof/challenge', 'POST /api/human/owner-device-proof/register',

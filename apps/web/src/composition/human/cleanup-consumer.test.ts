@@ -32,4 +32,20 @@ describe('owner browser cleanup consumer', () => {
     expect(cleanupRoom).not.toHaveBeenCalled();
     consumer.dispose();
   });
+
+  it('checks on startup and again when an offline browser becomes visible', async () => {
+    const listeners = new Map<string, () => void>();
+    vi.stubGlobal('document', { visibilityState: 'visible',
+      addEventListener: (name: string, listener: () => void) => listeners.set(name, listener),
+      removeEventListener: (name: string) => listeners.delete(name) });
+    const cleanupRoom = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const consumer = createOwnerCleanupConsumer({ ownerId: () => ownerId, requests: async () => [request], cleanupRoom });
+    consumer.start();
+    await vi.waitFor(() => expect(cleanupRoom).toHaveBeenCalledTimes(1));
+    listeners.get('visibilitychange')?.();
+    await vi.waitFor(() => expect(cleanupRoom).toHaveBeenCalledTimes(2));
+    consumer.dispose();
+    expect(listeners.size).toBe(0);
+    vi.unstubAllGlobals();
+  });
 });
