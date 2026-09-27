@@ -44,6 +44,7 @@ async function sessionPorts(
     }
   }
   if (!deps.hostedSession) return null;
+  if (deps.hostedBindingPresent && !await deps.hostedBindingPresent({ harness: CODEX_HARNESS, sessionId })) return null;
   const opened = await deps.hostedSession({ harness: CODEX_HARNESS, sessionId });
   hosted.push(opened);
   // An unbound or policy-unconfigured hosted session cannot turn a global hook

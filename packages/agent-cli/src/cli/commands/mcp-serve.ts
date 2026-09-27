@@ -96,6 +96,8 @@ async function runSessionMcpServer(deps: CliDependencies, grants: SessionGrants)
         if (deps.hostedSession === undefined) return null;
         let entry = hosted.get(session.sessionId);
         if (entry === undefined) {
+          if (toolName !== PAIR_TOOL_NAME && toolName !== CONNECT_TOOL_NAME
+            && deps.hostedBindingPresent && !await deps.hostedBindingPresent(session)) return null;
           entry = { opened: await deps.hostedSession(session), bound: null };
           hosted.set(session.sessionId, entry);
         }

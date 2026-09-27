@@ -191,6 +191,25 @@ describe('khala codex-hook', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it('does not create hosted state for an unpaired native hook', async () => {
+    const stdin = new PassThrough();
+    stdin.end(JSON.stringify({ hook_event_name: 'PreToolUse', session_id: BINDING.sessionId, turn_id: 't' }));
+    const stdout = new PassThrough(); const stderr = new PassThrough(); let out = '';
+    stdout.on('data', chunk => { out += String(chunk); });
+    const hostedSession = vi.fn(async () => { throw new Error('unpaired hook opened hosted connector'); });
+    const hostedBindingPresent = vi.fn(async () => false);
+    expect(await runCli(['codex-hook'], {
+      client: createUnavailableClient(), inbox: async () => { throw new Error('internal inbox opened'); },
+      stdin, stdout, stderr, sessionGrants: () => '/missing/grant.json',
+      internalClient: async () => createUnavailableClient(),
+      internalDelivery: async () => { throw new Error('internal delivery opened'); },
+      hostedSession, hostedBindingPresent,
+    })).toBe(0);
+    expect(out).toBe('');
+    expect(hostedBindingPresent).toHaveBeenCalledExactlyOnceWith({ harness: 'codex', sessionId: BINDING.sessionId });
+    expect(hostedSession).not.toHaveBeenCalled();
+  });
+
   it('keeps the hosted hook silent without an exact binding and applied mode', async () => {
     const w = world('steer');
     await enqueue(w, 'release-1');

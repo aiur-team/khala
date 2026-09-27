@@ -1,10 +1,36 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
+import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
 
 describe('installed hosted connector composition', () => {
+  it('checks only an exact admitted session marker without creating hosted state', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-hosted-presence-'));
+    const first = { harness: 'codex', sessionId: 'thread-1', workdir: '/project' };
+    const other = { ...first, sessionId: 'thread-2' };
+    try {
+      expect(await hasProductionBinding(directory, first)).toBe(false);
+      expect(await readdir(directory)).toEqual([]);
+      const opened = await openProductionConnector({ stateDirectory: directory,
+        appOrigin: 'https://khala.aiur.team', browserBundleDirectory: path.join(directory, 'substrate-browser'),
+        session: first, sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+        inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
+        openBrowser: async () => undefined, openInbox: async () => undefined });
+      await opened.close();
+      // A pending pair has state, but ordinary tools and hooks still need an admitted binding.
+      expect(await hasProductionBinding(directory, first)).toBe(false);
+      const [session] = await readdir(directory);
+      const marker = path.join(directory, session!, 'current-binding.json');
+      await writeFile(marker, '{}');
+      expect(await hasProductionBinding(directory, first)).toBe(true);
+      expect(await hasProductionBinding(directory, other)).toBe(false);
+      await rm(marker);
+      await mkdir(path.join(directory, 'target'));
+      await symlink(path.join(directory, 'target'), marker);
+      expect(await hasProductionBinding(directory, first)).toBe(false);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
   it('distinguishes offline recovery, unsupported substrate, and unknown catch-up from live intake', () => {
     expect(subscriptionDiagnostic({ kind: 'offline', retryAt: null })).toEqual({
       prerequisite: 'offline', errorCode: 'subscription_offline',

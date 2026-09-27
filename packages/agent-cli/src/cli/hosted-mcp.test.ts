@@ -25,7 +25,8 @@ function call(id: number, name: string, meta: Record<string, unknown> | undefine
   } };
 }
 
-async function serve(requests: readonly ReturnType<typeof call>[], hostedSession: NonNullable<CliDependencies['hostedSession']>) {
+async function serve(requests: readonly ReturnType<typeof call>[], hostedSession: NonNullable<CliDependencies['hostedSession']>,
+  hostedBindingPresent?: NonNullable<CliDependencies['hostedBindingPresent']>) {
   const stdout = new PassThrough(); const stderr = new PassThrough(); let output = '';
   stdout.on('data', chunk => { output += String(chunk); });
   const stdin = Readable.from([requests.map(request => `${JSON.stringify(request)}\n`).join('')]);
@@ -37,6 +38,7 @@ async function serve(requests: readonly ReturnType<typeof call>[], hostedSession
     internalClient: async () => createUnavailableClient(),
     internalDelivery: async () => unavailableDelivery,
     hostedSession,
+    ...(hostedBindingPresent ? { hostedBindingPresent } : {}),
   })).toBe(0);
   return output.trim().split('\n').map(line => JSON.parse(line) as { result: { structuredContent: unknown } });
 }
@@ -49,17 +51,19 @@ describe('installed hosted MCP routing', () => {
       client: { ...createUnavailableClient(), pair },
       inbox: async () => { throw new Error('unbound route must not open hosted inbox'); }, close,
     }));
+    const hostedBindingPresent = vi.fn(async () => false);
     const replies = await serve([
       call(1, 'khala_pair', undefined),
       call(2, 'khala_read', { threadId: THREAD }),
       call(3, 'khala_pair', { threadId: THREAD }),
       call(4, 'khala_pair', { threadId: THREAD }),
-    ], hostedSession);
+    ], hostedSession, hostedBindingPresent);
     expect(replies[0]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
     expect(replies[1]?.result.structuredContent).toEqual({ kind: 'refused', code: 'not_connected' });
     expect(replies[2]?.result.structuredContent).toEqual({ ok: false, v: 1, error: 'approval_pending', reason: 'approval_timeout', retryable: true });
     expect(replies[3]?.result.structuredContent).toEqual(replies[2]?.result.structuredContent);
     expect(hostedSession).toHaveBeenCalledExactlyOnceWith({ harness: 'codex', sessionId: THREAD });
+    expect(hostedBindingPresent).toHaveBeenCalledExactlyOnceWith({ harness: 'codex', sessionId: THREAD });
     expect(pair).toHaveBeenCalledTimes(2);
     expect(close).toHaveBeenCalledOnce();
   });

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { access, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -41,6 +41,21 @@ function productionLimits() {
 }
 
 const execFileAsync = promisify(execFile);
+function productionSessionDirectory(root: string, session: SessionClaim): string {
+  return path.join(root, createHash('sha256').update(JSON.stringify([
+    'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
+  ])).digest('hex'));
+}
+
+/** A native call may resume an admitted hosted binding without creating state for an unpaired session. */
+export async function hasProductionBinding(root: string, session: SessionClaim): Promise<boolean> {
+  try { return (await lstat(path.join(productionSessionDirectory(root, session), 'current-binding.json'))).isFile(); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 export function supportedBrowserVersion(output: string): boolean {
   const match = /^(?:Chromium|Google Chrome(?: for Testing)?) (\d+)\./u.exec(output.trim());
   return match !== null && Number(match[1]) >= 150 && Number(match[1]) <= 153;
@@ -97,9 +112,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     } catch { /* Try the next installed executable. */ }
   }
   if (!chromiumExecutablePath) throw new Error('chromium_unavailable_run_khala_setup');
-  const sessionDirectory = path.join(input.stateDirectory, createHash('sha256').update(JSON.stringify([
-    'khala.hosted.session.v1', input.session.harness, input.session.sessionId, input.session.workdir,
-  ])).digest('hex'));
+  const sessionDirectory = productionSessionDirectory(input.stateDirectory, input.session);
   const stateDirectory = path.join(sessionDirectory, 'state');
   const markerFile = path.join(sessionDirectory, 'current-binding.json');
   await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });

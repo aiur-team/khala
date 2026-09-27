@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { INTERNAL_ACTIVE_DESCRIPTOR_FILE } from '@khala/contracts/internal/descriptor';
-import { openProductionConnector } from '@khala/connector-app/composition/production';
+import { hasProductionBinding, openProductionConnector } from '@khala/connector-app/composition/production';
 import { runCli } from './app.js';
 import { openInbox } from './inbox.js';
 import { bundledInternalRuntime } from './internal.js';
@@ -77,6 +77,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         openConnector: openProductionConnector, environment: process.env, stateDirectory,
         distDirectory, workdir: process.cwd(), openInbox: openGenerationInbox,
       }),
+      hostedBindingPresent: session => hasProductionBinding(path.join(stateDirectory, 'hosted'),
+        { ...session, workdir: path.resolve(process.cwd()) }),
       ...(setup === undefined ? {} : { setup }),
       stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: abort.signal,
       internal: bundledInternalRuntime(import.meta.url), env: process.env, cwd: process.cwd(),

@@ -162,6 +162,8 @@ export type CliDependencies = Readonly<{
   hostedSession?: (session: HarnessSession) => Promise<Readonly<{
     client: AgentClientPort; inbox: OpenGenerationInbox; close(): Promise<void>;
   }>>;
+  /** Read-only exact-session fence before an ordinary tool or hook resumes hosted state. */
+  hostedBindingPresent?: (session: HarnessSession) => Promise<boolean>;
   claude?: ClaudeSessionClient;
   /** Setup planning and configuration status. The production composition always supplies it. */
   setup?: SetupService;
