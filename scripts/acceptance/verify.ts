@@ -64,13 +64,22 @@ function verifyTickets(input: VerifyInput, checks: Check[]): void {
 }
 
 function verifyIdentities(input: VerifyInput, checks: Check[]): void {
+  const sessions = input.roles.map(entry => entry.session).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+  if (sessions.length === 2 && (sessions[0]!.pid === sessions[1]!.pid
+    || (sessions[0]!.harness === sessions[1]!.harness && sessions[0]!.sessionId === sessions[1]!.sessionId))) {
+    check(checks, 'distinct-native-sessions', 'fail', 'the two tickets share a native process or session identity');
+  } else if (sessions.length < 2) {
+    check(checks, 'distinct-native-sessions', 'unproven', 'both native sessions are required');
+  } else {
+    check(checks, 'distinct-native-sessions', 'pass', 'one native process and session per ticket');
+  }
   for (const expected of input.profile.roles) {
     const record = role(input, expected.role);
     const session = record?.session ?? null;
     const name = `native-session:${expected.role}`;
     if (!session) {
       check(checks, name, 'unproven', 'the Executor recorded no native CLI session for this ticket');
-    } else if (session.harness !== expected.harness || session.provider !== expected.provider || session.model !== expected.model) {
+    } else if (session.harness !== expected.harness || session.provider !== expected.provider || session.model !== expected.model || session.cliVersion !== expected.cliVersion) {
       check(checks, name, 'fail', `recorded ${session.harness}/${session.provider}/${session.model}, expected ${expected.harness}/${expected.provider}/${expected.model}`);
     } else {
       check(checks, name, 'pass', `${session.harness} ${session.cliVersion} pid ${session.pid}`);

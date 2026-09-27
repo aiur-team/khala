@@ -10,7 +10,7 @@ import type { ListeningMode } from '../../packages/contracts/src/delivery/listen
 import { planModes } from './profile';
 import { controllerLine, markersFor, ownershipLine, ticketPrompt, ticketTitle } from './prompt';
 import {
-  ACCEPTANCE_LABEL, type AccessRequest, type ChannelSnapshot, type IssueRecord, type LaunchedServer, type Markers,
+  ACCEPTANCE_LABEL, DRIVER_MODEL_LABEL, type AccessRequest, type ChannelSnapshot, type IssueRecord, type LaunchedServer, type Markers,
   type ModeRequest, type OwnerSession, type Profile, type ProfileRole, type RoleName, type RoleRecord, type RunReport,
   type RunnerDeps, type StagedPackage, type StopRecord, type StopTarget, type TimelineEvent,
 } from './types';
@@ -80,7 +80,10 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
 
   const report = (verdict: RunReport['verdict'], checks: RunReport['checks']): RunReport => ({
     profile: profile.name, repository: profile.repository, khalaPackage: staged?.record ?? null, verdict, checks, modes: plan,
-    roles: roles.map(({ role, ticket, session, target }) => ({ role, ticket, session, target })),
+    roles: roles.map(({ role, ticket, session, target }) => ({
+      role, ticket, target,
+      session: session ? { harness: session.harness, provider: session.provider, model: session.model, cliVersion: session.cliVersion, pid: session.pid } : null,
+    })),
     stop, launcherClosed, cleanup, unexpectedPullRequests: pullRequests, errors, status,
   });
 
@@ -104,7 +107,7 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
       // Before any process starts: a tarball whose digest does not match refuses the run.
       staged = await deps.package.stage(profile.khalaPackage);
       status = (await deps.status.status(staged.spec)).output;
-      const labels = [ACCEPTANCE_LABEL, profile.dispatchLabel, ...profile.roles.flatMap(role => role.labels)];
+      const labels = [ACCEPTANCE_LABEL, profile.dispatchLabel, DRIVER_MODEL_LABEL];
       await deps.github.preflight(profile.repository, [...new Set(labels)]);
     } catch (error) {
       throw new Refused(`preflight failed: ${(error as Error).message}`);
@@ -122,13 +125,14 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
           repository: profile.repository,
           title: ticketTitle(profile, role, markers),
           body: ticketPrompt({ profile, role, markers, plan, channelUrl: owner.channelUrl }),
-          labels: [ACCEPTANCE_LABEL, profile.dispatchLabel, ...role.labels],
+          labels: [ACCEPTANCE_LABEL, profile.dispatchLabel, DRIVER_MODEL_LABEL],
         });
         roles.push({ role: role.role, ticket: issue.number, session: null, target: null, granted: false });
         controller.note(`created #${issue.number} for role ${role.role.toUpperCase()}`);
+        controller.note(`Executor fixture: capture native session for run ${options.runId}, ticket ${issue.number}, role ${role.role} before joining the channel`);
       }
 
-      await grantPair(deps, owner, profile, roles, waitFor);
+      await grantPair(deps, owner, profile, options.runId, roles, waitFor);
 
       await waitFor('both binding announcements', async () => {
         const announced = announcedTargets(await owner!.timeline(), markers);
@@ -150,14 +154,15 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
         await waitFor(`the ${mode} handshake`, async () => ((await owner!.timeline()).some(event => event.body === final) ? true : null));
       }
       await owner.say(controllerLine.hold(markers), `acc-${options.runId}-hold`);
-      stop = await guardedStop(deps, owner, server, roles, markers);
+      for (const record of roles) record.session = await deps.aiur.session(record.ticket, options.runId, record.role);
+      stop = await guardedStop(deps, owner, server, roles, markers, options.runId);
     } catch (error) {
       if (error instanceof Refused) refused = error.message;
       errors.push((error as Error).message);
     } finally {
       // A timeout or failure before Stop still stops whatever was bound.
       if (owner && !stop && roles.some(record => record.target)) {
-        try { stop = await guardedStop(deps, owner, server, roles, markers); } catch (error) { errors.push(`stop: ${(error as Error).message}`); }
+        try { stop = await guardedStop(deps, owner, server, roles, markers, options.runId); } catch (error) { errors.push(`stop: ${(error as Error).message}`); }
       }
       if (owner) {
         try { timeline = await owner.timeline(); } catch (error) { errors.push(`timeline: ${(error as Error).message}`); }
@@ -207,12 +212,13 @@ async function grantPair(
   deps: RunnerDeps,
   owner: OwnerSession,
   profile: Profile,
+  runId: string,
   roles: MutableRole[],
   waitFor: <T>(what: string, probe: () => Promise<T | null>) => Promise<T>,
 ): Promise<void> {
   const expected = (record: MutableRole): ProfileRole => profile.roles.find(role => role.role === record.role)!;
   await waitFor('both access grants', async () => {
-    for (const record of roles) record.session ??= await deps.aiur.session(record.ticket);
+    for (const record of roles) record.session = await deps.aiur.session(record.ticket, runId, record.role);
     const pending = (await owner.accessRequests()).filter(request => request.outcome === 'pending_owner');
     for (const record of roles.filter(entry => !entry.granted)) {
       const role = expected(record);
@@ -228,6 +234,9 @@ async function grantPair(
         request = candidates[0];
       }
       if (!request) continue;
+      if (record.session && !(Date.parse(request.createdAt) > Date.parse(record.session.capturedAt))) {
+        throw new Refused(`role ${record.role} requested Khala access before its native fixture was captured`);
+      }
       const confirmed = await deps.controller.confirmGrant({
         ticket: record.ticket, role: record.role, harness: role.harness, sessionFingerprint: request.sessionFingerprint, verified,
       });
@@ -245,13 +254,15 @@ async function guardedStop(
   server: LaunchedServer,
   roles: readonly MutableRole[],
   markers: Markers,
+  runId: string,
 ): Promise<StopRecord> {
   const sessions = roles.map(record => record.session);
   const alive = async () => Promise.all(sessions.map(async (session, index) => {
     if (!session || !(await deps.aiur.alive(session))) return false;
     // Same identity: the Executor still records this exact session for the ticket.
-    const current = await deps.aiur.session(roles[index]!.ticket);
-    return current !== null && current.sessionId === session.sessionId && current.pid === session.pid;
+    const current = await deps.aiur.session(roles[index]!.ticket, runId, roles[index]!.role);
+    return current !== null && current.sessionId === session.sessionId && current.pid === session.pid
+      && current.processStartTicks === session.processStartTicks && current.bootId === session.bootId;
   }));
   const aliveBefore = await alive();
   const targets = roles.map(record => record.target);

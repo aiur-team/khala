@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { promisify } from 'node:util';
-import { aiurLogs } from './adapters/aiur';
+import { aiurRecords } from './adapters/aiur';
 import { ghGitHub } from './adapters/github';
 import { npxLauncher } from './adapters/launcher';
 import { packageStager } from './adapters/package';
@@ -88,7 +88,7 @@ async function main(): Promise<number> {
     package: packageStager(path.join(state, 'khala-acceptance', 'packages')),
     status: npxStatus(),
     github: ghGitHub(),
-    aiur: aiurLogs(process.env.AIUR_LOGS_ROOT || path.join(os.homedir(), '.aiur', 'logs'), profile.repository),
+    aiur: aiurRecords(path.join(state, 'khala-acceptance', 'native-sessions'), profile.repository),
     launcher: npxLauncher(),
     snapshot: storeSnapshot(path.join(state, 'khala', 'internal')),
     controller: terminalController(),
