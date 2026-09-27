@@ -6,6 +6,7 @@
 // member syncs a channel. Imported history must reach none of them.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { EventRef } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/index';
@@ -57,7 +58,7 @@ async function convert(defect: ProviderDefect | null): Promise<Run> {
     runId: `make-external-${defect ?? 'honest'}`, mode: 'fake-contract', owners: fakeEnvironment(['builder', 'reviewer', 'author']).owners,
     sources: fakeSources,
   });
-  const root = fs.mkdtempSync('/tmp/khala-e2e-make-external-');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-e2e-make-external-'));
   const channel = seedInternalChannel({ root, messages: HISTORY });
   const ledgerDir = path.join(root, 'ledger');
   fs.mkdirSync(ledgerDir, { mode: 0o700 });

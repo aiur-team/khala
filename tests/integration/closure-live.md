@@ -4,8 +4,10 @@ Run from the repository root with Node 22, Docker Compose, Chromium, OpenSSL, an
 
 ```sh
 mkdir -p "$HOME/.cache/khala-closure-tmp"
-TMPDIR="$HOME/.cache/khala-closure-tmp" pnpm exec tsx --conditions=khala-source scripts/acceptance/closure-live.ts
+TMPDIR="$HOME/.cache/khala-closure-tmp" pnpm exec tsx --conditions=khala-source tests/integration/closure-live.ts
 ```
+
+This disposable component fixture is separate from the guarded Executor runner in `scripts/acceptance/` and starts no native agent CLI.
 
 The runner creates a unique disposable Synapse 1.161.0/Postgres 16 Docker project, a private SQLite control-store CAS fixture, two connector storage directories, and two Chromium profiles. It removes the Docker project and volumes, config, profiles, and SQLite data in `finally`. A failed assertion produces a sanitized error code; no Matrix tokens, passwords, ciphertext, or room identifiers are printed. Check `docker ps --format '{{.Names}}'` for `khala-closure-*` after a run if interrupted by a signal.
 
