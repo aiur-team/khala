@@ -640,7 +640,9 @@ describe('Claude delivery through the internal launcher', () => {
     const paused = await call(session.report.origin, { method: 'POST', path: `${binding}/pause`, headers: session.owner,
       body: { v: 1, generation: entry.binding.generation, paused: true } });
     expect(paused.json).toMatchObject({ paused: true });
+    const beforeHeldPost = fs.readFileSync(signal, 'utf8');
     await session.post('held while paused');
+    expect(fs.readFileSync(signal, 'utf8')).toBe(beforeHeldPost);
     const pausedEvent = await runHook('file-changed', JSON.stringify({ hook_event_name: 'FileChanged',
       session_id: nativeSession, file_path: signal, event: 'change' }), deps);
     expect(pausedEvent.exitCode).toBe(0);

@@ -110,6 +110,23 @@ describe('session keying', () => {
     expect(khala.ops(A)).toEqual(['hook', 'pull']);
   });
 
+  it('refuses a revoked binding even if a stale adapter still reports a pending sync release', async () => {
+    const { khala, deps, stop, stateRoot } = setup();
+    khala.bind(A, 'sync');
+    await stop(A);
+    const signal = claudeWakeSignalPath(stateRoot, A)!;
+    fs.writeFileSync(signal, '1', { mode: 0o600 });
+    const stale = {
+      ...deps,
+      bound: async () => false,
+      khala: async (op: string) => ({ code: 0, stdout: `${JSON.stringify(op === 'watch'
+        ? { ok: true, kind: 'hook', effective: 'sync', watchSeconds: 600, access: null }
+        : { ok: true, kind: 'pending' })}\n` }),
+    };
+    await expect(runHook('file-changed', hookInput('FileChanged', A, { file_path: signal, event: 'change' }), stale))
+      .resolves.toEqual(silent);
+  });
+
   // Wrong-implementation test: a cwd-keyed runtime fails it.
   it('delivers zero cross-session releases for two sessions in one cwd racing pulls', async () => {
     const { khala, postTool, stop, prompt } = setup();
