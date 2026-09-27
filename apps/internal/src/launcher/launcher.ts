@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { isInternalChannelArgument } from '@khala/contracts/internal/command';
-import { LOCAL_AUTOMATION_LIMITS } from '@khala/policy/listening-mode/limits';
 import {
   activeDescriptorPath, ensurePrivateDirectory, removeActiveDescriptor, removeLaunchRecord,
   writeActiveDescriptor, writeLaunchRecord,
@@ -12,7 +11,6 @@ import { type BindingControl, composeBindingControl } from '../composition/bindi
 import { composeBindingModes } from '../composition/binding-modes/index';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
 import { composeClaudeSession, inspectClaudeRoute } from '../composition/claude-session/compose';
-import { createLocalAutomationProvider } from '../composition/local-automation/provider';
 import { RECEIPT_LOG_FILE, composeInternalReceipts } from '../composition/receipt-projection';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
 import { resumeInternalChannel } from '../lifecycle/resume';
@@ -293,7 +291,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
         stateDirectory: path.dirname(root), claude: claudeRoute });
       const claude = await composeClaudeSession({
         root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
-        automation: createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS), pause: modes.pause,
+        pause: modes.pause,
       });
       bindingControl = composeBindingControl({
         handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,

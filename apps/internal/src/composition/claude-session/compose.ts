@@ -30,13 +30,14 @@ import {
 } from '@khala/contracts/internal/discovery-descriptor';
 import { MAX_CHANNEL_ACCESS_REQUESTER_PENDING, type RoomId } from '@khala/contracts/messaging/index';
 import { installedClaudeCapabilities } from '@khala/harnesses/claude/interactive';
+import { LOCAL_AUTOMATION_LIMITS } from '@khala/policy/listening-mode/limits';
 import { activeDescriptorPath, writePrivateFile } from '../../descriptor/write';
 import type { AgentSessionRoute } from '../../server/channel-server';
 import type { ChannelStore } from '../../store/channel-store';
 import type { BindingPauseStore } from '../../store/pause-store';
 import { discoveryPrincipal, sessionDigest } from '../channel-discovery/service';
 import { issueDiscoveryDescriptor } from '../discovery-descriptor';
-import { localClaudeWatchWindow, type LocalAutomationProvider } from '../local-automation/provider';
+import { createLocalAutomationProvider, localClaudeWatchWindow } from '../local-automation/provider';
 
 // The Claude plugin's session route in the internal launcher's server. Hooks and the
 // plugin's `mcp-serve` present the launch's transport capability from `active.json`
@@ -91,7 +92,6 @@ export type ClaudeSessionCompositionOptions = Readonly<{
   clock?: () => number;
   /** The route claim for the installed Claude Code, from `inspectClaudeRoute`. */
   capabilities: HarnessCapabilities;
-  automation: LocalAutomationProvider;
   pause: BindingPauseStore;
 }>;
 
@@ -114,6 +114,7 @@ export type ClaudeSessionComposition = Readonly<{ adapter: ClaudeSessionAdapter;
 
 export async function composeClaudeSession(options: ClaudeSessionCompositionOptions): Promise<ClaudeSessionComposition> {
   const { root, store } = options;
+  const automation = createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS);
   const expected = Buffer.from(options.transportCapability);
   const paths = (sessionId: string) => {
     const directory = path.join(root, INTERNAL_DISCOVERY_DIRECTORY, discoveryPrincipal(CLAUDE_HARNESS, sessionId));
@@ -370,7 +371,7 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       if (paused !== false) return null;
       const mode = await modes.read();
       if (!mode.ok) return null;
-      return localClaudeWatchWindow(options.automation, binding, active, mode.view, paused);
+      return localClaudeWatchWindow(automation, binding, active, mode.view, paused);
     };
     const read = new ReadOperation({
       heldBinding: binding,
