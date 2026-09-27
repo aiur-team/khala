@@ -72,6 +72,9 @@ const SESSION = 'ses_khala_plugin_a';
 const DIRECTORY = '/work/project';
 const MODEL = { providerID: 'anthropic', modelID: 'claude-sonnet-5' };
 
+/** Owner message transaction IDs, unique across a launch and its resume. */
+let sent = 0;
+
 /** A launcher whose state root is `$XDG_STATE_HOME/khala/internal`, where the plugin looks. */
 async function launched() {
   const state = fs.mkdtempSync('/tmp/khala-opencode-');
@@ -79,11 +82,20 @@ async function launched() {
   vi.stubEnv('XDG_STATE_HOME', state);
   const root = path.join(state, 'khala', 'internal');
   fs.mkdirSync(path.dirname(root), { mode: 0o700 });
-  const outcome = await launchInternal({
-    root, assets: webBundleManifest(fixtureBundle), request: { kind: 'create' }, startPort: 0,
-  });
+  return launch(root, { kind: 'create' }, 0);
+}
+
+/** `khala internal --resume` of the world's channel on the same port, after its launcher closed. */
+async function resumed(w: World) {
+  await w.shutdown();
+  return launch(w.root, { kind: 'resume', channelId: w.report.channelId }, Number(new URL(w.report.origin).port));
+}
+
+async function launch(root: string, request: Parameters<typeof launchInternal>[0]['request'], startPort: number) {
+  const outcome = await launchInternal({ root, assets: webBundleManifest(fixtureBundle), request, startPort });
   if (outcome.kind !== 'running') throw new Error(`launch failed: ${outcome.code}`);
-  cleanups.push(() => outcome.shutdown());
+  const shutdown = () => outcome.shutdown();
+  cleanups.push(shutdown);
   const { report } = outcome;
   const fragment = new URLSearchParams(new URL(report.url).hash.slice(1));
   const session = await call(report.origin, {
@@ -96,10 +108,10 @@ async function launched() {
     'x-khala-request-secret': session.json.requestSecret as string,
     origin: report.origin,
   };
-  let sent = 0;
   return {
     root,
     report,
+    shutdown,
     owner,
     channelUrl: `${report.origin}/channels/${report.channelId}`,
     async say(body: string): Promise<string> {
@@ -297,6 +309,66 @@ describe('the installed OpenCode plugin against the internal launcher', () => {
     await new Promise(resolve => setTimeout(resolve, 500));
     expect(prompts).toEqual([]);
   });
+
+  it('keeps delivering to the idle session after khala internal --resume, with no join and no hook', async () => {
+    const w = await launched();
+    await bind(w, SESSION);
+    const { client, prompts } = openCode();
+    const hooks = await loadPlugin(client, '1.17.10');
+    await hooks['tool.execute.after']({ tool: 'bash', sessionID: SESSION });
+    await eventually(() => ownerView(w), current => current.support.sync?.status === 'proven');
+    await w.say('meet at the north door');
+    await eventually(() => prompts.length, count => count === 1);
+    const first = plugin.parseOpenCodeEnvelope(prompts[0]!.text)!;
+    expect(JSON.parse(await hooks.tool.khala_send.execute({ message: 'on my way', ackBatchToken: first.token }, { sessionID: SESSION })))
+      .toMatchObject({ kind: 'accepted' });
+
+    // The resumed launcher refuses the capability the plugin holds; the binding itself is live.
+    const again = await resumed(w);
+    await again.say('bring the map');
+    await eventually(() => prompts.length, count => count === 2);
+    expect(prompts[1]!.text).toContain('bring the map');
+    expect(prompts[1]!.text).not.toContain('meet at the north door');
+    const next = plugin.parseOpenCodeEnvelope(prompts[1]!.text)!;
+    expect(JSON.parse(await hooks.tool.khala_send.execute({ message: 'got it', ackBatchToken: next.token }, { sessionID: SESSION })))
+      .toMatchObject({ kind: 'accepted' });
+    expect(JSON.parse(await hooks.tool.khala_read.execute({}, { sessionID: SESSION }))).toEqual({ kind: 'empty' });
+  }, 20_000);
+
+  it('restores the binding on the next Khala call after a hook saw the launcher down, and Stop still ends it', async () => {
+    const w = await launched();
+    await bind(w, SESSION);
+    const { client, prompts } = openCode();
+    const hooks = await loadPlugin(client, '1.17.10');
+    await hooks['tool.execute.after']({ tool: 'bash', sessionID: SESSION });
+    await eventually(() => ownerView(w), current => current.support.sync?.status === 'proven');
+
+    // While no launcher runs, the plugin is honestly not connected.
+    await w.shutdown();
+    const notConnected = JSON.stringify({ kind: 'refused', code: 'not_connected' });
+    expect(await hooks.tool.khala_read.execute({}, { sessionID: SESSION })).toBe(notConnected);
+
+    const again = await resumed(w);
+    await again.say('meet at the north door');
+    const read = batchOf(await eventually(
+      () => hooks.tool.khala_read.execute({}, { sessionID: SESSION }),
+      result => result.includes('meet at the north door'),
+    ));
+    expect(JSON.parse(await hooks.tool.khala_read.execute({ ackBatchToken: read.token }, { sessionID: SESSION })))
+      .toEqual({ kind: 'empty' });
+
+    // Stop on the resumed launch is final: the plugin never restores a revoked binding.
+    const stopped = await call(again.report.origin, {
+      method: 'POST', path: `/api/v1/channels/${again.report.channelId}/stop`, headers: again.owner, body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+    await again.say('bring the map');
+    await hooks['tool.execute.after']({ tool: 'bash', sessionID: SESSION });
+    expect(await eventually(() => hooks.tool.khala_read.execute({}, { sessionID: SESSION }), result => result === notConnected))
+      .toBe(notConnected);
+    await new Promise(resolve => setTimeout(resolve, 1_500));
+    expect(prompts.filter(prompt => prompt.text.includes('bring the map'))).toEqual([]);
+  }, 20_000);
 
   it('serves only the session that holds the grant', async () => {
     const w = await launched();
