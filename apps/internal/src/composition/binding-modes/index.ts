@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
 import type { RoomId } from '@khala/contracts/messaging/index';
 import type { CodexIdleWakePort } from '@khala/harnesses/codex/idle-wake';
@@ -13,6 +14,7 @@ import { createInternalReleaseFeed } from '../internal-delivery/release-feed';
 import { createLocalListeningModeStore } from '../local-transport/listening-mode-store';
 import { createCodexIdleActivity } from '@aiur/khala/composition/codex-idle-activity';
 import { internalSessionDigest } from '@aiur/khala/composition/internal-session';
+import { readOpenCodeTerminalId } from '@aiur/khala/composition/internal-turn-end';
 import { createServerHarnessCapabilities } from './capabilities';
 import { composeCodexIdleWake } from './codex-idle-wake';
 import { createLocalAutomationProvider } from '../local-automation/provider';
@@ -32,6 +34,11 @@ export type BindingModesComposition = Readonly<{
   /** Owner and agent mode control, plus the owner's pause. */
   control: BindingModeOptions;
 }>;
+
+function terminalEpoch(terminalId: string): string {
+  const hash = createHash('sha256').update('khala-local-terminal-v1\0').update(terminalId).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+}
 
 export function composeBindingModes(input: Readonly<{
   handle: InternalStoreHandle;
@@ -56,15 +63,23 @@ export function composeBindingModes(input: Readonly<{
     const control = listeningModes.read(binding);
     return control.kind === 'record' ? listeningModeView(control.control, harnesses.capabilities(binding)) : null;
   };
+  const claimedTerminalEpoch = (binding: SessionBinding): string | null => {
+    if (binding.harness === 'codex') return codexActivity.idleEpochSync(binding);
+    if (binding.harness === 'opencode') {
+      const id = readOpenCodeTerminalId(input.stateDirectory, binding);
+      return id === null ? null : terminalEpoch(id);
+    }
+    return null;
+  };
   const reservePeer = (binding: SessionBinding, event: Parameters<NonNullable<BindingModeOptions['peerWake']>>[1]) => {
     const result = automation.reserve({ recipient: binding, event, mode: modeView(binding),
-      claimedIdleEpoch: binding.harness === 'codex' ? codexActivity.idleEpochSync(binding) : null });
+      claimedIdleEpoch: claimedTerminalEpoch(binding) });
     return result.kind === 'held' ? result.reason : result.state === 'reserved';
   };
   const pendingPeer = (binding: SessionBinding, channelId: string) => {
     if (binding.harness === 'codex' && codexActivity.idleEpochSync(binding) === null) return false;
     const result = automation.nextPending({ recipient: binding, channelId, mode: modeView(binding),
-      claimedIdleEpoch: binding.harness === 'codex' ? codexActivity.idleEpochSync(binding) : null });
+      claimedIdleEpoch: claimedTerminalEpoch(binding) });
     return result !== null && result.kind !== 'held' && result.state === 'reserved';
   };
   const idleWake = composeCodexIdleWake({ store: input.store, modes: listeningModes, pause,
@@ -87,6 +102,18 @@ export function composeBindingModes(input: Readonly<{
       idleWake,
       idleSession: async binding => (await codexActivity.idleSession(binding))?.sessionId ?? null,
       turnEnd: async (binding, sessionId, channelId, terminalId, notBarred) => {
+        if (binding.harness === 'opencode') {
+          if (!terminalId || binding.sessionId !== internalSessionDigest('opencode', sessionId)
+            || !notBarred() || readOpenCodeTerminalId(input.stateDirectory, binding) !== terminalId) return false;
+          const live = input.store.sessionBinding({ bindingId: binding.bindingId, harness: binding.harness,
+            sessionId: binding.sessionId });
+          if (live.kind !== 'done' || live.binding?.generation !== binding.generation
+            || input.store.channel({ channelId: channelId as RoomId,
+              participantId: binding.agentParticipantId }).kind !== 'done' || !notBarred()) return false;
+          automation.finishEnded({ recipient: binding, channelId, epoch: terminalEpoch(terminalId) });
+          pendingPeer(binding, channelId);
+          return true;
+        }
         const idle = await codexActivity.idleSession(binding);
         if (binding.harness !== 'codex' || binding.sessionId !== internalSessionDigest('codex', sessionId)
           || terminalId !== null || !notBarred() || idle?.sessionId !== sessionId
