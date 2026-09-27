@@ -33,19 +33,28 @@ function subject(outcomes: ('queued' | 'not_started')[] = []) {
   const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-server-wake-'));
   directories.push(stateDirectory);
   let live = true;
+  let liveGeneration = binding.generation;
   let paused = false;
   let requested: 'steer' | 'sync' | 'async' = 'sync';
+  let duringInspection: () => void = () => {};
+  let inspections = 0;
   const runs: string[][] = [];
   const wake = composeCodexIdleWake({ stateDirectory,
-    store: { sessionBinding: () => ({ kind: 'done', binding: live ? binding : null }) } as unknown as ChannelStore,
+    store: { sessionBinding: () => ({ kind: 'done', binding: live ? { ...binding, generation: liveGeneration } : null }) } as unknown as ChannelStore,
     modes: { read: () => ({ kind: 'record', control: { bindingId: binding.bindingId,
       generation: binding.generation, requested, version: 1, experimentalGrants: [], hardCancelGrants: [],
       lastChangedBy: { kind: 'agent', bindingId: binding.bindingId, generation: binding.generation } } }) } as unknown as SqliteListeningModeRepository,
     pause: { read: () => paused } as unknown as BindingPauseStore,
-    harnesses: { capabilities: () => capabilities, observe() {}, revalidateCodex: async () => true },
+    harnesses: { capabilities: () => capabilities, observe() {}, revalidateCodex: async () => {
+      inspections += 1;
+      duringInspection();
+      return true;
+    } },
     port: { run: async argv => { runs.push([...argv]); return { status: outcomes.shift() ?? 'queued' }; } },
   });
   return { stateDirectory, wake, runs, stop: () => { live = false; }, pause: () => { paused = true; },
+    stale: () => { liveGeneration += 1; }, inspections: () => inspections,
+    duringInspection: (change: () => void) => { duringInspection = change; },
     mode: (value: typeof requested) => { requested = value; } };
 }
 
@@ -145,6 +154,42 @@ describe('owner-composed native idle wake', () => {
     await s.wake(binding, 'foreign-thread', () => true);
     s.stop();
     await s.wake(binding, native, () => true);
+    expect(s.runs).toEqual([]);
+  });
+
+  it('holds an unpaused stopped binding before inspecting the installation', async () => {
+    const s = subject();
+    await createCodexIdleActivity(s.stateDirectory).mark(binding, true, native);
+    s.stop();
+    await s.wake(binding, native, () => true);
+    expect(s.inspections()).toBe(0);
+    expect(s.runs).toEqual([]);
+  });
+
+  it('holds an unpaused stale generation before inspecting the installation', async () => {
+    const s = subject();
+    await createCodexIdleActivity(s.stateDirectory).mark(binding, true, native);
+    s.stale();
+    await s.wake(binding, native, () => true);
+    expect(s.inspections()).toBe(0);
+    expect(s.runs).toEqual([]);
+  });
+
+  it('rechecks an unpaused Stop after installation inspection', async () => {
+    const s = subject();
+    await createCodexIdleActivity(s.stateDirectory).mark(binding, true, native);
+    s.duringInspection(() => s.stop());
+    await s.wake(binding, native, () => true);
+    expect(s.inspections()).toBe(1);
+    expect(s.runs).toEqual([]);
+  });
+
+  it('rechecks an unpaused stale generation after installation inspection', async () => {
+    const s = subject();
+    await createCodexIdleActivity(s.stateDirectory).mark(binding, true, native);
+    s.duringInspection(() => s.stale());
+    await s.wake(binding, native, () => true);
+    expect(s.inspections()).toBe(1);
     expect(s.runs).toEqual([]);
   });
 
