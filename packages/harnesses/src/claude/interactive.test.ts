@@ -17,13 +17,18 @@ describe('interactive Claude capabilities', () => {
     const capabilities = interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits, proven);
     expect(decodeHarnessCapabilities(capabilities)).toEqual({ ok: true, value: capabilities });
     expect(capabilities).toMatchObject({ support: 'tested', acknowledgement: 'batch_token_next_call', version: '2.1.283' });
-    expect(statuses(capabilities)).toEqual(['proven', 'proven', 'proven']);
+    expect(statuses(capabilities)).toEqual(['proven', 'experimental', 'proven']);
     expect(capabilities.immediateNotification).toBe('unknown');
     for (const mode of Object.values(capabilities.modes)) {
       expect(mode).toMatchObject({ evidenceRef: CLAUDE_INTERACTIVE_MODE_EVIDENCE_REF,
         evidenceRevision: CLAUDE_INTERACTIVE_MODE_EVIDENCE_REVISION, testedVersion: '2.1.283' });
     }
     expect(capabilities.modes.steer.reason).toContain('3000 seconds');
+    expect(capabilities.modes.sync).toMatchObject({
+      status: 'experimental', evidenceRef: CLAUDE_INTERACTIVE_MODE_EVIDENCE_REF,
+      evidenceRevision: CLAUDE_INTERACTIVE_MODE_EVIDENCE_REVISION,
+    });
+    expect(capabilities.modes.sync.reason).toContain('after watcher timeout without a user prompt');
     expect(capabilities.modes.sync.reason).toContain('next native turn');
     expect(capabilities.modes.async.reason).toContain('hooks do not automatically deliver');
   });
@@ -57,11 +62,12 @@ describe('interactive Claude capabilities', () => {
       limitations: { unboundedIdleWakeProven: boolean; agentToAgentAutomaticWakeProven: boolean };
     };
     expect(CLAUDE_INTERACTIVE_PROVEN).toEqual(proven);
-    expect(CLAUDE_INTERACTIVE_MODE_PROVEN).toEqual(['steer', 'sync', 'async'].map(mode =>
+    expect(CLAUDE_INTERACTIVE_MODE_PROVEN).toEqual(['steer', 'async'].map(mode =>
       ({ version: evidence.claim.version, route: evidence.claim.route, mode })));
     expect(evidence.claim).toMatchObject({ immediateNotification: 'unknown', watchWindowSeconds: 3000 });
     expect(evidence.limitations).toMatchObject({ unboundedIdleWakeProven: false, agentToAgentAutomaticWakeProven: false });
     expect(interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits).support).toBe('tested');
+    expect(interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits).modes.sync.status).toBe('experimental');
     expect(interactiveClaudeCapabilities('2.1.284', CLAUDE_INTERACTIVE_ROUTE, limits).support).toBe('experimental');
   });
 

@@ -1,10 +1,10 @@
 # Interactive Claude Code channel integration
 
-Status: research and installed-version proof complete, 2026-09-24; re-proven under normal trust settings per E09 decision 33. Deliverable slug: `interactive-claude`.
+Status: research and installed-version proof retained, 2026-09-24; native `sync` rearm after watcher timeout remains unproven. Deliverable slug: `interactive-claude`.
 
 ## Verdict
 
-The installed internal-mode route has a separate [Claude Code 2.1.283 native mode run](../../../experiments/internal-mode/listening-modes/claude/README.md). It proves `steer`, `sync`, and `async` on the exact `claude-interactive-hooks` route for human-authored releases; the earlier 2.1.282 research below is not the current installed-version claim. Idle `steer` and `sync` wake was observed 46 seconds after Stop, while the watcher was live. Its local limit is 3,000 seconds, after which messages wait until the next native turn. The static `immediateNotification` field stays `unknown`; neither unbounded idle wake nor autonomous agent-to-agent release is claimed.
+The installed internal-mode route has a separate [Claude Code 2.1.283 native mode run](../../../experiments/internal-mode/listening-modes/claude/README.md). It proves `steer` and `async` on the exact `claude-interactive-hooks` route for human-authored releases, and observes bounded `sync` delivery; the earlier 2.1.282 research below is not the current installed-version claim. Idle `steer` and `sync` wake was observed 46 seconds after Stop, while the watcher was live. Its local limit is 3,000 seconds, after which messages wait until the next native turn. The original plugin contract also requires a native automation-fenced rearm after a watcher timeout without another user prompt before `sync` is proven; the installed run did not test that boundary. `sync` therefore remains experimental. The static `immediateNotification` field stays `unknown`; neither unbounded idle wake nor autonomous agent-to-agent release is claimed.
 
 Claude Code 2.1.282 delivers all three Khala listening modes into an already-running interactive CLI session, and wakes an idle session for `steer` and `sync`. Khala does not need to launch, host, or resume Claude. Every proof session was **agent-launched with default settings**: the proof harness started the normal interactive TUI in a terminal it controlled, with no flags. No human started these sessions, so they are not "user-started"; they exercise the same binary, settings sources, and trust prompts a user's own session uses.
 
@@ -167,4 +167,4 @@ This proof exercised no `create`, `join`, or `who` behavior. The contract stands
 
 ### `listening-mode-contract` — capability input
 
-This deliverable supplies Claude 2.1.282 evidence only. For the interactive CLI, `steer`, `sync`, and `async` are proven. `acknowledgement` is `batch_token_next_call`. Idle delivery is "while a watcher is live, else next turn". Hard abort is `unsupported`.
+This historical deliverable supplies Claude 2.1.282 mechanism evidence only; it does not promote the installed 2.1.283 `sync` capability above. It observed all three modes in the interactive CLI. `acknowledgement` is `batch_token_next_call`. Idle delivery is "while a watcher is live, else next turn". Hard abort is `unsupported`.
