@@ -19,12 +19,21 @@ describe('channel closure contract', () => {
     expect(decodeClosureStatus({ operationId: 'close_1', state: 'complete', reason: 'local_cleanup_failed' }).ok).toBe(false);
   });
 
-  it('requires an exact connector stop and cleanup request receipt', () => {
+  it('requires an aggregate connector stop and cleanup request receipt', () => {
     const receipt = { operationId: 'close_1', ownerId: 'owner_1', roomId: 'room_1', expectedRoomRevision: 0,
-      bindingId: 'binding_1', bindingGeneration: 4, state: 'stopped', cleanupRequested: true };
+      markerRevision: 3, activeBindingCount: 2,
+      fencedBindings: [{ bindingId: 'binding_1', generation: 4 }, { bindingId: 'binding_2', generation: 7 }],
+      state: 'stopped', futureBindingAdmissionBlocked: true, relayPollBlocked: true, relayIntakeBlocked: true,
+      modelDispatchBlocked: true, cleanupRequested: true };
     expect(decodeClosureConnectorReceipt(receipt).ok).toBe(true);
     expect(decodeClosureConnectorReceipt({ ...receipt, cleanupRequested: false }).ok).toBe(false);
-    expect(decodeClosureConnectorReceipt({ ...receipt, bindingGeneration: -1 }).ok).toBe(false);
+    expect(decodeClosureConnectorReceipt({ ...receipt, markerRevision: 0 }).ok).toBe(false);
+    expect(decodeClosureConnectorReceipt({ ...receipt, activeBindingCount: 1 }).ok).toBe(false);
+    expect(decodeClosureConnectorReceipt({ ...receipt, futureBindingAdmissionBlocked: false }).ok).toBe(false);
+    expect(decodeClosureConnectorReceipt({ ...receipt, relayPollBlocked: false }).ok).toBe(false);
+    expect(decodeClosureConnectorReceipt({ ...receipt, fencedBindings: [receipt.fencedBindings[0], receipt.fencedBindings[0]] }).ok).toBe(false);
+    expect(decodeClosureConnectorReceipt({ ...receipt, fencedBindings: [{ bindingId: 'binding_1', generation: -1 }] }).ok).toBe(false);
+    expect(decodeClosureConnectorReceipt({ ...receipt, bindingId: 'binding_1', bindingGeneration: 4 }).ok).toBe(false);
     expect(decodeClosureConnectorReceipt({ ...receipt, extra: true }).ok).toBe(false);
   });
 });

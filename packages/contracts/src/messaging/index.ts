@@ -44,7 +44,7 @@ export {
   decodeRevocationProgress, decodeRevocationRequest,
 } from './revocation';
 export {
-  type ClosureCapability, type ClosureConnectorReceipt, type ClosureConnectorStopResult, type ClosureConsequences, type ClosureFailureReason, type ClosurePort,
+  type ClosureBindingFence, type ClosureCapability, type ClosureConnectorReceipt, type ClosureConnectorStopResult, type ClosureConsequences, type ClosureFailureReason, type ClosurePort,
   type ClosureRejection, type ClosureRequest, type ClosureStatus, type ClosureUnavailableReason,
   CLOSURE_CONSEQUENCES, decodeClosureCapability, decodeClosureConnectorReceipt, decodeClosureRequest, decodeClosureStatus,
 } from './closure';

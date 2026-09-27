@@ -1,7 +1,7 @@
 // P13 channel closure is an owner-authorized lifecycle operation. It ends this
 // owner's participation; it does not erase transport or recipient copies.
 
-import { type Decoded, decodeWith, fail, identifier, literal, object, safeInteger } from './decode';
+import { array, elementPath, type Decoded, decodeWith, fail, identifier, literal, object, safeInteger } from './decode';
 import { type BindingId, type OwnerId, type RoomId, readId } from './ids';
 import type { CallOptions, OperationResult } from './outcomes';
 
@@ -34,12 +34,21 @@ export type ClosureRequest = Readonly<{
   expectedRoomRevision: number;
 }>;
 
-/** Connector acknowledgement for the exact close operation. It is emitted only
- * after a durable intake/dispatch fence is active and local cleanup is queued. */
+export type ClosureBindingFence = Readonly<{ bindingId: BindingId; generation: number }>;
+
+/** Protected server aggregate for the exact close operation. A single binding
+ * cannot prove closure: the marker blocks future admission and every active
+ * binding at its revision has acknowledged its poll/intake/dispatch fence.
+ * The protected server, not a connector-supplied count, must enumerate them. */
 export type ClosureConnectorReceipt = ClosureRequest & Readonly<{
-  bindingId: BindingId;
-  bindingGeneration: number;
+  markerRevision: number;
+  activeBindingCount: number;
+  fencedBindings: readonly ClosureBindingFence[];
   state: 'stopped';
+  futureBindingAdmissionBlocked: true;
+  relayPollBlocked: true;
+  relayIntakeBlocked: true;
+  modelDispatchBlocked: true;
   cleanupRequested: true;
 }>;
 
@@ -78,17 +87,38 @@ export function decodeClosureConnectorReceipt(input: unknown): Decoded<ClosureCo
   return decodeWith(() => {
     const r = object(input, '', [
       'operationId', 'ownerId', 'roomId', 'expectedRoomRevision',
-      'bindingId', 'bindingGeneration', 'state', 'cleanupRequested',
+      'markerRevision', 'activeBindingCount', 'fencedBindings', 'state',
+      'futureBindingAdmissionBlocked', 'relayPollBlocked', 'relayIntakeBlocked', 'modelDispatchBlocked', 'cleanupRequested',
     ]);
-    if (r.field('cleanupRequested') !== true) fail(r.at('cleanupRequested'), 'mismatch');
+    for (const key of ['futureBindingAdmissionBlocked', 'relayPollBlocked', 'relayIntakeBlocked', 'modelDispatchBlocked', 'cleanupRequested']) {
+      if (r.field(key) !== true) fail(r.at(key), 'mismatch');
+    }
+    const markerRevision = safeInteger(r.field('markerRevision'), r.at('markerRevision'));
+    if (markerRevision === 0) fail(r.at('markerRevision'), 'invalid_value');
+    const activeBindingCount = safeInteger(r.field('activeBindingCount'), r.at('activeBindingCount'));
+    const seen = new Set<string>();
+    const fencedBindings = array(r.field('fencedBindings'), r.at('fencedBindings')).map((value, index) => {
+      const path = elementPath(r.at('fencedBindings'), index);
+      const fence = object(value, path, ['bindingId', 'generation']);
+      const bindingId = readId<'BindingId'>(fence.field('bindingId'), fence.at('bindingId'));
+      const generation = safeInteger(fence.field('generation'), fence.at('generation'));
+      const identity = JSON.stringify([bindingId, generation]);
+      if (seen.has(identity)) fail(path, 'duplicate');
+      seen.add(identity);
+      return { bindingId, generation };
+    });
+    if (fencedBindings.length !== activeBindingCount) fail(r.at('activeBindingCount'), 'mismatch');
     return {
       operationId: identifier(r.field('operationId'), r.at('operationId')),
       ownerId: readId<'OwnerId'>(r.field('ownerId'), r.at('ownerId')),
       roomId: readId<'RoomId'>(r.field('roomId'), r.at('roomId')),
       expectedRoomRevision: safeInteger(r.field('expectedRoomRevision'), r.at('expectedRoomRevision')),
-      bindingId: readId<'BindingId'>(r.field('bindingId'), r.at('bindingId')),
-      bindingGeneration: safeInteger(r.field('bindingGeneration'), r.at('bindingGeneration')),
+      markerRevision, activeBindingCount, fencedBindings,
       state: literal(r.field('state'), r.at('state'), ['stopped']),
+      futureBindingAdmissionBlocked: true,
+      relayPollBlocked: true,
+      relayIntakeBlocked: true,
+      modelDispatchBlocked: true,
       cleanupRequested: true,
     };
   });

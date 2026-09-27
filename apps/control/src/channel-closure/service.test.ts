@@ -32,8 +32,12 @@ function setup() {
     connectorConfigured: true,
     membership: vi.fn(async () => 'joined' as const),
     stopConnectorDelivery: vi.fn(async input => ({ kind: 'stopped' as const, receipt: {
-      ...input, bindingId: 'binding_alice' as never, bindingGeneration: 1,
-      state: 'stopped' as const, cleanupRequested: true as const,
+      ...input, markerRevision: 2, activeBindingCount: 2,
+      fencedBindings: [{ bindingId: 'binding_alice_1' as never, generation: 1 },
+        { bindingId: 'binding_alice_2' as never, generation: 3 }],
+      state: 'stopped' as const, futureBindingAdmissionBlocked: true as const,
+      relayPollBlocked: true as const, relayIntakeBlocked: true as const,
+      modelDispatchBlocked: true as const, cleanupRequested: true as const,
     } })),
     leave: vi.fn(async () => 'left' as const),
     requestLocalCleanup: vi.fn(async () => 'requested' as const),
@@ -109,9 +113,23 @@ describe('channel closure service', () => {
   it('does not leave for a connector receipt from another channel', async () => {
     const { service, transport } = setup();
     vi.mocked(transport.stopConnectorDelivery).mockResolvedValueOnce({ kind: 'stopped', receipt: {
-      ...request, roomId: 'room_other' as RoomId, bindingId: 'binding_alice' as never,
-      bindingGeneration: 1, state: 'stopped', cleanupRequested: true,
+      ...request, roomId: 'room_other' as RoomId, markerRevision: 2, activeBindingCount: 1,
+      fencedBindings: [{ bindingId: 'binding_alice' as never, generation: 1 }],
+      state: 'stopped', futureBindingAdmissionBlocked: true, relayPollBlocked: true, relayIntakeBlocked: true,
+      modelDispatchBlocked: true, cleanupRequested: true,
     } });
+    expect(await service.closeRoom(request)).toMatchObject({ kind: 'ok', value: {
+      state: 'partial', reason: 'dependency_unavailable',
+    } });
+    expect(transport.leave).not.toHaveBeenCalled();
+  });
+
+  it('does not leave for a single-binding receipt that lacks aggregate coverage', async () => {
+    const { service, transport } = setup();
+    vi.mocked(transport.stopConnectorDelivery).mockResolvedValueOnce({ kind: 'stopped', receipt: {
+      ...request, bindingId: 'binding_alice' as never, bindingGeneration: 1,
+      state: 'stopped', cleanupRequested: true,
+    } as never });
     expect(await service.closeRoom(request)).toMatchObject({ kind: 'ok', value: {
       state: 'partial', reason: 'dependency_unavailable',
     } });
