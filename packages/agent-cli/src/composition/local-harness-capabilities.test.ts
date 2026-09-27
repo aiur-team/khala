@@ -61,14 +61,22 @@ describe('local harness capabilities', () => {
     expect(await localHarnessCapabilities(() => environment({}))(binding('opencode'))).toBeNull();
   });
 
-  it('labels an inspected but unproven Claude version experimental, never proven', async () => {
+  it('claims tested receipts for the inspected proven Claude version while modes stay experimental', async () => {
     const runs: string[] = [];
     const claude = await localHarnessCapabilities(() => environment({ claude: '2.1.283', runs }))(binding('claude'));
     expect(claude).toMatchObject({
-      harness: 'claude', version: '2.1.283', support: 'experimental', acknowledgement: 'batch_token_next_call',
+      harness: 'claude', version: '2.1.283', support: 'tested', acknowledgement: 'batch_token_next_call',
     });
     expect(Object.values(claude!.modes).map(mode => mode.status)).toEqual(['experimental', 'experimental', 'experimental']);
     expect(runs).toEqual(['/usr/bin/claude --version']);
+  });
+
+  it('does not extend the proven Claude receipt claim to another inspected version', async () => {
+    const claude = await localHarnessCapabilities(() => environment({ claude: '2.1.284' }))(binding('claude'));
+    expect(claude).toMatchObject({
+      harness: 'claude', version: '2.1.284', support: 'experimental', acknowledgement: 'batch_token_next_call',
+    });
+    expect(Object.values(claude!.modes).map(mode => mode.status)).toEqual(['experimental', 'experimental', 'experimental']);
   });
 
   it('keeps Claude unproven when its version cannot be inspected', async () => {
