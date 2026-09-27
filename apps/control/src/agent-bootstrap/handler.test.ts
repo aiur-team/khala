@@ -2,6 +2,17 @@
 // real provider, store and substrate proof belongs to KHA-133/139.
 
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject, createPublicKey } from 'node:crypto';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { vi } from 'vitest';
+import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/delivery/index';
+import { openConnectorStorage } from '../../../../packages/connector/src/storage/open';
+import { createBootstrapPersistence } from '../../../../packages/connector/src/storage/bootstrap';
+import { createCapabilityRenewal } from '../../../connector/src/composition/agent/capability-renewal';
+import { createLocalClosureFence } from '../../../connector/src/composition/closure/local-fence';
+import { openProductionConnector } from '../../../connector/src/composition/production';
+import { openTrustStateStore } from '../../../connector/src/composition/controls/trust-store';
 import { describe, expect, it } from 'vitest';
 import type { AuthPrincipal, BindingId, InviteState, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import type { Authentication } from '../auth/index';
@@ -12,7 +23,14 @@ import {
   createAgentBootstrapHandlers, isLoopbackRedirect,
 } from './handler';
 import { thumbprint } from './proof';
-import { agentBindingStoreKeys } from './store';
+import { agentBindingStoreKeys, createAgentBindingStore } from './store';
+import { createAgentRevocationCleanupRoutes, createRevocationCleanupStore, revocationStopId } from '../composition/human/revocation-cleanup';
+import { journalKey, operationJournal } from '@khala/messaging/revocation/journal';
+import type { OperationRecord } from '@khala/messaging/revocation/operation';
+import { createOwnerRoomIndex } from './owner-room-index';
+import { createProtectedClosureConnector } from '../channel-closure/production';
+import { createOwnerCleanupRequests } from '../channel-closure/cleanup-requests';
+import { createChannelClosureService } from '../channel-closure/service';
 import { type ProtocolRevocationPort, type RevocationTargets, createRevocationService } from '@khala/messaging/revocation/index';
 import type { ControlStore, DeviceId } from '@khala/contracts/messaging/index';
 
@@ -53,6 +71,8 @@ type SetupOverrides = Partial<Omit<AgentBootstrapDeps, 'agents'>> & {
   agents?: Partial<AgentAdmissionPort>;
   signedIn?: () => string | null;
   invite?: () => InviteState;
+  testClock?: () => number;
+  testKey?: ReturnType<typeof connectorKey>;
 };
 
 type Capability = { token: string; token_type: string; scope: string[]; binding_id: string; generation: number; expires_at: number };
@@ -60,7 +80,7 @@ type Redeemed = { binding: { bindingId: string; ownerId: string; generation: num
 
 function setup(overrides: SetupOverrides = {}) {
   let now = T0;
-  const clock = () => now;
+  const clock = overrides.testClock ?? (() => now);
   const store = fakeStore(clock);
   const admits: string[] = [];
   const admitOperations: string[] = [];
@@ -97,7 +117,7 @@ function setup(overrides: SetupOverrides = {}) {
   Object.assign(deps, { ...overrides, agents: { ...deps.agents, ...overrides.agents } });
   const handlers = createAgentBootstrapHandlers(deps);
   const route = (path: string) => [...handlers.agent, ...handlers.human].find(entry => entry.path === path)!;
-  const key = connectorKey(clock);
+  const key = overrides.testKey ?? connectorKey(clock);
   const verifier = randomBytes(32).toString('base64url');
 
   function authorizeParams(params: Record<string, string> = {}) {
@@ -1153,5 +1173,245 @@ describe('proof-key-bound capability renewal', () => {
     expect(await h.adapter(newer.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
     expect((await refreshCapability(h, original.binding, nonce)).status).toBe(403);
     expect(await h.adapter(newer.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+  });
+});
+
+describe('expired revoked cleanup authority', () => {
+  const roomId = '!expired-cleanup:example' as RoomId;
+  const operationId = 'revoke-expired-capability';
+  const deviceKey = 'B'.repeat(43);
+
+  async function fixture(prepare: boolean, supersede = false) {
+    const h = setup({ agents: { inspect: async ({ ownerId }) => ({ kind: 'ok', value: {
+      agentParticipantId: `agent_${ownerId}` as ParticipantId, roomId,
+    } }) } });
+    const { body: firstBody } = await h.bootstrap();
+    const body = supersede ? (await h.bootstrap(SESSION.generation, 'bootstrap-expired-replacement')).body : firstBody;
+    const binding = body.binding;
+    const token = body.adapter_capability.token;
+    const cleanup = createRevocationCleanupStore(h.store.store);
+    if (prepare) {
+      expect(await cleanup.prepare({ ownerId: binding.ownerId as OwnerId, operationId,
+        bindingId: binding.bindingId, roomId, deviceId: 'KHALADEV1', deviceKey,
+        expectedGeneration: binding.generation, revokedGeneration: binding.generation + 1,
+        capabilityDigest: createHash('sha256').update(`khala.agent-bootstrap.capability-ref.v1\u0000${token}`).digest('base64url') })).toBe('applied');
+      const record: OperationRecord = { v: 2, ownerId: binding.ownerId as OwnerId, operationId,
+        targetKind: 'binding', targetId: binding.bindingId as BindingId, expectedGeneration: binding.generation,
+        revokedGeneration: binding.generation + 1, deviceId: 'KHALADEV1' as DeviceId, deviceKey,
+        control: 'disabled', capability: 'revoked', removal: 'pending', removalRefusal: null,
+        rotation: 'pending', endpoint: 'pending', seq: 0 };
+      const key = await journalKey(binding.ownerId as OwnerId, operationId);
+      expect(key).not.toBeNull();
+      expect((await operationJournal(binding.ownerId as OwnerId, h.store.store).create(key!, record)).kind).toBe('applied');
+    }
+    expect(await h.handlers.capabilities.disableBinding({ operationId,
+      bindingId: binding.bindingId as BindingId, expectedGeneration: binding.generation,
+      revokedGeneration: binding.generation + 1 })).toEqual({ kind: 'applied' });
+    h.advance(3_600_001);
+    const routes = createAgentRevocationCleanupRoutes({ store: h.store.store, capabilities: h.handlers.capabilities });
+    async function request(path: '/api/agent/revocation/cleanup' | '/api/agent/revocation/result',
+      options: { token?: string; bindingId?: string; key?: ReturnType<typeof connectorKey>;
+        proof?: string; payload?: Record<string, unknown> } = {}) {
+      const presented = options.token ?? token;
+      const method = path.endsWith('/cleanup') ? 'GET' : 'POST';
+      const proof = options.proof ?? (options.key ?? h.key).proof(`${ORIGIN}${path}`, presented,
+        { claims: { htm: method } });
+      return routes.find(route => route.path === path)!.handle(new Request(`${ORIGIN}${path}`, {
+        method, headers: { authorization: `DPoP ${presented}`, dpop: proof,
+          'x-khala-binding-id': options.bindingId ?? binding.bindingId,
+          ...(method === 'POST' ? { origin: ORIGIN, 'content-type': 'application/json' } : {}) },
+        ...(method === 'POST' ? { body: JSON.stringify(options.payload) } : {}),
+      }));
+    }
+    return { h, binding, token, firstToken: firstBody.adapter_capability.token, request, cleanup };
+  }
+
+  it('accepts exact delayed Stop and removal reports, while ordinary bearer authority stays expired', async () => {
+    const f = await fixture(true);
+    expect(await f.h.adapter(f.token, 'publish_own')).toMatchObject({ kind: 'refused', code: 'invalid_capability' });
+    const first = await f.request('/api/agent/revocation/cleanup');
+    expect(first.status, JSON.stringify(await first.clone().json())).toBe(200);
+    const stop = { operationId: revocationStopId(operationId, f.binding.bindingId),
+      ownerId: f.binding.ownerId, roomId, expectedRoomRevision: 0,
+      bindingId: f.binding.bindingId, bindingGeneration: f.binding.generation,
+      state: 'stopped', cleanupRequested: true };
+    const payload = { operationId, deviceId: 'KHALADEV1', deviceKey,
+      generation: f.binding.generation, removal: null, localStop: stop };
+    expect((await f.request('/api/agent/revocation/result', { payload })).status).toBe(200);
+    expect((await f.request('/api/agent/revocation/result', { payload })).status).toBe(200);
+    const recorded = await f.cleanup.read(f.binding.ownerId as OwnerId, operationId);
+    expect(recorded.kind).toBe('record');
+    if (recorded.kind === 'record') expect((await f.cleanup.localStop(recorded.value)).kind).toBe('record');
+    expect((await f.request('/api/agent/revocation/result', { payload: { ...payload,
+      localStop: { ...stop, ownerId: 'other-owner' } } })).status).toBe(503);
+    expect((await f.request('/api/agent/revocation/result', { payload: {
+      operationId, deviceId: 'KHALADEV1', deviceKey, generation: f.binding.generation, removal: 'removed',
+    } })).status).toBe(200);
+  });
+
+  it('refuses absent preparation, wrong digest, binding, proof key, replay and superseded generation', async () => {
+    const absent = await fixture(false);
+    expect((await absent.request('/api/agent/revocation/cleanup')).status).toBe(503);
+    const f = await fixture(true);
+    expect((await f.request('/api/agent/revocation/cleanup', { token: randomBytes(32).toString('base64url') })).status).toBe(403);
+    expect((await f.request('/api/agent/revocation/cleanup', { bindingId: 'bnd_other' })).status).toBe(401);
+    expect((await f.request('/api/agent/revocation/cleanup', { key: connectorKey(() => T0 + 3_600_001) })).status).toBe(401);
+    const url = `${ORIGIN}/api/agent/revocation/cleanup`;
+    const proof = f.h.key.proof(url, f.token, { claims: { htm: 'GET' } });
+    const first = await f.request('/api/agent/revocation/cleanup', { proof });
+    expect(first.status, JSON.stringify(await first.clone().json())).toBe(200);
+    expect((await f.request('/api/agent/revocation/cleanup', { proof })).status).toBe(401);
+    const stale = f.h.key.proof(url, f.token, { claims: { htm: 'GET', iat: Math.floor(T0 / 1000) } });
+    expect((await f.request('/api/agent/revocation/cleanup', { proof: stale })).status).toBe(401);
+    expect((await f.request('/api/agent/revocation/result', { payload: {
+      operationId: 'other-operation', deviceId: 'KHALADEV1', deviceKey,
+      generation: f.binding.generation, removal: 'removed',
+    } })).status).toBe(404);
+    expect((await f.request('/api/agent/revocation/result', { payload: {
+      operationId, deviceId: 'KHALADEV1', deviceKey,
+      generation: f.binding.generation + 1, removal: 'removed',
+    } })).status).toBe(403);
+    const indexKey = agentBindingStoreKeys.participant(f.binding.ownerId, roomId, f.binding.agentParticipantId);
+    const record = f.h.store.records.get(indexKey)!;
+    f.h.store.records.set(indexKey, { ...record, value: { ...(record.value as object), revokedGeneration: f.binding.generation + 2 } });
+    expect((await f.request('/api/agent/revocation/cleanup')).status).toBe(401);
+    const wrongRoom = await fixture(true);
+    const [cleanupKey] = wrongRoom.h.store.keys('revocation-cleanup.v1.');
+    const cleanupRecord = wrongRoom.h.store.records.get(cleanupKey!)!;
+    wrongRoom.h.store.records.set(cleanupKey!, { ...cleanupRecord,
+      value: { ...(cleanupRecord.value as object), roomId: '!other:example' } });
+    expect((await wrongRoom.request('/api/agent/revocation/cleanup')).status).toBe(403);
+    const active = setup();
+    const admitted = (await active.bootstrap()).body;
+    active.advance(3_600_001);
+    const activeToken = admitted.adapter_capability.token;
+    const activePath = '/api/agent/revocation/cleanup';
+    const activeResponse = await active.handlers.capabilities.authorizeRevocationCleanup(new Request(`${ORIGIN}${activePath}`, {
+      headers: { authorization: `DPoP ${activeToken}`, 'x-khala-binding-id': admitted.binding.bindingId,
+        dpop: active.key.proof(`${ORIGIN}${activePath}`, activeToken, { claims: { htm: 'GET' } }) },
+    }));
+    expect(activeResponse).toMatchObject({ kind: 'refused', code: 'binding_superseded' });
+    const renewed = await fixture(true, true);
+    expect(renewed.token).not.toBe(renewed.firstToken);
+    expect((await renewed.request('/api/agent/revocation/cleanup', { token: renewed.firstToken })).status).toBe(403);
+    expect((await renewed.request('/api/agent/revocation/cleanup')).status).toBe(200);
+  });
+});
+
+describe('expired cleanup across issued control authority and restarted production connector', () => {
+  it('delivers a delayed exact Stop to closure without reviving intake or fabricating Matrix removal', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-expired-closure-'));
+    const session = { harness: 'codex' as const, sessionId: SESSION.session_id, workdir: '/project' };
+    const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
+      'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
+    ])).digest('hex'));
+    const stateDirectory = path.join(sessionDirectory, 'state');
+    const roomId = '!expiry-integration:example' as RoomId;
+    const matrixUserId = '@expired_agent:example';
+    const agentParticipantId = `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}` as ParticipantId;
+    const operationId = 'revoke-expired-production';
+    const deviceKey = 'B'.repeat(43);
+    let now = T0;
+    let opened: Awaited<ReturnType<typeof openProductionConnector>> | null = null;
+    try {
+      await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+      const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
+      if (!limits.ok) throw new Error('invalid fixture limits');
+      const storage = await openConnectorStorage({ directory: stateDirectory, mode: 'create', limits: limits.value });
+      const trust = await openTrustStateStore({ directory: stateDirectory, mode: 'create' });
+      const { signer } = await createBootstrapPersistence(storage, () => now);
+      const key = { jkt: signer.jkt,
+        proof: (url: string, token?: string, options?: ProofOptions) =>
+          signer.proof(String(options?.claims?.htm ?? 'POST'), url, token),
+      } as ReturnType<typeof connectorKey>;
+      const h = setup({ testClock: () => now, testKey: key,
+        agents: { inspect: async () => ({ kind: 'ok', value: { agentParticipantId, roomId } }) } });
+      const admitted = await h.bootstrap();
+      expect(admitted.status).toBe(200);
+      const binding = admitted.body.binding as SessionBinding;
+      const token = admitted.body.adapter_capability.token;
+      expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
+      await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin: ORIGIN,
+        binding, signer, clock: () => now }).acceptInitial({ token, bindingId: binding.bindingId,
+        generation: binding.generation, scope: ADAPTER_CAPABILITIES,
+        expiresAt: admitted.body.adapter_capability.expires_at });
+      const index = createOwnerRoomIndex(h.store.store);
+      expect((await index.activate(binding, roomId)).kind).toBe('ok');
+      const located = await createAgentBindingStore({ store: h.store.store }).locateBinding(binding.bindingId);
+      expect(located.kind).toBe('found');
+      if (located.kind !== 'found') throw new Error('missing binding');
+      expect(await createRevocationCleanupStore(h.store.store).prepare({ ownerId: binding.ownerId,
+        operationId, bindingId: binding.bindingId, roomId, deviceId: binding.deviceId, deviceKey,
+        expectedGeneration: binding.generation, revokedGeneration: binding.generation + 1,
+        capabilityDigest: located.record.capability })).toBe('applied');
+      const record: OperationRecord = { v: 2, ownerId: binding.ownerId, operationId,
+        targetKind: 'binding', targetId: binding.bindingId, expectedGeneration: binding.generation,
+        revokedGeneration: binding.generation + 1, deviceId: binding.deviceId, deviceKey,
+        control: 'disabled', capability: 'revoked', removal: 'pending', removalRefusal: null,
+        rotation: 'pending', endpoint: 'pending', seq: 0 };
+      const keyId = await journalKey(binding.ownerId, operationId);
+      expect((await operationJournal(binding.ownerId, h.store.store).create(keyId!, record)).kind).toBe('applied');
+      expect(await h.handlers.capabilities.disableBinding({ operationId,
+        bindingId: binding.bindingId, expectedGeneration: binding.generation,
+        revokedGeneration: binding.generation + 1 })).toEqual({ kind: 'applied' });
+      const stop = createLocalClosureFence({ storage, binding, roomId, stateDirectory: sessionDirectory,
+        clock: () => now, quiesce: async () => undefined });
+      expect((await stop.stop({ operationId: revocationStopId(operationId, binding.bindingId),
+        ownerId: binding.ownerId, roomId, expectedRoomRevision: 0 })).kind).toBe('stopped');
+      await storage.close();
+      trust.close();
+      await writeFile(path.join(sessionDirectory, 'current-binding.json'), JSON.stringify(binding));
+      await writeFile(path.join(sessionDirectory, 'matrix-session.json'), JSON.stringify({
+        baseUrl: 'http://127.0.0.1:9', userId: matrixUserId, deviceId: binding.deviceId,
+        accessToken: 'offline-device-token-123456', roomId, ownerUserId: '@owner:example',
+        ownerParticipantId: 'owner_participant',
+      }));
+      const closurePrincipal = { ...principal(binding.ownerId), sessionExpiresAt: new Date(Date.now() + 60_000).toISOString() };
+      const leave = vi.fn(async () => 'left' as const);
+      const cleanupRequests = createOwnerCleanupRequests(h.store.store, binding.ownerId);
+      const closure = createChannelClosureService({ principal: closurePrincipal, store: h.store.store, transport: {
+        connectorConfigured: true, membership: async () => 'joined',
+        stopConnectorDelivery: command => createProtectedClosureConnector({ store: h.store.store,
+          principal: closurePrincipal, clock: () => Date.now(), authoritySecret: 'expired-cleanup-test-authority-secret-long' }).stopDelivery(command),
+        leave, requestLocalCleanup: command => cleanupRequests.record(command),
+      } });
+      const closeRequest = { operationId: 'close-after-expired-revoke', ownerId: binding.ownerId,
+        roomId, expectedRoomRevision: 0 };
+      expect(await closure.closeRoom(closeRequest)).toMatchObject({ kind: 'ok', value: { state: 'partial' } });
+      now = Date.now();
+      expect(await h.adapter(token, 'publish_own')).toMatchObject({ kind: 'refused' });
+      const routes = createAgentRevocationCleanupRoutes({ store: h.store.store, capabilities: h.handlers.capabilities });
+      const paths: string[] = [];
+      vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const request = new Request(String(url), init);
+        paths.push(new URL(request.url).pathname);
+        const route = routes.find(item => item.path === new URL(request.url).pathname);
+        return route ? route.handle(request) : new Response(null, { status: 404 });
+      }));
+      const input = { stateDirectory: directory, appOrigin: ORIGIN,
+        browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session,
+        sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+        inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
+        openBrowser: vi.fn(async () => undefined), openInbox: vi.fn(async () => undefined) };
+      opened = await openProductionConnector(input);
+      await vi.waitFor(async () => {
+        const found = await createRevocationCleanupStore(h.store.store).read(binding.ownerId, operationId);
+        if (found.kind !== 'record') throw new Error('cleanup absent');
+        expect((await createRevocationCleanupStore(h.store.store).localStop(found.value)).kind).toBe('record');
+      });
+      expect(paths).toEqual(['/api/agent/revocation/cleanup', '/api/agent/revocation/result']);
+      expect(await closure.closeRoom(closeRequest)).toMatchObject({ kind: 'ok', value: { state: 'complete' } });
+      expect(leave).toHaveBeenCalledOnce();
+      expect((await createRevocationCleanupStore(h.store.store).read(binding.ownerId, operationId))).toMatchObject({
+        kind: 'record', value: { removal: null },
+      });
+      expect((await opened.send({ bindingId: binding.bindingId, clientTxnId: 'blocked', body: 'blocked' })).kind).toBe('refused');
+      expect(input.openInbox).not.toHaveBeenCalled();
+      expect(input.openInbox).not.toHaveBeenCalled();
+    } finally {
+      await opened?.close();
+      vi.unstubAllGlobals();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

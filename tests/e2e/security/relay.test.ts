@@ -122,6 +122,7 @@ describe('server-side stores and logs', () => {
       'apps/connector/src/substrate/matrix.ts',
       'apps/control/src/channel-closure/matrix.ts',
       'apps/control/src/composition/agent/matrix-admission.ts',
+      'apps/control/src/composition/human/matrix-identity.ts',
       'apps/control/src/composition/human/matrix.ts',
       'apps/web/src/composition/human/matrix-browser.ts',
     ]);

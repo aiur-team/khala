@@ -21,6 +21,18 @@ function json(status: number, body: unknown): Response {
 }
 
 describe('createHumanBrowserApi', () => {
+  it('retrieves exact owner cleanup requests without needing the closed room in its view', async () => {
+    const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId: 'room_1' as RoomId, expectedRoomRevision: 0 };
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { kind: 'ok', value: [command] }))
+      .mockResolvedValueOnce(json(200, { kind: 'ok', value: [{ ...command, ownerId: 'peer_owner' }] }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    expect(await api.cleanupRequests(principal.ownerId)).toEqual([command]);
+    expect(fetch.mock.calls[0]?.[0]).toBe(`${origin}/api/human/channel-closure?cleanup=1`);
+    expect(fetch.mock.calls[0]?.[1]?.credentials).toBe('same-origin');
+    expect(await api.cleanupRequests(principal.ownerId)).toBeNull();
+  });
+
   it('reads a room-scoped closure capability and posts with the human CSRF proof', async () => {
     const roomId = 'room_1' as RoomId;
     const capability = { ownerId: principal.ownerId, roomId, expectedRoomRevision: 0,

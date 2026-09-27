@@ -6,6 +6,7 @@ import { createControlStore, type BlobsStoreLike } from '../runtime/control-stor
 import { readHumanServerEnv } from '../runtime/env';
 import type { RouteRegistration } from '../runtime/handler';
 import { createChannelClosureHandlers } from './handler';
+import { createOwnerCleanupRequests } from './cleanup-requests';
 import { createMatrixClosureTransport } from './matrix';
 import { createChannelClosureService } from './service';
 
@@ -57,6 +58,7 @@ export function registerClosureHandlers(): readonly RouteRegistration[] {
       const activeSecret = authoritySecret;
       const handlers = createChannelClosureHandlers({
         auth: human.auth,
+        cleanupRequests: principal => createOwnerCleanupRequests(activeStore, principal.ownerId).list(),
         service: principal => createChannelClosureService({
           principal,
           store: activeStore,
@@ -65,6 +67,7 @@ export function registerClosureHandlers(): readonly RouteRegistration[] {
             connector: createProtectedClosureConnector({
               store: activeStore, principal, clock: () => Date.now(), authoritySecret: activeSecret,
             }),
+            cleanup: createOwnerCleanupRequests(activeStore, principal.ownerId),
           }),
         }),
       });

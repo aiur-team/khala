@@ -3,9 +3,11 @@ import {
   decodeAuthPrincipal,
   decodeClosureCapability,
   decodeClosureStatus,
+  decodeClosureRequest,
   decodeDeviceId,
   decodeInviteState,
   decodeParticipantView,
+  decodeRevocationProgress,
   decodeShareGrant,
   isSameOriginReturnPath,
   sameProviderIdentity,
@@ -18,6 +20,8 @@ import {
   type ContentLimits,
   type ClosurePort,
   type ClosureCapability,
+  type ClosureRequest,
+  type OwnerId,
   type RoomId,
   type IdentityPort,
   type IdentityState,
@@ -44,6 +48,19 @@ const CHANNEL_ACCESS_INBOX_PATH = '/api/human/channel-access/inbox';
 const CHANNEL_ACCESS_DECISION_PATH = '/api/human/channel-access/decision';
 const CHANNEL_ACCESS_MUTE_PATH = '/api/human/channel-access/mute';
 const CLOSURE_PATH = '/api/human/channel-closure';
+const REVOCATION_TARGETS_PATH = '/api/human/revocation/targets';
+const REVOCATION_REVOKE_PATH = '/api/human/revocation/revoke';
+const REVOCATION_STATUS_PATH = '/api/human/revocation/status';
+// khala-terminology-allow: fixed machine route for the Matrix room send fence.
+const ROOM_SEND_PATH = '/api/human/room-send';
+export type BrowserSendProof = Readonly<{ roomId: RoomId; deviceId: string; matrixAccessToken: string }>;
+export type BrowserSendFence = Readonly<{
+  ready(proof: BrowserSendProof): Promise<boolean>;
+  acquire(proof: BrowserSendProof, clientTxnId: string): Promise<Readonly<{ kind: 'granted'; permitId: string }> | Readonly<{ kind: 'held'; operationId: string; epoch: number }> | null>;
+  finish(proof: BrowserSendProof, permitId: string, outcome: Readonly<{ kind: 'complete'; eventId: string }> | Readonly<{ kind: 'unknown' | 'cancelled' }>): Promise<boolean>;
+  rotation(proof: BrowserSendProof, operationId: string, epoch: number): Promise<boolean>;
+  inspect(proof: BrowserSendProof): Promise<Readonly<{ operationId: string; epoch: number }> | null>;
+}>;
 
 type Fetch = typeof globalThis.fetch;
 
@@ -58,8 +75,6 @@ export type HumanBrowserApiOptions = Readonly<{
 
 export type HumanBrowserApi = Readonly<{
   reviewCsrf(): Promise<string | null>;
-  /** Filled by the dedicated revocation composition when available. */
-  revocation?: (roomId: RoomId) => BrowserRevocation;
   identity: IdentityPort;
   admission: AdmissionPort;
   credentials: CredentialSource;
@@ -70,6 +85,9 @@ export type HumanBrowserApi = Readonly<{
   closure: (roomId: RoomId) => Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
     currentCapability(): Promise<ClosureCapability | null>;
   }>;
+  cleanupRequests(ownerId: OwnerId): Promise<readonly ClosureRequest[] | null>;
+  revocation: (roomId: RoomId) => BrowserRevocation;
+  roomSend: BrowserSendFence;
 }>;
 
 function exactHttpsOrigin(value: string): string {
@@ -438,7 +456,127 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     };
   }
 
-  return { identity, admission, credentials, participants, channelAccess, closure,
+  async function cleanupRequests(ownerId: OwnerId): Promise<readonly ClosureRequest[] | null> {
+    try {
+      const url = new URL(CLOSURE_PATH, origin);
+      url.searchParams.set('cleanup', '1');
+      const response = await request(url.href, { method: 'GET', credentials: 'same-origin',
+        headers: { accept: 'application/json' }, signal: requestSignal() });
+      if (response.status !== 200) return null;
+      const body = await jsonObject(response);
+      if (body?.kind !== 'ok' || !Array.isArray(body.value) || body.value.length > 512) return null;
+      const requests: ClosureRequest[] = [];
+      for (const item of body.value) {
+        const decoded = decodeClosureRequest(item);
+        if (!decoded.ok || decoded.value.ownerId !== ownerId || decoded.value.expectedRoomRevision !== 0) return null;
+        requests.push(decoded.value);
+      }
+      return requests;
+    } catch { return null; }
+  }
+
+  function revocation(roomId: RoomId): BrowserRevocation {
+    return {
+      async targets() {
+        try {
+          const url = new URL(REVOCATION_TARGETS_PATH, origin);
+          url.searchParams.set('roomId', roomId);
+          const response = await request(url.href, { method: 'GET', credentials: 'same-origin',
+            headers: { accept: 'application/json' }, signal: requestSignal() });
+          if (response.status !== 200) return [];
+          const body = await jsonObject(response);
+          if (!body || !Array.isArray(body.targets) || body.targets.length > 128) return [];
+          const targets = [];
+          for (const value of body.targets) {
+            if (!isObject(value) || !hasExactKeys(value, ['targetKind', 'targetId', 'expectedGeneration'])
+              || value.targetKind !== 'binding' || typeof value.targetId !== 'string'
+              || !Number.isSafeInteger(value.expectedGeneration) || (value.expectedGeneration as number) < 0) return [];
+            targets.push({ targetKind: 'binding' as const, targetId: value.targetId as never,
+              expectedGeneration: value.expectedGeneration as number });
+          }
+          return targets;
+        } catch { return []; }
+      },
+      async revoke(input, options) {
+        const response = await mutation(REVOCATION_REVOKE_PATH, input, options?.signal);
+        if (!response) return unavailable();
+        const body = await jsonObject(response);
+        if (response.status === 200 && body?.kind === 'ok') {
+          const decoded = decodeRevocationProgress(body.value);
+          return decoded.ok && decoded.value.operationId === input.operationId ? ok(decoded.value) : unavailable();
+        }
+        if (response.status === 502 && body?.kind === 'outcome_unknown' && body.operationId === input.operationId) {
+          return outcomeUnknown(input.operationId);
+        }
+        if (body?.kind === 'rejected' && ['stale_generation', 'not_found', 'forbidden', 'operation_mismatch'].includes(String(body.code))) {
+          return rejected(body.code as 'stale_generation' | 'not_found' | 'forbidden' | 'operation_mismatch');
+        }
+        return unavailable();
+      },
+      async inspect(operationId, options) {
+        try {
+          const url = new URL(REVOCATION_STATUS_PATH, origin);
+          url.searchParams.set('operationId', operationId);
+          const response = await request(url.href, { method: 'GET', credentials: 'same-origin',
+            headers: { accept: 'application/json' }, signal: requestSignal(options?.signal) });
+          const body = await jsonObject(response);
+          if (response.status === 404) return rejected('not_found');
+          if (response.status !== 200 || body?.kind !== 'ok' || !isObject(body.value)) return unavailable();
+          const status = body.value;
+          if (status.operationId !== operationId || status.targetKind !== 'binding'
+            || typeof status.targetId !== 'string' || !Number.isSafeInteger(status.generation)
+            || typeof status.state !== 'string') return unavailable();
+          if (status.retryable === true && (status.generation as number) > 0) {
+            const continued = await this.revoke({ operationId, targetKind: 'binding',
+              targetId: status.targetId as never, expectedGeneration: (status.generation as number) - 1 }, options);
+            if (continued.kind === 'ok' || continued.kind === 'outcome_unknown') return continued;
+          }
+          const state = status.state === 'completed' ? 'complete'
+            : status.state === 'partial' ? 'partial'
+              : status.state === 'requested' ? 'pending' : 'propagating';
+          const decoded = decodeRevocationProgress({ operationId, targetKind: status.targetKind,
+            targetId: status.targetId, generation: status.generation, state });
+          return decoded.ok ? ok(decoded.value) : unavailable();
+        } catch { return unavailable(); }
+      },
+    };
+  }
+
+  const roomSend: BrowserSendFence = {
+    async ready(proof) {
+      const response = await mutation(`${ROOM_SEND_PATH}/ready`, proof);
+      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
+    },
+    async acquire(proof, clientTxnId) {
+      const response = await mutation(`${ROOM_SEND_PATH}/acquire`, { ...proof, clientTxnId });
+      if (!response || (response.status !== 200 && response.status !== 423)) return null;
+      const body = await jsonObject(response);
+      if (response.status === 200 && body?.kind === 'granted' && typeof body.permitId === 'string') {
+        return { kind: 'granted', permitId: body.permitId };
+      }
+      if (response.status === 423 && body?.kind === 'held' && typeof body.operationId === 'string'
+        && Number.isSafeInteger(body.epoch)) return { kind: 'held', operationId: body.operationId, epoch: body.epoch as number };
+      return null;
+    },
+    async finish(proof, permitId, outcome) {
+      const response = await mutation(`${ROOM_SEND_PATH}/finish`, { ...proof, permitId,
+        outcome: outcome.kind, eventId: outcome.kind === 'complete' ? outcome.eventId : null });
+      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
+    },
+    async rotation(proof, operationId, epoch) {
+      const response = await mutation(`${ROOM_SEND_PATH}/rotation`, { ...proof, operationId, epoch });
+      return response?.status === 200 && (await jsonObject(response))?.kind === 'applied';
+    },
+    async inspect(proof) {
+      const response = await mutation(`${ROOM_SEND_PATH}/inspect`, proof);
+      if (response?.status !== 200) return null;
+      const body = await jsonObject(response);
+      if (body?.kind !== 'ok' || !isObject(body.hold) || typeof body.hold.operationId !== 'string'
+        || !Number.isSafeInteger(body.hold.epoch)) return null;
+      return { operationId: body.hold.operationId, epoch: body.hold.epoch as number };
+    },
+  };
+  return { identity, admission, credentials, participants, channelAccess, closure, revocation, roomSend, cleanupRequests,
     async reviewCsrf() {
       if (csrfToken !== null) return csrfToken;
       return (await readCurrent()).kind === 'signed_in' ? csrfToken : null;

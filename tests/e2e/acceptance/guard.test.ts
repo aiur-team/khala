@@ -83,4 +83,24 @@ describe('runner command guard', () => {
       expect(text, file).not.toMatch(/['"`]run['"`]/);
     }
   });
+
+  it('does not import disposable integration process starters into the guarded runner', () => {
+    const repo = path.resolve(SCRIPTS, '../..');
+    const fixtures = path.join(repo, 'tests/integration/');
+    const visited = new Set<string>();
+    const pending = sources(SCRIPTS);
+    while (pending.length > 0) {
+      const file = pending.pop()!;
+      if (visited.has(file)) continue;
+      visited.add(file);
+      const source = fs.readFileSync(file, 'utf8');
+      for (const match of source.matchAll(/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)['"](\.[^'"]+)['"]/gu)) {
+        const stem = path.resolve(path.dirname(file), match[1]!);
+        const imported = [stem, `${stem}.ts`, `${stem}.tsx`, path.join(stem, 'index.ts')]
+          .find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+        if (imported && imported.startsWith(repo + path.sep)) pending.push(imported);
+      }
+    }
+    expect([...visited].filter(file => file.startsWith(fixtures))).toEqual([]);
+  });
 });

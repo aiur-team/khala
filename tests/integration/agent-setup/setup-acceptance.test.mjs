@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { parse as parseToml } from 'smol-toml';
 import {
   SUPPORTED, approveCodexHooksNatively, confirmed, createMachine, filesBelow, holdProbe, harnessCalls,
-  installHarness, installTarball, khala, khalaAsync, machineEnvironment, packedTarball, removeHarness, removeScratch,
+  installHarness, installTarball, installedTimeoutMs, khala, khalaAsync, machineEnvironment, packedTarball, removeHarness, removeScratch,
   repackAtVersion, repositoryRoot, sha256, snapshot, writeDescriptor, writeSessionGrant,
 } from './harness.mjs';
 
@@ -71,6 +71,14 @@ after(() => {
 });
 
 describe('packaged install', () => {
+  test('only confirmed removal receives the larger bounded durable-journal budget', () => {
+    const digest = `sha256:${'a'.repeat(64)}`;
+    assert.equal(installedTimeoutMs(['remove', '--confirm', digest]), 180_000);
+    for (const args of [['remove'], ['remove', '--dry-run'], ['remove', '--confirm', 'wrong'],
+      ['setup', '--confirm', digest], ['setup'], ['status'], ['status', '--check']]) {
+      assert.equal(installedTimeoutMs(args), 60_000);
+    }
+  });
   test('the tarball installs and runs outside the repository on the pinned Node', t => {
     const repository = fs.realpathSync(repositoryRoot);
     assert.ok(!v1.prefix.startsWith(repository + path.sep), `prefix ${v1.prefix} must be outside ${repository}`);

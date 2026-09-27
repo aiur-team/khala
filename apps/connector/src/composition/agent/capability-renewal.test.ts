@@ -19,6 +19,28 @@ function json(value: unknown): Response {
 }
 
 describe('endpoint capability renewal', () => {
+  it('retains only the exact persisted proof-bound token for revoked cleanup after TTL', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-expired-cleanup-'));
+    directories.push(directory);
+    let now = T0;
+    const signer = createProofSigner(generateKeyPairSync('ed25519').privateKey, () => now);
+    const token = randomBytes(32).toString('base64url');
+    const renewal = createCapabilityRenewal({ stateDirectory: directory,
+      appOrigin: 'https://khala.aiur.team', binding, signer, clock: () => now,
+      fetch: async () => new Response(null, { status: 503 }) });
+    await renewal.acceptInitial({ token, bindingId: binding.bindingId, generation: binding.generation,
+      scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: now + 3_600_000 });
+    now += 7_200_000;
+    expect((await renewal.existingForCleanup())?.token).toBe(token);
+    expect(await renewal.ensure()).toBeNull();
+    const other = createCapabilityRenewal({ stateDirectory: directory,
+      appOrigin: 'https://khala.aiur.team', binding: { ...binding, generation: 1 }, signer, clock: () => now });
+    expect(await other.existingForCleanup()).toBeNull();
+    const wrongSigner = createCapabilityRenewal({ stateDirectory: directory,
+      appOrigin: 'https://khala.aiur.team', binding,
+      signer: createProofSigner(generateKeyPairSync('ed25519').privateKey, () => now), clock: () => now });
+    expect(await wrongSigner.existingForCleanup()).toBeNull();
+  });
   it('keeps one durable challenge and operation after a lost POST reply, then reuses the exact token after restart', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-refresh-'));
     directories.push(directory);

@@ -138,6 +138,12 @@ export type BindingLookupResult =
 export interface AdapterCapabilities {
   /** Checks an adapter request: `Authorization: DPoP <capability>` plus a proof for this exact request. */
   authorize(request: Request, action: string): Promise<AdapterAuthorization>;
+  /** DPoP-authenticated old capability, usable only by a dedicated revoked-binding cleanup route. */
+  authorizeRevocationCleanup(request: Request): Promise<
+    Readonly<{ kind: 'authorized'; ownerId: OwnerId; roomId: RoomId; binding: SessionBinding; revokedGeneration: number; capabilityDigest: string }>
+    | Readonly<{ kind: 'refused'; status: 401 | 403; code: AdapterRefusal }>
+    | Readonly<{ kind: 'unavailable' }>
+  >;
   /** Reads one binding by ID. A replaced binding is `absent`: it holds no authority any more. */
   lookupBinding(bindingId: BindingId | string): Promise<BindingLookupResult>;
   /**
@@ -790,6 +796,50 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   }
 
   const capabilities: AdapterCapabilities = {
+    async authorizeRevocationCleanup(request) {
+      const refuse = (status: 401 | 403, code: AdapterRefusal) => ({ kind: 'refused', status, code }) as const;
+      const presented = bearer(request);
+      if (presented === null) return refuse(401, 'capability_required');
+      const read = await store.read<CapabilityRecord>(key('capability', presented));
+      if (read.kind === 'unavailable') return { kind: 'unavailable' };
+      let held: CapabilityRecord;
+      if (read.kind === 'absent') {
+        // The ordinary capability envelope expires after an hour. Its prepared
+        // revocation cleanup is durable and may be retried much later, but only
+        // by the original pinned proof key and token digest.
+        const bindingId = request.headers.get('x-khala-binding-id');
+        if (!bindingId || !OPERATION_ID.test(bindingId)) return refuse(401, 'invalid_capability');
+        const located = await bindings.locateBinding(bindingId);
+        if (located.kind === 'unavailable') return { kind: 'unavailable' };
+        if (located.kind !== 'found' || located.record.revokedGeneration !== located.record.binding.generation + 1) {
+          return refuse(401, 'binding_superseded');
+        }
+        const jkt = proofKeyThumbprint(request.headers.get('dpop'));
+        if (!jkt || await pinProofKey(located.record.binding, jkt) !== 'matched') return refuse(401, 'proof_key_mismatch');
+        held = { ownerId: located.address.ownerId, roomId: located.address.roomId,
+          bindingId, generation: located.record.binding.generation, jkt, scope: [] };
+      } else held = read.record.value;
+      let target: URL;
+      try { target = new URL(request.url); } catch { return refuse(401, 'proof_target_mismatch'); }
+      if (target.origin !== deps.origin || ![
+        '/api/agent/revocation/cleanup', '/api/agent/revocation/result',
+      ].includes(target.pathname)) return refuse(401, 'proof_target_mismatch');
+      const proof = await checkFreshProof(request, { method: request.method,
+        url: `${deps.origin}${target.pathname}`, jkt: held.jkt, accessToken: presented });
+      if (proof === 'unavailable') return { kind: 'unavailable' };
+      if (proof !== null) return refuse(401, proof);
+      const found = await bindings.locateBinding(held.bindingId);
+      if (found.kind === 'unavailable') return { kind: 'unavailable' };
+      if (found.kind !== 'found') return refuse(401, 'binding_superseded');
+      const { binding, revokedGeneration } = found.record;
+      if (binding.ownerId !== held.ownerId || found.address.roomId !== held.roomId
+        || binding.bindingId !== held.bindingId
+        || binding.generation !== held.generation || revokedGeneration !== held.generation + 1) {
+        return refuse(401, 'binding_superseded');
+      }
+      return { kind: 'authorized', ownerId: binding.ownerId, roomId: found.address.roomId,
+        binding, revokedGeneration, capabilityDigest: digest(presented) };
+    },
     async authorize(request, action) {
       const refuse = (status: 401 | 403, code: AdapterRefusal) => ({ kind: 'refused', status, code }) as const;
       const presented = bearer(request);

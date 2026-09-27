@@ -14,8 +14,8 @@ export interface ClosureTransport {
   /** A durable connector receipt: stop this exact owner/channel/generation's intake and model dispatch before leave. */
   stopConnectorDelivery(request: ClosureRequest, options?: CallOptions): Promise<ClosureConnectorStopResult>;
   leave(ownerId: OwnerId, roomId: RoomId, options?: CallOptions): Promise<'left' | 'forbidden' | 'unknown'>;
-  /** Best-effort request for remaining owner-device cleanup after connector stop. */
-  requestLocalCleanup(ownerId: OwnerId, roomId: RoomId, options?: CallOptions): Promise<'requested' | 'unavailable'>;
+  /** Durable request retrievable by each owner browser after connector stop and Matrix leave. */
+  requestLocalCleanup(request: ClosureRequest, options?: CallOptions): Promise<'requested' | 'unavailable'>;
 }
 
 type Intent = Readonly<{ ownerId: OwnerId; roomId: RoomId; expectedRoomRevision: number }>;
@@ -140,7 +140,7 @@ export function createChannelClosureService(input: Readonly<{
         : previouslyLeft ? 'left' as const
           : await transport.leave(request.ownerId, request.roomId, options).catch(() => 'unknown' as const);
       const cleanup = left === 'left'
-        ? await transport.requestLocalCleanup(request.ownerId, request.roomId, options).catch(() => 'unavailable' as const)
+        ? await transport.requestLocalCleanup(request, options).catch(() => 'unavailable' as const)
         : 'unavailable';
       const next: Marker = {
         ...intent,

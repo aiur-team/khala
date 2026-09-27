@@ -333,6 +333,11 @@ describe('registerHumanHandlers feature routes', () => {
       { path: '/api/human/owner-mailbox/result', methods: ['GET'] },
       { path: '/api/human/owner-device-proof/challenge', methods: ['GET'] },
       { path: '/api/human/owner-device-proof/register', methods: ['POST'] },
+      { path: '/api/human/revocation/targets', methods: ['GET'] },
+      { path: '/api/human/revocation/revoke', methods: ['POST'] },
+      { path: '/api/human/revocation/status', methods: ['GET'] },
+      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action =>
+        ({ path: `/api/human/room-send/${action}`, methods: ['POST'] })),
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'] },
       { path: '/api/human/pairing/decision', methods: ['POST'] },
       { path: '/api/human/channel-access/inbox', methods: ['GET'] },
@@ -349,6 +354,7 @@ describe('registerHumanHandlers feature routes', () => {
       const response = await registration.handle(new Request(`https://example.test${registration.path}`));
       expect(response.status).toBe(503);
       expect(await response.json()).toEqual(registration.path.includes('owner-mailbox') || registration.path.includes('owner-device-proof')
+        || registration.path.includes('/room-send/')
         ? { code: 'unavailable' }
         : registration.path.includes('channel-discovery/bootstrap')
         ? { error: 'feature_unavailable' }
@@ -359,7 +365,7 @@ describe('registerHumanHandlers feature routes', () => {
   it('substitutes live pairing registrations', () => {
     const request = { path: '/api/human/pairing/request', methods: ['POST', 'GET'], handle: async () => new Response('request') } as const;
     const decision = { path: '/api/human/pairing/decision', methods: ['POST'], handle: async () => new Response('decision') } as const;
-    expect(features(registerHumanHandlers({ pairing: () => [request, decision] })).slice(6, 8)).toEqual([request, decision]);
+    expect(features(registerHumanHandlers({ pairing: () => [request, decision] })).filter(item => item.path.startsWith('/api/human/pairing/'))).toEqual([request, decision]);
   });
 
   it('places live channel-access registrations after pairing', () => {
@@ -373,6 +379,8 @@ describe('registerHumanHandlers feature routes', () => {
       '/api/human/agent-bootstrap/authorize', '/api/human/owner-mailbox/review-bindings',
       '/api/human/owner-mailbox/submit', '/api/human/owner-mailbox/result',
       '/api/human/owner-device-proof/challenge', '/api/human/owner-device-proof/register',
+      '/api/human/revocation/targets', '/api/human/revocation/revoke', '/api/human/revocation/status',
+      ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action => `/api/human/room-send/${action}`),
       '/api/human/pairing/request', '/api/human/pairing/decision',
     ]);
   });
@@ -386,7 +394,7 @@ describe('registerHumanHandlers feature routes', () => {
     const registrations = features(registerHumanHandlers({ channelDiscoveryBootstrap: () => [authorize] }));
 
     expect(registrations.at(-4)).toBe(authorize);
-    expect(registrations.slice(6, 8).map(route => route.path)).toEqual([
+    expect(registrations.filter(route => route.path.startsWith('/api/human/pairing/')).map(route => route.path)).toEqual([
       '/api/human/pairing/request',
       '/api/human/pairing/decision',
     ]);

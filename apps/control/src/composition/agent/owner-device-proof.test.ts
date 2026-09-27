@@ -6,6 +6,7 @@ import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import type { AdmissionGateway } from '../../invitations/index';
 import { fakeStore, T0 } from '../../auth/support.test';
+import { ownerMatrixUserId } from '../human/matrix-identity';
 import { createMatrixBrowserDeviceVerifier, createOwnerDeviceProofRoutes,
   OWNER_DEVICE_CHALLENGE, OWNER_DEVICE_LOOKUP, OWNER_DEVICE_REGISTER } from './owner-device-proof';
 
@@ -89,7 +90,7 @@ async function setup() {
 
 describe('owner browser Matrix device proof', () => {
   it('accepts only the exact token-bound Matrix user, device, and published Ed25519 key', async () => {
-    const userId = `@khala_${Buffer.from(binding.ownerId).toString('base64url')}:example.test`;
+    const userId = ownerMatrixUserId(binding.ownerId, 'example.test');
     let who = { user_id: userId, device_id: browserDeviceId };
     let key = fingerprint;
     const calls: Array<{ url: string; init?: RequestInit }> = [];

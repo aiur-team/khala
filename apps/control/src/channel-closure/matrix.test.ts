@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthPrincipal, OwnerId, RoomId } from '@khala/contracts/messaging/index';
 import type { MatrixSessionIssuer } from '../composition/human/matrix';
+import { fakeStore, T0 } from '../auth/support.test';
+import { createOwnerCleanupRequests } from './cleanup-requests';
 import { createMatrixClosureTransport } from './matrix';
 
 const ownerId = 'owner_alice' as OwnerId;
@@ -11,6 +13,20 @@ const principal: AuthPrincipal = {
 const roomId = '!room:matrix.example' as RoomId;
 
 describe('Matrix channel closure transport', () => {
+  it('reports a request only when the owner-scoped cleanup store durably accepts it', async () => {
+    const state = fakeStore(() => T0);
+    const cleanup = createOwnerCleanupRequests(state.store, ownerId);
+    const sessions = { issue: async () => ({ kind: 'unavailable' as const }) } as unknown as MatrixSessionIssuer;
+    const transport = createMatrixClosureTransport({ principal, sessions,
+      homeserverOrigin: 'https://matrix.example', cleanup });
+    const request = { operationId: 'close_1', ownerId, roomId, expectedRoomRevision: 0 };
+    state.inject('compareAndSet', 'unavailable');
+    expect(await transport.requestLocalCleanup(request)).toBe('unavailable');
+    expect(await cleanup.list()).toEqual({ kind: 'ok', requests: [] });
+    expect(await transport.requestLocalCleanup(request)).toBe('requested');
+    expect(await cleanup.list()).toEqual({ kind: 'ok', requests: [request] });
+  });
+
   it('checks the owner membership and leaves only that room with the owner account', async () => {
     const sessions = { issue: vi.fn(async () => ({ kind: 'ok' as const, session: {
       homeserverOrigin: 'https://matrix.example', userId: '@alice:matrix.example', accessToken: 'secret',
@@ -29,6 +45,6 @@ describe('Matrix channel closure transport', () => {
     expect(fetch.mock.calls[1]?.[1]?.headers).toMatchObject({ authorization: 'Bearer secret' });
     expect(await transport.leave('owner_other' as OwnerId, roomId)).toBe('unknown');
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(await transport.requestLocalCleanup(ownerId, roomId)).toBe('unavailable');
+    expect(await transport.requestLocalCleanup({ operationId: 'close_1', ownerId, roomId, expectedRoomRevision: 0 })).toBe('unavailable');
   });
 });

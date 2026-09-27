@@ -48,6 +48,8 @@ export type MatrixConnectorSubstrate = Readonly<{
   send(clientTxnId: string, body: string): Promise<{ eventId: string }>;
   /** Explicit trust only after an authenticated owner-approved fingerprint attestation. */
   trustPeer(userId: string, deviceId: string, expectedEd25519: string): Promise<void>;
+  removeOwnDevice(expectedCurve25519: string): Promise<'removed' | 'replaced' | 'reauthentication_required' | 'forbidden' | 'unavailable'>;
+  discardOutboundSession(): Promise<boolean>;
   close(): Promise<void>;
 }>;
 
@@ -288,6 +290,8 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
         return accepted;
       }),
       trustPeer: async (userId, deviceId, expectedEd25519) => call<void>(current(), 'trustPeer', userId, deviceId, expectedEd25519),
+      removeOwnDevice: expectedCurve25519 => call(current(), 'removeOwnDevice', expectedCurve25519),
+      discardOutboundSession: () => call(current(), 'discardOutboundSession'),
       async close() {
         if (closed) return;
         listeners.clear();

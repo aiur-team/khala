@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, open, mkdir, readFile, rm } from 'node:fs/promises';
+import { link, open, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { ConnectorStorage } from '@khala/connector/storage/open';
@@ -10,6 +10,40 @@ export type LocalStopRequest = Readonly<{
 export type LocalStopReceipt = LocalStopRequest & Readonly<{
   bindingId: string; bindingGeneration: number; state: 'stopped'; cleanupRequested: true;
 }>;
+
+/** Only an exact synced revocation Stop marker permits cleanup-only startup. */
+export async function hasLocalRevocationStop(input: Readonly<{
+  stateDirectory: string; binding: SessionBinding; roomId: string; operationId?: string;
+}>): Promise<boolean> {
+  const directory = path.join(input.stateDirectory, 'closure-cleanup');
+  let entries;
+  try { entries = await readdir(directory, { withFileTypes: true }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const name = entry.name;
+    if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
+    let value: unknown;
+    try { value = JSON.parse(await readFile(path.join(directory, name), 'utf8')) as unknown; }
+    catch { continue; }
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).sort().join(',') !== 'bindingGeneration,bindingId,cleanup,expectedRoomRevision,operationId,ownerId,roomId,v'
+      || item.v !== 1 || typeof item.operationId !== 'string' || !/^revoke_[a-f0-9]{40}$/u.test(item.operationId)
+      || input.operationId !== undefined && item.operationId !== input.operationId
+      || item.ownerId !== input.binding.ownerId || item.roomId !== input.roomId
+      || item.bindingId !== input.binding.bindingId || item.bindingGeneration !== input.binding.generation
+      || item.expectedRoomRevision !== 0 || item.cleanup !== 'requested'
+      || name !== `${createHash('sha256').update(JSON.stringify([
+        item.operationId, input.binding.bindingId, input.binding.generation,
+      ])).digest('hex')}.json`) continue;
+    return true;
+  }
+  return false;
+}
 
 /**
  * Stops ingress and waits for in-flight model dispatch before writing a permanent

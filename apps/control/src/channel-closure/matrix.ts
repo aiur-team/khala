@@ -13,6 +13,7 @@ export function createMatrixClosureTransport(input: Readonly<{
   homeserverOrigin: string;
   /** #42 protected connector mailbox; no mailbox means closure cannot end delivery. */
   connector?: Readonly<{ stopDelivery(request: ClosureRequest, options?: CallOptions): Promise<ClosureConnectorStopResult> }>;
+  cleanup?: Readonly<{ record(request: ClosureRequest): Promise<'requested' | 'unavailable'> }>;
   fetch?: typeof globalThis.fetch;
 }>): ClosureTransport {
   const origin = new URL(input.homeserverOrigin);
@@ -62,11 +63,6 @@ export function createMatrixClosureTransport(input: Readonly<{
         return await membership(ownerId, roomId, options) === 'left' ? 'left' : response.status === 403 ? 'forbidden' : 'unknown';
       } catch { return 'unknown'; }
     },
-    async requestLocalCleanup() {
-      // The server cannot attest that an offline browser cleared its local
-      // state. The caller receives `partial` until a real cleanup request receipt
-      // is integrated; transport leave alone never upgrades this to complete.
-      return 'unavailable';
-    },
+    requestLocalCleanup: request => input.cleanup?.record(request) ?? Promise.resolve('unavailable' as const),
   };
 }

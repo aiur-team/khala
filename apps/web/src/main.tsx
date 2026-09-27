@@ -2,6 +2,7 @@ import { decodeContentLimits } from '@khala/contracts/messaging/index';
 import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { createHumanApplication } from './composition/human/application';
 import { createHumanBrowserApi } from './composition/human/browser-api';
+import { createOwnerCleanupConsumer } from './composition/human/cleanup-consumer';
 import { readHumanEntry } from './composition/human/entry';
 import { readHostedConfig } from './composition/human/hosted-config';
 import { createMatrixBrowserPorts } from './composition/human/matrix-browser';
@@ -57,21 +58,21 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     credentials: api.credentials,
     participants: api.participants,
     limits: decodedLimits.value,
+    sendFence: api.roomSend,
   });
+  let cleanupConsumer: ReturnType<typeof createOwnerCleanupConsumer> | null = null;
   const closure = (roomId: Parameters<typeof api.closure>[0]) => {
     const port = api.closure(roomId);
     return {
       currentCapability: port.currentCapability,
       async closeRoom(input: Parameters<typeof port.closeRoom>[0], options?: Parameters<typeof port.closeRoom>[1]) {
         const result = await port.closeRoom(input, options);
-        if (result.kind === 'ok' && (result.value.state === 'complete'
-          || result.value.reason === 'local_cleanup_failed')) await matrix.cleanupRoom(input.ownerId, roomId);
+        if (result.kind === 'ok' && result.value.state === 'complete') void cleanupConsumer?.poll();
         return result;
       },
       async inspectClosure(operationId: string, options?: Parameters<typeof port.inspectClosure>[1]) {
-        const ownerId = matrix.participant()?.ownerId;
         const result = await port.inspectClosure(operationId, options);
-        if (ownerId && result.kind === 'ok' && result.value.reason === 'local_cleanup_failed') await matrix.cleanupRoom(ownerId, roomId);
+        if (result.kind === 'ok' && result.value.state === 'complete') void cleanupConsumer?.poll();
         return result;
       },
     };
@@ -86,6 +87,17 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     ...(api.revocation ? { revocation: api.revocation } : {}),
     limits: decodedLimits.value,
   }, { initialPath: entry.path });
+  cleanupConsumer = createOwnerCleanupConsumer({
+    ownerId: () => {
+      const snapshot = application.getSnapshot();
+      return snapshot.phase === 'ready' ? snapshot.context.principal.ownerId : null;
+    },
+    requests: api.cleanupRequests,
+    cleanupRoom: matrix.cleanupRoom,
+    roomPresent: matrix.roomPresent,
+  });
+  const unsubscribeCleanup = application.subscribe(() => { void cleanupConsumer?.poll(); });
+  cleanupConsumer.start();
   const routes = createHumanRouteCodec({ origin: appOrigin, basePath: '/' });
   const createChannelAccess = () => createChannelAccessInboxController({ requests: api.channelAccess });
   const mounted = mountKhalaContent({
@@ -111,13 +123,19 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     navigateRoute(path) {
       history.pushState(null, '', path);
       application.navigate(path);
+      void cleanupConsumer?.poll();
     },
   });
 
-  const onPopState = () => application.navigate(`${location.pathname}${location.search}`);
+  const onPopState = () => {
+    application.navigate(`${location.pathname}${location.search}`);
+    void cleanupConsumer?.poll();
+  };
   addEventListener('popstate', onPopState);
   addEventListener('pagehide', () => {
     removeEventListener('popstate', onPopState);
+    unsubscribeCleanup();
+    cleanupConsumer?.dispose();
     mounted.dispose();
     application.dispose();
   }, { once: true });

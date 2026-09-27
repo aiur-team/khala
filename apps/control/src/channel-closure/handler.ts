@@ -1,4 +1,4 @@
-import { decodeClosureRequest, decodeClosureStatus, decodeRoomId, type AuthPrincipal, type ClosurePort, type ClosureStatus, type OperationResult } from '@khala/contracts/messaging/index';
+import { decodeClosureRequest, decodeClosureStatus, decodeRoomId, type AuthPrincipal, type ClosurePort, type ClosureRequest, type ClosureStatus, type OperationResult } from '@khala/contracts/messaging/index';
 import type { AuthService, MutationAuthorization } from '../auth/index';
 import type { RouteRegistration } from '../runtime/handler';
 
@@ -7,6 +7,7 @@ export const CLOSURE_PATH = '/api/human/channel-closure';
 type Dependencies = Readonly<{
   auth: Pick<AuthService, 'authenticateRequest' | 'requireHumanMutation'>;
   service(principal: AuthPrincipal): ClosurePort;
+  cleanupRequests?(principal: AuthPrincipal): Promise<Readonly<{ kind: 'ok'; requests: readonly ClosureRequest[] }> | Readonly<{ kind: 'unavailable' }>>;
 }>;
 
 const HEADERS = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
@@ -61,6 +62,10 @@ export function createChannelClosureHandlers(deps: Dependencies): readonly Route
       const query = new URL(request.url).searchParams;
       const operationId = query.get('operationId');
       const room = query.get('roomId');
+      if (query.size === 1 && query.get('cleanup') === '1') {
+        const result = await deps.cleanupRequests?.(authentication.context.principal);
+        return result?.kind === 'ok' ? json(200, { kind: 'ok', value: result.requests }) : failure(503, 'unavailable');
+      }
       if (query.size !== 1 || (operationId === null && room === null)) return failure(400, 'invalid_request');
       const service = deps.service(authentication.context.principal);
       if (operationId !== null && operationId.length > 0) {
