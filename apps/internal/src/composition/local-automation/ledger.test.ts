@@ -152,6 +152,27 @@ describe('durable local peer reservation', () => {
     } finally { w.handle.close(); }
   });
 
+  it('reopens the same reserved peer job after a crash without resetting its root budget or busy slot', () => {
+    const w = world();
+    const root = w.send('human');
+    w.acknowledge(bob, root);
+    const peer = w.send('bob', bob);
+    expect(w.ledger.reserve({ recipient: carol, event: peer, mode: w.mode(carol) }))
+      .toMatchObject({ kind: 'reserved' });
+    const later = w.send('bob', bob);
+    w.handle.close();
+    const reopened = openChannelStore({ directory: path.join(w.root, 'state'), mode: 'existing' });
+    try {
+      const ledger = createLocalAutomationLedger(reopened, createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS));
+      expect(ledger.reserve({ recipient: carol, event: peer, mode: w.mode(carol) }))
+        .toMatchObject({ kind: 'duplicate', state: 'reserved' });
+      expect(ledger.reserve({ recipient: carol, event: later, mode: w.mode(carol) }))
+        .toEqual({ kind: 'held', reason: 'busy' });
+      expect(reopened.read(db => db.prepare('SELECT count(*) AS n FROM automation_releases WHERE root_id = ?')
+        .get(root.eventId))).toEqual({ n: 1 });
+    } finally { reopened.close(); }
+  });
+
   it('rechecks pause, mode revision, admission and Stop against the same durable claim', () => {
     const w = world();
     try {
