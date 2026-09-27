@@ -228,6 +228,9 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
           if (wire.limited) return { kind: 'gap' };
           const events: SourceEvent[] = [];
           for (const event of wire.events) {
+            // The agent's own encrypted sends are not owner-authored pending work.
+            // Skipping them still advances the authenticated Matrix cursor.
+            if (event.senderUserId === input.userId) continue;
             const participant = input.participantIdFor(event.senderUserId);
             if (!participant) return { kind: 'rejected', code: 'unsupported' };
             const claimedDevice = (event.senderDeviceId ?? 'unknown') as DeviceId;
