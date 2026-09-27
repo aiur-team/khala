@@ -3,7 +3,7 @@ import { StoreError } from './errors';
 
 /** `PRAGMA application_id`: ASCII "KHCH" (Khala channel), distinct from connector storage. */
 export const APPLICATION_ID = 0x4b484348;
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export const CORE_SCHEMA_V1_SQL = `
 CREATE TABLE meta (
@@ -316,13 +316,54 @@ CREATE TABLE agent_acknowledgements (
 CREATE INDEX agent_acknowledgements_revision ON agent_acknowledgements (ledger_revision);
 `;
 
+/**
+ * Local-only peer automation evidence. An event's cause is set by the owner
+ * server from its authenticated author and acknowledged inbox history. Arrival
+ * versions are snapshotted when the event commits, so a later mode change
+ * cannot turn backlog into a newly authorized automatic release.
+ */
+export const AUTOMATION_SCHEMA_V9_SQL = `
+ALTER TABLE events ADD COLUMN causal_root_id TEXT;
+ALTER TABLE events ADD COLUMN causal_depth INTEGER CHECK (causal_depth >= 0);
+CREATE TABLE automation_arrivals (
+  event_id TEXT NOT NULL REFERENCES events (event_id) ON DELETE RESTRICT,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  mode_version INTEGER NOT NULL CHECK (mode_version >= 1),
+  PRIMARY KEY (event_id, binding_id, generation),
+  FOREIGN KEY (binding_id, generation) REFERENCES bindings (binding_id, generation) ON DELETE RESTRICT
+) STRICT;
+CREATE TABLE automation_releases (
+  release_id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events (event_id) ON DELETE RESTRICT,
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  root_id TEXT NOT NULL,
+  depth INTEGER NOT NULL CHECK (depth >= 0),
+  mode_version INTEGER NOT NULL CHECK (mode_version >= 1),
+  claimed_idle_epoch TEXT,
+  state TEXT NOT NULL CHECK (state IN ('reserved', 'finished')),
+  UNIQUE (event_id, binding_id, generation),
+  FOREIGN KEY (binding_id, generation) REFERENCES bindings (binding_id, generation) ON DELETE RESTRICT
+) STRICT;
+CREATE INDEX automation_releases_root ON automation_releases (root_id);
+CREATE TABLE automation_turn_ends (
+  binding_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  epoch TEXT NOT NULL,
+  PRIMARY KEY (binding_id, generation, epoch),
+  FOREIGN KEY (binding_id, generation) REFERENCES bindings (binding_id, generation) ON DELETE RESTRICT
+) STRICT;
+`;
+
 export type MigrationStage =
   | 'after_mode_controls' | 'after_mode_operations' | 'before_user_version' | 'after_user_version'
   | 'after_receipt_tables' | 'before_receipt_user_version'
   | 'after_discovery_tables' | 'before_discovery_user_version'
   | 'after_mode_rebuild' | 'before_mode_rebuild_user_version'
   | 'after_activation_start' | 'before_activation_start_user_version'
-  | 'after_acknowledgement_tables' | 'before_acknowledgement_user_version';
+  | 'after_acknowledgement_tables' | 'before_acknowledgement_user_version'
+  | 'after_automation_tables' | 'before_automation_user_version';
 export type MigrationFault = (stage: MigrationStage) => void;
 
 function pragmaNumber(db: DatabaseSync, name: 'application_id' | 'user_version'): number {
@@ -373,6 +414,7 @@ function expectedManifest(version: number): readonly SchemaRow[] {
     if (version >= 6) expected.exec(MODE_SCHEMA_V6_SQL);
     if (version >= 7) expected.exec(ACTIVATION_SCHEMA_V7_SQL);
     if (version >= 8) expected.exec(ACKNOWLEDGEMENT_SCHEMA_V8_SQL);
+    if (version >= 9) expected.exec(AUTOMATION_SCHEMA_V9_SQL);
     const rows = schemaRows(expected).map(row => ({ ...row, sql: normalizeSql(row.sql) }));
     expectedManifests.set(version, rows);
     return rows;
@@ -418,6 +460,7 @@ export function prepareSchema(
     db.exec(MODE_SCHEMA_V6_SQL);
     db.exec(ACTIVATION_SCHEMA_V7_SQL);
     db.exec(ACKNOWLEDGEMENT_SCHEMA_V8_SQL);
+    db.exec(AUTOMATION_SCHEMA_V9_SQL);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     assertManifest(db, SCHEMA_VERSION);
     assertIntegrity(db);
@@ -497,5 +540,14 @@ export function prepareSchema(
     assertIntegrity(db);
     migrationFault?.('before_acknowledgement_user_version');
     db.exec('PRAGMA user_version = 8');
+  }
+
+  if (version <= 8) {
+    db.exec(AUTOMATION_SCHEMA_V9_SQL);
+    migrationFault?.('after_automation_tables');
+    assertManifest(db, 9);
+    assertIntegrity(db);
+    migrationFault?.('before_automation_user_version');
+    db.exec('PRAGMA user_version = 9');
   }
 }

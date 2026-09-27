@@ -286,9 +286,8 @@ is capped by capability limits equivalent to
 
 ### Local automation and pause/wake
 
-`listening-mode-contract` owns the initial local-only automation profile; it is
-an injected value, never a caller option or hosted default. The starting values
-are provisional until its retained two-agent acceptance experiment passes:
+`listening-mode-contract` owns the local-only automation profile; it is
+an injected value, never a caller option or hosted default. The approved values are:
 
 ```ts
 const LOCAL_AUTOMATION_LIMITS = {
@@ -306,16 +305,17 @@ a human starts a new root or explicitly re-arms it; an agent cannot reset its
 own counters. Before promotion, the contract must retain one representative
 two-agent exchange that completes inside the profile and one self-sustaining
 loop that the profile stops; revise the values if the first cannot complete or
-the second is not bounded. `local-automation-fence` injects `maxCausalDepth`
-through the existing automatic-release policy; listening dispatch receives only
-`maxJobsPerCausalRoot`, `maxConcurrentJobs`, and `busy`. Both layers consume the
-same approved profile in local composition, while hosted `approvedAutomation()`
-remains `null`.
+the second is not bounded. Internal production composes the approved profile into
+the durable SQLite peer reservation ledger and the existing pull inbox. It derives
+authority from the owner's recorded same-channel admission and checks the current
+binding generation, mode revision and pause before a native notice. It does not
+mint a hosted approval command or connector policy acknowledgement. Hosted
+`approvedAutomation()` remains `null`.
 
-Pause and wake use the existing policy and dispatcher boundaries:
+Pause and wake use the internal release feed and native boundaries:
 
-1. An owner pause increments policy version. Once effective, no new claim may
-   start; an already-claimed attempt finishes under `modeAtClaim`. Hard cancel
+1. An owner pause holds the feed. Once effective, no new claim may
+   start; an already-claimed attempt may finish under its recorded mode revision. Hard cancel
    is a separate command and is never implied by pause.
 2. Arrival may issue one coalesced, content-free dispatcher wake only for an
    effective, unpaused automatic policy in `steer` or `sync`. `async` arrival

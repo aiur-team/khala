@@ -5,8 +5,8 @@
 // the identical record back and its inbox deduplicates it by release ID.
 //
 // Listening mode decides only whether a release may wake the harness: `async`
-// never does, and neither does an agent-authored event, because no local
-// automatic-release gate bounds agent-to-agent loops yet. A pause holds the whole
+// never does. An agent-authored event may wake only after the internal-only
+// durable admitted-peer gate reserves its causal budget. A pause holds the whole
 // feed behind its cursor. A revoked or stale generation is refused by the store.
 
 import { createHash } from 'node:crypto';
@@ -38,6 +38,8 @@ export type InternalReleaseFeedInput = Readonly<{
   listeningModes: Pick<SqliteListeningModeRepository, 'read'>;
   /** Whether the binding generation is paused. Absent means no pause source is composed. */
   paused?: (binding: SessionBinding) => PauseRead;
+  /** Owner-composed local peer gate; absent means no agent-authored wake. */
+  peerAutomation?: Readonly<{ reserve(binding: SessionBinding, event: StoredEvent): 'wake' | 'busy' | 'held' }>;
   /** Encoded release payload bound; larger releases become placeholders. Defaults to the inbox limit. */
   maxPayloadBytes?: number;
   /** Page payload budget; a page always carries at least one release. Defaults to MAX_PAGE_PAYLOAD_BYTES. */
@@ -58,7 +60,7 @@ function eventRef(event: StoredEvent): EventRef {
 }
 
 function release(
-  binding: SessionBinding, event: StoredEvent, modeWakes: boolean, maxPayloadBytes: number,
+  binding: SessionBinding, event: StoredEvent, modeWakes: boolean, peerWakes: boolean, maxPayloadBytes: number,
 ): AgentRelease | null {
   const releaseId = internalReleaseId(binding, event.eventId);
   const ref = eventRef(event);
@@ -81,7 +83,7 @@ function release(
     payload: encoded.bytes,
     payloadDigest: `sha256:${createHash('sha256').update(encoded.bytes).digest('hex')}`,
     releasedAt: event.receivedAt,
-    wake: modeWakes && event.participant.kind === 'human',
+    wake: modeWakes && (event.participant.kind === 'human' || peerWakes),
   };
 }
 
@@ -104,11 +106,11 @@ export function createInternalReleaseFeed(input: InternalReleaseFeedInput): Agen
         const releases: AgentRelease[] = [];
         let spent = 0;
         for (const [index, event] of page.events.entries()) {
-          const next = release(binding, event, modeWakes, maxPayloadBytes);
+          const next = release(binding, event, modeWakes, false, maxPayloadBytes);
           // An event that cannot be encoded must not be skipped past silently.
           if (next === null) return { kind: 'unavailable' };
-          spent += next.payload.byteLength + RELEASE_OVERHEAD_BYTES;
-          if (index > 0 && spent > maxPagePayloadBytes) {
+          const size = next.payload.byteLength + RELEASE_OVERHEAD_BYTES;
+          if (index > 0 && spent + size > maxPagePayloadBytes) {
             // End the page early so the response stays under the client's limit; the cursor
             // stops at the last included event and the rest arrives on the next pull.
             const decoded = decodeSubscriptionCursor(page.nextCursor);
@@ -116,7 +118,20 @@ export function createInternalReleaseFeed(input: InternalReleaseFeedInput): Agen
             const nextCursor = encodeSubscriptionCursor({ ...decoded, lastCoveredSequence: page.events[index - 1]!.sequence });
             return { kind: 'page', releases, nextCursor, caughtUp: false };
           }
-          releases.push(next);
+          spent += size;
+          // Reserve only for a release actually carried by this page. A suffix
+          // behind the byte cursor has not entered the recipient's pull lifecycle.
+          const peer = modeWakes && event.participant.kind === 'agent'
+            ? input.peerAutomation?.reserve(binding, event) ?? 'held' : 'held';
+          if (peer === 'busy') {
+            if (index === 0) return { kind: 'held', reason: 'peer_busy' };
+            const decoded = decodeSubscriptionCursor(page.nextCursor);
+            if (!decoded) return { kind: 'unavailable' };
+            return { kind: 'page', releases,
+              nextCursor: encodeSubscriptionCursor({ ...decoded, lastCoveredSequence: page.events[index - 1]!.sequence }),
+              caughtUp: false };
+          }
+          releases.push(peer === 'wake' ? { ...next, wake: true } : next);
         }
         return { kind: 'page', releases, nextCursor: page.nextCursor, caughtUp: page.caughtUp };
       } catch {

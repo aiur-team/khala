@@ -258,6 +258,37 @@ function storedEvents(db: DatabaseSync, rows: readonly EventRow[]): readonly Sto
   return events.every((event): event is StoredEvent => event !== null) ? events : null;
 }
 
+/** A model cannot assert its own causal root. Only a current binding's last
+ * acknowledged, server-issued batch can carry provenance into a new send. */
+function causeForAgentSend(
+  db: DatabaseSync, channelId: string, participantId: string, deviceId: string,
+  binding: SessionBinding | undefined,
+): Readonly<{ rootId: string; depth: number; releaseIds: readonly string[] }> | null {
+  if (!binding || binding.agentParticipantId !== participantId || binding.deviceId !== deviceId) return null;
+  const held = db.prepare(`SELECT b.status FROM bindings b
+    JOIN discovery_activations admission ON admission.binding_id = b.binding_id
+      AND admission.generation = b.generation AND admission.channel_id = ?
+    WHERE b.binding_id = ? AND b.generation = ? AND b.participant_id = ? AND b.device_id = ?
+    AND b.generation = (SELECT max(generation) FROM bindings WHERE binding_id = b.binding_id)`)
+    .get(channelId, binding.bindingId, binding.generation, participantId, deviceId) as { status: string } | undefined;
+  if (held?.status !== 'active') return null;
+  const latest = db.prepare(`SELECT max(ledger_revision) AS revision FROM agent_acknowledgements
+    WHERE binding_id = ? AND generation = ? AND channel_id = ?`)
+    .get(binding.bindingId, binding.generation, channelId) as { revision: number | null };
+  if (latest.revision === null) return null;
+  const causes = db.prepare(`SELECT e.causal_root_id AS root_id, e.causal_depth AS depth, a.release_id
+    FROM agent_acknowledgements a JOIN events e ON e.event_id = a.event_id
+    WHERE a.binding_id = ? AND a.generation = ? AND a.channel_id = ? AND a.ledger_revision = ?`)
+    .all(binding.bindingId, binding.generation, channelId, latest.revision) as unknown as Array<{
+      root_id: string | null; depth: number | null; release_id: string;
+    }>;
+  const rootId = causes[0]?.root_id;
+  if (!rootId || causes.some(cause => cause.root_id !== rootId || cause.depth === null
+    || !Number.isSafeInteger(cause.depth) || cause.depth < 0)) return null;
+  return { rootId, depth: Math.max(...causes.map(cause => cause.depth!)) + 1,
+    releaseIds: causes.map(cause => cause.release_id) };
+}
+
 function bindingFromRow(row: BindingRow): StoredBinding {
   return {
     v: 1,
@@ -391,6 +422,8 @@ export interface ChannelStore {
     clientTxnId: string;
     content: MessageContent;
     receivedAt: string;
+    /** Authenticated transport's binding; never decoded from the message body. */
+    sourceBinding?: SessionBinding;
   }>): SendResult;
   timeline(input: Readonly<{
     channelId: RoomId;
@@ -737,15 +770,39 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
             return { kind: 'rejected', code: 'identity_mismatch' } as const;
           }
           if (!isChannelWritable(db, input.channelId)) return { kind: 'rejected', code: 'read_only' } as const;
+          const author = db.prepare('SELECT kind FROM participants WHERE participant_id = ?')
+            .get(input.authorParticipantId) as { kind: 'human' | 'agent' } | undefined;
+          if (!author) return { kind: 'unavailable' } as const;
+          const cause = author.kind === 'human'
+            ? { rootId: input.eventId, depth: 0 }
+            : causeForAgentSend(db, input.channelId, input.authorParticipantId, input.authorDeviceId, input.sourceBinding);
           const inserted = db.prepare(`
             INSERT INTO events (
               event_id, channel_id, author_participant_id, author_device_id, client_txn_id,
-              canonical_payload, content_digest, received_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              canonical_payload, content_digest, received_at, causal_root_id, causal_depth
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             input.eventId, input.channelId, input.authorParticipantId, input.authorDeviceId,
             input.clientTxnId, canonicalPayload, contentDigest, input.receivedAt,
+            cause?.rootId ?? null, cause?.depth ?? null,
           );
+          db.prepare(`INSERT INTO automation_arrivals (event_id, binding_id, generation, mode_version)
+            SELECT ?, b.binding_id, b.generation, m.version FROM bindings b
+            JOIN memberships member ON member.participant_id = b.participant_id AND member.channel_id = ?
+            JOIN discovery_activations admission ON admission.binding_id = b.binding_id
+              AND admission.generation = b.generation AND admission.channel_id = member.channel_id
+            JOIN mode_controls m ON m.binding_id = b.binding_id AND m.generation = b.generation
+            WHERE b.status = 'active' AND member.membership = 'joined' AND b.participant_id <> ?
+            AND b.generation = (SELECT max(newer.generation) FROM bindings newer WHERE newer.binding_id = b.binding_id)`)
+            .run(input.eventId, input.channelId, input.authorParticipantId);
+          // An authenticated response to the exact acknowledged batch is a terminal
+          // observation for those peer jobs. ACK alone never frees the active slot.
+          if (author.kind === 'agent' && cause && 'releaseIds' in cause && input.sourceBinding) {
+            const finish = db.prepare(`UPDATE automation_releases SET state = 'finished'
+              WHERE release_id = ? AND binding_id = ? AND generation = ? AND root_id = ? AND state = 'reserved'`);
+            for (const releaseId of cause.releaseIds) finish.run(releaseId,
+              input.sourceBinding.bindingId, input.sourceBinding.generation, cause.rootId);
+          }
           db.prepare('UPDATE channels SET revision = revision + 1 WHERE channel_id = ?').run(input.channelId);
           const row = db.prepare('SELECT * FROM events WHERE sequence = ?').get(inserted.lastInsertRowid) as EventRow;
           const event = storedEvent(db, row);

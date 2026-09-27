@@ -1,6 +1,8 @@
 import type { HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
+import type { RoomId } from '@khala/contracts/messaging/index';
 import type { CodexIdleWakePort } from '@khala/harnesses/codex/idle-wake';
-import { createListeningModeService } from '@khala/policy/listening-mode/store';
+import { createListeningModeService, listeningModeView } from '@khala/policy/listening-mode/store';
+import { LOCAL_AUTOMATION_LIMITS } from '@khala/policy/listening-mode/limits';
 import { type SqliteListeningModeRepository, createSqliteListeningModeRepository } from '../../listening-mode-store/sqlite';
 import type { BindingModeOptions } from '../../server/binding-mode';
 import type { AgentReleaseFeed } from '../../server/channel-server';
@@ -10,8 +12,11 @@ import { type BindingPauseStore, createBindingPauseStore } from '../../store/pau
 import { createInternalReleaseFeed } from '../internal-delivery/release-feed';
 import { createLocalListeningModeStore } from '../local-transport/listening-mode-store';
 import { createCodexIdleActivity } from '@aiur/khala/composition/codex-idle-activity';
+import { internalSessionDigest } from '@aiur/khala/composition/internal-session';
 import { createServerHarnessCapabilities } from './capabilities';
 import { composeCodexIdleWake } from './codex-idle-wake';
+import { createLocalAutomationProvider } from '../local-automation/provider';
+import { createLocalAutomationLedger } from '../local-automation/ledger';
 import type { HarnessObservation } from '../../server/binding-mode';
 
 // Listening modes and pause for one internal channel store. The release feed, the
@@ -45,19 +50,59 @@ export function composeBindingModes(input: Readonly<{
   const harnesses = createServerHarnessCapabilities(input.claude, {
     handle: input.handle, ...(input.codexWake ? { inspectCodex: input.codexWake.inspect } : {}),
   });
+  const automation = createLocalAutomationLedger(input.handle, createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS));
+  const codexActivity = createCodexIdleActivity(input.stateDirectory);
+  const modeView = (binding: SessionBinding) => {
+    const control = listeningModes.read(binding);
+    return control.kind === 'record' ? listeningModeView(control.control, harnesses.capabilities(binding)) : null;
+  };
+  const reservePeer = (binding: SessionBinding, event: Parameters<NonNullable<BindingModeOptions['peerWake']>>[1]) => {
+    const result = automation.reserve({ recipient: binding, event, mode: modeView(binding),
+      claimedIdleEpoch: binding.harness === 'codex' ? codexActivity.idleEpochSync(binding) : null });
+    return result.kind === 'held' ? result.reason : result.state === 'reserved';
+  };
+  const pendingPeer = (binding: SessionBinding, channelId: string) => {
+    if (binding.harness === 'codex' && codexActivity.idleEpochSync(binding) === null) return false;
+    const result = automation.nextPending({ recipient: binding, channelId, mode: modeView(binding),
+      claimedIdleEpoch: binding.harness === 'codex' ? codexActivity.idleEpochSync(binding) : null });
+    return result !== null && result.kind !== 'held' && result.state === 'reserved';
+  };
+  const idleWake = composeCodexIdleWake({ store: input.store, modes: listeningModes, pause,
+    harnesses, stateDirectory: input.stateDirectory,
+    ...(input.codexWake ? { port: input.codexWake.port } : {}) });
   return {
     listeningModes,
     pause,
-    releases: createInternalReleaseFeed({ store: input.store, listeningModes, paused: binding => pause.read(binding) }),
+    releases: createInternalReleaseFeed({ store: input.store, listeningModes, paused: binding => pause.read(binding),
+      peerAutomation: { reserve(binding, event) {
+        const result = reservePeer(binding, event);
+        return result === true ? 'wake' : result === 'busy' ? 'busy' : 'held';
+      } },
+    }),
     control: {
       modes: createListeningModeService(createLocalListeningModeStore(listeningModes)),
       pause,
       capabilities: harnesses.capabilities,
       observe: harnesses.observe,
-      idleWake: composeCodexIdleWake({ store: input.store, modes: listeningModes, pause,
-        harnesses, stateDirectory: input.stateDirectory,
-        ...(input.codexWake ? { port: input.codexWake.port } : {}) }),
-      idleSession: async binding => (await createCodexIdleActivity(input.stateDirectory).idleSession(binding))?.sessionId ?? null,
+      idleWake,
+      idleSession: async binding => (await codexActivity.idleSession(binding))?.sessionId ?? null,
+      turnEnd: async (binding, sessionId, channelId, terminalId, notBarred) => {
+        const idle = await codexActivity.idleSession(binding);
+        if (binding.harness !== 'codex' || binding.sessionId !== internalSessionDigest('codex', sessionId)
+          || terminalId !== null || !notBarred() || idle?.sessionId !== sessionId
+          || !await harnesses.revalidateCodex(binding) || !notBarred()) return false;
+        const live = input.store.sessionBinding({ bindingId: binding.bindingId, harness: binding.harness,
+          sessionId: binding.sessionId });
+        if (live.kind !== 'done' || live.binding?.generation !== binding.generation
+          || input.store.channel({ channelId: channelId as RoomId,
+            participantId: binding.agentParticipantId }).kind !== 'done') return false;
+        automation.finishEnded({ recipient: binding, channelId, epoch: idle.epoch });
+        if (notBarred() && pendingPeer(binding, channelId)) await idleWake(binding, sessionId, notBarred);
+        return true;
+      },
+      peerWake: (binding, event) => binding.harness === 'codex' && codexActivity.idleEpochSync(binding) !== null
+        && reservePeer(binding, event) === true,
+      peerPending: pendingPeer,
     },
   };
 }
