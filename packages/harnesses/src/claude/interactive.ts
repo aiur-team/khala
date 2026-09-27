@@ -10,17 +10,19 @@ export const CLAUDE_INTERACTIVE_ROUTE = 'claude-interactive-hooks';
 export const CLAUDE_INTERACTIVE_ADAPTER_VERSION = 'claude-session-adapter-1';
 export const CLAUDE_INTERACTIVE_EVIDENCE_REF = 'experiments/internal-mode/read-receipts/claude/evidence.json';
 /** Changes whenever the route's evidence changes, so an owner's experimental grant lapses with it. */
-export const CLAUDE_INTERACTIVE_EVIDENCE_REVISION = 'interactive-claude-2026-09-25';
+export const CLAUDE_INTERACTIVE_EVIDENCE_REVISION = 'interactive-claude-2026-09-27';
 
 /** One exact Claude Code version and delivery route that passed the receipt conformance run. */
 export type ClaudeProvenRoute = Readonly<{ version: string; route: typeof CLAUDE_INTERACTIVE_ROUTE }>;
 
 /**
- * Pairs whose ordinary user-started CLI retained a passing live run (see the evidence
- * file's `provenPairs`). Empty until that run exists: an installed version is never
- * promoted by semver, by a hook firing, or by a passing offline test.
+ * Exact pairs with a retained normal-trust interactive CLI receipt run (see the
+ * evidence file's `provenPairs`). Decision 43 permits the Executor to launch the
+ * fixture. A version is never promoted by semver, a hook firing, or offline tests.
  */
-export const CLAUDE_INTERACTIVE_PROVEN: readonly ClaudeProvenRoute[] = [];
+export const CLAUDE_INTERACTIVE_PROVEN: readonly ClaudeProvenRoute[] = [
+  { version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE },
+];
 
 const IDLE = 'Idle agents receive messages only at their next turn.';
 
