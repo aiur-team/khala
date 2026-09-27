@@ -249,8 +249,25 @@ export function captureNativeSession(
   return finalSession;
 }
 
+/** A held native fixture can change its active session without changing PID or TTY. */
+function holdsNativeIdentity(
+  session: NativeSession, observe: typeof observeProcess, paneIsTty: typeof verifiedPane,
+  status: typeof nativeStatus, version: typeof nativeVersion,
+): boolean {
+  if (!sameProcess(session, observe(session.pid)) || !paneIsTty(session.tmuxPane, session.tty)) return false;
+  const imageVersion = parsedVersion(session.harness, version(session));
+  if (imageVersion !== session.cliVersion) return false;
+  const identity = nativeIdentity(session, status(session), imageVersion);
+  return identity?.sessionId === session.sessionId && identity.provider === session.provider
+    && identity.model === session.model && sameProcess(session, observe(session.pid))
+    && paneIsTty(session.tmuxPane, session.tty);
+}
+
 /** Exact run/ticket/role lookup; a second participant makes the record ambiguous. */
-export function aiurRecords(root: string, repository: string, observe = observeProcess, paneIsTty = verifiedPane): AiurPort {
+export function aiurRecords(
+  root: string, repository: string, observe = observeProcess, paneIsTty = verifiedPane,
+  status = nativeStatus, version = nativeVersion,
+): AiurPort {
   return {
     async session(ticket, runId, role) {
       if (!RUN.test(runId) || (role !== 'a' && role !== 'b')) return null;
@@ -269,13 +286,13 @@ export function aiurRecords(root: string, repository: string, observe = observeP
           || (proof as Record<string, unknown>).method !== expectedMethod[session.harness]
           || (proof as Record<string, unknown>).sessionId !== session.sessionId
           || (proof as Record<string, unknown>).cliVersion !== session.cliVersion) return null;
-        if (!sameProcess(session, observe(session.pid)) || !paneIsTty(session.tmuxPane, session.tty)) return null;
+        if (!holdsNativeIdentity(session, observe, paneIsTty, status, version)) return null;
         const other = role === 'a' ? 'b' : 'a';
         const sibling = recordPath(root, repository, runId, ticket, other);
         if (fs.existsSync(sibling)) return null;
         return session;
       } catch { return null; }
     },
-    async alive(session) { return sameProcess(session, observe(session.pid)) && paneIsTty(session.tmuxPane, session.tty); },
+    async alive(session) { return holdsNativeIdentity(session, observe, paneIsTty, status, version); },
   };
 }

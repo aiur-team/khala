@@ -31,7 +31,7 @@ describe('Executor native fixture evidence', () => {
   it('captures one private scoped native process and reads only its exact run, ticket, and role', async () => {
     const directory = root();
     captureNativeSession(directory, OBSERVATION, () => PROCESS, () => true, undefined, status, version);
-    const port = aiurRecords(directory, 'aiur-team/khala', () => PROCESS, () => true);
+    const port = aiurRecords(directory, 'aiur-team/khala', () => PROCESS, () => true, status, version);
     expect((await port.session(1001, OBSERVATION.runId, 'a'))?.sessionId).toBe(OBSERVATION.sessionId);
     expect(await port.session(1002, OBSERVATION.runId, 'a')).toBeNull();
     expect(await port.session(1001, 'ffffffffffff', 'a')).toBeNull();
@@ -63,10 +63,34 @@ describe('Executor native fixture evidence', () => {
     const directory = root();
     captureNativeSession(directory, OBSERVATION, () => PROCESS, () => true, undefined, status, version);
     expect(() => captureNativeSession(directory, { ...OBSERVATION, sessionId: 'native-8' }, () => PROCESS, () => true, undefined, status, version)).toThrow();
-    const reused = aiurRecords(directory, 'aiur-team/khala', () => ({ ...PROCESS, processStartTicks: '999999' }), () => true);
+    const reused = aiurRecords(directory, 'aiur-team/khala', () => ({ ...PROCESS, processStartTicks: '999999' }), () => true, status, version);
     expect(await reused.session(1001, OBSERVATION.runId, 'a')).toBeNull();
     expect(await reused.alive(decodeNativeSession(OBSERVATION)!)).toBe(false);
-    expect(await aiurRecords(directory, 'aiur-team/khala', () => null, () => true).session(1001, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await aiurRecords(directory, 'aiur-team/khala', () => null, () => true, status, version).session(1001, OBSERVATION.runId, 'a')).toBeNull();
+  });
+
+  it('refuses a live process that has switched native session, model, or image after capture', async () => {
+    const directory = root();
+    let shown: string | null = STATUS;
+    let image: string | null = version();
+    captureNativeSession(directory, OBSERVATION, () => PROCESS, () => true, undefined, () => shown, () => image);
+    const port = aiurRecords(directory, OBSERVATION.repository, () => PROCESS, () => true, () => shown, () => image);
+    const captured = decodeNativeSession(OBSERVATION)!;
+    expect(await port.session(OBSERVATION.ticket, OBSERVATION.runId, 'a')).not.toBeNull();
+    expect(await port.alive(captured)).toBe(true);
+    for (const changed of [
+      STATUS.replace(OBSERVATION.sessionId, '00000000-0000-4000-8000-000000000001'),
+      STATUS.replace('GPT-6-Sol', 'different-model'),
+      null,
+    ]) {
+      shown = changed;
+      expect(await port.session(OBSERVATION.ticket, OBSERVATION.runId, 'a')).toBeNull();
+      expect(await port.alive(captured)).toBe(false);
+    }
+    shown = STATUS;
+    image = 'codex-cli 0.157.1\n';
+    expect(await port.session(OBSERVATION.ticket, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await port.alive(captured)).toBe(false);
   });
 
   it('refuses tampered model or CLI version against the native process command and expected profile', () => {
@@ -87,9 +111,18 @@ describe('Executor native fixture evidence', () => {
     const screen = `Session ID:        ${native.sessionId}\nSession kind:      interactive\nLogin method:      Claude Max account\nModel:             opus (claude-opus-5-5)\n`;
     const capture = (value: typeof native, shown = screen, image = '2.1.283 (Claude Code)\n') =>
       captureNativeSession(directory, value, () => process, () => true, undefined, () => shown, () => image);
-    expect(capture(native).sessionId).toBe(native.sessionId);
-    expect((await aiurRecords(directory, native.repository, () => process, () => true).session(native.ticket, native.runId, 'a'))?.harness)
-      .toBe('claude');
+    const captured = capture(native);
+    expect(captured.sessionId).toBe(native.sessionId);
+    let shown: string | null = screen;
+    const held = aiurRecords(directory, native.repository, () => process, () => true,
+      () => shown, () => '2.1.283 (Claude Code)\n');
+    expect((await held.session(native.ticket, native.runId, 'a'))?.harness).toBe('claude');
+    shown = screen.replace(native.sessionId, '00000000-0000-4000-8000-000000000001');
+    expect(await held.session(native.ticket, native.runId, 'a')).toBeNull();
+    expect(await held.alive(captured)).toBe(false);
+    shown = screen.replace('claude-opus-5-5', 'claude-other-model');
+    expect(await held.session(native.ticket, native.runId, 'a')).toBeNull();
+    expect(await held.alive(captured)).toBe(false);
     const altered = root();
     const check = (value: typeof native, shown = screen, image = '2.1.283 (Claude Code)\n') =>
       captureNativeSession(altered, value, () => process, () => true, undefined, () => shown, () => image);
@@ -232,12 +265,36 @@ describe('Executor native fixture evidence', () => {
         expect(() => captureNativeSession(path.join(directory, 'bad-version'), { ...observation,
           cliVersion: '1.17.11', versionOutput: '1.17.11' }))
           .toThrow(/CLI version is unproven/);
-        expect(captureNativeSession(path.join(directory, 'records'), observation).sessionId).toBe(sessionId);
+        const captured = captureNativeSession(path.join(directory, 'records'), observation);
+        expect(captured.sessionId).toBe(sessionId);
+        const held = aiurRecords(path.join(directory, 'records'), observation.repository);
+        expect((await held.session(observation.ticket, observation.runId, 'a'))?.sessionId).toBe(sessionId);
+        expect(await held.alive(captured)).toBe(true);
+        const selected = JSON.stringify({ providerID: 'deepseek', id: 'deepseek-flash' });
+        const chosenProviderMismatch = new DatabaseSync(dbPath);
+        chosenProviderMismatch.prepare('UPDATE session SET model = ?').run(JSON.stringify({ providerID: 'anthropic', id: 'deepseek-flash' }));
+        chosenProviderMismatch.close();
+        expect(() => captureNativeSession(path.join(directory, 'bad-chosen-provider'), observation))
+          .toThrow(/session ID is unproven/);
+        expect(await held.session(observation.ticket, observation.runId, 'a')).toBeNull();
+        expect(await held.alive(captured)).toBe(false);
+        const restoreSelection = new DatabaseSync(dbPath);
+        restoreSelection.prepare('UPDATE session SET model = ?').run(selected);
+        restoreSelection.close();
+        expect(await held.alive(captured)).toBe(true);
         const changed = new DatabaseSync(dbPath);
         changed.prepare('UPDATE message SET data = ?').run(JSON.stringify({ role: 'assistant', providerID: 'anthropic', modelID: 'deepseek-flash' }));
         changed.close();
         expect(() => captureNativeSession(path.join(directory, 'bad-model'), observation))
           .toThrow(/session ID is unproven/);
+        expect(await held.session(observation.ticket, observation.runId, 'a')).toBeNull();
+        expect(await held.alive(captured)).toBe(false);
+        const deleted = new DatabaseSync(dbPath);
+        deleted.prepare('UPDATE message SET data = ?').run(JSON.stringify({ role: 'assistant', providerID: 'deepseek', modelID: 'deepseek-flash' }));
+        deleted.prepare('DELETE FROM session WHERE id = ?').run(sessionId);
+        deleted.close();
+        expect(await held.session(observation.ticket, observation.runId, 'a')).toBeNull();
+        expect(await held.alive(captured)).toBe(false);
         expect(observeProcess(pid)?.processStartTicks).toBe(live!.processStartTicks);
       } finally {
         if (previousTmux === undefined) delete process.env.TMUX;
