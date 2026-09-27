@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { hostedAppOrigin, hostedSessionFactory } from './hosted-production.js';
 import type { OpenProductionConnector } from './hosted-production.js';
+import type { AgentClientPort } from '../cli/types.js';
 
 const SESSION = { harness: 'codex', sessionId: '01a0b66b-ce0c-7ee3-823e-14ecdb9f2856' };
 
@@ -16,12 +17,14 @@ describe('installed hosted connector factory', () => {
 
   it('passes the provider session, native inspection, and endpoint-owned generation into one connector', async () => {
     const close = vi.fn(async () => undefined);
+    const listeningModeControl = { read: vi.fn(), set: vi.fn() } as unknown as NonNullable<AgentClientPort['listeningModeControl']>;
     const openConnector = vi.fn<OpenProductionConnector>(async () => ({
       ports: {} as never,
       async send(input) { return { kind: 'refused', code: 'not_connected', clientTxnId: input.clientTxnId }; },
       async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; },
       async listChannels() { return { kind: 'unavailable' }; },
       async listAgents() { return { kind: 'unavailable' }; },
+      listeningModeControl,
       async inbox() { throw new Error('no binding'); },
       close,
     }));
@@ -48,6 +51,7 @@ describe('installed hosted connector factory', () => {
     expect(await input?.inspectHostedCodexHooks()).toBeNull();
     expect(await input?.resolveCodexExecutable()).toBe('/usr/bin/codex');
     expect((await opened.client.status()).connected).toBe(false);
+    expect(opened.client.listeningModeControl).toBe(listeningModeControl);
     await opened.close();
     expect(close).toHaveBeenCalledOnce();
   });

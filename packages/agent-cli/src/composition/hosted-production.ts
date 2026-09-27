@@ -39,6 +39,7 @@ type ProductionConnector = Readonly<{
   listChannels: AgentClientPort['listChannels'];
   listAgents: AgentClientPort['listAgents'];
   listeningMode?: AgentClientPort['listeningMode'];
+  listeningModeControl?: AgentClientPort['listeningModeControl'];
   inbox: OpenGenerationInbox;
   close(): Promise<void>;
 }>;
@@ -81,6 +82,7 @@ export function hostedSessionFactory(options: Readonly<{
         send: connector.send, status: connector.status,
         listChannels: connector.listChannels, listAgents: connector.listAgents,
         ...(connector.listeningMode ? { listeningMode: connector.listeningMode } : {}),
+        ...(connector.listeningModeControl ? { listeningModeControl: connector.listeningModeControl } : {}),
       }),
       inbox: connector.inbox,
       close: connector.close,
