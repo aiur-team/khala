@@ -517,6 +517,33 @@ describe('Claude mcp-serve against the internal launcher', () => {
     expect(bodies).toContain('after the restart');
     expect(bodies).not.toContain('stale grant');
   });
+
+  it('re-requests the same approved channel after a launcher resume without another owner decision', async () => {
+    const first = await launched();
+    const sessionId = 'session-restart-request';
+    const [requested] = await serve(first.report.descriptorPath, sessionId, [
+      ['khala_request_channel_access', { target: first.channelUrl }],
+    ]);
+    expect(requested).toMatchObject({ outcome: 'pending_owner' });
+    await approvePending(first.report.origin, first.owner);
+    const [connected] = await serve(first.report.descriptorPath, sessionId, [
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+    ]);
+    expect(connected).toMatchObject({ outcome: 'connected', operationId: requested!.operationId });
+    await first.shutdown();
+
+    const second = await launched({ parent: first.parent, channelId: first.report.channelId, port: first.report.port });
+    const [unbound, resumed, sent] = await serve(second.report.descriptorPath, sessionId, [
+      ['khala_send', { message: 'stale grant' }],
+      ['khala_request_channel_access', { target: second.channelUrl }],
+      ['khala_send', { message: 'restored grant' }],
+    ]);
+    expect(unbound).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    expect(resumed).toMatchObject({ outcome: 'connected', operationId: requested!.operationId });
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    const inbox = await call(second.report.origin, { path: '/api/human/channel-requests', headers: second.owner });
+    expect((inbox.json.requests as Array<{ outcome: string }>).filter(entry => entry.outcome === 'pending_owner')).toEqual([]);
+  });
 });
 
 describe('Claude delivery through the internal launcher', () => {
