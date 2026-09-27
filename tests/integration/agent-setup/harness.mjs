@@ -188,11 +188,23 @@ function parse(stdout) {
 }
 
 /** Runs the installed CLI on a machine and returns its exit code, JSON result, and raw streams. */
+export function installedTimeoutMs(args) {
+  // Confirmed removal deletes hundreds of pinned browser and launcher files,
+  // syncing the durable journal around each operation. An 882-operation
+  // upgrade removal took ~46 s locally; two CI removals exceeded 60 s.
+  return args.length === 3 && args[0] === 'remove' && args[1] === '--confirm'
+    && /^sha256:[a-f0-9]{64}$/.test(args[2]) ? 180_000 : 60_000;
+}
+
 export function khala(install, machine, args, options = {}) {
+  const timeoutMs = installedTimeoutMs(args);
   const result = spawnSync(process.execPath, [install.bin, ...args], {
-    cwd: machine.cwd, encoding: 'utf8', env: machineEnvironment(machine, options.env), timeout: 60_000,
+    cwd: machine.cwd, encoding: 'utf8', env: machineEnvironment(machine, options.env), timeout: timeoutMs,
   });
-  if (result.error) throw result.error;
+  if (result.error) {
+    if (result.error.code === 'ETIMEDOUT') result.error.message = `installed ${args[0] ?? 'command'}${args[1] === '--confirm' ? ' --confirm' : ''} exceeded ${timeoutMs} ms`;
+    throw result.error;
+  }
   return { status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr, json: parse(result.stdout) };
 }
 
