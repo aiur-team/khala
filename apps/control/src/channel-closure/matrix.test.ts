@@ -29,6 +29,6 @@ describe('Matrix channel closure transport', () => {
     expect(fetch.mock.calls[1]?.[1]?.headers).toMatchObject({ authorization: 'Bearer secret' });
     expect(await transport.leave('owner_other' as OwnerId, roomId)).toBe('unknown');
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(await transport.requestLocalCleanup(ownerId, roomId)).toBe('unavailable');
+    expect(await transport.requestLocalCleanup({ operationId: 'close_1', ownerId, roomId, expectedRoomRevision: 0 })).toBe('unavailable');
   });
 });

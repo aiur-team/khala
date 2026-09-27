@@ -3,6 +3,7 @@ import {
   decodeAuthPrincipal,
   decodeClosureCapability,
   decodeClosureStatus,
+  decodeClosureRequest,
   decodeDeviceId,
   decodeInviteState,
   decodeParticipantView,
@@ -18,6 +19,8 @@ import {
   type ContentLimits,
   type ClosurePort,
   type ClosureCapability,
+  type ClosureRequest,
+  type OwnerId,
   type RoomId,
   type IdentityPort,
   type IdentityState,
@@ -66,6 +69,7 @@ export type HumanBrowserApi = Readonly<{
   closure: (roomId: RoomId) => Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
     currentCapability(): Promise<ClosureCapability | null>;
   }>;
+  cleanupRequests(ownerId: OwnerId): Promise<readonly ClosureRequest[] | null>;
 }>;
 
 function exactHttpsOrigin(value: string): string {
@@ -434,5 +438,24 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     };
   }
 
-  return { identity, admission, credentials, participants, channelAccess, closure };
+  async function cleanupRequests(ownerId: OwnerId): Promise<readonly ClosureRequest[] | null> {
+    try {
+      const url = new URL(CLOSURE_PATH, origin);
+      url.searchParams.set('cleanup', '1');
+      const response = await request(url.href, { method: 'GET', credentials: 'same-origin',
+        headers: { accept: 'application/json' }, signal: requestSignal() });
+      if (response.status !== 200) return null;
+      const body = await jsonObject(response);
+      if (body?.kind !== 'ok' || !Array.isArray(body.value) || body.value.length > 512) return null;
+      const requests: ClosureRequest[] = [];
+      for (const item of body.value) {
+        const decoded = decodeClosureRequest(item);
+        if (!decoded.ok || decoded.value.ownerId !== ownerId || decoded.value.expectedRoomRevision !== 0) return null;
+        requests.push(decoded.value);
+      }
+      return requests;
+    } catch { return null; }
+  }
+
+  return { identity, admission, credentials, participants, channelAccess, closure, cleanupRequests };
 }

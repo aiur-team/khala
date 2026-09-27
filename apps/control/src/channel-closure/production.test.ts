@@ -4,6 +4,7 @@ import { createAgentBindingStore } from '../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../agent-bootstrap/owner-room-index';
 import { fakeStore, T0 } from '../auth/support.test';
 import { createOwnerMailbox } from '../composition/owner-mailbox/store';
+import { createOwnerCleanupRequests } from './cleanup-requests';
 import { createProtectedClosureConnector } from './production';
 import { createChannelClosureService } from './service';
 
@@ -28,13 +29,14 @@ describe('production closure mailbox adapter', () => {
       expect((await index.activate(binding, roomId)).kind).toBe('ok');
     }
     const connector = createProtectedClosureConnector({ store, principal, clock: () => T0, authoritySecret });
+    const cleanup = createOwnerCleanupRequests(store, principal.ownerId);
     const leave = vi.fn(async () => 'left' as const);
     const service = createChannelClosureService({ principal, store, transport: {
       connectorConfigured: true,
       membership: async () => 'joined',
       stopConnectorDelivery: command => connector.stopDelivery(command),
       leave,
-      requestLocalCleanup: async () => 'requested',
+      requestLocalCleanup: command => cleanup.record(command),
     } });
     const partial = { kind: 'ok', value: { operationId: request.operationId, state: 'partial', reason: 'dependency_unavailable' } };
     expect(await service.closeRoom(request)).toEqual(partial);
@@ -52,5 +54,6 @@ describe('production closure mailbox adapter', () => {
         : partial);
       expect(leave).toHaveBeenCalledTimes(last ? 1 : 0);
     }
+    expect(await cleanup.list()).toEqual({ kind: 'ok', requests: [request] });
   });
 });
