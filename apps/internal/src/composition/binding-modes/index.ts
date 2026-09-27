@@ -1,4 +1,5 @@
-import type { HarnessCapabilities } from '@khala/contracts/delivery/index';
+import type { HarnessCapabilities, SessionBinding } from '@khala/contracts/delivery/index';
+import type { CodexIdleWakePort } from '@khala/harnesses/codex/idle-wake';
 import { createListeningModeService } from '@khala/policy/listening-mode/store';
 import { type SqliteListeningModeRepository, createSqliteListeningModeRepository } from '../../listening-mode-store/sqlite';
 import type { BindingModeOptions } from '../../server/binding-mode';
@@ -11,6 +12,7 @@ import { createLocalListeningModeStore } from '../local-transport/listening-mode
 import { createCodexIdleActivity } from '@aiur/khala/composition/codex-idle-activity';
 import { createServerHarnessCapabilities } from './capabilities';
 import { composeCodexIdleWake } from './codex-idle-wake';
+import type { HarnessObservation } from '../../server/binding-mode';
 
 // Listening modes and pause for one internal channel store. The release feed, the
 // owner's control and the agent's control all read and write the same SQLite mode
@@ -32,10 +34,17 @@ export function composeBindingModes(input: Readonly<{
   stateDirectory: string;
   /** The launch's Claude route claim; absent, Claude is unproven. */
   claude?: HarnessCapabilities;
+  /** Injected external inspection and queue effects for composition tests. */
+  codexWake?: Readonly<{
+    inspect: (binding: SessionBinding) => Promise<HarnessObservation | null>;
+    port: CodexIdleWakePort;
+  }>;
 }>): BindingModesComposition {
   const listeningModes = createSqliteListeningModeRepository(input.handle);
   const pause = createBindingPauseStore(input.handle);
-  const harnesses = createServerHarnessCapabilities(input.claude);
+  const harnesses = createServerHarnessCapabilities(input.claude, {
+    handle: input.handle, ...(input.codexWake ? { inspectCodex: input.codexWake.inspect } : {}),
+  });
   return {
     listeningModes,
     pause,
@@ -46,7 +55,8 @@ export function composeBindingModes(input: Readonly<{
       capabilities: harnesses.capabilities,
       observe: harnesses.observe,
       idleWake: composeCodexIdleWake({ store: input.store, modes: listeningModes, pause,
-        harnesses, stateDirectory: input.stateDirectory }),
+        harnesses, stateDirectory: input.stateDirectory,
+        ...(input.codexWake ? { port: input.codexWake.port } : {}) }),
       idleSession: async binding => (await createCodexIdleActivity(input.stateDirectory).idleSession(binding))?.sessionId ?? null,
     },
   };

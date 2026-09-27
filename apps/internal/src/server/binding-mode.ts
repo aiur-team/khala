@@ -16,9 +16,10 @@ import type { RouteContext, RouteSpec } from './server';
 // listening-mode store, so owner and agent writes share one version and one
 // idempotency journal. The view answered here is projected through the harness
 // claims this server knows; an agent client re-projects it through its own harness.
-// The server cannot inspect an agent's harness itself, so the agent's CLI reports what
-// it observed (version and hook trust) and composition derives the released claim
-// from that observation; the report selects no route and grants nothing.
+// The agent's CLI reports the version and hook trust it observed; composition
+// derives the released claim from that report. The idle wake path also checks
+// the owner's current local installation before using a persisted report.
+// The report selects no route and grants nothing.
 
 export const OWNER_MODE_ROUTES = {
   list: { method: 'GET', path: '/api/v1/channels/:channelId/bindings', admission: 'authenticated' },

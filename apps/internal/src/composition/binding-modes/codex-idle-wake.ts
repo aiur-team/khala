@@ -39,11 +39,18 @@ export function composeCodexIdleWake(input: Readonly<{
       ? view.effective : null;
   };
   return async (binding, sessionId, notBarred) => {
-    if (!notBarred()) return;
-    const mode = allowed(binding, sessionId);
-    if (mode === null) return;
+    if (!notBarred() || binding.harness !== 'codex'
+      || binding.sessionId !== internalSessionDigest('codex', sessionId)) return;
+    const live = input.store.sessionBinding({ bindingId: binding.bindingId, harness: 'codex', sessionId: binding.sessionId });
+    if (live.kind !== 'done' || live.binding?.generation !== binding.generation || input.pause.read(binding) !== false) return;
     const epoch = await activity.idleEpoch(binding);
     if (epoch === null || noticed.get(key(binding)) === epoch) return;
+    // A server restart loses the in-memory claim. Recover only the exact persisted
+    // binding observation after checking the currently installed Codex and hooks.
+    if (!await input.harnesses.revalidateCodex(binding)) return;
+    const mode = allowed(binding, sessionId);
+    if (mode === null) return;
+    if (await activity.idleEpoch(binding) !== epoch) return;
     let composed = wakes.get(key(binding));
     if (composed === undefined) {
       const command = await executable;
