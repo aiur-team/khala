@@ -10,8 +10,16 @@ const packageDirectory = fileURLToPath(new URL('../..', import.meta.url));
 const bundleScript = fileURLToPath(new URL('../../scripts/bundle.mjs', import.meta.url));
 const temporaryDirectory = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-cli-link-'));
 const linkedEntrypoint = path.join(temporaryDirectory, 'khala');
+const sqliteExperimentalWarning = /^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n/u;
+const withoutSqliteWarning = (stderr: string): string => stderr.replace(sqliteExperimentalWarning, '');
 
 describe('bundled CLI entrypoint', () => {
+  it('filters only Node’s known SQLite warning from child stderr', () => {
+    const sqlite = '(node:1234) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n'
+      + '(Use `node --trace-warnings ...` to show where the warning was created)\n';
+    expect(withoutSqliteWarning(sqlite + '{"ok":false}\n')).toBe('{"ok":false}\n');
+    expect(withoutSqliteWarning(sqlite + 'unexpected warning\n')).toBe('unexpected warning\n');
+  });
   beforeAll(() => {
     const build = spawnSync(process.execPath, [bundleScript], {
       cwd: packageDirectory,
@@ -29,7 +37,7 @@ describe('bundled CLI entrypoint', () => {
 
     expect(result.status).toBe(2);
     expect(result.stdout).toBe('');
-    expect(JSON.parse(result.stderr)).toEqual({ ok: false, error: 'invalid_arguments' });
+    expect(JSON.parse(withoutSqliteWarning(result.stderr))).toEqual({ ok: false, error: 'invalid_arguments' });
   });
 
   it('composes the Claude session client over the internal runtime descriptor', () => {
@@ -40,7 +48,7 @@ describe('bundled CLI entrypoint', () => {
     });
 
     expect(result.status).toBe(3);
-    expect(result.stderr).toBe('');
+    expect(withoutSqliteWarning(result.stderr)).toBe('');
     expect(JSON.parse(result.stdout)).toEqual({ ok: false, kind: 'refused', code: 'descriptor_missing' });
   });
 
@@ -50,7 +58,7 @@ describe('bundled CLI entrypoint', () => {
     const result = spawnSync(process.execPath, [linkedEntrypoint, 'status'], { encoding: 'utf8', env: { HOME: home, PATH: '' } });
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(withoutSqliteWarning(result.stderr)).toBe('');
     expect(JSON.parse(result.stdout)).toEqual({
       v: 1,
       connected: false,
