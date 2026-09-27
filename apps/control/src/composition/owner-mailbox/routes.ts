@@ -9,6 +9,7 @@ import { createOwnerMailbox, type OwnerCommandKind, type OwnerMailboxCommand } f
 
 export const OWNER_MAILBOX_SUBMIT = '/api/human/owner-mailbox/submit';
 export const OWNER_MAILBOX_RESULT = '/api/human/owner-mailbox/result';
+export const OWNER_REVIEW_BINDINGS = '/api/human/owner-mailbox/review-bindings';
 export const OWNER_MAILBOX_POLL = '/api/agent/owner-mailbox/poll';
 export const OWNER_MAILBOX_COMPLETE = '/api/agent/owner-mailbox/complete';
 
@@ -46,6 +47,8 @@ export function createOwnerMailboxRoutes(input: Readonly<{
   clock: () => number;
   authoritySecret: string;
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<Readonly<{ kind: 'joined' | 'absent' | 'unavailable' }>>;
+  /** Existing DPoP attestation, never a Matrix device-list guess. */
+  lookupAgentDevice(binding: SessionBinding): Promise<Readonly<{ userId: string; deviceId: string; fingerprint: string }> | null>;
 }>): Readonly<{ human: readonly RouteRegistration[]; agent: readonly RouteRegistration[] }> {
   const bindings = createAgentBindingStore({ store: input.store });
   const ownerRooms = createOwnerRoomIndex(input.store);
@@ -84,6 +87,34 @@ export function createOwnerMailboxRoutes(input: Readonly<{
   }
   return {
     human: Object.freeze([
+      { path: OWNER_REVIEW_BINDINGS, methods: ['GET'], async handle(request: Request) {
+        const url = new URL(request.url);
+        const roomId = url.searchParams.get('room_id');
+        if (!roomId || [...url.searchParams.keys()].join(',') !== 'room_id') return json(400, { code: 'invalid_request' });
+        const signed = await input.auth.authenticateRequest(request);
+        if (signed.kind === 'unavailable') return unavailable();
+        if (signed.kind !== 'authenticated') return json(401, { code: 'owner_auth_required' });
+        const principal = signed.context.principal;
+        const membership = await input.gateway.inspectMembership({ roomId: roomId as RoomId, principal, history: 'none' });
+        if (membership.kind === 'unavailable') return unavailable();
+        if (membership.kind !== 'joined') return json(403, { code: 'forbidden' });
+        const indexed = await ownerRooms.inspect(principal.ownerId, roomId as RoomId);
+        if (indexed.kind !== 'ok') return unavailable();
+        if (indexed.value?.marker) return json(403, { code: 'channel_closing' });
+        const active = [];
+        for (const candidate of indexed.value?.bindings ?? []) {
+          const found = await bindings.locateBinding(candidate.bindingId as BindingId);
+          if (found.kind === 'unavailable') return unavailable();
+          if (found.kind === 'found' && found.record.revokedGeneration === null
+            && found.address.ownerId === principal.ownerId && found.address.roomId === roomId
+            && found.record.binding.generation === candidate.generation) {
+            const device = await input.lookupAgentDevice(found.record.binding);
+            active.push({ bindingId: found.record.binding.bindingId, generation: candidate.generation,
+              agentParticipantId: found.record.binding.agentParticipantId, device });
+          }
+        }
+        return json(200, { v: 1, roomId, bindings: active });
+      } },
       { path: OWNER_MAILBOX_SUBMIT, methods: ['POST'], async handle(request: Request) {
         let body: ReturnType<typeof readCommand> = null;
         try { body = readCommand(await request.json()); } catch { /* malformed */ }
@@ -149,7 +180,7 @@ export function unavailableOwnerMailboxRoutes(): Readonly<{ human: readonly Rout
   const absent = (path: string, method: string): RouteRegistration => Object.freeze({
     path, methods: Object.freeze([method]), handle: async () => unavailable(),
   });
-  return { human: [absent(OWNER_MAILBOX_SUBMIT, 'POST'), absent(OWNER_MAILBOX_RESULT, 'GET')],
+  return { human: [absent(OWNER_REVIEW_BINDINGS, 'GET'), absent(OWNER_MAILBOX_SUBMIT, 'POST'), absent(OWNER_MAILBOX_RESULT, 'GET')],
     agent: [absent(OWNER_MAILBOX_POLL, 'GET'), absent(OWNER_MAILBOX_COMPLETE, 'POST')] };
 }
 

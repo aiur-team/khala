@@ -180,7 +180,8 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'GET /api/human/channel-closure', 'POST /api/human/channel-closure',
     'GET /api/human/agent-bootstrap/authorize', 'POST /api/human/agent-bootstrap/authorize',
     'GET /api/human/owner-device-proof/challenge', 'POST /api/human/owner-device-proof/register',
-    'POST /api/human/owner-mailbox/submit', 'GET /api/human/owner-mailbox/result',
+    'GET /api/human/owner-mailbox/review-bindings', 'POST /api/human/owner-mailbox/submit',
+    'GET /api/human/owner-mailbox/result',
   ].map(route => [`http-control:${route}`, humanOnly('owner-authenticated hosted control route')])),
   ...Object.fromEntries([
     'GET /api/agent/status', 'POST /api/agent/pairing/claim', 'POST /api/agent/pairing/result',
