@@ -25,6 +25,8 @@ export type ProfileRole = Readonly<{
   /** Provider and model the durable Aiur evidence must name, e.g. `anthropic` / `claude-opus-5-5`. */
   provider: string;
   model: string;
+  /** Exact version observed from the native CLI, not a dispatch label. */
+  cliVersion: string;
   /** Labels that make the normal Executor dispatch this ticket to that harness and model. */
   labels: readonly string[];
   /** The exact route's capabilities; only its declared-supported modes are exercised. */
@@ -108,11 +110,20 @@ export type NativeSession = Readonly<{
   cliVersion: string;
   launchCommand: string;
   startedAt: string;
+  repository: string;
+  runId: string;
+  ticket: number;
+  role: RoleName;
+  processStartTicks: string;
+  bootId: string;
+  executable: string;
+  argv: readonly string[];
+  tty: string;
 }>;
 
 export type AiurPort = Readonly<{
   /** The durable native session the Executor recorded for the ticket, or null while none is recorded. */
-  session(ticket: number): Promise<NativeSession | null>;
+  session(ticket: number, runId: string, role: RoleName): Promise<NativeSession | null>;
   /** Whether that exact process still runs as that session. Never signals it. */
   alive(session: NativeSession): Promise<boolean>;
 }>;
@@ -314,7 +325,8 @@ export type RunReport = Readonly<{
   verdict: Verdict;
   checks: readonly Check[];
   modes: ModePlan;
-  roles: readonly RoleRecord[];
+  /** Secret-free summary; exact argv and session IDs remain in private evidence. */
+  roles: readonly Readonly<{ role: RoleName; ticket: number; session: Pick<NativeSession, 'harness' | 'provider' | 'model' | 'cliVersion' | 'pid'> | null; target: StopTarget | null }>[];
   stop: StopRecord | null;
   launcherClosed: boolean;
   cleanup: readonly Readonly<{ ticket: number; outcome: 'closed' | 'already_closed' | 'refused' | 'failed'; detail: string }>[];

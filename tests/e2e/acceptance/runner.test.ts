@@ -49,6 +49,8 @@ describe('live acceptance runner', () => {
     expectCleanTail(world, report);
     // Markers are correlation labels; they never reach the report.
     expect(JSON.stringify(report)).not.toContain(world.markers.run);
+    expect(JSON.stringify(report)).not.toContain('native-a-1001');
+    expect(JSON.stringify(report)).not.toContain('launchCommand');
   });
 
   it('does not pass timed sends that carry no event-linked read/ack evidence', async () => {
@@ -135,6 +137,24 @@ describe('live acceptance runner', () => {
     expect(status(report, 'alive-at-barrier')).toBe('fail');
     expect(world.stopCalls).toHaveLength(1);
     expect(report.verdict).toBe('fail');
+  });
+
+  it('refreshes native identity before hold and fails a replaced process identity', async () => {
+    const world = createWorld();
+    let reads = 0;
+    const original = world.deps.aiur.session;
+    const report = await run({ ...world, deps: { ...world.deps, aiur: {
+      ...world.deps.aiur,
+      async session(ticket, runId, role) {
+        const session = await original(ticket, runId, role);
+        reads += 1;
+        return reads > 2 && role === 'a' && session ? { ...session, processStartTicks: 'reused-pid' } : session;
+      },
+      async alive(session) { return session.processStartTicks !== 'reused-pid'; },
+    } } });
+    expect(report.verdict).toBe('fail');
+    expect(status(report, 'alive-at-barrier')).toBe('fail');
+    expectCleanTail(world, report);
   });
 
   it('refuses a stale-generation Stop target locally and never sends it', async () => {

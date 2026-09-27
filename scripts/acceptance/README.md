@@ -13,8 +13,8 @@ Run it on the Executor host, with `gh` authenticated for `aiur-team/khala`. It p
 1. It takes the host lock for the repository: an exclusive SQLite (fcntl) lock under `$XDG_STATE_HOME/khala-acceptance/`. The kernel releases it when the process dies, and there is no TTL. A second run refuses, whatever its profile.
 2. It stages the build under test (see [Build under test](#build-under-test)), then runs `npx <khalaPackage> status` and records the output. The optional hardening result never gates the run. It then preflights the repository, its labels and write access.
 3. It starts the local server with `npx <khalaPackage> internal`, or `internal --resume <channel-id>`, and asks you to confirm the channel. It starts no agent.
-4. It creates the ticket pair from the fixed prompt in `prompt.ts`.
-5. It grants each access request only after you confirm it at the terminal. A request is tied to its ticket when the requester's session fingerprint matches the native session the Executor recorded.
+4. It creates the ticket pair. The normally dispatched worker receives driver instructions; `nativeParticipantPrompt` is the separate, deterministic text sent to the Executor-started interactive CLI fixture.
+5. The Executor starts exactly one ordinary native TUI CLI fixture per ticket in a tmux pane, outside Khala. Before the fixture uses Khala, the Executor captures its session identity with the command below. The worker drives that fixture; the worker session never joins the channel. The runner grants each request only after you confirm it. A request is tied to its ticket when its session fingerprint matches the private fixture record.
 6. It records each binding from the agent's `READY` announcement, attributed by the server. For each mode that both routes make effective, it requests the mode for both bindings through the owner's listening-mode route. A mode counts as effective only when the server's re-read confirms that binding generation both requests and runs it. It then announces the mode and waits for the ordered three-event handshake. A mode the server does not confirm is announced `unsupported` and stays unproven.
 7. It posts `hold`, checks that both sessions are alive with the same identity, and then calls Stop with exactly the two recorded binding IDs and generations. It refuses a stale or mismatched target.
 8. It always closes the launcher, even after a failure or timeout. It then reads the post-shutdown store snapshot, which it refuses to do while any launcher holds the internal root.
@@ -29,7 +29,19 @@ A profile is strict JSON, decoded by `decodeProfile` in `profile.ts`:
 - `dispatchLabel`
 - `khalaPackage`: an exact `@aiur/khala@x.y.z`, or `{ "tarball", "sha256", "commit" }` for a local tarball
 - `timeoutMs`
-- `roles`: two entries, `a` and `b`. Each has `harness`, `provider`, `model`, `labels` and the route's `HarnessCapabilities`.
+- `roles`: two entries, `a` and `b`. Each has `harness`, `provider`, `model`, exact `cliVersion`, `labels` and the route's `HarnessCapabilities`.
+
+### Native CLI fixture capture
+
+For each new ticket, the normal Executor starts one interactive `claude`, `codex`, or `opencode` TUI in its own tmux pane under normal trust settings. Record the native CLI's own session ID, the observed provider/model and `--version` output from that fixture, and its exact launch argv and launch time in a private JSON observation file. The CLI must launch with an explicit model argument; the capture checks it against `/proc/<pid>/cmdline`. Record the actual TUI PID, executable, `/proc/<pid>/stat` start ticks (field 22), kernel boot ID, and terminal from `/proc/<pid>/fd/0`, rather than an app-server or SDK process. The ticket's labels or worker prose cannot fill these fields.
+
+The observation file must be owned by the Executor user and mode `0600`. After the runner prints the run ID and ticket number, but **before the native fixture's first Khala command**, capture it with:
+
+```sh
+pnpm exec tsx scripts/acceptance/capture.ts <private-executor-observation.json>
+```
+
+The JSON keys are `source` (`executor-native-tmux-fixture`), `repository` (`aiur-team/khala`), `runId` (12 lowercase hex digits), `ticket`, `role` (`a` or `b`), `sessionId`, `pid`, `harness`, `provider`, `model`, `cliVersion`, `versionOutput`, `startedAt` (ISO time), `processStartTicks`, `bootId`, `executable`, `argv` (array), and `tty`. The capture checks the live process, rejects app-server/SDK launch arguments, and creates one exclusive mode `0600` record under `$XDG_STATE_HOME/khala-acceptance/native-sessions/`. It refuses a second capture for the same ticket/role. Never put tokens or prompts in the observation; keep the file outside a worker checkout. The runner report includes only the safe provider/model/version/PID summary.
 
 ### Build under test
 
@@ -54,12 +66,12 @@ A mode runs only when `listeningModeView` makes it effective for both routes. Ev
 Only durable evidence counts:
 
 - the store snapshot: bindings, event order, client transactions, and `agent_acknowledged` receipts linked to each handshake event;
-- the `native_session` record in the Executor's per-ticket `.agent_events.jsonl`, read from `AIUR_LOGS_ROOT`, which defaults to `~/.aiur/logs`;
+- the private Executor fixture capture for the exact repository/run/ticket/role, checked again against the live process at the hold barrier and after Stop;
 - GitHub metadata;
 - the runner's own Stop record.
 
 Agent prose, comments and closed tickets prove nothing. Absent evidence is `unproven`, contradicting evidence is `fail`, and a run that errored or timed out is `fail`. Only `pass` passes.
 
-Today a live run cannot pass, for two reasons: no receipt facts are recorded in internal mode, and Aiur logs no `native_session` record. The server confirms a mode only on a proven route, so a Claude binding, or a Codex binding whose CLI has not reported a trusted, proven version, leaves every mode unproven (decisions 34 and 37). Those gaps belong to their owning tickets, not to this runner.
+A live run still requires owned event-linked receipt facts and a proven mode route. A Claude binding, or a Codex binding whose CLI has not reported a trusted, proven version, leaves unsupported modes unproven (decisions 34 and 37). The runner never promotes a requested model label or an app-server identity into native session proof.
 
 Offline tests: `pnpm test:e2e -- tests/e2e/acceptance`.

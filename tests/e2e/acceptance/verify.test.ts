@@ -31,7 +31,8 @@ async function passingInput(): Promise<VerifyInput> {
   expect(report.verdict).toBe('pass');
   const snapshot = await world.deps.snapshot.read('channel_offline');
   return {
-    profile: world.profile, plan: planModes(world.profile), markers: world.markers, roles: report.roles,
+    profile: world.profile, plan: planModes(world.profile), markers: world.markers,
+    roles: await Promise.all(report.roles.map(async entry => ({ ...entry, session: await world.deps.aiur.session(entry.ticket, RUN_ID, entry.role) }))),
     issues: [...world.issues.values()], pullRequests: [], timeline, snapshot, stop: report.stop,
     launcherClosed: true, modeResults: new Map(report.modes.runnable.map(mode => [mode, { kind: 'effective' as const }])),
   };
@@ -88,6 +89,15 @@ describe('acceptance verdict', () => {
     const input = await passingInput();
     const other = { ...input, roles: input.roles.map(role => ({ ...role, session: { ...role.session!, model: 'deepseek-direct' } })) };
     expect(statusOf(other, 'native-session:a')).toBe('fail');
+  });
+
+  it('fails when the recorded CLI version differs or one native session stands in for both tickets', async () => {
+    const input = await passingInput();
+    const wrongVersion = { ...input, roles: input.roles.map(role => ({ ...role, session: { ...role.session!, cliVersion: '0.0.0' } })) };
+    expect(statusOf(wrongVersion, 'native-session:a')).toBe('fail');
+    const shared = { ...input, roles: input.roles.map(role => role.role === 'b'
+      ? { ...role, session: { ...role.session!, pid: input.roles[0]!.session!.pid } } : role) };
+    expect(statusOf(shared, 'distinct-native-sessions')).toBe('fail');
   });
 
   it('fails a duplicate client transaction in the store', async () => {

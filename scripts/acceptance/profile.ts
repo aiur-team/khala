@@ -32,7 +32,7 @@ function identifier(value: unknown, field: string): string {
 }
 
 function decodeRole(value: unknown, field: string, expected: RoleName): ProfileRole {
-  const record = exactKeys(value, field, ['role', 'harness', 'provider', 'model', 'labels', 'capabilities']);
+  const record = exactKeys(value, field, ['role', 'harness', 'provider', 'model', 'cliVersion', 'labels', 'capabilities']);
   if (record.role !== expected) fail(`${field}.role`, `must be ${expected}`);
   const harness = identifier(record.harness, `${field}.harness`);
   if (!Array.isArray(record.labels) || record.labels.length === 0) fail(`${field}.labels`, 'must name the harness/model labels');
@@ -45,6 +45,7 @@ function decodeRole(value: unknown, field: string, expected: RoleName): ProfileR
     harness,
     provider: identifier(record.provider, `${field}.provider`),
     model: identifier(record.model, `${field}.model`),
+    cliVersion: identifier(record.cliVersion, `${field}.cliVersion`),
     labels,
     capabilities: capabilities.value,
   };

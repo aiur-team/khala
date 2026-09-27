@@ -1,45 +1,64 @@
-// The Executor-side session evidence: only a complete structured `native_session`
-// payload in Aiur's per-ticket log counts; prose never does.
-
+// Private Executor fixture capture: scope, complete observation, and process
+// identity must all agree. Agent prose and daemon logs are irrelevant.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { aiurLogs, nativeSessionFromLog, ticketLog } from '../../../scripts/acceptance/adapters/aiur';
+import { aiurRecords, captureNativeSession, decodeNativeSession, type ProcessSnapshot } from '../../../scripts/acceptance/adapters/aiur';
 
-const SESSION = {
-  session_id: 'native-7', os_pid: 4242, harness: 'codex', provider: 'openai', model: 'gpt-5.5-codex',
-  cli_version: '0.156.1', launch_command: 'codex --model gpt-5.5-codex', started_at: '2026-09-26T10:00:00Z',
+const OBSERVATION = {
+  source: 'executor-native-tmux-fixture', repository: 'aiur-team/khala', runId: '0123456789ab',
+  ticket: 1001, role: 'a', sessionId: 'native-7', pid: 4242,
+  harness: 'codex', provider: 'openai', model: 'gpt-6-sol', cliVersion: '0.156.1',
+  versionOutput: 'codex-cli 0.156.1',
+  startedAt: '2026-09-26T10:00:00Z', processStartTicks: '123456', bootId: 'boot-7',
+  executable: '/usr/bin/node', argv: ['codex', '--model', 'gpt-6-sol'], tty: '/dev/pts/7',
 };
-const line = (payload: unknown, body = 'x') => JSON.stringify({ body, msg_id: 'm', payload, role: 'tool', sequence: 1, timestamp: 't', turn_id: 'u' });
+const PROCESS: ProcessSnapshot = {
+  pid: 4242, processStartTicks: '123456', bootId: 'boot-7', executable: '/usr/bin/node',
+  argv: ['codex', '--model', 'gpt-6-sol'], tty: '/dev/pts/7',
+};
+const roots: string[] = [];
+function root() { const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-acceptance-native-')); roots.push(directory); return directory; }
+afterEach(() => { for (const directory of roots.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 
-const directories: string[] = [];
-afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
-
-describe('Aiur native-session evidence', () => {
-  it('reads one complete native_session payload', () => {
-    expect(nativeSessionFromLog([line(null), line({ native_session: SESSION })].join('\n'))).toEqual({
-      sessionId: 'native-7', pid: 4242, harness: 'codex', provider: 'openai', model: 'gpt-5.5-codex',
-      cliVersion: '0.156.1', launchCommand: 'codex --model gpt-5.5-codex', startedAt: '2026-09-26T10:00:00Z',
-    });
+describe('Executor native fixture evidence', () => {
+  it('captures one private scoped native process and reads only its exact run, ticket, and role', async () => {
+    const directory = root();
+    captureNativeSession(directory, OBSERVATION, () => PROCESS);
+    const port = aiurRecords(directory, 'aiur-team/khala', () => PROCESS);
+    expect((await port.session(1001, OBSERVATION.runId, 'a'))?.sessionId).toBe('native-7');
+    expect(await port.session(1002, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await port.session(1001, 'ffffffffffff', 'a')).toBeNull();
+    expect(await port.session(1001, OBSERVATION.runId, 'b')).toBeNull();
+    expect(await aiurRecords(directory, 'foreign/repo', () => PROCESS).session(1001, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await port.alive(decodeNativeSession(OBSERVATION)!)).toBe(true);
+    expect(fs.statSync(path.join(directory, Buffer.from('aiur-team/khala').toString('base64url'), OBSERVATION.runId, '1001-a.json')).mode & 0o077).toBe(0);
   });
 
-  it('ignores agent prose, partial records and ambiguous sessions', () => {
-    expect(nativeSessionFromLog(line(null, `my session is ${JSON.stringify(SESSION)}`))).toBeNull();
-    expect(nativeSessionFromLog(line({ native_session: { ...SESSION, model: undefined } }))).toBeNull();
-    expect(nativeSessionFromLog([line({ native_session: SESSION }), line({ native_session: { ...SESSION, session_id: 'native-8' } })].join('\n'))).toBeNull();
+  it('rejects partial, claimed-only, app-server, and mismatched process observations', () => {
+    const directory = root();
+    expect(decodeNativeSession({ ...OBSERVATION, model: undefined })).toBeNull();
+    expect(decodeNativeSession({ ...OBSERVATION, source: 'worker-prose' })).toBeNull();
+    expect(decodeNativeSession({ ...OBSERVATION, argv: ['codex', 'app-server'] })).toBeNull();
+    expect(() => captureNativeSession(directory, OBSERVATION, () => ({ ...PROCESS, processStartTicks: '999999' }))).toThrow();
+    expect(() => captureNativeSession(directory, OBSERVATION, () => ({ ...PROCESS, argv: ['codex', 'app-server'] }))).toThrow();
+    expect(() => captureNativeSession(directory, OBSERVATION, () => null)).toThrow();
   });
 
-  it('finds the newest run log for the ticket in the acceptance repository', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-acceptance-aiur-'));
-    directories.push(root);
-    const name = `github-${Buffer.from('aiur-team/khala').toString('base64url')}.1001.agent_events.jsonl`;
-    for (const [run, session] of [['20260925T000000Z-1', { ...SESSION, session_id: 'old' }], ['20260926T000000Z-2', SESSION]] as const) {
-      fs.mkdirSync(path.join(root, run, 'log'), { recursive: true });
-      fs.writeFileSync(path.join(root, run, 'log', name), line({ native_session: session }));
-    }
-    expect(ticketLog(root, 'aiur-team/khala', 1001)).toBe(path.join(root, '20260926T000000Z-2', 'log', name));
-    expect((await aiurLogs(root, 'aiur-team/khala').session(1001))?.sessionId).toBe('native-7');
-    expect(await aiurLogs(root, 'aiur-team/khala').session(1002)).toBeNull();
+  it('refuses a second participant for one ticket and PID reuse or death', async () => {
+    const directory = root();
+    captureNativeSession(directory, OBSERVATION, () => PROCESS);
+    expect(() => captureNativeSession(directory, { ...OBSERVATION, sessionId: 'native-8' }, () => PROCESS)).toThrow();
+    const reused = aiurRecords(directory, 'aiur-team/khala', () => ({ ...PROCESS, processStartTicks: '999999' }));
+    expect(await reused.session(1001, OBSERVATION.runId, 'a')).toBeNull();
+    expect(await reused.alive(decodeNativeSession(OBSERVATION)!)).toBe(false);
+    expect(await aiurRecords(directory, 'aiur-team/khala', () => null).session(1001, OBSERVATION.runId, 'a')).toBeNull();
+  });
+
+  it('refuses tampered model or CLI version against the native process command and expected profile', () => {
+    const directory = root();
+    expect(() => captureNativeSession(directory, { ...OBSERVATION, model: 'wrong-model' }, () => PROCESS)).toThrow();
+    expect(decodeNativeSession({ ...OBSERVATION, cliVersion: '' })).toBeNull();
   });
 });
