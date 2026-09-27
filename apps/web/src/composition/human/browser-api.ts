@@ -28,7 +28,6 @@ import {
   type OperationResult,
   type ParticipantView,
 } from '@khala/contracts/messaging/index';
-import type { BrowserRevocation } from '../recovery/browser-port';
 import type { CredentialSource } from '@khala/messaging/browser-device/index';
 import type {
   ChannelAccessInboxPort,
@@ -76,8 +75,6 @@ export type HumanBrowserApiOptions = Readonly<{
 
 export type HumanBrowserApi = Readonly<{
   reviewCsrf(): Promise<string | null>;
-  /** Filled by the dedicated revocation composition when available. */
-  revocation?: (roomId: RoomId) => BrowserRevocation;
   identity: IdentityPort;
   admission: AdmissionPort;
   credentials: CredentialSource;

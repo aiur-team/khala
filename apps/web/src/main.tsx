@@ -58,6 +58,7 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     credentials: api.credentials,
     participants: api.participants,
     limits: decodedLimits.value,
+    sendFence: api.roomSend,
   });
   let cleanupConsumer: ReturnType<typeof createOwnerCleanupConsumer> | null = null;
   const closure = (roomId: Parameters<typeof api.closure>[0]) => {
