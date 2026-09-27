@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { aiurRecords, captureNativeSession, decodeNativeSession, observeProcess, type ProcessSnapshot } from '../../../scripts/acceptance/adapters/aiur';
 
@@ -76,15 +77,37 @@ describe('Executor native fixture evidence', () => {
       undefined, status, () => 'prefix codex-cli 0.156.1')).toThrow(/CLI version is unproven/);
   });
 
+  it('binds a Claude status UUID, account, and model to the exact running image version', async () => {
+    const directory = root();
+    const executable = '/opt/claude/versions/2.1.283';
+    const argv = [executable, '--model', 'claude-opus-5-5'];
+    const native = { ...OBSERVATION, harness: 'claude', provider: 'anthropic', model: 'claude-opus-5-5',
+      cliVersion: '2.1.283', versionOutput: '2.1.283 (Claude Code)', executable, argv };
+    const process = { ...PROCESS, executable, argv };
+    const screen = `Session ID:        ${native.sessionId}\nSession kind:      interactive\nLogin method:      Claude Max account\nModel:             opus (claude-opus-5-5)\n`;
+    const capture = (value: typeof native, shown = screen, image = '2.1.283 (Claude Code)\n') =>
+      captureNativeSession(directory, value, () => process, () => true, undefined, () => shown, () => image);
+    expect(capture(native).sessionId).toBe(native.sessionId);
+    expect((await aiurRecords(directory, native.repository, () => process, () => true).session(native.ticket, native.runId, 'a'))?.harness)
+      .toBe('claude');
+    const altered = root();
+    const check = (value: typeof native, shown = screen, image = '2.1.283 (Claude Code)\n') =>
+      captureNativeSession(altered, value, () => process, () => true, undefined, () => shown, () => image);
+    expect(() => check({ ...native, sessionId: '00000000-0000-4000-8000-000000000001' })).toThrow(/session ID is unproven/);
+    expect(() => check(native, screen.replace('Claude Max account', 'unknown account'))).toThrow(/session ID is unproven/);
+    expect(() => check(native, screen.replace('claude-opus-5-5', 'claude-other-model'))).toThrow(/session ID is unproven/);
+    expect(() => check(native, screen, '2.1.284 (Claude Code)\n')).toThrow(/CLI version is unproven/);
+  });
+
   it('rejects a substituted driver ID even with genuine process, pane, and model evidence', () => {
     const directory = root();
     const driverId = '01a0e073-0000-7000-8000-000000000001';
     expect(() => captureNativeSession(directory, { ...OBSERVATION, sessionId: driverId },
       () => PROCESS, () => true, undefined, status, version)).toThrow(/session ID is unproven/);
     expect(() => captureNativeSession(directory, OBSERVATION,
-      () => PROCESS, () => true, undefined, () => null)).toThrow(/session ID is unproven/);
+      () => PROCESS, () => true, undefined, () => null, version)).toThrow(/session ID is unproven/);
     expect(() => captureNativeSession(directory, { ...OBSERVATION, harness: 'claude', provider: 'anthropic', argv: ['claude', '--model', 'gpt-6-sol'] },
-      () => ({ ...PROCESS, argv: ['claude', '--model', 'gpt-6-sol'] }), () => true)).toThrow(/session ID is unproven/);
+      () => ({ ...PROCESS, argv: ['claude', '--model', 'gpt-6-sol'] }), () => true)).toThrow();
   });
 
   it.skipIf(process.platform !== 'linux' || !fs.existsSync('/usr/bin/script'))(
@@ -143,10 +166,10 @@ describe('Executor native fixture evidence', () => {
         let live: ProcessSnapshot | null = null;
         for (let attempt = 0; attempt < 50; attempt++) {
           live = observeProcess(pid);
-          if (live && tmux('capture-pane', '-p', '-t', pane).includes(OBSERVATION.sessionId)) break;
+          if (live?.executable === fixture && tmux('capture-pane', '-p', '-t', pane).includes(OBSERVATION.sessionId)) break;
           await new Promise(resolve => setTimeout(resolve, 20));
         }
-        expect(live).not.toBeNull();
+        expect(live?.executable).toBe(fixture);
         const observation = {
           ...OBSERVATION, pid, tmuxPane: pane, executable: live!.executable, argv: live!.argv,
           processStartTicks: live!.processStartTicks, bootId: live!.bootId, tty: live!.tty,
@@ -156,6 +179,65 @@ describe('Executor native fixture evidence', () => {
         expect(() => captureNativeSession(directory, { ...observation, cliVersion: '0.157.1', versionOutput: 'codex-cli 0.157.1' }))
           .toThrow(/CLI version is unproven/);
         expect(captureNativeSession(directory, observation).sessionId).toBe(OBSERVATION.sessionId);
+        expect(observeProcess(pid)?.processStartTicks).toBe(live!.processStartTicks);
+      } finally {
+        if (previousTmux === undefined) delete process.env.TMUX;
+        else process.env.TMUX = previousTmux;
+        try { tmux('kill-server'); } catch { /* fixture may already have exited */ }
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'linux' || !fs.existsSync('/usr/bin/tmux') || !fs.existsSync('/usr/bin/cc'))(
+    'joins an OpenCode pane title to one native read-only session and assistant model', async () => {
+      const directory = root();
+      const socket = path.join(process.cwd(), `.aiur239-opencode-${process.pid}-${Math.random().toString(36).slice(2, 8)}.sock`);
+      const fixture = path.join(directory, 'opencode');
+      const source = path.join(directory, 'opencode.c');
+      const dataHome = path.join(directory, 'data');
+      const dbPath = path.join(dataHome, 'opencode', 'opencode.db');
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      const sessionId = 'ses_1234567890abcdef';
+      const title = 'Native fixture session';
+      const db = new DatabaseSync(dbPath);
+      db.exec('CREATE TABLE session (id TEXT, title TEXT, directory TEXT, version TEXT, model TEXT); CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)');
+      db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?)').run(sessionId, title, directory, '1.17.10',
+        JSON.stringify({ providerID: 'deepseek', id: 'deepseek-flash' }));
+      db.prepare('INSERT INTO message VALUES (?, ?, ?)').run(sessionId, 1,
+        JSON.stringify({ role: 'assistant', providerID: 'deepseek', modelID: 'deepseek-flash' }));
+      db.close();
+      fs.writeFileSync(source, `#include <stdio.h>\n#include <string.h>\n#include <unistd.h>\nint main(int argc, char **argv) { if (argc == 2 && strcmp(argv[1], "--version") == 0) { puts("1.17.10"); return 0; } fputs("\\033]2;OC | Native fixture session\\007\\nBuild · DeepSeek V4.1 Flash DeepSeek\\n", stdout); fflush(stdout); for (;;) sleep(1); }`);
+      execFileSync('/usr/bin/cc', [source, '-o', fixture]);
+      const tmux = (...args: string[]) => execFileSync('/usr/bin/tmux', ['-S', socket, ...args], { encoding: 'utf8' }).trim();
+      const previousTmux = process.env.TMUX;
+      try {
+        tmux('new-session', '-d', '-s', 'native', '-c', directory,
+          `env XDG_DATA_HOME=${dataHome} ${fixture} --model deepseek/deepseek-flash`);
+        process.env.TMUX = `${socket},0,0`;
+        const pane = tmux('list-panes', '-t', 'native', '-F', '#{pane_id}');
+        const pid = Number(tmux('list-panes', '-t', 'native', '-F', '#{pane_pid}'));
+        let live: ProcessSnapshot | null = null;
+        for (let attempt = 0; attempt < 50; attempt++) {
+          live = observeProcess(pid);
+          if (live?.executable === fixture && tmux('display-message', '-p', '-t', pane, '#{pane_title}') === `OC | ${title}`) break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        expect(live?.executable).toBe(fixture);
+        const observation = { ...OBSERVATION, harness: 'opencode', provider: 'deepseek', model: 'deepseek/deepseek-flash',
+          sessionId, cliVersion: '1.17.10', versionOutput: '1.17.10', pid, tmuxPane: pane,
+          executable: live!.executable, argv: live!.argv, processStartTicks: live!.processStartTicks,
+          bootId: live!.bootId, tty: live!.tty };
+        expect(() => captureNativeSession(path.join(directory, 'bad-id'), { ...observation, sessionId: 'ses_forged1234567890' }))
+          .toThrow(/session ID is unproven/);
+        expect(() => captureNativeSession(path.join(directory, 'bad-version'), { ...observation,
+          cliVersion: '1.17.11', versionOutput: '1.17.11' }))
+          .toThrow(/CLI version is unproven/);
+        expect(captureNativeSession(path.join(directory, 'records'), observation).sessionId).toBe(sessionId);
+        const changed = new DatabaseSync(dbPath);
+        changed.prepare('UPDATE message SET data = ?').run(JSON.stringify({ role: 'assistant', providerID: 'anthropic', modelID: 'deepseek-flash' }));
+        changed.close();
+        expect(() => captureNativeSession(path.join(directory, 'bad-model'), observation))
+          .toThrow(/session ID is unproven/);
         expect(observeProcess(pid)?.processStartTicks).toBe(live!.processStartTicks);
       } finally {
         if (previousTmux === undefined) delete process.env.TMUX;
