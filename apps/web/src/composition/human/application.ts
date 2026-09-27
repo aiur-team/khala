@@ -13,7 +13,14 @@ import type {
   IdentityState,
   ParticipantView,
   RoomPort,
+  RoomId,
+  ClosureCapability,
+  ClosurePort,
 } from '@khala/contracts/messaging/index';
+
+type ChannelClosureContext = Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
+  currentCapability(): Promise<ClosureCapability | null>;
+}>;
 import { createHumanDeviceSession } from './device-session';
 
 export interface HumanApplicationPorts {
@@ -24,6 +31,7 @@ export interface HumanApplicationPorts {
   readonly limits: ContentLimits;
   /** Authenticated participant mapping supplied by the live messaging adapter. */
   readonly participant?: () => ParticipantView | null;
+  readonly closure?: (roomId: RoomId) => ChannelClosureContext;
 }
 
 export interface HumanRouteContext extends HumanApplicationPorts {

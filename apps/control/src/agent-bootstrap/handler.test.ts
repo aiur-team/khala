@@ -8,6 +8,7 @@ import type { Authentication } from '../auth/index';
 import { T0, fakeStore, secureRandom } from '../auth/support.test';
 import {
   ADAPTER_CAPABILITIES, AUTHORIZE_PATH, type AgentAdmissionPort, type AgentBootstrapDeps, DESCRIPTOR_PATH, REDEEM_PATH, TOKEN_PATH,
+  REFRESH_CHALLENGE_PATH, REFRESH_PATH,
   createAgentBootstrapHandlers, isLoopbackRedirect,
 } from './handler';
 import { thumbprint } from './proof';
@@ -76,6 +77,7 @@ function setup(overrides: SetupOverrides = {}) {
     inviteFromLink: url => (url.pathname.startsWith('/i/') ? url.pathname.slice(3) : null),
     admissionFor: () => ({ inspect: async () => overrides.invite?.() ?? 'eligible' }),
     admissionPolicy: async () => 'allow',
+    inspectOwnerMembership: async () => ({ kind: 'joined' }),
     legacyMigrationWritesEnabled: true,
     agents: {
       inspect: async ({ ownerId }) => ({
@@ -192,6 +194,27 @@ function moveBindingToLegacy(h: Harness, binding: Redeemed['binding']): void {
   if (!record) throw new Error('participant binding fixture is missing');
   h.store.records.delete(participantKey);
   h.store.records.set(legacyKey, { ...record, key: legacyKey });
+}
+
+async function refreshNonce(h: Harness, bindingId: string, proof?: string): Promise<{ response: Response; nonce: string }> {
+  const response = await h.route(REFRESH_CHALLENGE_PATH).handle(new Request(
+    `${ORIGIN}${REFRESH_CHALLENGE_PATH}?binding_id=${encodeURIComponent(bindingId)}`,
+    { headers: { dpop: proof ?? h.key.proof(`${ORIGIN}${REFRESH_CHALLENGE_PATH}`, undefined, { claims: { htm: 'GET' } }) } },
+  ));
+  const result = await response.clone().json() as { nonce?: string };
+  return { response, nonce: result.nonce ?? '' };
+}
+
+function refreshCapability(h: Harness, binding: Redeemed['binding'], nonce: string,
+  operationId = 'refresh_operation_001', bodyChanges: Record<string, unknown> = {}, proof?: string): Promise<Response> {
+  const body = JSON.stringify({ binding_id: binding.bindingId, owner_id: binding.ownerId,
+    device_id: 'KHALADEV1', generation: binding.generation, nonce, operation_id: operationId, ...bodyChanges });
+  return h.route(REFRESH_PATH).handle(new Request(`${ORIGIN}${REFRESH_PATH}`, {
+    method: 'POST', headers: { origin: ORIGIN, 'content-type': 'application/json',
+      dpop: proof ?? h.key.proof(`${ORIGIN}${REFRESH_PATH}`, undefined, { claims: {
+        nonce, body_hash: createHash('sha256').update(body).digest('base64url'),
+      } }) }, body,
+  }));
 }
 
 describe('descriptor', () => {
@@ -878,6 +901,8 @@ describe('adapter capability', () => {
     expect(await h.adapter(resumed.capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
     expect(await h.adapter(first.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'refused', code: 'binding_superseded' });
     expect(h.admits).toHaveLength(admitted);
+    expect(await h.handlers.capabilities.resumeAdapterCapability({ ...input, jkt: connectorKey(() => T0).jkt }))
+      .toEqual({ kind: 'refused', code: 'binding_conflict' });
 
     // Another owner, device, generation or an unknown binding gets nothing.
     for (const other of [{ ownerId: 'owner_other' }, { deviceId: 'DEVICEOTHER' }, { generation: binding.generation + 1 }, { bindingId: 'bnd_unknown' }]) {
@@ -1058,5 +1083,75 @@ describe('revocation composition (KHA-136)', () => {
     expect(backing.keys('agent-bootstrap:capability:')).toHaveLength(1);
     const [bindingKey] = backing.keys('agent-bootstrap:binding:');
     expect(backing.records.get(bindingKey!)!.value).toMatchObject({ revokedGeneration: 4, capability: null });
+  });
+});
+
+describe('proof-key-bound capability renewal', () => {
+  it('recovers after expiry with the same operation after a lost reply, without accepting the expired bearer', async () => {
+    const h = setup();
+    const initial = (await h.bootstrap()).body;
+    h.advance(3_600_001);
+    expect(await h.adapter(initial.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'refused' });
+    const challenge = await refreshNonce(h, initial.binding.bindingId);
+    expect(challenge.response.status).toBe(200);
+    const first = await refreshCapability(h, initial.binding, challenge.nonce);
+    expect(first.status).toBe(200);
+    const issued = await first.json() as { adapter_capability: Capability };
+    const retry = await refreshCapability(h, initial.binding, challenge.nonce);
+    expect(retry.status).toBe(200);
+    expect((await retry.json() as { adapter_capability: Capability }).adapter_capability).toEqual(issued.adapter_capability);
+    h.advance(60_001);
+    const delayedRetry = await refreshCapability(h, initial.binding, challenge.nonce);
+    expect(delayedRetry.status).toBe(200);
+    expect((await delayedRetry.json() as { adapter_capability: Capability }).adapter_capability).toEqual(issued.adapter_capability);
+    expect(await h.adapter(issued.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+    expect(await h.adapter(initial.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'refused' });
+    expect((await refreshCapability(h, initial.binding, challenge.nonce, 'different_refresh_operation')).status).toBe(409);
+  });
+
+  it('refuses a replacement key, stale generation, wrong owner, proof replay and revoked membership', async () => {
+    const h = setup();
+    const initial = (await h.bootstrap()).body;
+    const replacement = connectorKey(() => T0);
+    const wrongKey = await refreshNonce(h, initial.binding.bindingId,
+      replacement.proof(`${ORIGIN}${REFRESH_CHALLENGE_PATH}`, undefined, { claims: { htm: 'GET' } }));
+    expect(wrongKey.response.status).toBe(403);
+    const sameProof = h.key.proof(`${ORIGIN}${REFRESH_CHALLENGE_PATH}`, undefined, { claims: { htm: 'GET' } });
+    expect((await refreshNonce(h, initial.binding.bindingId, sameProof)).response.status).toBe(200);
+    expect((await refreshNonce(h, initial.binding.bindingId, sameProof)).response.status).toBe(401);
+    const { nonce } = await refreshNonce(h, initial.binding.bindingId);
+    expect((await refreshCapability(h, initial.binding, nonce, 'refresh_wrong_generation', { generation: 4 })).status).toBe(403);
+    expect((await refreshCapability(h, initial.binding, nonce, 'refresh_wrong_owner', { owner_id: 'owner_other' })).status).toBe(403);
+    await h.handlers.capabilities.revokeAdapterCapability({ operationId: 'revoke-renewal',
+      bindingId: initial.binding.bindingId as BindingId, revokedGeneration: initial.binding.generation });
+    expect((await refreshCapability(h, initial.binding, nonce)).status).toBe(403);
+  });
+
+  it('refuses an expired challenge and an owner who left the room', async () => {
+    const h = setup();
+    const initial = (await h.bootstrap()).body;
+    const { nonce } = await refreshNonce(h, initial.binding.bindingId);
+    h.advance(60_001);
+    expect((await refreshCapability(h, initial.binding, nonce)).status).toBe(403);
+    const absent = setup({ inspectOwnerMembership: async () => ({ kind: 'absent' }) });
+    const other = (await absent.bootstrap()).body;
+    expect((await refreshNonce(absent, other.binding.bindingId)).response.status).toBe(403);
+    let joined = true;
+    const left = setup({ inspectOwnerMembership: async () => ({ kind: joined ? 'joined' : 'absent' }) });
+    const former = (await left.bootstrap()).body;
+    const fresh = await refreshNonce(left, former.binding.bindingId);
+    joined = false;
+    expect((await refreshCapability(left, former.binding, fresh.nonce)).status).toBe(403);
+  });
+
+  it('will not restore an old refresh token after a newer bootstrap replaces its pointer', async () => {
+    const h = setup();
+    const original = (await h.bootstrap()).body;
+    const { nonce } = await refreshNonce(h, original.binding.bindingId);
+    expect((await refreshCapability(h, original.binding, nonce)).status).toBe(200);
+    const newer = (await h.bootstrap(SESSION.generation, 'bootstrap_newer_after_refresh')).body;
+    expect(await h.adapter(newer.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
+    expect((await refreshCapability(h, original.binding, nonce)).status).toBe(403);
+    expect(await h.adapter(newer.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
   });
 });

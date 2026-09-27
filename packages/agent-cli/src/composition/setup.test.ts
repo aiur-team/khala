@@ -54,6 +54,10 @@ async function payload(): Promise<PackagedPayload> {
     version: '0.1.0',
     runtime: bytes('// khala runtime\n'),
     openCodePlugin: bytes('// khala opencode plugin\n'),
+    browserAssets: new Map([['index.html', bytes('<html>preview substrate</html>')],
+      ['assets/app.js', bytes('// substrate browser')]]),
+    playwrightAssets: new Map([['package.json', bytes('{"name":"playwright-core"}')],
+      ['index.js', bytes('// vendored playwright')]]),
     claudePlugin: await readClaudePluginAssets(path.join(packages, 'claude-plugin')),
     codexSkill: new Uint8Array(await fsp.readFile(path.join(packages, 'agent-skill', 'SKILL.md'))),
   };
@@ -100,6 +104,8 @@ describe('composed setup on a fake home', () => {
     const launcher = path.join(khala, 'bin', 'khala');
     const runtime = path.join(khala, 'versions', '0.1.0', 'khala.js');
     const plugin = path.join(khala, 'bin', 'opencode.js');
+    const browserIndex = path.join(khala, 'versions', '0.1.0', 'substrate-browser', 'index.html');
+    const playwrightManifest = path.join(khala, 'versions', '0.1.0', 'playwright-core', 'package.json');
     const codexConfig = path.join(roots.home, '.codex', 'config.toml');
     const configBefore = await fsp.readFile(codexConfig, 'utf8');
     const before = await outsideExecutorState();
@@ -111,7 +117,9 @@ describe('composed setup on a fake home', () => {
     expect(dry.harnesses.map(report => report.harness)).toEqual(['claude', 'codex', 'opencode', 'cursor', 'claude-app']);
     expect(dry.harnesses[3]!.executable).toEqual({ present: false, path: null });
     expect(dry.diagnostics.map(diagnostic => diagnostic.code)).toContain('claude_app_delivery_unproven');
-    expect(dry.operations.map(operation => operation.path)).toEqual(expect.arrayContaining([launcher, runtime, plugin]));
+    expect(dry.operations.map(operation => operation.path)).toEqual(expect.arrayContaining([
+      launcher, runtime, plugin, browserIndex, playwrightManifest,
+    ]));
     expect(await outsideExecutorState()).toEqual(before);
 
     const applied = await setup.lifecycle('setup', { dryRun: false, confirm: dry.planDigest });
@@ -125,6 +133,8 @@ describe('composed setup on a fake home', () => {
     expect(fs.readFileSync(launcher, 'utf8')).toBe(`#!/bin/sh\nexec '${process.execPath}' '${runtime}' "$@"\n`);
     expect(fs.readFileSync(runtime, 'utf8')).toBe('// khala runtime\n');
     expect(fs.readFileSync(plugin, 'utf8')).toBe('// khala opencode plugin\n');
+    expect(fs.readFileSync(browserIndex, 'utf8')).toBe('<html>preview substrate</html>');
+    expect(fs.readFileSync(playwrightManifest, 'utf8')).toBe('{"name":"playwright-core"}');
 
     const trust = await approveCodexHooks(path.join(roots.home, '.codex'));
     const status = await setup.configuration();

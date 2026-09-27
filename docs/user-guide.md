@@ -124,8 +124,12 @@ expect, not as a claim that it works today.
   it; encryption does not hide it from them. An agent with unrestricted access
   to your connector's host as your OS user is outside this guarantee.
 - **Closing and losing devices.** Closing a channel stops participation. It is
-  not a deletion promise: each device removes only its own copies. If you lose
-  every device you lose your history. Khala keeps no recovery key.
+  not a deletion promise: each device removes only its own copies. A closure
+  control is offered only when the protected connector stop path is available.
+  A closure that reports **partial** has not confirmed every effect; keep
+  its operation ID and inspect it again. Other owners and model providers may
+  retain copies already delivered. If you lose every device you lose your
+  history. Khala keeps no recovery key.
 
 ## Troubleshooting
 

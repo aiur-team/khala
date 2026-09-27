@@ -1,6 +1,8 @@
 import {
   decodeAdmission,
   decodeAuthPrincipal,
+  decodeClosureCapability,
+  decodeClosureStatus,
   decodeDeviceId,
   decodeInviteState,
   decodeParticipantView,
@@ -8,11 +10,15 @@ import {
   isSameOriginReturnPath,
   sameProviderIdentity,
   outcomeUnknown,
+  ok,
   rejected,
   unavailable,
   type AdmissionPort,
   type AdmissionRejection,
   type ContentLimits,
+  type ClosurePort,
+  type ClosureCapability,
+  type RoomId,
   type IdentityPort,
   type IdentityState,
   type OperationResult,
@@ -36,6 +42,7 @@ const MATRIX_PARTICIPANTS_PATH = '/api/human/messaging/participants';
 const CHANNEL_ACCESS_INBOX_PATH = '/api/human/channel-access/inbox';
 const CHANNEL_ACCESS_DECISION_PATH = '/api/human/channel-access/decision';
 const CHANNEL_ACCESS_MUTE_PATH = '/api/human/channel-access/mute';
+const CLOSURE_PATH = '/api/human/channel-closure';
 
 type Fetch = typeof globalThis.fetch;
 
@@ -56,6 +63,9 @@ export type HumanBrowserApi = Readonly<{
     resolve(userIds: readonly string[], signal?: AbortSignal): Promise<ReadonlyMap<string, ParticipantView> | null>;
   }>;
   channelAccess: ChannelAccessInboxPort;
+  closure: (roomId: RoomId) => Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> & Readonly<{
+    currentCapability(): Promise<ClosureCapability | null>;
+  }>;
 }>;
 
 function exactHttpsOrigin(value: string): string {
@@ -373,5 +383,56 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
     subscribe: () => () => undefined,
   };
 
-  return { identity, admission, credentials, participants, channelAccess };
+  function closure(roomId: RoomId): ReturnType<HumanBrowserApi['closure']> {
+    return {
+      async currentCapability() {
+        try {
+          const url = new URL(CLOSURE_PATH, origin);
+          url.searchParams.set('roomId', roomId);
+          const response = await request(url.href, {
+            method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' },
+            signal: requestSignal(),
+          });
+          if (response.status !== 200) return null;
+          const body = await jsonObject(response);
+          if (body?.kind !== 'ok') return null;
+          const decoded = decodeClosureCapability(body.value);
+          return decoded.ok && decoded.value.roomId === roomId ? decoded.value : null;
+        } catch { return null; }
+      },
+      async closeRoom(input, options) {
+        if (input.roomId !== roomId) return rejected('forbidden');
+        const response = await mutation(CLOSURE_PATH, input, options?.signal);
+        if (response === null) return unavailable();
+        const body = await jsonObject(response);
+        if (response.status === 200 && body?.kind === 'ok') {
+          const decoded = decodeClosureStatus(body.value);
+          return decoded.ok && decoded.value.operationId === input.operationId ? ok(decoded.value) : unavailable();
+        }
+        if (response.status === 502 && body?.code === 'outcome_unknown' && body.operationId === input.operationId) return outcomeUnknown(input.operationId);
+        if (body?.code === 'forbidden' || body?.code === 'stale_room' || body?.code === 'operation_mismatch') return rejected(body.code);
+        return unavailable();
+      },
+      async inspectClosure(operationId, options) {
+        try {
+          const url = new URL(CLOSURE_PATH, origin);
+          url.searchParams.set('operationId', operationId);
+          const response = await request(url.href, {
+            method: 'GET', credentials: 'same-origin', headers: { accept: 'application/json' },
+            signal: requestSignal(options?.signal),
+          });
+          const body = await jsonObject(response);
+          if (response.status === 200 && body?.kind === 'ok') {
+            const decoded = decodeClosureStatus(body.value);
+            return decoded.ok && decoded.value.operationId === operationId ? ok(decoded.value) : unavailable();
+          }
+          if (response.status === 404) return rejected('not_found');
+          if (response.status === 403) return rejected('forbidden');
+          return unavailable();
+        } catch { return unavailable(); }
+      },
+    };
+  }
+
+  return { identity, admission, credentials, participants, channelAccess, closure };
 }

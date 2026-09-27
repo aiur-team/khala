@@ -141,7 +141,8 @@ describe('renderGeneratedFunction', () => {
     const outputDirectory = join(actualRoot, 'infra/netlify/functions-generated');
     const rendered = renderGeneratedFunction(await discoverRoutes(actualRoot), actualRoot);
     const specifiers = [...rendered.matchAll(/^import .+ from '([^']+)';$/gmu)].map(match => match[1]!);
-    expect(specifiers).toHaveLength(4);
+    expect(specifiers).toHaveLength(3);
+    expect(rendered).toContain('...registerHostedProductionRoutes()');
     for (const specifier of specifiers) {
       expect(existsSync(`${resolve(outputDirectory, specifier)}.ts`), `${specifier} must resolve from ${outputDirectory}`).toBe(true);
     }
@@ -176,6 +177,11 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/invitations/admit', methods: ['POST'], domain: 'human' },
       { path: '/api/human/messaging/session', methods: ['POST'], domain: 'human' },
       { path: '/api/human/messaging/participants', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/agent-bootstrap/authorize', methods: ['GET', 'POST'], domain: 'human' },
+      { path: '/api/human/owner-mailbox/submit', methods: ['POST'], domain: 'human' },
+      { path: '/api/human/owner-mailbox/result', methods: ['GET'], domain: 'human' },
+      { path: '/api/human/owner-device-proof/challenge', methods: ['GET'], domain: 'human' },
+      { path: '/api/human/owner-device-proof/register', methods: ['POST'], domain: 'human' },
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'], domain: 'human' },
       { path: '/api/human/pairing/decision', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-access/inbox', methods: ['GET'], domain: 'human' },
@@ -185,7 +191,18 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/channel-discovery/settings', methods: ['PUT'], domain: 'human' },
       { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-discovery/rollout', methods: ['PUT'], domain: 'human' },
+      { path: '/api/human/channel-closure', methods: ['GET', 'POST'], domain: 'closure' },
       { path: '/api/agent/status', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/bootstrap/descriptor', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/bootstrap/token', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/bootstrap/redeem', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/bootstrap/refresh/challenge', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/bootstrap/refresh', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/device-attestation/challenge', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/device-attestation/register', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/owner-mailbox/poll', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/owner-mailbox/complete', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/owner-device-proof/lookup', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/pairing/claim', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/pairing/result', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/channel-access/request', methods: ['POST'], domain: 'agent' },

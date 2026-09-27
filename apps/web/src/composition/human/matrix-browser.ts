@@ -440,6 +440,8 @@ export type MatrixBrowserPorts = Readonly<{
   device: DevicePort;
   room: RoomPort;
   participant(): ParticipantView | null;
+  /** Requests SDK cleanup of this owner's local room state after protected closure. */
+  cleanupRoom(ownerId: OwnerId, roomId: RoomId): Promise<boolean>;
 }>;
 
 /** Binds the selected Matrix SDK to KHA-111/112 without exposing it to UI controllers. */
@@ -501,5 +503,17 @@ export function createMatrixBrowserPorts(input: Readonly<{
     },
   };
 
-  return { device, room, participant: () => runtime.active?.actor ?? null };
+  return {
+    device, room, participant: () => runtime.active?.actor ?? null,
+    async cleanupRoom(ownerId, roomId) {
+      const active = runtime.active;
+      if (active?.principal.ownerId !== ownerId || !active.client.getRoom(roomId)) return false;
+      try {
+        await active.client.forget(roomId, true);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
 }

@@ -44,6 +44,11 @@ export {
   decodeRevocationProgress, decodeRevocationRequest,
 } from './revocation';
 export {
+  type ClosureBindingFence, type ClosureCapability, type ClosureConnectorReceipt, type ClosureConnectorStopResult, type ClosureConsequences, type ClosureFailureReason, type ClosurePort,
+  type ClosureRejection, type ClosureRequest, type ClosureStatus, type ClosureUnavailableReason,
+  CLOSURE_CONSEQUENCES, decodeClosureCapability, decodeClosureConnectorReceipt, decodeClosureRequest, decodeClosureStatus,
+} from './closure';
+export {
   type ProvideRecoverySecret, type RecoveryCapabilities, type RecoveryFailureReason, type RecoveryPort,
   type RecoveryRejection, type RecoveryState, type RecoveryStatus, type RecoveryUnavailableReason,
   RECOVERY_FAILURE_REASONS, RECOVERY_UNAVAILABLE_REASONS, decodeRecoveryCapabilities, decodeRecoveryStatus,

@@ -12,6 +12,7 @@ import type {
   RevocationPort,
   RevocationSubject,
   RoomId,
+  ClosureCapability, ClosureConsequences, ClosureFailureReason, ClosureRequest, ClosureStatus, ClosureRejection, ClosureUnavailableReason,
 } from '@khala/contracts/messaging/index';
 
 export type HistoryAvailability = 'available' | 'partial' | 'unavailable';
@@ -28,7 +29,7 @@ export const CLOSURE_UNAVAILABLE_REASONS = [
   'signed_out',
 ] as const;
 
-export type ClosureUnavailableReason = (typeof CLOSURE_UNAVAILABLE_REASONS)[number];
+export type { ClosureCapability, ClosureConsequences, ClosureFailureReason, ClosureRequest, ClosureStatus, ClosureRejection, ClosureUnavailableReason };
 
 export const CLOSURE_FAILURE_REASONS = [
   'forbidden',
@@ -37,48 +38,6 @@ export const CLOSURE_FAILURE_REASONS = [
   'local_cleanup_failed',
 ] as const;
 
-export type ClosureFailureReason = (typeof CLOSURE_FAILURE_REASONS)[number];
-
-/** The fixed, operator-approved no-deletion-promise consequence set. */
-export type ClosureConsequences = Readonly<{
-  stopsNewMessages: true;
-  removesFromOwnerView: true;
-  requestsLocalCleanup: true;
-  recallsDeliveredCopies: false;
-}>;
-
-export type ClosureCapability =
-  | Readonly<{
-    ownerId: OwnerId;
-    roomId: RoomId;
-    expectedRoomRevision: number;
-    available: true;
-    unavailableReason: null;
-    consequences: ClosureConsequences;
-  }>
-  | Readonly<{
-    ownerId: OwnerId;
-    roomId: RoomId;
-    expectedRoomRevision: number;
-    available: false;
-    unavailableReason: ClosureUnavailableReason;
-    consequences: ClosureConsequences;
-  }>;
-
-export type ClosureRequest = Readonly<{
-  operationId: string;
-  ownerId: OwnerId;
-  roomId: RoomId;
-  expectedRoomRevision: number;
-}>;
-
-export type ClosureStatus = Readonly<{
-  operationId: string;
-  state: 'pending' | 'complete' | 'partial' | 'failed';
-  reason: ClosureFailureReason | null;
-}>;
-
-export type ClosureRejection = 'forbidden' | 'stale_room' | 'operation_mismatch';
 
 /**
  * One authoritative read of independent authentication, device, history and

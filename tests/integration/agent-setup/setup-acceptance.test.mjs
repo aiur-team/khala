@@ -358,6 +358,10 @@ describe('concurrency and interruption', () => {
 
   test('a second mutation while one holds the lock gets a stable busy result and writes nothing', async () => {
     const machine = createMachine(ALL);
+    // This case measures the live setup lock, not private-browser acquisition.
+    // A supported system browser keeps the contender's read-only replan within
+    // the fake Codex probe's four-second hold (its real probe limit is five).
+    installHarness(machine, 'chromium', 'Chromium 153.0.8010.12');
     const { plan, probes } = probesPerPlan(machine);
     // The first pass plans outside the lock; the next probe is the replan under it.
     const hold = holdProbe(machine, 'codex', probes + 1);

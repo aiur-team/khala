@@ -9,6 +9,7 @@ import type { HumanRouteContext } from '../human/application';
 import { registerHumanCapabilities } from '../human/capabilities';
 import { createBrowserReviewPort, type ReviewControlClient, type ReviewPreviewRequest } from './browser-port';
 import { registerReview } from './register';
+import { receiptLabel } from '../../features/review/receipt-labels';
 
 const decoded = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
 if (!decoded.ok) throw new Error('limits');
@@ -97,6 +98,20 @@ function port(client: ReviewControlClient, room: RoomPort) {
 }
 
 describe('browser review port', () => {
+  it('keeps the authenticated batch-token receipt as a distinct owner-visible fact', async () => {
+    const acknowledged = { v: 2, receiptId: 'receipt_ack_1', releaseId: 'release_1', bindingId,
+      generation: 0, kind: 'agent_acknowledged', observedAt: '2026-09-25T10:02:00Z',
+      source: 'agent', evidenceRef: 'ack_1', errorCode: null };
+    const { client } = scriptedClient(() => ({ kind: 'ok', body: previewBody([], { receipts: [acknowledged] }) }));
+    const { room, emit } = fakeRoom();
+    const review = port(client, room);
+    emit([]);
+    await tick();
+    expect(review.snapshot().receipts).toEqual([acknowledged]);
+    expect(receiptLabel(review.snapshot().receipts[0]!)).toBe('Batch token returned');
+    review.dispose();
+  });
+
   it('sends only exact references, never bodies or owner identity, and shows only digest-exact pending items', async () => {
     const edited = { ...refOf(itemA), contentDigest: digest(99) };
     const { client, requests } = scriptedClient(() => ({ kind: 'ok', body: previewBody([edited, refOf(itemB)]) }));

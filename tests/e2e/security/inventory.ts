@@ -77,6 +77,7 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
   'mcp-tool:khala_request_channel_access': probe('mcp-serve'),
   'mcp-tool:khala_channel_access_status': probe('mcp-serve'),
   'mcp-tool:khala_pair': probe('mcp-serve'),
+  'mcp-tool:khala_connect': probe('mcp-serve'),
   'mcp-tool:khala_create_channel': probe('mcp-serve'),
   'mcp-tool:khala_channel_create_status': probe('mcp-serve'),
   // Claude-bound MCP server (`KHALA_MCP_HARNESS=claude`).
@@ -176,12 +177,22 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'GET /api/human/channel-discovery/bootstrap/authorize', 'POST /api/human/channel-discovery/bootstrap/authorize',
     'PUT /api/human/channel-discovery/settings', 'POST /api/human/channel-discovery/allowlist',
     'PUT /api/human/channel-discovery/rollout',
+    'GET /api/human/channel-closure', 'POST /api/human/channel-closure',
+    'GET /api/human/agent-bootstrap/authorize', 'POST /api/human/agent-bootstrap/authorize',
+    'GET /api/human/owner-device-proof/challenge', 'POST /api/human/owner-device-proof/register',
+    'POST /api/human/owner-mailbox/submit', 'GET /api/human/owner-mailbox/result',
   ].map(route => [`http-control:${route}`, humanOnly('owner-authenticated hosted control route')])),
   ...Object.fromEntries([
     'GET /api/agent/status', 'POST /api/agent/pairing/claim', 'POST /api/agent/pairing/result',
     'POST /api/agent/channel-access/request', 'POST /api/agent/channel-access/create', 'GET /api/agent/channel-access/status',
     'POST /api/agent/channel-access/exchange', 'POST /api/agent/channel-access/ready', 'POST /api/agent/channel-access/resume',
     'POST /api/agent/channel-discovery/bootstrap/token', 'GET /api/agent/channels',
+    'GET /api/agent/bootstrap/descriptor', 'POST /api/agent/bootstrap/token',
+    'POST /api/agent/bootstrap/redeem', 'GET /api/agent/bootstrap/refresh/challenge',
+    'POST /api/agent/bootstrap/refresh',
+    'GET /api/agent/device-attestation/challenge', 'POST /api/agent/device-attestation/register',
+    'GET /api/agent/owner-device-proof/lookup',
+    'GET /api/agent/owner-mailbox/poll', 'POST /api/agent/owner-mailbox/complete',
   ].map(route => [`http-control:${route}`, notObserved(CONTROL_NO_CONTENT)])),
   // Harness adapters. Only the Codex adapter is driven, over its fake app-server.
   'harness-adapter:claude': notObserved(ADAPTER_UNDRIVEN),
@@ -257,8 +268,8 @@ export function internalServerRoutes(
 /**
  * Where the encrypted relay (Matrix/Synapse) is reached from: relay or E2EE SDK
  * dependencies in runtime manifests, and source paths named for a relay, homeserver or
- * Matrix. Today that is the human browser flow and its control session issuer
- * (KHA-132). This is a heuristic, not a proof of absence: a relay client under another
+ * Matrix. Today that is the human browser flow, its control session issuer,
+ * and the owner-authorized closure adapter. This is a heuristic, not a proof of absence: a relay client under another
  * name, for example one built directly on `libsodium-wrappers`, would not appear.
  */
 export function relayAdapterEvidence(): string[] {

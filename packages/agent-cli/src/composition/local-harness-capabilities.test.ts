@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { codexHooksFragment } from '../codex/hooks-config.js';
 import type { SetupEnvironment } from '../setup/types.js';
-import { localHarnessCapabilities } from './local-harness-capabilities.js';
+import { inspectHostedCodexHooks, localHarnessCapabilities } from './local-harness-capabilities.js';
 
 const CODEX_HOME = '/home/user/.codex';
 const HOOKS_PATH = `${CODEX_HOME}/hooks.json`;
@@ -39,6 +39,15 @@ function environment(input: Readonly<{
 }
 
 describe('local harness capabilities', () => {
+  it('probes installed Codex hook trust for hosted steer/sync without claiming async', async () => {
+    const trusted = await inspectHostedCodexHooks(environment({ version: '0.154.0', config: TRUST }));
+    expect(trusted).toMatchObject({ version: '0.154.0', support: 'tested',
+      modes: { steer: { status: 'proven' }, sync: { status: 'proven' }, async: { status: 'unknown' } } });
+    expect(await inspectHostedCodexHooks(environment({ version: '0.154.0', config: null }))).toBeNull();
+    expect(await inspectHostedCodexHooks(environment({ version: '0.156.1', config: TRUST }))).toBeNull();
+    expect(await inspectHostedCodexHooks(environment({ version: null, config: TRUST }))).toBeNull();
+  });
+
   it('claims the Codex hook route for a proven version whose Khala hooks the user trusted', async () => {
     const runs: string[] = [];
     const claim = localHarnessCapabilities(() => environment({ config: TRUST, runs }));

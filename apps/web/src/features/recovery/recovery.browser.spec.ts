@@ -82,13 +82,24 @@ test('closure confirmation dispatches once and navigates once', { timeout: 90_00
   });
 });
 
-test('failed and unknown closure outcomes do not navigate', { timeout: 90_000 }, async () => {
-  for (const outcome of ['failed', 'unknown'] as const) {
+test('confirmed leave removes the owner view even when local cleanup is partial', { timeout: 90_000 }, async () => {
+  await withHarness(async page => {
+    await page.evaluate(() => window.__recoveryHarness.setClosureOutcome('cleanup_partial'));
+    await page.getByRole('button', { name: 'Close channel' }).click();
+    await page.getByRole('button', { name: 'Confirm channel closure' }).press('Enter');
+    await page.getByText('Closure partially complete', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.__recoveryHarness.getClosureCompleteCount()), 1);
+  });
+});
+
+test('unconfirmed leave, failed and unknown closure outcomes do not navigate', { timeout: 90_000 }, async () => {
+  for (const outcome of ['leave_partial', 'failed', 'unknown'] as const) {
     await withHarness(async page => {
       await page.evaluate(value => window.__recoveryHarness.setClosureOutcome(value), outcome);
       await page.getByRole('button', { name: 'Close channel' }).click();
       await page.getByRole('button', { name: 'Confirm channel closure' }).press('Enter');
-      await page.getByText(outcome === 'failed' ? 'Closure failed' : 'Closure outcome unknown', { exact: true }).waitFor();
+      await page.getByText(outcome === 'failed' ? 'Closure failed'
+        : outcome === 'unknown' ? 'Closure outcome unknown' : 'Closure partially complete', { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => window.__recoveryHarness.getClosureCompleteCount()), 0);
     });
   }

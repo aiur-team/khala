@@ -12,6 +12,7 @@ import { EVIDENCE, makeReceipt, recordQuietly } from './receipts';
 import {
   type AttemptedReleases, type SubmitDeps, verifyReleasePayload,
 } from './transport';
+import { CODEX_IDLE_WAKE_NOTICE } from './idle-wake';
 
 export type CodexNativeSessionState = 'present' | 'absent' | 'not_owned';
 
@@ -134,8 +135,7 @@ export async function submitNativeRelease(
   // licenses another native notification.
   if (inboxResult !== 'appended') return unknown('harness_unavailable');
 
-  const notification = `Khala release ${job.releaseId} is ready in the local inbox. Run khala listen.`;
-  const argv = ['queue', '--thread', job.binding.sessionId, '--message', notification] as const;
+  const argv = ['queue', '--thread', job.binding.sessionId, '--message', CODEX_IDLE_WAKE_NOTICE] as const;
   let outcome: CodexNativeCliOutcome;
   try {
     outcome = await withDeadline(

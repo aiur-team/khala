@@ -40,6 +40,12 @@ function domainsFor(repoRoot: string): readonly Domain[] {
       exportName: 'registerHumanHandlers',
     },
     {
+      key: 'closure',
+      prefix: '/api/human/',
+      modulePath: path.join(repoRoot, 'apps/control/src/channel-closure/production.ts'),
+      exportName: 'registerClosureHandlers',
+    },
+    {
       key: 'agent',
       prefix: '/api/agent/',
       modulePath: path.join(repoRoot, 'apps/control/src/composition/agent/handlers.ts'),
@@ -107,7 +113,8 @@ export async function discoverRoutes(repoRoot: string): Promise<DiscoveryResult>
     presentDomains.push(domain);
   }
 
-  return { presentDomains, absentPrefixes, routeManifest };
+  const presentPrefixes = new Set(presentDomains.map(domain => domain.prefix));
+  return { presentDomains, absentPrefixes: [...new Set(absentPrefixes)].filter(prefix => !presentPrefixes.has(prefix)), routeManifest };
 }
 
 /** Netlify's functions input directory (`[functions].directory` in netlify.toml). */
@@ -128,10 +135,16 @@ export function importSpecifier(outputDirectory: string, modulePath: string): st
 export function renderGeneratedFunction(result: DiscoveryResult, repoRoot: string): string {
   const outputDirectory = functionsOutputDirectory(repoRoot);
   const runtimeImport = (file: string) => importSpecifier(outputDirectory, path.join(repoRoot, 'apps/control/src/runtime', file));
-  const imports = result.presentDomains
-    .map(domain => `import { ${domain.exportName} } from '${importSpecifier(outputDirectory, domain.modulePath)}';`)
-    .join('\n');
-  const registrationCalls = result.presentDomains.map(domain => `...${domain.exportName}()`).join(', ');
+  const completeHostedDomains = result.presentDomains.some(domain => domain.key === 'human')
+    && result.presentDomains.some(domain => domain.key === 'agent');
+  const imports = completeHostedDomains
+    ? `import { registerHostedProductionRoutes } from '${importSpecifier(outputDirectory, path.join(repoRoot, 'apps/control/src/composition/hosted-production.ts'))}';`
+    : result.presentDomains
+      .map(domain => `import { ${domain.exportName} } from '${importSpecifier(outputDirectory, domain.modulePath)}';`)
+      .join('\n');
+  const registrationCalls = completeHostedDomains
+    ? '...registerHostedProductionRoutes()'
+    : result.presentDomains.map(domain => `...${domain.exportName}()`).join(', ');
   const absentPrefixesLiteral = JSON.stringify(result.absentPrefixes);
 
   return `// GENERATED FILE — do not edit. Produced by apps/control/src/runtime/discover.ts

@@ -9,7 +9,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
-  ADAPTER_CAPABILITIES, type AdapterCapability, type AdmissionOutcome, type BootstrapAdmissionPort, type OwnershipOutcome, type OwnershipPort,
+  ADAPTER_CAPABILITIES, type AdapterCapability, type AdmissionOutcome, type BootstrapAdmissionPort, type MatrixDeviceSession, type OwnershipOutcome, type OwnershipPort,
 } from './ports';
 import type { ProofSigner } from './proof';
 import { readBounded } from './discovery';
@@ -127,15 +127,36 @@ export function createHttpAdmission(options: HttpAdmissionOptions): BootstrapAdm
       }
       if (status === 429 || status === 503) return { kind: 'unavailable' };
       if (status !== 200) return status >= 500 ? { kind: 'outcome_unknown' } : { kind: 'refused', code: 'admission_denied' };
-      const body = response.body as { binding?: unknown; adapter_capability?: unknown } | null;
+      const body = response.body as { binding?: unknown; adapter_capability?: unknown; matrix_session?: unknown } | null;
       if (!body || typeof body.binding !== 'object' || body.binding === null) return { kind: 'outcome_unknown' };
       const capability = readCapability(body.adapter_capability);
       // Anything but exactly the adapter scope is refused, never used.
       if (capability === null) return { kind: 'refused', code: 'admission_denied' };
+      const matrixSession = body.matrix_session === undefined ? undefined : readMatrixSession(body.matrix_session);
+      if (body.matrix_session !== undefined && matrixSession === null) return { kind: 'refused', code: 'admission_denied' };
       // The orchestrator decodes and checks the binding, and the capability against it.
-      return { kind: 'admitted', binding: body.binding as never, capability };
+      return { kind: 'admitted', binding: body.binding as never, capability, ...(matrixSession ? { matrixSession } : {}) };
     },
   };
+}
+
+function readMatrixSession(value: unknown): MatrixDeviceSession | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const object = value as Record<string, unknown>;
+  if (Object.keys(object).sort().join(',') !== 'accessToken,baseUrl,deviceId,ownerParticipantId,ownerUserId,roomId,userId') return null;
+  const { baseUrl, userId, deviceId, accessToken, roomId, ownerUserId, ownerParticipantId } = object;
+  if (typeof baseUrl !== 'string' || typeof userId !== 'string' || typeof deviceId !== 'string'
+    || typeof accessToken !== 'string' || accessToken.length < 16 || accessToken.length > 4096
+    || !/^@[A-Za-z0-9._=-]+:[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u.test(userId)
+    || !/^[A-Za-z0-9_-]{1,64}$/u.test(deviceId)
+    || typeof roomId !== 'string' || !/^![^\s:]{1,255}:[^\s]{1,255}$/u.test(roomId)
+    || typeof ownerUserId !== 'string' || !/^@[A-Za-z0-9._=-]+:[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u.test(ownerUserId)
+    || typeof ownerParticipantId !== 'string' || !/^human_[a-f0-9]{40}$/u.test(ownerParticipantId)) return null;
+  try {
+    const url = new URL(baseUrl);
+    if (url.protocol !== 'https:' || url.origin !== baseUrl || url.username || url.password || url.search || url.hash) return null;
+  } catch { return null; }
+  return { baseUrl, userId, deviceId, accessToken, roomId, ownerUserId, ownerParticipantId };
 }
 
 /** `adapter_capability` from a redeem response, or `null` unless it is well formed with exactly the adapter scope. */

@@ -10,6 +10,7 @@ import type { ChannelAccessPort, ChannelListingPort } from './channels/types.js'
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { InternalDelivery } from '../composition/internal-delivery.js';
 import type { SessionGrants } from '../composition/session-grant.js';
+import type { HarnessSession } from '../composition/session-grant.js';
 import type { OpenGenerationInbox } from '../composition/delivering-inbox.js';
 import type { SetupService } from '../setup/plan.js';
 
@@ -69,8 +70,28 @@ export type SendResult =
   | Readonly<{ kind: 'accepted'; clientTxnId: string; eventId: string | null }>
   | Readonly<{ kind: 'refused'; code: SendRefusalCode; clientTxnId: string }>
   | Readonly<{ kind: 'outcome_unknown'; clientTxnId: string }>;
+export const AGENT_READINESS_PREREQUISITES = [
+  'storage', 'device', 'bootstrap', 'subscription', 'controls', 'harness', 'dispatch', 'review', 'recovery',
+] as const;
+export const AGENT_READINESS_STATES = ['ready', 'blocked', 'offline', 'unsupported', 'unknown'] as const;
+export const AGENT_READINESS_ERRORS = [
+  'connector_closed', 'binding_not_established', 'binding_revoked', 'channel_closing',
+  'device_unavailable', 'subscription_starting', 'subscription_offline',
+  'subscription_missing_keys', 'subscription_storage_failed', 'subscription_authority_lost',
+  'subscription_replay_gap', 'subscription_unsupported', 'authority_unavailable',
+  'owner_device_unverified', 'harness_unsupported', 'harness_unknown',
+  'listening_mode_unavailable', 'review_unavailable', 'dispatch_unavailable',
+] as const;
+export type AgentReadiness = Readonly<{
+  phase: 'ready' | 'degraded' | 'stopped';
+  prerequisites: Readonly<Record<(typeof AGENT_READINESS_PREREQUISITES)[number],
+    (typeof AGENT_READINESS_STATES)[number]>>;
+  errorCode: (typeof AGENT_READINESS_ERRORS)[number] | null;
+}>;
 export type AgentStatus = Readonly<{
   v: 1; connected: boolean; binding: SessionBinding | null; route: AgentRoute; sourceCursor: string | null;
+  /** Present only when the local connector can classify its own prerequisites. */
+  readiness?: AgentReadiness;
 }>;
 export type AccessRequestResult =
   | Readonly<{ kind: 'status'; outcome: AccessRequestOutcome }>
@@ -137,6 +158,12 @@ export type CliDependencies = Readonly<{
    * plugin MCP entry.
    */
   sessionGrants?: SessionGrants | undefined;
+  /** Opens a hosted connector only for the provider-named native MCP session. */
+  hostedSession?: (session: HarnessSession) => Promise<Readonly<{
+    client: AgentClientPort; inbox: OpenGenerationInbox; close(): Promise<void>;
+  }>>;
+  /** Read-only exact-session fence before an ordinary tool or hook resumes hosted state. */
+  hostedBindingPresent?: (session: HarnessSession) => Promise<boolean>;
   claude?: ClaudeSessionClient;
   /** Setup planning and configuration status. The production composition always supplies it. */
   setup?: SetupService;

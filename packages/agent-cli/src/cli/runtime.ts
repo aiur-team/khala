@@ -4,7 +4,8 @@ import { CliError } from './errors.js';
 import type { InboxItem } from './inbox.js';
 import type { SendService } from './send.js';
 import {
-  AGENT_ROUTES, CONNECT_REFUSAL_CODES, type AgentStatus, type ConnectRefusalCode,
+  AGENT_READINESS_ERRORS, AGENT_READINESS_PREREQUISITES, AGENT_READINESS_STATES,
+  AGENT_ROUTES, CONNECT_REFUSAL_CODES, type AgentReadiness, type AgentStatus, type ConnectRefusalCode,
 } from './types.js';
 import { plainObject, validBindingArgument, validIdentifier } from './validation.js';
 
@@ -72,12 +73,35 @@ export function publicStatus(value: unknown): AgentStatus {
     throw new CliError('transport_unavailable');
   }
   const binding = value.binding === null ? null : publicBinding(value.binding);
+  let readiness: AgentReadiness | undefined;
+  if (Object.hasOwn(value, 'readiness')) {
+    const input = value.readiness;
+    if (!plainObject(input) || Object.keys(input).sort().join(',') !== 'errorCode,phase,prerequisites'
+      || !['ready', 'degraded', 'stopped'].includes(String(input.phase))
+      || !(input.errorCode === null || (AGENT_READINESS_ERRORS as readonly unknown[]).includes(input.errorCode))
+      || !plainObject(input.prerequisites)
+      || Object.keys(input.prerequisites).sort().join(',') !== [...AGENT_READINESS_PREREQUISITES].sort().join(',')) {
+      throw new CliError('transport_unavailable');
+    }
+    const prerequisites = Object.fromEntries(AGENT_READINESS_PREREQUISITES.map(key => {
+      const state = (input.prerequisites as Record<string, unknown>)[key];
+      if (!(AGENT_READINESS_STATES as readonly unknown[]).includes(state)) throw new CliError('transport_unavailable');
+      return [key, state];
+    })) as AgentReadiness['prerequisites'];
+    if ((input.phase === 'ready') !== (input.errorCode === null)
+      || value.connected !== (input.phase === 'ready')
+      || (input.phase === 'ready' && AGENT_READINESS_PREREQUISITES.slice(0, 8)
+        .some(key => prerequisites[key] !== 'ready'))) throw new CliError('transport_unavailable');
+    readiness = { phase: input.phase as AgentReadiness['phase'], prerequisites,
+      errorCode: input.errorCode as AgentReadiness['errorCode'] };
+  }
   return {
     v: 1,
     connected: value.connected,
     binding,
     route: value.route as AgentStatus['route'],
     sourceCursor: value.sourceCursor,
+    ...(readiness === undefined ? {} : { readiness }),
   };
 }
 

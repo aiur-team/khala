@@ -23,7 +23,7 @@ import {
 export interface BlobsStoreLike {
   getWithMetadata(
     key: string,
-    options?: { type: 'json' },
+    options?: { type: 'json'; consistency?: 'strong' },
   ): Promise<{ data: unknown; etag?: string } | null>;
   setJSON(
     key: string,
@@ -104,6 +104,16 @@ function sameWrite<T extends JsonValue>(record: ControlRecord<T> | null, operati
   return record !== null && record.operationId === operationId && record.expiresAt === expiresAt && sameJsonValue(record.value, value);
 }
 
+function validEtag(etag: string | undefined): etag is string {
+  return typeof etag === 'string' && etag.length > 0;
+}
+
+function sameLedgerEntry(data: unknown, key: string, digest: string): boolean {
+  if (typeof data !== 'object' || data === null) return false;
+  const entry = data as Partial<LedgerEntry>;
+  return entry.key === key && entry.digest === digest;
+}
+
 export function createControlStore(deps: ControlStoreDeps): ControlStore {
   const { records, operations, clock } = deps;
 
@@ -114,8 +124,9 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
     /** The decoded envelope regardless of liveness — lets `resolve` see an expired-but-decodable record's operation ID. */
     envelope: StoredEnvelope | null;
   }> {
-    const raw = await records.getWithMetadata(key, { type: 'json' });
+    const raw = await records.getWithMetadata(key, { type: 'json', consistency: 'strong' });
     if (raw === null) return { raw: null, live: null, corrupt: false, envelope: null };
+    if (!validEtag(raw.etag)) return { raw, live: null, corrupt: true, envelope: null };
     const envelope = decodeEnvelope(raw.data);
     if (envelope === null) return { raw, live: null, corrupt: true, envelope: null };
     if (!isRecordLive({ expiresAt: envelope.expiresAt }, clock())) return { raw, live: null, corrupt: false, envelope };
@@ -142,21 +153,37 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
    * `conflict` off the strength of this claim alone.
    */
   async function claimOperation(operationId: string, key: string, digest: string): Promise<ClaimResult> {
+    let result: { modified: boolean; etag?: string };
     try {
-      const result = await operations.setJSON(operationId, { key, digest } satisfies LedgerEntry, { onlyIfNew: true });
-      if (result.modified) return { kind: 'claimed', retry: false };
+      result = await operations.setJSON(operationId, { key, digest } satisfies LedgerEntry, { onlyIfNew: true });
     } catch (error) {
       return { kind: isDefiniteRejection(error) ? 'unavailable' : 'unknown' };
     }
-    let entry: { data: unknown } | null;
+    if (result.modified) {
+      // The SDK can return modified:true for an HTTP error. A nonempty ETag
+      // and a strong read of the exact new ledger entry are both required.
+      if (!validEtag(result.etag)) return { kind: 'unknown' };
+      try {
+        const confirmed = await operations.getWithMetadata(operationId, { type: 'json', consistency: 'strong' });
+        return confirmed?.etag === result.etag && sameLedgerEntry(confirmed.data, key, digest)
+          ? { kind: 'claimed', retry: false }
+          : { kind: 'unknown' };
+      } catch {
+        return { kind: 'unknown' };
+      }
+    }
+    let entry: { data: unknown; etag?: string } | null;
     try {
-      entry = await operations.getWithMetadata(operationId, { type: 'json' });
+      entry = await operations.getWithMetadata(operationId, { type: 'json', consistency: 'strong' });
     } catch {
       return { kind: 'unknown' };
     }
-    if (entry === null) return { kind: 'unknown' };
+    if (entry === null || !validEtag(entry.etag)) return { kind: 'unknown' };
+    if (sameLedgerEntry(entry.data, key, digest)) return { kind: 'claimed', retry: true };
     const decoded = entry.data as Partial<LedgerEntry> | null;
-    return decoded && decoded.key === key && decoded.digest === digest ? { kind: 'claimed', retry: true } : { kind: 'mismatch' };
+    return decoded && typeof decoded.key === 'string' && typeof decoded.digest === 'string'
+      ? { kind: 'mismatch' }
+      : { kind: 'unknown' };
   }
 
   return {
@@ -180,12 +207,13 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       if (claim.kind === 'unknown') return { kind: 'outcome_unknown', operationId: input.operationId };
       const isRetry = claim.retry;
 
-      let before: { raw: { data: unknown; etag?: string } | null; live: ControlRecord<T> | null };
+      let before: { raw: { data: unknown; etag?: string } | null; live: ControlRecord<T> | null; corrupt: boolean };
       try {
         before = await readLive<T>(input.key);
       } catch (error) {
         return isDefiniteRejection(error) ? { kind: 'unavailable' } : { kind: 'outcome_unknown', operationId: input.operationId };
       }
+      if (before.corrupt) return { kind: 'unavailable' };
       if (sameWrite(before.live, input.operationId, input.next.value, input.next.expiresAt)) {
         return { kind: 'applied', record: before.live as ControlRecord<T> };
       }
@@ -209,17 +237,31 @@ export function createControlStore(deps: ControlStoreDeps): ControlStore {
       } catch (error) {
         return isDefiniteRejection(error) ? { kind: 'unavailable' } : { kind: 'outcome_unknown', operationId: input.operationId };
       }
-      if (result.modified) return { kind: 'applied', record: toRecord<T>(input.key, result.etag, envelope) };
+      if (result.modified) {
+        if (!validEtag(result.etag)) return { kind: 'outcome_unknown', operationId: input.operationId };
+        // The SDK reports modified:true for non-412 HTTP failures. Confirm
+        // both the returned revision and exact content through a strong read.
+        try {
+          const after = await readLive<T>(input.key);
+          if (after.live?.revision === result.etag && sameWrite(after.live, input.operationId, input.next.value, input.next.expiresAt)) {
+            return { kind: 'applied', record: after.live };
+          }
+        } catch {
+          // A write might have landed before the read failed.
+        }
+        return { kind: 'outcome_unknown', operationId: input.operationId };
+      }
 
       // The precondition failed: someone else raced us (or our own claimed
       // write already landed and we're seeing our own record). Read back
       // rather than guessing — this is the lost-response-recovery path.
-      let after: { live: ControlRecord<T> | null };
+      let after: { live: ControlRecord<T> | null; corrupt: boolean };
       try {
         after = await readLive<T>(input.key);
       } catch (error) {
         return isDefiniteRejection(error) ? { kind: 'unavailable' } : { kind: 'outcome_unknown', operationId: input.operationId };
       }
+      if (after.corrupt) return { kind: 'outcome_unknown', operationId: input.operationId };
       if (sameWrite(after.live, input.operationId, input.next.value, input.next.expiresAt)) {
         return { kind: 'applied', record: after.live as ControlRecord<T> };
       }

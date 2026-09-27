@@ -14,6 +14,8 @@ import type { AdmissionService } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
 import type { MatrixSessionIssuer } from './matrix';
 import { createProductionHumanServiceLoader } from './production';
+import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
+import { unavailableOwnerDeviceProofRoutes } from '../agent/owner-device-proof';
 
 export const ME_PATH = '/api/human/me';
 export const LOGOUT_PATH = '/api/human/auth/logout';
@@ -353,6 +355,12 @@ function withCookies(response: Response, cookies: readonly string[]): Response {
 const loadProductionServices = createProductionHumanServiceLoader();
 
 export type HumanHandlerDependencies = Readonly<{
+  /** Signed-in owner consent for the exact existing session and invite. */
+  bootstrap?: () => readonly RouteRegistration[];
+  /** Same-origin authenticated owner command mailbox. */
+  ownerMailbox?: () => readonly RouteRegistration[];
+  /** Explicit signed-in browser Matrix device key pin. */
+  ownerDeviceProof?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -376,6 +384,10 @@ function unavailableRoute(path: string, methods: readonly string[]): RouteRegist
 const unavailablePairingRoutes = Object.freeze([
   unavailableRoute('/api/human/pairing/request', ['POST', 'GET']),
   unavailableRoute('/api/human/pairing/decision', ['POST']),
+]);
+
+const unavailableBootstrapRoutes = Object.freeze([
+  unavailableRoute('/api/human/agent-bootstrap/authorize', ['GET', 'POST']),
 ]);
 
 const unavailableChannelAccessRoutes = Object.freeze([
@@ -403,6 +415,9 @@ const unavailableChannelSettingsRoutes = Object.freeze([
 export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {
   return Object.freeze([
     ...createHumanHandlers(loadProductionServices),
+    ...(dependencies?.bootstrap?.() ?? unavailableBootstrapRoutes),
+    ...(dependencies?.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().human),
+    ...(dependencies?.ownerDeviceProof?.() ?? unavailableOwnerDeviceProofRoutes().human),
     ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),

@@ -7,6 +7,16 @@ describe('registerAgentHandlers', () => {
 
     expect(registrations.map(({ path, methods }) => ({ path, methods }))).toEqual([
       { path: '/api/agent/status', methods: ['GET'] },
+      { path: '/api/agent/bootstrap/descriptor', methods: ['GET'] },
+      { path: '/api/agent/bootstrap/token', methods: ['POST'] },
+      { path: '/api/agent/bootstrap/redeem', methods: ['POST'] },
+      { path: '/api/agent/bootstrap/refresh/challenge', methods: ['GET'] },
+      { path: '/api/agent/bootstrap/refresh', methods: ['POST'] },
+      { path: '/api/agent/device-attestation/challenge', methods: ['GET'] },
+      { path: '/api/agent/device-attestation/register', methods: ['POST'] },
+      { path: '/api/agent/owner-mailbox/poll', methods: ['GET'] },
+      { path: '/api/agent/owner-mailbox/complete', methods: ['POST'] },
+      { path: '/api/agent/owner-device-proof/lookup', methods: ['GET'] },
       { path: '/api/agent/pairing/claim', methods: ['POST'] },
       { path: '/api/agent/pairing/result', methods: ['POST'] },
       { path: '/api/agent/channel-access/request', methods: ['POST'] },
@@ -23,9 +33,11 @@ describe('registerAgentHandlers', () => {
       expect(response.status).toBe(503);
       expect(response.headers.get('cache-control')).toBe('no-store');
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
-      expect(await response.json()).toEqual(index === 0
+      expect(await response.json()).toEqual(index >= 8 && index < 11
+        ? { code: 'unavailable' }
+        : index < 8
         ? { code: 'feature_unavailable' }
-        : index < 9
+        : index < 19
           ? { v: 1, kind: 'rejected', code: 'feature_unavailable' }
           : { error: 'feature_unavailable' });
     }
@@ -39,7 +51,7 @@ describe('registerAgentHandlers', () => {
       status: { snapshot: async () => ({ generation: 0, agents: [] }) },
       pairing: () => [claim, result],
     });
-    expect(registrations.slice(1, 3)).toEqual([claim, result]);
+    expect(registrations.filter(route => route.path.startsWith('/api/agent/pairing/'))).toEqual([claim, result]);
   });
 
   it('places live channel-access registrations after status and pairing', () => {
@@ -55,6 +67,10 @@ describe('registerAgentHandlers', () => {
     expect(registrations.slice(start, start + 3)).toEqual([access, create, status]);
     expect(registrations.slice(0, start).map(({ path }) => path)).toEqual([
       '/api/agent/status',
+      ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/bootstrap/')),
+      ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/device-attestation/')),
+      ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/owner-mailbox/')),
+      ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/owner-device-proof/')),
       ...registerAgentHandlers().map(({ path }) => path).filter(path => path.startsWith('/api/agent/pairing/')),
     ]);
   });
@@ -72,7 +88,7 @@ describe('registerAgentHandlers', () => {
     });
 
     expect(registrations.at(-2)).toBe(token);
-    expect(registrations.slice(1, 3).map(route => route.path)).toEqual([
+    expect(registrations.filter(route => route.path.startsWith('/api/agent/pairing/')).map(route => route.path)).toEqual([
       '/api/agent/pairing/claim',
       '/api/agent/pairing/result',
     ]);
