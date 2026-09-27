@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { isInternalChannelArgument } from '@khala/contracts/internal/command';
+import { LOCAL_AUTOMATION_LIMITS } from '@khala/policy/listening-mode/limits';
 import {
   activeDescriptorPath, ensurePrivateDirectory, removeActiveDescriptor, removeLaunchRecord,
   writeActiveDescriptor, writeLaunchRecord,
@@ -11,6 +12,7 @@ import { type BindingControl, composeBindingControl } from '../composition/bindi
 import { composeBindingModes } from '../composition/binding-modes/index';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
 import { composeClaudeSession, inspectClaudeRoute } from '../composition/claude-session/compose';
+import { createLocalAutomationProvider } from '../composition/local-automation/provider';
 import { RECEIPT_LOG_FILE, composeInternalReceipts } from '../composition/receipt-projection';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
 import { resumeInternalChannel } from '../lifecycle/resume';
@@ -287,14 +289,15 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       // Claude sessions present the transport capability from `active.json` and join as themselves.
       // One inspection of the installed Claude Code backs both the owner's view and the session route.
       const claudeRoute = await inspectClaudeRoute(options.claudeVersion);
+      const modes = composeBindingModes({ handle: channel.handle, store: channel.store,
+        stateDirectory: path.dirname(root), claude: claudeRoute });
       const claude = await composeClaudeSession({
         root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
+        automation: createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS), pause: modes.pause,
       });
       bindingControl = composeBindingControl({
         handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,
       });
-      const modes = composeBindingModes({ handle: channel.handle, store: channel.store,
-        stateDirectory: path.dirname(root), claude: claudeRoute });
       const receipts = composeInternalReceipts({ store: channel.handle, logFile: path.join(channel.directory, RECEIPT_LOG_FILE) });
       // Acknowledgements a crash left unprojected reach the owner's evidence before the server listens.
       await receipts.projector.drain().catch(() => undefined);

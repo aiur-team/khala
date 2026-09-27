@@ -33,8 +33,10 @@ import { installedClaudeCapabilities } from '@khala/harnesses/claude/interactive
 import { activeDescriptorPath, writePrivateFile } from '../../descriptor/write';
 import type { AgentSessionRoute } from '../../server/channel-server';
 import type { ChannelStore } from '../../store/channel-store';
+import type { BindingPauseStore } from '../../store/pause-store';
 import { discoveryPrincipal, sessionDigest } from '../channel-discovery/service';
 import { issueDiscoveryDescriptor } from '../discovery-descriptor';
+import { localClaudeWatchWindow, type LocalAutomationProvider } from '../local-automation/provider';
 
 // The Claude plugin's session route in the internal launcher's server. Hooks and the
 // plugin's `mcp-serve` present the launch's transport capability from `active.json`
@@ -89,6 +91,8 @@ export type ClaudeSessionCompositionOptions = Readonly<{
   clock?: () => number;
   /** The route claim for the installed Claude Code, from `inspectClaudeRoute`. */
   capabilities: HarnessCapabilities;
+  automation: LocalAutomationProvider;
+  pause: BindingPauseStore;
 }>;
 
 const limits = decodeDeliveryLimits({ maxPayloadBytes: MAX_SEND_BYTES, maxSelectionEvents: 32 });
@@ -359,6 +363,15 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       const found = bound(binding.sessionId);
       return found === null ? null : { ...found, sessionId: binding.sessionId };
     };
+    const window = async (): Promise<Readonly<{ seconds: number }> | null> => {
+      const active = await current();
+      if (active === null) return null;
+      const paused = options.pause.read(binding);
+      if (paused !== false) return null;
+      const mode = await modes.read();
+      if (!mode.ok) return null;
+      return localClaudeWatchWindow(options.automation, binding, active, mode.view, paused);
+    };
     const read = new ReadOperation({
       heldBinding: binding,
       consumer: {
@@ -398,9 +411,21 @@ export async function composeClaudeSession(options: ClaudeSessionCompositionOpti
       },
       readMode: () => modes.read(),
       capabilities,
-      // No local automation fence is composed: nothing pending, and no idle watcher.
-      pending: async () => ({ pending: false }),
-      watchWindow: async () => null,
+      pending: async () => {
+        if (await window() === null) return { pending: false };
+        const descriptor = grant(binding.sessionId);
+        if (descriptor === null || descriptor.bindingId !== binding.bindingId) return { pending: false };
+        // The store persists a digest of the provider session ID; its trusted binding is
+        // re-read here, while the session adapter continues to name the native ID.
+        const stored = bound(binding.sessionId);
+        if (stored === null || stored.bindingId !== binding.bindingId || stored.generation !== binding.generation)
+          return { pending: false };
+        const signal = store.pendingHumanRelease({ channelId: descriptor.channelId as RoomId, binding: stored });
+        if (signal.kind !== 'pending') return { pending: false };
+        // Stop, rebind or pause may have happened while the metadata query ran.
+        return { pending: signal.pending && await window() !== null };
+      },
+      watchWindow: window,
       roster: async () => {
         const held = grant(binding.sessionId);
         return held === null || held.bindingId !== binding.bindingId ? { kind: 'refused', code: 'not_joined' } : roster(held.channelId as RoomId);

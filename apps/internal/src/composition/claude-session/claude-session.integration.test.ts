@@ -819,6 +819,71 @@ describe('Claude delivery through the internal launcher', () => {
     expect(JSON.parse(await session.run('pull'))).toEqual({ ok: true, kind: 'empty' });
   });
 
+  it('arms the bounded idle window and reports only unacknowledged human release presence under the live mode', async () => {
+    const session = await bound('session-idle-fence');
+    const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
+    const [entry] = (await call(session.report.origin, { path: bindings, headers: session.owner })).json.bindings;
+    const binding = `${bindings}/${encodeURIComponent(entry.binding.bindingId)}`;
+    const owner = (suffix: string, body: unknown) => call(session.report.origin, {
+      method: 'POST', path: `${binding}/${suffix}`, headers: session.owner, body,
+    });
+    expect(JSON.parse(await session.run('watch'))).toMatchObject({ ok: true, kind: 'hook', watchSeconds: null });
+    const issuedAt = new Date().toISOString();
+    const set = await owner('listening-mode', {
+      v: 1, commandId: 'idle-sync', generation: entry.binding.generation,
+      expectedVersion: entry.view.version, requested: 'sync', issuedAt,
+    });
+    const support = entry.view.support.sync;
+    const pin = { mode: 'sync', route: support.route, harnessVersion: support.testedVersion,
+      evidenceRevision: support.evidenceRevision };
+    const grant = await owner('experimental-route/grant', {
+      v: 1, commandId: 'idle-grant', generation: entry.binding.generation,
+      expectedVersion: set.json.version, ...pin, issuedAt,
+    });
+    expect(grant.json).toMatchObject({ outcome: 'applied', view: { effective: 'sync' } });
+    expect(JSON.parse(await session.run('watch'))).toMatchObject({ ok: true, kind: 'hook', effective: 'sync', watchSeconds: 3000 });
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+
+    await session.post('private body never goes through pending');
+    const signal = await session.run('pending');
+    expect(JSON.parse(signal)).toEqual({ ok: true, kind: 'pending' });
+    expect(signal).not.toContain('private body');
+    expect(await session.facts()).toEqual([]);
+    expect(JSON.parse(await claude(session.report.descriptorPath, 'pending', 'other-session')))
+      .toMatchObject({ ok: false, kind: 'refused' });
+
+    const paused = await owner('pause', { v: 1, generation: entry.binding.generation, paused: true });
+    expect(paused.json).toMatchObject({ paused: true });
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(JSON.parse(await session.run('watch'))).toMatchObject({ watchSeconds: null });
+    await owner('pause', { v: 1, generation: entry.binding.generation, paused: false });
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'pending' });
+
+    // A delivered but not yet acknowledged batch never causes a second idle wake.
+    expect(await session.run('pull')).toContain('private body');
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(await session.facts()).toEqual([]);
+    await session.run('status');
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(await session.facts()).toHaveLength(1);
+
+    await session.post('held under async');
+    const next = await owner('listening-mode', {
+      v: 1, commandId: 'idle-async', generation: entry.binding.generation,
+      expectedVersion: grant.json.view.version, requested: 'async', issuedAt,
+    });
+    expect(next.json).toMatchObject({ outcome: 'applied', requested: 'async' });
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(JSON.parse(await session.run('watch'))).toMatchObject({ watchSeconds: null });
+
+    const stopped = await call(session.report.origin, {
+      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/stop`,
+      headers: session.owner, body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+    expect(JSON.parse(await session.run('pending'))).toMatchObject({ ok: false, kind: 'refused' });
+  });
+
   it('delivers at the next PostToolUse under steer only after the owner grants the experimental route', async () => {
     const session = await bound('session-granted');
     const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
