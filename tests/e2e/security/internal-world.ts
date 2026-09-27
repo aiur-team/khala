@@ -130,7 +130,8 @@ export async function startInternalWorld(): Promise<InternalWorld> {
       client: options.client === 'internal' ? await createInternalClient({ descriptorPath }) : createUnavailableClient(),
       listeningMode: null,
       inbox: (bindingId, generation, inboxOptions) => openInbox({
-        ...inboxOptions,
+        ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+        ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
         stateDirectory: agentState, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
       }),
       stdin, stdout, stderr, signal: abort.signal, env: {}, cwd: root,

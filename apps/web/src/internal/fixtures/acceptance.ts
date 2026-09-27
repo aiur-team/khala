@@ -48,7 +48,8 @@ export async function khala(argv: readonly string[], options: CliOptions): Promi
     client: createUnavailableClient(),
     listeningMode: null,
     inbox: (bindingId, generation, inboxOptions) => openInbox({
-      ...inboxOptions,
+      ...(inboxOptions?.recordAcknowledgement === undefined ? {} : { recordAcknowledgement: inboxOptions.recordAcknowledgement }),
+      ...(inboxOptions?.issueBatch === undefined ? {} : { issueBatch: inboxOptions.issueBatch }),
       stateDirectory: inboxState, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
     }),
     stdin, stdout, stderr,
