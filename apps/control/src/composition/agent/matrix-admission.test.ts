@@ -50,6 +50,16 @@ function fakeMatrix() {
       tokens.set(token, userId);
       return reply(200, { user_id: userId, device_id: body.device_id, access_token: token });
     }
+    if (path === '/_matrix/client/v3/keys/query') {
+      if (!bearer || !tokens.has(bearer)) return reply(401, {});
+      const requested = body.device_keys as Record<string, string[]>;
+      return reply(200, { device_keys: Object.fromEntries(Object.entries(requested).map(([userId, devices]) => [
+        userId, Object.fromEntries(devices.map(deviceId => [deviceId, {
+          user_id: userId, device_id: deviceId,
+          keys: { [`ed25519:${deviceId}`]: 'A'.repeat(43), [`curve25519:${deviceId}`]: 'B'.repeat(43) },
+        }])),
+      ])) });
+    }
     const member = /^\/_matrix\/client\/v3\/rooms\/([^/]+)\/state\/m\.room\.member\/(.+)$/u.exec(path);
     if (member) {
       const roomId = decodeURIComponent(member[1]!);
@@ -107,6 +117,10 @@ describe('Matrix agent admission production adapter', () => {
         ...session,
       } as SessionBinding, ROOM_ID);
       expect(issued).toMatchObject({ baseUrl: homeserverOrigin, userId: identity.userId, deviceId: `device_${owner}`, roomId: ROOM_ID });
+      const binding = { v: 1, bindingId: `binding_${owner}`, ownerId,
+        agentParticipantId: identity.participantId, deviceId: `device_${owner}`, ...session } as SessionBinding;
+      expect(await adapter.publishedDeviceFingerprint(binding)).toBe('A'.repeat(43));
+      expect(await adapter.publishedDeviceIdentityKey(binding)).toBe('B'.repeat(43));
     }
     expect(agentMatrixIdentity('owner_1' as OwnerId, { harness: 'codex', sessionId: 'existing-owner_1', generation: 1 }, serverName).userId)
       .not.toBe(agentMatrixIdentity('owner_2' as OwnerId, { harness: 'codex', sessionId: 'existing-owner_2', generation: 1 }, serverName).userId);

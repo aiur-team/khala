@@ -18,7 +18,7 @@ import type {
  * devices and bindings with their current control-plane generation.
  */
 export interface BrowserRevocation extends RevocationPort {
-  targets(): readonly RevocationCapability[];
+  targets(): readonly RevocationCapability[] | Promise<readonly RevocationCapability[]>;
 }
 
 /** The currently selected owner's channel, resolved by the control plane. */
@@ -70,6 +70,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
   let identity: IdentityState = { kind: 'unavailable', retryable: true };
   let recovery: RecoveryCapabilities = PENDING;
   let closure: ClosureCapability | null = null;
+  let revocationTargets: readonly RevocationCapability[] = [];
   let generation = 0;
   let disposed = false;
   let snapshot: RecoverySnapshot = build();
@@ -92,7 +93,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
       history: historyOf(device),
       connection: deps.connection?.() ?? 'unknown',
       recovery,
-      revocationTargets: identity.kind === 'signed_in' ? deps.revocation?.targets() ?? [] : [],
+      revocationTargets: identity.kind === 'signed_in' ? revocationTargets : [],
       closure: identity.kind === 'signed_in' && identity.principal.ownerId === deps.principal.ownerId ? closure : null,
     };
   }
@@ -108,9 +109,11 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     let nextIdentity: IdentityState;
     let nextRecovery: RecoveryCapabilities;
     let nextClosure: ClosureCapability | null = null;
+    let nextTargets: readonly RevocationCapability[] = [];
     try {
-      [nextIdentity, nextRecovery, nextClosure] = await Promise.all([
+      [nextIdentity, nextRecovery, nextClosure, nextTargets] = await Promise.all([
         deps.identity.current(), service.capabilities(), deps.closure?.currentCapability().catch(() => null) ?? Promise.resolve(null),
+        deps.revocation?.targets() ?? Promise.resolve([]),
       ]);
     } catch {
       nextIdentity = { kind: 'unavailable', retryable: true };
@@ -119,6 +122,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     if (disposed || own !== generation) return;
     identity = nextIdentity;
     recovery = nextRecovery;
+    revocationTargets = nextTargets;
     closure = nextClosure?.ownerId === deps.principal.ownerId ? nextClosure : null;
     publish();
   }

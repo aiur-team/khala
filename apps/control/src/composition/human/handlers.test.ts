@@ -332,6 +332,9 @@ describe('registerHumanHandlers feature routes', () => {
       { path: '/api/human/owner-mailbox/result', methods: ['GET'] },
       { path: '/api/human/owner-device-proof/challenge', methods: ['GET'] },
       { path: '/api/human/owner-device-proof/register', methods: ['POST'] },
+      { path: '/api/human/revocation/targets', methods: ['GET'] },
+      { path: '/api/human/revocation/revoke', methods: ['POST'] },
+      { path: '/api/human/revocation/status', methods: ['GET'] },
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'] },
       { path: '/api/human/pairing/decision', methods: ['POST'] },
       { path: '/api/human/channel-access/inbox', methods: ['GET'] },
@@ -358,7 +361,7 @@ describe('registerHumanHandlers feature routes', () => {
   it('substitutes live pairing registrations', () => {
     const request = { path: '/api/human/pairing/request', methods: ['POST', 'GET'], handle: async () => new Response('request') } as const;
     const decision = { path: '/api/human/pairing/decision', methods: ['POST'], handle: async () => new Response('decision') } as const;
-    expect(features(registerHumanHandlers({ pairing: () => [request, decision] })).slice(5, 7)).toEqual([request, decision]);
+    expect(features(registerHumanHandlers({ pairing: () => [request, decision] })).filter(item => item.path.startsWith('/api/human/pairing/'))).toEqual([request, decision]);
   });
 
   it('places live channel-access registrations after pairing', () => {
@@ -371,6 +374,7 @@ describe('registerHumanHandlers feature routes', () => {
     expect(registrations.slice(0, start).map(({ path }) => path)).toEqual([
       '/api/human/agent-bootstrap/authorize', '/api/human/owner-mailbox/submit', '/api/human/owner-mailbox/result',
       '/api/human/owner-device-proof/challenge', '/api/human/owner-device-proof/register',
+      '/api/human/revocation/targets', '/api/human/revocation/revoke', '/api/human/revocation/status',
       '/api/human/pairing/request', '/api/human/pairing/decision',
     ]);
   });
@@ -384,7 +388,7 @@ describe('registerHumanHandlers feature routes', () => {
     const registrations = features(registerHumanHandlers({ channelDiscoveryBootstrap: () => [authorize] }));
 
     expect(registrations.at(-4)).toBe(authorize);
-    expect(registrations.slice(5, 7).map(route => route.path)).toEqual([
+    expect(registrations.filter(route => route.path.startsWith('/api/human/pairing/')).map(route => route.path)).toEqual([
       '/api/human/pairing/request',
       '/api/human/pairing/decision',
     ]);

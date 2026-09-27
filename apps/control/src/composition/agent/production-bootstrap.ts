@@ -13,6 +13,8 @@ import { createInviteEvidenceReader } from './invite-evidence';
 import { createMatrixAgentAdmission } from './matrix-admission';
 import { createLazyOwnerMailboxRoutes, createOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { createLazyOwnerDeviceProofRoutes, createMatrixBrowserDeviceVerifier, createOwnerDeviceProofRoutes } from './owner-device-proof';
+import { createOwnerRevocationRoutes, createLazyOwnerRevocationRoutes } from '../human/revocation';
+import { createAgentRevocationCleanupRoutes, createCleanupProtocolPort, createLazyAgentRevocationCleanupRoutes } from '../human/revocation-cleanup';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -114,7 +116,16 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
         ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
       }),
     });
-    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof };
+    const revocation = createOwnerRevocationRoutes({
+      auth: active.auth, store: active.store, capabilities: bootstrap.capabilities,
+      deviceIdentityKey: binding => matrixAgents.publishedDeviceIdentityKey(binding),
+      inspectOwnerMembership: active.matrix.inspectOwnerMembership,
+      protocolFor: ownerId => createCleanupProtocolPort(active.store, ownerId),
+    });
+    const revocationCleanup = createAgentRevocationCleanupRoutes({
+      store: active.store, capabilities: bootstrap.capabilities,
+    });
+    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof, revocation, revocationCleanup };
   };
   const bootstrap = createLazyBootstrapRoutes(() => compose().bootstrap);
   return {
@@ -122,5 +133,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
     deviceAttestation: createLazyDeviceAttestationRoutes(() => compose().attestation),
     ownerMailbox: createLazyOwnerMailboxRoutes(() => compose().ownerMailbox),
     ownerDeviceProof: createLazyOwnerDeviceProofRoutes(() => compose().ownerDeviceProof),
+    revocation: createLazyOwnerRevocationRoutes(() => compose().revocation),
+    revocationCleanup: createLazyAgentRevocationCleanupRoutes(() => compose().revocationCleanup),
   };
 }

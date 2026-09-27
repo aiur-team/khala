@@ -3,6 +3,7 @@ import { decodeRoomId, type RoomId } from '@khala/contracts/messaging/ids';
 import type { RouteRegistration } from '../../runtime/handler';
 import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 import { unavailableOwnerDeviceProofRoutes } from './owner-device-proof';
+import { REVOCATION_CLEANUP_PATH, REVOCATION_RESULT_PATH } from '../human/revocation-cleanup';
 
 export type AgentAuthorization = 'allowed' | 'unauthenticated' | 'forbidden';
 export type AgentStatusSnapshot = Readonly<{
@@ -30,6 +31,7 @@ export type AgentHandlerDependencies = Readonly<{
   ownerMailbox?: () => readonly RouteRegistration[];
   /** DPoP-bound lookup of an owner-approved browser Matrix key. */
   ownerDeviceProof?: () => readonly RouteRegistration[];
+  revocationCleanup?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -109,6 +111,10 @@ const unavailablePairingRoutes = Object.freeze([
   unavailablePairing('/api/agent/pairing/claim'),
   unavailablePairing('/api/agent/pairing/result'),
 ]);
+const unavailableRevocationCleanupRoutes = Object.freeze([
+  Object.freeze<RouteRegistration>({ path: REVOCATION_CLEANUP_PATH, methods: ['GET'], async handle() { return json(503, { code: 'feature_unavailable' }); } }),
+  Object.freeze<RouteRegistration>({ path: REVOCATION_RESULT_PATH, methods: ['POST'], async handle() { return json(503, { code: 'feature_unavailable' }); } }),
+]);
 
 const unavailableChannelAccessRoutes = Object.freeze([
   unavailablePairing('/api/agent/channel-access/request'),
@@ -172,6 +178,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     ...unavailableDeviceAttestationRoutes,
     ...unavailableOwnerMailboxRoutes().agent,
     ...unavailableOwnerDeviceProofRoutes().agent,
+    ...unavailableRevocationCleanupRoutes,
     ...unavailablePairingRoutes,
     ...unavailableChannelAccessRoutes,
     ...unavailableChannelAccessExchangeRoutes,
@@ -197,6 +204,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     ...(dependencies.deviceAttestation?.() ?? unavailableDeviceAttestationRoutes),
     ...(dependencies.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().agent),
     ...(dependencies.ownerDeviceProof?.() ?? unavailableOwnerDeviceProofRoutes().agent),
+    ...(dependencies.revocationCleanup?.() ?? unavailableRevocationCleanupRoutes),
     ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies.channelAccessExchange?.() ?? unavailableChannelAccessExchangeRoutes),

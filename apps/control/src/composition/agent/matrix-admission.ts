@@ -28,6 +28,7 @@ export type MatrixAgentAdmission = Readonly<{
   agents: AgentAdmissionPort;
   deviceSession: AgentDeviceSessionPort;
   publishedDeviceFingerprint(binding: SessionBinding): Promise<string | null>;
+  publishedDeviceIdentityKey(binding: SessionBinding): Promise<string | null>;
 }>;
 
 function textObject(value: unknown): Record<string, unknown> | null {
@@ -203,7 +204,7 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
       } catch { return null; }
     },
   };
-  async function publishedDeviceFingerprint(binding: SessionBinding): Promise<string | null> {
+  async function publishedDeviceKey(binding: SessionBinding, algorithm: 'ed25519' | 'curve25519'): Promise<string | null> {
     try {
       const identity = agentMatrixIdentity(binding.ownerId, binding, options.serverName);
       if (identity.participantId !== binding.agentParticipantId) return null;
@@ -218,11 +219,15 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
       const devices = textObject(users?.[identity.userId]);
       const device = textObject(devices?.[binding.deviceId]);
       const keys = textObject(device?.keys);
-      const fingerprint = keys?.[`ed25519:${binding.deviceId}`];
+      const fingerprint = keys?.[`${algorithm}:${binding.deviceId}`];
       return device?.user_id === identity.userId && device.device_id === binding.deviceId
         && typeof fingerprint === 'string' && /^[A-Za-z0-9+/]{43}=?$/u.test(fingerprint)
         ? fingerprint : null;
     } catch { return null; }
   }
-  return { agents, deviceSession, publishedDeviceFingerprint };
+  return {
+    agents, deviceSession,
+    publishedDeviceFingerprint: binding => publishedDeviceKey(binding, 'ed25519'),
+    publishedDeviceIdentityKey: binding => publishedDeviceKey(binding, 'curve25519'),
+  };
 }

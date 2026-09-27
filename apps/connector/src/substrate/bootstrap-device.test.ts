@@ -37,7 +37,7 @@ describe('Matrix endpoint credential and device fence', () => {
         source: { authorize: async () => 'ok', listen: () => () => undefined,
           read: async () => ({ kind: 'page', events: [], nextCursor: '', caughtUp: true }) },
         send: async () => ({ eventId: '$event:example.test' }),
-        trustPeer: async () => undefined, close: async () => undefined,
+        trustPeer: async () => undefined, removeOwnDevice: async () => 'removed', close: async () => undefined,
       };
     };
     const options = { stateDirectory: state, profileDirectory: path.join(state, 'crypto'), open };

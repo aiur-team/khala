@@ -18,6 +18,7 @@ import { startProductionSubscription } from './agent/subscription';
 import type { SubscriptionHandle, SubscriptionState } from '@khala/connector/subscription/index';
 import { createCapabilityRenewal } from './agent/capability-renewal';
 import { createProductionOwnerMailbox } from './agent/owner-mailbox';
+import { createProductionRevocationCleanup } from './agent/revocation-cleanup';
 import { createLocalClosureFence } from './closure/local-fence';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { createPolicyControlHandler } from './controls/control-handler';
@@ -160,6 +161,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let signer: ProofSigner | null = null;
   let renewal: ReturnType<typeof createCapabilityRenewal> | null = null;
   let mailbox: ReturnType<typeof createProductionOwnerMailbox> | null = null;
+  let revocationCleanup: ReturnType<typeof createProductionRevocationCleanup> | null = null;
+  let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
   let ownerTrust: ReturnType<typeof createOwnerDeviceTrust> | null = null;
   let harness: HarnessPort | null = null;
   let dispatcher: Dispatcher | null = null;
@@ -192,7 +195,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       pollTimer = null;
       if (!mailbox || closed) return;
       try {
-        if (await mailbox.pollOnce() === 'revoked') remoteDenied = true;
+        if (await mailbox.pollOnce() === 'revoked') { remoteDenied = true; scheduleCleanup(); }
       } finally {
         polling = null;
         if (!closed && !remoteDenied) {
@@ -202,6 +205,20 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       }
     };
     polling = run();
+  }
+
+  function scheduleCleanup(): void {
+    if (closed || !remoteDenied || !revocationCleanup || cleanupTimer) return;
+    const run = async () => {
+      cleanupTimer = null;
+      if (closed || !revocationCleanup) return;
+      const outcome = await revocationCleanup.pollOnce().catch(() => 'unavailable' as const);
+      if (outcome !== 'complete' && !closed) {
+        cleanupTimer = setTimeout(() => { void run(); }, 5_000);
+        cleanupTimer.unref?.();
+      }
+    };
+    void run();
   }
 
   async function matrixSession(): Promise<MatrixDeviceSession> {
@@ -238,10 +255,16 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       stateDirectory: sessionDirectory, clock: Date.now,
       quiesce: quiesceDelivery,
     });
+    revocationCleanup = createProductionRevocationCleanup({
+      appOrigin: input.appOrigin, binding: next, signer: activeSigner,
+      existingCapability: () => capabilityFor(next).existing(),
+      quiesce: quiesceDelivery,
+      removeOwnDevice: key => substrate.removeOwnDevice(key),
+    });
     mailbox = createProductionOwnerMailbox({ appOrigin: input.appOrigin, binding: next, signer: activeSigner,
       capability: () => capabilityFor(next).ensure(), controls, review: () => review,
       stop: request => stop.stop(request),
-      onRevoked: async () => { remoteDenied = true; deliveryStopped = true; },
+      onRevoked: async () => { remoteDenied = true; deliveryStopped = true; scheduleCleanup(); },
     });
     const activeMailbox = mailbox;
     await trust.update(next.bindingId, current => {
@@ -498,6 +521,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         closed = true;
         mailbox?.close();
         if (pollTimer) clearTimeout(pollTimer);
+        if (cleanupTimer) clearTimeout(cleanupTimer);
         await polling?.catch(() => undefined);
         try {
           review?.dispose();
@@ -517,6 +541,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     const activeHarness = harness as HarnessPort | null;
     activeMailbox?.close();
     if (pollTimer) clearTimeout(pollTimer);
+    if (cleanupTimer) clearTimeout(cleanupTimer);
     await activePoll?.catch(() => undefined);
     try {
       activeReview?.dispose();
