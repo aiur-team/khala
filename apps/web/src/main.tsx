@@ -96,11 +96,17 @@ function startHostedApplication(target: Element, appOrigin: string, homeserverOr
     createChannelAccess,
     mode: entry.mode,
     capabilities: registerHumanCapabilities(reviewCapability),
-    renderRoom: createHumanRoomRenderer(review, reviewCapability, async (roomId, binding) => {
+    renderRoom: createHumanRoomRenderer(review, reviewCapability, async (context, roomId, binding) => {
       if (!binding.device) return false;
+      const currentOwner = () => matrix.participant()?.ownerId === context.principal.ownerId
+        && matrix.device.current().generation === context.deviceView.generation;
+      if (!currentOwner()) return false;
       const proof = await matrix.ownerDeviceProof();
-      if (!proof || !await ownerDevice.register(roomId, binding.bindingId, binding.generation, proof)) return false;
-      return matrix.trustAgentDevice(roomId, binding.device.userId, binding.device.deviceId, binding.device.fingerprint);
+      if (!proof || !currentOwner() || !await ownerDevice.register(roomId, binding.bindingId, binding.generation, proof)
+        || !currentOwner()) return false;
+      const established = await matrix.trustAgentDevice(roomId, binding.device.userId,
+        binding.device.deviceId, binding.device.fingerprint);
+      return established && currentOwner();
     }),
     navigateRoute(path) {
       history.pushState(null, '', path);
