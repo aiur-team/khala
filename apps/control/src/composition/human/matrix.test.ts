@@ -5,6 +5,7 @@ import { createMatrixHumanServices } from './matrix';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { agentMatrixIdentity } from '../agent/matrix-admission';
+import { ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 
 const registrationSecret = 'registration-secret-with-more-than-32-bytes';
 const passwordSecret = 'password-secret-with-more-than-32-bytes';
@@ -65,6 +66,34 @@ function services(fetch: typeof globalThis.fetch, store = memoryStore()) {
 }
 
 describe('createMatrixHumanServices', () => {
+  it('registers an ordinary owner when Synapse canonicalizes shared-secret usernames to lowercase', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.startsWith('/_matrix/client/v3/profile/')) return json(404, { errcode: 'M_NOT_FOUND' });
+      if (path === '/_synapse/admin/v1/register' && init?.method !== 'POST') return json(200, { nonce: 'nonce_1' });
+      if (path === '/_synapse/admin/v1/register') {
+        const request = JSON.parse(String(init?.body)) as { username: string };
+        return json(200, { user_id: `@${request.username.toLowerCase()}:matrix.example.test` });
+      }
+      if (path.endsWith('/login')) {
+        const request = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        return json(200, { user_id: request.identifier.user.toLowerCase(), device_id: request.device_id,
+          access_token: 'owner-device-token' });
+      }
+      if (path.endsWith('/keys/query')) return json(200, { device_keys: {} });
+      throw new Error(`unexpected request ${path}`);
+    });
+    const created = await services(fetch).directory.create(principal.ownerId);
+    expect(created).toMatchObject({ kind: 'created' });
+    if (created.kind === 'created') {
+      expect(created.accountId).toMatch(/^@khala_[a-z0-9_=\-]+:matrix\.example\.test$/u);
+      expect(await services(fetch).sessions.issue(principal, 'WEB_OWNER' as DeviceId))
+        .toMatchObject({ kind: 'ok', session: { userId: created.accountId } });
+      expect(await services(fetch).sessions.resolveParticipants([created.accountId]))
+        .toMatchObject({ kind: 'ok', participants: [{ matrixUserId: created.accountId, ownerId: principal.ownerId }] });
+    }
+  });
+
   it('provisions a deterministic non-admin account with the Synapse shared-secret MAC', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
@@ -73,7 +102,7 @@ describe('createMatrixHumanServices', () => {
       if (url.pathname === '/_synapse/admin/v1/register') {
         const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
         expect(request.admin).toBe(false);
-        expect(request.username).toBe(`khala_${Buffer.from(principal.ownerId).toString('base64url')}`);
+        expect(request.username).toBe(ownerMatrixLocalpart(principal.ownerId));
         expect(request).not.toHaveProperty('ownerId');
         const expected = createHmac('sha1', registrationSecret)
           .update('nonce_1\0').update(String(request.username)).update('\0')
@@ -87,7 +116,7 @@ describe('createMatrixHumanServices', () => {
 
     expect(await matrix.directory.lookup(principal.ownerId)).toEqual({ kind: 'absent' });
     expect(await matrix.directory.create(principal.ownerId)).toMatchObject({
-      kind: 'created', accountId: `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test`,
+      kind: 'created', accountId: ownerMatrixUserId(principal.ownerId, 'matrix.example.test'),
     });
   });
 
@@ -105,7 +134,7 @@ describe('createMatrixHumanServices', () => {
         expect(header).toBe(ingress);
         seen.push(init?.method ?? 'GET');
         return init?.method === 'POST'
-          ? json(200, { user_id: `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test` })
+          ? json(200, { user_id: ownerMatrixUserId(principal.ownerId, 'matrix.example.test') })
           : json(200, { nonce: 'nonce_1' });
       }
       throw new Error(`unexpected request ${pathname}`);
@@ -176,7 +205,7 @@ describe('createMatrixHumanServices', () => {
       if (url.pathname.endsWith('/invite')) {
         membershipWrites.push('invite');
         expect(JSON.parse(String(init?.body))).toEqual({
-          user_id: `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test`,
+          user_id: ownerMatrixUserId(principal.ownerId, 'matrix.example.test'),
         });
         return json(200, {});
       }
@@ -206,7 +235,7 @@ describe('createMatrixHumanServices', () => {
 
   it('resolves only canonical local participant accounts', async () => {
     const matrix = services(vi.fn());
-    const userId = `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test`;
+    const userId = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
     const result = await matrix.sessions.resolveParticipants([userId]);
     expect(result).toMatchObject({
       kind: 'ok',
@@ -218,9 +247,9 @@ describe('createMatrixHumanServices', () => {
 
 describe('Matrix room sender inventory', () => {
   const room = '!roster:matrix.example.test' as RoomId;
-  const user = `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test`;
+  const user = ownerMatrixUserId(principal.ownerId, 'matrix.example.test');
   const otherOwner = 'owner_bob' as OwnerId;
-  const other = `@khala_${Buffer.from(otherOwner).toString('base64url')}:matrix.example.test`;
+  const other = ownerMatrixUserId(otherOwner, 'matrix.example.test');
   const curve = Buffer.alloc(32, 7).toString('base64').replace(/=+$/u, '');
   const device = (userId: string, deviceId: string) => ({ user_id: userId, device_id: deviceId,
     keys: { [`curve25519:${deviceId}`]: curve } });

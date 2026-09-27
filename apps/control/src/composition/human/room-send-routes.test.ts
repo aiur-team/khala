@@ -5,6 +5,7 @@ import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import { fakeStore, T0 } from '../../auth/support.test';
 import { createRoomSendFence, senderIdFor } from './room-send-fence';
 import { createMatrixBrowserSenderVerifier, createRoomSendRoutes } from './room-send-routes';
+import { ownerMatrixUserId } from './matrix-identity';
 
 const roomId = '!send-fence:example' as RoomId;
 const origin = 'https://khala.aiur.team';
@@ -50,7 +51,7 @@ function setup() {
 
 describe('authenticated room send fence routes', () => {
   it('verifies the transient browser Matrix token and exact published Curve25519 device key', async () => {
-    const userId = `@khala_${Buffer.from(principal.ownerId, 'utf8').toString('base64url')}:example.test`;
+    const userId = ownerMatrixUserId(principal.ownerId, 'example.test');
     const fetch = async (url: string | URL | Request, init?: RequestInit) => {
       expect(init?.headers).toMatchObject({ authorization: 'Bearer valid-browser-token-123456789' });
       return Response.json(String(url).endsWith('/account/whoami')

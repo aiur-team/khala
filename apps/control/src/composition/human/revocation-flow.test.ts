@@ -11,11 +11,12 @@ import { createCleanupProtocolPort } from './revocation-cleanup';
 import { createOwnerRevocationRoutes, REVOCATION_REVOKE_PATH, REVOCATION_STATUS_PATH } from './revocation';
 import { createRoomSendRoutes } from './room-send-routes';
 import { senderIdFor } from './room-send-fence';
+import { ownerMatrixUserId } from './matrix-identity';
 
 const origin = 'https://khala.aiur.team';
 const ownerId = 'owner_flow' as OwnerId;
 const roomId = '!flow:example' as RoomId;
-const ownerUserId = `@khala_${Buffer.from(ownerId).toString('base64url')}:example`;
+const ownerUserId = ownerMatrixUserId(ownerId, 'example');
 const agentUserId = '@khala_agent_sender:example';
 const ownerDevice = { senderId: senderIdFor(ownerUserId, 'OWNER_DEVICE'), deviceId: 'OWNER_DEVICE', deviceKey: 'A'.repeat(43) };
 const agentDevice = { senderId: senderIdFor(agentUserId, 'AGENT_DEVICE'), deviceId: 'AGENT_DEVICE', deviceKey: 'B'.repeat(43) };

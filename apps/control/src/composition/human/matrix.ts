@@ -3,6 +3,7 @@ import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import { agentMatrixIdentity } from '../agent/matrix-admission';
 import { decodeOwnerId } from '@khala/contracts/messaging/index';
+import { ownerFromMatrixUserId, ownerMatrixLocalpart, ownerMatrixUserId } from './matrix-identity';
 import type {
   AuthPrincipal,
   CallOptions,
@@ -98,10 +99,6 @@ function requireSecret(value: string, name: string): string {
   return value;
 }
 
-function localpart(ownerId: OwnerId): string {
-  return `khala_${Buffer.from(ownerId, 'utf8').toString('base64url')}`;
-}
-
 function safeObject(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -164,19 +161,14 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     }
   }
 
-  const accountId = (ownerId: OwnerId) => `@${localpart(ownerId)}:${serverName}`;
+  const accountId = (ownerId: OwnerId) => ownerMatrixUserId(ownerId, serverName);
   const participantFor = (userId: string): MatrixParticipant | null => {
-    const suffix = `:${serverName}`;
-    if (!userId.startsWith('@khala_') || !userId.endsWith(suffix)) return null;
-    const encoded = userId.slice('@khala_'.length, -suffix.length);
-    let candidate: string;
-    try { candidate = Buffer.from(encoded, 'base64url').toString('utf8'); } catch { return null; }
-    const owner = decodeOwnerId(candidate);
-    if (!owner.ok || accountId(owner.value) !== userId) return null;
+    const ownerId = ownerFromMatrixUserId(userId, serverName);
+    if (!ownerId) return null;
     return {
       matrixUserId: userId,
       participantId: `human_${createHash('sha256').update(userId).digest('hex').slice(0, 40)}` as ParticipantId,
-      ownerId: owner.value,
+      ownerId,
       displayName: userId,
     };
   };
@@ -210,7 +202,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       const nonceResponse = await request('/_synapse/admin/v1/register', { headers: { accept: 'application/json', ...ingressHeaders } }, call);
       const nonceBody = await body(nonceResponse);
       if (nonceResponse.status !== 200 || typeof nonceBody?.nonce !== 'string') return 'unavailable';
-      const username = localpart(ownerId);
+      const username = ownerMatrixLocalpart(ownerId);
       const adminFlag = 'notadmin';
       const mac = createHmac('sha1', registrationSecret)
         .update(nonceBody.nonce).update('\0')

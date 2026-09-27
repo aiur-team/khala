@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { ownerMatrixUserId } from '../human/matrix-identity';
 import type { OwnerId, SessionBinding } from '@khala/contracts/messaging/index';
 import { describe, expect, it, vi } from 'vitest';
 import { ROOM_ID, SECRET, T0, harness, principal } from '../../invitations/support.test';
@@ -9,7 +10,7 @@ const serverName = 'matrix.example.test';
 const homeserverOrigin = `https://${serverName}`;
 const registrationSharedSecret = 'registration-secret-with-more-than-32-bytes';
 const passwordDerivationSecret = 'password-secret-with-more-than-32-bytes';
-const ownerUserId = (ownerId: string) => `@khala_${Buffer.from(ownerId).toString('base64url')}:${serverName}`;
+const ownerUserId = (ownerId: string) => ownerMatrixUserId(ownerId as OwnerId, serverName);
 const ownerPassword = (ownerId: string) => createHmac('sha256', passwordDerivationSecret)
   .update('khala-matrix-password-v1\0').update(ownerId).digest('base64url');
 

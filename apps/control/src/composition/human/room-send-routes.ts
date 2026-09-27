@@ -3,6 +3,7 @@ import type { AuthService } from '../../auth/index';
 import type { AdapterCapabilities } from '../../agent-bootstrap/handler';
 import type { RouteRegistration } from '../../runtime/handler';
 import { createRoomSendFence, senderIdFor, type SenderIdentity } from './room-send-fence';
+import { ownerMatrixUserId } from './matrix-identity';
 
 const HUMAN = '/api/human/room-send';
 const AGENT = '/api/agent/room-send';
@@ -43,7 +44,7 @@ export function createMatrixBrowserSenderVerifier(input: Readonly<{
     || new URL(input.homeserverOrigin).protocol !== 'https:') throw new Error('invalid_matrix_origin');
   const transport = input.fetch ?? globalThis.fetch.bind(globalThis);
   return async (principal, deviceId, accessToken) => {
-    const matrixUserId = `@khala_${Buffer.from(principal.ownerId, 'utf8').toString('base64url')}:${input.serverName}`;
+    const matrixUserId = ownerMatrixUserId(principal.ownerId, input.serverName);
     const headers = { authorization: `Bearer ${accessToken}`, accept: 'application/json' };
     try {
       const who = await transport(`${input.homeserverOrigin}/_matrix/client/v3/account/whoami`, {

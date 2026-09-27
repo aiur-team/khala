@@ -8,6 +8,7 @@ import {
   type SessionRef,
 } from '../../agent-bootstrap/handler';
 import { matchesInviteEvidence } from './invite-evidence';
+import { ownerMatrixUserId } from '../human/matrix-identity';
 
 type Fetch = typeof globalThis.fetch;
 
@@ -78,7 +79,7 @@ export function createMatrixAgentAdmission(options: MatrixAgentAdmissionOptions)
     .update('khala-matrix-agent-password-v1\0').update(userId).digest('base64url');
   const humanPassword = (ownerId: OwnerId) => createHmac('sha256', options.passwordDerivationSecret)
     .update('khala-matrix-password-v1\0').update(ownerId).digest('base64url');
-  const humanUserId = (ownerId: OwnerId) => `@khala_${Buffer.from(ownerId, 'utf8').toString('base64url')}:${options.serverName}`;
+  const humanUserId = (ownerId: OwnerId) => ownerMatrixUserId(ownerId, options.serverName);
   const controlDevice = (ownerId: OwnerId) => `KHALA_CONTROL_${digest(ownerId).slice(0, 24)}`;
 
   async function call(path: string, init: RequestInit = {}): Promise<{ status: number; body: Record<string, unknown> | null }> {

@@ -9,6 +9,7 @@ import { createAgentBindingStore } from '../../agent-bootstrap/store';
 import { createOwnerRoomIndex } from '../../agent-bootstrap/owner-room-index';
 import type { AdmissionGateway } from '../../invitations/index';
 import type { RouteRegistration } from '../../runtime/handler';
+import { ownerMatrixUserId } from '../human/matrix-identity';
 
 export const OWNER_DEVICE_REGISTER = '/api/human/owner-device-proof/register';
 export const OWNER_DEVICE_CHALLENGE = '/api/human/owner-device-proof/challenge';
@@ -48,7 +49,7 @@ export function createMatrixBrowserDeviceVerifier(input: Readonly<{
   const fetch = input.fetch ?? globalThis.fetch.bind(globalThis);
   const timeoutMs = input.timeoutMs ?? 10_000;
   return async (principal, deviceId, fingerprint, accessToken) => {
-    const expectedUser = `@khala_${Buffer.from(principal.ownerId, 'utf8').toString('base64url')}:${input.serverName}`;
+    const expectedUser = ownerMatrixUserId(principal.ownerId, input.serverName);
     const headers = { authorization: `Bearer ${accessToken}`, accept: 'application/json' };
     try {
       const whoResponse = await fetch(`${input.homeserverOrigin}/_matrix/client/v3/account/whoami`, {
