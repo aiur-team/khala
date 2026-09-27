@@ -127,14 +127,12 @@ export function createChannelClosureService(input: Readonly<{
       // server-side leave alone does not stop an agent still subscribed to the
       // channel, so an absent mailbox receipt must leave the outcome partial.
       const previouslyLeft = existing.state === 'partial' && existing.reason === 'local_cleanup_failed';
-      const connector = previouslyLeft
-        ? null
-        : await transport.stopConnectorDelivery(request, options).catch(() => ({ kind: 'unavailable' as const }));
-      const receipt = connector?.kind === 'stopped' ? decodeClosureConnectorReceipt(connector.receipt) : null;
-      const connectorStopped = previouslyLeft || (receipt?.ok === true
+      const connector = await transport.stopConnectorDelivery(request, options).catch(() => ({ kind: 'unavailable' as const }));
+      const receipt = connector.kind === 'stopped' ? decodeClosureConnectorReceipt(connector.receipt) : null;
+      const connectorStopped = receipt?.ok === true
         && receipt.value.operationId === request.operationId
           && receipt.value.ownerId === request.ownerId && receipt.value.roomId === request.roomId
-          && receipt.value.expectedRoomRevision === request.expectedRoomRevision);
+          && receipt.value.expectedRoomRevision === request.expectedRoomRevision;
       // Never claim completion from a local record alone: the transport may be
       // offline, and a marker cannot remove a remote participant by itself.
       // Once leave was confirmed, a cleanup retry must not leave a later join.
@@ -147,7 +145,8 @@ export function createChannelClosureService(input: Readonly<{
       const next: Marker = {
         ...intent,
         state: left === 'left' && cleanup === 'requested' ? 'complete' : 'partial',
-        reason: left !== 'left' ? 'dependency_unavailable' : cleanup === 'requested' ? null : 'local_cleanup_failed',
+        reason: left !== 'left' ? previouslyLeft ? 'local_cleanup_failed' : 'dependency_unavailable'
+          : cleanup === 'requested' ? null : 'local_cleanup_failed',
       };
       const revision = observed.kind === 'record' ? observed.record.revision
         : claimed?.kind === 'applied' ? claimed.record.revision : claimed?.current?.revision;

@@ -80,6 +80,11 @@ describe('channel closure service', () => {
       operationId: 'close_1', state: 'partial', reason: 'local_cleanup_failed',
     } });
     expect(transport.leave).toHaveBeenCalledTimes(2);
+    vi.mocked(transport.stopConnectorDelivery).mockResolvedValueOnce({ kind: 'unavailable' });
+    expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: {
+      operationId: 'close_1', state: 'partial', reason: 'local_cleanup_failed',
+    } });
+    expect(transport.requestLocalCleanup).toHaveBeenCalledTimes(1);
     expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: {
       operationId: 'close_1', state: 'complete', reason: null,
     } });
