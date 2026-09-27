@@ -17,7 +17,8 @@ describe('installed hosted connector composition', () => {
       browserBundleDirectory: path.join(directory, 'substrate-browser'),
       session: { harness: 'codex', sessionId: 'thread-owned-1', workdir: '/project' },
       sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
-      inspectHostedCodexHooks: async () => null, openBrowser: async () => undefined,
+      inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
+      openBrowser: async () => undefined,
       openInbox: async () => undefined };
     try {
       const first = await openProductionConnector(input);
@@ -36,7 +37,8 @@ describe('installed hosted connector composition', () => {
       appOrigin: 'https://khala.aiur.team/path', browserBundleDirectory: '/tmp/bundle',
       session: { harness: 'codex', sessionId: 'thread-owned-1', workdir: '/project' },
       sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
-      inspectHostedCodexHooks: async () => null, openBrowser: async () => undefined,
+      inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
+      openBrowser: async () => undefined,
       openInbox: async () => undefined,
     })).rejects.toThrow('production_origin_invalid');
   });
@@ -47,7 +49,8 @@ describe('installed hosted connector composition', () => {
       chromiumExecutablePath: '../browser/chrome',
       session: { harness: 'codex', sessionId: 'thread-owned-1', workdir: '/project' },
       sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
-      inspectHostedCodexHooks: async () => null, openBrowser: async () => undefined,
+      inspectHostedCodexHooks: async () => null, resolveCodexExecutable: async () => null,
+      openBrowser: async () => undefined,
       openInbox: async () => undefined,
     })).rejects.toThrow('production_path_invalid');
   });

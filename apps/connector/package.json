@@ -16,6 +16,7 @@
   "dependencies": {
     "@khala/connector": "workspace:*",
     "@khala/contracts": "workspace:*",
+    "@khala/harnesses": "workspace:*",
     "@khala/policy": "workspace:*",
     "matrix-js-sdk": "42.4.0",
     "playwright-core": "1.63.0",

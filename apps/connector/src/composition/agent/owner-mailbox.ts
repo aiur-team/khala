@@ -53,7 +53,7 @@ export function createProductionOwnerMailbox(input: Readonly<{
   signer: ProofSigner;
   capability(): Promise<AdapterCapability | null>;
   controls?: PolicyControlHandler;
-  review?: ReviewControlHandler;
+  review?: ReviewControlHandler | (() => ReviewControlHandler | null);
   stop(request: LocalStopRequest): Promise<Readonly<{ kind: 'stopped'; receipt: LocalStopReceipt }> | Readonly<{ kind: 'unavailable' }>>;
   onRevoked(): Promise<void>;
   fetch?: typeof fetch;
@@ -91,8 +91,14 @@ export function createProductionOwnerMailbox(input: Readonly<{
     switch (entry.kind) {
       case 'controls_status': return input.controls ? input.controls.status(entry.authority, entry.body) as Promise<JsonValue> : null;
       case 'controls_set': return input.controls ? input.controls.setPolicy(entry.authority, entry.body) as Promise<JsonValue> : null;
-      case 'review_preview': return input.review ? input.review.preview(entry.authority, entry.body) as Promise<JsonValue> : null;
-      case 'review_approve': return input.review ? input.review.approve(entry.authority, entry.body) as Promise<JsonValue> : null;
+      case 'review_preview': {
+        const handler = typeof input.review === 'function' ? input.review() : input.review;
+        return handler ? handler.preview(entry.authority, entry.body) as Promise<JsonValue> : null;
+      }
+      case 'review_approve': {
+        const handler = typeof input.review === 'function' ? input.review() : input.review;
+        return handler ? handler.approve(entry.authority, entry.body) as Promise<JsonValue> : null;
+      }
       case 'channel_stop': {
         const body = entry.body;
         if (!object(body) || Object.keys(body).sort().join(',') !== 'expectedRoomRevision,operationId,ownerId,roomId'

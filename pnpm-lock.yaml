@@ -44,6 +44,9 @@ importers:
       '@khala/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@khala/harnesses':
+        specifier: workspace:*
+        version: link:../../packages/harnesses
       '@khala/policy':
         specifier: workspace:*
         version: link:../../packages/policy

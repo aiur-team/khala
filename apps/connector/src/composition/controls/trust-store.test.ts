@@ -33,4 +33,20 @@ describe('hosted owner policy journal', () => {
       upgraded.close();
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
+
+  it('rejects a stale listening-mode CAS without overwriting the newer owner state', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-trust-cas-'));
+    try {
+      const store = await openTrustStateStore({ directory, mode: 'create' });
+      await store.update(bindingId, () => ({ next: baseline, result: undefined }));
+      const first = await store.snapshot(bindingId);
+      expect(first).not.toBeNull();
+      const revision = first!.revision;
+      const newer = { ...baseline, listeningMode: { ...baseline.listeningMode, version: 2 } };
+      expect(await store.compareAndSet(bindingId, revision, newer)).toBe('applied');
+      expect(await store.compareAndSet(bindingId, revision, baseline)).toBe('conflict');
+      expect((await store.read(bindingId))?.listeningMode.version).toBe(2);
+      store.close();
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
 });

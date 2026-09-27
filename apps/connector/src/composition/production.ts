@@ -23,6 +23,16 @@ import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatc
 import { createPolicyControlHandler } from './controls/control-handler';
 import { openTrustStateStore } from './controls/trust-store';
 import { createOwnerDeviceTrust } from './agent/owner-device-trust';
+import { createHostedCodexHarness, type LocalInbox } from './agent/hosted-codex';
+import { createDispatcher } from '@khala/connector/dispatch/run';
+import type { Dispatcher } from '@khala/connector/dispatch/types';
+import { sha256Digest } from '@khala/connector/storage/payloads';
+import { createReviewControlHandler, type ReviewControlHandler } from './review/control-handler';
+import { createAcknowledgementRecorder } from '@khala/connector/storage/acknowledgements';
+import type { HarnessPort } from '@khala/contracts/delivery/index';
+import { initialTrustState } from '@khala/policy/trust/index';
+import { createHostedListeningControl } from './agent/hosted-listening';
+import type { AgentListeningModeSetInput } from '@khala/connector/agent/listening-mode';
 
 function productionLimits() {
   const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
@@ -50,6 +60,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   session: SessionClaim;
   sessionInspection: (generationFor: (claim: SessionClaim) => Promise<number | null>) => SessionInspectionPort;
   inspectHostedCodexHooks(): Promise<unknown>;
+  resolveCodexExecutable(): Promise<string | null>;
   openBrowser(url: string): Promise<void>;
   openInbox: TInbox;
 }>) {
@@ -96,6 +107,25 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     throw error;
   });
   const dispatchStorage = createConnectorDispatchStorage(storage);
+  const acknowledgementRecorder = createAcknowledgementRecorder(storage);
+  type Acknowledgement = Readonly<{ bindingId: string; generation: number; releaseIds: readonly string[] }>;
+  type OpenInbox = (bindingId: string, generation: number, options?: Readonly<{
+    recordAcknowledgement?: (acknowledgement: Acknowledgement) => Promise<void>;
+  }>) => Promise<LocalInbox>;
+  const rawOpenInbox = input.openInbox as unknown as OpenInbox;
+  const openHostedInbox: OpenInbox = (bindingId, generation) => rawOpenInbox(bindingId, generation, {
+    recordAcknowledgement: async acknowledgement => {
+      if (!binding || bindingId !== binding.bindingId || generation !== binding.generation
+        || acknowledgement.bindingId !== bindingId || acknowledgement.generation !== generation) {
+        throw new Error('acknowledgement_binding_mismatch');
+      }
+      const result = await acknowledgementRecorder.recordBatchAcknowledgement({
+        principal: { bindingId: binding.bindingId, generation: binding.generation },
+        releaseIds: acknowledgement.releaseIds as never,
+      });
+      if (result.kind === 'refused') throw new Error('acknowledgement_refused');
+    },
+  });
   const matrix = createMatrixBootstrapDevice({
     stateDirectory: sessionDirectory,
     profileDirectory: path.join(sessionDirectory, 'matrix-profile'),
@@ -110,6 +140,10 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let renewal: ReturnType<typeof createCapabilityRenewal> | null = null;
   let mailbox: ReturnType<typeof createProductionOwnerMailbox> | null = null;
   let ownerTrust: ReturnType<typeof createOwnerDeviceTrust> | null = null;
+  let harness: HarnessPort | null = null;
+  let dispatcher: Dispatcher | null = null;
+  let review: ReviewControlHandler | null = null;
+  let listening: ReturnType<typeof createHostedListeningControl> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let polling: Promise<void> | null = null;
   let remoteDenied = false;
@@ -121,6 +155,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     deliveryStopped = true;
     await subscription?.stop();
     if (activeSends > 0) await new Promise<void>(resolve => { sendWaiters.push(resolve); });
+    await dispatcher?.stop();
   }
 
   function capabilityFor(next: SessionBinding) {
@@ -183,10 +218,17 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       quiesce: quiesceDelivery,
     });
     mailbox = createProductionOwnerMailbox({ appOrigin: input.appOrigin, binding: next, signer: activeSigner,
-      capability: () => capabilityFor(next).ensure(), controls, stop: request => stop.stop(request),
+      capability: () => capabilityFor(next).ensure(), controls, review: () => review,
+      stop: request => stop.stop(request),
       onRevoked: async () => { remoteDenied = true; deliveryStopped = true; },
     });
     const activeMailbox = mailbox;
+    await trust.update(next.bindingId, current => {
+      if (current && current.generation !== next.generation) throw new Error('production_trust_generation_conflict');
+      return { next: current ?? initialTrustState({ roomId: session.roomId as never,
+        bindingId: next.bindingId, ownerId: next.ownerId, generation: next.generation,
+        policyVersion: 0 }), result: undefined };
+    });
     subscription = await startProductionSubscription({
       binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
       storage, matrix: substrate,
@@ -197,6 +239,59 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         return activeTrust.ensure();
       },
     });
+    if (next.harness === 'codex') {
+      harness = createHostedCodexHarness({ binding: next, claim: input.session,
+        sessionInspection: sessionInspector,
+        current: async () => {
+          if (closed || remoteDenied || deliveryStopped) return false;
+          const held = await readBinding().catch(() => null);
+          return held !== null && sameSessionBinding(held, next)
+            && await activeMailbox.authorize() === 'active' && await activeTrust.ensure() === 'active';
+        },
+        resolveExecutable: input.resolveCodexExecutable,
+        inspectHooks: async () => (await input.inspectHostedCodexHooks()) as Awaited<ReturnType<Parameters<typeof createHostedCodexHarness>[0]['inspectHooks']>>,
+        openInbox: openHostedInbox,
+      });
+      const activeHarness = harness;
+      listening = createHostedListeningControl({ binding: next, trust, dispatch: dispatchStorage,
+        current: async () => {
+          if (closed || remoteDenied || deliveryStopped) return false;
+          const held = await readBinding().catch(() => null);
+          return held !== null && sameSessionBinding(held, next)
+            && await activeMailbox.authorize() === 'active' && await activeTrust.ensure() === 'active';
+        },
+        capabilities: async () => {
+          const inspected = await activeHarness.inspect(next);
+          return inspected.support === 'tested' ? inspected : null;
+        },
+      });
+      await listening.application.read();
+      dispatcher = createDispatcher({ ledger: dispatchStorage.ledger,
+        limits: { maxJobsPerCausalRoot: 1, maxConcurrentJobs: 1, busy: 'queue' },
+        harness: activeHarness,
+        boundary: { await: async ({ job, signal }) => {
+          if (signal.aborted || !sameSessionBinding(job.binding, next)) return null;
+          if (!await activeMailbox.authorize().then(value => value === 'active').catch(() => false)
+            || await activeTrust.ensure() !== 'active') return null;
+          const capabilities = await activeHarness.inspect(next);
+          return capabilities.support === 'tested' ? { binding: next, capabilities } : null;
+        } },
+        approvals: dispatchStorage.approvals, payloads: dispatchStorage.payloads,
+        digest: async bytes => sha256Digest(bytes), clock: { now: () => new Date() },
+        newId: kind => `${kind}_${randomUUID()}`, workerId: `hosted_${randomUUID()}`,
+      });
+      const activeDispatcher = dispatcher;
+      review = createReviewControlHandler({ storage, dispatchStorage, releases: activeDispatcher,
+        bindingId: next.bindingId, limits: productionLimits(),
+        room: { members: async roomId => {
+          if (roomId !== session.roomId || deliveryStopped || remoteDenied
+            || await activeMailbox.authorize() !== 'active'
+            || await substrate.source.authorize() !== 'ok') return null;
+          return [session.ownerParticipantId as never, next.agentParticipantId];
+        } },
+      });
+      await review.resumeReleases(next.bindingId);
+    }
     schedulePoll();
   }
 
@@ -240,6 +335,13 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     binding = next;
   }
 
+  const sessionInspector = input.sessionInspection(async claim => {
+    if (claim.harness !== input.session.harness || claim.sessionId !== input.session.sessionId
+      || claim.workdir !== input.session.workdir) return null;
+    if (!binding) return 0;
+    return (await readBinding().catch(() => null))?.generation ?? null;
+  });
+
   try {
     binding = await readBinding();
     const persistence = await createBootstrapPersistence(storage);
@@ -270,12 +372,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           return result;
         },
       },
-      sessions: input.sessionInspection(async claim => {
-        if (claim.harness !== input.session.harness || claim.sessionId !== input.session.sessionId
-          || claim.workdir !== input.session.workdir) return null;
-        if (!binding) return 0;
-        return (await readBinding().catch(() => null))?.generation ?? null;
-      }),
+      sessions: sessionInspector,
       operations,
     };
     return {
@@ -317,24 +414,55 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       },
       async listChannels() { return { kind: 'unavailable' as const }; },
       async listAgents() { return { kind: 'unavailable' as const }; },
-      inbox: input.openInbox,
+      async listeningMode() {
+        const active = listening as ReturnType<typeof createHostedListeningControl> | null;
+        if (!active) throw new Error('listening_mode_unavailable');
+        return active.status();
+      },
+      listeningModeControl: {
+        read: () => {
+          const active = listening as ReturnType<typeof createHostedListeningControl> | null;
+          return active ? active.application.read() : Promise.resolve({ ok: false as const, code: 'unavailable' as const });
+        },
+        set: (command: AgentListeningModeSetInput) => {
+          const active = listening as ReturnType<typeof createHostedListeningControl> | null;
+          if (!active) throw new Error('listening_mode_unavailable');
+          return active.application.set(command);
+        },
+      },
+      inbox: openHostedInbox as unknown as TInbox,
       async close() {
         if (closed) return;
         closed = true;
         mailbox?.close();
         if (pollTimer) clearTimeout(pollTimer);
         await polling?.catch(() => undefined);
-        try { await subscription?.stop(); await matrix.close(); } finally { trust.close(); await storage.close(); }
+        try {
+          review?.dispose();
+          await dispatcher?.stop();
+          await harness?.close();
+          await subscription?.stop();
+          await matrix.close();
+        } finally { trust.close(); await storage.close(); }
       },
     };
   } catch (error) {
     const active = subscription as SubscriptionHandle | null;
     const activeMailbox = mailbox as ReturnType<typeof createProductionOwnerMailbox> | null;
     const activePoll = polling as Promise<void> | null;
+    const activeReview = review as ReviewControlHandler | null;
+    const activeDispatcher = dispatcher as Dispatcher | null;
+    const activeHarness = harness as HarnessPort | null;
     activeMailbox?.close();
     if (pollTimer) clearTimeout(pollTimer);
     await activePoll?.catch(() => undefined);
-    try { await active?.stop(); await matrix.close(); } finally { trust.close(); await storage.close(); }
+    try {
+      activeReview?.dispose();
+      await activeDispatcher?.stop();
+      await activeHarness?.close();
+      await active?.stop();
+      await matrix.close();
+    } finally { trust.close(); await storage.close(); }
     throw error;
   }
 }

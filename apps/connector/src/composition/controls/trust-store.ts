@@ -1,12 +1,17 @@
 import { lstat, open } from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { BindingId } from '@khala/contracts/delivery/index';
 import type { TrustState } from '@khala/policy/trust/index';
 import type { TrustStateStore } from './control-handler';
 
 /** A separate owner-only SQLite journal, held under the connector's exclusive state lease. */
-export async function openTrustStateStore(input: Readonly<{ directory: string; mode: 'create' | 'existing' }>): Promise<TrustStateStore & { close(): void }> {
+export async function openTrustStateStore(input: Readonly<{ directory: string; mode: 'create' | 'existing' }>): Promise<TrustStateStore & {
+  snapshot(bindingId: BindingId): Promise<Readonly<{ revision: string; state: TrustState }> | null>;
+  compareAndSet(bindingId: BindingId, revision: string, state: TrustState): Promise<'applied' | 'conflict'>;
+  close(): void;
+}> {
   const file = path.join(input.directory, 'trust.sqlite');
   let fresh = false;
   try {
@@ -41,7 +46,26 @@ export async function openTrustStateStore(input: Readonly<{ directory: string; m
   function encode(state: TrustState): string {
     return JSON.stringify({ ...state, journal: [...state.journal], listeningModeJournal: [...state.listeningModeJournal] });
   }
+  const revision = (raw: string) => createHash('sha256').update(raw).digest('hex');
   return {
+    async snapshot(bindingId) {
+      const row = db.prepare('SELECT state FROM trust WHERE binding_id = ?').get(bindingId) as { state: string } | undefined;
+      if (!row) return null;
+      const state = decode(row.state);
+      if (state.bindingId !== bindingId) throw new Error('trust_store_corrupt');
+      return { revision: revision(row.state), state };
+    },
+    async compareAndSet(bindingId, expectedRevision, state) {
+      if (state.bindingId !== bindingId || !/^[a-f0-9]{64}$/u.test(expectedRevision)) throw new Error('trust_store_invalid_cas');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const row = db.prepare('SELECT state FROM trust WHERE binding_id = ?').get(bindingId) as { state: string } | undefined;
+        if (!row || revision(row.state) !== expectedRevision) { db.exec('ROLLBACK'); return 'conflict'; }
+        db.prepare('UPDATE trust SET state = ? WHERE binding_id = ?').run(encode(state), bindingId);
+        db.exec('COMMIT');
+        return 'applied';
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    },
     async read(bindingId: BindingId) {
       const row = db.prepare('SELECT state FROM trust WHERE binding_id = ?').get(bindingId) as { state: string } | undefined;
       if (!row) return null;
