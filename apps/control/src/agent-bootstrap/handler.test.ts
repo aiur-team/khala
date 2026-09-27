@@ -878,6 +878,8 @@ describe('adapter capability', () => {
     expect(await h.adapter(resumed.capability.token, 'publish_own')).toMatchObject({ kind: 'authorized' });
     expect(await h.adapter(first.adapter_capability.token, 'publish_own')).toMatchObject({ kind: 'refused', code: 'binding_superseded' });
     expect(h.admits).toHaveLength(admitted);
+    expect(await h.handlers.capabilities.resumeAdapterCapability({ ...input, jkt: connectorKey(() => T0).jkt }))
+      .toEqual({ kind: 'refused', code: 'binding_conflict' });
 
     // Another owner, device, generation or an unknown binding gets nothing.
     for (const other of [{ ownerId: 'owner_other' }, { deviceId: 'DEVICEOTHER' }, { generation: binding.generation + 1 }, { bindingId: 'bnd_unknown' }]) {

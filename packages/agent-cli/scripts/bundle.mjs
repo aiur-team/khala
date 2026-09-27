@@ -21,6 +21,8 @@ import { build } from 'esbuild';
 const packageDirectory = fileURLToPath(new URL('..', import.meta.url));
 
 export const INTERNAL_WEB_SOURCE = path.resolve(packageDirectory, '../../apps/web/dist/internal-web');
+export const SUBSTRATE_BROWSER_SOURCE = path.resolve(packageDirectory, '../../apps/connector/dist/substrate-browser');
+export const SUBSTRATE_BROWSER_CONFIG = path.resolve(packageDirectory, '../../apps/connector/vite.matrix.config.mjs');
 
 export const INTERNAL_ENTRY_POINT = path.resolve(packageDirectory, '../../apps/internal/src/composition/internal-cli.ts');
 /** Top-level Claude plugin entries that ship; sources, tests, and package metadata do not. */
@@ -88,6 +90,15 @@ export async function bundle({
       if (web.status !== 0 || !existsSync(path.join(internalWebSource, 'index.html'))) throw new Error(`internal web bundle missing at ${internalWebSource} and "pnpm --filter @khala/web build:internal" did not produce it`);
     }
     await fs.cp(internalWebSource, path.join(path.dirname(outfile), 'internal-web'), { recursive: true });
+  }
+  // The Matrix browser substrate is built separately from the Node CLI. The
+  // installed CLI passes this copied directory explicitly to the connector.
+  if (existsSync(SUBSTRATE_BROWSER_CONFIG)) {
+    const browser = spawnSync('pnpm', ['--filter', '@khala/connector-app', 'build'], { cwd: packageDirectory, stdio: ['ignore', 2, 2] });
+    if (browser.status !== 0 || !existsSync(path.join(SUBSTRATE_BROWSER_SOURCE, 'index.html'))) {
+      throw new Error(`connector browser bundle missing at ${SUBSTRATE_BROWSER_SOURCE} and build failed`);
+    }
+    await fs.cp(SUBSTRATE_BROWSER_SOURCE, path.join(path.dirname(outfile), 'substrate-browser'), { recursive: true });
   }
   await copyPayload(absWorkingDir, path.dirname(outfile));
   return metafile;

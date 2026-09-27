@@ -282,6 +282,7 @@ const MCP_ARGS: Readonly<Record<string, Record<string, unknown>>> = {
   khala_request_channel_access: { target: `http://127.0.0.1/channels/${otherChannelId}` },
   khala_channel_access_status: { operationId: 'op-probe' },
   khala_pair: { code: '7K3QX-9MZ2P' },
+  khala_connect: { url: 'https://khala.aiur.team/i/probe' },
   khala_create_channel: { title: 'probe', operationId: 'op-probe-create' },
   khala_channel_create_status: { operationId: 'op-probe-create' },
 };
@@ -309,13 +310,13 @@ export const MCP_PROBES: Readonly<Record<string, Probe>> = {
   'cli:mcp-serve': mcpSession,
   // The session above answers every tool. Every inbox-surface tool result appends the
   // unacknowledged batch, so its own response must carry the released canary: proof the
-  // probe reached a content-bearing path on that tool, not just an error. `khala_pair` is
-  // not an inbox surface (mcp/pair.ts) and carries no batch; its response is still scanned.
+  // probe reached a content-bearing path on that tool, not just an error. Bootstrap
+  // tools are not inbox surfaces and carry no batch; their responses are still scanned.
   ...Object.fromEntries(Object.keys(MCP_ARGS).map(name => [
     `mcp-tool:${name}`,
     (async s => {
       const carrying = s.capture.carrying(s.approved);
-      if (name === 'khala_pair') expect(carrying).not.toContain(`mcp-tool:${name}`);
+      if (name === 'khala_pair' || name === 'khala_connect') expect(carrying).not.toContain(`mcp-tool:${name}`);
       else expect(carrying).toContain(`mcp-tool:${name}`);
     }) as Probe,
   ])),

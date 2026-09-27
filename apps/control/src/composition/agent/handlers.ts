@@ -1,6 +1,7 @@
 import type { AcknowledgementSupport, ReceiptKindV2 } from '@khala/contracts/delivery/index';
 import { decodeRoomId, type RoomId } from '@khala/contracts/messaging/ids';
 import type { RouteRegistration } from '../../runtime/handler';
+import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
 
 export type AgentAuthorization = 'allowed' | 'unauthenticated' | 'forbidden';
 export type AgentStatusSnapshot = Readonly<{
@@ -18,8 +19,14 @@ export type AgentStatusSnapshot = Readonly<{
 }>;
 
 export type AgentHandlerDependencies = Readonly<{
-  authorize(request: Request, roomId: RoomId): Promise<AgentAuthorization>;
-  status: Readonly<{ snapshot(roomId: RoomId, signal: AbortSignal): Promise<AgentStatusSnapshot> }>;
+  authorize?(request: Request, roomId: RoomId): Promise<AgentAuthorization>;
+  status?: Readonly<{ snapshot(roomId: RoomId, signal: AbortSignal): Promise<AgentStatusSnapshot> }>;
+  /** Owner-authorized bootstrap registrations, including the public descriptor and one-use exchange. */
+  bootstrap?: () => readonly RouteRegistration[];
+  /** Proof-bound published Matrix key registration for the exact admitted device. */
+  deviceAttestation?: () => readonly RouteRegistration[];
+  /** Proof-bound connector poll and result submission. */
+  ownerMailbox?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -50,6 +57,32 @@ const unavailableStatus: RouteRegistration = Object.freeze({
     return json(503, { code: 'feature_unavailable' });
   },
 });
+
+const unavailableBootstrapRoutes = Object.freeze([
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/bootstrap/descriptor', methods: Object.freeze(['GET']),
+    async handle() { return json(503, { code: 'feature_unavailable' }); },
+  }),
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/bootstrap/token', methods: Object.freeze(['POST']),
+    async handle() { return json(503, { code: 'feature_unavailable' }); },
+  }),
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/bootstrap/redeem', methods: Object.freeze(['POST']),
+    async handle() { return json(503, { code: 'feature_unavailable' }); },
+  }),
+]);
+
+const unavailableDeviceAttestationRoutes = Object.freeze([
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/device-attestation/challenge', methods: Object.freeze(['GET']),
+    async handle() { return json(503, { code: 'feature_unavailable' }); },
+  }),
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/device-attestation/register', methods: Object.freeze(['POST']),
+    async handle() { return json(503, { code: 'feature_unavailable' }); },
+  }),
+]);
 
 function unavailablePairing(path: string): RouteRegistration {
   return Object.freeze({
@@ -124,27 +157,33 @@ function project(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
 export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): readonly RouteRegistration[] {
   if (!dependencies) return Object.freeze([
     unavailableStatus,
+    ...unavailableBootstrapRoutes,
+    ...unavailableDeviceAttestationRoutes,
+    ...unavailableOwnerMailboxRoutes().agent,
     ...unavailablePairingRoutes,
     ...unavailableChannelAccessRoutes,
     ...unavailableChannelAccessExchangeRoutes,
     ...unavailableChannelDiscoveryRoutes,
     ...unavailableChannelListingRoutes,
   ]);
-  const status: RouteRegistration = Object.freeze({
+  const status: RouteRegistration = !dependencies.authorize || !dependencies.status ? unavailableStatus : Object.freeze({
     path: '/api/agent/status',
     methods: Object.freeze(['GET']),
     async handle(request) {
       const rawRoomId = new URL(request.url).searchParams.get('roomId');
       const room = decodeRoomId(rawRoomId);
       if (!room.ok) return json(400, { code: 'invalid_request' });
-      const authorization = await dependencies.authorize(request, room.value);
+      const authorization = await dependencies.authorize!(request, room.value);
       if (authorization === 'unauthenticated') return json(401, { code: 'unauthenticated' });
       if (authorization !== 'allowed') return json(403, { code: 'forbidden' });
-      return json(200, project(await dependencies.status.snapshot(room.value, request.signal)));
+      return json(200, project(await dependencies.status!.snapshot(room.value, request.signal)));
     },
   });
   return Object.freeze([
     status,
+    ...(dependencies.bootstrap?.() ?? unavailableBootstrapRoutes),
+    ...(dependencies.deviceAttestation?.() ?? unavailableDeviceAttestationRoutes),
+    ...(dependencies.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().agent),
     ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies.channelAccessExchange?.() ?? unavailableChannelAccessExchangeRoutes),

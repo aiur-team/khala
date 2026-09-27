@@ -10,6 +10,7 @@ import type { ChannelAccessPort, ChannelListingPort } from './channels/types.js'
 import type { ClaudeSessionClient } from '../composition/claude-session-http.js';
 import type { InternalDelivery } from '../composition/internal-delivery.js';
 import type { SessionGrants } from '../composition/session-grant.js';
+import type { HarnessSession } from '../composition/session-grant.js';
 import type { OpenGenerationInbox } from '../composition/delivering-inbox.js';
 import type { SetupService } from '../setup/plan.js';
 
@@ -133,6 +134,10 @@ export type CliDependencies = Readonly<{
    * plugin MCP entry.
    */
   sessionGrants?: SessionGrants | undefined;
+  /** Opens a hosted connector only for the provider-named native MCP session. */
+  hostedSession?: (session: HarnessSession) => Promise<Readonly<{
+    client: AgentClientPort; inbox: OpenGenerationInbox; close(): Promise<void>;
+  }>>;
   claude?: ClaudeSessionClient;
   /** Setup planning and configuration status. The production composition always supplies it. */
   setup?: SetupService;

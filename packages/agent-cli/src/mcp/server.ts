@@ -7,6 +7,8 @@ import { cliErrorCode } from '../cli/errors.js';
 import type { ListeningModeOperationPort } from './listening-mode-tool.js';
 import type { ChannelToolsPort } from './channels/tools.js';
 import { PairingService } from '../cli/pair.js';
+import { ConnectService } from '../cli/connect.js';
+import type { ConnectToolPort } from './connect.js';
 import type { PairToolPort } from './pair.js';
 import { type ReadOperationPort, readToolFailure } from './read-tool.js';
 import { toolRegistry, type ToolRegistry } from './registry.js';
@@ -30,6 +32,7 @@ export type McpCallCollaborators = Readonly<{
   channels: ChannelToolsPort;
   /** Absent means this connector has no pairing configuration; the tool then reports `pairing_unavailable`. */
   pair?: PairToolPort | undefined;
+  connect?: ConnectToolPort | undefined;
   postprocessResult: McpServerResultPostprocessor;
   postprocessReadResult: McpServerReadResultPostprocessor;
 }>;
@@ -39,7 +42,7 @@ export type McpCallCollaborators = Readonly<{
  * when the call names no session this server can act as; that call is then refused
  * `not_connected`.
  */
-export type McpSessionRoute = (meta: Readonly<Record<string, unknown>> | undefined) => Promise<McpCallCollaborators | null>;
+export type McpSessionRoute = (meta: Readonly<Record<string, unknown>> | undefined, toolName: string) => Promise<McpCallCollaborators | null>;
 
 export type McpServerOptions = Readonly<{
   input: Readable;
@@ -176,7 +179,7 @@ async function callTool(
   if (tool === undefined) return failure(id, -32602, 'Invalid params');
   let collaborators: McpCallCollaborators | null;
   try {
-    collaborators = await context.route(meta);
+    collaborators = await context.route(meta, params.name);
   } catch (error) {
     // One session's failure refuses that call only; the server keeps serving every other session.
     return success(id, readToolFailure(cliErrorCode(error)).primaryResult);
@@ -190,6 +193,7 @@ async function callTool(
     listeningMode: collaborators.listeningMode ?? new ListeningModeOperation({ application: null }),
     channels: collaborators.channels,
     pair: collaborators.pair ?? new PairingService({}),
+    connect: collaborators.connect ?? new ConnectService({ async connect() { return { kind: 'unavailable' }; } }),
     // A notification has no response on which a batch could be delivered.
     postprocessResult: notification ? undefined : collaborators.postprocessResult,
     postprocessReadResult: notification ? undefined : collaborators.postprocessReadResult,
