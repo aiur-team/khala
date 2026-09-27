@@ -113,8 +113,19 @@ export type AdapterCapability = Readonly<{
   expiresAt: number;
 }>;
 
+/** Endpoint-owned Matrix access. The control plane may mint it transiently but never persists it. */
+export type MatrixDeviceSession = Readonly<{
+  baseUrl: string;
+  userId: string;
+  deviceId: string;
+  accessToken: string;
+  roomId: string;
+  ownerUserId: string;
+  ownerParticipantId: string;
+}>;
+
 export type AdmissionOutcome =
-  | Readonly<{ kind: 'admitted'; binding: SessionBinding; capability: AdapterCapability }>
+  | Readonly<{ kind: 'admitted'; binding: SessionBinding; capability: AdapterCapability; matrixSession?: MatrixDeviceSession }>
   | Readonly<{ kind: 'refused'; code: 'ownership_required' | 'admission_denied' | 'binding_conflict' | 'binding_revoked' }>
   | Readonly<{ kind: 'unavailable' }>
   /** The service may have admitted; retry with the same operation ID only. */
@@ -143,7 +154,7 @@ export type DeviceStatus = 'ready' | 'incomplete' | 'missing' | 'unavailable';
  */
 export interface ConnectorDevicePort {
   reserve(operationId: string): Promise<DeviceReservation>;
-  activate(input: Readonly<{ deviceId: string; binding: SessionBinding; capability: AdapterCapability; operationId: string }>): Promise<DeviceActivation>;
+  activate(input: Readonly<{ deviceId: string; binding: SessionBinding; capability: AdapterCapability; operationId: string; matrixSession?: MatrixDeviceSession }>): Promise<DeviceActivation>;
   status(deviceId: string): Promise<DeviceStatus>;
 }
 

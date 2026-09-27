@@ -341,12 +341,14 @@ export function createConnectorRuntime(
       update({}, { storage: 'ready' });
       device = await factories.openDevice(storage);
       if (stopRequested) return;
-      await factories.bindDeviceIdentity(storage, device);
-      if (stopRequested) return;
-      update({}, { device: 'ready' });
       const bootstrap = await factories.bootstrap({ storage, device });
       if (stopRequested) return;
       update({ binding: bootstrap.binding }, { bootstrap: 'ready' });
+      // First admission initializes the endpoint's Matrix crypto identity. Bind its
+      // resulting fingerprint before any subscription or dispatch is opened.
+      await factories.bindDeviceIdentity(storage, device);
+      if (stopRequested) return;
+      update({}, { device: 'ready' });
       subscription = await factories.openSubscription({ storage, device, binding: bootstrap.binding });
       if (stopRequested) return;
       update({}, { subscription: subscription.state() });

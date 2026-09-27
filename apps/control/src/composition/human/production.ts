@@ -20,7 +20,7 @@ export type ProductionHumanDependencies = Readonly<{
   fetch?: typeof globalThis.fetch;
 }>;
 
-type Runtime = Readonly<{
+export type ProductionHumanRuntime = Readonly<{
   auth: ReturnType<typeof createAuthService>;
   store: ReturnType<typeof createControlStore>;
   matrix: ReturnType<typeof createMatrixHumanServices>;
@@ -33,9 +33,32 @@ type Runtime = Readonly<{
  * request. Importing or discovering handlers performs no network or store I/O.
  */
 export function createProductionHumanServiceLoader(dependencies: ProductionHumanDependencies = {}): LoadHumanServices {
-  let runtime: Runtime | null = null;
+  const loadRuntime = createProductionHumanRuntimeLoader(dependencies);
+  return async function load(request: Request): Promise<HumanHandlerServices> {
+    const active = loadRuntime();
+    return {
+      auth: active.auth,
+      admission: createAdmissionService({
+        store: active.store,
+        identity: active.auth.identityFor(request),
+        authority: active.matrix.authority,
+        gateway: active.matrix.gateway,
+        clock: active.clock,
+        origin: active.env.publicAppOrigin,
+        allowedOrigins: [active.env.publicAppOrigin],
+        secret: active.env.invitationHmacSecret,
+        inviteLifetimeMs: INVITE_TTL_MS,
+      }),
+      messaging: active.matrix.sessions,
+    };
+  };
+}
 
-  function initialize(): Runtime {
+/** Shared lazy production adapters for request-scoped feature composition. */
+export function createProductionHumanRuntimeLoader(dependencies: ProductionHumanDependencies = {}): () => ProductionHumanRuntime {
+  let runtime: ProductionHumanRuntime | null = null;
+
+  function initialize(): ProductionHumanRuntime {
     if (runtime !== null) return runtime;
     const env = readHumanServerEnv(dependencies.env);
     const clock = dependencies.clock ?? (() => Date.now());
@@ -75,22 +98,5 @@ export function createProductionHumanServiceLoader(dependencies: ProductionHuman
     return runtime;
   }
 
-  return async function load(request: Request): Promise<HumanHandlerServices> {
-    const active = initialize();
-    return {
-      auth: active.auth,
-      admission: createAdmissionService({
-        store: active.store,
-        identity: active.auth.identityFor(request),
-        authority: active.matrix.authority,
-        gateway: active.matrix.gateway,
-        clock: active.clock,
-        origin: active.env.publicAppOrigin,
-        allowedOrigins: [active.env.publicAppOrigin],
-        secret: active.env.invitationHmacSecret,
-        inviteLifetimeMs: INVITE_TTL_MS,
-      }),
-      messaging: active.matrix.sessions,
-    };
-  };
+  return initialize;
 }

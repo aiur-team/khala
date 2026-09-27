@@ -67,7 +67,7 @@ export type AdmissionPolicy = (input: Readonly<{ principal: AuthPrincipal; invit
  * atomically refuses if the room or participant no longer matches the expectation.
  */
 export interface AgentAdmissionPort {
-  inspect(input: Readonly<{ ownerId: OwnerId; inviteRef: string; session: SessionRef }>): Promise<
+  inspect(input: Readonly<{ ownerId: OwnerId; principal?: AuthPrincipal | null; inviteRef: string; session: SessionRef; inviteEvidence?: InviteEvidence | null }>): Promise<
     OperationResult<Readonly<{ agentParticipantId: ParticipantId; roomId: RoomId }>, AdmissionRejection>
   >;
   admit(input: Readonly<{
@@ -78,10 +78,34 @@ export interface AgentAdmissionPort {
     expectedAgentParticipantId: ParticipantId;
     expectedRoomId: RoomId;
     operationId: string;
+    principal?: AuthPrincipal | null;
+    inviteEvidence?: InviteEvidence | null;
   }>): Promise<
     OperationResult<Readonly<{ agentParticipantId: ParticipantId; roomId: RoomId }>, AdmissionRejection>
   >;
 }
+
+export type AgentMatrixSession = Readonly<{
+  baseUrl: string;
+  userId: string;
+  deviceId: string;
+  accessToken: string;
+  roomId: string;
+  ownerUserId: string;
+  ownerParticipantId: string;
+}>;
+
+/** Mints only the already-admitted binding's Matrix device session. */
+export interface AgentDeviceSessionPort {
+  issue(binding: SessionBinding, roomId: RoomId): Promise<AgentMatrixSession | null>;
+}
+
+/** The exact immutable link policy and authoritative store revision approved in the owner browser. */
+export type InviteEvidence = Readonly<{
+  roomId: RoomId;
+  revision: string;
+  policyDigest: string;
+}>;
 
 /** Result of checking an adapter request against its capability. */
 export type AdapterAuthorization =
@@ -157,9 +181,13 @@ export type AgentBootstrapDeps = Readonly<{
   inviteFromLink(url: URL): string | null;
   /** Request-scoped KHA-105 admission port for the signed-in owner. */
   admissionFor(request: Request): Pick<AdmissionPort, 'inspect'>;
+  /** Persist the signed-in owner's eligible per-link scope in the one-use grant. */
+  inviteEvidenceFor?: (principal: AuthPrincipal, inviteRef: string) => Promise<InviteEvidence | null>;
   /** No default: the deployment must decide G-ADMISSION explicitly. */
   admissionPolicy: AdmissionPolicy;
   agents: AgentAdmissionPort;
+  /** Production adapter; no control-plane persistence of Matrix access tokens. */
+  agentDeviceSession?: AgentDeviceSessionPort;
   /** Pairing-code grants (`pairing-code-v1`), redeemed at the same route as bootstrap grants. Absent disables them. */
   pairingGrants?: PairingGrantPort;
   /** Serves the code-only descriptor from the shared descriptor path; `null` means "not a pairing request". */
@@ -173,6 +201,8 @@ export type SessionRef = Readonly<{ harness: string; sessionId: string; generati
 type CodeRecord = {
   ownerId: string; invite: string; harness: string; sessionId: string; generation: number;
   deviceId: string; jkt: string; challenge: string; redirectUri: string; used: boolean;
+  inviteEvidence?: InviteEvidence | null;
+  principal?: AuthPrincipal | null;
 };
 /**
  * `redemption` is set by the one operation that claimed the grant. `admitted` records
@@ -183,6 +213,8 @@ type Redemption = { operationId: string; admitted: { agentParticipantId: string;
 type GrantRecord = {
   ownerId: string; invite: string; harness: string; sessionId: string; generation: number;
   deviceId: string; jkt: string; redemption: Redemption | null;
+  inviteEvidence?: InviteEvidence | null;
+  principal?: AuthPrincipal | null;
 };
 type CapabilityRecord = {
   ownerId: string; roomId: string; bindingId: string; generation: number; jkt: string; scope: string[];
@@ -273,12 +305,16 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const { principal } = auth.context;
     const refusal = await admissible(request, principal, params);
     if (refusal) return refusal;
+    const inviteEvidence = deps.inviteEvidenceFor
+      ? await safeCall(() => deps.inviteEvidenceFor!(principal, params.invite))
+      : null;
+    if (deps.inviteEvidenceFor && inviteEvidence === null) return json(503, { code: 'unavailable' });
 
     const code = randomToken(deps.random, 32);
     const now = deps.clock();
     const value: CodeRecord = {
       ownerId: principal.ownerId, invite: params.invite, ...params.session, deviceId: params.deviceId,
-      jkt: params.jkt, challenge: params.challenge, redirectUri: params.redirectUri, used: false,
+      jkt: params.jkt, challenge: params.challenge, redirectUri: params.redirectUri, used: false, inviteEvidence, principal,
     };
     const written = await settleWrite<JsonValue>(store, {
       key: key('code', code), expectedRevision: null, operationId: `code-${randomToken(deps.random, 16)}`,
@@ -337,6 +373,8 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const value: GrantRecord = {
       ownerId: pending.ownerId, invite: pending.invite, harness: pending.harness, sessionId: pending.sessionId,
       generation: pending.generation, deviceId: pending.deviceId, jkt: pending.jkt, redemption: null,
+      inviteEvidence: pending.inviteEvidence ?? null,
+      principal: pending.principal ?? null,
     };
     const written = await settleWrite<JsonValue>(store, {
       key: key('grant', grant), expectedRevision: null, operationId: `grant-${randomToken(deps.random, 16)}`,
@@ -451,7 +489,10 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const ownerId = held.ownerId as OwnerId;
     const sessionRef: SessionRef = { harness: held.harness, sessionId: held.sessionId, generation: held.generation };
     // Resolve the verified session's exact participant without joining a device.
-    const inspected = await safeCall(() => deps.agents.inspect({ ownerId, inviteRef: held.invite, session: sessionRef }));
+    const inspected = await safeCall(() => deps.agents.inspect({
+      ownerId, principal: held.principal ?? null, inviteRef: held.invite, session: sessionRef,
+      inviteEvidence: held.inviteEvidence ?? null,
+    }));
     if (inspected === null || inspected.kind === 'unavailable' || inspected.kind === 'outcome_unknown') return json(503, { code: 'unavailable' });
     if (inspected.kind === 'rejected') return json(403, { code: 'admission_denied' });
     const address = {
@@ -485,6 +526,8 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
         expectedAgentParticipantId: address.agentParticipantId,
         expectedRoomId: address.roomId,
         operationId: scopedOperationId,
+        inviteEvidence: held.inviteEvidence ?? null,
+        principal: held.principal ?? null,
       }));
       if (result === null || result.kind === 'unavailable') return json(503, { code: 'unavailable' });
       if (result.kind === 'outcome_unknown') return json(502, { code: 'outcome_unknown' });
@@ -506,6 +549,13 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     if (bound.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (bound.kind === 'refused') return json(409, { code: bound.code });
 
+    const matrixSession = deps.agentDeviceSession
+      ? await safeCall(() => deps.agentDeviceSession!.issue(bound.binding, address.roomId))
+      : null;
+    if (deps.agentDeviceSession && (matrixSession === null || matrixSession.deviceId !== bound.binding.deviceId)) {
+      return json(503, { code: 'unavailable' });
+    }
+
     // Spend the grant before minting, so concurrent retries cannot both be issued one.
     const spent = await saveRedemption({ ...tracker.redemption!, issued: true });
     if (spent === 'conflict') return json(401, { code: 'grant_replayed' });
@@ -518,6 +568,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
         token: capability.token, token_type: 'DPoP', scope: [...ADAPTER_CAPABILITIES],
         binding_id: bound.binding.bindingId, generation: bound.binding.generation, expires_at: capability.expiresAt,
       },
+      ...(matrixSession ? { matrix_session: matrixSession } : {}),
     });
   }
 

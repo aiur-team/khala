@@ -353,6 +353,8 @@ function withCookies(response: Response, cookies: readonly string[]): Response {
 const loadProductionServices = createProductionHumanServiceLoader();
 
 export type HumanHandlerDependencies = Readonly<{
+  /** Signed-in owner consent for the exact existing session and invite. */
+  bootstrap?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -376,6 +378,10 @@ function unavailableRoute(path: string, methods: readonly string[]): RouteRegist
 const unavailablePairingRoutes = Object.freeze([
   unavailableRoute('/api/human/pairing/request', ['POST', 'GET']),
   unavailableRoute('/api/human/pairing/decision', ['POST']),
+]);
+
+const unavailableBootstrapRoutes = Object.freeze([
+  unavailableRoute('/api/human/agent-bootstrap/authorize', ['GET', 'POST']),
 ]);
 
 const unavailableChannelAccessRoutes = Object.freeze([
@@ -403,6 +409,7 @@ const unavailableChannelSettingsRoutes = Object.freeze([
 export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {
   return Object.freeze([
     ...createHumanHandlers(loadProductionServices),
+    ...(dependencies?.bootstrap?.() ?? unavailableBootstrapRoutes),
     ...(dependencies?.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies?.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies?.channelDiscoveryBootstrap?.() ?? unavailableChannelDiscoveryRoutes),

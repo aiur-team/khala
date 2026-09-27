@@ -26,6 +26,9 @@ export type ProofExpectation = Readonly<{
   jkt: string;
   /** The grant presented with the request, when there is one. */
   accessToken?: string;
+  /** Signed one-use challenge and canonical request-body digest for device attestation. */
+  nonce?: string;
+  bodyHash?: string;
   nowMs: number;
 }>;
 
@@ -66,6 +69,12 @@ export function checkProof(proof: string | null, expected: ProofExpectation): Pr
     if ('ath' in payload) return invalid('proof_token_mismatch');
   } else if (typeof payload.ath !== 'string' || !safeEqual(payload.ath, createHash('sha256').update(expected.accessToken).digest('base64url'))) {
     return invalid('proof_token_mismatch');
+  }
+  if (expected.nonce !== undefined && (typeof payload.nonce !== 'string' || !safeEqual(payload.nonce, expected.nonce))) {
+    return invalid('invalid_proof');
+  }
+  if (expected.bodyHash !== undefined && (typeof payload.body_hash !== 'string' || !safeEqual(payload.body_hash, expected.bodyHash))) {
+    return invalid('invalid_proof');
   }
   return { kind: 'valid', jti, publicKey: jwk.x };
 }

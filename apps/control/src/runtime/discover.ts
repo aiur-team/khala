@@ -128,10 +128,16 @@ export function importSpecifier(outputDirectory: string, modulePath: string): st
 export function renderGeneratedFunction(result: DiscoveryResult, repoRoot: string): string {
   const outputDirectory = functionsOutputDirectory(repoRoot);
   const runtimeImport = (file: string) => importSpecifier(outputDirectory, path.join(repoRoot, 'apps/control/src/runtime', file));
-  const imports = result.presentDomains
-    .map(domain => `import { ${domain.exportName} } from '${importSpecifier(outputDirectory, domain.modulePath)}';`)
-    .join('\n');
-  const registrationCalls = result.presentDomains.map(domain => `...${domain.exportName}()`).join(', ');
+  const completeHostedDomains = result.presentDomains.some(domain => domain.key === 'human')
+    && result.presentDomains.some(domain => domain.key === 'agent');
+  const imports = completeHostedDomains
+    ? `import { registerHostedProductionRoutes } from '${importSpecifier(outputDirectory, path.join(repoRoot, 'apps/control/src/composition/hosted-production.ts'))}';`
+    : result.presentDomains
+      .map(domain => `import { ${domain.exportName} } from '${importSpecifier(outputDirectory, domain.modulePath)}';`)
+      .join('\n');
+  const registrationCalls = completeHostedDomains
+    ? '...registerHostedProductionRoutes()'
+    : result.presentDomains.map(domain => `...${domain.exportName}()`).join(', ');
   const absentPrefixesLiteral = JSON.stringify(result.absentPrefixes);
 
   return `// GENERATED FILE — do not edit. Produced by apps/control/src/runtime/discover.ts
