@@ -41,6 +41,8 @@ export type MatrixConnectorSubstrate = Readonly<{
   devices: ConnectorDevicePort;
   source: SubscriptionSource;
   fingerprint: string;
+  /** Encrypts one agent-authored message with the same durable Matrix device. */
+  send(clientTxnId: string, body: string): Promise<{ eventId: string }>;
   /** Explicit trust only after an authenticated owner-approved fingerprint attestation. */
   trustPeer(userId: string, deviceId: string, expectedEd25519: string): Promise<void>;
   close(): Promise<void>;
@@ -65,6 +67,8 @@ async function writeJson(filename: string, value: unknown): Promise<void> {
     const handle = await open(temporary, 'r');
     try { await handle.sync(); } finally { await handle.close(); }
     await rename(temporary, filename);
+    const directory = await open(path.dirname(filename), 'r');
+    try { await directory.sync(); } finally { await directory.close(); }
   } finally { await rm(temporary, { force: true }); }
 }
 
@@ -171,6 +175,14 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
     if (prior === null) await writeJson(markerPath, marker);
     const reservationPath = fileFor(input.profileDirectory, 'reservations.json');
     let reservation = await readReservation(reservationPath);
+    const outgoingDirectory = fileFor(input.profileDirectory, 'outgoing');
+    await mkdir(outgoingDirectory, { recursive: true, mode: 0o700 });
+    let sending = Promise.resolve();
+    const serializeSend = async <T>(work: () => Promise<T>): Promise<T> => {
+      const running = sending.then(work, work);
+      sending = running.then(() => undefined, () => undefined);
+      return running;
+    };
     let closed = false;
     const current = () => { if (closed || !page) throw new Error('matrix_device_closed'); return page; };
     const devices: ConnectorDevicePort = {
@@ -239,6 +251,29 @@ export async function openMatrixConnectorSubstrate(input: MatrixConnectorInput):
     };
     return {
       devices, source, fingerprint: identity.fingerprint,
+      send: (clientTxnId, body) => serializeSend(async () => {
+        if (!/^[A-Za-z0-9_-]{8,128}$/u.test(clientTxnId) || typeof body !== 'string' || body.length === 0
+          || Buffer.byteLength(body) > 64 * 1024) throw new Error('matrix_invalid_send');
+        const digest = createHash('sha256').update(body).digest('hex');
+        const outgoingPath = fileFor(outgoingDirectory, `${createHash('sha256').update(clientTxnId).digest('hex')}.json`);
+        const prior = await readFile(outgoingPath, 'utf8').catch(error => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+          throw error;
+        });
+        const previous: unknown = prior === null ? null : JSON.parse(prior);
+        if (previous !== null && (typeof previous !== 'object' || Array.isArray(previous)
+          || !('clientTxnId' in previous) || previous.clientTxnId !== clientTxnId
+          || !('digest' in previous) || typeof previous.digest !== 'string'
+          || !('eventId' in previous) || (previous.eventId !== null && typeof previous.eventId !== 'string')))
+          throw new Error('matrix_outgoing_corrupt');
+        if (previous !== null && previous.digest !== digest) throw new Error('matrix_send_conflict');
+        if (previous !== null && typeof previous.eventId === 'string') return { eventId: previous.eventId };
+        if (previous === null) await writeJson(outgoingPath, { clientTxnId, digest, eventId: null });
+        const accepted = await call<{ eventId: string }>(current(), 'send', clientTxnId, body);
+        if (typeof accepted.eventId !== 'string' || !accepted.eventId.startsWith('$')) throw new Error('matrix_send_unknown');
+        await writeJson(outgoingPath, { clientTxnId, digest, eventId: accepted.eventId });
+        return accepted;
+      }),
       trustPeer: async (userId, deviceId, expectedEd25519) => call<void>(current(), 'trustPeer', userId, deviceId, expectedEd25519),
       async close() {
         if (closed) return;

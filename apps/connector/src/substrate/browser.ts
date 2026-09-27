@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 // Browser half of the owner connector's Matrix device. matrix-js-sdk's supported durable
 // Rust crypto store is IndexedDB; this page is a private local sidecar, never a model surface.
-import { ClientEvent, MatrixEvent, RoomEvent, SyncState, createClient, type MatrixClient } from 'matrix-js-sdk';
+import { ClientEvent, EventType, MatrixEvent, MsgType, RoomEvent, SyncState, createClient, type MatrixClient } from 'matrix-js-sdk';
 
 type OpenInput = Readonly<{
   baseUrl: string; userId: string; deviceId: string; accessToken: string;
@@ -25,6 +25,7 @@ type MatrixBrowserApi = Readonly<{
   trustPeer(userId: string, deviceId: string, expectedEd25519: string): Promise<void>;
   authorize(): Promise<'ok' | 'revoked' | 'expired' | 'unavailable'>;
   read(cursor: string | null, limit: number): Promise<SyncPage>;
+  send(clientTxnId: string, body: string): Promise<{ eventId: string }>;
   close(): Promise<void>;
 }>;
 
@@ -171,6 +172,18 @@ window.khalaMatrix = {
       if (event) events.push(event);
     }
     return { events, nextCursor: body.next_batch, limited: timeline?.limited === true };
+  },
+  async send(clientTxnId, body) {
+    if (!active || !client) throw new Error('matrix_closed');
+    if (!/^[A-Za-z0-9_-]{8,128}$/u.test(clientTxnId) || typeof body !== 'string' || body.length === 0
+      || new TextEncoder().encode(body).length > 64 * 1024) throw new Error('matrix_invalid_send');
+    if (await this.authorize() !== 'ok') throw new Error('matrix_authority_lost');
+    const room = client.getRoom(active.roomId);
+    if (!room?.hasEncryptionStateEvent()) throw new Error('matrix_room_not_encrypted');
+    const response = await client.sendEvent(active.roomId, EventType.RoomMessage,
+      { msgtype: MsgType.Text, body }, clientTxnId);
+    if (typeof response.event_id !== 'string') throw new Error('matrix_send_unknown');
+    return { eventId: response.event_id };
   },
   async close() {
     const matrix = client;

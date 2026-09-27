@@ -63,7 +63,8 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         const input = {
           baseUrl, userId: bob.user_id, deviceId: bob.device_id, accessToken: bob.access_token,
           roomId, profileDirectory: join(scratch, 'connector'),
-          participantIdFor: (userId: string) => userId === alice.user_id ? 'alice' as ParticipantId : null,
+          participantIdFor: (userId: string) => userId === alice.user_id ? 'alice' as ParticipantId
+            : userId === bob.user_id ? 'bob' as ParticipantId : null,
         };
         substrate = await openMatrixConnectorSubstrate(input);
         const identity = substrate.fingerprint;
@@ -101,11 +102,20 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         if (delivered?.kind !== 'decrypted') return;
         assert.equal(delivered.verifiedDeviceId, alice.device_id);
         assert.match(Buffer.from(delivered.canonicalPayload).toString(), /synthetic-verified-encrypted-replay/);
+        const ownTxn = 'connector_send_transaction_001';
+        const ownMessage = 'synthetic-connector-encrypted-send';
+        const ownSent = await substrate.send(ownTxn, ownMessage);
+        assert.equal(await page.evaluate(({ room, eventId }) => (window as any).peer.decrypt(room, eventId),
+          { room: roomId, eventId: ownSent.eventId }), ownMessage);
+        assert.deepEqual(await substrate.send(ownTxn, ownMessage), ownSent);
+        await assert.rejects(substrate.send(ownTxn, 'changed transaction body'), /matrix_send_conflict/);
         const firstCursor = first.nextCursor;
         await substrate.close(); substrate = null;
         const reopened = await openMatrixConnectorSubstrate(input);
         substrate = reopened;
         assert.equal(reopened.fingerprint, identity);
+        assert.deepEqual(await reopened.send(ownTxn, ownMessage), ownSent);
+        await assert.rejects(reopened.send(ownTxn, 'changed after restart'), /matrix_send_conflict/);
         let replay = await reopened.source.read({ cursor: beforeTrust.kind === 'page' ? beforeTrust.nextCursor : null, limit: 100 });
         for (let attempt = 0; attempt < 20 && replay.kind === 'page' && !replay.events.some(event => event.ref.eventId === sent.event_id); attempt++) {
           await new Promise(resolve => setTimeout(resolve, 250));
