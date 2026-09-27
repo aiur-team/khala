@@ -7,7 +7,7 @@ call returns it. Only then may `interactiveClaudeCapabilities` report the route 
 and only for the exact version/route pair in `evidence.json` `provenPairs` (mirrored in
 `CLAUDE_INTERACTIVE_PROVEN`).
 
-**Status: proven for receipts on the exact Claude Code 2.1.283 interactive-hooks route.** Three Executor live runs on 2026-09-26 used that version. The latest run and its follow-up diagnostics are documented in [live-run-2026-09-26.md](live-run-2026-09-26.md). Decision 43 permits an Executor-launched TUI under normal trust; the person-started fixture of #236 remains separate. Mode delivery remains experimental.
+**Status: proven for receipts on the exact Claude Code 2.1.283 interactive-hooks route.** Three Executor live runs on 2026-09-26 used that version. The latest run and its follow-up diagnostics are documented in [live-run-2026-09-26.md](live-run-2026-09-26.md). Decision 43 permits an Executor-launched TUI under normal trust; the person-started fixture of #236 remains separate. The later, separately retained [installed native mode proof](../../listening-modes/claude/README.md) covers `steer`, `sync`, and `async` on that exact version and route.
 
 - The first run failed because the server composed the Claude session route as unproven. Every hook
   pull and `khala_read` was refused before any batch or token existed.
@@ -18,7 +18,7 @@ and only for the exact version/route pair in `evidence.json` `provenPairs` (mirr
   token and wrong generation could not be reached live.
 - The third run used merged receipt build `d389c79` and a native TUI under normal trust. Native next-call acknowledgements were recorded, including after reconnect and owner Stop/rejoin. A fresh disposable continuation showed omitted-token refusal and exact-token duplicate idempotency against a native pending batch, with the native call in between recording one event-linked receipt. Wrong-input and duplicate probes used the local HTTP boundary; they are not claimed as native malformed plugin calls.
 
-Other inspected versions stay `experimental` and use the owner's explicit experimental-route grant (decisions 34 and 37). The receipt result does not promote steer, sync, async, or idle wake.
+Other inspected versions stay `experimental` and use the owner's explicit experimental-route grant (decisions 34 and 37). This receipt result alone did not promote any mode or idle wake; the separate native mode proof gates the exact version's mode claims.
 
 ```sh
 node --test experiments/internal-mode/read-receipts/claude/scan.test.mjs

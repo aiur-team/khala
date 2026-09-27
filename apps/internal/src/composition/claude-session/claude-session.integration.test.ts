@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -61,8 +62,9 @@ function call(origin: string, input: Readonly<{ method?: string; path: string; h
 
 type ToolResponse = { id: number; result?: { structuredContent: Record<string, unknown>; isError?: boolean }; error?: unknown };
 
-/** The Claude Code version the tests' launcher inspects: installed, and not in the proven list. */
+/** The exact installed mode-proof version, with an adjacent version for grant tests. */
 const INSTALLED_CLAUDE = '2.1.283';
+const EXPERIMENTAL_CLAUDE = '2.1.284';
 
 /** A fresh launch, or with `resume` the same root and channel relaunched on the same port. */
 async function launched(
@@ -70,7 +72,7 @@ async function launched(
   options: Readonly<{ clock?: () => number; claudeVersion?: () => Promise<string | null> }> = {},
 ) {
   const { clock, claudeVersion = async () => INSTALLED_CLAUDE } = options;
-  const parent = resume?.parent ?? fs.mkdtempSync('/tmp/khala-claude-');
+  const parent = resume?.parent ?? fs.mkdtempSync(path.join(os.tmpdir(), 'khala-claude-'));
   if (resume === undefined) cleanups.push(() => fs.rmSync(parent, { recursive: true, force: true }));
   const outcome = await launchInternal({
     root: path.join(parent, 'internal'), assets: webBundleManifest(fixtureBundle),
@@ -309,9 +311,9 @@ describe('Claude mcp-serve against the internal launcher', () => {
     skew += CLAUDE_SETTLE_INTERVAL_MS;
 
     // The next boundary settles the grant itself; the agent never calls the status tool again.
-    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: 'connected' });
     // Reported once; the session stays connected.
-    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
+    await expect(hooks.hook(granted)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: null });
     const [send, who] = await serve(report.descriptorPath, granted, [
       ['khala_send', { message: 'hello without a retry' }], ['khala_list_agents'],
     ]);
@@ -338,8 +340,8 @@ describe('Claude mcp-serve against the internal launcher', () => {
     // The clock never moves: every other boundary stays inside the interval.
     await approvePending(report.origin, owner);
     await expect(hooks.hook(session)).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
-    await expect(hooks.hook(session, { stop: true })).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: 'connected' });
-    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'hook', effective: null, watchSeconds: null, access: null });
+    await expect(hooks.hook(session, { stop: true })).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: 'connected' });
+    await expect(hooks.hook(session)).resolves.toEqual({ kind: 'hook', effective: 'sync', watchSeconds: 3000, access: null });
   });
 
   it('reports a denial at the next hook boundary, and the session stays unbound', async () => {
@@ -517,6 +519,33 @@ describe('Claude mcp-serve against the internal launcher', () => {
     expect(bodies).toContain('after the restart');
     expect(bodies).not.toContain('stale grant');
   });
+
+  it('re-requests the same approved channel after a launcher resume without another owner decision', async () => {
+    const first = await launched();
+    const sessionId = 'session-restart-request';
+    const [requested] = await serve(first.report.descriptorPath, sessionId, [
+      ['khala_request_channel_access', { target: first.channelUrl }],
+    ]);
+    expect(requested).toMatchObject({ outcome: 'pending_owner' });
+    await approvePending(first.report.origin, first.owner);
+    const [connected] = await serve(first.report.descriptorPath, sessionId, [
+      ['khala_channel_access_status', { operationId: requested!.operationId }],
+    ]);
+    expect(connected).toMatchObject({ outcome: 'connected', operationId: requested!.operationId });
+    await first.shutdown();
+
+    const second = await launched({ parent: first.parent, channelId: first.report.channelId, port: first.report.port });
+    const [unbound, resumed, sent] = await serve(second.report.descriptorPath, sessionId, [
+      ['khala_send', { message: 'stale grant' }],
+      ['khala_request_channel_access', { target: second.channelUrl }],
+      ['khala_send', { message: 'restored grant' }],
+    ]);
+    expect(unbound).toEqual({ kind: 'refused', code: 'session_not_bound' });
+    expect(resumed).toMatchObject({ outcome: 'connected', operationId: requested!.operationId });
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    const inbox = await call(second.report.origin, { path: '/api/human/channel-requests', headers: second.owner });
+    expect((inbox.json.requests as Array<{ outcome: string }>).filter(entry => entry.outcome === 'pending_owner')).toEqual([]);
+  });
 });
 
 describe('Claude delivery through the internal launcher', () => {
@@ -559,6 +588,21 @@ describe('Claude delivery through the internal launcher', () => {
       },
     };
   }
+
+  it('renders an explicit MCP read in Claude structured output and acknowledges only on the next call', async () => {
+    const session = await bound('session-structured-read');
+    const eventId = await session.post('structured read canary');
+    const [read] = await serve(session.report.descriptorPath, 'session-structured-read', [['khala_read']]);
+    expect(read).toEqual({ kind: 'batch', batch: expect.stringContaining('structured read canary') });
+    expect(JSON.stringify(read)).not.toContain('batchToken:');
+    expect(await session.facts()).toEqual([]);
+
+    const [sent] = await serve(session.report.descriptorPath, 'session-structured-read', [
+      ['khala_send', { message: 'ordinary next reply' }],
+    ]);
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    expect((await session.facts()).some(fact => fact.events.some(event => event.eventId === eventId))).toBe(true);
+  });
 
   // Wrong-implementation test (#443): a feed that starts at sequence 0 hands the rejoined
   // binding every earlier message, including the one sent while no agent was bound.
@@ -637,7 +681,7 @@ describe('Claude delivery through the internal launcher', () => {
   const tokenOf = (framed: string): string | null => /^batchToken: (\S+)$/m.exec(framed)?.[1] ?? null;
 
   function scratchState(): string {
-    const directory = fs.mkdtempSync('/tmp/khala-cli-state-');
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-cli-state-'));
     cleanups.push(() => fs.rmSync(directory, { recursive: true, force: true }));
     return directory;
   }
@@ -778,7 +822,7 @@ describe('Claude delivery through the internal launcher', () => {
   });
 
   it('delivers to a bound session on an experimental route: hook pull, then read, then next-call acknowledgement', async () => {
-    const session = await bound('session-delivered');
+    const session = await bound('session-delivered', async () => EXPERIMENTAL_CLAUDE);
 
     // The route is labelled experimental for the inspected version, never proven.
     const mode = JSON.parse(await session.run('mode'));
@@ -792,7 +836,7 @@ describe('Claude delivery through the internal launcher', () => {
     });
     expect(listed.status).toBe(200);
     expect(listed.json.bindings).toMatchObject([{
-      harnessVersion: INSTALLED_CLAUDE, view: { support: { sync: { status: 'experimental', testedVersion: INSTALLED_CLAUDE } } },
+      harnessVersion: EXPERIMENTAL_CLAUDE, view: { support: { sync: { status: 'experimental', testedVersion: EXPERIMENTAL_CLAUDE } } },
     }]);
 
     await session.post('first from the owner');
@@ -819,8 +863,73 @@ describe('Claude delivery through the internal launcher', () => {
     expect(JSON.parse(await session.run('pull'))).toEqual({ ok: true, kind: 'empty' });
   });
 
+  it('arms the bounded idle window and reports only unacknowledged human release presence under the live mode', async () => {
+    const session = await bound('session-idle-fence', async () => EXPERIMENTAL_CLAUDE);
+    const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
+    const [entry] = (await call(session.report.origin, { path: bindings, headers: session.owner })).json.bindings;
+    const binding = `${bindings}/${encodeURIComponent(entry.binding.bindingId)}`;
+    const owner = (suffix: string, body: unknown) => call(session.report.origin, {
+      method: 'POST', path: `${binding}/${suffix}`, headers: session.owner, body,
+    });
+    expect(JSON.parse(await session.run('watch'))).toMatchObject({ ok: true, kind: 'hook', watchSeconds: null });
+    const issuedAt = new Date().toISOString();
+    const set = await owner('listening-mode', {
+      v: 1, commandId: 'idle-sync', generation: entry.binding.generation,
+      expectedVersion: entry.view.version, requested: 'sync', issuedAt,
+    });
+    const support = entry.view.support.sync;
+    const pin = { mode: 'sync', route: support.route, harnessVersion: support.testedVersion,
+      evidenceRevision: support.evidenceRevision };
+    const grant = await owner('experimental-route/grant', {
+      v: 1, commandId: 'idle-grant', generation: entry.binding.generation,
+      expectedVersion: set.json.version, ...pin, issuedAt,
+    });
+    expect(grant.json).toMatchObject({ outcome: 'applied', view: { effective: 'sync' } });
+    expect(JSON.parse(await session.run('watch'))).toMatchObject({ ok: true, kind: 'hook', effective: 'sync', watchSeconds: 3000 });
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+
+    await session.post('private body never goes through pending');
+    const signal = await session.run('pending');
+    expect(JSON.parse(signal)).toEqual({ ok: true, kind: 'pending' });
+    expect(signal).not.toContain('private body');
+    expect(await session.facts()).toEqual([]);
+    expect(JSON.parse(await claude(session.report.descriptorPath, 'pending', 'other-session')))
+      .toMatchObject({ ok: false, kind: 'refused' });
+
+    const paused = await owner('pause', { v: 1, generation: entry.binding.generation, paused: true });
+    expect(paused.json).toMatchObject({ paused: true });
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(JSON.parse(await session.run('watch'))).toMatchObject({ watchSeconds: null });
+    await owner('pause', { v: 1, generation: entry.binding.generation, paused: false });
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'pending' });
+
+    // A delivered but not yet acknowledged batch never causes a second idle wake.
+    expect(await session.run('pull')).toContain('private body');
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(await session.facts()).toEqual([]);
+    await session.run('status');
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(await session.facts()).toHaveLength(1);
+
+    await session.post('held under async');
+    const next = await owner('listening-mode', {
+      v: 1, commandId: 'idle-async', generation: entry.binding.generation,
+      expectedVersion: grant.json.view.version, requested: 'async', issuedAt,
+    });
+    expect(next.json).toMatchObject({ outcome: 'applied', requested: 'async' });
+    expect(JSON.parse(await session.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(JSON.parse(await session.run('watch'))).toMatchObject({ watchSeconds: null });
+
+    const stopped = await call(session.report.origin, {
+      method: 'POST', path: `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/stop`,
+      headers: session.owner, body: { v: 1, targets: null },
+    });
+    expect(stopped.status).toBe(200);
+    expect(JSON.parse(await session.run('pending'))).toMatchObject({ ok: false, kind: 'refused' });
+  });
+
   it('delivers at the next PostToolUse under steer only after the owner grants the experimental route', async () => {
-    const session = await bound('session-granted');
+    const session = await bound('session-granted', async () => EXPERIMENTAL_CLAUDE);
     const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
     const [entry] = (await call(session.report.origin, { path: bindings, headers: session.owner })).json.bindings;
     const binding = `${bindings}/${encodeURIComponent(entry.binding.bindingId)}`;

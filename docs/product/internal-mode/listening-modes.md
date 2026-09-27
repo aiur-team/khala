@@ -125,15 +125,14 @@ binary used here resolves to
 
 ### Delivery matrix
 
-Every primary row targets the already-running, user-started CLI. No current row
-is proven end to end; the per-CLI research slugs below own the retained proof and
-must end each cell as **Proven**, **Unsupported**, or
-**Blocked-without-wrapper**.
+Every primary row targets an already-running interactive CLI. Decision 43 also
+accepts a normal-trust Executor-launched TUI for the proof. The per-CLI research
+slugs below own the retained evidence for each cell.
 
 | User-owned interactive CLI | `steer` | `sync` (default) | `async` | Proof owner |
 | --- | --- | --- | --- | --- |
 | Codex CLI/TUI | **Proven** on 0.154.0 and 0.156.1 under normal trust: native `PreToolUse`/`PostToolUse` hooks at the next tool boundary; idle via a content-free `codex queue` wake. See [`interactive-codex.md`](interactive-codex.md). | **Proven**: native `Stop`, plus `UserPromptSubmit` for the next prompt or an idle wake. | **Proven**: hooks stay silent; the agent's explicit read. | `interactive-codex` |
-| Claude Code CLI | **Unproven here.** `claude-plugin-hooks` owns `PostToolUse` after-tool delivery into the existing session; no restricted profile is required. | **Unproven here.** `claude-plugin-hooks` owns `Stop` end-of-turn delivery into the existing session. | **Unproven.** `/khala read` delegates to `khala_read`; any explicit async wake belongs to the plugin runtime, while arrival alone remains silent. | `interactive-claude` |
+| Claude Code CLI | **Proven on 2.1.283:** `PostToolUse` delivered during a busy turn, and a live Stop-armed watcher woke an idle session after 46 seconds. The watcher expires after 3,000 seconds; later idle messages wait for the next turn. | **Proven on 2.1.283:** delivery waited for `Stop` during a busy turn, and the live watcher woke the idle session after 46 seconds. The same watcher limit applies. | **Proven on 2.1.283:** hooks did not deliver across tools or Stop; the agent's explicit native `khala_read` exposed the body after the MCP repair. All three cells cover human-authored releases only. See [installed evidence](../../../experiments/internal-mode/listening-modes/claude/README.md). | `interactive-claude` |
 | OpenCode TUI + DeepSeek | **Unproven as a product route.** Prove that non-abort `promptAsync` or a plugin boundary targets the user's existing TUI session. | **Unproven.** The prior 1.17.10 status-read/submission shape was racy; the new proof must supply an idle/plugin boundary or report blocked. | **Unproven.** Delegate to `khala_read`; arrival does not inject. | `interactive-opencode` |
 | Harness-neutral MCP/skill | **Unsupported by itself.** It cannot choose an arbitrary active tool boundary. | **Experimental mechanism only.** `mcp-result-piggyback` can append a batch on an existing Khala call, not promise latency. | **Unproven.** Support remains disabled until `mcp-piggyback-evidence` passes. | Shared fallback evidence |
 

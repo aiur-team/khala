@@ -66,7 +66,7 @@ export type ModePlan = Readonly<{
 
 export type Markers = Readonly<{
   run: string;
-  /** Posted by each role right after it connects, naming the binding it holds. */
+  /** Posted after connect; the server attributes its author and the owner resolves the binding. */
   ready(role: RoleName): string;
   /** Role- and mode-specific handshake marker. */
   handshake(role: RoleName, mode: ListeningMode): string;
@@ -125,7 +125,9 @@ export type NativeSession = Readonly<{
 }>;
 
 export type AiurPort = Readonly<{
-  /** The durable native session the Executor recorded for the ticket, or null while none is recorded. */
+  /** Capture made before the first Khala request, with the original process and image still alive. Grant also requires the server's exact session fingerprint. */
+  capturedSession(ticket: number, runId: string, role: RoleName): Promise<NativeSession | null>;
+  /** The captured session only while its current native status/record still proves the same identity. */
   session(ticket: number, runId: string, role: RoleName): Promise<NativeSession | null>;
   /** Whether that exact process still runs as that session. Never signals it. */
   alive(session: NativeSession): Promise<boolean>;
@@ -152,6 +154,7 @@ export type AccessRequest = Readonly<{
 }>;
 
 export type StopTarget = Readonly<{ bindingId: string; generation: number; agentParticipantId: string }>;
+export type OwnerBinding = StopTarget & Readonly<{ harness: string; sessionDigest: string }>;
 
 export type StopReply =
   | Readonly<{ kind: 'stopped'; stopped: readonly StopTarget[] }>
@@ -168,6 +171,8 @@ export type OwnerSession = Readonly<{
   timeline(): Promise<readonly TimelineEvent[]>;
   say(body: string, clientTxnId: string): Promise<string>;
   accessRequests(): Promise<readonly AccessRequest[]>;
+  /** Authenticated owner's current active bindings; sessionDigest is the server's fingerprint. */
+  bindings(): Promise<readonly OwnerBinding[]>;
   approve(request: AccessRequest, operationId: string): Promise<void>;
   /** Asks the binding's listening-mode control for `mode` and waits for its confirmed state. */
   requestMode(target: StopTarget, mode: ListeningMode): Promise<ModeRequest>;

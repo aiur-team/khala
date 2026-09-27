@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { decodeHarnessCapabilities } from '@khala/contracts/delivery/index';
 import {
-  CLAUDE_INTERACTIVE_PROVEN, CLAUDE_INTERACTIVE_ROUTE, installedClaudeCapabilities, interactiveClaudeCapabilities,
+  CLAUDE_INTERACTIVE_MODE_EVIDENCE_REF, CLAUDE_INTERACTIVE_MODE_EVIDENCE_REVISION,
+  CLAUDE_INTERACTIVE_MODE_PROVEN, CLAUDE_INTERACTIVE_PROVEN, CLAUDE_INTERACTIVE_ROUTE,
+  installedClaudeCapabilities, interactiveClaudeCapabilities,
 } from './interactive';
 import { limits } from '../codex/fakes';
 
@@ -14,8 +17,15 @@ describe('interactive Claude capabilities', () => {
     const capabilities = interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits, proven);
     expect(decodeHarnessCapabilities(capabilities)).toEqual({ ok: true, value: capabilities });
     expect(capabilities).toMatchObject({ support: 'tested', acknowledgement: 'batch_token_next_call', version: '2.1.283' });
-    // Receipt proof says nothing about mode delivery: the modes stay experimental.
-    expect(statuses(capabilities)).toEqual(['experimental', 'experimental', 'experimental']);
+    expect(statuses(capabilities)).toEqual(['proven', 'proven', 'proven']);
+    expect(capabilities.immediateNotification).toBe('unknown');
+    for (const mode of Object.values(capabilities.modes)) {
+      expect(mode).toMatchObject({ evidenceRef: CLAUDE_INTERACTIVE_MODE_EVIDENCE_REF,
+        evidenceRevision: CLAUDE_INTERACTIVE_MODE_EVIDENCE_REVISION, testedVersion: '2.1.283' });
+    }
+    expect(capabilities.modes.steer.reason).toContain('3000 seconds');
+    expect(capabilities.modes.sync.reason).toContain('next native turn');
+    expect(capabilities.modes.async.reason).toContain('hooks do not automatically deliver');
   });
 
   it.each([
@@ -42,9 +52,27 @@ describe('interactive Claude capabilities', () => {
   });
 
   it('ships only the retained exact version and route', () => {
+    const evidence = JSON.parse(readFileSync(new URL('../../../../experiments/internal-mode/listening-modes/claude/evidence.json', import.meta.url), 'utf8')) as {
+      claim: { version: string; route: string; immediateNotification: string; watchWindowSeconds: number };
+      limitations: { unboundedIdleWakeProven: boolean; agentToAgentAutomaticWakeProven: boolean };
+    };
     expect(CLAUDE_INTERACTIVE_PROVEN).toEqual(proven);
+    expect(CLAUDE_INTERACTIVE_MODE_PROVEN).toEqual(['steer', 'sync', 'async'].map(mode =>
+      ({ version: evidence.claim.version, route: evidence.claim.route, mode })));
+    expect(evidence.claim).toMatchObject({ immediateNotification: 'unknown', watchWindowSeconds: 3000 });
+    expect(evidence.limitations).toMatchObject({ unboundedIdleWakeProven: false, agentToAgentAutomaticWakeProven: false });
     expect(interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits).support).toBe('tested');
     expect(interactiveClaudeCapabilities('2.1.284', CLAUDE_INTERACTIVE_ROUTE, limits).support).toBe('experimental');
+  });
+
+  it('never promotes a mode from receipt evidence alone or extends one mode proof to another', () => {
+    const receiptsOnly = interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits, proven, []);
+    expect(statuses(receiptsOnly)).toEqual(['experimental', 'experimental', 'experimental']);
+    const syncOnly = interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits, proven,
+      [{ version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE, mode: 'sync' }]);
+    expect(statuses(syncOnly)).toEqual(['experimental', 'proven', 'experimental']);
+    const noReceipt = interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits, [], CLAUDE_INTERACTIVE_MODE_PROVEN);
+    expect(statuses(noReceipt)).toEqual(['experimental', 'experimental', 'experimental']);
   });
 
   it('keeps an uninspected or uncarriable installed version unproven', () => {
