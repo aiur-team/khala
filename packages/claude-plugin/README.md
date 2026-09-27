@@ -34,10 +34,10 @@ unbound session never has. The adapter still makes every decision for a bound
 session.
 
 Each hook reads Claude's hook JSON and uses its `session_id`, never the cwd. It
-reaches Khala only by running `khala claude <hook|watch|pull|pending> --session <id>`
+reaches Khala only by running `khala claude <hook|watch|pull|pending|terminal-challenge|terminal-complete> --session <id>`
 without a shell. The session ID is the only argv element taken from input, and
 message bodies never enter argv, the environment, logs or errors. None of those
-four ops acknowledges anything. Batch tokens stay in the local Khala server's
+ops acknowledges anything. Batch tokens stay in the local Khala server's
 Claude session adapter, which acknowledges a delivered batch on the agent's
 next Khala call (`khala_send`, `khala_read`, `khala_status` or a mode call). The
 runtime never sees a token, reads or acknowledges the inbox, deduplicates, or
@@ -55,7 +55,7 @@ both up on PATH.
 |---|---|---|---|
 | `PostToolUse` | pulls; the batch is `additionalContext` | nothing | nothing |
 | `Stop` | fallback pull when the turn used no more tools | pulls; `decision: block` with the batch as `reason` | nothing |
-| `Stop` with `stop_hook_active` | never pulls; marks the session idle | same | same |
+| `Stop` with `stop_hook_active` | content-free terminal check; never pulls; marks the session idle | same | same |
 | `Stop` watcher (`asyncRewake`) | wakes an idle session | same | never armed |
 | `UserPromptSubmit` | marks the session busy, cancels the watcher, and pulls only for a watcher's wake | same | no pull |
 | `SessionEnd` | removes the session's hook state | same | same |
@@ -78,8 +78,13 @@ session learns the outcome at its next prompt.
 `steer` is delivered at the next safe boundary, after the running tool finishes.
 It never interrupts. Each pull delivers the bounded batch that Khala hands out
 at that moment, in order, and any overflow waits for the next boundary. A
-delivered `Stop` batch keeps the session active for one continuation. The
-following `stop_hook_active` Stop never pulls, which rules out a stop loop.
+delivered `Stop` batch keeps the session active for one continuation. At either
+native Stop boundary, the hook may ask for a content-free server challenge when
+the exact binding retains a peer batch. Only this installed hook reads the
+per-launch `0600` terminal key and returns its HMAC proof through the CLI's
+stdin. The server validates the one-use challenge before completing a peer turn.
+The hook never sees a batch token, settles access, pulls, acknowledges, or
+returns model context. A direct CLI call without the key cannot complete a turn.
 
 **Idle wake.** Every `Stop` arms one watcher, following the #178 amendment in
 `docs/product/internal-mode/interactive-claude.md`. A fresh owner nonce
@@ -108,8 +113,9 @@ If the session calls `khala_request_channel_access` again, it files a new
 request that waits for the owner's approval; it never gets the stopped one back.
 
 **Timeouts.** Each `khala claude` call is bounded at 10 s, the CLI's own client
-timeout. A synchronous hook makes at most two calls, inside its `30` second
-registration timeout.
+timeout. A Stop boundary can make `hook`, challenge, completion, and pull calls
+inside its `30` second registration timeout. If that limit expires, the peer
+completion remains unproven and the server retains the reservation.
 
 **Session state.** Hook state lives under
 `$XDG_STATE_HOME/khala/claude-hooks/<digest of session ID>/`, with a `0700`

@@ -41,7 +41,10 @@ afterEach(async () => {
 
 type Harness = Awaited<ReturnType<typeof harness>>;
 
-async function harness(options: Readonly<{ mode: OpenCodeControls['mode']; version?: string | null; stateDirectory?: string }>) {
+async function harness(options: Readonly<{
+  mode: OpenCodeControls['mode']; version?: string | null; stateDirectory?: string;
+  onTurnEnd?: (binding: SessionBinding, sessionId: string, terminalId: string) => Promise<void>;
+}>) {
   let state = options.stateDirectory;
   if (state === undefined) {
     const parent = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-opencode-'));
@@ -64,6 +67,7 @@ async function harness(options: Readonly<{ mode: OpenCodeControls['mode']; versi
     version: options.version === undefined ? '1.17.10' : options.version,
     directory: '/work/project',
     failReads: false,
+    onTurnEnd: options.onTurnEnd,
   };
   await start(h);
   return h;
@@ -75,6 +79,7 @@ async function start(h: {
   reads: ReadBatchInput[]; reports: OpenCodeBridgeReport[]; consumer: WakeableInboxConsumer;
   store: OpenCodeBridgeStore; bridge: OpenCodeSessionBridge; version: string | null; directory: string;
   failReads: boolean;
+  onTurnEnd: ((binding: SessionBinding, sessionId: string, terminalId: string) => Promise<void>) | undefined;
 }): Promise<void> {
   // The real listener: hints arrive over its socket through `inbox.notifyListener`.
   const consumer = await h.inbox.acquireListener();
@@ -96,6 +101,7 @@ async function start(h: {
     store: h.store,
     runtime: { version: h.version, directory: h.directory },
     onReport: report => h.reports.push(report),
+    ...(h.onTurnEnd === undefined ? {} : { onTurnEnd: h.onTurnEnd }),
   });
 }
 
@@ -355,6 +361,32 @@ describe('OpenCode session bridge: acknowledgement and piggyback', () => {
 });
 
 describe('OpenCode session bridge: session isolation and untrusted content', () => {
+  it('reports only a native idle event for the current, non-degraded binding generation', async () => {
+    const onTurnEnd = vi.fn(async (...args: [SessionBinding, string, string]) => { void args; });
+    const h = await harness({ mode: 'sync', onTurnEnd });
+    await h.bridge.onEvent({ type: 'session.idle', properties: { sessionID: A } });
+    expect(onTurnEnd).not.toHaveBeenCalled(); // No observed native model session yet.
+    h.opencode.userTurn(A, 'one turn');
+    await modelCall(h);
+    await h.bridge.onEvent({ type: 'session.idle', properties: { sessionID: A } });
+    expect(onTurnEnd).not.toHaveBeenCalled(); // A user message is not terminal assistant evidence.
+    h.opencode.toolResult(A, 'native assistant completion');
+    await h.bridge.onEvent({ type: 'session.idle', properties: { sessionID: B } });
+    await h.bridge.onEvent({ type: 'session.status', properties: { sessionID: A, status: { type: 'idle' } } });
+    expect(onTurnEnd).not.toHaveBeenCalled();
+    await h.bridge.onEvent({ type: 'session.idle', properties: { sessionID: A } });
+    expect(onTurnEnd).toHaveBeenCalledExactlyOnceWith(binding, A, 'msg_0002');
+    await h.bridge.onEvent({ type: 'session.idle', properties: { sessionID: A } });
+    expect(onTurnEnd.mock.calls[1]).toEqual([binding, A, 'msg_0002']); // Retry keeps the same server-fenced ID.
+    h.controls.set({ binding: { ...binding, generation: 4 } });
+    await h.bridge.onEvent({ type: 'session.idle', properties: { sessionID: A } });
+    expect(onTurnEnd).toHaveBeenCalledTimes(2);
+    h.controls.set({ binding });
+    await h.store.write({ ...await h.store.read(), degraded: 'model_drift' });
+    await h.bridge.onEvent({ type: 'session.idle', properties: { sessionID: A } });
+    expect(onTurnEnd).toHaveBeenCalledTimes(2);
+  });
+
   it('never touches session B, its draft or its context while the binding names A', async () => {
     const h = await harness({ mode: 'steer' });
     h.opencode.drafts.set(B, 'unsent draft in B');

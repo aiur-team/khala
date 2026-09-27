@@ -5,6 +5,7 @@ import {
   type SessionBinding, decodeOwnerRouteGrantCommand,
 } from '@khala/contracts/delivery/index';
 import type { BindingPauseStore } from '../store/pause-store';
+import type { StoredEvent } from '../store/channel-store';
 import type { Principal } from './credentials';
 import { type ErrorCode, readJsonObject, sendError, sendJson } from './http';
 import type { RouteContext, RouteSpec } from './server';
@@ -35,6 +36,7 @@ export const AGENT_MODE_ROUTES = {
   set: { method: 'POST', path: '/api/v1/agent/listening-mode', admission: 'authenticated' },
   harness: { method: 'POST', path: '/api/v1/agent/harness', admission: 'authenticated' },
   idleWake: { method: 'POST', path: '/api/v1/agent/idle-wake', admission: 'authenticated' },
+  turnEnd: { method: 'POST', path: '/api/v1/agent/automation-turn-end', admission: 'authenticated' },
 } as const satisfies Record<string, RouteSpec>;
 
 const OWNER_ROUTES: readonly RouteSpec[] = Object.values(OWNER_MODE_ROUTES);
@@ -90,6 +92,13 @@ export type BindingModeOptions = Readonly<{
   idleWake?: (binding: SessionBinding, sessionId: string, notBarred: () => boolean) => Promise<void>;
   /** Native session recorded by an idle Stop hook; absent for busy or unknown sessions. */
   idleSession?: (binding: SessionBinding) => Promise<string | null>;
+  /** An exact native end may finish a pulled peer job; ACK alone cannot. */
+  turnEnd?: (binding: SessionBinding, sessionId: string, channelId: string, terminalId: string | null,
+    notBarred: () => boolean) => Promise<boolean>;
+  /** Local admitted-peer gate used before any native notification from an agent arrival. */
+  peerWake?: (binding: SessionBinding, event: StoredEvent) => boolean;
+  /** Rechecks a durable peer backlog after a terminal turn or resume. */
+  peerPending?: (binding: SessionBinding, channelId: string) => boolean;
 }>;
 
 export type OwnerBindings =
@@ -320,6 +329,25 @@ async function agentRoute(context: RouteContext<Principal>, deps: BindingModeDep
   }
 
   const body = await readJsonObject(context, deps.maxBodyBytes);
+  if (route === AGENT_MODE_ROUTES.turnEnd) {
+    if (!deps.options.turnEnd || !(exactKeys(body, ['v', 'sessionId', 'channelId'])
+      || exactKeys(body, ['v', 'sessionId', 'channelId', 'terminalId'])) || body.v !== 1
+      || typeof body.sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(body.sessionId)
+      || typeof body.channelId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(body.channelId)
+      || (Object.hasOwn(body, 'terminalId') && (typeof body.terminalId !== 'string'
+        || !/^[A-Za-z0-9._:-]{1,256}$/.test(body.terminalId)))) {
+      fail(response, 400, 'invalid_request');
+      return;
+    }
+    const pending = deps.commitAgent(context, () => deps.options.turnEnd!(
+      binding, body.sessionId as string, body.channelId as string,
+      typeof body.terminalId === 'string' ? body.terminalId : null, () => deps.notBarred(binding),
+    ));
+    if (pending === null) return;
+    if (!await pending) { fail(response, 403, 'forbidden'); return; }
+    sendJson(response, 200, { v: 1 });
+    return;
+  }
   if (route === AGENT_MODE_ROUTES.idleWake) {
     if (!deps.options.idleWake || !exactKeys(body, ['v', 'sessionId']) || body.v !== 1
       || typeof body.sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(body.sessionId)) {

@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { isInternalChannelArgument } from '@khala/contracts/internal/command';
+import { INTERNAL_CLAUDE_TERMINAL_KEY_FILE } from '@khala/contracts/internal/descriptor';
 import {
   activeDescriptorPath, ensurePrivateDirectory, removeActiveDescriptor, removeLaunchRecord,
-  writeActiveDescriptor, writeLaunchRecord,
+  writeActiveDescriptor, writeLaunchRecord, writePrivateFile,
 } from '../descriptor/write';
 import { type BindingControl, composeBindingControl } from '../composition/binding-control/index';
 import { composeBindingModes } from '../composition/binding-modes/index';
@@ -229,6 +230,7 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
   let server: LoopbackServer | null = null;
   let bindingControl: BindingControl | null = null;
   let stopping: Promise<void> | null = null;
+  let claudeTerminalKey: Buffer | null = null;
   const timers: NodeJS.Timeout[] = [];
   const handoffCleanups: Array<() => Promise<void>> = [];
   const release = async (): Promise<void> => {
@@ -236,9 +238,12 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
     // Discovery first, so no client can find a server that is going away.
     bindingControl?.close();
     try { removeActiveDescriptor(root); } catch {}
+    try { fs.unlinkSync(path.join(root, INTERNAL_CLAUDE_TERMINAL_KEY_FILE)); } catch {}
     if (opened) try { removeLaunchRecord(opened.directory); } catch {}
     await Promise.all(handoffCleanups.splice(0).map(cleanup => cleanup().catch(() => {})));
     if (server) await server.close().catch(() => {});
+    claudeTerminalKey?.fill(0);
+    claudeTerminalKey = null;
     if (opened) try { opened.handle.close(); } catch {}
     lease.release();
   };
@@ -287,11 +292,16 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       // Claude sessions present the transport capability from `active.json` and join as themselves.
       // One inspection of the installed Claude Code backs both the owner's view and the session route.
       const claudeRoute = await inspectClaudeRoute(options.claudeVersion);
+      claudeTerminalKey = randomBytes(32);
+      writePrivateFile(root, INTERNAL_CLAUDE_TERMINAL_KEY_FILE, claudeTerminalKey.toString('base64url'));
       const modes = composeBindingModes({ handle: channel.handle, store: channel.store,
-        stateDirectory: path.dirname(root), claude: claudeRoute });
+        stateDirectory: path.dirname(root), claude: claudeRoute, claudeTerminalKey });
       const claude = await composeClaudeSession({
         root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
         pause: modes.pause,
+        ...(modes.control.peerPending ? { peerPending: modes.control.peerPending } : {}),
+        peerTerminalChallenge: modes.claudeTerminalChallenge,
+        peerTurnEnd: modes.finishClaudeTurn,
       });
       bindingControl = composeBindingControl({
         handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,

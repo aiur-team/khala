@@ -7,8 +7,8 @@ import type { StoreErrorCode } from './errors';
 import { ROOM_DATABASE_FILE } from './path';
 import { openChannelStore } from './open';
 import {
-  ACTIVATION_SCHEMA_V7_SQL, APPLICATION_ID, CORE_SCHEMA_V1_SQL, DISCOVERY_SCHEMA_V5_SQL, MODE_SCHEMA_V2_SQL, MODE_SCHEMA_V3_SQL, MODE_SCHEMA_V6_SQL,
-  RECEIPT_SCHEMA_V4_SQL, SCHEMA_VERSION,
+  ACKNOWLEDGEMENT_SCHEMA_V8_SQL, ACTIVATION_SCHEMA_V7_SQL, APPLICATION_ID, CORE_SCHEMA_V1_SQL, DISCOVERY_SCHEMA_V5_SQL,
+  MODE_SCHEMA_V2_SQL, MODE_SCHEMA_V3_SQL, MODE_SCHEMA_V6_SQL, RECEIPT_SCHEMA_V4_SQL, SCHEMA_VERSION,
 } from './schema';
 
 const roots: string[] = [];
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 function scratchDirectory(): string {
-  const root = fs.mkdtempSync(path.join('/tmp', 'khala-internal-store-'));
+  const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'khala-internal-store-'));
   roots.push(root);
   fs.chmodSync(root, 0o700);
   return path.join(root, 'channel');
@@ -69,7 +69,7 @@ function snapshot(directory: string): ReadonlyArray<readonly [string, string, nu
   });
 }
 
-function createV1(directory: string, version: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 1): string {
+function createV1(directory: string, version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 = 1): string {
   fs.mkdirSync(directory, { mode: 0o700 });
   const target = file(directory);
   const db = new DatabaseSync(target);
@@ -81,6 +81,7 @@ function createV1(directory: string, version: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 1): st
   if (version >= 5) db.exec(DISCOVERY_SCHEMA_V5_SQL);
   if (version >= 6) db.exec(MODE_SCHEMA_V6_SQL);
   if (version >= 7) db.exec(ACTIVATION_SCHEMA_V7_SQL);
+  if (version >= 8) db.exec(ACKNOWLEDGEMENT_SCHEMA_V8_SQL);
   db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
   db.exec(`PRAGMA user_version = ${version}`);
   db.exec("INSERT INTO participants (participant_id, owner_id, kind, display_name) VALUES ('p1', 'o1', 'agent', 'Agent')");
@@ -111,7 +112,10 @@ describe('openChannelStore', () => {
     const second = open(directory, 'existing');
     expect(second.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all()
       .map(row => (row as { name: string }).name))).toEqual([
-      'admission_operations', 'agent_acknowledgements', 'bindings', 'channel_operations', 'channels', 'control_operations', 'control_records',
+      'admission_operations', 'agent_acknowledgements', 'automation_arrivals', 'automation_releases',
+      'automation_terminal_challenges', 'automation_turn_ends',
+      'bindings', 'channel_operations', 'channels',
+      'control_operations', 'control_records',
       'devices', 'discovery_activations', 'discovery_agents', 'discovery_allowlist', 'discovery_operations', 'discovery_visibility', 'events',
       'issued_agent_batch_members', 'issued_agent_batches', 'issued_agent_releases', 'memberships', 'meta', 'mode_controls',
       'mode_operations', 'participants', 'receipt_fact_events', 'receipt_facts',
@@ -256,6 +260,32 @@ describe('openChannelStore', () => {
       expect(handle.read(db => db.prepare("SELECT name FROM sqlite_schema WHERE name = 'agent_acknowledgements'").get()))
         .toEqual({ name: 'agent_acknowledgements' });
       expect(handle.read(db => db.prepare('SELECT participant_id FROM participants').get())).toEqual({ participant_id: 'p1' });
+      handle.close();
+    }
+  });
+
+  it('migrates v8 causal state atomically without treating old events as new automation roots', () => {
+    for (const stage of ['after_automation_tables', 'before_automation_user_version'] as const) {
+      const directory = scratchDirectory();
+      const target = createV1(directory, 8);
+      const raw = new DatabaseSync(target);
+      raw.exec("INSERT INTO channels VALUES ('c1', NULL, 'p1', 'd1', 0, '2026-09-26T00:00:00.000Z')");
+      raw.exec(`INSERT INTO events (event_id, channel_id, author_participant_id, author_device_id, client_txn_id, canonical_payload, content_digest, received_at)
+        VALUES ('old-event', 'c1', 'p1', 'd1', 't1', X'00', 'digest', '2026-09-26T00:00:00.000Z')`);
+      raw.close();
+      expect(() => openChannelStore({ directory, mode: 'existing', migrationFault: current => {
+        if (current === stage) throw new Error('injected');
+      } })).toThrow(expect.objectContaining({ code: 'transaction_aborted' }));
+      const unchanged = new DatabaseSync(target, { readOnly: true });
+      expect(unchanged.prepare('PRAGMA user_version').get()).toEqual({ user_version: 8 });
+      expect(unchanged.prepare("SELECT name FROM pragma_table_info('events') WHERE name = 'causal_root_id'").all()).toEqual([]);
+      unchanged.close();
+      const handle = open(directory, 'existing');
+      expect(handle.read(db => db.prepare('PRAGMA user_version').get())).toEqual({ user_version: SCHEMA_VERSION });
+      expect(handle.read(db => db.prepare(`SELECT causal_root_id, causal_depth, author_binding_id,
+        author_binding_generation FROM events WHERE event_id = ?`).get('old-event')))
+        .toEqual({ causal_root_id: null, causal_depth: null, author_binding_id: null, author_binding_generation: null });
+      expect(handle.read(db => db.prepare('SELECT count(*) AS n FROM automation_releases').get())).toEqual({ n: 0 });
       handle.close();
     }
   });

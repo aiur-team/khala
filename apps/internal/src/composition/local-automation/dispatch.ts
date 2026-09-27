@@ -1,8 +1,7 @@
-// Dispatch under the local automation profile. Hosted roots receive no local limits and
-// stay `automation_gated`; only this internal composition injects the profile into
-// `createDispatcher`. Dispatch enforces the per-root job, concurrency and busy limits
-// at delivery. `evaluateLocalAutomaticRelease` is the sole enforcer of `maxCausalDepth`
-// and reads the same provider value at release, so both layers share one profile.
+// Contract/reference wrapper for the generic connector dispatcher. Internal
+// production uses the existing pull inbox and native hooks, with its own
+// journaled-admission authority in local-automation/ledger.ts; no synthetic
+// hosted approval command or connector ACK is minted for that path.
 
 import {
   createDispatcher, type DispatchDeps, type DispatchLimits, type Dispatcher,

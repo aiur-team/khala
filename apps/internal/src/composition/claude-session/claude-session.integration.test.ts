@@ -11,6 +11,7 @@ import { createInternalClient } from '@aiur/khala/composition/internal';
 import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
 import { createUnavailableClient } from '@aiur/khala/composition/unavailable';
 import { INTERNAL_DISCOVERY_DIRECTORY } from '@khala/contracts/internal/discovery-descriptor';
+import { INTERNAL_CLAUDE_TERMINAL_KEY_FILE } from '@khala/contracts/internal/descriptor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHook, sessionGranted } from '../../../../../packages/claude-plugin/hooks/lib/runtime.mjs';
 import { webBundleManifest } from '../../launcher/bundle';
@@ -928,6 +929,103 @@ describe('Claude delivery through the internal launcher', () => {
     expect(JSON.parse(await session.run('pending'))).toMatchObject({ ok: false, kind: 'refused' });
   });
 
+  it('reports admitted Claude peer arrival without treating it as human mail', async () => {
+    const recipient = await bound('session-peer-recipient');
+    const senderId = 'session-peer-sender';
+    const [requested] = await serve(recipient.report.descriptorPath, senderId,
+      [['khala_request_channel_access', { target: recipient.channelUrl }]]);
+    expect(requested).toMatchObject({ outcome: 'pending_owner' });
+    await approvePending(recipient.report.origin, recipient.owner);
+    const [joined] = await serve(recipient.report.descriptorPath, senderId,
+      [['khala_channel_access_status', { operationId: requested!.operationId }]]);
+    expect(joined).toMatchObject({ outcome: 'connected' });
+
+    // Current Claude 2.1.283 sync remains experimental. The owner explicitly
+    // enables this exact route for each admitted binding before peer automation.
+    const bindingsPath = `/api/v1/channels/${encodeURIComponent(recipient.report.channelId)}/bindings`;
+    const listed = await call(recipient.report.origin, { path: bindingsPath, headers: recipient.owner });
+    expect(listed.status).toBe(200);
+    const bindings = listed.json.bindings as Array<{ binding: { bindingId: string; generation: number };
+      view: { version: number; support: { sync: { route: string; testedVersion: string;
+        evidenceRevision: string } } } }>;
+    expect(bindings).toHaveLength(2);
+    for (const [index, entry] of bindings.entries()) {
+      const path = `${bindingsPath}/${encodeURIComponent(entry.binding.bindingId)}`;
+      const issuedAt = new Date().toISOString();
+      const set = await call(recipient.report.origin, { method: 'POST', path: `${path}/listening-mode`,
+        headers: recipient.owner, body: { v: 1, commandId: `peer-sync-${index}`,
+          generation: entry.binding.generation, expectedVersion: entry.view.version, requested: 'sync', issuedAt } });
+      expect(set.json).toMatchObject({ outcome: 'applied' });
+      const grant = await call(recipient.report.origin, { method: 'POST', path: `${path}/experimental-route/grant`,
+        headers: recipient.owner, body: { v: 1, commandId: `peer-grant-${index}`,
+          generation: entry.binding.generation, expectedVersion: set.json.version,
+          mode: 'sync', route: entry.view.support.sync.route,
+          harnessVersion: entry.view.support.sync.testedVersion,
+          evidenceRevision: entry.view.support.sync.evidenceRevision, issuedAt } });
+      expect(grant.json).toMatchObject({ outcome: 'applied', view: { effective: 'sync' } });
+    }
+
+    await recipient.post('human causal root');
+    expect(await recipient.run('read')).toContain('human causal root');
+    await recipient.run('status');
+    expect(JSON.parse(await recipient.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(await claude(recipient.report.descriptorPath, 'read', senderId)).toContain('human causal root');
+    await claude(recipient.report.descriptorPath, 'status', senderId);
+    const [sent] = await serve(recipient.report.descriptorPath, senderId,
+      [['khala_send', { message: 'peer causal reply' }]]);
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    const pending = await recipient.run('pending');
+    expect(JSON.parse(pending)).toEqual({ ok: true, kind: 'pending' });
+    expect(pending).not.toContain('peer causal reply');
+
+    const hookRoot = path.join(recipient.parent, 'claude-peer-hooks');
+    const hookDeps = {
+      bound: (sessionId: string) => sessionGranted(path.join(recipient.parent, 'internal'), sessionId),
+      khala: async (op: string, sessionId: string, flags: string[] = [], input = '') => {
+        const stdout = new PassThrough();
+        let output = '';
+        stdout.on('data', chunk => { output += chunk; });
+        const code = await runCli(['claude', op, '--session', sessionId, ...flags], {
+          client: createUnavailableClient(),
+          inbox: vi.fn(async () => { throw new Error('the Claude hook never opens inbox storage'); }),
+          claude: createClaudeSessionClient({ descriptorPath: recipient.report.descriptorPath }),
+          stdin: Readable.from([input]), stdout, stderr: new PassThrough(),
+        });
+        return { code, stdout: output };
+      },
+      stateRoot: hookRoot,
+      terminalKeyPath: path.join(recipient.parent, 'internal', INTERNAL_CLAUDE_TERMINAL_KEY_FILE),
+      sleep: async () => undefined,
+      now: () => Date.now(),
+      nonce: () => 'peer-stop-nonce',
+      parentAlive: () => true,
+    };
+    const stop = (continued: boolean) => runHook('stop', JSON.stringify({
+      hook_event_name: 'Stop', session_id: 'session-peer-recipient', stop_hook_active: continued,
+    }), hookDeps);
+
+    // The plain CLI has no proof. The first native Stop pulls the peer release;
+    // only the follow-up Stop can authenticate completion of that retained batch.
+    expect(JSON.parse(await recipient.run('terminal-challenge'))).toMatchObject({ kind: 'empty' });
+    const firstStop = await stop(false);
+    expect(firstStop.stdout).toContain('peer causal reply');
+    const challenge = JSON.parse(await recipient.run('terminal-challenge')) as { kind: string; nonce: string };
+    expect(challenge).toMatchObject({ kind: 'terminal_challenge' });
+    expect((await hookDeps.khala('terminal-complete', 'session-peer-recipient', [],
+      JSON.stringify({ nonce: challenge.nonce, proof: 'A'.repeat(43) }))).code).toBe(3);
+    const [nextSent] = await serve(recipient.report.descriptorPath, senderId,
+      [['khala_send', { message: 'second peer causal reply' }]]);
+    expect(nextSent).toMatchObject({ kind: 'accepted' });
+    expect(JSON.parse(await recipient.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    const secondStop = await stop(true);
+    expect(secondStop).toEqual({ stdout: '', stderr: '', exitCode: 0 });
+    expect(JSON.parse(await recipient.run('terminal-challenge'))).toMatchObject({ kind: 'empty' });
+    // Completion releases the active slot; the ordinary next call acknowledges
+    // the previous batch before the watcher may announce the queued event.
+    await recipient.run('status');
+    expect(JSON.parse(await recipient.run('pending'))).toEqual({ ok: true, kind: 'pending' });
+  });
+
   it('delivers at the next PostToolUse under steer only after the owner grants the experimental route', async () => {
     const session = await bound('session-granted', async () => EXPERIMENTAL_CLAUDE);
     const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;
@@ -939,6 +1037,7 @@ describe('Claude delivery through the internal launcher', () => {
       bound: sessionId => sessionGranted(path.join(session.parent, 'internal'), sessionId),
       khala: async op => ({ code: 0, stdout: await session.run(op) }),
       stateRoot: path.join(session.parent, 'claude-hooks'),
+      terminalKeyPath: path.join(session.parent, 'internal', INTERNAL_CLAUDE_TERMINAL_KEY_FILE),
       sleep: async () => undefined,
       now: () => Date.now(),
       nonce: () => 'nonce',

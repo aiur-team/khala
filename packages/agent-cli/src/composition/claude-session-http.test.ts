@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { BINDINGS, batch, directory, fakeServices, type FakeServices } from '../fixtures/claude.js';
 import { createClaudeSessionAdapter } from './claude-session.js';
 import { CLAUDE_SESSION_PATH, createClaudeSessionClient, handleClaudeSessionRequest } from './claude-session-http.js';
@@ -28,12 +29,22 @@ function workspace(): string {
 type Launch = Readonly<{ origin: string; credential: string; logs: string[]; server: Server }>;
 
 /** One launch of the local server: fresh port, fresh credential, same durable state directory. */
-async function launch(stateDirectory: string, services: FakeServices, credential: string): Promise<Launch> {
+async function launch(
+  stateDirectory: string, services: FakeServices, credential: string,
+  terminal?: Readonly<{
+    onTerminalChallenge(binding: SessionBinding, sessionId: string, batchToken: string): Promise<{
+      nonce: string; bindingId: string; generation: number; channelId: string;
+    } | null>;
+    onTurnEnd(binding: SessionBinding, sessionId: string, terminalId: string,
+      batchToken: string, nonce: string, proof: string): Promise<boolean>;
+  }>,
+): Promise<Launch> {
   const adapter = createClaudeSessionAdapter({
     authenticator: { authenticate: async presented => presented === credential ? { principalId: 'principal-a' } : null },
     sessions: directory(),
     state: await openClaudeSessionState(stateDirectory),
     services: services.services,
+    ...(terminal === undefined ? {} : terminal),
   });
   const logs: string[] = [];
   const server = createServer(async (request, response) => {
@@ -170,6 +181,48 @@ describe('Claude session adapter over the loopback server', () => {
     await expect(client.hook('s-3')).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
   });
 
+  it('reports a pulled sync batch only at a later content-free terminal boundary', async () => {
+    const root = workspace();
+    const services = fakeServices();
+    services.services(BINDINGS['s-1']);
+    const read = services.reads.get('binding-1')!;
+    read.next.push({ kind: 'batch', batch: batch('peer-token', '{"body":"peer release"}') });
+    const completed: Array<readonly [string, string, string, string]> = [];
+    const nonce = 'A'.repeat(32);
+    const proof = `${'B'.repeat(42)}A`;
+    const launched = await launch(path.join(root, 'state'), services, 'J'.repeat(43), {
+      async onTerminalChallenge(binding, _sessionId, token) {
+        return token === 'peer-token' ? { nonce, bindingId: binding.bindingId, generation: binding.generation, channelId: 'channel-1' } : null;
+      },
+      async onTurnEnd(binding, sessionId, terminalId, batchToken, challengedNonce, presentedProof) {
+        if (challengedNonce !== nonce || presentedProof !== proof) return false;
+        completed.push([binding.bindingId, sessionId, terminalId, batchToken]);
+        return true;
+      },
+    });
+    const descriptor = path.join(root, 'active.json');
+    writeDescriptor(descriptor, launched);
+    const client = createClaudeSessionClient({ descriptorPath: descriptor });
+    await expect(client.hook('s-1', { stop: true })).resolves.toMatchObject({ kind: 'hook' });
+    expect(completed).toEqual([]);
+    await expect(client.pull('s-1')).resolves.toMatchObject({ kind: 'batch' });
+    expect(completed).toEqual([]);
+    await expect(client.terminalChallenge('s-3')).resolves.toEqual({ kind: 'refused', code: 'session_not_bound' });
+    await expect(client.terminalChallenge('s-1')).resolves.toEqual({
+      kind: 'terminal_challenge', nonce, bindingId: 'binding-1', generation: 1, channelId: 'channel-1',
+    });
+    expect(completed).toEqual([]);
+    await expect(client.terminalComplete('s-1', { nonce, proof: `${'C'.repeat(42)}A` }))
+      .resolves.toEqual({ kind: 'refused', code: 'unavailable' });
+    await expect(client.terminalComplete('s-1', { nonce, proof })).resolves.toEqual({ kind: 'terminal' });
+    expect(completed).toHaveLength(1);
+    expect(completed[0]?.slice(0, 2)).toEqual(['binding-1', 's-1']);
+    expect(completed[0]?.[2]).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(completed[0]?.[3]).toBe('peer-token');
+    expect(read.calls).toEqual([{ bindingId: 'binding-1', maxBytes: 4096 }]);
+    expect(JSON.stringify(launched.logs)).not.toContain('peer-token');
+  });
+
   it('resolves a rotated descriptor on the next call of a long-lived client', async () => {
     const root = workspace();
     const services = fakeServices();
@@ -272,6 +325,18 @@ describe('Claude session adapter over the loopback server', () => {
     await expect(handleClaudeSessionRequest(adapter, {
       authorization, body: { v: 1, op: 'hook', sessionId: 's-1', stop: true }, readBudgetBytes: 1,
     })).resolves.toMatchObject({ status: 200 });
+    await expect(handleClaudeSessionRequest(adapter, {
+      authorization, body: { v: 1, op: 'terminal_challenge', sessionId: 's-1' }, readBudgetBytes: 1,
+    })).resolves.toEqual({ status: 200, body: { kind: 'empty' } });
+    await expect(handleClaudeSessionRequest(adapter, {
+      authorization, body: { v: 1, op: 'terminal_challenge', sessionId: 's-1', stop: true }, readBudgetBytes: 1,
+    })).resolves.toEqual({ status: 400, body: { kind: 'refused', code: 'invalid_request' } });
+    await expect(handleClaudeSessionRequest(adapter, {
+      authorization, body: { v: 1, op: 'terminal_complete', sessionId: 's-1', nonce: 'A'.repeat(32), proof: `${'B'.repeat(42)}A` }, readBudgetBytes: 1,
+    })).resolves.toEqual({ status: 200, body: { kind: 'refused', code: 'unavailable' } });
+    await expect(handleClaudeSessionRequest(adapter, {
+      authorization, body: { v: 1, op: 'terminal_complete', sessionId: 's-1', nonce: 'A' }, readBudgetBytes: 1,
+    })).resolves.toEqual({ status: 400, body: { kind: 'refused', code: 'invalid_request' } });
     for (const hook of [{ stop: false }, { stop: 'yes' }, { final: true }]) {
       await expect(handleClaudeSessionRequest(adapter, { authorization, body: { v: 1, op: 'watch', sessionId: 's-1', ...hook }, readBudgetBytes: 1 }))
         .resolves.toEqual({ status: 400, body: { kind: 'refused', code: 'invalid_request' } });

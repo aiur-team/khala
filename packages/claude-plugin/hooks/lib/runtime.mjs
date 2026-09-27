@@ -9,7 +9,8 @@
 // `Stop` passes `--stop`, so the turn-ending boundary settles regardless of the throttle.
 
 import { execFile } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -132,7 +133,8 @@ export function defaultDependencies(env = process.env, command = 'khala') {
   const internalRoot = path.join(stateHome, 'khala', 'internal');
   return {
     bound: sessionId => sessionEngaged(internalRoot, sessionId),
-    khala: (op, sessionId, flags) => runKhala(command, op, sessionId, flags),
+    khala: (op, sessionId, flags, input) => runKhala(command, op, sessionId, flags, input),
+    terminalKeyPath: path.join(internalRoot, 'claude-terminal.key'),
     stateRoot: path.join(stateHome, 'khala', 'claude-hooks'),
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     now: () => Date.now(),
@@ -212,13 +214,13 @@ function processAlive(pid) {
  * body ever travels in argv or the environment, and stdin is closed. Error text is
  * never forwarded, only whether the call answered.
  */
-function runKhala(command, op, sessionId, flags = []) {
+function runKhala(command, op, sessionId, flags = [], input = '') {
   return new Promise(resolve => {
     execFile(command, ['claude', op, '--session', sessionId, ...flags], {
       encoding: 'utf8', timeout: KHALA_CALL_TIMEOUT_MS, maxBuffer: MAX_FRAME_BYTES * 2, windowsHide: true,
     }, (error, stdout) => {
       resolve({ code: error ? (typeof error.code === 'number' ? error.code : -1) : 0, stdout: typeof stdout === 'string' ? stdout : '' });
-    }).stdin?.end();
+    }).stdin?.end(input);
   });
 }
 
@@ -228,6 +230,47 @@ function parseLine(stdout) {
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
   } catch {
     return null;
+  }
+}
+
+/** The per-launch hook-only proof key; refuse symlinks, foreign owners, and loose modes. */
+async function terminalKey(file) {
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  let handle;
+  try {
+    handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600
+      || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || stat.size !== 43) return null;
+    const text = await handle.readFile('utf8');
+    if (!/^[A-Za-z0-9_-]{43}$/u.test(text)) return null;
+    const key = Buffer.from(text, 'base64url');
+    return key.length === 32 && key.toString('base64url') === text ? key : null;
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+/** One native Stop may finish a server-issued peer batch; no message or token crosses this hook. */
+async function terminalProbe(deps, sessionId) {
+  const key = await terminalKey(deps.terminalKeyPath);
+  if (key === null) return;
+  try {
+    const result = await deps.khala('terminal-challenge', sessionId);
+    const challenge = result.code === 0 ? parseLine(result.stdout) : null;
+    if (challenge?.ok !== true || challenge.kind !== 'terminal_challenge'
+      || Object.keys(challenge).length !== 6 || !/^[A-Za-z0-9_-]{32}$/u.test(challenge.nonce)
+      || !validSessionId(challenge.bindingId) || !Number.isSafeInteger(challenge.generation)
+      || challenge.generation < 0 || !validSessionId(challenge.channelId)) return;
+    const proof = createHmac('sha256', key).update(JSON.stringify([
+      'khala.claude.terminal.v1', challenge.nonce, sessionId,
+      challenge.bindingId, challenge.generation, challenge.channelId,
+    ])).digest('base64url');
+    await deps.khala('terminal-complete', sessionId, [], JSON.stringify({ nonce: challenge.nonce, proof }));
+  } finally {
+    key.fill(0);
   }
 }
 
@@ -417,11 +460,15 @@ async function postToolUse(input, deps) {
 /**
  * `sync` delivery, and the `steer` fallback when the turn used no more tools. A
  * delivered batch keeps the session active for one continuation; the following
- * `stop_hook_active` Stop never pulls and marks the session idle, which is the
- * only point a watcher may wake it.
+ * `stop_hook_active` Stop makes one content-free terminal check, never pulls,
+ * and marks the session idle, which is the only point a watcher may wake it.
  */
 async function stop(input, state, deps) {
   if (input.stopHookActive) {
+    // The preceding Stop may have pulled a batch only after its hook-state call.
+    // This check observes that retained token after Claude's continuation ends;
+    // it cannot settle access, pull, acknowledge, or return model context.
+    await terminalProbe(deps, input.sessionId);
     await state.setActivity('idle');
     return { stdout: '', stderr: '', exitCode: 0 };
   }
@@ -429,6 +476,7 @@ async function stop(input, state, deps) {
   await state.consumeWake();
   // The session may idle after this boundary, so it settles access whatever the throttle.
   const hook = await hookState(deps, input.sessionId, 'hook', true);
+  await terminalProbe(deps, input.sessionId);
   // An access notice alone also keeps the session for one continuation, so the model can tell the user.
   const { delivered, result } = await deliver('stop', input.event, input.sessionId, deps,
     (_event, text) => JSON.stringify({ decision: 'block', reason: text }), hook, delivering(hook));

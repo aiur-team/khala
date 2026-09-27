@@ -71,7 +71,7 @@ export type AgentRelease = Readonly<{
 
 export type AgentReleaseRead =
   | Readonly<{ kind: 'page'; releases: readonly AgentRelease[]; nextCursor: string; caughtUp: boolean }>
-  | Readonly<{ kind: 'held'; reason: 'paused' | 'mode_unavailable' }>
+  | Readonly<{ kind: 'held'; reason: 'paused' | 'mode_unavailable' | 'peer_busy' }>
   | Readonly<{ kind: 'rejected'; code: string }>
   | Readonly<{ kind: 'unavailable' }>;
 
@@ -793,18 +793,26 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
       clientTxnId,
       content: content.value,
       receivedAt: new Date(options.clock()).toISOString(),
+      ...(principal?.kind === 'binding' ? { sourceBinding: principal.binding } : {}),
     }));
     if (result === null) return;
     if (result.kind === 'stored' || result.kind === 'replayed') {
       sendJson(response, result.kind === 'stored' ? 201 : 200, { state: result.kind, event: eventView(result.event) });
-      // An idle TUI may never call a Khala MCP tool. A stored human message is
-      // enough to notify its session; the hook still performs the shared pull.
-      if (result.kind === 'stored' && principal?.kind === 'human'
+      // An idle TUI may never call a Khala MCP tool. Peer arrivals pass the
+      // local admitted-peer budget under the recipient's Stop barrier before a
+      // content-free native notice; a human arrival has its existing route.
+      if (result.kind === 'stored' && (principal?.kind === 'human' || principal?.kind === 'binding')
         && options.stop?.activatedBindings && options.bindingModes?.idleWake && options.bindingModes.idleSession) {
         try {
           const bindings = options.stop.activatedBindings(params.channelId as RoomId);
           if (bindings !== 'unavailable') for (const binding of bindings) {
             if (binding.harness !== 'codex' || barrier.barred(binding)) continue;
+            if (principal?.kind === 'binding') {
+              if (!options.bindingModes.peerPending) continue;
+              const reserved = barrier.run(binding, () => options.bindingModes!.peerPending!(
+                binding, params.channelId!));
+              if (reserved.kind !== 'ran' || reserved.value !== true) continue;
+            }
             void options.bindingModes.idleSession(binding).then(sessionId => {
               if (sessionId === null || !options.bindingModes?.idleWake) return;
               const pending = barrier.run(binding, () => options.bindingModes!.idleWake!(
