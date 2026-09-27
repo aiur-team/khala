@@ -31,13 +31,15 @@ export const CLAUDE_INTERACTIVE_PROVEN: readonly ClaudeProvenRoute[] = [
 export type ClaudeProvenMode = ClaudeProvenRoute & Readonly<{ mode: ListeningMode }>;
 export const CLAUDE_INTERACTIVE_MODE_PROVEN: readonly ClaudeProvenMode[] = [
   { version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE, mode: 'steer' },
-  { version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE, mode: 'sync' },
   { version: '2.1.283', route: CLAUDE_INTERACTIVE_ROUTE, mode: 'async' },
 ];
 
 const IDLE = 'Idle agents receive messages only at their next turn.';
 const WATCHER = 'Idle wake works only while the Stop-armed watcher is live, for at most 3000 seconds after arming;'
   + ' after it expires, messages wait until the next native turn. Proof covers human-authored releases only.';
+const SYNC_REARM = 'Native Stop delivery and a live-watcher idle wake were observed on Claude Code 2.1.283.'
+  + ' Sync remains experimental until a native, automation-fenced rearm delivers after watcher timeout without a user prompt.'
+  + ' After the 3000-second watcher expires, messages wait until the next native turn. Proof covers human-authored releases only.';
 
 /**
  * Declares the interactive route for one inspected Claude Code version. An exact
@@ -66,9 +68,11 @@ export function interactiveClaudeCapabilities(
     status: 'experimental',
     route: `${route}-${mode}`,
     testedVersion: version,
-    evidenceRef: CLAUDE_INTERACTIVE_EVIDENCE_REF,
-    evidenceRevision: CLAUDE_INTERACTIVE_EVIDENCE_REVISION,
-    reason,
+    evidenceRef: tested && version === '2.1.283' && mode === 'sync'
+      ? CLAUDE_INTERACTIVE_MODE_EVIDENCE_REF : CLAUDE_INTERACTIVE_EVIDENCE_REF,
+    evidenceRevision: tested && version === '2.1.283' && mode === 'sync'
+      ? CLAUDE_INTERACTIVE_MODE_EVIDENCE_REVISION : CLAUDE_INTERACTIVE_EVIDENCE_REVISION,
+    reason: tested && version === '2.1.283' && mode === 'sync' ? SYNC_REARM : reason,
   });
   const modeSupport = (mode: ListeningMode): ModeSupport => tested
     && modeProven.some(pair => pair.version === version && pair.route === route && pair.mode === mode)

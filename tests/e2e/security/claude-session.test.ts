@@ -10,8 +10,8 @@
 // session's own channel. An unbound bystander session must carry neither.
 //
 // This world's launcher claims the exact Claude Code version with a proven native
-// route: `pull` and `read` deliver with batch-token acknowledgement, and the default
-// `sync` request is effective. The approved canary is the
+// route: `pull` and `read` deliver with batch-token acknowledgement, while the
+// default `sync` request requires an owner's experimental grant. The approved canary is the
 // positive control: it reaches the granted session's own delivery surfaces, and only
 // those. The pending canary reaches nothing, and the bystander carries neither. The
 // granted session's own sends landing in its channel, and only there, show the probes
@@ -120,24 +120,24 @@ describe('Claude session surfaces never carry content the session was not releas
     // The hook pull runs first and delivers it; the agent's own read then acknowledges it.
     expect(carrying).toContain(`claude-op:pull ${GRANTED}`);
     const granted = (surface: string) => seed.capture.text(`${surface} ${GRANTED}`);
-    // The exact-version sync route is effective; its content-free hook may arm
-    // the finite watcher, but neither it nor the bystander can see pending content.
+    // The exact-version sync observation remains experimental until timeout rearm
+    // proof. Without an owner grant, hooks cannot arm its finite watcher.
     for (const surface of ['claude-op:hook', 'claude-op:watch']) {
-      expect(granted(surface), surface).toContain('"kind":"hook","effective":"sync","watchSeconds":3000');
+      expect(granted(surface), surface).toContain('"kind":"hook","effective":null,"watchSeconds":null');
     }
     // Surfaces are driven in sorted order, so `khala_mode_get` reads before `khala_mode_set` writes.
     for (const surface of ['claude-op:mode', 'claude-mcp-tool:khala_mode_get']) {
       const text = granted(surface).replaceAll('\\"', '"');
-      expect(text, surface).toContain('"kind":"mode","requested":"sync","effective":"sync","effectiveReason":null');
-      expect(text, surface).toContain('"support":{"steer":"proven","sync":"proven","async":"proven"}');
+      expect(text, surface).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
+      expect(text, surface).toContain('"support":{"steer":"proven","sync":"experimental","async":"proven"}');
       expect(text, surface).toContain('"acknowledgement":"batch_token_next_call"');
     }
-    // The agent may request the proven mode on its own (decision 42).
+    // The agent may request a mode, but cannot grant its own experimental route.
     const set = granted('claude-mcp-tool:khala_mode_set').replaceAll('\\"', '"');
-    expect(set).toContain('"kind":"applied","requested":"sync","effective":"sync","effectiveReason":null,"version":2');
+    expect(set).toContain('"kind":"applied","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required","version":2');
     const status = granted('claude-mcp-tool:khala_status').replaceAll('\\"', '"');
-    expect(status).toContain('"kind":"mode","requested":"sync","effective":"sync","effectiveReason":null');
-    expect(status).toContain('"support":{"steer":"proven","sync":"proven","async":"proven"}');
+    expect(status).toContain('"kind":"mode","requested":"sync","effective":null,"effectiveReason":"experimental_grant_required"');
+    expect(status).toContain('"support":{"steer":"proven","sync":"experimental","async":"proven"}');
   });
 
   it('the granted binding is real: its sends reach its own channel only, and the bystander\'s reach nothing', async () => {
