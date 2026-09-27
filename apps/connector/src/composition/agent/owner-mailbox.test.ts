@@ -65,6 +65,7 @@ describe('protected hosted owner mailbox endpoint', () => {
     const routes = createOwnerMailboxRoutes({ auth, gateway, capabilities, store: state.store,
       clock: () => T0, authoritySecret: 'mailbox-test-secret-at-least-thirty-two-bytes',
       inspectOwnerMembership: async () => ({ kind: 'joined' }),
+      lookupAgentDevice: async () => null,
     });
     const poll = routes.agent.find(route => route.path.endsWith('/poll'))!;
     const produced = await poll.handle(new Request('https://khala.aiur.team' + poll.path));
