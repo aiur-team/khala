@@ -12,6 +12,7 @@ import { createDeviceAttestationRoutes, createLazyDeviceAttestationRoutes } from
 import { createInviteEvidenceReader } from './invite-evidence';
 import { createMatrixAgentAdmission } from './matrix-admission';
 import { createLazyOwnerMailboxRoutes, createOwnerMailboxRoutes } from '../owner-mailbox/routes';
+import { createLazyOwnerDeviceProofRoutes, createMatrixBrowserDeviceVerifier, createOwnerDeviceProofRoutes } from './owner-device-proof';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -104,12 +105,22 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       authoritySecret: active.env.invitationHmacSecret,
       inspectOwnerMembership: active.matrix.inspectOwnerMembership,
     });
-    return { bootstrap, attestation, ownerMailbox };
+    const ownerDeviceProof = createOwnerDeviceProofRoutes({
+      auth: active.auth, gateway: active.matrix.gateway, store: active.store,
+      capabilities: bootstrap.capabilities, clock: active.clock,
+      inspectOwnerMembership: active.matrix.inspectOwnerMembership,
+      verifyBrowserDevice: createMatrixBrowserDeviceVerifier({
+        homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
+      }),
+    });
+    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof };
   };
   const bootstrap = createLazyBootstrapRoutes(() => compose().bootstrap);
   return {
     ...bootstrap,
     deviceAttestation: createLazyDeviceAttestationRoutes(() => compose().attestation),
     ownerMailbox: createLazyOwnerMailboxRoutes(() => compose().ownerMailbox),
+    ownerDeviceProof: createLazyOwnerDeviceProofRoutes(() => compose().ownerDeviceProof),
   };
 }

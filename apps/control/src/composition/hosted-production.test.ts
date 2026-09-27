@@ -40,6 +40,7 @@ describe('generated hosted production composition', () => {
       expect(descriptor.status).toBe(503);
       expect(consent.status).toBe(503);
       expect((await route(new Request(`${origin}/api/agent/device-attestation/challenge`))).status).toBe(503);
+      expect((await route(new Request(`${origin}/api/human/owner-device-proof/challenge?room_id=!room:matrix.example.test&device_id=OWNER`))).status).toBe(503);
     }
   });
 
@@ -58,5 +59,7 @@ describe('generated hosted production composition', () => {
     expect(consent.status).toBe(303); // signed-out browser goes through the real OIDC entry
     expect(consent.headers.get('location')).toContain('/api/human/auth/login');
     expect(consent.headers.get('cache-control')).toBe('no-store');
+    const ownerProof = await route(new Request(`${origin}/api/human/owner-device-proof/challenge?room_id=!room:matrix.example.test&device_id=OWNER`));
+    expect(ownerProof.status).toBe(401);
   });
 });

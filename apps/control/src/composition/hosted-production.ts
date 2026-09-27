@@ -35,12 +35,14 @@ export function registerHostedProductionRoutes(
     },
   });
   return Object.freeze([
-    ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human }),
+    ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
+      ownerDeviceProof: () => bootstrap.ownerDeviceProof.human }),
     ...registerClosureHandlers(),
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
       deviceAttestation: () => bootstrap.deviceAttestation,
       ownerMailbox: () => bootstrap.ownerMailbox.agent,
+      ownerDeviceProof: () => bootstrap.ownerDeviceProof.agent,
     }),
   ]);
 }
