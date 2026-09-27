@@ -199,7 +199,7 @@ describe('Codex native CLI notification delivery', () => {
     expect(selected.inbox.deliveries[0]!.payload).toEqual(bytes);
     expect(selected.cli.argv).toEqual([[
       'queue', '--thread', 'session-b', '--message',
-      'Khala release rel-b-7 is ready in the local inbox. Run khala listen.',
+      'Khala: channel messages are waiting. Continue.',
     ]]);
     expect(JSON.stringify(selected.cli.argv)).not.toContain('quarterly numbers');
   });

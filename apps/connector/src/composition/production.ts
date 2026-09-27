@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { access, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import {
   createDiscovery, createHttpAdmission, createLoopbackOwnership, createPairingOwnership,
@@ -26,6 +28,12 @@ function productionLimits() {
   const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
   if (!limits.ok) throw new Error('invalid_production_limits');
   return limits.value;
+}
+
+const execFileAsync = promisify(execFile);
+export function supportedBrowserVersion(output: string): boolean {
+  const match = /^(?:Chromium|Google Chrome(?: for Testing)?) (\d+)\./u.exec(output.trim());
+  return match !== null && Number(match[1]) >= 150 && Number(match[1]) <= 153;
 }
 
 /**
@@ -64,7 +72,9 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   for (const candidate of [...systemBrowsers, ...(input.chromiumExecutablePath ? [input.chromiumExecutablePath] : [])]) {
     try {
       await access(candidate, constants.X_OK);
-      if ((await stat(candidate)).isFile()) { chromiumExecutablePath = candidate; break; }
+      if (!(await stat(candidate)).isFile()) continue;
+      const version = await execFileAsync(candidate, ['--version'], { timeout: 3_000, maxBuffer: 1024 });
+      if (supportedBrowserVersion(version.stdout)) { chromiumExecutablePath = candidate; break; }
     } catch { /* Try the next installed executable. */ }
   }
   if (!chromiumExecutablePath) throw new Error('chromium_unavailable_run_khala_setup');
@@ -103,6 +113,15 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let polling: Promise<void> | null = null;
   let remoteDenied = false;
+  let deliveryStopped = false;
+  let activeSends = 0;
+  const sendWaiters: Array<() => void> = [];
+
+  async function quiesceDelivery(): Promise<void> {
+    deliveryStopped = true;
+    await subscription?.stop();
+    if (activeSends > 0) await new Promise<void>(resolve => { sendWaiters.push(resolve); });
+  }
 
   function capabilityFor(next: SessionBinding) {
     if (!signer) throw new Error('production_signer_missing');
@@ -161,18 +180,18 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       roomId: session.roomId as never, bindingId: next.bindingId });
     const stop = createLocalClosureFence({ storage, binding: next, roomId: session.roomId,
       stateDirectory: sessionDirectory, clock: Date.now,
-      quiesce: async () => { await subscription?.stop(); },
+      quiesce: quiesceDelivery,
     });
     mailbox = createProductionOwnerMailbox({ appOrigin: input.appOrigin, binding: next, signer: activeSigner,
       capability: () => capabilityFor(next).ensure(), controls, stop: request => stop.stop(request),
-      onRevoked: async () => { remoteDenied = true; },
+      onRevoked: async () => { remoteDenied = true; deliveryStopped = true; },
     });
     const activeMailbox = mailbox;
     subscription = await startProductionSubscription({
       binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
       storage, matrix: substrate,
       guard: async () => {
-        if (closed || remoteDenied) return 'revoked';
+        if (closed || remoteDenied || deliveryStopped) return 'revoked';
         const authority = await activeMailbox.authorize();
         if (authority !== 'active') return authority === 'unavailable' ? 'unavailable' : 'revoked';
         return activeTrust.ensure();
@@ -262,7 +281,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     return {
       ports,
       async send(command: Readonly<{ bindingId: string | null; clientTxnId: string; body: string }>) {
-        if (closed || remoteDenied || !binding || !subscription || command.bindingId !== binding.bindingId) {
+        if (closed || remoteDenied || deliveryStopped || !binding || !subscription || command.bindingId !== binding.bindingId) {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
         }
         const held = await readBinding().catch(() => null);
@@ -274,13 +293,21 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         }
         const substrate = matrix.substrate();
         if (!substrate) return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
+        if (deliveryStopped || remoteDenied || closed) {
+          return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
+        }
+        activeSends += 1;
         try {
           const sent = await substrate.send(command.clientTxnId, command.body);
           return { kind: 'accepted' as const, clientTxnId: command.clientTxnId, eventId: sent.eventId };
         } catch { return { kind: 'outcome_unknown' as const, clientTxnId: command.clientTxnId }; }
+        finally {
+          activeSends -= 1;
+          if (activeSends === 0) for (const wake of sendWaiters.splice(0)) wake();
+        }
       },
       async status() {
-        if (closed || remoteDenied || !binding || !subscription) return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
+        if (closed || remoteDenied || deliveryStopped || !binding || !subscription) return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
         const held = await readBinding().catch(() => null);
         if (!held || !sameSessionBinding(held, binding) || !matrix.substrate() || subscription.state().kind !== 'live'
           || !mailbox || !ownerTrust || await mailbox.authorize() !== 'active' || await ownerTrust.ensure() !== 'active') {

@@ -2,9 +2,15 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { openProductionConnector } from './production';
+import { openProductionConnector, supportedBrowserVersion } from './production';
 
 describe('installed hosted connector composition', () => {
+  it('admits only the browser majors proven with the pinned driver', () => {
+    expect(supportedBrowserVersion('Chromium 150.0.7871.128')).toBe(true);
+    expect(supportedBrowserVersion('Google Chrome for Testing 153.0.8010.12')).toBe(true);
+    expect(supportedBrowserVersion('Chromium 120.0.0.0')).toBe(false);
+    expect(supportedBrowserVersion('Firefox 153.0')).toBe(false);
+  });
   it('pins one durable proof key to the same provider-named native session across restart', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-hosted-production-'));
     const input = { stateDirectory: directory, appOrigin: 'https://khala.aiur.team',
