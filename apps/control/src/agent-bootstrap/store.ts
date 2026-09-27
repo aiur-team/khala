@@ -21,6 +21,11 @@ export type BindingLookup =
   | Readonly<{ kind: 'found'; record: BindingRecord }>
   | Readonly<{ kind: 'absent' | 'unavailable' }>;
 
+/** A binding located by ID, with the owner, room and participant it lives under. */
+export type LocatedBindingLookup =
+  | Readonly<{ kind: 'found'; record: BindingRecord; address: BindingAddress }>
+  | Readonly<{ kind: 'absent' | 'unavailable' }>;
+
 export type SessionClaim =
   | Readonly<{ kind: 'claimed' }>
   | Readonly<{ kind: 'conflict'; agentParticipantId: ParticipantId }>
@@ -49,6 +54,7 @@ export type AgentBindingStore = Readonly<{
   claimSession(input: ParticipantClaimInput): Promise<SessionClaim>;
   putParticipant(input: BindingAddress & Readonly<{ expectedBindingId: BindingId | null; record: BindingRecord }>): Promise<BindingWrite>;
   findBinding(bindingId: BindingId | string): Promise<BindingLookup>;
+  locateBinding(bindingId: BindingId | string): Promise<LocatedBindingLookup>;
   updateBinding(bindingId: BindingId | string, change: (record: BindingRecord) => BindingRecord | null): Promise<BindingMutation>;
 }>;
 
@@ -426,7 +432,7 @@ export function createAgentBindingStore(deps: Readonly<{
     });
   }
 
-  return { findParticipant, claimSession, putParticipant, findBinding, updateBinding };
+  return { findParticipant, claimSession, putParticipant, findBinding, locateBinding, updateBinding };
 }
 
 function decodeBindingRecord(value: unknown): BindingRecord | null {

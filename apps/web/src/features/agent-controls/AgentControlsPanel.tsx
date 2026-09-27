@@ -78,7 +78,7 @@ function requestedPolicyLabel(view: AgentControlsView): string | null {
   return `Requested: review, ${action} (v${view.policy.requestedVersion})${suffix}`;
 }
 
-function EvidenceLines({ evidence }: { evidence: EvidenceDetail }) {
+export function EvidenceLines({ evidence }: { evidence: EvidenceDetail }) {
   return (
     <ul className="agent-controls__evidence-list">
       <li>Route: {evidence.route}</li>

@@ -23,6 +23,7 @@ export const API = {
   timeline: (channelId: string) => `/api/v1/channels/${encodeURIComponent(channelId)}/timeline`,
   messages: (channelId: string) => `/api/v1/channels/${encodeURIComponent(channelId)}/messages`,
   hints: (channelId: string) => `/api/v1/channels/${encodeURIComponent(channelId)}/hints`,
+  receipts: (channelId: string) => `/api/v1/channels/${encodeURIComponent(channelId)}/receipts`,
 } as const;
 
 /** The human authority a browser session was bootstrapped with. */

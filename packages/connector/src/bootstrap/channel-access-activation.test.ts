@@ -510,6 +510,61 @@ describe('channel-access activation', () => {
       });
     }
 
+    describe('guards the resumed binding before activating', () => {
+      const capabilityFor = (binding: SessionBinding): AdmissionOutcome => ({
+        kind: 'admitted',
+        binding,
+        capability: {
+          token: 'adapter-capability-secret',
+          scope: ['publish_own', 'receive_released', 'ack_delivery'],
+          bindingId: binding.bindingId,
+          generation: binding.generation,
+          expiresAt: T0 + 3_600_000,
+        },
+      });
+
+      async function resumingWith(binding: SessionBinding) {
+        const h = await crashedInAdmitted();
+        h.ports.redeem = { ...h.ports.redeem, resume: async () => capabilityFor(binding) };
+        return h;
+      }
+
+      it('refuses a binding that is not the same session binding, and never activates', async () => {
+        for (const other of [
+          { ...bindingFor('device_1'), bindingId: 'bnd_2' as never },
+          { ...bindingFor('device_1'), ownerId: 'owner_2' as never },
+          { ...bindingFor('device_1'), sessionId: 'thread-2' },
+        ]) {
+          const h = await resumingWith(other);
+          const activations = h.devices.activations;
+          expect(await h.activate()).toEqual({ kind: 'repair_required', reason: 'exchange_conflict' });
+          expect(h.devices.activations).toBe(activations);
+          expect(h.store.record()).toMatchObject({ phase: 'repair_required', binding: bindingFor('device_1') });
+        }
+      });
+
+      it('refuses a binding for another device or generation, and never activates', async () => {
+        for (const other of [bindingFor('device_2'), bindingFor('device_1', 4)]) {
+          const h = await resumingWith(other);
+          const activations = h.devices.activations;
+          expect(await h.activate()).toEqual({ kind: 'repair_required', reason: 'admission_refused' });
+          expect(h.devices.activations).toBe(activations);
+          expect(h.store.record()).toMatchObject({ phase: 'repair_required', binding: bindingFor('device_1') });
+        }
+      });
+
+      it('refuses to resume with a key other than the one the operation was bound to', async () => {
+        const h = await crashedInAdmitted();
+        const resumes = h.service.state.resumes.length;
+        const activations = h.devices.activations;
+        h.ports.signer = createProofSigner(generateKeyPairSync('ed25519').privateKey, () => T0);
+        expect(h.ports.signer.jkt).not.toBe(h.store.record().proofKeyThumbprint);
+        expect(await h.activate()).toEqual({ kind: 'repair_required', reason: 'exchange_conflict' });
+        expect(h.service.state.resumes).toHaveLength(resumes);
+        expect(h.devices.activations).toBe(activations);
+      });
+    });
+
     it('fails closed once the seven-day recovery window has passed', async () => {
       for (const setup of [crashedInAdmitted, failedActivation]) {
         const h = await setup();

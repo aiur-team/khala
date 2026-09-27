@@ -488,7 +488,12 @@ describe('listing-reference resolution', () => {
     h.callers.set('b1-gen5', { ownerId: 'owner_b', principal: 'agent_b', generation: 5 });
     expect(await h.handlers.resolveListingRef(caller('b2', h.callers), ref)).toEqual({ kind: 'unavailable' });
     expect(await h.handlers.resolveListingRef(caller('b1-gen5', h.callers), ref)).toEqual({ kind: 'unavailable' });
-    expect(await h.handlers.resolveListingRef(caller('b1', h.callers), `${ref.slice(0, -2)}AA`)).toEqual({ kind: 'unavailable' });
+    // Swap one character in the middle of the token for a different one so the
+    // tampered ref can never collapse back to the original.
+    const at = ref.length - 11;
+    const tampered = `${ref.slice(0, at)}${ref[at] === 'A' ? 'B' : 'A'}${ref.slice(at + 1)}`;
+    expect(tampered).not.toBe(ref);
+    expect(await h.handlers.resolveListingRef(caller('b1', h.callers), tampered)).toEqual({ kind: 'unavailable' });
     expect(await h.handlers.resolveListingRef(caller('b1', h.callers), 'dlr_garbage')).toEqual({ kind: 'unavailable' });
     expect(JSON.stringify([...h.store.records.entries()])).toBe(before);
   });

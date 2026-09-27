@@ -11,8 +11,14 @@ import type {
   AccessRequestResult, AgentClientPort, AgentStatus, SendRefusalCode, SendResult,
 } from '../cli/types.js';
 import { plainObject, validIdentifier } from '../cli/validation.js';
-import { activateInternalAccess } from './internal-activation.js';
-import { type InternalDiscoverySelection, selectInternalDiscovery } from './internal-discovery.js';
+import { activateInternalAccess, activationPaths, releaseRevokedGrant } from './internal-activation.js';
+import { createInternalChannelCreate } from './internal-channel-create.js';
+import {
+  type LocalHarnessCapabilities, type LocalHarnessObservation, createInternalListeningMode,
+} from './internal-listening-mode.js';
+import { internalSessionDigest } from './internal-session.js';
+import { CliError } from '../cli/errors.js';
+import { type InternalDiscoverySelection, createInternalDiscoveryClient, selectInternalDiscovery } from './internal-discovery.js';
 
 // The descriptor-backed local client for `--internal-descriptor <path>`. The
 // only stable input is the path: every operation reopens that exact file, so a
@@ -91,6 +97,13 @@ export type InternalClientOptions = Readonly<{
   timeoutMs?: number;
   /** Epoch-ms clock for the activation proofs and grant checks; tests pin it to the server's. */
   clock?: (() => number) | undefined;
+  /**
+   * The released capability claim of the harness running this binding. Absent means
+   * none can be inspected here, so every mode projects as unusable and hooks stay silent.
+   */
+  capabilities?: LocalHarnessCapabilities;
+  /** What that harness shows about itself, reported so the owner sees the same claim. */
+  observation?: LocalHarnessObservation;
 }>;
 
 type Reply = Readonly<{ status: number; body: unknown }>;
@@ -113,6 +126,13 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     descriptorPath: options.descriptorPath,
     activePath: path.resolve(path.dirname(options.descriptorPath), '..', '..', INTERNAL_ACTIVE_DESCRIPTOR_FILE),
   });
+
+  // Create intents ride the discovery principal; the owner's decision, not this client, creates a channel.
+  const channelCreate = createInternalChannelCreate(createInternalDiscoveryClient({
+    select: discoverySelection,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  }));
 
   async function request(
     descriptor: Readonly<{ origin: string }>, capability: string, target: string,
@@ -146,8 +166,29 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
     return binding.bindingId === descriptor.bindingId ? binding : 'revoked' as const;
   }
 
+  const modes = createInternalListeningMode({
+    descriptor: () => {
+      const descriptor = current();
+      return descriptor !== null && isGrantedDescriptor(descriptor) ? descriptor : null;
+    },
+    call: (descriptor, target, init, signal) => request(descriptor, descriptor.bindingCapability, target, init, signal),
+    capabilities: options.capabilities ?? (async () => null),
+    ...(options.observation ? { observation: options.observation } : {}),
+  });
+
   return {
     async connect() { return { kind: 'unavailable' }; },
+
+    async listeningMode(signal) {
+      const status = await modes.status(signal);
+      if (status === null) throw new CliError('transport_unavailable');
+      return status;
+    },
+
+    listeningModeControl: { read: modes.read, set: modes.set },
+
+    // The internal server binds a session by its digest, never the harness's own ID.
+    storedSessionId: internalSessionDigest,
 
     async status(signal) {
       const descriptor = current();
@@ -197,12 +238,23 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
         const joined = await joinWithDiscovery(selection, channelUrl, signal,
           (capability, target, init) => request(selection, capability, target, init, signal), answered);
         if (joined.kind !== 'status' || answered.operationId === null || !ACTIVATABLE.has(joined.outcome)) return joined;
+        // A grant whose binding the owner's Stop revoked would refuse the approved binding's write.
+        const { grantPath } = activationPaths(options.descriptorPath);
+        const held = readInternalDescriptor(grantPath);
+        if (held.ok && isGrantedDescriptor(held.value)) {
+          let binding;
+          try { binding = await heldBinding(held.value, signal); } catch { binding = 'unavailable' as const; }
+          if (binding === 'revoked') releaseRevokedGrant(grantPath, held.value.bindingId);
+        }
         // Approved: finish the binding now. Every step is journaled, so a later `join` resumes it.
+        // A `connected` answer is checked too: after a launcher restart the descriptor holds no grant.
         const activated = await activateInternalAccess({
           descriptorPath: options.descriptorPath, descriptor: selection.descriptor, origin: selection.origin,
           operationId: answered.operationId, repair: joined.outcome === 'repair_required', fetch: options.fetch, signal, clock: options.clock,
         });
-        return { kind: 'status', outcome: activated === 'unavailable' ? joined.outcome : activated };
+        if (activated !== 'unavailable') return { kind: 'status', outcome: activated };
+        // Never report `connected` for a binding this descriptor does not hold.
+        return joined.outcome === 'connected' ? { kind: 'unavailable' } : joined;
       }
       const descriptor = current();
       if (descriptor === null) return { kind: 'unavailable' };
@@ -218,6 +270,10 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
       return { kind: 'refused', code: 'discovery_required' };
     },
 
+
+    requestChannelCreate: channelCreate.requestChannelCreate,
+    channelCreateStatus: channelCreate.channelCreateStatus,
+
     async listChannels() { return { kind: 'unavailable' }; },
     async listAgents() { return { kind: 'unavailable' }; },
   };
@@ -225,8 +281,11 @@ export function createInternalClient(options: InternalClientOptions): AgentClien
 
 type AccessOutcome = (typeof ACCESS_REQUEST_OUTCOMES)[number];
 
-/** Owner-approved answers that still owe a local binding. `connected` is already acknowledged. */
-const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'repair_required']);
+/**
+ * Owner-approved answers that still owe a local binding. `connected` is included: its
+ * capability is launch-scoped, so a resumed launcher's descriptor may no longer hold it.
+ */
+const ACTIVATABLE: ReadonlySet<string> = new Set(['approved', 'connecting', 'connected', 'repair_required']);
 
 /** A 401 means the discovery capability was rotated or is unknown here: reissue it. */
 const DISCOVERY_REJECTED = 'discovery_rejected' as const;

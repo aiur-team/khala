@@ -202,7 +202,8 @@ export type ListeningDisplay = Readonly<{
   sessionActive: boolean;
   /** Why no mode or grant action is possible right now, or `null`. */
   inactiveReason: string | null;
-  requested: ListeningMode;
+  /** `null` when the harness has no proven or experimental mode to request. */
+  requested: ListeningMode | null;
   effective: ListeningEffectiveLabel;
   effectiveReason: string | null;
   initialReason: string | null;
@@ -257,9 +258,13 @@ export function bindingShortId(bindingId: BindingId, siblings: readonly BindingI
 
 /** `<CLI name> <version> · <binding-short-id>`, repeated on every listening surface. */
 export function sessionLabelFor(snapshot: AgentControlsSnapshot, siblings: readonly BindingId[]): string {
-  const name = HARNESS_NAMES[snapshot.binding.harness] ?? snapshot.binding.harness;
-  const version = snapshot.capabilities?.version ?? 'version unknown';
-  return `${name} ${version} · ${bindingShortId(snapshot.binding.bindingId, siblings)}`;
+  return agentLabelFor(snapshot.binding.harness, snapshot.capabilities?.version ?? null, snapshot.binding.bindingId, siblings);
+}
+
+/** The same label from its parts, for surfaces that hold no full snapshot. */
+export function agentLabelFor(harness: string, version: string | null, bindingId: BindingId, siblings: readonly BindingId[]): string {
+  const name = HARNESS_NAMES[harness] ?? harness;
+  return `${name} ${version ?? 'version unknown'} · ${bindingShortId(bindingId, siblings)}`;
 }
 
 const IDENTIFIER_REF = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -329,7 +334,7 @@ export function grantStateFor(
   return { kind: 'none' };
 }
 
-const MISSING_PROOF = 'Khala has not proved the composed delivery route on this version.';
+export const MISSING_PROOF = 'Khala has not proved the composed delivery route on this version.';
 const BLOCKED_WITHOUT_WRAPPER = 'Native delivery unavailable; wrapper-based support is awaiting product-operator approval.';
 
 function supportDescription(support: ModeSupport, grant: GrantState, harnessName: string): string {
@@ -353,6 +358,7 @@ function supportDescription(support: ModeSupport, grant: GrantState, harnessName
 
 const EFFECTIVE_REASONS: Readonly<Record<string, string>> = {
   capabilities_unavailable: 'Current harness capabilities are unavailable.',
+  no_requested_mode: 'No listening mode is requested: this harness has no proven or experimental mode.',
   support_experimental: 'The requested route is experimental and has no current grant.',
   support_unsupported: 'The requested route is unsupported on this version/session.',
   support_unknown: 'Support for the requested route is unknown on this version/session.',
@@ -374,7 +380,15 @@ function inactiveReasonFor(snapshot: AgentControlsSnapshot, viewerOwnerId: Owner
   return null;
 }
 
-function lastChangeLabelFor(listening: ListeningModeSnapshot, isViewerOwned: boolean, sessionLabel: string): string {
+/** Who made the current version's change; `lastChange` covers records written before actors were stored. */
+export function lastChangeLabelFor(
+  listening: Readonly<{
+    view: Pick<ListeningModeSnapshot['view'], 'version' | 'lastChangedBy'>;
+    lastChange: ListeningModeSnapshot['lastChange'];
+  }>,
+  isViewerOwned: boolean,
+  sessionLabel: string,
+): string {
   const version = listening.view.version;
   const recorded = listening.view.lastChangedBy;
   const actor = recorded.kind !== 'unknown'
@@ -498,7 +512,7 @@ export function projectListening(
   };
 }
 
-const MODE_WARNINGS: Readonly<Record<RouteGrantKind, string>> = {
+export const MODE_WARNINGS: Readonly<Record<RouteGrantKind, string>> = {
   experimental_route: 'Enabling this experimental route lets you select it for this binding only. '
     + 'It does not enable hard cancel.',
   hard_cancel: 'Hard cancel interrupts the agent mid-turn. A tool call already in progress may have partly '
@@ -546,7 +560,7 @@ const SUBMISSION_TEXT = {
 
 /** Text for the permanently mounted listening status region. */
 export function listeningStatusText(display: ListeningDisplay): string {
-  const parts = [`Requested: ${display.requested} · Effective: ${display.effective}`];
+  const parts = [`Requested: ${display.requested ?? 'none'} · Effective: ${display.effective}`];
   if (display.effective !== display.requested && display.effectiveReason) parts.push(display.effectiveReason);
   const submission = display.submission;
   if (submission.kind === 'refused') parts.push(`Your choice (${submission.attempted}) was refused: ${submission.reason}.`);

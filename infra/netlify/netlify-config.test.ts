@@ -143,9 +143,16 @@ test('every response carries a baseline security header set, including frame-anc
   const catchAll = headersFor(config, '/*');
   assert.equal(catchAll['X-Frame-Options'], 'DENY');
   assert.equal(catchAll['Referrer-Policy'], 'same-origin');
-  const csp = String(catchAll['Content-Security-Policy'] ?? '');
-  assert.match(csp, /default-src 'self'/);
-  assert.match(csp, /frame-ancestors 'none'/);
+});
+
+test('the CSP comes from the web build\'s _headers, never a static netlify.toml policy that cannot name the homeserver', async () => {
+  const config = await readConfig();
+  for (const block of config.headers ?? []) {
+    assert.ok(!('Content-Security-Policy' in (block.values ?? {})), `[[headers]] for = "${block.for}" must not declare a static CSP`);
+  }
+  const viteConfig = await readFile(resolve(repoRoot, 'apps/web/vite.config.ts'), 'utf8');
+  assert.match(viteConfig, /fileName: '_headers', source: renderNetlifyHeaders\(homeserverOrigin\)/);
+  assert.match(viteConfig, /plugins: \[netlifyHeaders\(env\.PUBLIC_HOMESERVER_ORIGIN\)\]/);
 });
 
 test('env.schema.json keeps public and server variables in disjoint, non-overlapping groups', async () => {

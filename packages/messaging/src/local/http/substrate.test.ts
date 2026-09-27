@@ -111,6 +111,23 @@ describe('HttpRoomSubstrate requests', () => {
     expect(substrate.transport.current()).toEqual({ kind: 'auth_failed' });
   });
 
+  it('reads receipt evidence under the session credential and never turns a refusal into an empty read', async () => {
+    const body = { v: 1, facts: [], groups: [] };
+    const replies = [json(200, body), json(403, { error: { code: 'forbidden' } }), json(503, { error: { code: 'unavailable' } }), 'throw' as const];
+    const { substrate, calls } = harness(() => replies.shift()!);
+    expect(await substrate.receiptEvidence(CHANNEL)).toEqual({ kind: 'ok', body });
+    expect(calls[0]).toMatchObject({
+      url: `${ORIGIN}/api/v1/channels/ch_one/receipts`, method: 'GET', credentials: 'same-origin', headers: { [REQUEST_SECRET_HEADER]: SECRET },
+    });
+    expect(await substrate.receiptEvidence(CHANNEL)).toEqual({ kind: 'rejected', status: 403 });
+    expect(await substrate.receiptEvidence(CHANNEL)).toEqual({ kind: 'unavailable' });
+    expect(await substrate.receiptEvidence(CHANNEL)).toEqual({ kind: 'unavailable' });
+
+    const refused = harness(() => json(401, { error: { code: 'unauthenticated' } }));
+    expect(await refused.substrate.receiptEvidence(CHANNEL)).toEqual({ kind: 'auth_failed' });
+    expect(refused.states).toEqual([{ kind: 'auth_failed' }]);
+  });
+
   it('decodes the session human', async () => {
     const { substrate } = harness(() => json(200, { human: { ownerId: 'owner_1', participantId: 'participant_h', deviceId: 'device_h' } }));
     expect(await substrate.session()).toEqual({ kind: 'ok', human: { ownerId: 'owner_1', participantId: 'participant_h', deviceId: 'device_h' } });

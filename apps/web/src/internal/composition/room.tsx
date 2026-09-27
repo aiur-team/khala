@@ -2,16 +2,31 @@ import { useEffect, useMemo, useRef, useSyncExternalStore, type Ref } from 'reac
 import type { RoomId } from '@khala/contracts/messaging/index';
 import type { LocalTransport, LocalTransportState } from '@khala/messaging/local/http/index';
 import { createChannelController } from '../../features/channel/controller';
+import { type ReceiptEvidencePort, createReceiptEvidenceController } from '../../features/receipt-evidence/controller';
 import type { ChannelUiPort } from '../../features/channel/ports';
 import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import type { HumanRouteContext } from '../../composition/human/application';
+import { ListeningControl } from '../controls/ListeningControl';
+import { createListeningController } from '../controls/listening-controller';
+import type { ListeningPort } from '../controls/listening-port';
+import { StopControl } from '../controls/StopControl';
+import { createStopController } from '../controls/stop-controller';
+import type { BindingStopPort } from '../controls/stop-port';
+import { MakeExternalEntry, linkedSendReason, useJourneySummary } from '../make-external/ChannelEntry';
+import type { MakeExternalPort } from '../make-external/port';
 import { createPendingSendStore } from './pending-store';
 
-// Agent presence, listening mode and Stop belong to their own tickets; they
-// arrive here as injected capabilities, never as UI built by this entry.
+/** The binding Stop control's port and the channel URL a replacement agent joins with. */
+export type LocalStopCapability = Readonly<{
+  port: BindingStopPort;
+  channelUrl(roomId: string): string;
+}>;
+
+// Agent presence and listening mode belong to their own tickets; they arrive
+// here as injected capabilities, never as UI built by this entry.
 const unavailablePresence: ChannelUiPort = {
   async agents() { throw new Error('agent presence unavailable'); },
   subscribeAgents: () => () => undefined,
@@ -109,11 +124,38 @@ export function SessionEnded({ roomId, headingRef }: {
   );
 }
 
-export function LocalRoom({ context, roomId, transport }: {
+/** Receipt projections do not raise channel hints, so evidence is also reread on this interval. */
+export const EVIDENCE_POLL_MS = 5_000;
+
+export function LocalRoom({
+  context, roomId, transport, evidencePort, evidencePollMs = EVIDENCE_POLL_MS, stop, listening, makeExternal = null,
+  onMakeExternal = () => undefined,
+}: {
   context: HumanRouteContext;
   roomId: RoomId;
   transport: LocalTransport;
+  evidencePort?: ReceiptEvidencePort;
+  evidencePollMs?: number;
+  stop?: LocalStopCapability;
+  /** Owner listening-mode and pause control; absent means the page shows none. */
+  listening?: ListeningPort;
+  /** The Make-external journey port; without it the page offers no such action. */
+  makeExternal?: MakeExternalPort | null;
+  onMakeExternal?: () => void;
 }) {
+  const journey = useJourneySummary(makeExternal, roomId);
+  const evidence = useMemo(
+    () => (evidencePort ? createReceiptEvidenceController(evidencePort, roomId) : undefined),
+    [evidencePort, roomId],
+  );
+  useEffect(() => {
+    if (!evidence) return undefined;
+    const timer = setInterval(() => void evidence.refresh(), evidencePollMs);
+    return () => {
+      clearInterval(timer);
+      evidence.dispose();
+    };
+  }, [evidence, evidencePollMs]);
   const state = useSyncExternalStore(transport.subscribe, transport.current, transport.current);
   const timeline = useMemo(
     () => createTimelineController(context.room, roomId, { generation: context.generation, pageSize: 50 }),
@@ -123,6 +165,19 @@ export function LocalRoom({ context, roomId, transport }: {
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
   );
+  const stopController = useMemo(() => (stop ? createStopController(stop.port, roomId) : null), [stop, roomId]);
+  useEffect(() => () => stopController?.dispose(), [stopController]);
+  const listeningController = useMemo(() => (listening ? createListeningController(listening, roomId) : null), [listening, roomId]);
+  // An agent can change its own mode, and Stop removes agents, so the owner's view is reread on the evidence interval.
+  useEffect(() => {
+    if (!listeningController) return undefined;
+    void listeningController.refresh();
+    const timer = setInterval(() => void listeningController.refresh(), evidencePollMs);
+    return () => {
+      clearInterval(timer);
+      listeningController.dispose();
+    };
+  }, [evidencePollMs, listeningController]);
   const pendingStore = useMemo(() => createPendingSendStore(context.principal.ownerId, roomId), [context.principal.ownerId, roomId]);
   useEffect(() => () => {
     timeline.dispose();
@@ -135,6 +190,11 @@ export function LocalRoom({ context, roomId, transport }: {
   useEffect(() => {
     if (state.kind === 'live' && (phase === 'unavailable' || phase === 'partial')) void timeline.loadOlder();
   }, [phase, state.kind, timeline]);
+  // New or older rows may carry evidence already projected: reread with them.
+  const items = useSyncExternalStore(timeline.subscribe, () => timeline.getSnapshot().items, () => timeline.getSnapshot().items);
+  useEffect(() => {
+    void evidence?.refresh();
+  }, [evidence, items]);
   const viewer = context.participant?.() ?? null;
   if (viewer === null) {
     return (
@@ -157,13 +217,20 @@ export function LocalRoom({ context, roomId, transport }: {
             roomPort={context.room}
             roomId={roomId}
             viewer={viewer}
-            sendBlockedReason={sendBlockedReason(state)}
+            sendBlockedReason={linkedSendReason(journey) ?? sendBlockedReason(state)}
             pendingStore={pendingStore}
+            {...(evidence ? { evidence } : {})}
           />
         </>
       )}
       renderReview={() => null}
-      renderControls={() => null}
+      renderControls={() => (
+        <>
+          {listeningController ? <ListeningControl controller={listeningController} /> : null}
+          {stop && stopController ? <StopControl controller={stopController} replacementAccessUrl={stop.channelUrl(roomId)} /> : null}
+          <MakeExternalEntry summary={journey} onOpen={onMakeExternal} />
+        </>
+      )}
     />
   );
 }

@@ -413,6 +413,40 @@ describe('durable dispatch storage', () => {
       .toEqual(['reconcile-claimed', 'reconcile-dispatching', 'reconcile-outcome_unknown']);
   });
 
+  it('reports dispatcher-recorded dispatch as an unknown outcome in the recovery view', async () => {
+    const { state, storage } = await fresh();
+    const dispatch = createConnectorDispatchStorage(storage);
+    const states: DispatchRecord['state'][] = [
+      'queued', 'claimed', 'quarantined', 'rejected', 'dispatching', 'accepted', 'outcome_unknown', 'completed',
+      'failed', 'cancelled', 'abandoned',
+    ];
+    const releases: Awaited<ReturnType<typeof durableRelease>>[] = [];
+    for (const [index, stateValue] of states.entries()) {
+      releases.push(await durableRelease(storage, `recover-${stateValue}`, `root-${index}`));
+    }
+    // Only the dispatcher's own record carries this evidence: nothing is written to `receipts`.
+    await dispatch.ledger.transact(tx => {
+      for (const [index, stateValue] of states.entries()) {
+        const releaseValue = releases[index]!;
+        const claimed = !['queued', 'quarantined', 'rejected'].includes(stateValue);
+        tx.put({
+          ...queuedRecord(releaseValue.job, tx.nextSeq()),
+          state: stateValue,
+          attemptId: claimed ? `attempt-${index}` : null,
+          workerId: claimed ? 'worker-before-crash' : null,
+          claimedAt: claimed ? '2026-09-18T10:02:00Z' : null,
+          snapshot: claimed ? snapshotFor(releaseValue.job) : null,
+          reserved: claimed,
+          abandonedBy: stateValue === 'abandoned' ? 'owner-authorization-1' as DispatchRecord['abandonedBy'] : null,
+        });
+      }
+    });
+
+    const report = await recoverConnectorStorage(await reopen(storage, state));
+    expect(report.outcomeUnknownReleases).toEqual(['recover-dispatching', 'recover-accepted', 'recover-outcome_unknown']);
+    expect(report.undispatchedReleases).toEqual(['recover-queued', 'recover-claimed', 'recover-quarantined', 'recover-rejected']);
+  });
+
   it('queues only the exact durable release while preserving matching record updates', async () => {
     const { storage } = await fresh();
     const dispatch = createConnectorDispatchStorage(storage);

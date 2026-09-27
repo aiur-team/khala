@@ -30,7 +30,7 @@ export const MAX_PAGE_PAYLOAD_BYTES = 2 * 1024 * 1024;
 /** Per-release JSON overhead counted against the page budget on top of the payload. */
 const RELEASE_OVERHEAD_BYTES = 1024;
 /** The whole body of an oversized placeholder; the real body is never carried. */
-export const OVERSIZED_PLACEHOLDER_BODY = 'oversized: message body withheld; read it from the channel timeline by event';
+export const OVERSIZED_PLACEHOLDER_BODY = 'oversized: message body withheld; read it by event from the channel timeline, which shows you what was said since your admission';
 
 export type PauseRead = boolean | 'unavailable';
 
@@ -103,7 +103,7 @@ export function createInternalReleaseFeed(input: InternalReleaseFeedInput): Agen
         if (paused) return { kind: 'held', reason: 'paused' };
         const control = input.listeningModes.read({ bindingId: binding.bindingId, generation: binding.generation });
         if (control.kind === 'unavailable') return { kind: 'held', reason: 'mode_unavailable' };
-        // `sync` is the default until the binding's mode is first set.
+        // Wakes on every message unless the binding requested `async`; an absent or null request wakes too.
         const modeWakes = control.kind === 'absent' || control.control.requested !== 'async';
         const page = input.store.readSubscription({ channelId, binding, cursor, limit });
         if (page.kind === 'rejected') return { kind: 'rejected', code: page.code };

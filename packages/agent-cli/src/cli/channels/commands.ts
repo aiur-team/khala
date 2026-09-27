@@ -2,6 +2,7 @@ import type { BindingId } from '@khala/contracts/delivery/index';
 import { CliError } from '../errors.js';
 import { write } from '../runtime.js';
 import type { CliCommand, CliDependencies } from '../types.js';
+import { createChannel, createChannelStatus } from './create/commands.js';
 import {
   ChannelAccessService, accessExitCode, defaultOperationId, parseAccessTarget, validOperationArgument,
 } from './access.js';
@@ -19,6 +20,8 @@ export const channelsCommand: CliCommand = {
   async run(args, deps) {
     const [subcommand, ...rest] = args;
     if (subcommand === 'request-access') return requestAccess(rest, deps);
+    if (subcommand === 'create') return createChannel(rest, deps);
+    if (subcommand === 'create-status') return createChannelStatus(rest, deps);
     if (subcommand === 'access-status') return accessStatus(rest, deps);
     if (subcommand !== 'list') throw new CliError('invalid_arguments');
     const flags = parseFlags(rest, ['--origin', '--cursor']);
@@ -51,12 +54,17 @@ async function requestAccess(args: readonly string[], deps: CliDependencies): Pr
   const target = parseAccessTarget(rawTarget);
   if (target === null) throw new CliError('invalid_arguments');
   const flags = parseFlags(rest, ['--operation', '--origin']);
-  const operationId = flags.get('--operation') ?? defaultOperationId(target);
+  const named = flags.get('--operation');
+  const operationId = named ?? defaultOperationId(target);
   const origin = flags.get('--origin') ?? null;
   if (!validOperationArgument(operationId) || (origin !== null && !validOriginArgument(origin))) {
     throw new CliError('invalid_arguments');
   }
-  const output = await new ChannelAccessService(deps.client).request({ target, operationId, origin }, deps.signal);
+  const access = new ChannelAccessService(deps.client);
+  // Without `--operation`, asking again after the owner's Stop files the revoked operation's successor.
+  const output = named === undefined
+    ? await access.requestAgain({ target, operationId, origin }, deps.signal)
+    : await access.request({ target, operationId, origin }, deps.signal);
   await write(deps.stdout, JSON.stringify(output) + '\n');
   return accessExitCode(output);
 }

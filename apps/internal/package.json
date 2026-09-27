@@ -10,13 +10,14 @@
     "test:browser": "node --import tsx --test 'src/**/*.browser.spec.ts'"
   },
   "dependencies": {
+    "@aiur/khala": "workspace:*",
     "@khala/connector": "workspace:*",
     "@khala/contracts": "workspace:*",
+    "@khala/harnesses": "workspace:*",
     "@khala/messaging": "workspace:*",
     "@khala/policy": "workspace:*"
   },
   "devDependencies": {
-    "@aiur/khala": "workspace:*",
     "@playwright/test": "1.63.0",
     "libsodium-wrappers": "0.8.4",
     "tsx": "4.20.6"

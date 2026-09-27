@@ -27,8 +27,12 @@ const cliClient: CliDependencies['client'] = {
   async listAgents() { throw new Error('documentation checks should not list agents'); },
 };
 
-// Commands whose bare name is not a complete invocation are exercised with their documented subcommand.
-const DOCUMENTED_INVOCATIONS: Readonly<Record<string, readonly string[]>> = { mode: ['mode', 'get'] };
+// Commands whose bare name is not a complete invocation are exercised with their documented arguments.
+const DOCUMENTED_INVOCATIONS: Readonly<Record<string, readonly string[]>> = {
+  mode: ['mode', 'get'],
+  internal: ['internal', 'discovery', '--harness', 'codex', '--session', 'codex-thread-id'],
+  join: ['--internal-descriptor', '/khala/discovery/descriptor.json', 'join', 'http://127.0.0.1:4000/c/channel'],
+};
 
 async function invokeCli(command: string) {
   const io = cliStreams();
@@ -70,12 +74,12 @@ describe('fallback skill documentation', () => {
 
   it('only documents agent CLI commands recognized by the CLI parser', async () => {
     const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
-    const documentedCommands = [...skill.matchAll(/`khala ([a-z][a-z-]*)(?:\s|`)/g)]
+    const documentedCommands = [...skill.matchAll(/`khala (?:--internal-descriptor <[^>]+> )?([a-z][a-z-]*)(?:\s|`)/g)]
       .map(match => match[1]!)
       .filter((command, index, commands) => commands.indexOf(command) === index)
       .sort();
 
-    expect(documentedCommands).toEqual(['codex-hook', 'connect', 'listen', 'mode', 'read', 'send', 'status']);
+    expect(documentedCommands).toEqual(['codex-hook', 'connect', 'internal', 'join', 'listen', 'mode', 'read', 'send', 'status']);
     for (const command of documentedCommands) {
       const result = await invokeCli(command);
       expect(result.error, `documented command "${command}" was rejected by runCli`).not.toContain('invalid_arguments');
@@ -84,6 +88,17 @@ describe('fallback skill documentation', () => {
     const unknown = await invokeCli('not-a-real-command');
     expect(unknown.exitCode).toBe(2);
     expect(JSON.parse(unknown.error)).toEqual({ ok: false, error: 'invalid_arguments' });
+  });
+
+  it('tells Codex agents to discover and join as their own session', () => {
+    const skill = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+    const section = skill.split(/^## /m).find(part => part.startsWith('Codex session in internal mode'));
+    expect(section, 'SKILL.md has a Codex internal-mode session section').toBeDefined();
+    const normalized = section!.replace(/\s+/g, ' ');
+
+    expect(normalized).toContain('khala internal discovery --harness codex --session "$CODEX_THREAD_ID"');
+    expect(normalized).toContain('khala --internal-descriptor <descriptorPath> join <channel-url>');
+    expect(normalized).toMatch(/Never omit `--session` or pass a different session ID.*`not_connected`/);
   });
 
   it('documents the explicit async pull and token lifecycle without idle-delivery claims', () => {

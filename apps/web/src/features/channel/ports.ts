@@ -1,10 +1,10 @@
-import type { ReceiptKind } from '@khala/contracts/delivery/index';
+import type { AcknowledgementSupport, ReceiptKindV2 } from '@khala/contracts/delivery/index';
 import type { ParticipantId, RoomId } from '@khala/contracts/messaging/ids';
 
 export type AgentConnectionState = 'connected' | 'stale' | 'offline' | 'unknown';
 
 export type AgentPresenceReceipt = Readonly<{
-  kind: ReceiptKind;
+  kind: ReceiptKindV2;
   observedAt: string;
 }>;
 
@@ -17,6 +17,8 @@ export type AgentPresence = Readonly<{
   /** Human-readable capability copy, including honest values such as "Unsupported". */
   routeLabel: string;
   lastReceipt: AgentPresenceReceipt | null;
+  /** The route's closed batch-token capability, carried unchanged from the connector snapshot. */
+  acknowledgement: AcknowledgementSupport;
 }>;
 
 export type AgentPresenceSnapshot = Readonly<{

@@ -1,5 +1,6 @@
 import { type SessionBinding, sameSessionBinding } from '@khala/contracts/delivery/index';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
+import { isChannelLinked } from './conversion-lock';
 import type { InternalStoreHandle } from './open';
 
 // Durable internal channel discovery. Visibility defaults to `private` with an
@@ -351,12 +352,13 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
 
     eligibleChannels(principal) {
       try {
-        const rows = handle.read(db => db.prepare(`${TARGET_SELECT}
+        const rows = handle.read(db => (db.prepare(`${TARGET_SELECT}
           WHERE v.visibility = 'public'
             OR (COALESCE(v.visibility, 'private') = 'private' AND EXISTS (
               SELECT 1 FROM discovery_allowlist a WHERE a.channel_id = c.channel_id AND a.principal = ?))
           ORDER BY COALESCE(c.title, ''), c.channel_id
-        `).all(principal) as unknown as TargetRow[]);
+        `).all(principal) as unknown as TargetRow[])
+          .filter(row => !isChannelLinked(db, row.channel_id)));
         return { kind: 'done', channels: rows.map(targetFromRow) };
       } catch { return unavailable(); }
     },
@@ -372,7 +374,7 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
       try {
         return handle.read(db => {
           const row = db.prepare(`${TARGET_SELECT} WHERE c.channel_id = ?`).get(channelId) as TargetRow | undefined;
-          if (!row) return false;
+          if (!row || isChannelLinked(db, channelId)) return false;
           const visibility = row.visibility ?? 'private';
           if (visibility === 'public') return true;
           if (visibility === 'secret') return false;
@@ -392,7 +394,8 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
               ? { kind: 'admitted', membership: recorded.membership } as const
               : { kind: 'rejected' } as const;
           }
-          if (!db.prepare('SELECT 1 FROM channels WHERE channel_id = ?').get(input.channelId)) return { kind: 'rejected' } as const;
+          if (!db.prepare('SELECT 1 FROM channels WHERE channel_id = ?').get(input.channelId)
+            || isChannelLinked(db, input.channelId)) return { kind: 'rejected' } as const;
           const participant = db.prepare('SELECT owner_id, kind FROM participants WHERE participant_id = ?')
             .get(input.participantId) as { owner_id: string; kind: string } | undefined;
           if (participant && (participant.owner_id !== input.ownerId || participant.kind !== 'agent')) return { kind: 'rejected' } as const;
@@ -502,10 +505,13 @@ export function createDiscoveryStore(handle: InternalStoreHandle): DiscoveryStor
             binding.bindingId, binding.generation, binding.ownerId, binding.agentParticipantId,
             binding.deviceId, binding.harness, binding.sessionId,
           );
+          // Admission shares no history: the feed starts after the channel's head right now.
+          const head = (db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM events WHERE channel_id = ?')
+            .get(input.channelId) as { value: number }).value;
           db.prepare(`
-            INSERT INTO discovery_activations (operation_key, binding_id, generation, channel_id, session_generation)
-            VALUES (?, ?, ?, ?, ?)
-          `).run(input.operationKey, binding.bindingId, binding.generation, input.channelId, input.sessionGeneration);
+            INSERT INTO discovery_activations (operation_key, binding_id, generation, channel_id, session_generation, start_sequence)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(input.operationKey, binding.bindingId, binding.generation, input.channelId, input.sessionGeneration, head);
           return {
             kind: 'activated',
             activation: activationFromRow(db.prepare(ACTIVATION_SELECT).get(input.operationKey) as ActivationRow),

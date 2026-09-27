@@ -34,6 +34,13 @@ and the ports defined by KHA-105 (`@khala/contracts/messaging/*`).
   text/code nodes. It never uses `dangerouslySetInnerHTML` and never creates
   an `<img>`, `<a>`, `<iframe>`, or any element that fetches remote content or
   navigates — including from markdown-shaped syntax in the body.
+- **Receipt evidence.** With an injected `ReceiptEvidenceController`, the
+  timeline is the durable receipt surface, backed by the owner's read model.
+  Evidence for one message and one release sits beside that message. A batch,
+  or a release carrying several messages, renders as one group before its
+  earliest loaded member, and each member row links to it. Access failures show
+  "Delivery evidence unavailable" with Retry and never claim an absence. See
+  [`../receipt-evidence/README.md`](../receipt-evidence/README.md).
 - **`send.ts`** sends each draft under a caller-owned `clientTxnId` and
   resolves a `failed` or `outcome_unknown` result by re-sending the *same*
   transaction — never a fresh send with new bytes. `TimelineScreen.tsx` shows

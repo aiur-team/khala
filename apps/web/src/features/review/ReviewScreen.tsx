@@ -9,11 +9,45 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { MessageContent, TimelineItem, UnavailableReason } from '@khala/contracts/messaging/index';
 import { sameEventRef } from '@khala/contracts/messaging/index';
+import type { DeliveryReceiptTransport, ReleaseId } from '@khala/contracts/delivery/index';
+import { evidenceUnits } from '../receipt-evidence/model';
+import { UnitFacts } from '../receipt-evidence/ReceiptEvidence';
 import { buildDisplayNameResolver, ownershipLabel } from './attribution';
 import type { ReviewController } from './controller';
 import type { ReviewAccessState, SubmissionState } from './model';
-import { latestReceiptFor, receiptLabel } from './receipt-labels';
 import { ReviewItem, type ReadableTimelineItem } from './ReviewItem';
+
+/**
+ * Every fact for the just-released releases, as a set rather than a latest
+ * receipt, so a later completion never hides earlier context evidence. Releases
+ * one batch token covered share one token-return status. Review's receipts are
+ * not a complete token-return read, so no absence is ever claimed here; the
+ * channel timeline is the durable evidence surface.
+ */
+function ReleaseEvidence({ releaseIds, receipts }: {
+  releaseIds: readonly ReleaseId[];
+  receipts: readonly DeliveryReceiptTransport[];
+}) {
+  const released = new Set<string>(releaseIds);
+  const units = evidenceUnits(receipts
+    .filter(receipt => released.has(receipt.releaseId))
+    .map(receipt => ({ receipt, evidenceRef: receipt.evidenceRef ?? receipt.receiptId, events: [] })));
+  const covered = new Set<string>(units.flatMap(unit => unit.releases.map(release => release.releaseId)));
+  return (
+    <ul className="review__receipts" aria-label="Delivery evidence">
+      {units.map(unit => (
+        <li key={unit.id}>
+          {unit.releases.map(release => release.releaseId).join(', ')}:
+          {' '}
+          <UnitFacts unit={unit} confirmAbsence={false} />
+        </li>
+      ))}
+      {releaseIds.filter(releaseId => !covered.has(releaseId)).map(releaseId => (
+        <li key={releaseId}>{releaseId}: Awaiting delivery evidence</li>
+      ))}
+    </ul>
+  );
+}
 
 export interface ReviewScreenProps {
   controller: ReviewController;
@@ -229,16 +263,7 @@ export function ReviewScreen({ controller, recipientLabel, renderContent }: Revi
           </p>
         ) : null}
         {submission.phase === 'released' && submission.releaseIds ? (
-          <ul className="review__receipts" aria-label="Delivery evidence">
-            {submission.releaseIds.map(releaseId => {
-              const latest = latestReceiptFor(releaseId, view.receipts);
-              return (
-                <li key={releaseId}>
-                  {releaseId}: {latest ? receiptLabel(latest) : 'Awaiting delivery evidence'}
-                </li>
-              );
-            })}
-          </ul>
+          <ReleaseEvidence releaseIds={submission.releaseIds} receipts={view.receipts} />
         ) : null}
       </div>
     </section>

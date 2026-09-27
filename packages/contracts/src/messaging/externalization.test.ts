@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONVERSION_STATES, CONVERSION_TRANSITIONS, type ConversionAdvance, type ConversionState,
-  decodeConversionAdvance, decodeConversionCreate, decodeConversionRecord,
+  decodeConversionAdvance, decodeConversionCreate, decodeConversionRecord, decodeConversionStart,
   decodeHistoryTransferProgress, decodeHistoryTransferStep, isAllowedTransition,
 } from './externalization';
 import { createFakeConversionJournal } from './externalization.fake';
@@ -92,6 +92,26 @@ describe('fake conversion journal', () => {
         expect(await journal.read('conv_1')).toMatchObject({ value: { state: from, revision } });
       }
     }
+  });
+});
+
+describe('conversion start', () => {
+  const start = {
+    v: 1, conversionId: 'conv_1', operationId: 'op_start', sourceChannelId: 'channel_1', historyMode: 'start_fresh', agents: ['agent_1'],
+  } as const;
+
+  it('defaults an omitted visibility to secret and keeps every explicit choice', () => {
+    expect(decodeConversionStart(start)).toEqual({ ok: true, value: { ...start, visibility: 'secret' } });
+    for (const visibility of ['public', 'private', 'secret'] as const) {
+      expect(decodeConversionStart({ ...start, visibility })).toEqual({ ok: true, value: { ...start, visibility } });
+    }
+    expect(decodeConversionStart({ ...start, visibility: 'open' }).ok).toBe(false);
+    expect(decodeConversionStart({ ...start, visibility: undefined }).ok).toBe(false);
+  });
+
+  it('rejects a repeated agent and unknown fields', () => {
+    expect(decodeConversionStart({ ...start, agents: ['agent_1', 'agent_1'] })).toEqual({ ok: false, error: { path: 'agents', code: 'invalid_value' } });
+    expect(decodeConversionStart({ ...start, extra: 1 }).ok).toBe(false);
   });
 });
 

@@ -16,7 +16,7 @@ import type {
   ComponentState, HarnessDetection, HarnessObservation, SetupAdapter, SetupComponent, SetupDiagnostic,
   SetupEnvironment, SetupOperation, SetupPlanRequest, Sha256Digest,
 } from '../types.js';
-import { OPENCODE_PLUGIN_SPECIFIER, OPENCODE_TESTED_VERSIONS } from '../../opencode/index.js';
+import { OPENCODE_PLUGIN_SPECIFIER, OPENCODE_TESTED_VERSIONS, parseOpenCodeVersion } from '../../opencode/index.js';
 
 export const OPENCODE_EXECUTABLE = 'opencode';
 export const OPENCODE_MCP_NAME = 'khala';
@@ -417,12 +417,9 @@ function sortKeys(value: unknown): unknown {
 // Detection, inspection, and planning
 // ---------------------------------------------------------------------------
 
-const VERSION = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
-
-/** Exact-version detection: the whole `--version` output must be one version, and only tested versions are supported. */
-export function parseOpenCodeVersion(output: string): string | null {
-  return VERSION.exec(output.trim())?.[1] ?? null;
-}
+// Exact-version detection shares the plugin's parser, so setup and the plugin agree on a
+// version; only tested versions are supported.
+export { parseOpenCodeVersion };
 
 const encoder = new TextEncoder();
 

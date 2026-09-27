@@ -35,6 +35,8 @@ describe('claude plugin scaffold', () => {
       'khala_read',
       'khala_status',
       'khala_listening_mode',
+      'khala_mode_get',
+      'khala_mode_set',
       'khala_create_channel',
       'khala_list_channels',
       'khala_request_channel_access',
@@ -108,8 +110,8 @@ describe('claude plugin scaffold', () => {
     expect(code).not.toMatch(/\b(?:fetch|XMLHttpRequest|WebSocket|require)\b|node:(?:https?|net|tls|dgram)/);
     expect(code).not.toMatch(/inbox|ackBatchToken|--ack|exec\(|shell:\s*true/);
     // Only the non-acknowledging adapter ops; `read`, `send`, `status` and `mode` are agent calls.
-    const ops = [...code.matchAll(/deps\.khala\('([a-z]+)'/g)].map(match => match[1]).sort();
-    expect(ops).toEqual(['hook', 'pending', 'pull']);
+    const ops = [...code.matchAll(/(?:deps\.khala\(|hookState\(deps, input\.sessionId, )'([a-z]+)'/g)].map(match => match[1]);
+    expect([...new Set(ops)].sort()).toEqual(['hook', 'pending', 'pull', 'watch']);
   });
 
   it('carries no dangerous flags or isolated setting sources', () => {

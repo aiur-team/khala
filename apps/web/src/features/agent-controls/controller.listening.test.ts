@@ -250,6 +250,12 @@ describe('listening mode — defaults and labels', () => {
     controller.dispose();
   });
 
+  it('renders "Requested: none" when no mode is requested', async () => {
+    const { listening, controller } = await start(fixture());
+    expect(listeningStatusText({ ...listening(), requested: null })).toMatch(/^Requested: none · Effective: /);
+    controller.dispose();
+  });
+
   it('labels the binding as <CLI> <version> · <short id>', async () => {
     const { listening, controller } = await start(fixture());
     expect(listening().sessionLabel).toBe(`Codex CLI 0.154.0 · ${bindingShortId(BINDING_ID, [])}`);

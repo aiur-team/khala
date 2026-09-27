@@ -9,5 +9,5 @@
       "@khala/policy/*": ["../../../packages/policy/src/*.ts"]
     }
   },
-  "include": ["../**/*.ts", "../../conformance/**/*.ts"]
+  "include": ["../**/*.ts", "../../conformance/**/*.ts", "../../../scripts/acceptance/**/*.ts"]
 }

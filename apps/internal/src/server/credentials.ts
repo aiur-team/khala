@@ -120,6 +120,10 @@ export type CredentialAuthority = Readonly<{
    * capability: installing it again replaces the prior one, which stops working.
    */
   installBinding(record: BindingCredential): boolean;
+  /** Removes a binding generation's live capability; later requests with it are unauthenticated. */
+  revokeBinding(key: Readonly<{ bindingId: string; generation: number }>): void;
+  /** Bindings whose live capability is scoped to the channel. */
+  scopedBindings(channelId: RoomId): SessionBinding[];
   clear(): void;
 }>;
 
@@ -136,7 +140,9 @@ export function createCredentialAuthority(input: Readonly<{
   const transport = new DigestTable<true>();
   // Binding scope -> digest-table key of its one live capability.
   const bindingScopes = new Map<string, string>();
-  const scopeOf = (record: BindingCredential) => JSON.stringify([record.binding.bindingId, record.binding.generation]);
+  const scopeKey = (key: Readonly<{ bindingId: string; generation: number }>) => JSON.stringify([key.bindingId, key.generation]);
+  const scopeOf = (record: BindingCredential) => scopeKey(record.binding);
+  const scopedRecords = new Map<string, BindingCredential>();
 
   for (const record of input.bootstrap) {
     if (!isCanonicalCredential(record.credential) || !Number.isSafeInteger(record.expiresAt)
@@ -158,6 +164,7 @@ export function createCredentialAuthority(input: Readonly<{
       throw new CredentialConfigError();
     }
     bindingScopes.set(scope, bindings.lookup(record.credential)!.key);
+    scopedRecords.set(scope, record);
   }
   if (input.transportCapability !== undefined) {
     if (!isCanonicalCredential(input.transportCapability) || bootstrap.lookup(input.transportCapability)
@@ -213,11 +220,25 @@ export function createCredentialAuthority(input: Readonly<{
       const prior = bindingScopes.get(scope);
       if (prior !== undefined) bindings.delete(prior);
       bindingScopes.set(scope, bindings.lookup(record.credential)!.key);
+      scopedRecords.set(scope, record);
       return true;
+    },
+
+    revokeBinding(key) {
+      const scope = scopeKey(key);
+      const live = bindingScopes.get(scope);
+      if (live !== undefined) bindings.delete(live);
+      bindingScopes.delete(scope);
+      // The scope record stays so a retried Stop still finds the binding's durable row.
+    },
+
+    scopedBindings(channelId) {
+      return [...scopedRecords.values()].filter(record => record.channels.includes(channelId)).map(record => record.binding);
     },
 
     clear() {
       bindingScopes.clear();
+      scopedRecords.clear();
       bootstrap.clear();
       bindings.clear();
       sessions.clear();

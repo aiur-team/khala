@@ -1,12 +1,12 @@
 // Screen-local view types the review controller/selection layer project for
 // presentation. Item data itself is `TimelineItem`/`EventRef`/`ParticipantView`
 // from `@khala/contracts/messaging/index` (KHA-105) and
-// `ApprovalCommand`/`ApprovalResult`/`DeliveryReceipt` from
+// `ApprovalCommand`/`ApprovalResult`/`DeliveryReceiptTransport` from
 // `@khala/contracts/delivery/index` (KHA-106); this module only adds the
 // review-local view model layered on top (KTD1-KTD4).
 
 import type { BindingId, CommandId, ReleaseId } from '@khala/contracts/delivery/ids';
-import type { ApprovalErrorCode, DeliveryReceipt } from '@khala/contracts/delivery/index';
+import type { ApprovalErrorCode, DeliveryReceiptTransport } from '@khala/contracts/delivery/index';
 import type { EventRef, OwnerId, TimelineItem } from '@khala/contracts/messaging/index';
 
 /**
@@ -69,5 +69,5 @@ export type ReviewView = Readonly<{
   /** The signed-in reviewer's own `ownerId`, used to tell "your agent" apart from another owner's (R1). */
   viewerOwnerId: OwnerId;
   pending: readonly TimelineItem[];
-  receipts: readonly DeliveryReceipt[];
+  receipts: readonly DeliveryReceiptTransport[];
 }>;

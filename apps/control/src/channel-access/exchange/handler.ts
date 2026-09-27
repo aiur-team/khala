@@ -19,6 +19,7 @@ import {
   validateGrantExchangeRequest,
 } from '@khala/contracts/messaging/index';
 import type { RouteRegistration } from '../../runtime/handler';
+import type { ChannelAccessResumeRequest, ChannelAccessResumeService } from '../../composition/agent/channel-access-resume';
 
 /** The exchange plus the readiness acknowledgement, as the composed exchange service provides it. */
 export type ConnectorGrantExchangePort = AdmissionGrantExchangePort & Readonly<{
@@ -36,6 +37,8 @@ export type ConnectorGrantExchangePort = AdmissionGrantExchangePort & Readonly<{
 export const CONNECTOR_CHANNEL_ACCESS_EXCHANGE_PATH = '/api/agent/channel-access/exchange';
 /** Readiness acknowledgement after local activation; the operation is named the same way. */
 export const CONNECTOR_CHANNEL_ACCESS_READY_PATH = '/api/agent/channel-access/ready';
+/** Resume of an already-admitted operation, by operation ID and bound-key proof, without a grant. */
+export const CONNECTOR_CHANNEL_ACCESS_RESUME_PATH = '/api/agent/channel-access/resume';
 
 export type VerifiedExchangeConnector = Readonly<{
   requester: StableAgentPrincipal;
@@ -133,6 +136,70 @@ export function createGrantReadinessHandler(deps: GrantExchangeHandlerDependenci
     methods: Object.freeze(['POST']),
     handle,
   });
+}
+
+/**
+ * The connector finishes an already-admitted operation without a grant. Authority comes
+ * from the same connector authentication, whose fresh proof must be for the key the
+ * exchange was bound to; the body's assertions must match it. The response has the shape of
+ * the redeem response: the binding and a sender-constrained adapter capability.
+ */
+export function createChannelAccessResumeHandler(deps: Readonly<{
+  authenticateConnector: GrantExchangeHandlerDependencies['authenticateConnector'];
+  resumeFor(connector: Readonly<{ sessionFingerprint: string }>): ReturnType<ChannelAccessResumeService['forConnector']>;
+}>): RouteRegistration {
+  async function handle(request: Request): Promise<Response> {
+    const operation = readOperation(request);
+    if (operation === null) return rejected(400, 'invalid_request');
+    const auth = await safeCall(() => deps.authenticateConnector(request));
+    if (auth === null || auth.kind === 'unavailable') return unavailable();
+    if (auth.kind === 'rejected') return rejected(auth.code === 'auth_required' ? 401 : 403, auth.code);
+    const body = readResume(await readJson(request));
+    if (body === null) return rejected(400, 'invalid_request');
+    const connector = auth.connector;
+    if (body.operationId !== operation) return mapRejection('operation_mismatch');
+    if (body.requester !== connector.requester) return mapRejection('wrong_requester');
+    if (body.origin !== connector.origin) return mapRejection('wrong_origin');
+    if (body.sessionGeneration !== connector.sessionGeneration) return mapRejection('wrong_generation');
+    if (body.deviceId !== connector.deviceId) return mapRejection('wrong_device');
+    if (body.proofKeyThumbprint !== connector.proofKeyThumbprint) return mapRejection('proof_mismatch');
+    const result = await safeCall(() => deps.resumeFor({ sessionFingerprint: connector.sessionFingerprint })
+      .resume(body, { signal: request.signal }));
+    if (result === null || result.kind === 'unavailable' || result.kind === 'outcome_unknown') return unavailable();
+    if (result.kind === 'rejected') return mapRejection(result.code);
+    const { binding, capability } = result.value;
+    return json(200, {
+      binding,
+      adapter_capability: {
+        token: capability.token,
+        token_type: 'DPoP',
+        scope: [...capability.scope],
+        binding_id: binding.bindingId,
+        generation: binding.generation,
+        expires_at: capability.expiresAt,
+      },
+    });
+  }
+
+  return Object.freeze({
+    path: CONNECTOR_CHANNEL_ACCESS_RESUME_PATH,
+    methods: Object.freeze(['POST']),
+    handle,
+  });
+}
+
+const RESUME_FIELDS = [
+  'v', 'operationId', 'requester', 'origin', 'sessionGeneration', 'deviceId', 'bindingId', 'proofKeyThumbprint',
+] as const;
+
+function readResume(value: unknown): ChannelAccessResumeRequest | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const r = value as Record<string, unknown>;
+  if (Object.keys(r).length !== RESUME_FIELDS.length || !RESUME_FIELDS.every(field => Object.hasOwn(r, field))) return null;
+  const text = (field: string) => typeof r[field] === 'string' && (r[field] as string).length > 0 && (r[field] as string).length <= 512;
+  if (r.v !== 1 || !Number.isSafeInteger(r.sessionGeneration) || (r.sessionGeneration as number) < 0
+    || !['operationId', 'requester', 'origin', 'deviceId', 'bindingId', 'proofKeyThumbprint'].every(text)) return null;
+  return r as unknown as ChannelAccessResumeRequest;
 }
 
 function mapRejection(code: GrantExchangeRejection): Response {

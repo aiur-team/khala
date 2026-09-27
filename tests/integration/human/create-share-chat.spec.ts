@@ -11,11 +11,11 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await signIn(alice, environment, environment.users[0]);
 
     const intro = syntheticCanary('intro');
-    await alice.getByLabel('Chat name (optional)').fill(`Live ${environment.environmentId}`);
+    await alice.getByLabel('Channel name (optional)').fill(`Live ${environment.environmentId}`);
     await alice.getByLabel('Message 1').fill(intro);
-    await alice.getByRole('button', { name: 'Create chat' }).click();
-    const link = alice.getByLabel('Chat link');
-    await expect(link).toHaveValue(/\/join\?invite=/u);
+    await alice.getByRole('button', { name: 'Create channel' }).click();
+    const link = alice.getByLabel('Channel link');
+    await expect(link).toHaveValue(/\/join\/[^/?#]+$/u);
     const shareUrl = await link.inputValue();
 
     const bob = await bobContext.newPage();
@@ -23,7 +23,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
     await signIn(bob, environment, environment.users[1]);
     await expect(bob.getByText("You're in.")).toBeVisible();
     const roomText = await bob.locator('.join-joined__room-id').innerText();
-    const roomId = roomText.replace(/^Room:\s*/u, '');
+    const roomId = roomText.replace(/^Channel:\s*/u, '');
     expect(roomId).not.toBe('');
 
     await bob.getByRole('button', { name: 'Open channel' }).click();
@@ -61,9 +61,9 @@ test('an account without admission cannot read a protected room', async ({ brows
     await signIn(owner, environment, environment.users[0]);
     const canary = syntheticCanary('protected');
     await owner.getByLabel('Message 1').fill(canary);
-    await owner.getByRole('button', { name: 'Create chat' }).click();
-    const shareUrl = await owner.getByLabel('Chat link').inputValue();
-    const inviteRef = new URL(shareUrl).searchParams.get('invite');
+    await owner.getByRole('button', { name: 'Create channel' }).click();
+    const shareUrl = await owner.getByLabel('Channel link').inputValue();
+    const inviteRef = new URL(shareUrl).pathname.match(/^\/join\/([^/]+)$/u)?.[1] ?? null;
     expect(inviteRef).not.toBeNull();
 
     const outsider = await freshPage(outsiderContext, environment);

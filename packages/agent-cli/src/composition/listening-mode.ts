@@ -31,7 +31,7 @@ export type ListeningModeSupportProjection = Readonly<{
 }>;
 
 export type ListeningModeState = Readonly<{
-  requested: ListeningMode;
+  requested: ListeningMode | null;
   effective: ListeningMode | null;
   effectiveReason: string | null;
   version: number;
@@ -129,7 +129,7 @@ function setOutcome(value: unknown, commandId: string): ListeningModeOutcome {
 }
 
 function modeState(requested: unknown, effective: unknown, reason: unknown, version: unknown): ListeningModeState | null {
-  if (!validMode(requested) || !(effective === null || validMode(effective))
+  if (!(requested === null || validMode(requested)) || !(effective === null || validMode(effective))
     || !(reason === null || validIdentifier(reason)) || !validVersion(version)) return null;
   return { requested, effective, effectiveReason: reason, version };
 }

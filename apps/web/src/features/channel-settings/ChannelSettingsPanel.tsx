@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import type { ChannelVisibility, RoomId } from '@khala/contracts/messaging/index';
 import { Panel } from '../../shell/Panel';
 import { createChannelSettingsController, type ChannelSettingsController } from './controller';
@@ -8,6 +8,8 @@ import type { AllowlistedAgent, ChannelSettingsPorts, KnownPrincipalSource } fro
 export interface ChannelSettingsPanelProps {
   ports: ChannelSettingsPorts;
   roomId: RoomId;
+  /** Replaces the hosted "how an agent becomes known" help when no verified agent is offered. */
+  pickerEmptyHelp?: ReactNode;
   /** Test-only seam: a pre-built controller. */
   controller?: ChannelSettingsController;
 }
@@ -128,7 +130,7 @@ function Preview({ preview }: { preview: ListingPreview }) {
   );
 }
 
-export function ChannelSettingsPanel({ ports, roomId, controller: injectedController }: ChannelSettingsPanelProps) {
+export function ChannelSettingsPanel({ ports, roomId, pickerEmptyHelp, controller: injectedController }: ChannelSettingsPanelProps) {
   const ownController = useMemo(() => createChannelSettingsController(ports, roomId), [ports, roomId]);
   const controller = injectedController ?? ownController;
   const [view, setView] = useState<ChannelSettingsView>(() => controller.getView());
@@ -338,6 +340,7 @@ export function ChannelSettingsPanel({ ports, roomId, controller: injectedContro
                 view={view}
                 allowlisted={allowlisted}
                 enabled={canEditAllowlist}
+                emptyHelp={pickerEmptyHelp}
                 onAllow={principal => controller.allow(principal)}
                 onReload={() => controller.load()}
               />
@@ -350,11 +353,12 @@ export function ChannelSettingsPanel({ ports, roomId, controller: injectedContro
 }
 
 function Picker({
-  view, allowlisted, enabled, onAllow, onReload,
+  view, allowlisted, enabled, emptyHelp, onAllow, onReload,
 }: {
   view: ChannelSettingsView;
   allowlisted: ReadonlySet<string>;
   enabled: boolean;
+  emptyHelp: ReactNode | undefined;
   onAllow: (principal: string) => void;
   onReload: () => void;
 }) {
@@ -373,11 +377,13 @@ function Picker({
     return (
       <div className="channel-settings__picker-empty">
         <p>No verified agents are known to your account yet.</p>
+        {emptyHelp ?? (
         <p>
           An agent appears here after you run its session yourself and sign in to authorize it, complete a pairing with it,
           or approve one of its access requests. To reach any other agent, share this channel’s URL instead; you still
           approve its request.
         </p>
+        )}
       </div>
     );
   }

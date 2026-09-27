@@ -7,10 +7,11 @@ import {
   activeDescriptorPath, ensurePrivateDirectory, removeActiveDescriptor, removeLaunchRecord,
   writeActiveDescriptor, writeLaunchRecord,
 } from '../descriptor/write';
-import { createInternalReleaseFeed } from '../composition/internal-delivery/release-feed';
+import { type BindingControl, composeBindingControl } from '../composition/binding-control/index';
+import { composeBindingModes } from '../composition/binding-modes/index';
 import { composeInternalChannelDiscovery } from '../composition/channel-discovery/service';
+import { composeClaudeSession, inspectClaudeRoute } from '../composition/claude-session/compose';
 import { CHANNELS_DIRECTORY, channelDirectory } from '../lifecycle/paths';
-import { createSqliteListeningModeRepository } from '../listening-mode-store/sqlite';
 import { resumeInternalChannel } from '../lifecycle/resume';
 import type { AssetManifest } from '../server/assets';
 import { BOOTSTRAP_DOCUMENT_ROUTE } from '../server/bootstrap';
@@ -22,6 +23,7 @@ import { createSqliteControlStore } from '../store/control-store';
 import { createDiscoveryStore } from '../store/discovery-store';
 import { bindLifecycleChannel } from '../store/lifecycle-snapshot';
 import { type InternalStoreHandle, openChannelStore } from '../store/open';
+import { createReceiptReadModel } from '../store/receipts';
 import type { OpenBootstrapInput, OpenOutcome } from './browser-handoff';
 import { type RootLease, acquireRootLease } from './lock';
 
@@ -105,6 +107,8 @@ export type LauncherOptions = Readonly<{
   openBrowser?: (input: Pick<OpenBootstrapInput, 'bootstrapUrl' | 'credential' | 'handoffParent'>) => Promise<OpenOutcome>;
   /** Test seam: runs after the lease is taken and before any other state is touched. */
   afterLease?: () => void;
+  /** Test seam: the installed Claude Code version. Defaults to setup's inspection of the local CLI. */
+  claudeVersion?: () => Promise<string | null>;
 }>;
 
 export function resumeCommandFor(channelId: string): string {
@@ -222,12 +226,14 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
 
   let opened: OpenedChannel | null = null;
   let server: LoopbackServer | null = null;
+  let bindingControl: BindingControl | null = null;
   let stopping: Promise<void> | null = null;
   const timers: NodeJS.Timeout[] = [];
   const handoffCleanups: Array<() => Promise<void>> = [];
   const release = async (): Promise<void> => {
     for (const timer of timers.splice(0)) clearTimeout(timer);
     // Discovery first, so no client can find a server that is going away.
+    bindingControl?.close();
     try { removeActiveDescriptor(root); } catch {}
     if (opened) try { removeLaunchRecord(opened.directory); } catch {}
     await Promise.all(handoffCleanups.splice(0).map(cleanup => cleanup().catch(() => {})));
@@ -272,23 +278,39 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       const discovery = await composeInternalChannelDiscovery({
         control: createSqliteControlStore(channel.handle, clock),
         store: createDiscoveryStore(channel.handle),
+        bindings: channel.store,
         human: channel.human,
         clock,
         newChannelId: () => `ch_${token()}`,
       });
+      // Claude sessions present the transport capability from `active.json` and join as themselves.
+      // One inspection of the installed Claude Code backs both the owner's view and the session route.
+      const claudeRoute = await inspectClaudeRoute(options.claudeVersion);
+      const claude = await composeClaudeSession({
+        root, store: channel.store, transportCapability, clock, capabilities: claudeRoute,
+      });
+      bindingControl = composeBindingControl({
+        handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,
+      });
+      const modes = composeBindingModes({ handle: channel.handle, store: channel.store, claude: claudeRoute });
       server = await startChannelServer({
         store: channel.store,
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],
         // Agent bindings are granted later through channel access, never at launch.
         bindings: [],
-        // A granted binding pulls its releases into its own inbox; nothing is pushed.
-        releases: createInternalReleaseFeed({
-          store: channel.store,
-          listeningModes: createSqliteListeningModeRepository(channel.handle),
-        }),
+        // A granted binding pulls its releases into its own inbox; nothing is pushed. The
+        // owner's pause holds the whole feed before any claim.
+        releases: modes.releases,
+        // Owner and agent mode control over the same SQLite record, plus the owner's pause.
+        bindingModes: modes.control,
+        // The owner's projected receipt evidence, read-only; the projector owns writes.
+        receipts: createReceiptReadModel(channel.handle),
         // The transport capability may only obtain a discovery-only descriptor.
         transportCapability,
         discovery: discovery.port,
+        agentSession: claude.route,
+        // Stop revokes bindings and delivery only; the server keeps running until launcher shutdown.
+        stop: bindingControl,
         assets: options.assets,
         newId: randomUUID,
         clock,

@@ -1,15 +1,12 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { parse } from 'smol-toml';
+import { existsSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
-import { LANDING_PORT, PRODUCTION_CSP } from '../../playwright.visual.config';
+import { LANDING_PORT, PRODUCTION_CSP, PRODUCTION_HOMESERVER_ORIGIN } from '../../playwright.visual.config';
+import { renderNetlifyHeaders } from '../composition/human/hosted-config';
 
 // Screenshot baselines for the splash, served from the production build under
 // the production CSP. Run with `pnpm --filter @khala/web test:visual` inside the
 // pinned Playwright image; see playwright.visual.config.ts.
 
-const here = dirname(fileURLToPath(import.meta.url));
 const url = `http://127.0.0.1:${LANDING_PORT}/landing/`;
 const THEMES = ['light', 'dark'] as const;
 const VIEWPORTS = [
@@ -70,12 +67,8 @@ async function open(page: Page, theme: Theme, viewport: Viewport, { bannerDismis
 
 const key = (theme: Theme, viewport: Viewport) => `${theme}-${viewport.width}x${viewport.height}`;
 
-test('serves the netlify.toml Content-Security-Policy', async ({ request }) => {
-  const netlify = parse(readFileSync(join(here, '../../../../netlify.toml'), 'utf8')) as {
-    headers: { for: string; values: Record<string, string> }[];
-  };
-  const siteWide = netlify.headers.find(entry => entry.for === '/*');
-  expect(siteWide?.values['Content-Security-Policy']).toBe(PRODUCTION_CSP);
+test('serves the hosted build\'s _headers Content-Security-Policy', async ({ request }) => {
+  expect(renderNetlifyHeaders(PRODUCTION_HOMESERVER_ORIGIN)).toBe(`/*\n  Content-Security-Policy: ${PRODUCTION_CSP}\n`);
   const response = await request.get(url);
   expect(response.headers()['content-security-policy']).toBe(PRODUCTION_CSP);
 });

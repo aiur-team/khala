@@ -21,6 +21,7 @@ let snapshot: AgentPresenceSnapshot = {
     connection: 'offline',
     routeLabel: 'Khala skill',
     lastReceipt: null,
+    acknowledgement: 'unknown',
   }],
 };
 
@@ -45,6 +46,7 @@ function connectScout(): void {
       connection: 'connected',
       routeLabel: 'Codex CLI',
       lastReceipt: { kind: 'context_consumed', observedAt: '2026-09-18T14:31:19.880Z' },
+      acknowledgement: 'batch_token_next_call',
     }],
   };
   for (const listener of listeners) listener(snapshot);

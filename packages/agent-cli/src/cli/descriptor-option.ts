@@ -4,7 +4,9 @@ import { CliError } from './errors.js';
 export const INTERNAL_DESCRIPTOR_OPTION = '--internal-descriptor';
 
 /** Commands that run against the descriptor-selected local client. */
-export const INTERNAL_CLIENT_COMMANDS: ReadonlySet<string> = new Set(['status', 'send', 'read', 'listen', 'mcp-serve', 'join']);
+export const INTERNAL_CLIENT_COMMANDS: ReadonlySet<string> = new Set([
+  'status', 'send', 'read', 'listen', 'mcp-serve', 'join', 'mode', 'codex-hook',
+]);
 
 /**
  * Splits a leading `--internal-descriptor <absolute-path>` from argv. The path

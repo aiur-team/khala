@@ -83,7 +83,7 @@ invariants.
 
 | Term | Meaning |
 | --- | --- |
-| requested mode | The per-binding value selected by the agent or human; normally defaults to `sync`. An exact **interactive-session** route with proved unsupported `sync` may initialize `async` with an explicit reason rather than perform a later fallback. Secondary hosted evidence cannot trigger this exception. |
+| requested mode | The per-binding value selected by the agent or human; defaults to `null` whenever the harness has no proven or experimental mode (Cursor, Claude CLI at an uninspected version, the agent-skill fallback, and v2 capability records), and to `sync` otherwise. A stored `null` stays `null` after evidence arrives, until the owner selects a mode; `release-feed` still wakes on every message while the request is null. An exact **interactive-session** route with proved unsupported `sync` may initialize `async` with an explicit reason rather than perform a later fallback. Secondary hosted evidence cannot trigger this exception. |
 | effective mode | The route currently usable for the exact harness, version, and session shape; `null` when none is honest. |
 | proven | A retained, reproducible observation exercises the composed Khala route on the named version. |
 | experimental | The underlying surface exists, but Khala has not proved the composed behavior. It requires explicit opt-in. |
@@ -334,7 +334,13 @@ the exact active binding. Its visible identity is `<CLI name> <version> ·
 human-readable derivation of the immutable binding ID and expands if two active
 bindings would share it. Grant confirmations, evidence detail, runtime
 failures, and delivery receipts repeat the same label so concurrent sessions of
-one CLI cannot be confused.
+one CLI cannot be confused. Each row also says who made the last mode change,
+the owner or the agent, with the version it produced.
+
+In internal mode the owner's supported-mode badge reflects the harness version
+and hook trust the agent's CLI reported; it is evidence, not authority. Delivery
+re-checks the local installation at every hook boundary, so a badge the agent
+over-reported never releases a message the installed harness cannot prove.
 
 | Support state | Control | Copy and detail |
 | --- | --- | --- |

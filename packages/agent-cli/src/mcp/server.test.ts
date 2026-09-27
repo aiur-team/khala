@@ -14,7 +14,7 @@ import type { AgentClientPort, InboxDelivery } from '../cli/types.js';
 import { postprocessMcpResult, postprocessPreselectedMcpResult } from './result-postprocessor.js';
 import type { ChannelToolsPort } from './channels/tools.js';
 import type { ReadOperationPort } from './read-tool.js';
-import { runMcpServer, type McpServerOptions } from './server.js';
+import { runMcpServer, type McpCallCollaborators } from './server.js';
 
 type Request = Readonly<Record<string, unknown>>;
 type Response = Readonly<{
@@ -52,7 +52,7 @@ describe('MCP server', () => {
 
     expect(responses[0]).toMatchObject({ id: 1, result: { protocolVersion: '2025-03-26' } });
     expect(responses[1]).toEqual({ jsonrpc: '2.0', id: 2, result: {} });
-    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status', 'khala_pair']);
+    expect(responses[2]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status', 'khala_create_channel', 'khala_channel_create_status', 'khala_pair']);
     expect(responses[2]).toMatchObject({
       result: { tools: [ {
         name: 'khala_send',
@@ -88,12 +88,52 @@ describe('MCP server', () => {
         name: 'khala_channel_access_status',
         inputSchema: { additionalProperties: false, required: ['operationId'] },
       }, {
+        name: 'khala_create_channel',
+        inputSchema: { additionalProperties: false, required: ['title', 'operationId'] },
+      }, {
+        name: 'khala_channel_create_status',
+        inputSchema: { additionalProperties: false, required: ['operationId'] },
+      }, {
         name: 'khala_pair',
         inputSchema: { additionalProperties: false, required: ['code'] },
       }] },
     });
     expect(client.sent).toEqual([{ bindingId: 'binding-1', body: 'hello' }]);
     expect(responses[3]).toMatchObject({ id: 4, result: { structuredContent: { kind: 'accepted', eventId: 'event-1' } } });
+  });
+
+  it('routes each tool call by its _meta, refusing one without a route and surviving a failed one', async () => {
+    const client = fakeClient();
+    const seen: unknown[] = [];
+    const route = async (meta: Readonly<Record<string, unknown>> | undefined) => {
+      seen.push(meta);
+      if (meta?.threadId === 'broken') throw new Error('inbox storage failed');
+      return meta?.threadId === 'thread-a' ? {
+        send: new SendService(client), read: emptyReadOperation(), channels: unusedChannels(),
+        postprocessResult: identityPostprocessor, postprocessReadResult: identityReadPostprocessor,
+      } : null;
+    };
+    const send = (id: number, meta?: Record<string, unknown>) => `${JSON.stringify(request(id, 'tools/call', {
+      ...(meta === undefined ? {} : { _meta: meta }), name: 'khala_send', arguments: { message: `m-${id}` },
+    }))}\n`;
+    let stdout = '';
+    const output = new Writable({ write(chunk, _encoding, callback) { stdout += chunk.toString(); callback(); } });
+    await runMcpServer({
+      input: Readable.from([`${JSON.stringify(request(1, 'tools/list', { _meta: { progressToken: 0 } }))}\n`,
+        send(2), send(3, { threadId: 'broken' }), send(4, { threadId: 'thread-a' })]),
+      output, route,
+    });
+    const responses = stdout.trim().split('\n').map(line => JSON.parse(line) as Response);
+
+    // Only tool calls consult the route, each with its own metadata.
+    expect(seen).toEqual([undefined, { threadId: 'broken' }, { threadId: 'thread-a' }]);
+    expect(responses[0]!.result?.tools?.length).toBeGreaterThan(0);
+    expect(responses.slice(1).map(response => response.result?.structuredContent)).toEqual([
+      { kind: 'refused', code: 'not_connected' },
+      { kind: 'refused', code: 'internal_error' },
+      expect.objectContaining({ kind: 'accepted' }),
+    ]);
+    expect(client.sent).toEqual([{ bindingId: null, body: 'm-4' }]);
   });
 
   it('reports a held-binding refusal without echoing message content', async () => {
@@ -228,7 +268,7 @@ describe('MCP server', () => {
       request(6, 'tools/list', { ...meta, cursor: 'next' }),
     ]);
 
-    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status', 'khala_pair']);
+    expect(responses[1]?.result?.tools?.map(tool => tool.name)).toEqual(['khala_send', 'khala_read', 'khala_listening_mode', 'khala_list_channels', 'khala_list_agents', 'khala_request_channel_access', 'khala_channel_access_status', 'khala_create_channel', 'khala_channel_create_status', 'khala_pair']);
     expect(responses.map(response => response.error?.code ?? 'ok')).toEqual(['ok', 'ok', 'ok', 'ok', -32602, -32602]);
     expect(client.sent).toEqual([{ bindingId: null, body: 'hello' }]);
   });
@@ -424,7 +464,7 @@ describe('MCP server', () => {
   it('runs khala_listening_mode through generic postprocessing for every valid outcome with the stripped token', async () => {
     const fake = fakeModeApplication();
     const listeningMode = new ListeningModeOperation({ application: fake.application });
-    const postprocessResult = vi.fn<McpServerOptions['postprocessResult']>(async input => input.primaryResult);
+    const postprocessResult = vi.fn<McpCallCollaborators['postprocessResult']>(async input => input.primaryResult);
 
     const responses = await exchangeWithOptions(fakeClient(), [
       request(60, 'tools/call', { name: 'khala_listening_mode', arguments: { action: 'get', ackBatchToken: 'token-a' } }),
@@ -641,7 +681,7 @@ async function exchangeChunks(client: AgentClientPort, chunks: readonly (string 
 async function exchangeWithOptions(
   client: AgentClientPort,
   requests: readonly Request[],
-  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
+  options: Partial<Pick<McpCallCollaborators, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
 ): Promise<Response[]> {
   return exchangeChunksWithOptions(client, requests.map(item => `${JSON.stringify(item)}\n`), options);
 }
@@ -649,7 +689,7 @@ async function exchangeWithOptions(
 async function exchangeChunksWithOptions(
   client: AgentClientPort,
   chunks: readonly (string | Buffer)[],
-  options: Partial<Pick<McpServerOptions, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
+  options: Partial<Pick<McpCallCollaborators, 'postprocessResult' | 'postprocessReadResult' | 'read' | 'listeningMode'>>,
 ): Promise<Response[]> {
   let stdout = '';
   const output = new Writable({
@@ -675,15 +715,15 @@ async function exchangeChunksWithOptions(
 
 function unusedChannels(): ChannelToolsPort {
   const unused = async () => { throw new Error('channel listing is not under test'); };
-  return { listChannels: unused, listAgents: unused, request: unused, status: unused };
+  return { listChannels: unused, listAgents: unused, request: unused, status: unused, createChannel: unused, createChannelStatus: unused };
 }
 
 function emptyReadOperation(): ReadOperationPort {
   return { async read() { return { kind: 'empty' }; } };
 }
 
-const identityPostprocessor: McpServerOptions['postprocessResult'] = async input => input.primaryResult;
-const identityReadPostprocessor: McpServerOptions['postprocessReadResult'] = async input => ({
+const identityPostprocessor: McpCallCollaborators['postprocessResult'] = async input => input.primaryResult;
+const identityReadPostprocessor: McpCallCollaborators['postprocessReadResult'] = async input => ({
   kind: 'composed', result: input.primaryResult,
 });
 

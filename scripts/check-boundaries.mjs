@@ -24,7 +24,8 @@ const hostedOnlyWeb = /^(?:apps\/web\/src\/composition\/(?:recovery\/|human\/(?:
 const hostedOnlyDependency = /^matrix-js-sdk(?:\/|$)/;
 // Shared web primitives other features may import. They may not import features themselves.
 // `channel-create` is the creation operation adapter the channel-request inbox renders.
-const sharedFeatures = new Set(['approval-decision', 'channel-create']);
+// `receipt-evidence` is the one truthful receipt vocabulary the timeline, review and panels share.
+const sharedFeatures = new Set(['approval-decision', 'channel-create', 'receipt-evidence']);
 
 function filesBelow(directory) {
   if (!fs.existsSync(directory)) return [];

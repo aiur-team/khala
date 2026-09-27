@@ -68,6 +68,24 @@ live entries. `live-gate.test.ts` runs the fixtures in `fixtures/live-gate/` thr
 - `reference.ts`: the fake owner connector and harness adapter used by self-tests and
   conformance. They are `fake-contract` evidence only. Their `defect` options add
   the bugs that the conformance oracles must catch. Every oracle has at least one.
+- `internal.ts`: internal-mode composition for acceptance entries. `khala(profile, argv)`
+  runs the production `khala` command table. `startLauncher` runs `khala internal` or
+  `--resume` until it is closed, and `humanSession` redeems the printed bootstrap URL.
+  `installProcessAudit` records every `node:child_process` start, so an entry can
+  prove that Khala launched nothing.
+
+## Internal mode (`tests/e2e/internal-mode/`)
+
+Acceptance 1 of `docs/product/internal-mode/acceptance.md`.
+
+- `protocol.test.ts` drives the real launcher, loopback server and SQLite store. Two
+  externally started fake CLI sessions (`cli-driver.ts`) take part. The flow covers
+  grants, two-way deliberate sends, a human message, batch-token acknowledgement,
+  Stop, launcher close and `--resume`.
+- `modes.test.ts` covers steer, sync, async and pause over the same real launcher.
+  The owner sets the mode and pauses through the owner API. A granted fake Codex
+  session fires the exact installed `khala codex-hook` and states its
+  released capability claim, because no real Codex is installed.
 
 ## Conformance (`tests/conformance/`)
 

@@ -12,7 +12,9 @@ import { PassThrough } from 'node:stream';
 import { runCli } from '@aiur/khala/cli/app';
 import { openInbox } from '@aiur/khala/cli/inbox';
 import { createInternalClient, readInternalDescriptor } from '@aiur/khala/composition/internal';
+import { ChannelCreateService } from '@aiur/khala/cli/channels/create/service';
 import { createInternalDelivery } from '@aiur/khala/composition/internal-delivery';
+import { sessionGrants } from '@aiur/khala/composition/session-grant';
 import sodium from 'libsodium-wrappers';
 import { afterEach, describe, expect, it } from 'vitest';
 import { writeActiveDescriptor } from '../../descriptor/write';
@@ -96,6 +98,7 @@ async function boot(
   const discovery = await composeInternalChannelDiscovery({
     control: createSqliteControlStore(handle, () => clock.now),
     store: wrapStore(createDiscoveryStore(handle)),
+    bindings: createChannelStore(handle),
     human: { ownerId: alice.ownerId, participantId: alice.participantId, deviceId: aliceDevice },
     clock: () => clock.now,
     newChannelId: () => `ch_${randomBytes(8).toString('hex')}`,
@@ -112,6 +115,8 @@ async function boot(
     newId: () => `id-${++id}`,
     clock: () => clock.now,
     startPort,
+    // Channel access's share of the owner's Stop, as the launcher wires it.
+    stop: { cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped },
     ...extra,
   });
   cleanups.push(() => server.close());
@@ -518,6 +523,63 @@ describe('internal channel discovery', () => {
     expect((await activateCall(w, agent, 'op-full', { deviceId: body.deviceId, grant: null })).status).toBe(410);
   });
 
+  // Wrong-implementation test (#450): a timeline that ignores the binding's admission start hands
+  // the agent everything said before it was admitted, including while no agent was bound.
+  it('shows a bound agent only the timeline since its admission, across Stop and rejoin; the human sees it all', async () => {
+    const w = await world();
+    const agent = await issue(w, 'session-rejoin');
+    let posted = 0;
+    const post = async (body: string) => {
+      posted += 1;
+      const sent = await call(w.server.port, {
+        method: 'POST', path: `/api/v1/channels/${channelId}/messages`, headers: w.human,
+        body: { clientTxnId: `txn-rejoin-${posted}`, content: { v: 1, kind: 'text', body } },
+      });
+      expect(sent.status).toBe(201);
+    };
+    const join = async (operationId: string) => {
+      await approvedAccess(w, agent, operationId);
+      const recovery = await recoveryKey();
+      const body = await exchangeRequest(w, agent, operationId, `device_${operationId}`, recovery);
+      const exchangeUrl = `${w.server.origin}/api/connector/channel-access-requests/${operationId}/exchange`;
+      const grant = openGrant((await exchangeCall(w, agent, operationId, body, proof(w, agent, exchangeUrl))).json, recovery);
+      const activated = await activateCall(w, agent, operationId, { deviceId: body.deviceId, grant });
+      expect(activated.status).toBe(200);
+      return activated.json as { capability: string; binding: { bindingId: string; generation: number } };
+    };
+    // Every page, oldest first, so pagination cannot hide an earlier message either.
+    const bodies = async (headers: Record<string, string>) => {
+      const pages: string[][] = [];
+      let cursor: string | null = null;
+      do {
+        const query: string = cursor === null ? '?limit=1' : `?limit=1&cursor=${encodeURIComponent(cursor)}`;
+        const read = await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline${query}`, headers });
+        expect(read.status).toBe(200);
+        pages.push(read.json.events.map((event: { content: { body: string } }) => event.content.body));
+        cursor = read.json.nextCursor;
+      } while (cursor !== null);
+      return pages.reverse().flat();
+    };
+
+    await post('said before any admission');
+    const first = await join('op-first');
+    await post('said to the first binding');
+    expect(await bodies(bearer(first.capability))).toEqual(['said to the first binding']);
+
+    // Stop: the binding is revoked and the channel's approvals close.
+    expect(createChannelStore(w.handle).revokeBinding(first.binding).kind).toBe('done');
+    expect(await w.discovery.cancelApproved(channelId)).toBe('cancelled');
+    await post('said while no agent was bound');
+
+    const rejoined = await join('op-rejoin');
+    await post('said after the rejoin');
+    expect(await bodies(bearer(rejoined.capability))).toEqual(['said after the rejoin']);
+    // The human's view is unchanged: the whole history.
+    expect(await bodies(w.human)).toEqual([
+      'said before any admission', 'said to the first binding', 'said while no agent was bound', 'said after the rejoin',
+    ]);
+  });
+
   it('finishes an activation whose grant was consumed before the binding was recorded', async () => {
     const w = await world();
     const agent = await issue(w, 'session-crash');
@@ -536,6 +598,30 @@ describe('internal channel discovery', () => {
     const activated = await activateCall(w, agent, 'op-crash', { deviceId: body.deviceId, grant });
     expect(activated.status).toBe(200);
     expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(200);
+  });
+
+  it('Stop closes an approval mid-exchange: the activation that raced it is revoked, and another channel keeps its own', async () => {
+    const w = await world();
+    const agent = await issue(w, 'session-stop');
+    await approvedAccess(w, agent, 'op-stop');
+    const recovery = await recoveryKey();
+    const body = await exchangeRequest(w, agent, 'op-stop', 'device_stop_1', recovery);
+    const exchangeUrl = `${w.server.origin}/api/connector/channel-access-requests/op-stop/exchange`;
+    const grant = openGrant((await exchangeCall(w, agent, 'op-stop', body, proof(w, agent, exchangeUrl))).json, recovery);
+
+    // Stopping another channel leaves this approval alone.
+    expect(await w.discovery.cancelApproved(otherChannelId)).toBe('cancelled');
+    expect((await accessStatus(w, agent, 'op-stop')).json.outcome).toBe('connecting');
+
+    // Stop of this channel closes the exchanged request before its connector activates the grant.
+    expect(await w.discovery.cancelApproved(channelId)).toBe('cancelled');
+    expect((await accessStatus(w, agent, 'op-stop')).json).toEqual({ v: 1, operationId: 'op-stop', outcome: 'revoked' });
+    expect((await activateCall(w, agent, 'op-stop', { deviceId: body.deviceId, grant })).status).toBe(410);
+    // The binding the late activation recorded never became live.
+    const rows = w.handle.read(db => db.prepare('SELECT status FROM bindings WHERE participant_id = ?')
+      .all(`participant_${agent.principal}`)) as Array<{ status: string }>;
+    expect(rows).toEqual([{ status: 'revoked' }]);
+    expect((await activateCall(w, agent, 'op-stop', { deviceId: body.deviceId, grant: null })).status).toBe(410);
   });
 
   it('keeps visibility, allowlists, pending decisions and exchange recovery across restart', async () => {
@@ -704,6 +790,57 @@ describe('internal channel discovery', () => {
     expect(w.handle.read(db => db.prepare('SELECT count(*) AS n FROM channels').get())).toEqual({ n: 3 });
   });
 
+  // Wrong-implementation test: a create path that makes the channel at submission,
+  // or on a denial or expiry, leaves rows behind that these counts catch.
+  it('creates nothing for a rejected or expired confirmation, and exactly one secret channel on approval', async () => {
+    const w = await world();
+    // Each scenario is its own agent session: one session holds one create request.
+    const serviceFor = async (session: string) =>
+      new ChannelCreateService(createInternalClient({ descriptorPath: (await issue(w, session)).descriptorPath }));
+    const counts = () => ({
+      channels: w.handle.read(db => db.prepare('SELECT count(*) AS n FROM channels').get()),
+      memberships: w.handle.read(db => db.prepare('SELECT count(*) AS n FROM memberships').get()),
+      bindings: w.handle.read(db => db.prepare('SELECT count(*) AS n FROM bindings').get()),
+      grants: controlKeys(w).filter(key => key.includes('grant')),
+    });
+    const before = counts();
+    const pendingFor = async (title: string) => (await inbox(w)).find(entry =>
+      entry.operationKind === 'create' && entry.outcome === 'pending_owner'
+      && (entry as unknown as { detail: { proposedTitle: string } }).detail.proposedTitle === title)!;
+
+    // Submission alone creates nothing; a rejected confirmation creates nothing.
+    const rejecting = await serviceFor('session-reject');
+    expect(await rejecting.request({ title: 'Rejected', operationId: 'op-reject', origin: null }))
+      .toMatchObject({ ok: true, outcome: 'pending_owner' });
+    expect(counts()).toEqual(before);
+    const rejected = await pendingFor('Rejected');
+    expect((await decide(w, rejected.requestHandle, rejected.revision, 'deny', w.human, 'create')).status).toBe(200);
+    expect(await rejecting.status({ operationId: 'op-reject', origin: null })).toMatchObject({ ok: true, outcome: 'denied' });
+    expect(counts()).toEqual(before);
+
+    // An unanswered confirmation that outlives its deadline creates nothing either.
+    const expiring = await serviceFor('session-expire');
+    expect(await expiring.request({ title: 'Expired', operationId: 'op-expire', origin: null }))
+      .toMatchObject({ ok: true, outcome: 'pending_owner' });
+    w.clock.now += 8 * 24 * 60 * 60_000;
+    const expired = await expiring.status({ operationId: 'op-expire', origin: null });
+    expect(expired.ok && expired.outcome).not.toBe('connected');
+    expect(counts()).toEqual(before);
+
+    // Approval creates exactly one secret channel, still with no binding or grant.
+    w.clock.now = NOW;
+    const approving = await serviceFor('session-approve');
+    await approving.request({ title: 'Approved', operationId: 'op-approve', origin: null });
+    const approved = await pendingFor('Approved');
+    expect((await decide(w, approved.requestHandle, approved.revision, 'approve', w.human, 'create')).status).toBe(200);
+    await approving.status({ operationId: 'op-approve', origin: null });
+    await approving.status({ operationId: 'op-approve', origin: null });
+    const after = counts();
+    expect(after.channels).toEqual({ n: (before.channels as { n: number }).n + 1 });
+    expect(after.bindings).toEqual(before.bindings);
+    expect(after.grants).toEqual(before.grants);
+  });
+
   it('keeps the admission adapter idempotent per provider operation', async () => {
     const w = await world();
     const agent = await issue(w, 'session-1');
@@ -718,6 +855,8 @@ describe('internal channel discovery', () => {
     expect(await w.discovery.admission.reconcile(input)).toEqual({ kind: 'admitted', membership: 'joined' });
     // A stale generation is never admitted.
     expect(await w.discovery.admission.admit({ ...input, providerOperationId: 'padmit-2', sessionGeneration: 2 })).toEqual({ kind: 'rejected' });
+    // Channel access shares no history: any other history choice is refused, never widened.
+    expect(await w.discovery.admission.admit({ ...input, providerOperationId: 'padmit-3', history: 'full' as never })).toEqual({ kind: 'rejected' });
   });
 
   describe('local activation by the agent client', () => {
@@ -752,12 +891,13 @@ describe('internal channel discovery', () => {
       };
       const client = createInternalClient({ descriptorPath: agent.descriptorPath, fetch: transport, clock: () => NOW });
       const channelUrl = `${w.server.origin}/channels/${channelId}`;
-      const activePath = path.join(fixture.root, 'active.json');
-      const readActive = () => JSON.parse(fs.readFileSync(activePath, 'utf8')) as Record<string, string>;
+      // The agent's own granted descriptor beside its discovery descriptor is the binding of record.
+      const grantPath = path.join(path.dirname(agent.descriptorPath), 'grant.json');
+      const readGrant = () => JSON.parse(fs.readFileSync(grantPath, 'utf8')) as Record<string, string>;
       const bindingRows = () => w.handle.read(db => (db.prepare('SELECT count(*) AS n FROM bindings WHERE participant_id = ?')
         .get(`participant_${agent.principal}`) as { n: number }).n);
       return {
-        w, agent, client, channelUrl, calls, activePath, readActive, bindingRows, fixture,
+        w, agent, client, channelUrl, calls, grantPath, readGrant, bindingRows, fixture,
         failNext(...attempts: Attempt[]) { plan = attempts; },
         async approve() {
           expect(await client.requestAccess!(channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
@@ -771,7 +911,7 @@ describe('internal channel discovery', () => {
           stdout.on('data', chunk => { chunks.out += String(chunk); });
           stderr.on('data', chunk => { chunks.err += String(chunk); });
           const stateDirectory = path.join(fixture.root, 'agent-state');
-          const code = await runCli(['--internal-descriptor', activePath, ...args], {
+          const code = await runCli(['--internal-descriptor', grantPath, ...args], {
             client: null as never,
             inbox: (bindingId, generation) => openInbox({
               stateDirectory, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
@@ -800,9 +940,9 @@ describe('internal channel discovery', () => {
       expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
       expect(a.calls).toEqual(['exchange', 'activate', 'ready']);
       expect(a.bindingRows()).toBe(1);
-      const active = a.readActive();
+      const active = a.readGrant();
       expect(active).toMatchObject({ channelId, grantRef: expect.any(String), bindingId: expect.any(String), bindingCapability: expect.any(String) });
-      expect(fs.statSync(a.activePath).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(a.grantPath).mode & 0o777).toBe(0o600);
       // Ready is acknowledged only after the descriptor was written.
       expect((await accessStatus(a.w, a.agent, active.grantRef!)).json.outcome).toBe('connected');
 
@@ -826,12 +966,12 @@ describe('internal channel discovery', () => {
       a.failNext({ action: 'ready', outcome: 'lose' });
       expect((await a.client.requestAccess!(a.channelUrl)).kind).toBe('status');
       expect(a.bindingRows()).toBe(1);
-      const written = a.readActive();
+      const written = a.readGrant();
       a.calls.length = 0;
       expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
       // The held binding is never re-activated, so the running client's capability survives.
       expect(a.calls).not.toContain('activate');
-      expect(a.readActive()).toEqual(written);
+      expect(a.readGrant()).toEqual(written);
       expect(a.bindingRows()).toBe(1);
     });
 
@@ -841,10 +981,10 @@ describe('internal channel discovery', () => {
       a.failNext({ action: 'activate', outcome: 'lose' });
       await a.client.requestAccess!(a.channelUrl);
       expect(a.bindingRows()).toBe(1);
-      expect(() => a.readActive().bindingId).not.toThrow();
+      expect(() => a.readGrant().bindingId).not.toThrow();
       expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
       expect(a.bindingRows()).toBe(1);
-      const active = a.readActive();
+      const active = a.readGrant();
       expect(active.bindingId).toBeDefined();
       const timeline = await call(a.w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(active.bindingCapability!) });
       expect(timeline.status).toBe(200);
@@ -854,13 +994,13 @@ describe('internal channel discovery', () => {
       const a = await activationWorld();
       await a.approve();
       await a.client.requestAccess!(a.channelUrl);
-      const stale = a.readActive().bindingCapability!;
+      const stale = a.readGrant().bindingCapability!;
       const eventId = a.human(BODY);
-      const active = a.readActive();
+      const active = a.readGrant();
       // The listener read the descriptor before activation rotated the capability.
       let reads = 0;
       const delivery = createInternalDelivery({
-        descriptorPath: a.activePath, stateDirectory: path.join(a.fixture.root, 'agent-state'),
+        descriptorPath: a.grantPath, stateDirectory: path.join(a.fixture.root, 'agent-state'),
         readDescriptor: file => {
           const read = readInternalDescriptor(file);
           return reads++ === 0 && read.ok ? { ...read, value: { ...read.value, bindingCapability: stale } as typeof read.value } : read;
@@ -876,7 +1016,7 @@ describe('internal channel discovery', () => {
       });
       expect(rotated.status).toBe(200);
       const next = { ...active, bindingCapability: rotated.json.capability as string };
-      fs.writeFileSync(a.activePath, JSON.stringify(next), { mode: 0o600 });
+      fs.writeFileSync(a.grantPath, JSON.stringify(next), { mode: 0o600 });
       expect(next.bindingCapability).not.toBe(stale);
       const inboxFor = () => openInbox({
         stateDirectory: path.join(a.fixture.root, 'agent-state'), bindingId: active.bindingId!, generation: 1,
@@ -889,6 +1029,139 @@ describe('internal channel discovery', () => {
       const batch = await listener.readBatch({ maxBytes: 1024 * 1024 });
       await listener.release();
       expect(batch?.items.map(item => item.record.releaseId)).toEqual([internalReleaseId({ bindingId: active.bindingId, generation: 1 } as never, eventId as never)]);
+    });
+
+    const stop = (a: Awaited<ReturnType<typeof activationWorld>>) => call(a.w.server.port, {
+      method: 'POST', path: `/api/v1/channels/${channelId}/stop`, headers: a.w.human, body: { v: 1, targets: null },
+    });
+
+    // Wrong-implementation test (#441): a Stop that leaves the connected request as it was shows
+    // the owner a stopped agent as connected, and the agent's next join is that same operation.
+    it('after Stop, the owner sees the connected request revoked and the agent joins again as a new request', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      const first = a.readGrant();
+      expect((await stop(a)).status).toBe(200);
+
+      expect((await inbox(a.w)).map(entry => entry.outcome)).toEqual(['revoked']);
+      expect((await accessStatus(a.w, a.agent, first.grantRef!)).json).toEqual({ v: 1, operationId: first.grantRef, outcome: 'revoked' });
+      expect(await createInternalClient({ descriptorPath: a.grantPath }).status()).toMatchObject({ connected: false });
+
+      // Asking again files a new request for the owner; nothing is admitted by asking.
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      const pending = (await inbox(a.w)).filter(entry => entry.outcome === 'pending_owner');
+      expect(pending).toHaveLength(1);
+      expect((await decide(a.w, pending[0]!.requestHandle, pending[0]!.revision, 'approve')).status).toBe(200);
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      const second = a.readGrant();
+      expect(second.bindingId).not.toBe(first.bindingId);
+      expect(second.grantRef).not.toBe(first.grantRef);
+      const timeline = await call(a.w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(second.bindingCapability!) });
+      expect(timeline.status).toBe(200);
+      // The stopped operation itself never reads as connected again.
+      expect((await accessStatus(a.w, a.agent, first.grantRef!)).json.outcome).toBe('revoked');
+    });
+
+    // Wrong-implementation test (#441): keeping the revoked grant in the agent's descriptor refuses
+    // the new binding's write, so every join answers `repair_required` while the owner sees it bound.
+    it('after Stop and a new discovery identity, the agent joins, is approved and connects', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      const first = a.readGrant();
+      expect((await stop(a)).status).toBe(200);
+
+      const rediscovered = await issue(a.w, 'session-local');
+      expect(rediscovered.generation).toBeGreaterThan(a.agent.generation);
+      const client = createInternalClient({ descriptorPath: rediscovered.descriptorPath, clock: () => NOW });
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      const pending = (await inbox(a.w)).find(entry => entry.outcome === 'pending_owner')!;
+      expect((await decide(a.w, pending.requestHandle, pending.revision, 'approve')).status).toBe(200);
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      const second = a.readGrant();
+      expect(second.bindingId).not.toBe(first.bindingId);
+      expect(await createInternalClient({ descriptorPath: a.grantPath }).status())
+        .toMatchObject({ connected: true, binding: { bindingId: second.bindingId } });
+    });
+
+    // Wrong-implementation test (#391): with one shared grant file, the second session's
+    // activation is refused as `repair_required` and only one binding is ever usable.
+    it('binds two agent sessions of one OS user to one channel, each through its own granted descriptor', async () => {
+      const a = await activationWorld();
+      const launchPath = path.join(a.fixture.root, 'active.json');
+      const launch = fs.readFileSync(launchPath, 'utf8');
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      const second = await issue(a.w, 'session-second');
+      const client = createInternalClient({ descriptorPath: second.descriptorPath, clock: () => NOW });
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      const pending = (await inbox(a.w)).find(entry => entry.outcome === 'pending_owner')!;
+      expect((await decide(a.w, pending.requestHandle, pending.revision, 'approve')).status).toBe(200);
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      const secondGrantPath = path.join(path.dirname(second.descriptorPath), 'grant.json');
+      const grants = [a.grantPath, secondGrantPath].map(file => JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>);
+      expect(grants[0]!.bindingId).not.toBe(grants[1]!.bindingId);
+      expect(fs.statSync(secondGrantPath).mode & 0o777).toBe(0o600);
+      // No grant reaches the launch's descriptor: it stays transport-only (#407).
+      expect(fs.readFileSync(launchPath, 'utf8')).toBe(launch);
+      // Each session, pointed at its own file, is connected as its own binding.
+      for (const [index, file] of [a.grantPath, secondGrantPath].entries()) {
+        const status = await createInternalClient({ descriptorPath: file }).status();
+        expect(status).toMatchObject({ connected: true, binding: { bindingId: grants[index]!.bindingId } });
+      }
+    });
+
+    // Wrong-implementation test (#407): an installed entry that falls back to `active.json`
+    // sends as whichever session bound first, or as nobody.
+    it('lets two installed Codex entries on one host each send as their own participant', async () => {
+      const a = await activationWorld();
+      await a.approve();
+      expect(await a.client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+      const second = await issue(a.w, 'session-second');
+      const client = createInternalClient({ descriptorPath: second.descriptorPath, clock: () => NOW });
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'pending_owner' });
+      const pending = (await inbox(a.w)).find(entry => entry.outcome === 'pending_owner')!;
+      expect((await decide(a.w, pending.requestHandle, pending.revision, 'approve')).status).toBe(200);
+      expect(await client.requestAccess!(a.channelUrl)).toEqual({ kind: 'status', outcome: 'connected' });
+
+      // Each Codex session runs the same argv-less `mcp-serve` and names its thread on every call.
+      const entry = async (thread: string, body: string) => {
+        const stdin = new PassThrough();
+        stdin.end(`${JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { _meta: { threadId: thread }, name: 'khala_send', arguments: { message: body } },
+        })}\n`);
+        const stdout = new PassThrough();
+        let out = '';
+        stdout.on('data', chunk => { out += String(chunk); });
+        const stateDirectory = path.join(a.fixture.root, `entry-${thread}`);
+        const code = await runCli(['mcp-serve'], {
+          client: null as never,
+          inbox: (bindingId, generation) => openInbox({
+            stateDirectory, bindingId, generation, maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32,
+          }),
+          stdin, stdout, stderr: new PassThrough(),
+          sessionGrants: sessionGrants(a.fixture.root),
+          internalClient: async descriptorPath => createInternalClient({ descriptorPath }),
+          internalDelivery: async descriptorPath => createInternalDelivery({ descriptorPath, stateDirectory }),
+        });
+        expect(code).toBe(0);
+        return JSON.parse(out) as { result: { structuredContent: { kind: string } } };
+      };
+      expect((await entry('session-second', 'from the second session')).result.structuredContent.kind).toBe('accepted');
+      expect((await entry('session-local', 'from the first session')).result.structuredContent.kind).toBe('accepted');
+
+      const timeline = await call(a.w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: a.w.human });
+      const authors = Object.fromEntries((timeline.json.events as Array<{ content: { body: string }; participant: { participantId: string } }>)
+        .map(event => [event.content.body, event.participant.participantId]));
+      expect(authors['from the first session']).toBe(`participant_${a.agent.principal}`);
+      expect(authors['from the second session']).toBe(`participant_${second.principal}`);
     });
   });
 
@@ -948,6 +1221,22 @@ describe('internal channel discovery', () => {
       expect(sent.status).toBe(201);
       expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(403);
       expect(channelCount(w)).toBe(before + 1);
+    });
+
+    it('Stop of the created channel closes the approved create before its requester is admitted', async () => {
+      const w = await world();
+      const agent = await issue(w, 'session-create-stop');
+      expect((await requestCreate(w, agent, 'op-create-stop', 'Stopped proposal')).json.outcome).toBe('pending_owner');
+      const pending = await pendingCreate(w);
+      expect((await decide(w, pending.requestHandle, pending.revision, 'approve', w.human, 'create')).status).toBe(200);
+      const created = w.handle.read(db => db.prepare("SELECT channel_id FROM channels WHERE title = 'Stopped proposal'").all()) as Array<{ channel_id: string }>;
+      expect(created).toHaveLength(1);
+
+      expect(await w.discovery.cancelApproved(created[0]!.channel_id)).toBe('cancelled');
+      expect((await inbox(w)).find(entry => entry.requestHandle === pending.requestHandle)?.outcome).toBe('revoked');
+      const { reply } = await createExchange(w, agent, 'op-create-stop', await recoveryKey());
+      expect(reply.status).not.toBe(200);
+      expect(membersOf(w, created[0]!.channel_id)).toEqual([{ participant_id: alice.participantId }]);
     });
 
     it('denial creates nothing and the exchange stays closed', async () => {

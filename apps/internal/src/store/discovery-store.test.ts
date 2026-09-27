@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { DeviceId, OwnerId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChannelStore } from './channel-store';
+import { encodeSubscriptionCursor } from './cursors';
 import { type DiscoveryStore, createDiscoveryStore } from './discovery-store';
 import { bindLifecycleChannel, readResumeMetadata } from './lifecycle-snapshot';
 import { type InternalStoreHandle, openChannelStore } from './open';
@@ -156,6 +157,42 @@ describe('internal discovery store', () => {
     expect(discovery.admit({ ...input, providerOperationId: 'padmit_3', channelId: 'ch_missing' })).toEqual({ kind: 'rejected' });
     expect(handle.read(db => db.prepare('SELECT count(*) AS n FROM bindings').get())).toEqual({ n: 0 });
     expect(createChannelStore(handle).channel({ channelId: 'ch_a' as RoomId, participantId: input.participantId }).kind).toBe('done');
+  });
+
+  // Wrong-implementation test (#443): a feed that starts at sequence 0 delivers `before`.
+  it('starts an activated binding feed after the channel head at activation, whatever cursor it presents', () => {
+    const { handle, discovery } = open(directory());
+    seed(handle, [['ch_a', 'Alpha']]);
+    const store = createChannelStore(handle);
+    const agent = 'participant_agent' as ParticipantId;
+    const agentDevice = 'device_agent' as DeviceId;
+    const post = (body: string) => expect(store.send({
+      channelId: 'ch_a' as RoomId, eventId: `event_${body}` as never, authorParticipantId: human, authorDeviceId: humanDevice,
+      clientTxnId: `txn_${body}`, content: { v: 1, kind: 'text', body }, receivedAt: T,
+    }).kind).toBe('stored');
+    post('before');
+    expect(discovery.admit({
+      providerOperationId: 'padmit_1', channelId: 'ch_a', ownerId: owner, participantId: agent, deviceId: agentDevice, displayName: 'codex',
+    }).kind).toBe('admitted');
+    post('admitted');
+    const binding = {
+      v: 1 as const, bindingId: 'binding_1' as never, ownerId: owner, agentParticipantId: agent, deviceId: agentDevice,
+      harness: 'codex', sessionId: 'session_1', generation: 1,
+    };
+    expect(discovery.activate({ operationKey: 'op_1', binding, channelId: 'ch_a', sessionGeneration: 1 }).kind).toBe('activated');
+    post('after');
+    const bodies = (cursor: string | null) => {
+      const page = store.readSubscription({ channelId: 'ch_a' as RoomId, binding, cursor, limit: 50 });
+      if (page.kind !== 'page') throw new Error(`expected a page, got ${page.kind}`);
+      return page.events.map(event => (event.content as { body: string }).body);
+    };
+    expect(bodies(null)).toEqual(['after']);
+    // A replayed activation keeps its recorded start.
+    expect(discovery.activate({ operationKey: 'op_1', binding, channelId: 'ch_a', sessionGeneration: 1 }).kind).toBe('activated');
+    expect(bodies(null)).toEqual(['after']);
+    // A cursor rewound to the channel's beginning still starts after the activation head.
+    const forged = encodeSubscriptionCursor({ channelId: 'ch_a' as RoomId, bindingId: 'binding_1', generation: 1, lastCoveredSequence: 0 });
+    expect(bodies(forged)).toEqual(['after']);
   });
 
   it('creates or reconciles exactly one secret channel per idempotency key and no agent membership', () => {

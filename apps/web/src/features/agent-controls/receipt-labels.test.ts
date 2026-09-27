@@ -20,15 +20,17 @@ function receipt(overrides: Partial<DeliveryReceipt> = {}): DeliveryReceipt {
 
 describe('receiptLabel', () => {
   it('never implies context_consumed from transport_written', () => {
-    expect(receiptLabel(receipt({ kind: 'transport_written' }))).not.toContain('model');
+    expect(receiptLabel(receipt({ kind: 'transport_written' }))).not.toContain('context');
   });
 
   it('never implies context_consumed from harness_queued', () => {
-    expect(receiptLabel(receipt({ kind: 'harness_queued' }))).not.toContain('model');
+    expect(receiptLabel(receipt({ kind: 'harness_queued' }))).not.toContain('context');
   });
 
-  it('labels context_consumed distinctly, as the only kind that reached the model', () => {
-    expect(receiptLabel(receipt({ kind: 'context_consumed' }))).toContain('model');
+  it('labels context_consumed as context insertion, never as read, and completion never as a token return', () => {
+    expect(receiptLabel(receipt({ kind: 'context_consumed' }))).toBe('Added to agent context');
+    expect(receiptLabel(receipt({ kind: 'completed' }))).toBe('Agent turn completed');
+    expect(receiptLabel(receipt({ kind: 'completed' }))).not.toMatch(/token|read/i);
   });
 
   it('stays visible and distinct for outcome_unknown, independent of connector status', () => {
@@ -60,6 +62,6 @@ describe('receiptDetailFromDecoded', () => {
   it('renders the normal label for a well-formed decoded receipt', () => {
     const decoded = decodeDeliveryReceipt(receipt({ kind: 'completed' }));
     const detail = receiptDetailFromDecoded(decoded);
-    expect(detail).toBe('Delivery confirmed complete');
+    expect(detail).toBe('Agent turn completed');
   });
 });

@@ -110,9 +110,26 @@ export async function discoverRoutes(repoRoot: string): Promise<DiscoveryResult>
   return { presentDomains, absentPrefixes, routeManifest };
 }
 
-export function renderGeneratedFunction(result: DiscoveryResult): string {
+/** Netlify's functions input directory (`[functions].directory` in netlify.toml). */
+export function functionsOutputDirectory(repoRoot: string): string {
+  return path.join(repoRoot, 'infra/netlify/functions-generated');
+}
+
+/**
+ * The extensionless, POSIX-separated specifier the generated function uses to
+ * import `modulePath`. Derived from the real output directory, not a hardcoded
+ * `../..`, so esbuild resolves it however deep that directory sits.
+ */
+export function importSpecifier(outputDirectory: string, modulePath: string): string {
+  const relative = path.relative(outputDirectory, modulePath.replace(/\.ts$/u, '')).split(path.sep).join('/');
+  return relative.startsWith('.') ? relative : `./${relative}`;
+}
+
+export function renderGeneratedFunction(result: DiscoveryResult, repoRoot: string): string {
+  const outputDirectory = functionsOutputDirectory(repoRoot);
+  const runtimeImport = (file: string) => importSpecifier(outputDirectory, path.join(repoRoot, 'apps/control/src/runtime', file));
   const imports = result.presentDomains
-    .map(domain => `import { ${domain.exportName} } from '../../apps/control/src/composition/${domain.key}/handlers';`)
+    .map(domain => `import { ${domain.exportName} } from '${importSpecifier(outputDirectory, domain.modulePath)}';`)
     .join('\n');
   const registrationCalls = result.presentDomains.map(domain => `...${domain.exportName}()`).join(', ');
   const absentPrefixesLiteral = JSON.stringify(result.absentPrefixes);
@@ -120,8 +137,8 @@ export function renderGeneratedFunction(result: DiscoveryResult): string {
   return `// GENERATED FILE — do not edit. Produced by apps/control/src/runtime/discover.ts
 // via \`pnpm --filter @khala/control build:functions\`. This directory is
 // Netlify's functions *input*, not its build output; it is gitignored.
-import { createGateway } from '../../apps/control/src/runtime/handler';
-import { readServerEnv } from '../../apps/control/src/runtime/env';
+import { createGateway } from '${runtimeImport('handler.ts')}';
+import { readServerEnv } from '${runtimeImport('env.ts')}';
 ${imports}
 
 // Fails closed at cold start if required server config is absent (never logs
@@ -154,9 +171,9 @@ async function run(): Promise<void> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = repoRootFrom(here);
   const result = await discoverRoutes(repoRoot);
-  const outputDirectory = path.join(repoRoot, 'infra/netlify/functions-generated');
+  const outputDirectory = functionsOutputDirectory(repoRoot);
   await mkdir(outputDirectory, { recursive: true });
-  await writeFile(path.join(outputDirectory, 'khala-control.ts'), renderGeneratedFunction(result), 'utf8');
+  await writeFile(path.join(outputDirectory, 'khala-control.ts'), renderGeneratedFunction(result, repoRoot), 'utf8');
   await writeFile(path.join(outputDirectory, 'route-manifest.json'), renderRouteManifest(result), 'utf8');
   const domainSummary = result.presentDomains.map(domain => domain.key).join(', ') || 'none';
   console.log(`build:functions: ${result.routeManifest.length} route(s) from [${domainSummary}]; absent: ${result.absentPrefixes.join(', ') || 'none'}`);

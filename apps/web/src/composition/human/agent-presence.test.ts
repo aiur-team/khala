@@ -40,6 +40,8 @@ describe('human channel composition', () => {
         connection: 'connected',
         routeLabel: 'Codex CLI',
         lastReceipt: { kind: 'harness_queued', observedAt: '2026-09-19T12:00:00.000Z' },
+        // A snapshot from before the capability existed presents it as unknown.
+        acknowledgement: 'unknown',
       }],
     });
     await expect(port.installCommand('agent-1' as ParticipantId, new AbortController().signal))

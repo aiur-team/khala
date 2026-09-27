@@ -10,6 +10,7 @@ import {
   type ImportedHistoryRecordInput, decodeImportedHistoryLimits, digestImportedHistoryManifest, encodeImportedHistoryChunk,
   sealImportedHistory,
 } from '@khala/contracts/messaging/imported-history';
+import { MAX_HISTORY_CATCH_UP_ROUNDS } from '@khala/contracts/messaging/make-external';
 import { decodeCanonical } from '../store/channel-store';
 import type { InternalStoreHandle } from '../store/open';
 import type { HistoryTransferLedger, SealedChunkRef, TransferLedgerState, TransferStepKey } from './transfer-ledger';
@@ -28,7 +29,7 @@ import type { HistoryTransferLedger, SealedChunkRef, TransferLedgerState, Transf
 // chunk, so a resumed or replayed step re-sends nothing already acknowledged, and a
 // lost acknowledgement is reconciled from the destination rather than re-sent.
 
-export const MAX_CATCH_UP_ROUNDS = 3;
+export const MAX_CATCH_UP_ROUNDS = MAX_HISTORY_CATCH_UP_ROUNDS;
 
 /** Facts the conversion owns: which internal channel, which external channel, whose conversion. */
 export type ConversionTarget = Readonly<{

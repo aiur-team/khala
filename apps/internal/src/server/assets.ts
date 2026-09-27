@@ -60,7 +60,7 @@ export class AssetManifestError extends Error {
 
 const ROUTE_PATTERN = /^\/(?:[A-Za-z0-9._~-]+\/)*[A-Za-z0-9._~-]*$/;
 const FILE_SEGMENT = /^[A-Za-z0-9._~-]+$/;
-export const RESERVED_ROUTE_PREFIXES = ['/api/', '/__khala/', '/channels/'] as const;
+export const RESERVED_ROUTE_PREFIXES = ['/api/', '/__khala/', '/channels/', '/channel-requests/'] as const;
 
 function validRoute(route: string): boolean {
   return ROUTE_PATTERN.test(route) && route.split('/').every(segment => segment !== '.' && segment !== '..');
@@ -124,7 +124,7 @@ export function loadAssets(manifest: AssetManifest, limits: AssetLimits = DEFAUL
   let total = 0;
   for (const entry of manifest.entries) {
     if (typeof entry.route !== 'string' || !validRoute(entry.route)) throw new AssetManifestError('invalid_route');
-    if (entry.route === '/api' || entry.route === '/__khala' || entry.route === '/channels'
+    if (entry.route === '/api' || entry.route === '/__khala' || entry.route === '/channels' || entry.route === '/channel-requests'
       || RESERVED_ROUTE_PREFIXES.some(prefix => entry.route.startsWith(prefix))) {
       throw new AssetManifestError('reserved_route');
     }

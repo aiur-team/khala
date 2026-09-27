@@ -1,0 +1,95 @@
+/* Neutral evidence chips: no checkmarks, ticks or progress styling, because facts are not a read state. */
+
+.receipt-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.receipt-evidence--group {
+  display: block;
+  padding: 0.6rem 0.85rem;
+  border: 1px dashed var(--khala-line);
+  border-radius: var(--khala-panel-radius);
+}
+
+.receipt-evidence--group h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+}
+
+.receipt-evidence__batch,
+.receipt-evidence__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.receipt-evidence__releases {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.receipt-evidence__release-label {
+  display: block;
+  color: var(--khala-ink-muted);
+}
+
+.receipt-evidence__fact {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--khala-fill-control);
+}
+
+.receipt-evidence__fact--absent {
+  color: var(--khala-ink-muted);
+}
+
+.receipt-evidence__help {
+  font-size: inherit;
+}
+
+.receipt-evidence__help-text {
+  display: block;
+  margin-top: 0.25rem;
+}
+
+.receipt-evidence__help-text[hidden] {
+  display: none;
+}
+
+.receipt-evidence__access {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--khala-panel-radius);
+  background: var(--khala-fill-control);
+}
+
+.receipt-evidence__announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.timeline__evidence-group {
+  list-style: none;
+}
+
+.timeline__evidence-link {
+  display: inline-block;
+  margin-top: 0.4rem;
+  margin-right: 0.75rem;
+}

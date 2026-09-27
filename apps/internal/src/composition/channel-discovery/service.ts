@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { internalSessionDigest } from '@aiur/khala/composition/internal-session';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
+import { discoveryPrincipalPreimage } from '@khala/contracts/internal/discovery-descriptor';
 import {
   type AuthPrincipal, type AuthorizedChannelRef, type ChannelAccessRequesterContext, type ChannelAccessResolutionPort,
   type ChannelCreateAdapterPort, type ChannelCreateReconciliation, type ControlStore, type DeviceId, type DiscoveryRequester,
@@ -15,6 +17,7 @@ import { createChannelAccessService } from '@khala/messaging/channel-access/jour
 import { createChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
 import { composeChannelCreate } from '@khala/messaging/channel-create/compose';
 import type { HumanAuthority } from '../../server/credentials';
+import type { ChannelStore } from '../../store/channel-store';
 import {
   type DiscoveryAgentContext, type DiscoveryAgentView, type DiscoverySettingsView, type InternalDiscoveryPort,
   ed25519Thumbprint,
@@ -53,11 +56,23 @@ export type InternalChannelDiscovery = Readonly<{
   /** Human-workflow-only; run by the composed creation workflow, never reachable from an agent route. */
   createAdapter: ChannelCreateAdapterPort;
   admission: ChannelAdmissionProviderPort;
+  /**
+   * The owner's Stop, for channel access: closes every approved request for the channel whose
+   * grant has not yet become an active binding, access and create alike, as `revoked`.
+   */
+  cancelApproved(channelId: string): Promise<'cancelled' | 'unavailable'>;
+  /**
+   * The owner's Stop, once its bindings are revoked: closes every request that activated one
+   * of `bindingIds`, connected ones included, as `revoked`.
+   */
+  closeStopped(bindingIds: ReadonlySet<string>): Promise<'closed' | 'unavailable'>;
 }>;
 
 export type InternalChannelDiscoveryDeps = Readonly<{
   control: ControlStore;
   store: DiscoveryStore;
+  /** Revokes an activation that lost its request to the owner's Stop while it was being activated. */
+  bindings: Pick<ChannelStore, 'revokeBinding'>;
   human: HumanAuthority;
   clock: TrustedClock;
   newChannelId: () => string;
@@ -72,7 +87,13 @@ function digest(purpose: string, ...fields: readonly string[]): string {
 }
 
 export function discoveryPrincipal(harness: string, sessionId: string): string {
-  return `agent_${digest('principal', harness, sessionId)}`;
+  return `agent_${createHash('sha256').update(discoveryPrincipalPreimage(harness, sessionId)).digest('base64url')}`;
+}
+
+/** What a binding stores as its session: a digest, never the harness's own session ID. */
+export function sessionDigest(harness: string, sessionId: string): string {
+  // Shared with the agent client, whose native hooks must recognise the same session.
+  return internalSessionDigest(harness, sessionId);
 }
 
 function agentParticipant(principal: string): string {
@@ -256,7 +277,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
   });
 
   /** The one binding an operation activates is named by its requester, origin and operation. */
-  function activationKey(agent: DiscoveryAgentContext, operationId: string): string {
+  function activationKey(agent: Pick<DiscoveryAgentContext, 'principal' | 'origin'>, operationId: string): string {
     return digest('activation', agent.principal, agent.origin, operationId);
   }
 
@@ -290,7 +311,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       if (activation.binding.deviceId !== input.deviceId) return { kind: 'rejected', code: 'wrong_device' };
       // A revoked binding stays revoked; resuming never mints it a new capability.
       if (activation.status !== 'active') return { kind: 'rejected', code: 'closed' };
-      return { kind: 'ok', value: { binding: activation.binding, channelId: activation.channelId } };
+      return fenced(agent, stored, operationId, { binding: activation.binding, channelId: activation.channelId });
     }
     if (input.grant === null) return { kind: 'rejected', code: 'closed' };
     const bound = await redeemed({
@@ -319,12 +340,99 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
         harness: stored.harness,
         // The session digest, never the harness's own session identifier.
         sessionId: stored.sessionDigest,
-        generation: 1,
+        // The connector admits only a binding of its own session generation, as the hosted
+        // service issues one; a fixed generation refuses every session after a rediscovery.
+        generation: agent.generation,
       },
     });
     if (activated.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
     if (activated.kind === 'rejected') return { kind: 'rejected', code: 'closed' };
-    return { kind: 'ok', value: { binding: activated.activation.binding, channelId: activated.activation.channelId } };
+    return fenced(agent, stored, operationId, { binding: activated.activation.binding, channelId: activated.activation.channelId });
+  }
+
+  /**
+   * An activation whose request the owner's Stop closed never takes effect. Stop closes the
+   * request before it reads the channel's bindings, and this check reads the request only
+   * after the binding is recorded: an activation Stop did not see is revoked here.
+   */
+  async function fenced(
+    agent: DiscoveryAgentContext,
+    stored: DiscoveryAgent,
+    operationId: string,
+    value: Readonly<{ binding: SessionBinding; channelId: RoomId }>,
+  ): Promise<OperationResult<Readonly<{ binding: SessionBinding; channelId: RoomId }>, GrantExchangeRejection>> {
+    if (!await requestRevoked(agent, stored, operationId)) return { kind: 'ok', value };
+    return deps.bindings.revokeBinding(value.binding).kind === 'done'
+      ? { kind: 'rejected', code: 'closed' }
+      : { kind: 'unavailable', retryable: true };
+  }
+
+  /** True once this operation's request is closed as `revoked`; the journal keys it by operation alone. */
+  async function requestRevoked(agent: DiscoveryAgentContext, stored: DiscoveryAgent, operationId: string): Promise<boolean> {
+    for (const kind of ['access', 'create'] as const) {
+      const found = await journal.inspectRequester({
+        requester: agent.principal,
+        sessionFingerprint: stored.sessionDigest,
+        sessionGeneration: agent.generation,
+        origin: agent.origin,
+        kind,
+        operationId,
+      });
+      if (found.kind === 'found') return found.status.outcome === 'revoked';
+    }
+    return false;
+  }
+
+  /** The channel an approved request admits into: the one it names, or the one its approval created. */
+  async function approvedChannel(requestHandle: string, kind: 'access' | 'create'): Promise<string | null | 'unavailable'> {
+    if (kind === 'create') return create.workflow.createdChannel(requestHandle);
+    const located = await journal.readContext({ requestHandle });
+    if (located.kind === 'unavailable') return 'unavailable';
+    return located.kind === 'found' && located.context.detail.kind === 'access'
+      ? channelOf(located.context.detail.authorizedChannelRef).channelId
+      : null;
+  }
+
+  async function cancelApproved(channelId: string): Promise<'cancelled' | 'unavailable'> {
+    const listed = await journal.listOwner({ ownerId: human.ownerId });
+    if (listed.kind !== 'found') return 'unavailable';
+    let result: 'cancelled' | 'unavailable' = 'cancelled';
+    for (const request of listed.requests) {
+      if (request.outcome !== 'approved' && request.outcome !== 'connecting') continue;
+      const target = await approvedChannel(request.requestHandle, request.kind);
+      if (target === 'unavailable') result = 'unavailable';
+      if (target !== channelId) continue;
+      const revoked = await access.revokeApproved(request.requestHandle, `stop-${request.requestHandle}-${request.revision}`);
+      if (revoked === 'unavailable') result = 'unavailable';
+    }
+    return result;
+  }
+
+  /**
+   * Closes every request whose activated binding Stop revoked, as `revoked`: the owner's inbox
+   * stops reading it as connected, and the requester's next request is a new one. The binding
+   * ID is derived from the request's requester, origin and operation, exactly as `activate`
+   * derives it.
+   */
+  async function closeStopped(bindingIds: ReadonlySet<string>): Promise<'closed' | 'unavailable'> {
+    if (bindingIds.size === 0) return 'closed';
+    const listed = await journal.listOwner({ ownerId: human.ownerId });
+    if (listed.kind !== 'found') return 'unavailable';
+    let result: 'closed' | 'unavailable' = 'closed';
+    for (const request of listed.requests) {
+      if (request.outcome !== 'approved' && request.outcome !== 'connecting' && request.outcome !== 'connected') continue;
+      const located = await journal.readContext({ requestHandle: request.requestHandle });
+      if (located.kind !== 'found') {
+        if (located.kind === 'unavailable') result = 'unavailable';
+        continue;
+      }
+      const { requester, origin, operationId } = located.context;
+      const bindingId = `binding_${activationKey({ principal: requester, origin }, operationId)}`;
+      if (!bindingIds.has(bindingId)) continue;
+      const revoked = await access.revokeStopped(request.requestHandle, `stop-${request.requestHandle}-${request.revision}`);
+      if (revoked === 'unavailable') result = 'unavailable';
+    }
+    return result;
   }
 
   function requesterOf(agent: DiscoveryAgentContext, stored: DiscoveryAgent): DiscoveryRequester {
@@ -376,7 +484,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       const issued = store.issueAgent({
         principal,
         harness: input.harness,
-        sessionDigest: digest('session', input.harness, input.sessionId),
+        sessionDigest: sessionDigest(input.harness, input.sessionId),
         displayLabel: input.displayLabel,
         workspaceLabel: input.workspaceLabel,
         capabilityDigest: capabilityDigest(capability),
@@ -491,7 +599,7 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
     },
   };
 
-  return { port, createAdapter, admission };
+  return { port, createAdapter, admission, cancelApproved, closeStopped };
 }
 
 function reconciliation(

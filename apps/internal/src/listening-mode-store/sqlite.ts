@@ -6,7 +6,7 @@ import {
   readListeningModeActor,
 } from '@khala/contracts/delivery/index';
 import {
-  array, decodeWith, fail, identifier, literal, object, safeInteger, version,
+  array, decodeWith, fail, identifier, literal, nullable, object, safeInteger, version,
 } from '@khala/contracts/delivery/decode';
 import { readId } from '@khala/contracts/delivery/ids';
 import type { InternalStoreHandle } from '../store/open';
@@ -111,7 +111,7 @@ function decodeControl(input: unknown): ListeningModeControl | null {
     const controlVersion = positiveInteger(reader.field('version'), reader.at('version'));
     return {
       ...key,
-      requested: literal(reader.field('requested'), reader.at('requested'), LISTENING_MODES),
+      requested: nullable(reader.field('requested'), value => literal(value, reader.at('requested'), LISTENING_MODES)),
       version: controlVersion,
       experimentalGrants: array(reader.field('experimentalGrants'), reader.at('experimentalGrants'))
         .map((grant, index) => readGrant(

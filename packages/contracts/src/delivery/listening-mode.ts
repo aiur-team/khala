@@ -63,7 +63,7 @@ export type ListeningModeResult = Readonly<{
   generation: number;
   outcome: (typeof LISTENING_MODE_RESULT_OUTCOMES)[number];
   version: number;
-  requested: ListeningMode;
+  requested: ListeningMode | null;
   effective: ListeningMode | null;
   reason: string | null;
 }>;
@@ -133,7 +133,8 @@ export function readListeningModeActor(input: unknown, field: string): Listening
 export type ListeningModeControl = Readonly<{
   bindingId: BindingId;
   generation: number;
-  requested: ListeningMode;
+  /** `null` when the harness has no proven or experimental mode to request. */
+  requested: ListeningMode | null;
   version: number;
   experimentalGrants: readonly RouteGrant[];
   hardCancelGrants: readonly RouteGrant[];
@@ -242,7 +243,9 @@ export function unknownModeSupportMap(routePrefix: string, reason: string, teste
   };
 }
 
-export function initialListeningMode(modes: ModeSupportMap): Readonly<{ requested: ListeningMode; reason: string | null }> {
+export function initialListeningMode(modes: ModeSupportMap): Readonly<{ requested: ListeningMode | null; reason: string | null }> {
+  const evidenced = LISTENING_MODES.some(mode => modes[mode].status === 'proven' || modes[mode].status === 'experimental');
+  if (!evidenced) return { requested: null, reason: null };
   const sync = modes.sync;
   const asyncSupport = modes.async;
   const exactNegative = sync.status === 'unsupported'
@@ -305,7 +308,7 @@ export function decodeListeningModeResult(input: unknown): Decoded<ListeningMode
       generation: safeInteger(r.field('generation'), r.at('generation')),
       outcome: literal(r.field('outcome'), r.at('outcome'), LISTENING_MODE_RESULT_OUTCOMES),
       version: safeInteger(r.field('version'), r.at('version')),
-      requested: literal(r.field('requested'), r.at('requested'), LISTENING_MODES),
+      requested: nullable(r.field('requested'), value => literal(value, r.at('requested'), LISTENING_MODES)),
       effective: nullable(r.field('effective'), value => literal(value, r.at('effective'), LISTENING_MODES)),
       reason: nullable(r.field('reason'), value => requiredReason(value, r.at('reason'))),
     };

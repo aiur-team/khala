@@ -30,9 +30,14 @@ function exportAliases(name: string): { find: RegExp; replacement: string }[] {
   });
 }
 
+// Application sources (the internal launcher, for one) import `@aiur/khala` subpaths that
+// resolve only under the workspace `khala-source` condition, as in the root config.
+const sourceCondition = 'khala-source';
+
 export default defineConfig({
   root,
-  resolve: { alias: GRADED_PACKAGES.flatMap(exportAliases) },
+  resolve: { alias: GRADED_PACKAGES.flatMap(exportAliases), conditions: [sourceCondition, 'module', 'node', 'development|production'] },
+  ssr: { resolve: { conditions: [sourceCondition, 'module', 'node', 'development|production'] } },
   test: {
     environment: 'node',
     exclude: ['**/node_modules/**', '**/dist/**'],

@@ -235,7 +235,8 @@ reason paragraph so its id is exposed by name, not just adjacent text.
 ## Testing
 
 - `receipt-labels.test.ts` — the receipt-kind-to-label mapping (unit):
-  `transport_written`/`harness_queued` never imply `context_consumed`,
+  `transport_written`/`harness_queued` never imply `context_consumed`, which
+  reads "Added to agent context"; `completed` never implies a returned batch token,
   `outcome_unknown` stays distinct, and a malformed/undecodable receipt shows
   a generic unavailable detail without leaking the raw payload.
 - `controller.test.ts` — the versioned policy-intent state machine against a

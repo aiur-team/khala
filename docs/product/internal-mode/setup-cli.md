@@ -25,7 +25,7 @@ succeeds without confirmation.
 There is no interactive terminal prompt and the person never runs an install
 step. `status` retains its existing connection fields and adds a nested
 `configuration` report; `--check` is the CI form that returns non-zero for
-drift, conflicts, pending Codex hook review, or unsupported detected harnesses.
+drift, conflicts, pending Codex hook review, or when every detected harness is unsupported.
 `setup` and `remove` share
 one deterministic planner, transaction journal, and rollback engine. A dry run
 uses the same plan but performs no Khala writes, lock creation, cache
@@ -49,7 +49,7 @@ supplied the initial reuse map. Both inputs were read from PR #136 head
 | Initiator and consent | The user's existing agent runs the CLI. A mutation requires a digest-bound confirmation from the person, relayed by that agent; setup never asks the person to install anything. |
 | Consent boundary | The digest proves that the initiating agent supplied the current confirmed plan, not cryptographic human presence. The initiating agent is a trusted relay; a malicious or compromised agent is out of scope. |
 | Harness selection | Configure every detected and supported harness; report absent harnesses without creating their config roots. |
-| Unsupported harness | An unsupported detected version blocks setup/upgrade, but not manifest-driven recovery or removal when the manifest schema is supported and every managed postimage still matches. A machine with no detected harness is a successful no-op; status still reports every absent/unsupported result. |
+| Unsupported harness | An unsupported detected version blocks setup/upgrade for that harness only: setup leaves it unchanged, reports it unsupported with a `harness_unsupported` warning, and still configures every other detected, supported harness. Setup refuses as `unsupported` only when no detected harness is supported. Manifest-driven recovery or removal stays available when the manifest schema is supported and every managed postimage still matches. A machine with no detected harness is a successful no-op; status still reports every absent/unsupported result. |
 | Pre-existing Khala entry | Identical manifest-owned state is reused. Any unowned entry, even if identical, is a conflict; v1 has no `--force` or adopt mode. |
 | Vendor mutations | An adapter is supported only when it uses guarded direct edits or confines an exact tested vendor version to declared writable targets. Unconstrained vendor-CLI side effects are `unsupported`, not implicitly owned. |
 | Runtime path | Setup copies a self-contained, versioned payload under the XDG data root and points harness entries at a stable owned launcher, never an ephemeral npx cache path. |
@@ -164,7 +164,8 @@ status remains informational; `--check` enforces the table below.
 | Configured, effectiveness unproven | `configured_effect_unknown` / true | Use the named CLI fallback; do not claim native readiness | 0 / 3 |
 | Ready, optional Claude hardening absent | `ready` / true | Continue normally; report hardening as absent | 0 / 0 |
 | Drift or conflict | `drifted` or `conflict` / false | Preserve user state and report remediation | 0 / 3 |
-| Unsupported detected version | `unsupported` / false | Refuse setup/upgrade; retain manifest-driven remove | 0 / 3 |
+| Unsupported detected version, no supported harness | `unsupported` / false | Refuse setup/upgrade; retain manifest-driven remove | 0 / 3 |
+| Unsupported detected version beside a supported harness | the supported harnesses' state | Report the unsupported harness per harness; it never gates the others | per that state |
 | Recovery required or final state unknown | `recovery_required` / false | Run bounded recovery; do not claim readiness | 0 / 4 |
 
 Plans are stable-sorted by harness, component, and path. The plan digest omits
@@ -192,7 +193,7 @@ manifests, backups, or status output.
 | Location | Contents | Ownership |
 | --- | --- | --- |
 | `$XDG_DATA_HOME/khala/versions/<version>/` | Self-contained CLI runtime plus reviewed plugin/skill assets | Installer-owned; directories 0700, regular files 0400, executables 0500; immutable after commit |
-| `$XDG_DATA_HOME/khala/bin/` | Stable `khala` and `khala-fallback` launchers | Installer-owned; directory 0700, launchers 0500 |
+| `$XDG_DATA_HOME/khala/bin/` | Stable `khala` and `khala-fallback` launchers, plus `opencode.js`: the stable copy of the packaged OpenCode plugin (`dist/opencode.js`) that the OpenCode config imports by file URL | Installer-owned; directory 0700, launchers 0500, `opencode.js` 0400 |
 | `$XDG_STATE_HOME/khala/setup/manifest.v1.json` | Active desired state, selected versions, operation IDs, pre/post hashes, and backup references | Installer-owned, mode 0600 |
 | `$XDG_STATE_HOME/khala/setup/transaction.v1.json` | Write-ahead state, operation preconditions, backup references, applied-operation cursor, and recovery state | Installer-owned, mode 0600 |
 | `$XDG_STATE_HOME/khala/setup/backups/<transaction>/` | Byte-exact foreign-file preimages and absence markers | Installer-owned directory 0700; files 0600 |
@@ -208,9 +209,11 @@ Before the first mutation, the executor durably publishes a `prepared` journal
 with all preconditions and backup references. It durably advances the journal
 after each applied operation, records `rollback_failed` when exact recovery
 cannot be proven, and removes it only after manifest commit or a proven complete
-rollback. Every command first recovers a prepared/partially-applied journal;
-read-only status may instead report `recovery_required`. A committed journal is
-safe to finalize, while an unknown state or newer schema is a safe refusal.
+rollback. While a journal exists, `setup` and `remove` plan only its recovery:
+a confirmable plan whose digest covers the journal bytes. Once that plan is
+confirmed, the executor recovers under the lock and then relays the next plan.
+Read-only status reports `recovery_required`. A committed journal is safe to
+finalize, while an unknown state or newer schema is a safe refusal.
 
 Idempotency is byte-level: a second setup on ready state has `changed: false`,
 an empty operation list, and changes neither contents nor mtimes. Command exit

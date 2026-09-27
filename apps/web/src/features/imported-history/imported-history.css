@@ -1,0 +1,50 @@
+.imported-history {
+  display: grid;
+  gap: var(--space-3, 0.75rem);
+  border: 1px dashed var(--color-border, #c8c8c8);
+  padding: var(--space-3, 0.75rem);
+}
+
+.imported-history__provenance,
+.imported-history__notice {
+  color: var(--color-muted, #5c5c5c);
+}
+
+.imported-history__records {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3, 0.75rem);
+}
+
+.imported-history__meta {
+  display: flex;
+  gap: var(--space-2, 0.5rem);
+  align-items: baseline;
+}
+
+.imported-history__author {
+  font-weight: 600;
+}
+
+.imported-history__kind {
+  font-size: 0.85em;
+  color: var(--color-muted, #5c5c5c);
+}
+
+.imported-history__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.imported-history__code {
+  overflow-x: auto;
+}
+
+.imported-history__code-lang {
+  display: block;
+  font-size: 0.8em;
+  color: var(--color-muted, #5c5c5c);
+}

@@ -8,6 +8,9 @@ import type { HumanApplicationHandle, HumanApplicationSnapshot, HumanRouteContex
 import type { TimelineController, TimelineData } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import type { PendingSend } from '../../features/timeline/send';
+import { createChannelAccessInboxController } from '../../features/channel-access/controller';
+import { createFakeJournal } from '../../features/channel-access/fakes';
+import { createFakeCatalog } from '../../features/channel-settings/fakes';
 import { closedAdmission, localPrincipal, localViewer } from './ports';
 import { TransportStatus, resumeCommand, sendBlockedReason } from './room';
 import { createLocalRouteCodec } from './routes';
@@ -57,7 +60,16 @@ function render(path: string, state: LocalTransportState = { kind: 'live' }, pha
     ? { phase: 'ready', path, context: context(path) }
     : { phase: 'signed_out', path, context: null };
   return renderToStaticMarkup(
-    <LocalApplicationScreen application={application(snapshot)} routes={routes} transport={transport(state)} navigateRoute={vi.fn()} />,
+    <LocalApplicationScreen
+      application={application(snapshot)}
+      routes={routes}
+      transport={transport(state)}
+      navigateRoute={vi.fn()}
+      owner={{
+        createChannelAccess: () => createChannelAccessInboxController({ requests: createFakeJournal().port }),
+        settings: createFakeCatalog({ roomId }).port,
+      }}
+    />,
   );
 }
 
@@ -68,6 +80,27 @@ describe('LocalApplicationScreen', () => {
     const html = render('/join?invite=abc');
     expect(html).toContain('This local Khala page does not exist.');
     for (const text of HOSTED_ONLY) expect(html).not.toContain(text);
+  });
+
+  it('adds owner navigation to the channel-requests inbox with a settings link on each channel', () => {
+    const html = render('/channels/ch_1');
+    expect(html).toContain('href="/channel-requests"');
+    expect(html).toContain('Channel requests');
+    expect(html).toContain('href="/channels/ch_1/settings"');
+  });
+
+  it('renders the shared inbox and the shared settings panel on their own routes', () => {
+    const requests = render('/channel-requests');
+    expect(requests).toContain('khala-channel-requests-title');
+    const settings = render('/channels/ch_1/settings');
+    expect(settings).toContain('Channel discovery settings');
+    expect(settings).toContain('href="/channels/ch_1"');
+    for (const text of HOSTED_ONLY) expect(requests + settings).not.toContain(text);
+  });
+
+  it('renders no owner navigation for a refused session', () => {
+    const html = render('/channel-requests', { kind: 'auth_failed' }, 'signed_out');
+    expect(html).not.toContain('Channel requests');
   });
 
   it('renders private create without admission choice or share link', () => {

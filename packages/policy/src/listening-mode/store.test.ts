@@ -170,6 +170,26 @@ describe('listening-mode service', () => {
     });
   });
 
+  it('stores no requested mode for a harness with no proven or experimental mode', async () => {
+    const unknown = (route: string) => ({
+      status: 'unknown', route, evidenceRef: null, evidenceRevision: null, reason: 'No evidence.',
+    } as const);
+    const unevidenced: HarnessCapabilities = {
+      ...capabilities(),
+      modes: { steer: unknown('cursor-steer'), sync: unknown('cursor-sync'), async: unknown('cursor-async') },
+    };
+    const service = createListeningModeService(memoryStore());
+    const context = { binding: binding(), status: 'active' as const };
+
+    expect(await service.read(agent(), context, unevidenced)).toMatchObject({
+      ok: true,
+      view: { requested: null, version: 1, effective: null, effectiveReason: 'no_requested_mode' },
+    });
+
+    const chosen = await service.set(owner(), context, capabilities(), modeCommand({ requested: 'steer', expectedVersion: 1 }));
+    expect(chosen).toMatchObject({ outcome: 'applied', version: 2, requested: 'steer', effective: 'steer' });
+  });
+
   it('gives owner and exact agent authority the same set path', async () => {
     const ownerService = createListeningModeService(memoryStore());
     const agentService = createListeningModeService(memoryStore());

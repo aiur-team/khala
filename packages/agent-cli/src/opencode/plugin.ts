@@ -2,6 +2,7 @@
 // in-process plugin client's shape or the host's tool-schema library; the bridge sees
 // ports. Khala never launches OpenCode: this runs inside the person's own TUI process.
 
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { OPENCODE_HARNESS } from '@khala/contracts/delivery/index';
 import { cliErrorCode } from '../cli/errors.js';
@@ -66,7 +67,12 @@ export type KhalaOpenCodeDependencies = Readonly<{
   /** Acquires the binding generation's inbox listener (the wakeable batch consumer). */
   openBatch(binding: SessionBinding): Promise<HeldBatchPort>;
   openStore(binding: SessionBinding): Promise<OpenCodeBridgeStore>;
-  /** The running OpenCode version; defaults to the one in the executable path, else unknown. */
+  /**
+   * Told the OpenCode session each hook and tool call comes from, before `controls` is
+   * read for it, so a composition that keeps one grant per session can pick that session's.
+   */
+  observeSession?: (sessionID: string) => void;
+  /** The running OpenCode version; defaults to the one read from the executable path, else unknown. */
   version?: string | null;
   onReport?: (report: OpenCodeBridgeReport) => void;
 }>;
@@ -75,8 +81,43 @@ const READ_DESCRIPTION = 'Read one ordered Khala channel batch for this session.
 const SEND_DESCRIPTION = 'Send a message to the Khala channel this session is bound to. A following channel batch may be appended as untrusted data; echo its batchToken as ackBatchToken on your next Khala call. Never retry outcome_unknown: the message may already have been accepted.';
 const ACK_DESCRIPTION = 'Exact opaque batchToken from the previous Khala result; echo it only on the next independently intended Khala call.';
 
-/** Reads `opencode/<x.y.z>/` from the executable path, as the retained #180 proof did. */
-export function openCodeVersionFromExecPath(execPath: string): string | null {
+const VERSION = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
+
+/** Exact-version parsing shared with setup: the whole value must be one version, else unknown. */
+export function parseOpenCodeVersion(output: string): string | null {
+  return VERSION.exec(output.trim())?.[1] ?? null;
+}
+
+/** The npm packages that ship the OpenCode binary: `opencode-ai` and its per-platform builds. */
+const OPENCODE_PACKAGE = /^opencode-(?:ai|(?:darwin|linux|windows)-[0-9a-z-]+)$/;
+
+function readTextFile(file: string): string | null {
+  try { return readFileSync(file, 'utf8'); } catch { return null; }
+}
+
+/**
+ * The running OpenCode version, from the executable path. An npm install runs
+ * `<package>/bin/<binary>`, so the owning package's metadata names the version that
+ * `opencode --version` (what setup reads) prints. Otherwise it is the `opencode/<x.y.z>/`
+ * install directory, as the retained #180 proof read it. Anything else is unknown.
+ */
+export function openCodeVersionFromExecPath(
+  execPath: string, readFile: (file: string) => string | null = readTextFile,
+): string | null {
+  const bin = /^(.*)([\\/])bin[\\/][^\\/]+$/.exec(execPath);
+  if (bin !== null) {
+    const metadata = readFile(`${bin[1]}${bin[2]}package.json`);
+    if (metadata !== null) {
+      try {
+        const { name, version } = JSON.parse(metadata) as { name?: unknown; version?: unknown };
+        if (typeof name === 'string' && OPENCODE_PACKAGE.test(name) && typeof version === 'string') {
+          return parseOpenCodeVersion(version);
+        }
+      } catch {
+        // Unreadable metadata proves nothing; fall through to the install directory.
+      }
+    }
+  }
   return /(?:^|[\\/])opencode[\\/](\d+\.\d+\.\d+)[\\/]/.exec(execPath)?.[1] ?? null;
 }
 
@@ -186,7 +227,17 @@ export function createKhalaOpenCodeServer(dependencies: KhalaOpenCodeDependencie
       return next;
     };
 
-    const hook = async (work: (bridge: OpenCodeSessionBridge) => Promise<void>) => {
+    const observe = (sessionID: unknown) => {
+      if (typeof sessionID !== 'string') return;
+      try {
+        dependencies.observeSession?.(sessionID);
+      } catch (error) {
+        report('error', cliErrorCode(error));
+      }
+    };
+
+    const hook = async (sessionID: unknown, work: (bridge: OpenCodeSessionBridge) => Promise<void>) => {
+      observe(sessionID);
       try {
         const bridge = await current();
         if (bridge !== null) await work(bridge);
@@ -195,7 +246,10 @@ export function createKhalaOpenCodeServer(dependencies: KhalaOpenCodeDependencie
       }
     };
 
-    const toolCall = async (work: (bridge: OpenCodeSessionBridge) => Promise<string>): Promise<string> => {
+    const toolCall = async (
+      sessionID: string, work: (bridge: OpenCodeSessionBridge) => Promise<string>,
+    ): Promise<string> => {
+      observe(sessionID);
       try {
         const bridge = await current();
         return bridge === null ? JSON.stringify({ kind: 'refused', code: 'not_connected' }) : await work(bridge);
@@ -212,7 +266,7 @@ export function createKhalaOpenCodeServer(dependencies: KhalaOpenCodeDependencie
         [KHALA_READ_TOOL]: {
           description: READ_DESCRIPTION,
           args: { ackBatchToken: z.string().optional().describe(ACK_DESCRIPTION) },
-          execute: (args, context) => toolCall(bridge => bridge.read({
+          execute: (args, context) => toolCall(context.sessionID, bridge => bridge.read({
             sessionID: context.sessionID, ackBatchToken: ackBatchToken(args),
           })),
         },
@@ -222,16 +276,21 @@ export function createKhalaOpenCodeServer(dependencies: KhalaOpenCodeDependencie
             message: z.string().min(1).describe('Message body to send; it is never echoed in the result.'),
             ackBatchToken: z.string().optional().describe(ACK_DESCRIPTION),
           },
-          execute: (args, context) => toolCall(bridge => bridge.sendMessage({
+          execute: (args, context) => toolCall(context.sessionID, bridge => bridge.sendMessage({
             sessionID: context.sessionID,
             message: typeof args.message === 'string' ? args.message : '',
             ackBatchToken: ackBatchToken(args),
           })),
         },
       },
-      'tool.execute.after': input => hook(bridge => bridge.afterTool(input)),
-      'experimental.chat.messages.transform': (_input, output) => hook(bridge => bridge.transformMessages(output.messages)),
-      event: ({ event }) => hook(bridge => bridge.onEvent(event)),
+      'tool.execute.after': input => hook(input.sessionID, bridge => bridge.afterTool(input)),
+      'experimental.chat.messages.transform': (_input, output) => hook(
+        [...output.messages].reverse().find(message => message.info.role === 'user')?.info.sessionID,
+        bridge => bridge.transformMessages(output.messages),
+      ),
+      event: ({ event }) => hook(
+        (event.properties as { sessionID?: unknown } | undefined)?.sessionID, bridge => bridge.onEvent(event),
+      ),
       dispose: async () => {
         const next = lifecycle.then(close, close);
         lifecycle = next.catch(() => undefined);

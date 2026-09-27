@@ -4,7 +4,7 @@ import { MAX_SEND_BYTES } from '../cli/send.js';
 import { validIdentifier } from '../cli/validation.js';
 import type { ClaudeSessionClient } from './claude-session-http.js';
 
-export const CLAUDE_COMMAND_OPS = ['pull', 'read', 'send', 'status', 'mode', 'pending', 'hook'] as const;
+export const CLAUDE_COMMAND_OPS = ['pull', 'read', 'send', 'status', 'mode', 'pending', 'hook', 'watch'] as const;
 
 export type ClaudeCommandDependencies = Readonly<{
   /** Absent until the live local-server composition exists: the command fails closed. */
@@ -15,15 +15,18 @@ export type ClaudeCommandDependencies = Readonly<{
 
 /**
  * `khala claude <op> --session <claude-session-id>`, the entry point Claude hooks and
- * the `/khala` skill call. Hooks use `pull` (never acknowledges), `pending` and
- * `hook` (effective mode and the fence's watcher window, content-free); the
+ * the `/khala` skill call. Hooks use `pull` (never acknowledges), `pending`, `hook`
+ * (effective mode, the fence's watcher window, and an access outcome it settled; the
+ * `Stop` hook adds `--stop`, which settles regardless of the per-session throttle) and
+ * `watch` (the watcher's `hook`, which never settles), all content-free; the
  * agent's own calls, `read`, `send`, `status` and `mode`, acknowledge what hooks
  * delivered. The session ID is a selector only; the loopback server authenticates
  * the installation. Output never carries a token.
  */
 export async function runClaudeCommand(args: readonly string[], deps: ClaudeCommandDependencies): Promise<number> {
   const [op, flag, sessionId, ...rest] = args;
-  if (flag !== '--session' || !validIdentifier(sessionId) || rest.length !== 0) throw new CliError('invalid_arguments');
+  const stop = op === 'hook' && rest.length === 1 && rest[0] === '--stop';
+  if (flag !== '--session' || !validIdentifier(sessionId) || (rest.length !== 0 && !stop)) throw new CliError('invalid_arguments');
   if (!(CLAUDE_COMMAND_OPS as readonly unknown[]).includes(op)) throw new CliError('invalid_arguments');
   if (deps.claude === undefined) throw new CliError('transport_unavailable');
   const client = deps.claude;
@@ -39,7 +42,9 @@ export async function runClaudeCommand(args: readonly string[], deps: ClaudeComm
   } else if (op === 'mode') {
     outcome = await client.mode(sessionId, deps.signal);
   } else if (op === 'hook') {
-    outcome = await client.hook(sessionId, deps.signal);
+    outcome = await client.hook(sessionId, { stop }, deps.signal);
+  } else if (op === 'watch') {
+    outcome = await client.watch(sessionId, deps.signal);
   } else {
     outcome = await client.pending(sessionId, deps.signal);
   }

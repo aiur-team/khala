@@ -40,6 +40,7 @@ describe('AgentPresencePanel', () => {
           connection: 'offline',
           routeLabel: 'Khala skill',
           lastReceipt: { kind: 'harness_queued', observedAt: '2026-09-18T14:31:02.402Z' },
+          acknowledgement: 'unknown',
           installCommand: 'khala connect https://khala.example/r/one',
           installCommandError: false,
         }],
@@ -48,7 +49,8 @@ describe('AgentPresencePanel', () => {
 
     expect(html.indexOf('Connect Scout')).toBeLessThan(html.indexOf('Owned by Mira'));
     expect(html).toContain('Khala skill');
-    expect(html).toContain('Queued at the agent session');
+    expect(html).toContain('Queued at agent session');
+    expect(html).toContain('Batch-token return support not verified');
     expect(html).not.toContain('Read by the agent');
     expect(html).toContain('Copy install command');
   });
@@ -64,6 +66,7 @@ describe('AgentPresencePanel', () => {
           connection: 'connected',
           routeLabel: 'Unsupported',
           lastReceipt: null,
+          acknowledgement: 'unknown',
           installCommand: null,
           installCommandError: false,
         }],
@@ -86,6 +89,7 @@ describe('AgentPresencePanel', () => {
           connection: 'offline',
           routeLabel: 'Khala skill (native route unsupported)',
           lastReceipt: null,
+          acknowledgement: 'unknown',
           installCommand: 'khala connect https://khala.example/r/one',
           installCommandError: false,
         }],
@@ -106,6 +110,7 @@ describe('AgentPresencePanel', () => {
           connection: 'stale',
           routeLabel: 'Codex CLI',
           lastReceipt: null,
+          acknowledgement: 'unknown',
           installCommand: 'khala connect https://khala.example/r/one',
           installCommandError: false,
         }],
@@ -126,6 +131,7 @@ describe('AgentPresencePanel', () => {
           connection: 'unknown',
           routeLabel: 'Khala skill',
           lastReceipt: null,
+          acknowledgement: 'unknown',
           installCommand: null,
           installCommandError: true,
         }],
@@ -146,6 +152,7 @@ describe('AgentPresencePanel', () => {
           connection: 'unknown',
           routeLabel: 'Khala skill',
           lastReceipt: null,
+          acknowledgement: 'unknown',
           installCommand: null,
           installCommandError: true,
         }],
@@ -166,6 +173,7 @@ describe('AgentPresencePanel', () => {
           connection: 'offline',
           routeLabel: 'Khala skill',
           lastReceipt: { kind: 'queued', observedAt: '2026-09-18T14:31:02.402Z' },
+          acknowledgement: 'unknown',
           installCommand: 'khala connect https://khala.example/r/one',
           installCommandError: false,
         }],
@@ -173,5 +181,53 @@ describe('AgentPresencePanel', () => {
     );
     expect(html).toContain('Queued for delivery');
     expect(html).not.toContain('Read by the agent');
+  });
+
+  it.each([
+    ['unknown', 'Batch-token return support not verified'],
+    ['unsupported', 'Batch-token return not supported'],
+    ['batch_token_next_call', 'Batch-token return supported'],
+  ] as const)('renders the %s acknowledgement capability as its own closed copy', (acknowledgement, label) => {
+    const html = renderToStaticMarkup(
+      <AgentPresencePanel controller={controller({
+        phase: 'ready',
+        agents: [{
+          participantId: 'agent_1' as ParticipantId,
+          displayName: 'Scout',
+          ownerDisplayName: 'Mira',
+          connection: 'connected',
+          routeLabel: 'Codex CLI',
+          lastReceipt: null,
+          acknowledgement,
+          installCommand: null,
+          installCommandError: false,
+        }],
+      })} />,
+    );
+    expect(html).toContain(`<dd>${label}</dd>`);
+    // A supported route with no receipt is neutral: no error, unread or absence claim.
+    expect(html).toContain('No delivery receipt yet');
+    expect(html).not.toMatch(/unread|No token-return fact|role="alert"/i);
+  });
+
+  it('labels context insertion truthfully and never as read', () => {
+    const html = renderToStaticMarkup(
+      <AgentPresencePanel controller={controller({
+        phase: 'ready',
+        agents: [{
+          participantId: 'agent_1' as ParticipantId,
+          displayName: 'Scout',
+          ownerDisplayName: 'Mira',
+          connection: 'connected',
+          routeLabel: 'Codex CLI',
+          lastReceipt: { kind: 'context_consumed', observedAt: '2026-09-18T14:31:02.402Z' },
+          acknowledgement: 'batch_token_next_call',
+          installCommand: null,
+          installCommandError: false,
+        }],
+      })} />,
+    );
+    expect(html).toContain('Added to agent context');
+    expect(html).not.toMatch(/read by the agent|Batch token returned/i);
   });
 });

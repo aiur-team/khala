@@ -53,6 +53,11 @@ export type ExchangeGrantIssuer = Readonly<{
    * consumer that crashed after `redeem` finish the same activation; it never consumes.
    */
   consumed(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantConsumedResult>;
+  /** Whether a grant for this operation was ever redeemed, i.e. the operation was admitted. */
+  wasRedeemed(
+    input: Pick<ExchangeGrantBinding, 'operationId' | 'requester' | 'origin'>,
+    options?: CallOptions,
+  ): Promise<'redeemed' | 'never' | 'unavailable'>;
 }>;
 
 export type ExchangeGrantConsumedResult =
@@ -144,6 +149,16 @@ export function createExchangeGrantIssuer(deps: Readonly<{
     return { kind: 'redeemed', binding };
   }
 
+  async function wasRedeemed(
+    input: Pick<ExchangeGrantBinding, 'operationId' | 'requester' | 'origin'>,
+    options?: CallOptions,
+  ): Promise<'redeemed' | 'never' | 'unavailable'> {
+    const read = await safe(() => deps.store.read(consumedKey(input), options));
+    if (read === null || read.kind === 'unavailable') return 'unavailable';
+    return read.kind === 'record' ? 'redeemed' : 'never';
+  }
+
+
   async function consumedBy(input: ExchangeGrantRedemption, options?: CallOptions): Promise<ExchangeGrantConsumedResult> {
     const found = await presented(input, options);
     if (found.kind === 'unavailable') return found;
@@ -156,14 +171,14 @@ export function createExchangeGrantIssuer(deps: Readonly<{
     return { kind: 'consumed', binding: found.stored.binding };
   }
 
-  return Object.freeze({ mint, redeem, consumed: consumedBy });
+  return Object.freeze({ mint, redeem, consumed: consumedBy, wasRedeemed });
 }
 
 function grantKey(grant: string): string {
   return `channel-access-grant/${createHash('sha256').update('khala.channel-access.grant.v1\0').update(grant).digest('hex')}`;
 }
 
-function consumedKey(binding: ExchangeGrantBinding): string {
+function consumedKey(binding: Pick<ExchangeGrantBinding, 'operationId' | 'requester' | 'origin'>): string {
   const digest = createHash('sha256')
     .update('khala.channel-access.grant-consumed.v1\0')
     .update(JSON.stringify([binding.requester, binding.origin, binding.operationId]))

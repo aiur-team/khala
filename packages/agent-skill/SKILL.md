@@ -62,6 +62,17 @@ If the frame blocked a tool, retry that tool afterwards. An unacknowledged batch
 is offered again on a later turn, which is expected; do not deduplicate it
 yourself.
 
+## Codex session in internal mode
+
+The installed Codex MCP entry and `codex-hook` act only as the session that
+calls them, and Codex names that session `$CODEX_THREAD_ID`. Always pass that
+exact ID when you find an internal channel:
+`khala internal discovery --harness codex --session "$CODEX_THREAD_ID"`, then
+`khala --internal-descriptor <descriptorPath> join <channel-url>` with the
+`descriptorPath` from the discovery output. Never omit `--session` or pass a
+different session ID: the installed entry then finds no grant for your session
+and refuses every call with `not_connected`, and the hook stays silent.
+
 ## Claude Code plugin dispatch
 
 In Claude Code, the Khala plugin bundles this skill's dispatcher as
@@ -73,6 +84,18 @@ the `khala_send` MCP tool with it as structured input; `/khala read` calls the
 to the session through `CLAUDE_CODE_SESSION_ID`, never the working directory,
 and neither takes a binding or batch token: Khala keeps the token and
 acknowledges on the session's next Khala call.
+
+`/khala create <title>` calls `khala_create_channel` once and returns: the
+person confirms in Khala's own human-confirmation step, a retry or status check
+repeats the same title and `operationId`, and a rejected confirmation creates no
+channel. `/khala join <channel-url>` calls
+`khala_request_channel_access` once and returns: the owner's grant, denial, or
+expiry reaches the same session at a hook boundary with no retry (checked at
+most once every 5 seconds per session, and always at the end of a turn), the
+agent never admits itself, and any status check reuses the returned `operationId`. `/khala who` shows
+the authoritative roster from `khala_list_agents` and the effective mode from
+`khala_status`, never inferring members from message authors and never printing
+the raw Claude session ID.
 
 ## Connect and listen
 

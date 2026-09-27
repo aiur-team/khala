@@ -150,6 +150,24 @@ describe('channel store identity and authority', () => {
         }],
       });
   });
+
+  it('answers a session binding only for its exact binding, harness and session, at the live generation', () => {
+    const { store } = fresh();
+    seed(store);
+    const key = { bindingId: bobBinding.bindingId, harness: bobBinding.harness, sessionId: bobBinding.sessionId };
+    expect(store.sessionBinding(key)).toMatchObject({ kind: 'done', binding: { ...bobBinding, status: 'active' } });
+    expect(store.sessionBinding({ ...key, sessionId: 'session-other' })).toEqual({ kind: 'done', binding: null });
+    expect(store.sessionBinding({ ...key, harness: 'codex-other' })).toEqual({ kind: 'done', binding: null });
+    expect(store.sessionBinding({ ...key, bindingId: 'binding-other' })).toEqual({ kind: 'done', binding: null });
+    expect(store.sessionBinding({ ...key, sessionId: '' })).toEqual({ kind: 'done', binding: null });
+
+    const next = { ...bobBinding, generation: bobBinding.generation + 1 };
+    expect(store.registerBinding(next)).toEqual({ kind: 'done', changed: true });
+    expect(store.sessionBinding(key)).toMatchObject({ kind: 'done', binding: { generation: next.generation } });
+    // A revoked newest generation never falls back to the superseded one that is still active.
+    expect(store.revokeBinding({ bindingId: next.bindingId, generation: next.generation })).toEqual({ kind: 'done', changed: true });
+    expect(store.sessionBinding(key)).toEqual({ kind: 'done', binding: null });
+  });
 });
 
 describe('channel creation and sends', () => {

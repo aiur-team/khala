@@ -23,6 +23,21 @@ export class ChannelAccessService {
     return this.#settle(input.operationId, call === undefined ? null : () => call.call(this.#client, input, signal));
   }
 
+  /**
+   * Requests `input.operationId`, or the first of its successors that is not revoked. A revoked
+   * operation, as the owner's Stop leaves one, is closed for good, so asking again files its
+   * successor: a new request the owner decides. Successors are derived, so repeating a live
+   * request stays idempotent and reaches the same live one.
+   */
+  async requestAgain(input: AccessRequestInput, signal?: AbortSignal): Promise<AccessOutput> {
+    let operationId = input.operationId;
+    for (let walked = 0; ; walked += 1) {
+      const output = await this.request({ ...input, operationId }, signal);
+      if (!output.ok || output.outcome !== 'revoked' || walked === MAX_REVOKED_SUCCESSORS) return output;
+      operationId = successorOperationId(operationId);
+    }
+  }
+
   async status(input: AccessStatusInput, signal?: AbortSignal): Promise<AccessOutput> {
     const call = this.#client.channelAccessStatus;
     return this.#settle(input.operationId, call === undefined ? null : () => call.call(this.#client, input, signal));
@@ -79,6 +94,15 @@ export function defaultOperationId(target: AccessTarget): string {
   return createHash('sha256')
     .update(JSON.stringify(['khala.agent-cli.channel-access.v1', target.kind, locator]))
     .digest('base64url').slice(0, 32);
+}
+
+/** How many revoked operations one request walks past before it answers the last one as revoked. */
+export const MAX_REVOKED_SUCCESSORS = 32;
+
+/** The operation a default request files once `operationId` is revoked. */
+export function successorOperationId(operationId: string): string {
+  // The tag predates the CLI and MCP paths; changing it would orphan live Claude successors.
+  return createHash('sha256').update(JSON.stringify(['khala.claude.access.successor.v1', operationId])).digest('base64url').slice(0, 32);
 }
 
 /** Pending, approved, connecting, and connected are progress; every other outcome needs attention. */
