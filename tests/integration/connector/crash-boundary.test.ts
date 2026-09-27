@@ -42,4 +42,18 @@ describe('native acceptance barrier mechanics (not live acceptance)', () => {
     await assert.rejects(wrapped.submit({ job, payload }), /native_acceptance_not_observed/u);
     assert.deepEqual(accepted, []);
   });
+
+  it('does not signal native acceptance for a queued receipt from the connector', async () => {
+    const accepted: NativeAcceptance[] = [];
+    const native = { async submit() {
+      return { releaseId: 'release-test', bindingId: 'binding-test', generation: 0,
+        kind: 'harness_queued', source: 'connector' };
+    } } as unknown as HarnessPort;
+    const wrapped = stopAfterNativeAcceptance(native, observation => accepted.push(observation));
+    await assert.rejects(Promise.race([
+      wrapped.submit({ job, payload }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('source_guard_bypassed')), 100)),
+    ]), /native_acceptance_not_observed/u);
+    assert.deepEqual(accepted, []);
+  });
 });

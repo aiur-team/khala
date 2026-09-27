@@ -20,4 +20,11 @@ describe('native crash supervisor mechanics (not live acceptance)', () => {
       expectedReleaseId: 'other-release', expectedSessionId: 'session-test',
     }), /native_acceptance_identity_mismatch/u);
   });
+
+  it('rejects a matching release from the wrong native session', async () => {
+    await assert.rejects(killAtNativeAcceptance({
+      command: process.execPath, args: [child], cwd: process.cwd(), env: process.env,
+      expectedReleaseId: 'release-test', expectedSessionId: 'other-session',
+    }), /native_acceptance_identity_mismatch/u);
+  });
 });
