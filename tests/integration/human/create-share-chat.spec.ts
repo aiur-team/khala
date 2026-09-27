@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary } from './fixtures';
+import { freshPage, rawRoomMessages, readLiveHumanEnvironment, signIn, syntheticCanary, verifyMatrixObserver } from './fixtures';
 
 const environment = readLiveHumanEnvironment();
 
@@ -36,6 +36,7 @@ test('two OAuth humans create, share, join, and exchange encrypted attributed me
 
     // The disposable observer has not been admitted. A 403 proves private
     // history is inaccessible; it is not a source of ciphertext evidence.
+    await verifyMatrixObserver(environment);
     await expect(rawRoomMessages(environment, roomId, environment.observer.accessToken))
       .rejects.toThrow('Matrix event request failed with 403');
 

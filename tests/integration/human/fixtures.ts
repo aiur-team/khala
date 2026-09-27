@@ -138,6 +138,15 @@ export function syntheticCanary(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+export async function verifyMatrixObserver(environment: LiveHumanEnvironment): Promise<void> {
+  const response = await fetch(`${environment.homeserverOrigin}/_matrix/client/v3/account/whoami`, {
+    headers: { authorization: `Bearer ${environment.observer.accessToken}` },
+  });
+  if (!response.ok) throw new Error(`Matrix observer identity request failed with ${response.status}`);
+  const body = await response.json() as { user_id?: unknown };
+  if (body.user_id !== environment.observer.userId) throw new Error('Matrix observer identity does not match descriptor');
+}
+
 export async function rawRoomMessages(environment: LiveHumanEnvironment, roomId: string, accessToken: string): Promise<readonly Record<string, unknown>[]> {
   const response = await fetch(
     `${environment.homeserverOrigin}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages?dir=b&limit=100`,

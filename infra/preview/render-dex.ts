@@ -49,7 +49,7 @@ export function readInputs(env: NodeJS.ProcessEnv): Inputs {
     const hash = required(env, `KHALA_PREVIEW_OIDC_USER_${label}_BCRYPT_HASH`);
     const id = required(env, `KHALA_PREVIEW_OIDC_USER_${label}_ID`);
     const bcrypt = /^\$2[aby]\$(\d{2})\$[./A-Za-z0-9]{53}$/.exec(hash);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !bcrypt || Number(bcrypt[1]) < 10 || !/^[0-9a-f-]{36}$/i.test(id)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !bcrypt || Number(bcrypt[1]) < 10 || Number(bcrypt[1]) > 31 || !/^[0-9a-f-]{36}$/i.test(id)) {
       throw new Error(`Invalid static OIDC user ${label}`);
     }
     return { email, hash, id };
