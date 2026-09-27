@@ -1,4 +1,5 @@
 import type { RouteRegistration } from '../runtime/handler';
+import { registerClosureHandlers } from '../channel-closure/production';
 import { createInviteEvidenceReader } from './agent/invite-evidence';
 import { createProductionBootstrapRoutes, type ProductionBootstrapDependencies } from './agent/production-bootstrap';
 import { registerAgentHandlers } from './agent/handlers';
@@ -17,7 +18,7 @@ export function registerHostedProductionRoutes(
 ): readonly RouteRegistration[] {
   const env = options.env ?? process.env;
   if (env.KHALA_ADMISSION_MODE !== 'explicit_browser_consent') {
-    return Object.freeze([...registerHumanHandlers(), ...registerAgentHandlers()]);
+    return Object.freeze([...registerHumanHandlers(), ...registerClosureHandlers(), ...registerAgentHandlers()]);
   }
   const runtime = createProductionHumanRuntimeLoader(options);
   const bootstrap = createProductionBootstrapRoutes({
@@ -35,6 +36,7 @@ export function registerHostedProductionRoutes(
   });
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human }),
+    ...registerClosureHandlers(),
     ...registerAgentHandlers({
       bootstrap: () => bootstrap.agent,
       deviceAttestation: () => bootstrap.deviceAttestation,

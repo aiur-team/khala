@@ -26,6 +26,12 @@ function gateway(mode?: string) {
 }
 
 describe('generated hosted production composition', () => {
+  it('registers channel closure regardless of the unresolved admission mode', () => {
+    for (const mode of [undefined, 'explicit_browser_consent']) {
+      const routes = registerHostedProductionRoutes({ env: { ...env, KHALA_ADMISSION_MODE: mode }, stores });
+      expect(routes.filter(route => route.path === '/api/human/channel-closure')).toHaveLength(1);
+    }
+  });
   it('keeps bootstrap and device attestation unavailable without the exact product mode', async () => {
     for (const mode of [undefined, '', 'automatic_same_computer', 'explicit_browser_consant']) {
       const route = gateway(mode);
