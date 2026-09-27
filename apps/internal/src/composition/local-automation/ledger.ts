@@ -100,7 +100,8 @@ function paused(db: DatabaseSync, binding: SessionBinding): boolean | 'unavailab
 export function createLocalAutomationLedger(
   handle: InternalStoreHandle, provider: LocalAutomationProvider, claudeTerminalKey?: Uint8Array,
 ): LocalAutomationLedger {
-  const terminalKey = claudeTerminalKey?.length === 32 ? Buffer.from(claudeTerminalKey) : null;
+  // Keep the launcher's buffer so shutdown can zero the one live verifier key.
+  const terminalKey = claudeTerminalKey?.length === 32 ? claudeTerminalKey : null;
   const ledger: LocalAutomationLedger = {
     reserve({ recipient, event, mode, claimedIdleEpoch }) {
       try {
