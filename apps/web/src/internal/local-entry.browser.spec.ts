@@ -143,7 +143,7 @@ test('local web entry: create/open/send/observe over real HTTP without hosted-on
     await page.getByRole('button', { name: 'Check delivery' }).click();
     await page.locator('.timeline__row:not(.timeline__row--pending)', { hasText: 'maybe delivered' }).waitFor();
     assert.equal(sentTxnIds.at(-1), unknownTxn, 'the retry reused the original clientTxnId');
-    const stored = fixture.store.timeline({ channelId, participantId: fixture.bootstrap.human.participantId, cursor: null, limit: 100 });
+    const stored = fixture.store.timeline({ channelId, participantId: fixture.bootstrap.human.participantId, reader: { kind: 'member' }, cursor: null, limit: 100 });
     assert.equal(stored.kind === 'done' && stored.events.filter(event => event.content.body === 'maybe delivered').length, 1);
 
     // Wrong-implementation check, part 1: there is no join route, in the server or the app.

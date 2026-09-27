@@ -263,7 +263,7 @@ describe('receipt projection into the channel store and agent log', () => {
     ]));
     expect(result.groups).toHaveLength(2);
     const timeline = createChannelStore(w.store).timeline({
-      channelId: CHANNEL, participantId: HUMAN.participantId, cursor: null, limit: 10,
+      channelId: CHANNEL, participantId: HUMAN.participantId, reader: { kind: 'member' }, cursor: null, limit: 10,
     });
     if (timeline.kind !== 'done') throw new Error(timeline.kind);
     const sequenceOf = new Map(timeline.events.map(event => [event.eventId, event.sequence]));

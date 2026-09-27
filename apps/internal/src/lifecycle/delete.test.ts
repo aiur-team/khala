@@ -47,7 +47,7 @@ function addCreatedChannels(handle: InternalStoreHandle): void {
       v: 1, bindingId: `binding-${channelId}` as SessionBinding['bindingId'], ownerId: bob.ownerId,
       agentParticipantId: bob.participantId, deviceId: bobDevice, harness: 'codex', sessionId: 'session-digest', generation: 1,
     };
-    if (discovery.activate({ operationKey: `op-${channelId}`, binding, channelId, sessionGeneration: 1 }).kind !== 'activated') {
+    if (discovery.activate({ operationKey: `op-${channelId}`, binding, channelId, sessionGeneration: 1, history: 'none' }).kind !== 'activated') {
       throw new Error('fixture activation');
     }
   }

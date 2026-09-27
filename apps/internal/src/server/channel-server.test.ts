@@ -343,7 +343,7 @@ describe('credential authentication', () => {
       }, 50);
     });
     expect(status).toBe(401);
-    const timeline = h.fixture.store.timeline({ channelId, participantId: bob.participantId, cursor: null, limit: 10 });
+    const timeline = h.fixture.store.timeline({ channelId, participantId: bob.participantId, reader: { kind: 'member' }, cursor: null, limit: 10 });
     expect(timeline).toMatchObject({ kind: 'done', events: [] });
   });
 });

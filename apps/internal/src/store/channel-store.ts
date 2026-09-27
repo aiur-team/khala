@@ -314,13 +314,26 @@ function channelFor(db: DatabaseSync, channelId: string, participantId: string):
 }
 
 /**
- * The channel head when this binding generation was admitted. Admission shares no history,
- * so the binding's feed and timeline reads both start after it, whatever cursor it presents.
+ * Who reads a channel's history. A joined member reads all of it; a bound agent reads only
+ * what its admission shares. Every event-bearing read names its reader, so none can skip
+ * the admission boundary by omission.
  */
-function admissionStart(db: DatabaseSync, binding: TrustedBinding, channelId: string): number {
+export type HistoryReader =
+  | Readonly<{ kind: 'member' }>
+  | Readonly<{ kind: 'binding'; binding: TrustedBinding }>;
+
+/**
+ * The admission boundary, and the one place it is decided: the last sequence of `channelId`
+ * that `reader` may not see, or null when the reader may see none of the channel. A binding
+ * sees what its admission recorded: from the channel head at activation when the owner shared
+ * no history (`history: none`), or the whole channel when the owner shared it. A binding with
+ * no admission record for the channel is denied, whatever cursor it presents.
+ */
+export function admissionStart(db: DatabaseSync, reader: HistoryReader, channelId: string): number | null {
+  if (reader.kind === 'member') return 0;
   return (db.prepare(`
     SELECT start_sequence FROM discovery_activations WHERE binding_id = ? AND generation = ? AND channel_id = ?
-  `).get(binding.bindingId, binding.generation, channelId) as { start_sequence: number } | undefined)?.start_sequence ?? 0;
+  `).get(reader.binding.bindingId, reader.binding.generation, channelId) as { start_sequence: number } | undefined)?.start_sequence ?? null;
 }
 
 function allEvents(db: DatabaseSync, channelId: string): readonly StoredEvent[] | null {
@@ -382,8 +395,8 @@ export interface ChannelStore {
   timeline(input: Readonly<{
     channelId: RoomId;
     participantId: ParticipantId;
-    /** A bound agent's read: it sees only what was said after its admission to the channel. */
-    binding?: TrustedBinding;
+    /** Whose view this is: a bound agent sees only what was said after its admission. */
+    reader: HistoryReader;
     cursor: string | null;
     limit: number;
   }>): TimelineResult;
@@ -763,7 +776,8 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
             || cursor.snapshotRevision > currentRevision || cursor.beforeSequence > cursor.snapshotHighWater + 1) {
             return { kind: 'rejected', code: 'invalid_cursor' } as const;
           }
-          const start = input.binding ? admissionStart(db, input.binding, input.channelId) : 0;
+          const start = admissionStart(db, input.reader, input.channelId);
+          if (start === null) return { kind: 'rejected', code: 'not_joined' } as const;
           const rows = db.prepare(`
             SELECT * FROM events
             WHERE channel_id = ? AND sequence <= ? AND sequence < ? AND sequence > ?
@@ -799,7 +813,8 @@ export function createChannelStore(handle: InternalStoreHandle): ChannelStore {
           }
           const maximum = (db.prepare('SELECT coalesce(max(sequence), 0) AS value FROM events WHERE channel_id = ?')
             .get(input.channelId) as { value: number }).value;
-          const start = admissionStart(db, input.binding, input.channelId);
+          const start = admissionStart(db, { kind: 'binding', binding: input.binding }, input.channelId);
+          if (start === null) return { kind: 'rejected', code: 'not_joined' } as const;
           const cursor = input.cursor === null
             ? { channelId: input.channelId, bindingId: row.binding_id, generation: row.generation, lastCoveredSequence: start }
             : decodeSubscriptionCursor(input.cursor);

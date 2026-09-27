@@ -3,11 +3,16 @@
 // agent CLI with its descriptor-backed client, inbox and delivery (@aiur/khala),
 // composed as `cli/main.ts` composes them. Nothing here is a mock port; only the
 // clock and identifiers are fixed, and every process runs in this test worker.
+//
+// The agent starts on the fixture's Bob binding. `stop` and `admit` replay what the owner's
+// Stop and a fresh channel-access admission record, so a probe can run as a re-admitted
+// binding: the world's bearer and descriptor always name the binding currently held.
 
 import fs from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
+import type { SessionBinding } from '@khala/contracts/delivery/index';
 import type { EventId, ParticipantId, RoomId } from '@khala/contracts/messaging/index';
 import { encodeInternalDescriptor } from '@khala/contracts/internal/descriptor';
 import { composeBindingControl } from '../../../apps/internal/src/composition/binding-control/index';
@@ -16,8 +21,10 @@ import { FakeHostedProvider } from '../../../apps/internal/src/composition/fixtu
 import { composeMakeExternal } from '../../../apps/internal/src/composition/make-external';
 import { createInternalReleaseFeed } from '../../../apps/internal/src/composition/internal-delivery/release-feed';
 import { startChannelServer } from '../../../apps/internal/src/server/channel-server';
+import type { ChannelStore } from '../../../apps/internal/src/store/channel-store';
+import { createDiscoveryStore } from '../../../apps/internal/src/store/discovery-store';
 import { createReceiptReadModel } from '../../../apps/internal/src/store/receipts';
-import { mintCredential } from '../../../apps/internal/src/server/credentials';
+import { type BindingCredential, mintCredential } from '../../../apps/internal/src/server/credentials';
 import {
   type ChannelFixture, alice, aliceDevice, bobBinding, channelId, createChannelFixture, otherChannelId,
 } from '../../../apps/internal/src/server/fixtures/channel-fixture';
@@ -45,8 +52,17 @@ export type InternalWorld = Readonly<{
   logs: LogEvent[];
   server: LoopbackServer;
   pause: { value: boolean };
-  /** The agent's binding bearer, as its descriptor carries it. */
-  bearer: string;
+  /** The held binding's bearer, as the agent's descriptor carries it. */
+  readonly bearer: string;
+  /** The binding the agent currently holds. */
+  binding(): SessionBinding;
+  /** The owner's Stop of the held binding: its generation is revoked and nothing is held. */
+  stop(): void;
+  /**
+   * Admits the agent to its channel through channel access again, as a fresh binding with its
+   * own capability and descriptor. `none` shares no earlier history; `shared` shares it all.
+   */
+  admit(history: 'none' | 'shared'): SessionBinding;
   /** A human message in `channel`, stored by the real channel store. */
   say(channel: RoomId, body: string): EventId;
   /** Runs the agent CLI as installed, optionally against the descriptor, with stdin. */
@@ -60,7 +76,13 @@ export type InternalWorld = Readonly<{
   close(): Promise<void>;
 }>;
 
-export async function startInternalWorld(): Promise<InternalWorld> {
+/** Re-admissions a world can hold after the fixture's binding, each with a capability minted up front. */
+const ADMISSIONS = 2;
+
+export async function startInternalWorld(options: Readonly<{
+  /** Wraps the store the server and release feed read, to compose a deliberately wrong read path. */
+  store?: (store: ChannelStore) => ChannelStore;
+}> = {}): Promise<InternalWorld> {
   const root = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'kha138-internal-'));
   const fixture = createChannelFixture({ root, now: NOW });
   const logs: LogEvent[] = [];
@@ -69,13 +91,20 @@ export async function startInternalWorld(): Promise<InternalWorld> {
   const agentState = path.join(root, 'agent-state');
   const descriptorPath = path.join(root, 'descriptor.json');
   let id = 0;
+  const store = options.store ? options.store(fixture.store) : fixture.store;
+  // The capabilities are known to the server from the start, and authenticate once admission records their binding.
+  const admissions: BindingCredential[] = Array.from({ length: ADMISSIONS }, (_, index) => ({
+    credential: mintCredential(),
+    binding: { ...bobBinding, bindingId: `binding-bob-admitted-${index + 1}` as SessionBinding['bindingId'] },
+    channels: [channelId],
+  }));
   const server = await startChannelServer({
-    store: fixture.store,
+    store,
     bootstrap: [fixture.bootstrap],
-    bindings: [fixture.bob],
+    bindings: [fixture.bob, ...admissions],
     // Composed as the launcher composes it (`composeBindingModes`), plus this world's own pause switch.
     releases: createInternalReleaseFeed({
-      store: fixture.store,
+      store,
       listeningModes: modes.listeningModes,
       paused: binding => (pause.value ? true : modes.pause.read(binding)),
     }),
@@ -98,10 +127,18 @@ export async function startInternalWorld(): Promise<InternalWorld> {
     })(),
     startPort: 0,
   });
-  fs.writeFileSync(descriptorPath, encodeInternalDescriptor({
-    v: 1, channelId, origin: server.origin, transportCapability: mintCredential(),
-    grantRef: 'grant-bob', bindingId: bobBinding.bindingId, bindingCapability: fixture.bob.credential,
+  const transportCapability = mintCredential();
+  let held: BindingCredential | null = fixture.bob;
+  const holding = (): BindingCredential => {
+    if (!held) throw new Error('the agent holds no binding');
+    return held;
+  };
+  const writeDescriptor = (credential: BindingCredential) => fs.writeFileSync(descriptorPath, encodeInternalDescriptor({
+    v: 1, channelId, origin: server.origin, transportCapability,
+    grantRef: `grant-${credential.binding.bindingId}`, bindingId: credential.binding.bindingId, bindingCapability: credential.credential,
   }), { mode: 0o600 });
+  writeDescriptor(fixture.bob);
+  const discovery = createDiscoveryStore(fixture.handle);
 
   let sent = 0;
   const say = (channel: RoomId, body: string): EventId => {
@@ -143,7 +180,7 @@ export async function startInternalWorld(): Promise<InternalWorld> {
   };
 
   const http: InternalWorld['http'] = async (method, route, options = {}) => {
-    const bearer = options.bearer === undefined ? fixture.bob.credential : options.bearer;
+    const bearer = options.bearer === undefined ? holding().credential : options.bearer;
     const response = await fetch(`${server.origin}${route}`, {
       method,
       headers: {
@@ -159,7 +196,7 @@ export async function startInternalWorld(): Promise<InternalWorld> {
   const raw: InternalWorld['raw'] = route => new Promise((resolve, reject) => {
     const { hostname, port } = new URL(server.origin);
     const request = httpRequest({
-      host: hostname, port, method: 'GET', path: route, headers: { authorization: `Bearer ${fixture.bob.credential}` },
+      host: hostname, port, method: 'GET', path: route, headers: { authorization: `Bearer ${holding().credential}` },
     }, response => {
       let body = '';
       response.setEncoding('utf8');
@@ -173,7 +210,7 @@ export async function startInternalWorld(): Promise<InternalWorld> {
   const stream: InternalWorld['stream'] = async (route, during, ms) => {
     const abort = new AbortController();
     const response = await fetch(`${server.origin}${route}`, {
-      headers: { authorization: `Bearer ${fixture.bob.credential}` }, signal: abort.signal,
+      headers: { authorization: `Bearer ${holding().credential}` }, signal: abort.signal,
     });
     let body = '';
     const reader = response.body?.getReader();
@@ -198,7 +235,24 @@ export async function startInternalWorld(): Promise<InternalWorld> {
 
   return {
     fixture, root, serverState: path.join(root, 'state'), agentState, descriptorPath, logs, server, pause,
-    bearer: fixture.bob.credential, say, khala, http, raw, stream,
+    get bearer() { return holding().credential; },
+    binding: () => holding().binding,
+    stop() {
+      if (fixture.store.revokeBinding(holding().binding).kind !== 'done') throw new Error('fixture stop');
+      held = null;
+    },
+    admit(history) {
+      const next = admissions.shift();
+      if (!next) throw new Error('no admission left in this world');
+      const admitted = discovery.activate({
+        operationKey: `admission-${next.binding.bindingId}`, binding: next.binding, channelId, sessionGeneration: 1, history,
+      });
+      if (admitted.kind !== 'activated') throw new Error(`fixture admission: ${admitted.kind}`);
+      held = next;
+      writeDescriptor(next);
+      return next.binding;
+    },
+    say, khala, http, raw, stream,
     async close() {
       await server.close();
       fixture.dispose();

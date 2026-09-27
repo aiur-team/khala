@@ -8,6 +8,7 @@ import {
 import type { ProvenancePort, SubscriptionSource } from '@khala/connector/subscription/index';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createChannelStore, type ChannelStore } from '../../store/channel-store';
+import { admitWithSharedHistory } from '../../store/fixtures/admission';
 import { openChannelStore, type InternalStoreHandle } from '../../store/open';
 import { createLocalSubscriptionSource } from './subscription-source';
 
@@ -70,6 +71,7 @@ function fresh(): ChannelStore {
   })).toMatchObject({ kind: 'created' });
   expect(store.setMembership({ channelId, participantId: bob.participantId, membership: 'joined' }))
     .toMatchObject({ kind: 'done' });
+  admitWithSharedHistory(handle, binding, channelId);
   return store;
 }
 
