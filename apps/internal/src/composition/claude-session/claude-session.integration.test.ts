@@ -940,6 +940,31 @@ describe('Claude delivery through the internal launcher', () => {
       [['khala_channel_access_status', { operationId: requested!.operationId }]]);
     expect(joined).toMatchObject({ outcome: 'connected' });
 
+    // Current Claude 2.1.283 sync remains experimental. The owner explicitly
+    // enables this exact route for each admitted binding before peer automation.
+    const bindingsPath = `/api/v1/channels/${encodeURIComponent(recipient.report.channelId)}/bindings`;
+    const listed = await call(recipient.report.origin, { path: bindingsPath, headers: recipient.owner });
+    expect(listed.status).toBe(200);
+    const bindings = listed.json.bindings as Array<{ binding: { bindingId: string; generation: number };
+      view: { version: number; support: { sync: { route: string; testedVersion: string;
+        evidenceRevision: string } } } }>;
+    expect(bindings).toHaveLength(2);
+    for (const [index, entry] of bindings.entries()) {
+      const path = `${bindingsPath}/${encodeURIComponent(entry.binding.bindingId)}`;
+      const issuedAt = new Date().toISOString();
+      const set = await call(recipient.report.origin, { method: 'POST', path: `${path}/listening-mode`,
+        headers: recipient.owner, body: { v: 1, commandId: `peer-sync-${index}`,
+          generation: entry.binding.generation, expectedVersion: entry.view.version, requested: 'sync', issuedAt } });
+      expect(set.json).toMatchObject({ outcome: 'applied' });
+      const grant = await call(recipient.report.origin, { method: 'POST', path: `${path}/experimental-route/grant`,
+        headers: recipient.owner, body: { v: 1, commandId: `peer-grant-${index}`,
+          generation: entry.binding.generation, expectedVersion: set.json.version,
+          mode: 'sync', route: entry.view.support.sync.route,
+          harnessVersion: entry.view.support.sync.testedVersion,
+          evidenceRevision: entry.view.support.sync.evidenceRevision, issuedAt } });
+      expect(grant.json).toMatchObject({ outcome: 'applied', view: { effective: 'sync' } });
+    }
+
     await recipient.post('human causal root');
     expect(await recipient.run('read')).toContain('human causal root');
     await recipient.run('status');
