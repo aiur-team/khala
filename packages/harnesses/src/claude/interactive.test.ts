@@ -41,13 +41,14 @@ describe('interactive Claude capabilities', () => {
     expect(statuses(capabilities)).toEqual(['unknown', 'unknown', 'unknown']);
   });
 
-  it('ships with no proven pair, so an installed version is experimental until a live run is retained', () => {
-    expect(CLAUDE_INTERACTIVE_PROVEN).toEqual([]);
-    expect(interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits).support).toBe('experimental');
+  it('ships only the retained exact version and route', () => {
+    expect(CLAUDE_INTERACTIVE_PROVEN).toEqual(proven);
+    expect(interactiveClaudeCapabilities('2.1.283', CLAUDE_INTERACTIVE_ROUTE, limits).support).toBe('tested');
+    expect(interactiveClaudeCapabilities('2.1.284', CLAUDE_INTERACTIVE_ROUTE, limits).support).toBe('experimental');
   });
 
   it('keeps an uninspected or uncarriable installed version unproven', () => {
-    expect(installedClaudeCapabilities('2.1.283', limits)).toMatchObject({ support: 'experimental', acknowledgement: 'batch_token_next_call' });
+    expect(installedClaudeCapabilities('2.1.283', limits)).toMatchObject({ support: 'tested', acknowledgement: 'batch_token_next_call' });
     for (const version of [null, 'not a version']) {
       const capabilities = installedClaudeCapabilities(version, limits);
       expect(capabilities).toMatchObject({ support: 'unsupported', acknowledgement: 'unknown', version: 'unknown' });
