@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionBinding } from '@khala/contracts/delivery/index';
 import { decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { openConnectorStorage } from '@khala/connector/storage/open';
-import { createLocalClosureFence } from './local-fence';
+import { createLocalClosureFence, hasLocalRevocationStop } from './local-fence';
 
 const binding = { v: 1, bindingId: 'binding-one', ownerId: 'owner-one', agentParticipantId: 'agent-one',
   deviceId: 'device-one', harness: 'claude', sessionId: 'session-one', generation: 0 } as SessionBinding;
@@ -48,5 +48,27 @@ describe('endpoint local closure fence', () => {
     expect(await storage.ledger.transaction(tx => tx.readApprovalSnapshot({ bindingId: binding.bindingId, selection: [] })))
       .toMatchObject({ kind: 'snapshot' });
     await storage.close();
+  });
+
+  it('recovers only the exact synced revocation Stop after the local ledger restarts', async () => {
+    const { directory, storage } = await fixture();
+    const revoke = { ...request, operationId: `revoke_${'a'.repeat(40)}` };
+    const lookup = { stateDirectory: directory, binding, roomId: request.roomId };
+    expect(await hasLocalRevocationStop(lookup)).toBe(false);
+    const stop = createLocalClosureFence({ storage, binding, roomId: request.roomId,
+      stateDirectory: directory, clock: () => Date.parse('2026-09-27T00:00:00Z'),
+      quiesce: async () => undefined });
+    expect((await stop.stop(revoke)).kind).toBe('stopped');
+    await storage.close();
+    expect(await hasLocalRevocationStop({ ...lookup, operationId: revoke.operationId })).toBe(true);
+    expect(await hasLocalRevocationStop({ ...lookup, operationId: `revoke_${'b'.repeat(40)}` })).toBe(false);
+    expect(await hasLocalRevocationStop({ ...lookup, binding: { ...binding, generation: 1 } })).toBe(false);
+    expect(await hasLocalRevocationStop({ ...lookup, roomId: '!other:example' })).toBe(false);
+    const limits = decodeDeliveryLimits({ maxPayloadBytes: 64 * 1024, maxSelectionEvents: 32 });
+    if (!limits.ok) throw new Error('test limits invalid');
+    const reopened = await openConnectorStorage({ directory, mode: 'existing', limits: limits.value });
+    expect(await reopened.ledger.transaction(tx => tx.readApprovalSnapshot({ bindingId: binding.bindingId, selection: [] })))
+      .toEqual({ kind: 'revoked' });
+    await reopened.close();
   });
 });

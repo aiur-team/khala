@@ -26,10 +26,16 @@ const peer = {
   async trust(userId: string, deviceId: string, fingerprint: string) {
     const crypto = client?.getCrypto();
     if (!crypto) throw new Error('peer_closed');
-    const device = (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId);
-    if (!device || device.getFingerprint() !== fingerprint) throw new Error('peer_fingerprint_mismatch');
-    await crypto.setDeviceVerified(userId, deviceId, true);
-    return (await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified() === true;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const device = (await crypto.getUserDeviceInfo([userId], true)).get(userId)?.get(deviceId);
+      if (device) {
+        if (device.getFingerprint() !== fingerprint) throw new Error('peer_fingerprint_mismatch');
+        await crypto.setDeviceVerified(userId, deviceId, true);
+        return (await crypto.getDeviceVerificationStatus(userId, deviceId))?.isVerified() === true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    throw new Error('peer_device_missing');
   },
   async send(roomId: string, body: string) {
     if (!client) throw new Error('peer_closed');

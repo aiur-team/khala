@@ -64,11 +64,16 @@ export function createProductionRevocationCleanup(input: Readonly<{
         instruction.operationId, input.binding.bindingId,
       ])).digest('hex').slice(0, 40)}`).catch(() => ({ kind: 'unavailable' as const }));
       if (stopped.kind !== 'stopped') return 'pending';
-      const removal = instruction.removal ?? await input.removeOwnDevice(instruction.deviceKey);
+      const localStop = await call('POST', RESULT, { operationId: instruction.operationId,
+        deviceId: instruction.deviceId, deviceKey: instruction.deviceKey, generation: instruction.generation,
+        removal: null, localStop: stopped.receipt });
+      if (!localStop || localStop.status !== 200 || !object(localStop.value)
+        || localStop.value.operationId !== instruction.operationId || localStop.value.removal !== null) return 'pending';
+      if (instruction.removal !== null) { completed = true; return 'complete'; }
+      const removal = await input.removeOwnDevice(instruction.deviceKey);
       if (removal === 'unavailable') return 'pending';
       const receipt = { operationId: instruction.operationId, deviceId: instruction.deviceId,
-        deviceKey: instruction.deviceKey, generation: instruction.generation, removal,
-        localStop: stopped.receipt };
+        deviceKey: instruction.deviceKey, generation: instruction.generation, removal };
       const posted = await call('POST', RESULT, receipt);
       if (!posted || posted.status !== 200 || !object(posted.value)
         || posted.value.operationId !== instruction.operationId || posted.value.removal !== removal) return 'pending';

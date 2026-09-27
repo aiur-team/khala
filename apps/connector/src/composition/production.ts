@@ -20,7 +20,7 @@ import { createCapabilityRenewal } from './agent/capability-renewal';
 import { createProductionOwnerMailbox } from './agent/owner-mailbox';
 import { createProductionRevocationCleanup } from './agent/revocation-cleanup';
 import { createAgentRoomSendFence } from './agent/room-send-fence';
-import { createLocalClosureFence } from './closure/local-fence';
+import { createLocalClosureFence, hasLocalRevocationStop } from './closure/local-fence';
 import { createConnectorDispatchStorage } from '@khala/connector/storage/dispatch';
 import { createPolicyControlHandler } from './controls/control-handler';
 import { openTrustStateStore } from './controls/trust-store';
@@ -136,7 +136,9 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     recordAcknowledgement?: (acknowledgement: Acknowledgement) => Promise<void>;
   }>) => Promise<LocalInbox>;
   const rawOpenInbox = input.openInbox as unknown as OpenInbox;
-  const openHostedInbox: OpenInbox = (bindingId, generation) => rawOpenInbox(bindingId, generation, {
+  const openHostedInbox: OpenInbox = (bindingId, generation) => {
+    if (closed || remoteDenied || deliveryStopped) throw new Error('production_binding_revoked');
+    return rawOpenInbox(bindingId, generation, {
     recordAcknowledgement: async acknowledgement => {
       if (!binding || bindingId !== binding.bindingId || generation !== binding.generation
         || acknowledgement.bindingId !== bindingId || acknowledgement.generation !== generation) {
@@ -148,7 +150,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       });
       if (result.kind === 'refused') throw new Error('acknowledgement_refused');
     },
-  });
+    });
+  };
   const matrix = createMatrixBootstrapDevice({
     stateDirectory: sessionDirectory,
     profileDirectory: path.join(sessionDirectory, 'matrix-profile'),
@@ -234,18 +237,23 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     return raw as MatrixDeviceSession;
   }
 
-  async function startIntake(next: SessionBinding): Promise<void> {
-    if (subscription) return;
-    const substrate = matrix.substrate();
-    if (!substrate) throw new Error('matrix_device_unavailable');
-    const identity = await storage.bindDeviceIdentity({ deviceId: next.deviceId, fingerprint: substrate.fingerprint });
-    if (identity.kind === 'conflict') throw new Error('production_device_identity_conflict');
+  async function boundMatrixSession(next: SessionBinding): Promise<MatrixDeviceSession> {
     const session = await matrixSession();
     const agentParticipantId = `agent_${createHash('sha256').update(session.userId).digest('hex').slice(0, 40)}`;
     if (session.deviceId !== next.deviceId || session.ownerUserId === session.userId
       || session.ownerParticipantId === next.agentParticipantId || agentParticipantId !== next.agentParticipantId) {
       throw new Error('matrix_session_binding_conflict');
     }
+    return session;
+  }
+
+  async function startIntake(next: SessionBinding): Promise<void> {
+    if (subscription) return;
+    const substrate = matrix.substrate();
+    if (!substrate) throw new Error('matrix_device_unavailable');
+    const identity = await storage.bindDeviceIdentity({ deviceId: next.deviceId, fingerprint: substrate.fingerprint });
+    if (identity.kind === 'conflict') throw new Error('production_device_identity_conflict');
+    const session = await boundMatrixSession(next);
     const activeSigner = signer;
     if (!activeSigner) throw new Error('production_signer_missing');
     ownerTrust = createOwnerDeviceTrust({ appOrigin: input.appOrigin, binding: next,
@@ -347,7 +355,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     schedulePoll();
   }
 
-  async function readBinding(): Promise<SessionBinding | null> {
+  async function readBinding(allowStopped = false): Promise<SessionBinding | null> {
     let value: unknown;
     try { value = JSON.parse(await readFile(markerFile, 'utf8')) as unknown; }
     catch (error) {
@@ -362,7 +370,7 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     const local = await storage.ledger.transaction(tx => tx.readBinding(decoded.value.bindingId));
     if (!local || !sameSessionBinding(local, decoded.value)) throw new Error('production_binding_ledger_mismatch');
     const snapshot = await storage.ledger.transaction(tx => tx.readApprovalSnapshot({ bindingId: local.bindingId, selection: [] }));
-    if (snapshot?.kind === 'revoked') throw new Error('production_binding_revoked');
+    if (snapshot?.kind === 'revoked' && !allowStopped) throw new Error('production_binding_revoked');
     return local;
   }
   async function persistBinding(next: SessionBinding): Promise<void> {
@@ -395,13 +403,42 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   });
 
   try {
-    binding = await readBinding();
+    binding = await readBinding(true);
     const persistence = await createBootstrapPersistence(storage);
     signer = persistence.signer;
     if (binding) {
-      const status = await matrix.devices.status(binding.deviceId);
-      if (status !== 'ready') throw new Error('matrix_device_not_ready');
-      await startIntake(binding);
+      const heldBinding = binding;
+      const snapshot = await storage.ledger.transaction(tx => tx.readApprovalSnapshot({ bindingId: heldBinding.bindingId, selection: [] }));
+      if (!snapshot) throw new Error('production_binding_ledger_mismatch');
+      if (snapshot?.kind === 'revoked') {
+        const stoppedBinding = heldBinding;
+        const session = await boundMatrixSession(stoppedBinding);
+        if (!await hasLocalRevocationStop({ stateDirectory: sessionDirectory, binding: stoppedBinding, roomId: session.roomId })) {
+          throw new Error('production_binding_revoked');
+        }
+        const activeSigner = signer;
+        const stop = createLocalClosureFence({ storage, binding: stoppedBinding, roomId: session.roomId,
+          stateDirectory: sessionDirectory, clock: Date.now, quiesce: quiesceDelivery });
+        remoteDenied = true;
+        deliveryStopped = true;
+        revocationCleanup = createProductionRevocationCleanup({ appOrigin: input.appOrigin,
+          binding: stoppedBinding, signer: activeSigner,
+          existingCapability: () => capabilityFor(stoppedBinding).existing(),
+          stop: async operationId => await hasLocalRevocationStop({ stateDirectory: sessionDirectory,
+            binding: stoppedBinding, roomId: session.roomId, operationId })
+            ? stop.stop({ operationId, ownerId: stoppedBinding.ownerId, roomId: session.roomId, expectedRoomRevision: 0 })
+            : { kind: 'unavailable' },
+          async removeOwnDevice(key) {
+            if (await matrix.devices.status(stoppedBinding.deviceId) !== 'ready') return 'unavailable';
+            return matrix.substrate()?.removeOwnDevice(key) ?? 'unavailable';
+          },
+        });
+        scheduleCleanup();
+      } else {
+        const status = await matrix.devices.status(heldBinding.deviceId);
+        if (status !== 'ready') throw new Error('matrix_device_not_ready');
+        await startIntake(heldBinding);
+      }
     }
     const { operations } = persistence;
     const ports: BootstrapPorts = {
@@ -410,9 +447,10 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       pairing: createPairingOwnership({ signer }),
       admission: createHttpAdmission({ signer }),
       devices: {
-        reserve: operationId => matrix.devices.reserve(operationId),
-        status: deviceId => matrix.devices.status(deviceId),
+        reserve: operationId => remoteDenied ? Promise.resolve({ kind: 'unavailable' }) : matrix.devices.reserve(operationId),
+        status: deviceId => remoteDenied ? Promise.resolve('unavailable') : matrix.devices.status(deviceId),
         async activate(activation) {
+          if (remoteDenied) return { kind: 'failed', reason: 'storage_unavailable' };
           const result = await matrix.devices.activate(activation);
           if (result.kind !== 'ready') return result;
           try {
@@ -485,8 +523,8 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
           readiness: { phase, prerequisites: { ...prerequisites, ...changes }, errorCode } });
         if (closed) return unavailable('connector_closed', { storage: 'offline' }, 'stopped');
         if (!binding) return unavailable('binding_not_established');
-        if (deliveryStopped) return unavailable('channel_closing', { bootstrap: 'blocked' });
         if (remoteDenied) return unavailable('binding_revoked', { bootstrap: 'blocked' });
+        if (deliveryStopped) return unavailable('channel_closing', { bootstrap: 'blocked' });
         const held = await readBinding().catch(() => null);
         if (!held || !sameSessionBinding(held, binding)) return unavailable('binding_revoked');
         const activeDevice = matrix.substrate();

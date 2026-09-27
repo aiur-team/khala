@@ -267,7 +267,8 @@ export function createAgentRevocationCleanupRoutes(input: Readonly<{
       if (!object(body) || !['deviceId,deviceKey,generation,operationId,removal',
         'deviceId,deviceKey,generation,localStop,operationId,removal'].includes(Object.keys(body).sort().join(','))
         || typeof body.operationId !== 'string' || !ID.test(body.operationId)
-        || typeof body.removal !== 'string' || !['removed', 'replaced', 'reauthentication_required', 'forbidden'].includes(body.removal)) {
+        || !(body.removal === null && 'localStop' in body
+          || typeof body.removal === 'string' && ['removed', 'replaced', 'reauthentication_required', 'forbidden'].includes(body.removal))) {
         return json(400, { code: 'invalid_request' });
       }
       const item = await authorized(request, body.operationId);
@@ -277,7 +278,8 @@ export function createAgentRevocationCleanupRoutes(input: Readonly<{
       }
       const stopped = !('localStop' in body) || await cleanup.recordLocalStop(item, body.localStop) === 'applied';
       if (!stopped) return json(503, { code: 'unavailable' });
-      const result = await cleanup.recordRemoval(item.ownerId, item.operationId, body.removal as Removal);
+      const result = body.removal === null ? 'applied'
+        : await cleanup.recordRemoval(item.ownerId, item.operationId, body.removal as Removal);
       return result === 'applied' ? json(200, { v: 1, operationId: item.operationId, removal: body.removal })
         : json(503, { code: 'unavailable' });
     } },

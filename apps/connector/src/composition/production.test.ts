@@ -1,10 +1,108 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { decodeDeliveryLimits, type SessionBinding } from '@khala/contracts/delivery/index';
+import { openConnectorStorage } from '@khala/connector/storage/open';
+import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
+import { createCapabilityRenewal } from './agent/capability-renewal';
+import { revocationStopId } from '../../../control/src/composition/human/revocation-cleanup';
+import { createLocalClosureFence } from './closure/local-fence';
+import { openTrustStateStore } from './controls/trust-store';
 import { hasProductionBinding, openProductionConnector, subscriptionDiagnostic, supportedBrowserVersion } from './production';
 
 describe('installed hosted connector composition', () => {
+  it.each(['removed', 'unreported'] as const)(
+    'restarts a locally stopped binding only for cleanup when Matrix removal is %s', async removalState => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-revoked-restart-'));
+    const session = { harness: 'codex' as const, sessionId: 'thread-revoked-1', workdir: '/project' };
+    const sessionDirectory = path.join(directory, createHash('sha256').update(JSON.stringify([
+      'khala.hosted.session.v1', session.harness, session.sessionId, session.workdir,
+    ])).digest('hex'));
+    const stateDirectory = path.join(sessionDirectory, 'state');
+    const appOrigin = 'https://khala.aiur.team';
+    const matrixUserId = '@khala_agent:example';
+    const roomId = '!revoked:example';
+    const binding = { v: 1, bindingId: 'binding-revoked-restart', ownerId: 'owner-revoked',
+      agentParticipantId: `agent_${createHash('sha256').update(matrixUserId).digest('hex').slice(0, 40)}`,
+      deviceId: 'DEVICE_REVOKED', harness: session.harness, sessionId: session.sessionId,
+      generation: 2 } as SessionBinding;
+    const revokeId = revocationStopId('revocation-restart', binding.bindingId);
+    const input = { stateDirectory: directory, appOrigin,
+      browserBundleDirectory: path.join(directory, 'missing-matrix-browser'), session,
+      sessionInspection: () => ({ inspect: async () => ({ kind: 'missing' as const }) }),
+      inspectHostedCodexHooks: vi.fn(async () => null), resolveCodexExecutable: vi.fn(async () => null),
+      openBrowser: vi.fn(async () => undefined), openInbox: vi.fn(async () => undefined) };
+    const requests: Array<{ method: string; path: string; payload: Record<string, unknown> | null }> = [];
+    const reply = (value: unknown) => new Response(JSON.stringify(value), { status: 200,
+      headers: { 'content-type': 'application/json' } });
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const payload = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
+      requests.push({ method: init?.method ?? 'GET', path: new URL(String(url)).pathname, payload });
+      if (new URL(String(url)).pathname.endsWith('/cleanup')) return reply({ v: 1,
+        operationId: 'revocation-restart', deviceId: binding.deviceId, deviceKey: 'B'.repeat(43),
+        generation: binding.generation, removal: removalState === 'removed' ? 'removed' : null });
+      return reply({ v: 1, operationId: 'revocation-restart', removal: payload?.removal });
+    }));
+    try {
+      await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+      const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
+      if (!limits.ok) throw new Error('test limits invalid');
+      const storage = await openConnectorStorage({ directory: stateDirectory, mode: 'create', limits: limits.value });
+      const trust = await openTrustStateStore({ directory: stateDirectory, mode: 'create' });
+      expect((await storage.ledger.transaction(tx => tx.putBinding(binding))).kind).toBe('inserted');
+      const { signer } = await createBootstrapPersistence(storage);
+      await createCapabilityRenewal({ stateDirectory: sessionDirectory, appOrigin, binding, signer }).acceptInitial({
+        token: 'C'.repeat(43), bindingId: binding.bindingId, generation: binding.generation,
+        scope: ['publish_own', 'receive_released', 'ack_delivery'], expiresAt: Date.now() + 3_600_000,
+      });
+      const stop = createLocalClosureFence({ storage, binding, roomId, stateDirectory: sessionDirectory,
+        clock: Date.now, quiesce: async () => undefined });
+      expect((await stop.stop({ operationId: revokeId, ownerId: binding.ownerId, roomId,
+        expectedRoomRevision: 0 })).kind).toBe('stopped');
+      await storage.close();
+      trust.close();
+      await writeFile(path.join(sessionDirectory, 'current-binding.json'), JSON.stringify(binding));
+      await writeFile(path.join(sessionDirectory, 'matrix-session.json'), JSON.stringify({
+        baseUrl: 'http://127.0.0.1:9', userId: matrixUserId, deviceId: binding.deviceId,
+        accessToken: 'offline-device-token-123456', roomId, ownerUserId: '@owner:example',
+        ownerParticipantId: 'owner_participant',
+      }));
+      const opened = await openProductionConnector(input);
+      await vi.waitFor(() => expect(requests.some(item => item.path.endsWith('/result'))).toBe(true));
+      expect(requests.map(item => item.path)).toEqual([
+        '/api/agent/revocation/cleanup', '/api/agent/revocation/result',
+      ]);
+      expect(requests[1]?.payload).toMatchObject({ operationId: 'revocation-restart',
+        removal: null, localStop: { operationId: revokeId, bindingId: binding.bindingId,
+          bindingGeneration: binding.generation, roomId, state: 'stopped' } });
+      if (removalState === 'unreported') {
+        // The Matrix device is unavailable after removal; no successful
+        // exact-device result can be invented from that absence.
+        await new Promise(resolve => setTimeout(resolve, 200));
+        expect(requests.filter(item => item.payload?.removal === 'removed')).toHaveLength(0);
+      }
+      expect(await opened.status()).toMatchObject({ connected: false });
+      expect((await opened.send({ bindingId: binding.bindingId, clientTxnId: 'after-restart', body: 'blocked' })).kind)
+        .toBe('refused');
+      expect(() => opened.inbox()).toThrow('production_binding_revoked');
+      expect(await opened.ports.devices.status(binding.deviceId)).toBe('unavailable');
+      expect(input.openInbox).not.toHaveBeenCalled();
+      expect(input.inspectHostedCodexHooks).not.toHaveBeenCalled();
+      await opened.close();
+      const markerDirectory = path.join(sessionDirectory, 'closure-cleanup');
+      const [marker] = await readdir(markerDirectory);
+      expect(marker).toMatch(/^[a-f0-9]{64}\.json$/u);
+      await rm(path.join(markerDirectory, marker!));
+      const before = requests.length;
+      await expect(openProductionConnector(input)).rejects.toThrow('production_binding_revoked');
+      expect(requests).toHaveLength(before);
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it('checks only an exact admitted session marker without creating hosted state', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'khala-hosted-presence-'));
     const first = { harness: 'codex', sessionId: 'thread-1', workdir: '/project' };

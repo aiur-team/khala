@@ -56,7 +56,7 @@ export function createOwnerRoomClosureConnector(input: Readonly<{
             || journal.stored.record.expectedGeneration !== item.generation
             || journal.stored.record.revokedGeneration !== found.record.revokedGeneration) return { kind: 'unavailable' };
           const stopped = await revocations.localStop(proof);
-          if (proof.removal === null || stopped.kind === 'absent') { pending = true; continue; }
+          if (stopped.kind === 'absent') { pending = true; continue; }
           if (stopped.kind !== 'record') return { kind: 'unavailable' };
           fenced.push(item);
           continue;

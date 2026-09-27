@@ -23,7 +23,8 @@ const authoritySecret = 'mailbox-test-secret-at-least-thirty-two-bytes';
 const request = { operationId: 'closure-operation', ownerId: first.ownerId, roomId, expectedRoomRevision: 0 };
 
 describe('production closure mailbox adapter', () => {
-  it('requires the revoked endpoint’s durable local Stop before revoke-then-close can leave', async () => {
+  it.each(['no_removal', 'uia_only', 'legacy_removal'] as const)(
+    'requires the revoked endpoint’s durable local Stop before revoke-then-close can leave (%s)', async mode => {
     const store = fakeStore(() => T0).store;
     const bindings = createAgentBindingStore({ store });
     const index = createOwnerRoomIndex(store);
@@ -70,11 +71,12 @@ describe('production closure mailbox adapter', () => {
     const stop = { operationId: revocationStopId(revokeId, first.bindingId), ownerId: principal.ownerId,
       roomId, expectedRoomRevision: 0 as const, bindingId: first.bindingId,
       bindingGeneration: first.generation, state: 'stopped' as const, cleanupRequested: true as const };
-    // Owner-side UIA removal without endpoint Stop remains partial.
-    expect(await revocations.recordVerifiedRemoval(principal.ownerId, revokeId, 'removed')).toBe('applied');
-    expect(await service.closeRoom(request)).toEqual(partial);
-    // A legacy endpoint removal receipt alone is also insufficient.
-    expect(await revocations.recordRemoval(principal.ownerId, revokeId, 'removed')).toBe('applied');
+    if (mode === 'uia_only') {
+      expect(await revocations.recordVerifiedRemoval(principal.ownerId, revokeId, 'removed')).toBe('applied');
+    }
+    if (mode === 'legacy_removal') {
+      expect(await revocations.recordRemoval(principal.ownerId, revokeId, 'removed')).toBe('applied');
+    }
     expect(await service.closeRoom(request)).toEqual(partial);
     const resultRoute = createAgentRevocationCleanupRoutes({ store, capabilities: {
       async authorizeRevocationCleanup() { return { kind: 'authorized' as const, ownerId: principal.ownerId,
@@ -83,7 +85,7 @@ describe('production closure mailbox adapter', () => {
     const report = (localStop: unknown) => resultRoute.handle(new Request(`https://khala.aiur.team${REVOCATION_RESULT_PATH}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
         operationId: revokeId, deviceId: first.deviceId, deviceKey, generation: first.generation,
-        removal: 'removed', localStop,
+        removal: null, localStop,
       }),
     }));
     expect((await report({ ...stop, ownerId: 'peer-owner' })).status).toBe(503);
@@ -91,10 +93,19 @@ describe('production closure mailbox adapter', () => {
     expect((await report({ ...stop, bindingGeneration: first.generation + 1 })).status).toBe(503);
     expect(await service.closeRoom(request)).toEqual(partial);
     expect((await report(stop)).status).toBe(200);
+    expect((await report(stop)).status).toBe(200);
+    expect((await report({ ...stop, operationId: `revoke_${'a'.repeat(40)}` })).status).toBe(503);
+    expect((await revocations.read(principal.ownerId, revokeId)).kind).toBe('record');
     expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: {
       operationId: request.operationId, state: 'complete', reason: null,
     } });
     expect(leave).toHaveBeenCalledOnce();
+    const removalReport = (removal: 'removed' | 'replaced') => resultRoute.handle(new Request(
+      `https://khala.aiur.team${REVOCATION_RESULT_PATH}`, { method: 'POST',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operationId: revokeId,
+          deviceId: first.deviceId, deviceKey, generation: first.generation, removal }) }));
+    expect((await removalReport('removed')).status).toBe(200);
+    expect((await removalReport('replaced')).status).toBe(503);
     expect(await cleanup.list()).toEqual({ kind: 'ok', requests: [request] });
   });
   it('keeps Matrix leave pending until every active binding acknowledges its stop', async () => {
