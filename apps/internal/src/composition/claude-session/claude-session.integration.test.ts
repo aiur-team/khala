@@ -928,6 +928,31 @@ describe('Claude delivery through the internal launcher', () => {
     expect(JSON.parse(await session.run('pending'))).toMatchObject({ ok: false, kind: 'refused' });
   });
 
+  it('reports admitted Claude peer arrival without treating it as human mail', async () => {
+    const recipient = await bound('session-peer-recipient');
+    const senderId = 'session-peer-sender';
+    const [requested] = await serve(recipient.report.descriptorPath, senderId,
+      [['khala_request_channel_access', { target: recipient.channelUrl }]]);
+    expect(requested).toMatchObject({ outcome: 'pending_owner' });
+    await approvePending(recipient.report.origin, recipient.owner);
+    const [joined] = await serve(recipient.report.descriptorPath, senderId,
+      [['khala_channel_access_status', { operationId: requested!.operationId }]]);
+    expect(joined).toMatchObject({ outcome: 'connected' });
+
+    await recipient.post('human causal root');
+    expect(await recipient.run('read')).toContain('human causal root');
+    await recipient.run('status');
+    expect(JSON.parse(await recipient.run('pending'))).toEqual({ ok: true, kind: 'idle' });
+    expect(await claude(recipient.report.descriptorPath, 'read', senderId)).toContain('human causal root');
+    await claude(recipient.report.descriptorPath, 'status', senderId);
+    const [sent] = await serve(recipient.report.descriptorPath, senderId,
+      [['khala_send', { message: 'peer causal reply' }]]);
+    expect(sent).toMatchObject({ kind: 'accepted' });
+    const pending = await recipient.run('pending');
+    expect(JSON.parse(pending)).toEqual({ ok: true, kind: 'pending' });
+    expect(pending).not.toContain('peer causal reply');
+  });
+
   it('delivers at the next PostToolUse under steer only after the owner grants the experimental route', async () => {
     const session = await bound('session-granted', async () => EXPERIMENTAL_CLAUDE);
     const bindings = `/api/v1/channels/${encodeURIComponent(session.report.channelId)}/bindings`;

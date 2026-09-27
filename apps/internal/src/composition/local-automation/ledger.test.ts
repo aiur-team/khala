@@ -240,6 +240,8 @@ describe('durable local peer reservation', () => {
       const issued = ack.issueRelease({ principal, channelId: room, release });
       const token = ack.issueBatch({ principal, channelId: room, releases: [{ ...release, proof: issued }] });
       expect(token).not.toBeNull();
+      expect(createLocalAutomationLedger(w.handle, createLocalAutomationProvider(LOCAL_AUTOMATION_LIMITS))
+        .issueClaudeChallenge({ recipient: claude, channelId: room, batchToken: token! })).toBeNull();
       const expired = w.ledger.issueClaudeChallenge({ recipient: claude, channelId: room, batchToken: token! });
       expect(expired).not.toBeNull();
       w.handle.transaction(db => db.prepare('UPDATE automation_terminal_challenges SET expires_at = 0 WHERE nonce = ?')

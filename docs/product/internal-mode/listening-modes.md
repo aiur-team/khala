@@ -321,7 +321,12 @@ uses a short-lived, one-use challenge over the exact issued batch and a
 launch-scoped private key. The hook sees neither the batch token nor message
 content. This proves the installed helper's participation within the existing
 same-user host trust boundary; it is not cryptographic attestation by Claude
-Code against arbitrary same-UID process or file access.
+Code against arbitrary same-UID process or file access. Codex likewise requires
+a fresh private exact-thread idle epoch after reservation, current installed
+hook/version evidence, and a server-issued batch; ordinary descriptor-only
+terminal or ACK calls cannot create that epoch. The private marker is not
+provider-signed evidence against someone who can execute the installed helper
+or alter its same-UID state.
 
 Pause and wake use the internal release feed and native boundaries:
 

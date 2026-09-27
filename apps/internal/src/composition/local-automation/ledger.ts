@@ -258,7 +258,8 @@ export function createLocalAutomationLedger(
       const expected = createHmac('sha256', terminalKey)
         .update(proofMessage(nonce, recipient, channelId, nativeSessionId)).digest();
       const presented = Buffer.from(proof, 'base64url');
-      if (presented.length !== expected.length || !timingSafeEqual(expected, presented)) return false;
+      if (presented.length !== expected.length || presented.toString('base64url') !== proof
+        || !timingSafeEqual(expected, presented)) return false;
       try {
         return handle.transaction(db => {
           if (!activeBinding(db, recipient, channelId)) return false;
