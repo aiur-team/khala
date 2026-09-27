@@ -81,8 +81,8 @@ describe('createConnectorRuntime', () => {
     await Promise.all([runtime.start(), runtime.start()]);
 
     expect(events).toEqual([
-      'device.bind',
       'bootstrap',
+      'device.bind',
       'controls.load',
       'harness.inspect',
       'dispatch.enabled:false',

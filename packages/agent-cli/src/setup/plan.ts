@@ -52,7 +52,11 @@ export type ComposedSetupAdapter = SetupAdapter & Readonly<{
 export type InstallerFile = Readonly<{
   path: string;
   component: 'payload' | 'launcher';
-  bytes: Uint8Array;
+  /** Deferred assets publish their pinned hash during dry-run and supply bytes only after confirmation. */
+  bytes?: Uint8Array;
+  postimage?: Sha256Digest;
+  /** Confirmation copy for a deferred acquisition; never used as an authority for writes. */
+  acquisition?: string;
   /** Harnesses whose installed configuration runs this file; it is staged only when one is set up. */
   harnesses: readonly HarnessId[];
   /** A mode other than the executor default (0400; launchers 0500). Modes are digest inputs. */
@@ -84,6 +88,8 @@ export type SetupServiceOptions = Readonly<{
   adapters: readonly ComposedSetupAdapter[];
   execute: SetupExecute;
   payload?: SetupPayloadSource;
+  /** Stages pinned optional assets only after the caller confirms the dry-run digest. */
+  prepareConfirmed?: (command: LifecycleCommand, environment: SetupEnvironment) => Promise<() => Promise<void>>;
 }>;
 
 type Prepared = Readonly<{
@@ -204,6 +210,16 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
   }
 
   async function confirmed(command: LifecycleCommand, digest: Sha256Digest, snapshot: Snapshot): Promise<SetupResult> {
+    let cleanup: (() => Promise<void>) | undefined;
+    try {
+      if (snapshot.journal === null && command === 'setup'
+        && snapshot.installer.some(target => target.operation !== null && target.file.acquisition !== undefined)) {
+        cleanup = await options.prepareConfirmed?.(command, snapshot.environment);
+      }
+    } catch {
+      return result(command, 'unsupported', snapshot, [], digest, CONFIRMED, [...snapshot.diagnostics,
+        { code: 'asset_unavailable', severity: 'error', message: 'The pinned browser asset could not be acquired or verified; no setup transaction started.' }]);
+    }
     // Any throw once execution may have started, including re-inspection afterwards, leaves the
     // final state unproven.
     try {
@@ -214,7 +230,7 @@ export function createSetupService(options: SetupServiceOptions): SetupService {
     } catch {
       return result(command, 'recovery_required', snapshot, [], digest, CONFIRMED, [...snapshot.diagnostics,
         { code: 'execution_failed', severity: 'error', message: 'Setup stopped unexpectedly; its final state is not proven.' }]);
-    }
+    } finally { await cleanup?.(); }
   }
 
   async function settle(
@@ -450,7 +466,8 @@ async function observeInstaller(
     const harness = owner.report.harness;
     const hash = current.get(file.path) ?? await read(file.path);
     current.set(file.path, hash);
-    const desired = sha256(file.bytes);
+    const desired = file.postimage ?? (file.bytes === undefined ? null : sha256(file.bytes));
+    if (desired === null || (file.bytes !== undefined && sha256(file.bytes) !== desired)) throw new Error('invalid installer asset');
     const entry = managed.get(file.path);
     const base = { harness, component: file.component, path: file.path };
     let state: ComponentState;
@@ -598,7 +615,9 @@ function planOperations(command: LifecycleCommand, snapshot: Snapshot): Planned 
     for (const { file, operation } of snapshot.installer) {
       if (operation === null) continue;
       operations.push(operation);
-      contents.set(sha256(file.bytes), file.bytes);
+      if (file.bytes !== undefined && (operation.type === 'file_create' || operation.type === 'file_replace')) {
+        contents.set(operation.postimage, file.bytes);
+      }
     }
   } else {
     const drifted: SetupDiagnostic[] = [];
@@ -805,6 +824,9 @@ function confirmationRequest(
 ): SetupResult['confirmation'] {
   const { harnesses, actions, paths } = footprint(operations, operation => ACTIONS[operation.type]);
   const verb = command === 'setup' ? 'install and configure Khala' : 'remove Khala';
+  const acquisition = command === 'setup'
+    ? snapshot.installer.find(target => target.operation !== null && target.file.acquisition !== undefined)?.file.acquisition
+    : undefined;
   return {
     required: true,
     confirmed: false,
@@ -818,7 +840,7 @@ function confirmationRequest(
     sessionEffect: 'unknown',
     fallbackRoute: snapshot.fallbackRoute,
     planDigest: digest,
-    request: `Approve ${operations.length} change(s) to ${verb} for ${harnesses.join(', ')}? `
+    request: `${acquisition === undefined ? '' : `${acquisition} `}Approve ${operations.length} change(s) to ${verb} for ${harnesses.join(', ')}? `
       + `If approved, run \`khala ${command} --confirm ${digest}\`.`,
   };
 }
@@ -890,4 +912,3 @@ function result(
     diagnostics: command === 'status' ? [...diagnostics, ...setupRequiredDiagnostics(snapshot)] : diagnostics,
   };
 }
-

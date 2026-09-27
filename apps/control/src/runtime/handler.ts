@@ -115,7 +115,9 @@ export function wrapRegistration(registration: RouteRegistration, options: WrapO
       }
       const bodyCheck = await readBoundedBody(request);
       if (bodyCheck.tooLarge) return jsonResponse(413, 'payload_too_large', requestId);
-      const boundedRequest = bodyCheck.body !== null ? new Request(request, { body: bodyCheck.body }) : request;
+      const boundedRequest = bodyCheck.body !== null
+        ? new Request(request, { body: new Uint8Array(bodyCheck.body).buffer })
+        : request;
       try {
         const response = await registration.handle(boundedRequest);
         // netlify.toml's `[[headers]]` rules apply to static/CDN-served paths,

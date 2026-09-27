@@ -10,16 +10,29 @@ const packageDirectory = fileURLToPath(new URL('../..', import.meta.url));
 const bundleScript = fileURLToPath(new URL('../../scripts/bundle.mjs', import.meta.url));
 const temporaryDirectory = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), 'khala-cli-link-'));
 const linkedEntrypoint = path.join(temporaryDirectory, 'khala');
+// Node may flush its warning after the CLI has written its JSON error.
+const sqliteExperimentalWarning = /^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n/mu;
+const withoutSqliteWarning = (stderr: string): string => stderr.replace(sqliteExperimentalWarning, '');
 
 describe('bundled CLI entrypoint', () => {
+  it('filters only Node’s known SQLite warning from child stderr', () => {
+    const sqlite = '(node:1234) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n'
+      + '(Use `node --trace-warnings ...` to show where the warning was created)\n';
+    expect(withoutSqliteWarning(sqlite + '{"ok":false}\n')).toBe('{"ok":false}\n');
+    expect(withoutSqliteWarning('{"ok":false}\n' + sqlite)).toBe('{"ok":false}\n');
+    expect(withoutSqliteWarning(sqlite + 'unexpected warning\n')).toBe('unexpected warning\n');
+    expect(withoutSqliteWarning('unexpected warning\n' + sqlite)).toBe('unexpected warning\n');
+    expect(withoutSqliteWarning('prefix ' + sqlite)).toBe('prefix ' + sqlite);
+  });
   beforeAll(() => {
     const build = spawnSync(process.execPath, [bundleScript], {
       cwd: packageDirectory,
       encoding: 'utf8',
+      timeout: 60_000,
     });
     expect(build.status, build.stderr).toBe(0);
     fs.symlinkSync(path.join(packageDirectory, 'dist/khala.js'), linkedEntrypoint);
-  });
+  }, 70_000);
 
   afterAll(() => fs.rmSync(temporaryDirectory, { recursive: true, force: true }));
 
@@ -28,7 +41,7 @@ describe('bundled CLI entrypoint', () => {
 
     expect(result.status).toBe(2);
     expect(result.stdout).toBe('');
-    expect(JSON.parse(result.stderr)).toEqual({ ok: false, error: 'invalid_arguments' });
+    expect(JSON.parse(withoutSqliteWarning(result.stderr))).toEqual({ ok: false, error: 'invalid_arguments' });
   });
 
   it('composes the Claude session client over the internal runtime descriptor', () => {
@@ -39,7 +52,7 @@ describe('bundled CLI entrypoint', () => {
     });
 
     expect(result.status).toBe(3);
-    expect(result.stderr).toBe('');
+    expect(withoutSqliteWarning(result.stderr)).toBe('');
     expect(JSON.parse(result.stdout)).toEqual({ ok: false, kind: 'refused', code: 'descriptor_missing' });
   });
 
@@ -49,7 +62,7 @@ describe('bundled CLI entrypoint', () => {
     const result = spawnSync(process.execPath, [linkedEntrypoint, 'status'], { encoding: 'utf8', env: { HOME: home, PATH: '' } });
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe('');
+    expect(withoutSqliteWarning(result.stderr)).toBe('');
     expect(JSON.parse(result.stdout)).toEqual({
       v: 1,
       connected: false,
@@ -70,8 +83,11 @@ describe('bundled CLI entrypoint', () => {
   it('keeps the internal runtime out of the main bundle and loads it only for internal', () => {
     const main = JSON.parse(fs.readFileSync(path.join(packageDirectory, 'dist/khala.js.meta.json'), 'utf8'));
     expect(Object.keys(main.inputs).filter(input => input.includes('apps/internal'))).toEqual([]);
+    expect(Object.keys(main.inputs).some(input => input.endsWith('/connector/src/storage/open.ts'))).toBe(true);
     const imports = Object.values(main.outputs as Record<string, { imports: { path: string }[] }>).flatMap(output => output.imports.map(entry => entry.path));
-    expect(imports).not.toContain('node:sqlite');
+    // The hosted connector's own durable ledger uses SQLite; source inventory still
+    // proves the separate internal application is excluded from this entrypoint.
+    expect(imports).toContain('node:sqlite');
 
     // node:sqlite prints an ExperimentalWarning of its own; the result is the one JSON line.
     const result = (stderr: string) => JSON.parse(stderr.split('\n').find(line => line.startsWith('{'))!);

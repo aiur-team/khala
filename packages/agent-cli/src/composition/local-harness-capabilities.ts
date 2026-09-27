@@ -52,6 +52,17 @@ async function inspectCodex(environment: SetupEnvironment): Promise<Inspection> 
   };
 }
 
+/** Current installed Codex hook proof for a hosted, provider-named session. */
+export async function inspectHostedCodexHooks(environment: SetupEnvironment): Promise<HarnessCapabilities | null> {
+  try {
+    const inspected = await inspectCodex(environment);
+    return inspected.capabilities?.support === 'tested' && inspected.observation?.version === '0.154.0'
+      && inspected.observation.hookReview === 'trusted' ? inspected.capabilities : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The installed Claude Code version, read as setup's detection reads it; `null` when it cannot be. */
 export async function inspectClaudeVersion(environment: SetupEnvironment): Promise<string | null> {
   try {

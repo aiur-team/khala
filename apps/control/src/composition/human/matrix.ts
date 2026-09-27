@@ -64,6 +64,8 @@ export type MatrixHumanServices = Readonly<{
   sessions: MatrixSessionIssuer;
   authority: InvitationAuthority;
   gateway: AdmissionGateway;
+  /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
+  inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
 }>;
 
 type MatrixLogin = Readonly<{ userId: string; accessToken: string; deviceId: DeviceId }>;
@@ -324,8 +326,8 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     }
   }
 
-  async function membership(principal: AuthPrincipal, roomId: RoomId, call?: CallOptions): Promise<GatewayInspection> {
-    const session = await authenticated(principal, call);
+  async function membershipForOwner(ownerId: OwnerId, roomId: RoomId, call?: CallOptions): Promise<GatewayInspection> {
+    const session = await login(ownerId, controlDevice(ownerId), call);
     if (session === null) return { kind: 'unavailable' };
     try {
       const response = await request(
@@ -342,6 +344,9 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       return { kind: 'unavailable' };
     }
   }
+
+  const membership = (principal: AuthPrincipal, roomId: RoomId, call?: CallOptions) =>
+    membershipForOwner(principal.ownerId, roomId, call);
 
   const authority: InvitationAuthority = {
     async canShare({ principal, roomId }, call) {
@@ -420,5 +425,5 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     },
   };
 
-  return { directory, sessions, authority, gateway };
+  return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner };
 }

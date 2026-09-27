@@ -44,9 +44,21 @@ importers:
       '@khala/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@khala/harnesses':
+        specifier: workspace:*
+        version: link:../../packages/harnesses
       '@khala/policy':
         specifier: workspace:*
         version: link:../../packages/policy
+      matrix-js-sdk:
+        specifier: 42.4.0
+        version: 42.4.0
+      playwright-core:
+        specifier: 1.63.0
+        version: 1.63.0
+      vite:
+        specifier: 7.3.6
+        version: 7.3.6(@types/node@22.20.3)(tsx@4.20.6)
 
   apps/control:
     dependencies:
@@ -137,6 +149,9 @@ importers:
       '@khala/connector':
         specifier: workspace:*
         version: link:../connector
+      '@khala/connector-app':
+        specifier: workspace:*
+        version: link:../../apps/connector
       '@khala/contracts':
         specifier: workspace:*
         version: link:../contracts

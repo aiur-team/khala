@@ -1,10 +1,10 @@
 // Browser recovery composition (KHA-136). Adapts the real identity and device
 // ports and the KHA-129 recovery service to the KHA-127 panel's `RecoveryUiPort`.
 // P14: no history recovery and no escrow, so recovery always refuses without asking
-// for a secret. P13: closure has no approved command yet, so it is never offered.
+// for a secret. P13 closure is available only through the owner-scoped control port.
 
 import {
-  type AuthPrincipal, type DevicePort, type DeviceView, type IdentityPort, type IdentityState, type RecoveryCapabilities,
+  type AuthPrincipal, type ClosureCapability, type ClosurePort, type DevicePort, type DeviceView, type IdentityPort, type IdentityState, type RecoveryCapabilities,
   type RevocationPort, rejected, unavailable,
 } from '@khala/contracts/messaging/index';
 import { createRecoveryService } from '@khala/messaging/recovery/index';
@@ -21,6 +21,11 @@ export interface BrowserRevocation extends RevocationPort {
   targets(): readonly RevocationCapability[];
 }
 
+/** The currently selected owner's channel, resolved by the control plane. */
+export interface BrowserClosure extends Pick<ClosurePort, 'closeRoom' | 'inspectClosure'> {
+  currentCapability(): Promise<ClosureCapability | null>;
+}
+
 export type BrowserRecoveryDeps = Readonly<{
   principal: AuthPrincipal;
   identity: IdentityPort;
@@ -28,6 +33,8 @@ export type BrowserRecoveryDeps = Readonly<{
   device: DevicePort;
   /** Absent until the control plane serves revocation: no target is offered and `revoke` is unavailable. */
   revocation?: BrowserRevocation;
+  /** Absent until the protected human closure route and its service are registered. */
+  closure?: BrowserClosure;
   resumeStore?: RecoveryResumeStore;
   connection?: () => RecoveryConnection;
 }>;
@@ -62,6 +69,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
   const listeners = new Set<() => void>();
   let identity: IdentityState = { kind: 'unavailable', retryable: true };
   let recovery: RecoveryCapabilities = PENDING;
+  let closure: ClosureCapability | null = null;
   let generation = 0;
   let disposed = false;
   let snapshot: RecoverySnapshot = build();
@@ -85,7 +93,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
       connection: deps.connection?.() ?? 'unknown',
       recovery,
       revocationTargets: identity.kind === 'signed_in' ? deps.revocation?.targets() ?? [] : [],
-      closure: null,
+      closure: identity.kind === 'signed_in' && identity.principal.ownerId === deps.principal.ownerId ? closure : null,
     };
   }
 
@@ -99,8 +107,11 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     const own = ++generation;
     let nextIdentity: IdentityState;
     let nextRecovery: RecoveryCapabilities;
+    let nextClosure: ClosureCapability | null = null;
     try {
-      [nextIdentity, nextRecovery] = await Promise.all([deps.identity.current(), service.capabilities()]);
+      [nextIdentity, nextRecovery, nextClosure] = await Promise.all([
+        deps.identity.current(), service.capabilities(), deps.closure?.currentCapability().catch(() => null) ?? Promise.resolve(null),
+      ]);
     } catch {
       nextIdentity = { kind: 'unavailable', retryable: true };
       nextRecovery = PENDING;
@@ -108,6 +119,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     if (disposed || own !== generation) return;
     identity = nextIdentity;
     recovery = nextRecovery;
+    closure = nextClosure?.ownerId === deps.principal.ownerId ? nextClosure : null;
     publish();
   }
 
@@ -140,12 +152,23 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
       if (!deps.revocation || disposed) return unavailable();
       return deps.revocation.inspect(operationId, options);
     },
-    // No approved closure command exists (KHA-130). Nothing here calls storage deletion instead.
-    async closeRoom() {
-      return unavailable();
+    async closeRoom(input, options) {
+      if (!deps.closure || disposed) return unavailable();
+      if (identity.kind !== 'signed_in'
+        || input.ownerId !== deps.principal.ownerId || input.ownerId !== identity.principal.ownerId
+        || closure?.roomId !== input.roomId || closure.expectedRoomRevision !== input.expectedRoomRevision) {
+        return rejected('forbidden');
+      }
+      return deps.closure.closeRoom(input, options);
     },
-    async inspectClosure() {
-      return rejected('not_found');
+    async inspectClosure(operationId, options) {
+      if (!deps.closure || disposed || identity.kind !== 'signed_in'
+        || identity.principal.ownerId !== deps.principal.ownerId) return rejected('not_found');
+      const result = await deps.closure.inspectClosure(operationId, options);
+      if (result.kind === 'rejected') return rejected('not_found');
+      if (result.kind === 'ok') return { kind: 'ok', value: result.value };
+      if (result.kind === 'outcome_unknown') return result;
+      return unavailable();
     },
   };
 

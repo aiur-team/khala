@@ -48,7 +48,7 @@ const device: DeviceView = {
 };
 
 export type SyntheticRevocationOutcome = 'complete' | 'propagating' | 'unknown';
-export type SyntheticClosureOutcome = 'complete' | 'failed' | 'unknown';
+export type SyntheticClosureOutcome = 'complete' | 'cleanup_partial' | 'leave_partial' | 'failed' | 'unknown';
 
 export function createFakeRecoveryPorts() {
   let stored: RecoveryOperationReference | null = null;
@@ -132,6 +132,12 @@ export function createFakeRecoveryPorts() {
       if (closureOutcome === 'unknown') return outcomeUnknown(input.operationId);
       if (closureOutcome === 'failed') {
         return ok({ operationId: input.operationId, state: 'failed', reason: 'dependency_unavailable' });
+      }
+      if (closureOutcome === 'cleanup_partial') {
+        return ok({ operationId: input.operationId, state: 'partial', reason: 'local_cleanup_failed' });
+      }
+      if (closureOutcome === 'leave_partial') {
+        return ok({ operationId: input.operationId, state: 'partial', reason: 'dependency_unavailable' });
       }
       return ok({ operationId: input.operationId, state: 'complete', reason: null });
     },

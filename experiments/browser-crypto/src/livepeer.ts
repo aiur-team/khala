@@ -25,6 +25,7 @@ Object.assign(window, { peer: {
   },
   async status(user:string,device:string){return (await client.getCrypto()!.getDeviceVerificationStatus(user,device))?.isVerified()??false;},
   async send(room:string,body:string){return client.sendTextMessage(room,body);},
+  async rotate(room:string){await client.getCrypto()!.forceDiscardSession(room);},
   async decrypt(room:string,eventId:string) {
     const raw=await client.fetchRoomEvent(room,eventId);
     if(raw.type!=='m.room.encrypted') throw new Error('server stored plaintext');

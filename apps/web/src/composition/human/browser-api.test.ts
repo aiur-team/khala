@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { decodeContentLimits, type ChannelAccessRequestHandle, type DeviceId, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
+import { CLOSURE_CONSEQUENCES, decodeContentLimits, type ChannelAccessRequestHandle, type DeviceId, type OwnerId, type RoomId } from '@khala/contracts/messaging/index';
 import { createHumanBrowserApi } from './browser-api';
 
 const origin = 'https://khala.aiur.team';
@@ -21,6 +21,29 @@ function json(status: number, body: unknown): Response {
 }
 
 describe('createHumanBrowserApi', () => {
+  it('reads a room-scoped closure capability and posts with the human CSRF proof', async () => {
+    const roomId = 'room_1' as RoomId;
+    const capability = { ownerId: principal.ownerId, roomId, expectedRoomRevision: 0,
+      available: true, unavailableReason: null, consequences: CLOSURE_CONSEQUENCES };
+    const state = { operationId: 'close_1', state: 'partial', reason: 'local_cleanup_failed' };
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(200, { kind: 'ok', value: capability }))
+      .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))
+      .mockResolvedValueOnce(json(200, { kind: 'ok', value: state }))
+      .mockResolvedValueOnce(json(200, { kind: 'ok', value: state }));
+    const api = createHumanBrowserApi({ origin, homeserverOrigin, limits, fetch });
+    const closure = api.closure(roomId);
+    expect(await closure.currentCapability()).toEqual(capability);
+    const command = { operationId: 'close_1', ownerId: principal.ownerId, roomId, expectedRoomRevision: 0 };
+    expect(await closure.closeRoom(command)).toEqual({ kind: 'ok', value: state });
+    expect(await closure.inspectClosure('close_1')).toEqual({ kind: 'ok', value: state });
+    expect(fetch.mock.calls[0]?.[0]).toContain('roomId=room_1');
+    expect(fetch.mock.calls[2]?.[0]).toBe(`${origin}/api/human/channel-closure`);
+    expect(new Headers(fetch.mock.calls[2]?.[1]?.headers).get('x-khala-csrf')).toBe('csrf-proof');
+    expect(await closure.closeRoom({ ...command, roomId: 'room_2' as RoomId })).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
   it('projects the current verified principal and uses its CSRF proof for admission writes', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(json(200, { principal, csrfToken: 'csrf-proof' }))

@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import {
   type AdmissionPort, type AdmissionRejection, type AuthPrincipal, type BindingId, type CallOptions, type ControlStore, type JsonValue,
   type OperationResult,
-  type OwnerId, type ParticipantId, type RoomId, type SessionBinding, type TrustedClock, isSameOriginReturnPath,
+  type OwnerId, type ParticipantId, type RoomId, type SessionBinding, type TrustedClock, isSameOriginReturnPath, sameJsonValue,
 } from '@khala/contracts/messaging/index';
 import type { Authentication } from '../auth/index';
 import { LOGIN_PATH } from '../auth/callback';
@@ -30,11 +30,14 @@ import type { RouteRegistration } from '../runtime/handler';
 import type { PairingGrantPort } from '../pairing/store';
 import { type ProofCheck, checkProof, proofKeyThumbprint } from './proof';
 import { type BindingRecord, createAgentBindingStore } from './store';
+import { createOwnerRoomIndex } from './owner-room-index';
 
 export const DESCRIPTOR_PATH = '/api/agent/bootstrap/descriptor';
 export const AUTHORIZE_PATH = '/api/human/agent-bootstrap/authorize';
 export const TOKEN_PATH = '/api/agent/bootstrap/token';
 export const REDEEM_PATH = '/api/agent/bootstrap/redeem';
+export const REFRESH_CHALLENGE_PATH = '/api/agent/bootstrap/refresh/challenge';
+export const REFRESH_PATH = '/api/agent/bootstrap/refresh';
 export const OWNERSHIP_METHOD = 'loopback-browser-v1';
 
 /**
@@ -67,7 +70,7 @@ export type AdmissionPolicy = (input: Readonly<{ principal: AuthPrincipal; invit
  * atomically refuses if the room or participant no longer matches the expectation.
  */
 export interface AgentAdmissionPort {
-  inspect(input: Readonly<{ ownerId: OwnerId; inviteRef: string; session: SessionRef }>): Promise<
+  inspect(input: Readonly<{ ownerId: OwnerId; principal?: AuthPrincipal | null; inviteRef: string; session: SessionRef; inviteEvidence?: InviteEvidence | null }>): Promise<
     OperationResult<Readonly<{ agentParticipantId: ParticipantId; roomId: RoomId }>, AdmissionRejection>
   >;
   admit(input: Readonly<{
@@ -78,10 +81,34 @@ export interface AgentAdmissionPort {
     expectedAgentParticipantId: ParticipantId;
     expectedRoomId: RoomId;
     operationId: string;
+    principal?: AuthPrincipal | null;
+    inviteEvidence?: InviteEvidence | null;
   }>): Promise<
     OperationResult<Readonly<{ agentParticipantId: ParticipantId; roomId: RoomId }>, AdmissionRejection>
   >;
 }
+
+export type AgentMatrixSession = Readonly<{
+  baseUrl: string;
+  userId: string;
+  deviceId: string;
+  accessToken: string;
+  roomId: string;
+  ownerUserId: string;
+  ownerParticipantId: string;
+}>;
+
+/** Mints only the already-admitted binding's Matrix device session. */
+export interface AgentDeviceSessionPort {
+  issue(binding: SessionBinding, roomId: RoomId): Promise<AgentMatrixSession | null>;
+}
+
+/** The exact immutable link policy and authoritative store revision approved in the owner browser. */
+export type InviteEvidence = Readonly<{
+  roomId: RoomId;
+  revision: string;
+  policyDigest: string;
+}>;
 
 /** Result of checking an adapter request against its capability. */
 export type AdapterAuthorization =
@@ -134,6 +161,7 @@ export interface AdapterCapabilities {
    */
   resumeAdapterCapability(input: Readonly<{
     bindingId: string; ownerId: OwnerId; deviceId: string; generation: number; jkt: string;
+    planned?: Readonly<{ token: string; expiresAt: number; operationId: string; previousCapability: string }>;
   }>): Promise<AdapterResume>;
 }
 
@@ -157,9 +185,15 @@ export type AgentBootstrapDeps = Readonly<{
   inviteFromLink(url: URL): string | null;
   /** Request-scoped KHA-105 admission port for the signed-in owner. */
   admissionFor(request: Request): Pick<AdmissionPort, 'inspect'>;
+  /** Persist the signed-in owner's eligible per-link scope in the one-use grant. */
+  inviteEvidenceFor?: (principal: AuthPrincipal, inviteRef: string) => Promise<InviteEvidence | null>;
   /** No default: the deployment must decide G-ADMISSION explicitly. */
   admissionPolicy: AdmissionPolicy;
   agents: AgentAdmissionPort;
+  /** Production adapter; no control-plane persistence of Matrix access tokens. */
+  agentDeviceSession?: AgentDeviceSessionPort;
+  /** The current Matrix owner membership, required on every credential renewal. */
+  inspectOwnerMembership?: (ownerId: OwnerId, roomId: RoomId) => Promise<Readonly<{ kind: 'joined' | 'absent' | 'unavailable' }>>;
   /** Pairing-code grants (`pairing-code-v1`), redeemed at the same route as bootstrap grants. Absent disables them. */
   pairingGrants?: PairingGrantPort;
   /** Serves the code-only descriptor from the shared descriptor path; `null` means "not a pairing request". */
@@ -173,6 +207,8 @@ export type SessionRef = Readonly<{ harness: string; sessionId: string; generati
 type CodeRecord = {
   ownerId: string; invite: string; harness: string; sessionId: string; generation: number;
   deviceId: string; jkt: string; challenge: string; redirectUri: string; used: boolean;
+  inviteEvidence?: InviteEvidence | null;
+  principal?: AuthPrincipal | null;
 };
 /**
  * `redemption` is set by the one operation that claimed the grant. `admitted` records
@@ -183,9 +219,15 @@ type Redemption = { operationId: string; admitted: { agentParticipantId: string;
 type GrantRecord = {
   ownerId: string; invite: string; harness: string; sessionId: string; generation: number;
   deviceId: string; jkt: string; redemption: Redemption | null;
+  inviteEvidence?: InviteEvidence | null;
+  principal?: AuthPrincipal | null;
 };
 type CapabilityRecord = {
   ownerId: string; roomId: string; bindingId: string; generation: number; jkt: string; scope: string[];
+};
+type RefreshSlot = {
+  v: 1; bindingId: string; ownerId: string; deviceId: string; generation: number;
+  jkt: string; operationId: string; nonce: string; token: string; expiresAt: number; previousCapability: string;
 };
 
 const HARNESS = /^[a-z][a-z0-9-]{0,31}$/;
@@ -212,8 +254,115 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   if (typeof deps.legacyMigrationWritesEnabled !== 'boolean') throw new Error('legacy migration write activation must be explicit');
   const store = guardStore(deps.store);
   const bindings = createAgentBindingStore({ store: deps.store, legacyMigrationWritesEnabled: deps.legacyMigrationWritesEnabled });
+  const ownerRooms = createOwnerRoomIndex(store);
   const tokenUrl = `${deps.origin}${TOKEN_PATH}`;
   const redeemUrl = `${deps.origin}${REDEEM_PATH}`;
+  const refreshChallengeUrl = `${deps.origin}${REFRESH_CHALLENGE_PATH}`;
+  const refreshUrl = `${deps.origin}${REFRESH_PATH}`;
+
+  async function refreshBinding(bindingId: string, jkt: string) {
+    if (!OPERATION_ID.test(bindingId) || !B64URL_43.test(jkt) || !deps.inspectOwnerMembership) return null;
+    const found = await bindings.locateBinding(bindingId);
+    if (found.kind !== 'found' || found.record.revokedGeneration !== null) return null;
+    const { binding } = found.record;
+    const { address } = found;
+    if (await pinProofKey(binding, jkt) !== 'matched') return null;
+    const index = await ownerRooms.inspect(binding.ownerId, address.roomId);
+    if (index.kind !== 'ok' || index.value?.marker || !index.value?.bindings.some(item =>
+      item.bindingId === bindingId && item.generation === binding.generation)) return null;
+    const membership = await safeCall(() => deps.inspectOwnerMembership!(binding.ownerId, address.roomId));
+    return membership?.kind === 'joined' ? { binding, address, capability: found.record.capability } : null;
+  }
+
+  async function refreshChallenge(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if ([...url.searchParams.keys()].join(',') !== 'binding_id') return json(400, { code: 'invalid_request' });
+    const bindingId = url.searchParams.get('binding_id');
+    const jkt = proofKeyThumbprint(request.headers.get('dpop'));
+    if (!bindingId || !jkt) return json(401, { code: 'invalid_proof' });
+    const current = await refreshBinding(bindingId, jkt);
+    if (!current) return json(403, { code: 'binding_revoked' });
+    const proof = await verifyFreshProof(request, { method: 'GET', url: refreshChallengeUrl, jkt });
+    if (proof) return proof;
+    const nonce = randomToken(deps.random, 32);
+    const written = await settleWrite<JsonValue>(store, {
+      key: key('refresh-challenge', nonce), expectedRevision: null,
+      operationId: `refresh-challenge.${nonce}`,
+      next: { value: { v: 1, bindingId, generation: current.binding.generation, jkt },
+        expiresAt: new Date(deps.clock() + CODE_TTL_MS).toISOString() },
+    });
+    return written.kind === 'applied' ? json(200, { v: 1, nonce, expires_at: deps.clock() + CODE_TTL_MS })
+      : json(503, { code: 'unavailable' });
+  }
+
+  async function refresh(request: Request): Promise<Response> {
+    if (request.headers.get('origin') !== deps.origin
+      || (request.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase() !== 'application/json')
+      return json(403, { code: 'invalid_request' });
+    const raw = await request.text().catch(() => '');
+    if (!raw || Buffer.byteLength(raw) > 2048) return json(400, { code: 'invalid_request' });
+    let body: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid');
+      body = parsed as Record<string, unknown>;
+    } catch { return json(400, { code: 'invalid_request' }); }
+    if (Object.keys(body).sort().join(',') !== 'binding_id,device_id,generation,nonce,operation_id,owner_id'
+      || typeof body.binding_id !== 'string' || !OPERATION_ID.test(body.binding_id)
+      || typeof body.operation_id !== 'string' || !OPERATION_ID.test(body.operation_id)
+      || typeof body.nonce !== 'string' || !TOKEN.test(body.nonce)
+      || typeof body.owner_id !== 'string' || typeof body.device_id !== 'string'
+      || !Number.isSafeInteger(body.generation) || (body.generation as number) < 0)
+      return json(400, { code: 'invalid_request' });
+    const jkt = proofKeyThumbprint(request.headers.get('dpop'));
+    if (!jkt) return json(401, { code: 'invalid_proof' });
+    const current = await refreshBinding(body.binding_id, jkt);
+    if (!current || current.binding.ownerId !== body.owner_id || current.binding.deviceId !== body.device_id
+      || current.binding.generation !== body.generation) return json(403, { code: 'binding_revoked' });
+    const proof = await verifyFreshProof(request, { method: 'POST', url: refreshUrl, jkt,
+      nonce: body.nonce, bodyHash: createHash('sha256').update(raw).digest('base64url') });
+    if (proof) return proof;
+    const slotKey = key('refresh-slot', body.binding_id);
+    let plan: RefreshSlot | null = null;
+    const seen = await store.read<JsonValue>(slotKey);
+    if (seen.kind === 'unavailable') return json(503, { code: 'unavailable' });
+    if (seen.kind === 'record') {
+      const value = seen.record.value;
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return json(503, { code: 'unavailable' });
+      const candidate = value as unknown as RefreshSlot;
+      if (candidate.v !== 1 || candidate.bindingId !== body.binding_id || candidate.operationId !== body.operation_id
+        || candidate.nonce !== body.nonce || candidate.ownerId !== body.owner_id || candidate.deviceId !== body.device_id
+        || candidate.generation !== body.generation || candidate.jkt !== jkt || !TOKEN.test(candidate.token)
+        || !Number.isSafeInteger(candidate.expiresAt) || typeof candidate.previousCapability !== 'string'
+        || !B64URL_43.test(candidate.previousCapability)) return json(409, { code: 'operation_conflict' });
+      plan = candidate;
+    } else {
+      const challenge = await store.read<JsonValue>(key('refresh-challenge', body.nonce));
+      if (challenge.kind !== 'record' || !sameJsonValue(challenge.record.value,
+        { v: 1, bindingId: body.binding_id, generation: body.generation, jkt }))
+        return json(403, { code: 'invalid_challenge' });
+      if (!current.capability || !B64URL_43.test(current.capability)) return json(403, { code: 'binding_conflict' });
+      const created: RefreshSlot = { v: 1, bindingId: body.binding_id, ownerId: body.owner_id,
+        deviceId: body.device_id, generation: body.generation as number, jkt, operationId: body.operation_id,
+        nonce: body.nonce, token: randomToken(deps.random, 32), expiresAt: deps.clock() + CAPABILITY_TTL_MS,
+        previousCapability: current.capability };
+      const written = await settleWrite<JsonValue>(store, { key: slotKey, expectedRevision: null,
+        operationId: `refresh-slot.${body.binding_id}.${body.operation_id}`,
+        next: { value: created as unknown as JsonValue, expiresAt: new Date(created.expiresAt).toISOString() } });
+      if (written.kind === 'unavailable') return json(503, { code: 'unavailable' });
+      if (written.kind === 'conflict') return json(409, { code: 'operation_conflict' });
+      plan = created;
+    }
+    const resumed = await capabilities.resumeAdapterCapability({ bindingId: body.binding_id,
+      ownerId: current.binding.ownerId, deviceId: current.binding.deviceId, generation: current.binding.generation,
+      jkt, planned: { token: plan.token, expiresAt: plan.expiresAt, operationId: plan.operationId,
+        previousCapability: plan.previousCapability } });
+    return resumed.kind === 'resumed' ? json(200, { v: 1, binding: resumed.binding,
+      adapter_capability: { token: resumed.capability.token, token_type: 'DPoP', scope: [...ADAPTER_CAPABILITIES],
+        binding_id: resumed.binding.bindingId, generation: resumed.binding.generation,
+        expires_at: resumed.capability.expiresAt } })
+      : json(resumed.kind === 'refused' ? 403 : 503, { code: resumed.kind === 'refused' ? resumed.code : 'unavailable' });
+  }
 
   async function describe(request: Request): Promise<Response> {
     const paired = deps.pairingDescriptor?.(request) ?? null;
@@ -273,12 +422,16 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const { principal } = auth.context;
     const refusal = await admissible(request, principal, params);
     if (refusal) return refusal;
+    const inviteEvidence = deps.inviteEvidenceFor
+      ? await safeCall(() => deps.inviteEvidenceFor!(principal, params.invite))
+      : null;
+    if (deps.inviteEvidenceFor && inviteEvidence === null) return json(503, { code: 'unavailable' });
 
     const code = randomToken(deps.random, 32);
     const now = deps.clock();
     const value: CodeRecord = {
       ownerId: principal.ownerId, invite: params.invite, ...params.session, deviceId: params.deviceId,
-      jkt: params.jkt, challenge: params.challenge, redirectUri: params.redirectUri, used: false,
+      jkt: params.jkt, challenge: params.challenge, redirectUri: params.redirectUri, used: false, inviteEvidence, principal,
     };
     const written = await settleWrite<JsonValue>(store, {
       key: key('code', code), expectedRevision: null, operationId: `code-${randomToken(deps.random, 16)}`,
@@ -337,6 +490,8 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const value: GrantRecord = {
       ownerId: pending.ownerId, invite: pending.invite, harness: pending.harness, sessionId: pending.sessionId,
       generation: pending.generation, deviceId: pending.deviceId, jkt: pending.jkt, redemption: null,
+      inviteEvidence: pending.inviteEvidence ?? null,
+      principal: pending.principal ?? null,
     };
     const written = await settleWrite<JsonValue>(store, {
       key: key('grant', grant), expectedRevision: null, operationId: `grant-${randomToken(deps.random, 16)}`,
@@ -451,12 +606,18 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const ownerId = held.ownerId as OwnerId;
     const sessionRef: SessionRef = { harness: held.harness, sessionId: held.sessionId, generation: held.generation };
     // Resolve the verified session's exact participant without joining a device.
-    const inspected = await safeCall(() => deps.agents.inspect({ ownerId, inviteRef: held.invite, session: sessionRef }));
+    const inspected = await safeCall(() => deps.agents.inspect({
+      ownerId, principal: held.principal ?? null, inviteRef: held.invite, session: sessionRef,
+      inviteEvidence: held.inviteEvidence ?? null,
+    }));
     if (inspected === null || inspected.kind === 'unavailable' || inspected.kind === 'outcome_unknown') return json(503, { code: 'unavailable' });
     if (inspected.kind === 'rejected') return json(403, { code: 'admission_denied' });
     const address = {
       ownerId, roomId: inspected.value.roomId, agentParticipantId: inspected.value.agentParticipantId,
     };
+    const roomIndex = await ownerRooms.inspect(ownerId, address.roomId);
+    if (roomIndex.kind !== 'ok') return json(503, { code: 'unavailable' });
+    if (roomIndex.value?.marker) return json(403, { code: 'admission_denied' });
     const current = await bindings.findParticipant(address);
     if (current.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (current.kind === 'found') {
@@ -485,6 +646,8 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
         expectedAgentParticipantId: address.agentParticipantId,
         expectedRoomId: address.roomId,
         operationId: scopedOperationId,
+        inviteEvidence: held.inviteEvidence ?? null,
+        principal: held.principal ?? null,
       }));
       if (result === null || result.kind === 'unavailable') return json(503, { code: 'unavailable' });
       if (result.kind === 'outcome_unknown') return json(502, { code: 'outcome_unknown' });
@@ -505,6 +668,24 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
     const bound = await bindSession(address, held);
     if (bound.kind === 'unavailable') return json(503, { code: 'unavailable' });
     if (bound.kind === 'refused') return json(409, { code: bound.code });
+    // This CAS races the close marker in one owner/room record. No capability can
+    // reach a binding that closure omitted from its active snapshot.
+    const indexed = await ownerRooms.activate(bound.binding, address.roomId);
+    if (indexed.kind === 'closed') return json(403, { code: 'admission_denied' });
+    if (indexed.kind !== 'ok') return json(503, { code: 'unavailable' });
+
+    const matrixSession = deps.agentDeviceSession
+      ? await safeCall(() => deps.agentDeviceSession!.issue(bound.binding, address.roomId))
+      : null;
+    if (deps.agentDeviceSession && (matrixSession === null || matrixSession.deviceId !== bound.binding.deviceId)) {
+      return json(503, { code: 'unavailable' });
+    }
+
+    // Pin the original connector proof key before the one-use grant is spent.
+    // An expired bearer alone must never authorize a replacement key later.
+    const pinned = await pinProofKey(bound.binding, held.jkt, true);
+    if (pinned !== 'matched') return json(pinned === 'conflict' ? 409 : 503,
+      { code: pinned === 'conflict' ? 'binding_conflict' : 'unavailable' });
 
     // Spend the grant before minting, so concurrent retries cannot both be issued one.
     const spent = await saveRedemption({ ...tracker.redemption!, issued: true });
@@ -518,6 +699,7 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
         token: capability.token, token_type: 'DPoP', scope: [...ADAPTER_CAPABILITIES],
         binding_id: bound.binding.bindingId, generation: bound.binding.generation, expires_at: capability.expiresAt,
       },
+      ...(matrixSession ? { matrix_session: matrixSession } : {}),
     });
   }
 
@@ -555,23 +737,55 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   }
 
   /** Mints the binding's only accepted capability. An earlier one for the binding stops working. */
+  async function pinProofKey(binding: SessionBinding, jkt: string, create = false): Promise<'matched' | 'conflict' | 'unavailable'> {
+    const proofKey = key('adapter-proof-key', binding.bindingId);
+    const desired = { bindingId: binding.bindingId, generation: binding.generation, deviceId: binding.deviceId, jkt };
+    const seen = await store.read<JsonValue>(proofKey);
+    if (seen.kind === 'unavailable') return 'unavailable';
+    if (seen.kind === 'record') return sameJsonValue(seen.record.value, desired) ? 'matched' : 'conflict';
+    if (!create) return 'conflict';
+    const stored = await settleWrite<JsonValue>(store, { key: proofKey, expectedRevision: null,
+      operationId: `adapter-proof-key.${binding.bindingId}.${binding.generation}`,
+      next: { value: desired, expiresAt: null } });
+    if (stored.kind === 'applied') return 'matched';
+    if (stored.kind === 'conflict') return stored.current && sameJsonValue(stored.current.value, desired) ? 'matched' : 'conflict';
+    return 'unavailable';
+  }
+
   async function issueCapability(
     ownerId: OwnerId, roomId: RoomId, binding: SessionBinding, jkt: string,
-  ): Promise<Readonly<{ kind: 'issued'; token: string; expiresAt: number }> | Readonly<{ kind: 'revoked' | 'unavailable' }>> {
-    const capability = randomToken(deps.random, 32);
-    const expiresAt = deps.clock() + CAPABILITY_TTL_MS;
+    planned?: Readonly<{ token: string; expiresAt: number; operationId: string; previousCapability: string }>,
+  ): Promise<Readonly<{ kind: 'issued'; token: string; expiresAt: number }> | Readonly<{ kind: 'revoked' | 'conflict' | 'unavailable' }>> {
+    const capability = planned?.token ?? randomToken(deps.random, 32);
+    const expiresAt = planned?.expiresAt ?? deps.clock() + CAPABILITY_TTL_MS;
+    if (!TOKEN.test(capability) || expiresAt <= deps.clock()) return { kind: 'unavailable' };
     const value: CapabilityRecord = {
       ownerId, roomId, bindingId: binding.bindingId, generation: binding.generation, jkt, scope: [...ADAPTER_CAPABILITIES],
     };
     const written = await settleWrite<JsonValue>(store, {
-      key: key('capability', capability), expectedRevision: null, operationId: `capability-${randomToken(deps.random, 16)}`,
+      key: key('capability', capability), expectedRevision: null,
+      operationId: planned ? `capability-refresh.${planned.operationId}` : `capability-${randomToken(deps.random, 16)}`,
       next: { value, expiresAt: new Date(expiresAt).toISOString() },
     });
-    if (written.kind !== 'applied') return { kind: 'unavailable' };
-    const pointed = await bindings.updateBinding(binding.bindingId, record => (
-      record.revokedGeneration === null ? { ...record, capability: digest(capability) } : null
-    ));
+    if (written.kind !== 'applied' && (written.kind !== 'conflict' || !written.current
+      || !sameJsonValue(written.current.value, value as unknown as JsonValue)
+      || written.current.expiresAt !== new Date(expiresAt).toISOString())) return { kind: 'unavailable' };
+    let conflict = false;
+    const pointed = await bindings.updateBinding(binding.bindingId, record => {
+      if (record.revokedGeneration !== null || record.capability === digest(capability)) return null;
+      if (planned && record.capability !== planned.previousCapability) {
+        conflict = true;
+        return null;
+      }
+      return { ...record, capability: digest(capability) };
+    });
+    if (conflict) return { kind: 'conflict' };
     if (pointed === 'applied') return { kind: 'issued', token: capability, expiresAt };
+    if (pointed === 'unchanged') {
+      const current = await bindings.findBinding(binding.bindingId);
+      if (current.kind === 'found' && current.record.revokedGeneration === null
+        && current.record.capability === digest(capability)) return { kind: 'issued', token: capability, expiresAt };
+    }
     return { kind: pointed === 'unchanged' ? 'revoked' : 'unavailable' };
   }
 
@@ -618,8 +832,14 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
         return { kind: 'refused', code: 'binding_conflict' };
       }
       if (located.record.revokedGeneration !== null) return { kind: 'refused', code: 'binding_revoked' };
-      const issued = await issueCapability(input.ownerId, located.address.roomId, binding, input.jkt);
+      if (input.planned && located.record.capability !== input.planned.previousCapability
+        && located.record.capability !== digest(input.planned.token)) return { kind: 'refused', code: 'binding_conflict' };
+      const pinned = await pinProofKey(binding, input.jkt);
+      if (pinned === 'conflict') return { kind: 'refused', code: 'binding_conflict' };
+      if (pinned !== 'matched') return { kind: 'unavailable' };
+      const issued = await issueCapability(input.ownerId, located.address.roomId, binding, input.jkt, input.planned);
       if (issued.kind === 'revoked') return { kind: 'refused', code: 'binding_revoked' };
+      if (issued.kind === 'conflict') return { kind: 'refused', code: 'binding_conflict' };
       if (issued.kind !== 'issued') return { kind: 'unavailable' };
       return { kind: 'resumed', binding, capability: { token: issued.token, scope: ADAPTER_CAPABILITIES, expiresAt: issued.expiresAt } };
     },
@@ -670,14 +890,18 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
   };
 
   /** Verifies the proof, then records its `jti` once. Returns a response only on failure. */
-  async function verifyFreshProof(request: Request, expected: Readonly<{ method: string; url: string; jkt: string; accessToken?: string }>): Promise<Response | null> {
+  async function verifyFreshProof(request: Request, expected: Readonly<{
+    method: string; url: string; jkt: string; accessToken?: string; nonce?: string; bodyHash?: string;
+  }>): Promise<Response | null> {
     const checked = await checkFreshProof(request, expected);
     if (checked === null) return null;
     return checked === 'unavailable' ? json(503, { code: 'unavailable' }) : json(401, { code: checked });
   }
 
   async function checkFreshProof(
-    request: Request, expected: Readonly<{ method: string; url: string; jkt: string; accessToken?: string }>,
+    request: Request, expected: Readonly<{
+      method: string; url: string; jkt: string; accessToken?: string; nonce?: string; bodyHash?: string;
+    }>,
   ): Promise<ProofRefusal | 'proof_replayed' | 'unavailable' | null> {
     const nowMs = deps.clock();
     const checked = checkProof(request.headers.get('dpop'), { ...expected, nowMs });
@@ -703,6 +927,8 @@ export function createAgentBootstrapHandlers(deps: AgentBootstrapDeps): AgentBoo
       { path: DESCRIPTOR_PATH, methods: ['GET'], handle: describe },
       { path: TOKEN_PATH, methods: ['POST'], handle: token },
       { path: REDEEM_PATH, methods: ['POST'], handle: redeem },
+      { path: REFRESH_CHALLENGE_PATH, methods: ['GET'], handle: refreshChallenge },
+      { path: REFRESH_PATH, methods: ['POST'], handle: refresh },
     ],
     human: [{ path: AUTHORIZE_PATH, methods: ['GET', 'POST'], handle: request => (request.method === 'POST' ? authorize(request) : consent(request)) }],
     capabilities,
@@ -795,7 +1021,7 @@ function isText(value: unknown): value is string {
 }
 
 /** Store keys never contain a raw secret: codes, grants and capabilities are hashed, other parts digested. */
-function key(kind: 'code' | 'grant' | 'proof' | 'capability', value: string): string {
+function key(kind: 'code' | 'grant' | 'proof' | 'capability' | 'adapter-proof-key' | 'refresh-challenge' | 'refresh-slot', value: string): string {
   return `agent-bootstrap:${kind}:${createHash('sha256').update(`khala.agent-bootstrap.${kind}.v1\u0000${value}`).digest('hex')}`;
 }
 

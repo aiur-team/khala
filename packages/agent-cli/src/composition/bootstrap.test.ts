@@ -58,6 +58,16 @@ describe('connector bootstrap composition', () => {
     expect(delegatedListAgents).toHaveBeenCalledOnce();
   });
 
+  it('passes the connector-bound listening-mode control through unchanged', () => {
+    const listeningModeControl = { read: vi.fn(), set: vi.fn() } as unknown as NonNullable<AgentClientPort['listeningModeControl']>;
+    const client = createConnectorBootstrapClient({
+      ports: {} as BootstrapPorts, session, send, status, listChannels, listAgents, listeningModeControl,
+    });
+    expect(client.listeningModeControl).toBe(listeningModeControl);
+    expect(createConnectorBootstrapClient({ ports: {} as BootstrapPorts, session, send, status, listChannels, listAgents })
+      .listeningModeControl).toBeUndefined();
+  });
+
   it('offers pairing only with configured pairing ports, with a stable per-code operation ID', async () => {
     const unconfigured = createConnectorBootstrapClient({ ports: {} as BootstrapPorts, session, send, status, listChannels, listAgents });
     expect(unconfigured.pair).toBeUndefined();

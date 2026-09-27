@@ -131,6 +131,26 @@ describe('createHttpAdmission', () => {
     expect(calls[0]!.body).toMatchObject({ operation_id: 'bootstrap-b-1', device_id: 'KHALADEV1' });
   });
 
+  it('accepts only an exact room-bound endpoint Matrix credential', async () => {
+    const matrix_session = {
+      baseUrl: 'https://matrix.example', userId: '@agent:example', deviceId: 'KHALADEV1',
+      accessToken: 'a'.repeat(64), roomId: '!room:example',
+      ownerUserId: '@owner:example', ownerParticipantId: `human_${'b'.repeat(40)}`,
+    };
+    const respond = (session: unknown) => service(() => ({ status: 200, body: { binding, adapter_capability: capability, matrix_session: session } }));
+    expect(await createHttpAdmission({ signer, fetch: respond(matrix_session).fetchImpl }).redeem({ grant, operationId: 'bootstrap-b-1' }))
+      .toMatchObject({ kind: 'admitted', matrixSession: matrix_session });
+    for (const changed of [
+      { ...matrix_session, roomId: 'room-not-matrix' },
+      { ...matrix_session, ownerUserId: 'not-a-user' },
+      { ...matrix_session, ownerParticipantId: 'agent_injected' },
+      { ...matrix_session, extra: 'unexpected' },
+    ]) {
+      expect(await createHttpAdmission({ signer, fetch: respond(changed).fetchImpl }).redeem({ grant, operationId: 'bootstrap-b-1' }))
+        .toEqual({ kind: 'refused', code: 'admission_denied' });
+    }
+  });
+
   it('refuses a capability with any other scope, or malformed, rather than using it', async () => {
     for (const change of [
       { scope: ['publish_own', 'receive_released', 'ack_delivery', 'approve'] }, { scope: ['publish_own', 'receive_released'] },

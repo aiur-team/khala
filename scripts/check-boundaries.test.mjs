@@ -24,6 +24,24 @@ test('browser can consume contracts', t => {
     'packages/contracts/src/messaging/room.ts': 'export type Room = string;',
   }), []);
 });
+test('only the installed CLI entry may import the connector production composition', t => {
+  const errors = fixture(t, {
+    'packages/agent-cli/src/cli/main.ts': "import '../../../../apps/connector/src/composition/production';",
+    'packages/agent-cli/src/cli/other.ts': "import '../../../../apps/connector/src/composition/production';",
+    'apps/connector/src/composition/production.ts': 'export const open = true;',
+  });
+  assert(!errors.some(error => error.includes('main.ts') && error.includes('cannot import an app')));
+  assert(errors.some(error => error.includes('other.ts') && error.includes('cannot import an app')));
+});
+test('connector substrate adapters compose package ports while other modules cannot', t => {
+  const errors = fixture(t, {
+    'apps/connector/src/substrate/matrix.ts': "import '../../../../packages/connector/src/subscription/adapter';",
+    'apps/connector/src/other.ts': "import '../../../packages/connector/src/subscription/adapter';",
+    'packages/connector/src/subscription/adapter.ts': 'export const adapter = true;',
+  });
+  assert(!errors.some(error => error.includes('substrate/matrix.ts') && error.includes('cross-component implementation')));
+  assert(errors.some(error => error.includes('src/other.ts') && error.includes('cross-component implementation')));
+});
 test('browser cannot reach native code through a dynamic import and a re-export', t => {
   const errors = fixture(t, {
     'apps/web/src/chat.ts': "import('./bridge');",

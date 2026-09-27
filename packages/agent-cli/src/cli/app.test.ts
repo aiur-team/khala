@@ -119,6 +119,18 @@ describe('runCli', () => {
     expect(await runCli(['status'], { client: client({ async status() { return { v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null }; } }), inbox: unusedInbox, ...io })).toBe(0);
     expect(JSON.parse(io.output())).toMatchObject({ v: 1, connected: false, inbox: null });
   });
+  it('prints bounded diagnostic prerequisites without claiming delivery', async () => {
+    const io = streams();
+    const prerequisites = { storage: 'ready', device: 'blocked', bootstrap: 'blocked',
+      subscription: 'blocked', controls: 'blocked', harness: 'unknown',
+      dispatch: 'blocked', review: 'blocked', recovery: 'unknown' } as const;
+    expect(await runCli(['status'], { client: client({ async status() { return {
+      v: 1, connected: false, binding: null, route: 'unavailable', sourceCursor: null,
+      readiness: { phase: 'degraded', prerequisites, errorCode: 'binding_not_established' },
+    }; } }), inbox: unusedInbox, ...io })).toBe(0);
+    expect(JSON.parse(io.output())).toMatchObject({ connected: false, inbox: null,
+      readiness: { phase: 'degraded', errorCode: 'binding_not_established', prerequisites } });
+  });
   it('fails listen closed when disconnected without opening an inbox', async () => {
     let opened = false;
     const io = streams();
@@ -278,6 +290,16 @@ describe('runCli', () => {
     });
     expect(await runCli(['status'], { client: malicious, inbox: unusedInbox, ...io })).toBe(2);
     expect(io.error()).toContain('transport_unavailable');
+    expect(io.output() + io.error()).not.toContain('do-not-print');
+  });
+  it('rejects unrecognized readiness fields without printing injected values', async () => {
+    const io = streams();
+    const malicious = client({ async status() { return { v: 1, connected: false, binding: null,
+      route: 'unavailable', sourceCursor: null, readiness: { phase: 'degraded',
+        errorCode: 'binding_not_established', prerequisites: { storage: 'ready' },
+        pendingBody: 'do-not-print' },
+    } as never; } });
+    expect(await runCli(['status'], { client: malicious, inbox: unusedInbox, ...io })).toBe(2);
     expect(io.output() + io.error()).not.toContain('do-not-print');
   });
   it('reports unexpected failures as internal errors', async () => {

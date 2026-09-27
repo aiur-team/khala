@@ -113,7 +113,9 @@ export function checkBoundaries(root) {
   for (const [origin, edges] of graph) {
     if (testPattern.test(origin)) continue;
     const owner = packageOf(origin);
-    const composition = origin.includes('/composition/');
+    // The connector's Matrix substrate adapters implement several package ports
+    // together; they are endpoint composition, despite their dedicated directory.
+    const composition = origin.includes('/composition/') || /^apps\/connector\/src\/substrate\//.test(origin);
     for (const edge of edges) {
       // The loopback server is a transport edge: Node built-ins, the internal store and contracts only.
       if (origin.startsWith('apps/internal/src/server/')) {
@@ -131,7 +133,11 @@ export function checkBoundaries(root) {
         const toDomain = edge.target.split('/')[3];
         if (['messaging', 'delivery'].includes(fromDomain) && ['messaging', 'delivery'].includes(toDomain) && fromDomain !== toDomain) errors.add(`${origin}: contract domains cannot import each other (${edge.specifier})`);
       }
-      if (owner !== destination && destination.startsWith('apps/')) errors.add(`${origin}: cannot import an app (${edge.specifier})`);
+      // The published CLI is the installed entry point for the connector app.
+      // Admit exactly that composition import, never arbitrary app internals.
+      const installedConnectorEntry = origin === 'packages/agent-cli/src/cli/main.ts'
+        && edge.target === 'apps/connector/src/composition/production.ts';
+      if (owner !== destination && destination.startsWith('apps/') && !installedConnectorEntry) errors.add(`${origin}: cannot import an app (${edge.specifier})`);
       if (!composition && owner !== destination && destination.startsWith('packages/') && destination !== 'packages/contracts') errors.add(`${origin}: cross-component implementation requires a composition root (${edge.specifier})`);
       const fromFeature = origin.match(/^apps\/web\/src\/features\/([^/]+)/)?.[1];
       const toFeature = edge.target.match(/^apps\/web\/src\/features\/([^/]+)/)?.[1];

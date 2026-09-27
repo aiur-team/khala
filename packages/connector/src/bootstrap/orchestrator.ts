@@ -281,6 +281,7 @@ async function admit(
   if (binding.deviceId !== deviceId || !bindsSession(binding, session)) return blocked('admission_denied');
   if (record.binding && !sameSessionBinding(record.binding, binding)) return blocked('binding_conflict');
   const { capability } = admitted;
+  if (admitted.matrixSession && admitted.matrixSession.deviceId !== binding.deviceId) return blocked('admission_denied');
   // The capability must be for exactly this binding generation, and still live.
   if (capability.bindingId !== binding.bindingId || capability.generation !== binding.generation || !(capability.expiresAt > clock())) {
     return blocked('admission_denied');
@@ -298,7 +299,8 @@ async function admit(
   if (record.phase === 'reserved' && !(await persist('admitted'))) return retry;
 
   const activation = await guard(
-    () => ports.devices.activate({ deviceId, binding, capability, operationId }),
+    () => ports.devices.activate({ deviceId, binding, capability, operationId,
+      ...(admitted.matrixSession ? { matrixSession: admitted.matrixSession } : {}) }),
     { kind: 'unavailable' } as const,
   );
   if (activation.kind !== 'ready') {

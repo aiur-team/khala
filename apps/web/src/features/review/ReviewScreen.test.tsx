@@ -126,6 +126,24 @@ describe('ReviewScreen', () => {
     expect(html).toContain('Awaiting delivery evidence');
   });
 
+  it('shows a returned batch token as its own fact without claiming model consumption', () => {
+    const receipt = { v: 2 as const, receiptId: 'receipt_ack_1' as never,
+      releaseId: 'release_1' as ReleaseId, bindingId, generation: 0,
+      kind: 'agent_acknowledged' as const, observedAt: '2026-09-25T10:02:00Z',
+      source: 'agent' as const, evidenceRef: 'ack_1', errorCode: null };
+    const controller = fakeController({
+      submission: { phase: 'released', commandId: 'cmd_1' as never,
+        releaseIds: ['release_1' as ReleaseId], error: null },
+      view: { access: 'ready', bindingId, bindingGeneration: 0, policyVersion: 3,
+        viewerOwnerId, pending: [], receipts: [receipt] },
+    });
+    const html = renderToStaticMarkup(<ReviewScreen controller={controller}
+      recipientLabel="Agent" renderContent={inertRenderContent} />);
+    expect(html).toContain('Batch token returned');
+    expect(html).not.toContain('Agent read');
+    expect(html).not.toContain('Agent understood');
+  });
+
   it('the Hide control is structurally separate from message content and never labeled as a release/approve action', () => {
     const controller = fakeController();
     const html = renderToStaticMarkup(<ReviewScreen controller={controller} recipientLabel="Agent" renderContent={inertRenderContent} />);

@@ -100,7 +100,7 @@ function Harness() {
             <RecoveryPanel
               ports={fake.ports}
               config={{ roomId, roomRevision: 7, createOperationId: () => `synthetic-${Date.now()}` }}
-              onClosureComplete={() => { closureCompleteCount += 1; }}
+              onClosureParticipationEnded={() => { closureCompleteCount += 1; }}
               {...(probeController === null ? {} : { controller: probeController })}
             />
           ) : null}

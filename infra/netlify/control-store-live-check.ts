@@ -88,6 +88,30 @@ async function run(argv = process.argv.slice(2), env = process.env): Promise<rea
       return mismatch.kind === 'operation_mismatch' && stillAbsent.kind === 'absent';
     });
 
+    await check('two concurrent writers on the same ETag have exactly one winner', async () => {
+      const key = `${prefix}/race`;
+      recordKeys.push(key);
+      const createId = `${prefix}-race-create`;
+      const writerAId = `${prefix}-race-a`;
+      const writerBId = `${prefix}-race-b`;
+      operationKeys.push(createId, writerAId, writerBId);
+      const created = await store.compareAndSet({ key, expectedRevision: null, operationId: createId, next: { value: 'initial', expiresAt: null } });
+      if (created.kind !== 'applied') return false;
+      const revision = created.record.revision;
+      const [writerA, writerB] = await Promise.all([
+        store.compareAndSet({ key, expectedRevision: revision, operationId: writerAId, next: { value: 'writer-a', expiresAt: null } }),
+        store.compareAndSet({ key, expectedRevision: revision, operationId: writerBId, next: { value: 'writer-b', expiresAt: null } }),
+      ]);
+      const winners = [writerA, writerB].filter(result => result.kind === 'applied');
+      const losers = [writerA, writerB].filter(result => result.kind === 'conflict');
+      if (winners.length !== 1 || losers.length !== 1) return false;
+      const readback = await store.read<string>(key);
+      return readback.kind === 'record'
+        && readback.record.revision === winners[0]?.record.revision
+        && readback.record.value === winners[0]?.record.value
+        && readback.record.operationId === winners[0]?.record.operationId;
+    });
+
     await check('an expired record allows a fresh create-if-absent', async () => {
       const key = `${prefix}/expiring`;
       recordKeys.push(key);
