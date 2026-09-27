@@ -187,7 +187,7 @@ describe('RecoveryPanel operation states', () => {
     expect(html).toMatch(/status-badge--caution[^>]*>Closure partially complete/);
     expect(html).not.toMatch(/status-badge--positive[^>]*>Closure partially complete/);
     expect(html).toContain('Completed: new messages stopped and the channel was removed from your view.');
-    expect(html).toContain('Remaining: local cleanup did not complete on every owner device.');
+    expect(html).toContain('Remaining: local cleanup is not confirmed on every owner device.');
   });
 
   it('does not invent completed effects for a partial closure without cleanup evidence', () => {

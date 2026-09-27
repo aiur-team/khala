@@ -141,7 +141,7 @@ describe('renderGeneratedFunction', () => {
     const outputDirectory = join(actualRoot, 'infra/netlify/functions-generated');
     const rendered = renderGeneratedFunction(await discoverRoutes(actualRoot), actualRoot);
     const specifiers = [...rendered.matchAll(/^import .+ from '([^']+)';$/gmu)].map(match => match[1]!);
-    expect(specifiers).toHaveLength(4);
+    expect(specifiers).toHaveLength(5);
     for (const specifier of specifiers) {
       expect(existsSync(`${resolve(outputDirectory, specifier)}.ts`), `${specifier} must resolve from ${outputDirectory}`).toBe(true);
     }
@@ -185,6 +185,7 @@ describe('renderRouteManifest', () => {
       { path: '/api/human/channel-discovery/settings', methods: ['PUT'], domain: 'human' },
       { path: '/api/human/channel-discovery/allowlist', methods: ['POST'], domain: 'human' },
       { path: '/api/human/channel-discovery/rollout', methods: ['PUT'], domain: 'human' },
+      { path: '/api/human/channel-closure', methods: ['GET', 'POST'], domain: 'closure' },
       { path: '/api/agent/status', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/pairing/claim', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/pairing/result', methods: ['POST'], domain: 'agent' },

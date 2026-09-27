@@ -5,6 +5,8 @@ import { ChannelScreen } from '../../features/channel/ChannelScreen';
 import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
+import { RecoveryPanel } from '../../features/recovery/RecoveryPanel';
+import { createBrowserRecoveryPort } from '../recovery/browser-port';
 import type { HumanRoomRenderer } from './mount';
 
 const unavailablePresence: ChannelUiPort = {
@@ -29,10 +31,15 @@ function HumanRoom({ context, roomId }: {
     () => createChannelController(unavailablePresence, { roomId, generation: context.generation }),
     [context.generation, roomId],
   );
+  const recovery = useMemo(() => createBrowserRecoveryPort({
+    principal: context.principal, identity: context.identity, device: context.device,
+    ...(context.closure ? { closure: context.closure(roomId) } : {}),
+  }), [context, roomId]);
   useEffect(() => () => {
     timeline.dispose();
     room.dispose();
-  }, [room, timeline]);
+    recovery.dispose();
+  }, [room, timeline, recovery]);
   const viewer = context.participant?.() ?? null;
   if (viewer === null) {
     return (
@@ -56,9 +63,12 @@ function HumanRoom({ context, roomId }: {
         </Panel>
       )}
       renderControls={() => (
-        <Panel heading="Agent controls">
-          <p role="status">Agent controls are not available for this channel yet.</p>
-        </Panel>
+        <>
+          <Panel heading="Agent controls">
+            <p role="status">Agent controls are not available for this channel yet.</p>
+          </Panel>
+          <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureComplete={() => location.assign('/')} />
+        </>
       )}
     />
   );

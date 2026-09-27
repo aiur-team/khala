@@ -1,7 +1,7 @@
 import type { Disposer } from '@khala/contracts/messaging/index';
 import type { HumanCapability } from '../human/capabilities';
 import type { HumanRouteContext } from '../human/application';
-import { type BrowserRecoveryPorts, type BrowserRevocation, createBrowserRecoveryPort } from './browser-port';
+import { type BrowserClosure, type BrowserRecoveryPorts, type BrowserRevocation, createBrowserRecoveryPort } from './browser-port';
 
 export type RecoveryRegistrationDeps = Readonly<{
   /**
@@ -11,6 +11,7 @@ export type RecoveryRegistrationDeps = Readonly<{
   render?: (context: HumanRouteContext, ports: BrowserRecoveryPorts) => Disposer;
   /** Owner-scoped control-plane revocation. Absent: no target is offered. */
   revocation?: (context: HumanRouteContext) => BrowserRevocation | undefined;
+  closure?: (context: HumanRouteContext) => BrowserClosure | undefined;
 }>;
 
 /**
@@ -27,11 +28,13 @@ export function registerRecovery(deps: RecoveryRegistrationDeps = {}): HumanCapa
     state: 'ready',
     attach(context) {
       const revocation = deps.revocation?.(context);
+      const closure = deps.closure?.(context);
       const ports = createBrowserRecoveryPort({
         principal: context.principal,
         identity: context.identity,
         device: context.device,
         ...(revocation ? { revocation } : {}),
+        ...(closure ? { closure } : {}),
       });
       const unmount = render(context, ports);
       return {
