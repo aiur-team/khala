@@ -5,7 +5,7 @@
 // pending, so an edited or substituted version can never be released by mistake.
 
 import {
-  type BindingId, type DeliveryLimits, type DeliveryReceipt, type EventRef,
+  type BindingId, type DeliveryLimits, type DeliveryReceiptTransport, type EventRef,
   decodeDeliveryReceiptTransport, sameEventRef,
 } from '@khala/contracts/delivery/index';
 import { decodeEventSelection } from '@khala/contracts/delivery/events';
@@ -18,7 +18,7 @@ export type ReviewPreview = Readonly<{
   bindingGeneration: number;
   policyVersion: number;
   pending: readonly EventRef[];
-  receipts: readonly DeliveryReceipt[];
+  receipts: readonly DeliveryReceiptTransport[];
 }>;
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -29,20 +29,6 @@ const PREVIEW_KEYS = 'bindingGeneration,bindingId,pending,policyVersion,receipts
 
 function nonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-
-/**
- * Receipts reach the UI in the v1 vocabulary. A v2 legacy observation carries the
- * same fact; an agent acknowledgement has no v1 label and is left out rather than
- * relabelled as model consumption.
- */
-function toUiReceipt(input: unknown): DeliveryReceipt | null | 'invalid' {
-  const decoded = decodeDeliveryReceiptTransport(input);
-  if (!decoded.ok) return 'invalid';
-  const receipt = decoded.value;
-  if (receipt.v === 1) return receipt;
-  if (receipt.kind === 'agent_acknowledged') return null;
-  return { ...receipt, v: 1 } as DeliveryReceipt;
 }
 
 /** Strictly decodes a preview body; anything malformed is unavailable, never partial. */
@@ -57,11 +43,11 @@ export function decodeReviewPreview(input: unknown, limits: DeliveryLimits, bind
     if (!decoded.ok) return null;
     pending = decoded.value;
   }
-  const receipts: DeliveryReceipt[] = [];
+  const receipts: DeliveryReceiptTransport[] = [];
   for (const value of input.receipts) {
-    const receipt = toUiReceipt(value);
-    if (receipt === 'invalid') return null;
-    if (receipt !== null && receipt.bindingId === bindingId) receipts.push(receipt);
+    const decoded = decodeDeliveryReceiptTransport(value);
+    if (!decoded.ok) return null;
+    if (decoded.value.bindingId === bindingId) receipts.push(decoded.value);
   }
   return {
     bindingId,
