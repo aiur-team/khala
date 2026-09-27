@@ -292,7 +292,8 @@ export async function launchInternal(options: LauncherOptions): Promise<LaunchOu
       bindingControl = composeBindingControl({
         handle: channel.handle, root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,
       });
-      const modes = composeBindingModes({ handle: channel.handle, store: channel.store, claude: claudeRoute });
+      const modes = composeBindingModes({ handle: channel.handle, store: channel.store,
+        stateDirectory: path.dirname(root), claude: claudeRoute });
       server = await startChannelServer({
         store: channel.store,
         bootstrap: [{ credential: bootstrapCredential, channelId: channel.channelId as RoomId, expiresAt, human: channel.human }],

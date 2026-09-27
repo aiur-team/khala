@@ -47,6 +47,8 @@ export type CodexHookDependencies = Readonly<{
   stdout: Writable;
   stderr: Writable;
   signal?: AbortSignal | undefined;
+  /** Records the boundary for the installed MCP entry's conservative idle check. */
+  onBoundary?: (binding: SessionBinding, idle: boolean, sessionId: string) => Promise<void>;
 }> & (CodexHookPorts | Readonly<{
   /**
    * The ports of the Codex session the hook input names, or `null` when that session holds
@@ -134,11 +136,18 @@ export async function runCodexHook(deps: CodexHookDependencies): Promise<void> {
     // An unbound, revoked or foreign session is a plain Codex session again.
     const session = ports.storedSessionId?.(input.sessionId) ?? input.sessionId;
     if (binding === null || binding.harness !== 'codex' || binding.sessionId !== session) return;
+    const mark = async (idle: boolean) => { await deps.onBoundary?.(binding, idle, input.sessionId).catch(() => undefined); };
+    await mark(false);
     const mode = decodeListeningModeStatus(await ports.listeningMode());
     if (mode === null || mode.bindingId !== binding.bindingId || mode.generation !== binding.generation
       || mode.effective === null) return;
     const delivery = codexHookDelivery(mode.effective, input);
-    if (delivery === null) return;
+    if (delivery === null) {
+      // A Stop block continues the same turn with stop_hook_active=true. Its
+      // terminal Stop has no new pull, but the session is idle afterward.
+      if (input.event === 'Stop' && input.stopHookActive && mode.effective !== 'async') await mark(true);
+      return;
+    }
 
     const inbox = await ports.inbox(binding.bindingId, binding.generation);
     const read = new ReadOperation({
@@ -152,7 +161,10 @@ export async function runCodexHook(deps: CodexHookDependencies): Promise<void> {
       offerScope: codexOfferScope(input),
       turnStart: input.event === 'UserPromptSubmit',
     });
-    if (result.kind === 'empty') return;
+    if (result.kind === 'empty') {
+      if (input.event === 'Stop') await mark(true);
+      return;
+    }
     const output = renderCodexHookOutput(input.event, delivery, renderInboxBatch(result.batch));
     if (Buffer.byteLength(output) > CODEX_HOOK_MAX_OUTPUT_BYTES) throw new CliError('invalid_input');
     await write(deps.stdout, output);

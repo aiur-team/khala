@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { type IncomingMessage, request as httpRequest } from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SESSION_COOKIE } from './bootstrap';
 import { type ChannelServerOptions, startChannelServer } from './channel-server';
 import { CredentialConfigError, mintCredential } from './credentials';
@@ -393,6 +393,30 @@ describe('versioned channel API', () => {
     expect((await call(h.server.port, {
       method: 'POST', path: `/api/v1/channels/${otherChannelId}/messages`, headers, body: message('scope'),
     })).status).toBe(403);
+  });
+
+  it('wakes an idle native session for a stored human message without any agent tool call', async () => {
+    const idleWake = vi.fn(async (binding: typeof bobBinding, sessionId: string, notBarred: () => boolean) => {
+      expect(binding).toEqual(bobBinding);
+      expect(sessionId).toBe('native-bob');
+      expect(notBarred()).toBe(true);
+    });
+    const idleSession = vi.fn(async () => 'native-bob');
+    const h = await start({
+      stop: { activatedBindings: () => [bobBinding] },
+      bindingModes: { idleWake, idleSession } as unknown as NonNullable<ChannelServerOptions['bindingModes']>,
+    });
+    const headers = await humanSession(h);
+    const route = `/api/v1/channels/${channelId}/messages`;
+    expect((await call(h.server.port, { method: 'POST', path: route, headers, body: message('wake') })).status).toBe(201);
+    await vi.waitFor(() => expect(idleWake).toHaveBeenCalledOnce());
+    expect(idleWake.mock.calls[0]?.[0]).toEqual(bobBinding);
+    expect(idleWake.mock.calls[0]?.[1]).toBe('native-bob');
+    expect((await call(h.server.port, { method: 'POST', path: route, headers, body: message('wake') })).status).toBe(200);
+    expect(idleWake).toHaveBeenCalledOnce();
+    expect((await call(h.server.port, { method: 'POST', path: route,
+      headers: bearer(h.fixture.bob.credential), body: message('agent-work') })).status).toBe(201);
+    expect(idleWake).toHaveBeenCalledOnce();
   });
 
   it('serves summary, roster and bounded timeline pages to members only', async () => {

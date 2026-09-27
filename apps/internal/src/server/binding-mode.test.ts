@@ -25,11 +25,15 @@ afterEach(async () => {
 type Harness = Readonly<{ fixture: ChannelFixture; server: LoopbackServer }>;
 
 /** `claim`, when given, is the harness claim every binding is projected through, as a launcher's inspection supplies it. */
-async function start(claim?: HarnessCapabilities): Promise<Harness> {
+async function start(claim?: HarnessCapabilities,
+  idleWake?: (binding: typeof bobBinding, sessionId: string, notBarred: () => boolean) => Promise<void>): Promise<Harness> {
   const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-modes-'), now: NOW });
   cleanups.push(() => fixture.dispose());
-  const composed = composeBindingModes({ handle: fixture.handle, store: fixture.store });
-  const modes = claim === undefined ? composed : { ...composed, control: { ...composed.control, capabilities: () => claim } };
+  const composed = composeBindingModes({ handle: fixture.handle, store: fixture.store, stateDirectory: fixture.root });
+  const modes = { ...composed, control: { ...composed.control,
+    ...(claim === undefined ? {} : { capabilities: () => claim }),
+    ...(idleWake === undefined ? {} : { idleWake }),
+  } };
   let id = 0;
   const server = await startChannelServer({
     store: fixture.store,
@@ -87,6 +91,35 @@ async function say(h: Harness, owner: Record<string, string>, body: string): Pro
 }
 
 describe('binding listening-mode control', () => {
+  it('holds an authenticated idle wake inside Stop’s revocation barrier', async () => {
+    let started!: () => void;
+    const begun = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const running = new Promise<void>(resolve => { release = resolve; });
+    const h = await start(undefined, async (_binding, sessionId, notBarred) => {
+      expect(sessionId).toBe('native-thread-one');
+      expect(notBarred()).toBe(true);
+      started();
+      await running;
+    });
+    const owner = await human(h);
+    const wake = call(h, '/api/v1/agent/idle-wake', {
+      method: 'POST', headers: bearer(h.fixture.bob.credential), body: { v: 1, sessionId: 'native-thread-one' },
+    });
+    await begun;
+    let stopped = false;
+    const stop = call(h, `/api/v1/channels/${channelId}/stop`, {
+      method: 'POST', headers: owner, body: { v: 1, targets: null },
+    }).then(reply => { stopped = true; return reply; });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(stopped).toBe(false);
+    release();
+    expect((await wake).status).toBe(200);
+    expect((await stop).json.outcome).toBe('stopped');
+    expect((await call(h, '/api/v1/agent/idle-wake', {
+      method: 'POST', headers: bearer(h.fixture.bob.credential), body: { v: 1, sessionId: 'native-thread-one' },
+    })).status).toBe(401);
+  });
   it('starts in sync; the server claims no Codex route it cannot inspect', async () => {
     const h = await start();
     const owner = await human(h);

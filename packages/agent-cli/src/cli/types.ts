@@ -125,7 +125,11 @@ export type CliDependencies = Readonly<{
   /** Lazily composes the descriptor-backed local client for `--internal-descriptor`, or for a session `sessionGrants` locates. */
   internalClient?: (descriptorPath: string) => Promise<AgentClientPort>;
   /** Lazily composes delivery of local-server releases into the held binding's inbox, with `--internal-descriptor`. */
-  internalDelivery?: (descriptorPath: string) => Promise<InternalDelivery>;
+  internalDelivery?: (descriptorPath: string, onWake?: () => Promise<void>) => Promise<InternalDelivery>;
+  /** Installed Codex entry only: binds the raw native thread to its held generation. */
+  codexIdleWake?: (sessionId: string, binding: SessionBinding) => Promise<(() => Promise<void>) | null>;
+  /** Installed hook only: records completed native boundaries for the conservative idle check. */
+  codexBoundary?: (binding: SessionBinding, idle: boolean, sessionId: string) => Promise<void>;
   /**
    * Locates each calling session's own `grant.json` for the installed Codex/OpenCode `mcp-serve`
    * entry and `codex-hook`, which name no descriptor. Absent under `--internal-descriptor` and the

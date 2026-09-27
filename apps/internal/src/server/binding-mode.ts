@@ -33,6 +33,7 @@ export const AGENT_MODE_ROUTES = {
   get: { method: 'GET', path: '/api/v1/agent/listening-mode', admission: 'authenticated' },
   set: { method: 'POST', path: '/api/v1/agent/listening-mode', admission: 'authenticated' },
   harness: { method: 'POST', path: '/api/v1/agent/harness', admission: 'authenticated' },
+  idleWake: { method: 'POST', path: '/api/v1/agent/idle-wake', admission: 'authenticated' },
 } as const satisfies Record<string, RouteSpec>;
 
 const OWNER_ROUTES: readonly RouteSpec[] = Object.values(OWNER_MODE_ROUTES);
@@ -84,6 +85,10 @@ export type BindingModeOptions = Readonly<{
   capabilities(binding: SessionBinding): HarnessCapabilities | null;
   /** Records the agent's latest observation of its own harness for that binding generation. */
   observe(binding: SessionBinding, observation: HarnessObservation): void;
+  /** Runs a content-free native notice inside the same revocation barrier as Stop. */
+  idleWake?: (binding: SessionBinding, sessionId: string, notBarred: () => boolean) => Promise<void>;
+  /** Native session recorded by an idle Stop hook; absent for busy or unknown sessions. */
+  idleSession?: (binding: SessionBinding) => Promise<string | null>;
 }>;
 
 export type OwnerBindings =
@@ -104,6 +109,7 @@ export type BindingModeDeps = Readonly<{
   ownerBindings(channelId: string, principal: Principal): OwnerBindings;
   /** Runs an agent write at the commit point: authority rechecked, through the revocation barrier. `null` means already answered. */
   commitAgent<T>(context: RouteContext<Principal>, effect: () => T): T | null;
+  notBarred(binding: SessionBinding): boolean;
 }>;
 
 const COMMAND_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -313,6 +319,20 @@ async function agentRoute(context: RouteContext<Principal>, deps: BindingModeDep
   }
 
   const body = await readJsonObject(context, deps.maxBodyBytes);
+  if (route === AGENT_MODE_ROUTES.idleWake) {
+    if (!deps.options.idleWake || !exactKeys(body, ['v', 'sessionId']) || body.v !== 1
+      || typeof body.sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(body.sessionId)) {
+      fail(response, 400, 'invalid_request');
+      return;
+    }
+    const pending = deps.commitAgent(context, () => deps.options.idleWake!(
+      binding, body.sessionId as string, () => deps.notBarred(binding),
+    ));
+    if (pending === null) return;
+    await pending;
+    sendJson(response, 200, { v: 1 });
+    return;
+  }
   if (route === AGENT_MODE_ROUTES.harness) {
     if (!exactKeys(body, ['v', 'version', 'hookReview']) || body.v !== 1
       || typeof body.version !== 'string' || !HARNESS_VERSION.test(body.version)

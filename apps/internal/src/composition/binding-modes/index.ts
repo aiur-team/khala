@@ -8,7 +8,9 @@ import type { InternalStoreHandle } from '../../store/open';
 import { type BindingPauseStore, createBindingPauseStore } from '../../store/pause-store';
 import { createInternalReleaseFeed } from '../internal-delivery/release-feed';
 import { createLocalListeningModeStore } from '../local-transport/listening-mode-store';
+import { createCodexIdleActivity } from '@aiur/khala/composition/codex-idle-activity';
 import { createServerHarnessCapabilities } from './capabilities';
+import { composeCodexIdleWake } from './codex-idle-wake';
 
 // Listening modes and pause for one internal channel store. The release feed, the
 // owner's control and the agent's control all read and write the same SQLite mode
@@ -27,6 +29,7 @@ export type BindingModesComposition = Readonly<{
 export function composeBindingModes(input: Readonly<{
   handle: InternalStoreHandle;
   store: ChannelStore;
+  stateDirectory: string;
   /** The launch's Claude route claim; absent, Claude is unproven. */
   claude?: HarnessCapabilities;
 }>): BindingModesComposition {
@@ -42,6 +45,9 @@ export function composeBindingModes(input: Readonly<{
       pause,
       capabilities: harnesses.capabilities,
       observe: harnesses.observe,
+      idleWake: composeCodexIdleWake({ store: input.store, modes: listeningModes, pause,
+        harnesses, stateDirectory: input.stateDirectory }),
+      idleSession: async binding => (await createCodexIdleActivity(input.stateDirectory).idleSession(binding))?.sessionId ?? null,
     },
   };
 }
