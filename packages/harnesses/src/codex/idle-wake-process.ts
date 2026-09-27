@@ -49,11 +49,19 @@ export function createCodexQueueProcessPort(deps: CodexQueueProcessDeps): CodexI
           return resolve({ status: 'not_started' });
         }
         let timedOut = false;
-        const stop = () => { child.kill('SIGTERM'); };
+        let stopped = false;
+        let force: ReturnType<typeof setTimeout> | null = null;
+        const stop = () => {
+          if (stopped) return;
+          stopped = true;
+          child.kill('SIGTERM');
+          force = setTimeout(() => { child.kill('SIGKILL'); }, 500);
+        };
         const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
         signal.addEventListener('abort', stop, { once: true });
         const settle = (outcome: CodexIdleWakeOutcome) => {
           clearTimeout(timer);
+          if (force !== null) clearTimeout(force);
           signal.removeEventListener('abort', stop);
           resolve(outcome);
         };

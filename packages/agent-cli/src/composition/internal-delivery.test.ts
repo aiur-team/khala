@@ -116,6 +116,22 @@ describe('internal delivery pull', () => {
     expect(duplicate.hints).toEqual([]);
   });
 
+  it('calls the installed wake only after new eligible work is durable', async () => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'khala-delivery-'));
+    directories.push(stateDirectory);
+    const inbox = fakeInbox();
+    const observed: string[][] = [];
+    const delivery = createInternalDelivery({ descriptorPath: '/unused', stateDirectory,
+      fetch: server([{ status: 200, body: page({ releases: [release('r1', true)] }) }]).fetch,
+      readDescriptor: () => ({ ok: true, value: granted }),
+      onWake: async () => { observed.push([...inbox.durable.keys()]); },
+    });
+    expect(await delivery.pull(held, inbox.open)).toBe('caught_up');
+    expect(observed).toEqual([['r1']]);
+    expect(await delivery.pull(held, inbox.open)).toBe('caught_up');
+    expect(observed).toHaveLength(1);
+  });
+
   it('enqueues nothing from a page computed for another binding generation', async () => {
     const inbox = fakeInbox();
     const { fetch } = server([{

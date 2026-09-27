@@ -797,6 +797,23 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     if (result === null) return;
     if (result.kind === 'stored' || result.kind === 'replayed') {
       sendJson(response, result.kind === 'stored' ? 201 : 200, { state: result.kind, event: eventView(result.event) });
+      // An idle TUI may never call a Khala MCP tool. A stored human message is
+      // enough to notify its session; the hook still performs the shared pull.
+      if (result.kind === 'stored' && principal?.kind === 'human'
+        && options.stop?.activatedBindings && options.bindingModes?.idleWake && options.bindingModes.idleSession) {
+        try {
+          const bindings = options.stop.activatedBindings(params.channelId as RoomId);
+          if (bindings !== 'unavailable') for (const binding of bindings) {
+            if (binding.harness !== 'codex' || barrier.barred(binding)) continue;
+            void options.bindingModes.idleSession(binding).then(sessionId => {
+              if (sessionId === null || !options.bindingModes?.idleWake) return;
+              const pending = barrier.run(binding, () => options.bindingModes!.idleWake!(
+                binding, sessionId, () => !barrier.barred(binding)));
+              if (pending.kind === 'ran') void pending.value.catch(() => undefined);
+            }).catch(() => undefined);
+          }
+        } catch { /* Optional notification cannot change an accepted send. */ }
+      }
     } else if (result.kind === 'rejected') {
       fail(response, rejection(result.code));
     } else {
@@ -928,6 +945,7 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
               return await handleBindingMode(context, {
                 options: options.bindingModes, maxBodyBytes: limits.maxBodyBytes, clock: options.clock,
                 ownerTarget, ownerBindings, commitAgent: commitAuthorized,
+                notBarred: binding => !barrier.barred(binding),
               });
             }
             return staticAsset(context);

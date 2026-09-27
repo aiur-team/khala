@@ -88,8 +88,8 @@ export async function startInternalWorld(options: Readonly<{
   const fixture = createChannelFixture({ root, now: NOW });
   const logs: LogEvent[] = [];
   const pause = { value: false };
-  const modes = composeBindingModes({ handle: fixture.handle, store: fixture.store });
   const agentState = path.join(root, 'agent-state');
+  const modes = composeBindingModes({ handle: fixture.handle, store: fixture.store, stateDirectory: agentState });
   const descriptorPath = path.join(root, 'descriptor.json');
   let id = 0;
   const store = options.store ? options.store(fixture.store) : fixture.store;
