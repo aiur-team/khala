@@ -97,7 +97,8 @@ describe('hosted owner mailbox routes', () => {
     expect((await mailbox.submit({ operationId: stop.operationId, kind: 'channel_stop', body: stop }, principal)).kind).toBe('ok');
     expect((await env.index.markClosing(binding.ownerId, '!room:example' as RoomId, stop.operationId, 0)).kind).toBe('ok');
     expect((await env.call(OWNER_MAILBOX_SUBMIT, 'POST', command)).status).toBe(403);
-    const pending = await (await env.call(OWNER_MAILBOX_POLL, 'GET')).json() as { entries: Array<{ kind: string }> };
+    const pending = await (await env.call(OWNER_MAILBOX_POLL, 'GET')).json() as { closing: boolean; entries: Array<{ kind: string }> };
+    expect(pending.closing).toBe(true);
     expect(pending.entries.map(item => item.kind)).toEqual(['channel_stop']);
     const receipt = { ...stop, bindingId: binding.bindingId, bindingGeneration: binding.generation,
       state: 'stopped', cleanupRequested: true };

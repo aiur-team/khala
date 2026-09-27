@@ -15,13 +15,28 @@ export async function startProductionSubscription(input: Readonly<{
   ownerParticipantId: ParticipantId;
   storage: ConnectorStorage;
   matrix: MatrixConnectorSubstrate;
+  /** Server-checked current binding, owner membership and closure marker. */
+  guard(): Promise<'active' | 'revoked' | 'unavailable'>;
   clock?: () => number;
 }>): Promise<SubscriptionHandle> {
   let locked = false;
   const clock = input.clock ?? Date.now;
   const streamId = `matrix:${input.roomId}:${input.binding.deviceId}`;
   return startSubscription({ binding: input.binding, streamId, pageSize: 50 }, {
-    source: input.matrix.source,
+    source: {
+      async authorize(options) {
+        const authority = await input.guard();
+        return authority === 'active' ? input.matrix.source.authorize(options)
+          : authority === 'revoked' ? 'revoked' : 'unavailable';
+      },
+      listen(listener) { return input.matrix.source.listen(listener); },
+      async read(page, options) {
+        const authority = await input.guard();
+        return authority === 'active' ? input.matrix.source.read(page, options)
+          : authority === 'revoked' ? { kind: 'rejected' as const, code: 'authority_lost' as const }
+            : { kind: 'unavailable' as const };
+      },
+    },
     cursors: {
       async load(id) {
         try {

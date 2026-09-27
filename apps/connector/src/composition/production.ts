@@ -9,9 +9,13 @@ import type { MatrixDeviceSession } from '@khala/connector/bootstrap/ports';
 import { decodeDeliveryLimits, decodeSessionBinding, sameSessionBinding, type SessionBinding } from '@khala/contracts/delivery/index';
 import { createBootstrapPersistence } from '@khala/connector/storage/bootstrap';
 import { openConnectorStorage } from '@khala/connector/storage/open';
+import type { ProofSigner } from '@khala/connector/bootstrap/proof';
 import { createMatrixBootstrapDevice } from '../substrate/bootstrap-device';
 import { startProductionSubscription } from './agent/subscription';
 import type { SubscriptionHandle } from '@khala/connector/subscription/index';
+import { createCapabilityRenewal } from './agent/capability-renewal';
+import { createProductionOwnerMailbox } from './agent/owner-mailbox';
+import { createLocalClosureFence } from './closure/local-fence';
 
 function productionLimits() {
   const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
@@ -63,6 +67,37 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
   let closed = false;
   let binding: SessionBinding | null = null;
   let subscription: SubscriptionHandle | null = null;
+  let signer: ProofSigner | null = null;
+  let renewal: ReturnType<typeof createCapabilityRenewal> | null = null;
+  let mailbox: ReturnType<typeof createProductionOwnerMailbox> | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let polling: Promise<void> | null = null;
+  let remoteDenied = false;
+
+  function capabilityFor(next: SessionBinding) {
+    if (!signer) throw new Error('production_signer_missing');
+    if (!renewal) renewal = createCapabilityRenewal({ stateDirectory: sessionDirectory,
+      appOrigin: input.appOrigin, binding: next, signer });
+    return renewal;
+  }
+
+  function schedulePoll(): void {
+    if (closed || remoteDenied || !mailbox || pollTimer || polling) return;
+    const run = async () => {
+      pollTimer = null;
+      if (!mailbox || closed) return;
+      try {
+        if (await mailbox.pollOnce() === 'revoked') remoteDenied = true;
+      } finally {
+        polling = null;
+        if (!closed && !remoteDenied) {
+          pollTimer = setTimeout(() => { polling = run(); }, 2_000);
+          pollTimer.unref?.();
+        }
+      }
+    };
+    polling = run();
+  }
 
   async function matrixSession(): Promise<MatrixDeviceSession> {
     const raw: unknown = JSON.parse(await readFile(path.join(sessionDirectory, 'matrix-session.json'), 'utf8')) as unknown;
@@ -86,10 +121,27 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       || session.ownerParticipantId === next.agentParticipantId || agentParticipantId !== next.agentParticipantId) {
       throw new Error('matrix_session_binding_conflict');
     }
+    const activeSigner = signer;
+    if (!activeSigner) throw new Error('production_signer_missing');
+    const stop = createLocalClosureFence({ storage, binding: next, roomId: session.roomId,
+      stateDirectory: sessionDirectory, clock: Date.now,
+      quiesce: async () => { await subscription?.stop(); },
+    });
+    mailbox = createProductionOwnerMailbox({ appOrigin: input.appOrigin, binding: next, signer: activeSigner,
+      capability: () => capabilityFor(next).ensure(), stop: request => stop.stop(request),
+      onRevoked: async () => { remoteDenied = true; },
+    });
+    const activeMailbox = mailbox;
     subscription = await startProductionSubscription({
       binding: next, roomId: session.roomId as never, ownerParticipantId: session.ownerParticipantId as never,
       storage, matrix: substrate,
+      guard: async () => {
+        if (closed || remoteDenied) return 'revoked';
+        const authority = await activeMailbox.authorize();
+        return authority === 'active' ? 'active' : authority === 'unavailable' ? 'unavailable' : 'revoked';
+      },
     });
+    schedulePoll();
   }
 
   async function readBinding(): Promise<SessionBinding | null> {
@@ -129,12 +181,14 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
 
   try {
     binding = await readBinding();
+    const persistence = await createBootstrapPersistence(storage);
+    signer = persistence.signer;
     if (binding) {
       const status = await matrix.devices.status(binding.deviceId);
       if (status !== 'ready') throw new Error('matrix_device_not_ready');
       await startIntake(binding);
     }
-    const { operations, signer } = await createBootstrapPersistence(storage);
+    const { operations } = persistence;
     const ports: BootstrapPorts = {
       discovery: createDiscovery({ trustedOrigins: [input.appOrigin], hostedOrigin: input.appOrigin }),
       ownership: createLoopbackOwnership({ signer, openBrowser: input.openBrowser }),
@@ -146,7 +200,11 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         async activate(activation) {
           const result = await matrix.devices.activate(activation);
           if (result.kind !== 'ready') return result;
-          try { await persistBinding(activation.binding); await startIntake(activation.binding); }
+          try {
+            await persistBinding(activation.binding);
+            await capabilityFor(activation.binding).acceptInitial(activation.capability);
+            await startIntake(activation.binding);
+          }
           catch { return { kind: 'failed', reason: 'storage_unavailable' }; }
           return result;
         },
@@ -162,12 +220,15 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
     return {
       ports,
       async send(command: Readonly<{ bindingId: string | null; clientTxnId: string; body: string }>) {
-        if (closed || !binding || !subscription || command.bindingId !== binding.bindingId) {
+        if (closed || remoteDenied || !binding || !subscription || command.bindingId !== binding.bindingId) {
           return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
         }
         const held = await readBinding().catch(() => null);
         if (!held || !sameSessionBinding(held, binding)) {
           return { kind: 'refused' as const, code: 'binding_not_held' as const, clientTxnId: command.clientTxnId };
+        }
+        if (!mailbox || await mailbox.authorize() !== 'active') {
+          return { kind: 'refused' as const, code: 'not_connected' as const, clientTxnId: command.clientTxnId };
         }
         const substrate = matrix.substrate();
         if (!substrate) return { kind: 'refused' as const, code: 'transport_unavailable' as const, clientTxnId: command.clientTxnId };
@@ -177,9 +238,10 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
         } catch { return { kind: 'outcome_unknown' as const, clientTxnId: command.clientTxnId }; }
       },
       async status() {
-        if (closed || !binding || !subscription) return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
+        if (closed || remoteDenied || !binding || !subscription) return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
         const held = await readBinding().catch(() => null);
-        if (!held || !sameSessionBinding(held, binding) || !matrix.substrate() || subscription.state().kind !== 'live') {
+        if (!held || !sameSessionBinding(held, binding) || !matrix.substrate() || subscription.state().kind !== 'live'
+          || !mailbox || await mailbox.authorize() !== 'active') {
           return { v: 1 as const, connected: false, binding: null, route: 'unavailable' as const, sourceCursor: null };
         }
         return { v: 1 as const, connected: true, binding: held, route: 'native_cli_queue' as const, sourceCursor: null };
@@ -190,11 +252,19 @@ export async function openProductionConnector<TInbox>(input: Readonly<{
       async close() {
         if (closed) return;
         closed = true;
+        mailbox?.close();
+        if (pollTimer) clearTimeout(pollTimer);
+        await polling?.catch(() => undefined);
         try { await subscription?.stop(); await matrix.close(); } finally { await storage.close(); }
       },
     };
   } catch (error) {
     const active = subscription as SubscriptionHandle | null;
+    const activeMailbox = mailbox as ReturnType<typeof createProductionOwnerMailbox> | null;
+    const activePoll = polling as Promise<void> | null;
+    activeMailbox?.close();
+    if (pollTimer) clearTimeout(pollTimer);
+    await activePoll?.catch(() => undefined);
     try { await active?.stop(); await matrix.close(); } finally { await storage.close(); }
     throw error;
   }

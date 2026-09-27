@@ -117,7 +117,8 @@ export function createOwnerMailboxRoutes(input: Readonly<{
         if (identity instanceof Response) return identity;
         const result = await createOwnerMailbox({ store: input.store, ...identity, clock: input.clock, authoritySecret: input.authoritySecret }).pending();
         return result.kind === 'ok' ? json(200, { v: 1, bindingId: identity.binding.bindingId,
-          generation: identity.binding.generation, entries: result.value.filter(entry => !identity.closing || entry.kind === 'channel_stop').map(entry => ({
+          generation: identity.binding.generation, closing: identity.closing,
+          entries: result.value.filter(entry => !identity.closing || entry.kind === 'channel_stop').map(entry => ({
             operationId: entry.operationId, kind: entry.kind, body: entry.body, authority: entry.authority,
             outcome: entry.outcome,
           })) }) : unavailable();
