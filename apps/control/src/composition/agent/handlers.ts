@@ -2,6 +2,7 @@ import type { AcknowledgementSupport, ReceiptKindV2 } from '@khala/contracts/del
 import { decodeRoomId, type RoomId } from '@khala/contracts/messaging/ids';
 import type { RouteRegistration } from '../../runtime/handler';
 import { unavailableOwnerMailboxRoutes } from '../owner-mailbox/routes';
+import { unavailableOwnerDeviceProofRoutes } from './owner-device-proof';
 
 export type AgentAuthorization = 'allowed' | 'unauthenticated' | 'forbidden';
 export type AgentStatusSnapshot = Readonly<{
@@ -27,6 +28,8 @@ export type AgentHandlerDependencies = Readonly<{
   deviceAttestation?: () => readonly RouteRegistration[];
   /** Proof-bound connector poll and result submission. */
   ownerMailbox?: () => readonly RouteRegistration[];
+  /** DPoP-bound lookup of an owner-approved browser Matrix key. */
+  ownerDeviceProof?: () => readonly RouteRegistration[];
   /** Request-lifetime live pairing registrations supplied by the composition root. */
   pairing?: () => readonly RouteRegistration[];
   /** Authenticated channel-access registrations supplied by the composition root. */
@@ -168,6 +171,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     ...unavailableBootstrapRoutes,
     ...unavailableDeviceAttestationRoutes,
     ...unavailableOwnerMailboxRoutes().agent,
+    ...unavailableOwnerDeviceProofRoutes().agent,
     ...unavailablePairingRoutes,
     ...unavailableChannelAccessRoutes,
     ...unavailableChannelAccessExchangeRoutes,
@@ -192,6 +196,7 @@ export function registerAgentHandlers(dependencies?: AgentHandlerDependencies): 
     ...(dependencies.bootstrap?.() ?? unavailableBootstrapRoutes),
     ...(dependencies.deviceAttestation?.() ?? unavailableDeviceAttestationRoutes),
     ...(dependencies.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().agent),
+    ...(dependencies.ownerDeviceProof?.() ?? unavailableOwnerDeviceProofRoutes().agent),
     ...(dependencies.pairing?.() ?? unavailablePairingRoutes),
     ...(dependencies.channelAccess?.() ?? unavailableChannelAccessRoutes),
     ...(dependencies.channelAccessExchange?.() ?? unavailableChannelAccessExchangeRoutes),
