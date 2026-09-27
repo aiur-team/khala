@@ -2,8 +2,9 @@
 
 This suite is the non-fixture acceptance proof for KHA-132. It uses two isolated
 browser contexts, two disposable OAuth identities, the deployed Khala control
-routes, and the deployed Synapse/PostgreSQL environment. A pass records encrypted
-raw Matrix events while both humans see attributed messages allowed by admission:
+routes, and the deployed Synapse/PostgreSQL environment. A pass reads encrypted
+raw Matrix events through the creator's own Matrix session and confirms a
+separate unadmitted observer gets 403. Both humans see attributed messages allowed by admission:
 the default joiner sees content from admission onward, while the creator retains
 their earlier introduction history.
 
@@ -18,6 +19,7 @@ descriptor. Secrets stay in separately named environment variables:
   "synapseVersion": "1.161.0",
   "oauth": {
     "usernameLabel": "Email",
+    "usernamePlaceholder": "email address",
     "passwordLabel": "Password",
     "submitName": "Continue"
   },
@@ -31,6 +33,11 @@ descriptor. Secrets stay in separately named environment variables:
   }
 }
 ```
+
+`usernamePlaceholder` is optional. Use it only if the real provider's email
+field has no associated accessible label (Dex v2.43.1 has a visible label but
+its `for` attribute does not match the input ID); otherwise the suite uses
+`usernameLabel`. Set the labels and button name from the deployed form.
 
 Run only against an operator-approved disposable deployment:
 
