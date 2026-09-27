@@ -12,6 +12,7 @@ import { ok, outcomeUnknown, rejected, unavailable } from '@khala/contracts/mess
 import type { ImportedHistoryPart, ImportedHistoryTransport, ImportedPartLookup } from '@khala/messaging/channels/history-import';
 import type { HostedSignInOutcome, HostedSignInPort } from '../../web/make-external/ports';
 import { type ChannelStore, type RegisteredParticipant, createChannelStore } from '../../store/channel-store';
+import { createDiscoveryStore } from '../../store/discovery-store';
 import { type InternalStoreHandle, openChannelStore } from '../../store/open';
 
 // Test-only hosted side of Make external: channel creation, the access journal, inbox
@@ -222,15 +223,19 @@ export function seedInternalChannel(input: Readonly<{ root: string; messages?: r
     operationId: 'create-internal', channelId, title: input.title ?? 'Planning', creatorOwnerId: human.ownerId,
     creatorParticipantId: human.participantId, creatorDeviceId: humanDevice, createdAt: '2026-09-25T10:00:00.000Z',
   });
+  const discovery = createDiscoveryStore(handle);
   AGENT_IDS.forEach((id, index) => {
     const participantId = id as ParticipantId;
     store.registerParticipant({ participantId, ownerId: human.ownerId, kind: 'agent', displayName: ['Builder', 'Reviewer', 'Tester'][index]! });
     store.registerDevice({ deviceId: `device-${id}` as DeviceId, participantId });
-    store.registerBinding({
-      v: 1, bindingId: `binding-${id}` as SessionBinding['bindingId'], ownerId: human.ownerId, agentParticipantId: participantId,
-      deviceId: `device-${id}` as DeviceId, harness: 'codex', sessionId: `session-${id}`, generation: 1,
-    });
     store.setMembership({ channelId, participantId, membership: 'joined' });
+    discovery.activate({
+      operationKey: `activation-${id}`, channelId, sessionGeneration: 1, history: 'shared',
+      binding: {
+        v: 1, bindingId: `binding-${id}` as SessionBinding['bindingId'], ownerId: human.ownerId, agentParticipantId: participantId,
+        deviceId: `device-${id}` as DeviceId, harness: 'codex', sessionId: `session-${id}`, generation: 1,
+      },
+    });
   });
   let sent = 0;
   const send = (body: string): boolean => {

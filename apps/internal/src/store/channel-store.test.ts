@@ -8,6 +8,8 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChannelStore, type ChannelStore, type RegisteredParticipant } from './channel-store';
 import { encodeSubscriptionCursor, encodeTimelineCursor } from './cursors';
+import { createDiscoveryStore } from './discovery-store';
+import { admitWithSharedHistory } from './fixtures/admission';
 import { openChannelStore, type InternalStoreHandle } from './open';
 
 const roots: string[] = [];
@@ -141,7 +143,7 @@ describe('channel store identity and authority', () => {
     expect(again.binding(nextBinding)).toMatchObject({ kind: 'done', binding: { status: 'active', generation: 5 } });
     expect(again.latestBindingGeneration(bobBinding.bindingId)).toEqual({ kind: 'done', generation: 5 });
     expect(again.latestBindingGeneration('binding-unknown')).toEqual({ kind: 'done', generation: null });
-    expect(again.timeline({ channelId, participantId: alice.participantId, cursor: null, limit: 10 }))
+    expect(again.timeline({ channelId, participantId: alice.participantId, reader: { kind: 'member' }, cursor: null, limit: 10 }))
       .toMatchObject({
         kind: 'done',
         events: [{
@@ -360,7 +362,7 @@ describe('channel creation and sends', () => {
       db.prepare("UPDATE events SET canonical_payload = ?, content_digest = ? WHERE event_id = '1'")
         .run(noncanonical, `sha256:${createHash('sha256').update(noncanonical).digest('hex')}`);
     });
-    expect(store.timeline({ channelId, participantId: alice.participantId, cursor: null, limit: 10 }))
+    expect(store.timeline({ channelId, participantId: alice.participantId, reader: { kind: 'member' }, cursor: null, limit: 10 }))
       .toEqual({ kind: 'unavailable' });
   });
 });
@@ -371,13 +373,13 @@ describe('timeline and subscription replay', () => {
     seed(store);
     send(store, { eventId: '1' });
     send(store, { eventId: '2' });
-    const newest = store.timeline({ channelId, participantId: alice.participantId, cursor: null, limit: 1 });
+    const newest = store.timeline({ channelId, participantId: alice.participantId, reader: { kind: 'member' }, cursor: null, limit: 1 });
     expect(newest).toMatchObject({ kind: 'done', events: [{ eventId: '2' }] });
     if (newest.kind !== 'done') throw new Error('expected page');
     send(store, { eventId: '3' });
-    expect(store.timeline({ channelId, participantId: alice.participantId, cursor: newest.nextCursor, limit: 2 }))
+    expect(store.timeline({ channelId, participantId: alice.participantId, reader: { kind: 'member' }, cursor: newest.nextCursor, limit: 2 }))
       .toMatchObject({ kind: 'done', events: [{ eventId: '1' }], nextCursor: null, revision: newest.revision });
-    expect(store.timeline({ channelId, participantId: alice.participantId, cursor: null, limit: 2 }))
+    expect(store.timeline({ channelId, participantId: alice.participantId, reader: { kind: 'member' }, cursor: null, limit: 2 }))
       .toMatchObject({ kind: 'done', events: [{ eventId: '2' }, { eventId: '3' }] });
   });
 
@@ -390,14 +392,54 @@ describe('timeline and subscription replay', () => {
       encodeTimelineCursor({ channelId: 'other' as RoomId, snapshotHighWater: 1, snapshotRevision: 1, beforeSequence: 1 }),
       encodeTimelineCursor({ channelId, snapshotHighWater: 99, snapshotRevision: 99, beforeSequence: 99 }),
     ]) {
-      expect(store.timeline({ channelId, participantId: alice.participantId, cursor, limit: 10 }))
+      expect(store.timeline({ channelId, participantId: alice.participantId, reader: { kind: 'member' }, cursor, limit: 10 }))
         .toEqual({ kind: 'rejected', code: 'invalid_cursor' });
     }
   });
 
-  it('advances over a self row without consuming its peer lookahead', () => {
+  it('denies every event read of a binding with no admission record', () => {
     const { store } = fresh();
     seed(store);
+    send(store, { eventId: '1' });
+    const reader = { kind: 'binding', binding: bobBinding } as const;
+    expect(store.timeline({ channelId, participantId: bob.participantId, reader, cursor: null, limit: 10 }))
+      .toEqual({ kind: 'rejected', code: 'not_joined' });
+    expect(store.readSubscription({ channelId, binding: bobBinding, cursor: null, limit: 10 }))
+      .toEqual({ kind: 'rejected', code: 'not_joined' });
+  });
+
+  it.each([
+    ['none', ['3']],
+    ['shared', ['1', '2', '3']],
+  ] as const)('shows a binding admitted with history %s only what its admission shares, whatever cursor it presents', (history, visible) => {
+    const { store, handle } = fresh();
+    seed(store);
+    send(store, { eventId: '1' });
+    send(store, { eventId: '2' });
+    const admitted = { ...bobBinding, bindingId: `binding-${history}` as typeof bobBinding.bindingId };
+    expect(createDiscoveryStore(handle).activate({ operationKey: `op-${history}`, binding: admitted, channelId, sessionGeneration: 1, history }).kind)
+      .toBe('activated');
+    send(store, { eventId: '3' });
+    const reader = { kind: 'binding', binding: admitted } as const;
+    const ids = (result: { kind: string; events?: readonly { eventId: string }[] }) => result.events?.map(event => event.eventId);
+
+    expect(ids(store.timeline({ channelId, participantId: bob.participantId, reader, cursor: null, limit: 10 }))).toEqual(visible);
+    // A human's cursor into the earlier history, replayed by the binding.
+    const human = store.timeline({ channelId, participantId: alice.participantId, reader: { kind: 'member' }, cursor: null, limit: 1 });
+    if (human.kind !== 'done' || human.nextCursor === null) throw new Error('expected a human cursor');
+    expect(ids(store.timeline({ channelId, participantId: bob.participantId, reader, cursor: human.nextCursor, limit: 10 })))
+      .toEqual(visible.filter(id => id !== '3'));
+    // A hand-built feed cursor from the start of the channel.
+    const early = encodeSubscriptionCursor({ channelId, bindingId: admitted.bindingId, generation: admitted.generation, lastCoveredSequence: 0 });
+    for (const cursor of [null, early]) {
+      expect(ids(store.readSubscription({ channelId, binding: admitted, cursor, limit: 10 }))).toEqual(visible);
+    }
+  });
+
+  it('advances over a self row without consuming its peer lookahead', () => {
+    const { store, handle } = fresh();
+    seed(store);
+    admitWithSharedHistory(handle, bobBinding, channelId);
     send(store, { eventId: '1', author: 'bob' });
     send(store, { eventId: '2', author: 'alice' });
     const first = store.readSubscription({ channelId, binding: bobBinding, cursor: null, limit: 1 });
@@ -409,8 +451,9 @@ describe('timeline and subscription replay', () => {
   });
 
   it('never returns or skips an all-peer lookahead row', () => {
-    const { store } = fresh();
+    const { store, handle } = fresh();
     seed(store);
+    admitWithSharedHistory(handle, bobBinding, channelId);
     send(store, { eventId: '1', author: 'alice' });
     send(store, { eventId: '2', author: 'alice' });
     const first = store.readSubscription({ channelId, binding: bobBinding, cursor: null, limit: 1 });
@@ -421,8 +464,9 @@ describe('timeline and subscription replay', () => {
   });
 
   it('binds subscription cursors to the exact channel, binding and generation', () => {
-    const { store } = fresh();
+    const { store, handle } = fresh();
     seed(store);
+    admitWithSharedHistory(handle, bobBinding, channelId);
     const wrong = encodeSubscriptionCursor({
       channelId, bindingId: 'different', generation: bobBinding.generation, lastCoveredSequence: 0,
     });
