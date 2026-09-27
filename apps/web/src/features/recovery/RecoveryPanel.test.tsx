@@ -78,7 +78,7 @@ function unusedPorts(): RecoveryPorts {
 
 function render(current: RecoveryView): string {
   return renderToStaticMarkup(
-    <RecoveryPanel ports={unusedPorts()} config={CONFIG} controller={controller(current)} onClosureComplete={() => {}} />,
+    <RecoveryPanel ports={unusedPorts()} config={CONFIG} controller={controller(current)} onClosureParticipationEnded={() => {}} />,
   );
 }
 

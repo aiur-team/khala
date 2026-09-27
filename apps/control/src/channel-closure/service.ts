@@ -115,7 +115,11 @@ export function createChannelClosureService(input: Readonly<{
 
       // Never claim completion from a local record alone: the transport may be
       // offline, and a marker cannot remove a remote participant by itself.
-      const left = await transport.leave(request.ownerId, request.roomId, options).catch(() => 'unknown' as const);
+      // Once leave was confirmed, a cleanup retry must never leave a later
+      // participation that may have joined the same Matrix room.
+      const left = existing.state === 'partial' && existing.reason === 'local_cleanup_failed'
+        ? 'left' as const
+        : await transport.leave(request.ownerId, request.roomId, options).catch(() => 'unknown' as const);
       const cleanup = left === 'left'
         ? await transport.requestLocalCleanup(request.ownerId, request.roomId, options).catch(() => 'unavailable' as const)
         : 'unavailable';

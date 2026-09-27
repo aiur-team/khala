@@ -67,7 +67,7 @@ function HumanRoom({ context, roomId }: {
           <Panel heading="Agent controls">
             <p role="status">Agent controls are not available for this channel yet.</p>
           </Panel>
-          <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureComplete={() => location.assign('/')} />
+          <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureParticipationEnded={() => location.assign('/')} />
         </>
       )}
     />

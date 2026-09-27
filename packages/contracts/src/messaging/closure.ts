@@ -19,7 +19,7 @@ export type ClosureFailureReason = 'forbidden' | 'stale_room' | 'dependency_unav
 export type ClosureCapability = Readonly<{
   ownerId: OwnerId;
   roomId: RoomId;
-  /** Monotonic owner/channel generation; never an opaque transport revision. */
+  /** Owner/channel participation generation. The current one-way lifecycle is generation 0. */
   expectedRoomRevision: number;
   available: boolean;
   unavailableReason: ClosureUnavailableReason | null;

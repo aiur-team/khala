@@ -70,8 +70,10 @@ describe('channel closure service', () => {
     expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: {
       operationId: 'close_1', state: 'partial', reason: 'local_cleanup_failed',
     } });
+    expect(transport.leave).toHaveBeenCalledTimes(2);
     expect(await service.closeRoom(request)).toEqual({ kind: 'ok', value: {
       operationId: 'close_1', state: 'complete', reason: null,
     } });
+    expect(transport.leave).toHaveBeenCalledTimes(2);
   });
 });
