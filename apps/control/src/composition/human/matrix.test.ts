@@ -88,6 +88,34 @@ describe('createMatrixHumanServices', () => {
     });
   });
 
+  it('sends the optional ingress credential only on the two registration requests', async () => {
+    const ingress = 'preview-ingress-token-more-than-32-bytes';
+    const seen: string[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const pathname = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      const header = new Headers(init?.headers).get('X-Khala-Registration-Ingress');
+      if (pathname.startsWith('/_matrix/client/v3/profile/')) {
+        expect(header).toBeNull();
+        return json(404, { errcode: 'M_NOT_FOUND' });
+      }
+      if (pathname === '/_synapse/admin/v1/register') {
+        expect(header).toBe(ingress);
+        seen.push(init?.method ?? 'GET');
+        return init?.method === 'POST'
+          ? json(200, { user_id: `@khala_${Buffer.from(principal.ownerId).toString('base64url')}:matrix.example.test` })
+          : json(200, { nonce: 'nonce_1' });
+      }
+      throw new Error(`unexpected request ${pathname}`);
+    });
+    const matrix = createMatrixHumanServices({
+      homeserverOrigin: 'https://matrix.example.test', serverName: 'matrix.example.test',
+      registrationSharedSecret: registrationSecret, registrationIngressToken: ingress,
+      passwordDerivationSecret: passwordSecret, store: memoryStore(), fetch,
+    });
+    expect(await matrix.directory.create(principal.ownerId)).toMatchObject({ kind: 'created' });
+    expect(seen).toEqual(['GET', 'POST']);
+  });
+
   it('mints a device-bound browser token and reports an already-published identity key', async () => {
     const deviceId = 'KH_WEB_1' as DeviceId;
     const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {

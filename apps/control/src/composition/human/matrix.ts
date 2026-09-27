@@ -26,6 +26,7 @@ export type MatrixHumanOptions = Readonly<{
   homeserverOrigin: string;
   serverName: string;
   registrationSharedSecret: string;
+  registrationIngressToken?: string | null;
   passwordDerivationSecret: string;
   store: ControlStore;
   fetch?: Fetch;
@@ -108,6 +109,8 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   const homeserverOrigin = exactHttpsOrigin(options.homeserverOrigin);
   const serverName = validateServerName(options.serverName);
   const registrationSecret = requireSecret(options.registrationSharedSecret, 'Matrix registration shared secret');
+  const registrationIngressToken = options.registrationIngressToken
+    ? requireSecret(options.registrationIngressToken, 'Matrix registration ingress token') : null;
   const passwordSecret = requireSecret(options.passwordDerivationSecret, 'Matrix password derivation secret');
   const fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -194,7 +197,8 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
 
   async function register(ownerId: OwnerId, call?: CallOptions): Promise<'created' | 'unavailable' | 'outcome_unknown'> {
     try {
-      const nonceResponse = await request('/_synapse/admin/v1/register', { headers: { accept: 'application/json' } }, call);
+      const ingressHeaders = registrationIngressToken ? { 'X-Khala-Registration-Ingress': registrationIngressToken } : {};
+      const nonceResponse = await request('/_synapse/admin/v1/register', { headers: { accept: 'application/json', ...ingressHeaders } }, call);
       const nonceBody = await body(nonceResponse);
       if (nonceResponse.status !== 200 || typeof nonceBody?.nonce !== 'string') return 'unavailable';
       const username = localpart(ownerId);
@@ -207,7 +211,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
         .digest('hex');
       const response = await request('/_synapse/admin/v1/register', {
         method: 'POST',
-        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        headers: { accept: 'application/json', 'content-type': 'application/json', ...ingressHeaders },
         body: JSON.stringify({ nonce: nonceBody.nonce, username, password: password(ownerId), admin: false, mac }),
       }, call);
       const value = await body(response);

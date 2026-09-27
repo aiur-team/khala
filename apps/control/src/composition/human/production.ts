@@ -73,6 +73,7 @@ export function createProductionHumanRuntimeLoader(dependencies: ProductionHuman
       homeserverOrigin: env.publicHomeserverOrigin,
       serverName: env.matrixServerName,
       registrationSharedSecret: env.matrixRegistrationSharedSecret,
+      registrationIngressToken: env.matrixRegistrationIngressToken,
       passwordDerivationSecret: env.matrixPasswordDerivationSecret,
       store,
       ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),

@@ -1,0 +1,27 @@
+# Railway terminates public HTTPS and forwards to this private HTTP listener.
+# Both variables are required at startup; the registration token is an
+# independent ingress credential, not Synapse's nonce/HMAC shared secret.
+:8080 {
+  @control_register {
+    path /_synapse/admin/v1/register
+    method GET POST
+    header X-Khala-Registration-Ingress {$KHALA_REGISTRATION_INGRESS_TOKEN}
+  }
+
+  handle @control_register {
+    request_header -X-Khala-Registration-Ingress
+    reverse_proxy {$KHALA_SYNAPSE_UPSTREAM}
+  }
+  handle /_synapse/admin/* {
+    respond 403
+  }
+  handle /_matrix/client/* {
+    reverse_proxy {$KHALA_SYNAPSE_UPSTREAM}
+  }
+  handle /health {
+    reverse_proxy {$KHALA_SYNAPSE_UPSTREAM}
+  }
+  handle {
+    respond 404
+  }
+}
