@@ -5,16 +5,20 @@
   "type": "module",
   "exports": {
     "./runtime/*": "./src/runtime/*.ts",
-    "./composition/*": "./src/composition/*.ts"
+    "./composition/*": "./src/composition/*.ts",
+    "./substrate/*": "./src/substrate/*.ts"
   },
   "scripts": {
     "typecheck": "node ../../scripts/package-task.mjs typecheck",
-    "build": "node ../../scripts/package-task.mjs build",
+    "build": "node ../../scripts/package-task.mjs build && vite build --config vite.matrix.config.mjs",
     "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
   },
   "dependencies": {
     "@khala/connector": "workspace:*",
     "@khala/contracts": "workspace:*",
-    "@khala/policy": "workspace:*"
+    "@khala/policy": "workspace:*",
+    "matrix-js-sdk": "42.4.0",
+    "playwright-core": "1.63.0",
+    "vite": "7.3.6"
   }
 }
