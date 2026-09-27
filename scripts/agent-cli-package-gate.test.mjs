@@ -148,6 +148,10 @@ test('the tarball file list is an exact allowlist', () => {
     'tarball is missing dist/opencode.js',
     ...PAYLOAD_FILES.map(file => `tarball is missing ${file}`),
     'tarball is missing dist/internal-web/index.html',
+    'tarball is missing dist/substrate-browser/index.html',
+    'tarball is missing dist/playwright-core/package.json',
+    'tarball is missing dist/playwright-core/index.js',
+    'tarball is missing dist/playwright-core/browsers.json',
   ]);
 });
 

@@ -25,7 +25,10 @@ function fixture(fetch: typeof globalThis.fetch) {
 
 describe('owner-approved Matrix device trust', () => {
   it('trusts only the protected server pin, never keys advertised by an arbitrary Matrix device list', async () => {
-    const fetch = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => list([{ deviceId: 'BROWSER_ONE', fingerprint }]));
+    const fetch = vi.fn(async (...args: Parameters<typeof globalThis.fetch>) => {
+      void args;
+      return list([{ deviceId: 'BROWSER_ONE', fingerprint }]);
+    });
     const { trust, trustPeer, signer } = fixture(fetch);
     expect(await trust.ensure()).toBe('active');
     expect(trustPeer).toHaveBeenCalledExactlyOnceWith('@owner:example', 'BROWSER_ONE', fingerprint);

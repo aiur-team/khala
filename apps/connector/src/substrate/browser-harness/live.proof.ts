@@ -12,6 +12,14 @@ import type { ParticipantId } from '@khala/contracts/messaging/index';
 import { proof } from '../../../../../experiments/backend/check';
 import { openMatrixConnectorSubstrate } from '../matrix';
 
+type PeerBridge = {
+  open(input: { baseUrl: string; userId: string; deviceId: string; accessToken: string }): Promise<{ ed25519: string }>;
+  send(roomId: string, body: string): Promise<{ event_id: string }>;
+  trust(userId: string, deviceId: string, fingerprint: string): Promise<boolean>;
+  rotate(roomId: string): Promise<void>;
+  decrypt(roomId: string, eventId: string): Promise<string>;
+};
+
 const experiment = fileURLToPath(new URL('../../../../../experiments/browser-crypto/', import.meta.url));
 function fixtureSynapse(baseUrl: string): string {
   const hostPort = new URL(baseUrl).port;
@@ -56,8 +64,8 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
       try {
         const page = await peer.newPage();
         await page.goto(peerOrigin);
-        await page.waitForFunction(() => !!(window as any).peer);
-        const aliceKeys = await page.evaluate(input => (window as any).peer.open(input), {
+        await page.waitForFunction(() => !!(globalThis as unknown as { peer?: PeerBridge }).peer);
+        const aliceKeys = await page.evaluate(input => (globalThis as unknown as { peer: PeerBridge }).peer.open(input), {
           baseUrl, userId: alice.user_id, deviceId: alice.device_id, accessToken: alice.access_token,
         }) as { ed25519: string };
         const input = {
@@ -68,7 +76,7 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         };
         substrate = await openMatrixConnectorSubstrate(input);
         const identity = substrate.fingerprint;
-        const untrusted = await page.evaluate(room => (window as any).peer.send(room, 'synthetic-unverified-recipient-denial'), roomId) as { event_id: string };
+        const untrusted = await page.evaluate(room => (globalThis as unknown as { peer: PeerBridge }).peer.send(room, 'synthetic-unverified-recipient-denial'), roomId) as { event_id: string };
         const beforeTrust = await substrate.source.read({ cursor: null, limit: 100 });
         assert.equal(beforeTrust.kind, 'page');
         if (beforeTrust.kind === 'page') {
@@ -77,13 +85,13 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         }
         await assert.rejects(substrate.trustPeer(alice.user_id, alice.device_id, 'wrong'), /matrix_fingerprint_mismatch/);
         assert.equal(await page.evaluate(({ userId, deviceId, fingerprint }) =>
-          (window as any).peer.trust(userId, deviceId, fingerprint),
+          (globalThis as unknown as { peer: PeerBridge }).peer.trust(userId, deviceId, fingerprint),
         { userId: bob.user_id, deviceId: bob.device_id, fingerprint: identity }), true);
         await substrate.trustPeer(alice.user_id, alice.device_id, aliceKeys.ed25519);
-        await page.evaluate(room => (window as any).peer.rotate(room), roomId);
+        await page.evaluate(room => (globalThis as unknown as { peer: PeerBridge }).peer.rotate(room), roomId);
         await assert.rejects(openMatrixConnectorSubstrate(input), /matrix_device_locked/);
         const marker = 'synthetic-verified-encrypted-replay';
-        const sent = await page.evaluate(({ roomId, marker }) => (window as any).peer.send(roomId, marker), { roomId, marker }) as { event_id: string };
+        const sent = await page.evaluate(({ roomId, marker }) => (globalThis as unknown as { peer: PeerBridge }).peer.send(roomId, marker), { roomId, marker }) as { event_id: string };
         const rawResponse = await fetch(`${baseUrl}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(sent.event_id)}`, {
           headers: { Authorization: `Bearer ${bob.access_token}` },
         });
@@ -105,7 +113,7 @@ test('real Synapse encrypted source: verified sender, replay, and durable same d
         const ownTxn = 'connector_send_transaction_001';
         const ownMessage = 'synthetic-connector-encrypted-send';
         const ownSent = await substrate.send(ownTxn, ownMessage);
-        assert.equal(await page.evaluate(({ room, eventId }) => (window as any).peer.decrypt(room, eventId),
+        assert.equal(await page.evaluate(({ room, eventId }) => (globalThis as unknown as { peer: PeerBridge }).peer.decrypt(room, eventId),
           { room: roomId, eventId: ownSent.eventId }), ownMessage);
         assert.deepEqual(await substrate.send(ownTxn, ownMessage), ownSent);
         await assert.rejects(substrate.send(ownTxn, 'changed transaction body'), /matrix_send_conflict/);
