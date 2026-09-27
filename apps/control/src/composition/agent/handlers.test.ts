@@ -10,6 +10,8 @@ describe('registerAgentHandlers', () => {
       { path: '/api/agent/bootstrap/descriptor', methods: ['GET'] },
       { path: '/api/agent/bootstrap/token', methods: ['POST'] },
       { path: '/api/agent/bootstrap/redeem', methods: ['POST'] },
+      { path: '/api/agent/bootstrap/refresh/challenge', methods: ['GET'] },
+      { path: '/api/agent/bootstrap/refresh', methods: ['POST'] },
       { path: '/api/agent/device-attestation/challenge', methods: ['GET'] },
       { path: '/api/agent/device-attestation/register', methods: ['POST'] },
       { path: '/api/agent/owner-mailbox/poll', methods: ['GET'] },
@@ -30,11 +32,11 @@ describe('registerAgentHandlers', () => {
       expect(response.status).toBe(503);
       expect(response.headers.get('cache-control')).toBe('no-store');
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
-      expect(await response.json()).toEqual(index >= 6 && index < 8
+      expect(await response.json()).toEqual(index >= 8 && index < 10
         ? { code: 'unavailable' }
-        : index < 6
+        : index < 8
         ? { code: 'feature_unavailable' }
-        : index < 16
+        : index < 18
           ? { v: 1, kind: 'rejected', code: 'feature_unavailable' }
           : { error: 'feature_unavailable' });
     }
@@ -48,7 +50,7 @@ describe('registerAgentHandlers', () => {
       status: { snapshot: async () => ({ generation: 0, agents: [] }) },
       pairing: () => [claim, result],
     });
-    expect(registrations.slice(8, 10)).toEqual([claim, result]);
+    expect(registrations.filter(route => route.path.startsWith('/api/agent/pairing/'))).toEqual([claim, result]);
   });
 
   it('places live channel-access registrations after status and pairing', () => {
@@ -84,7 +86,7 @@ describe('registerAgentHandlers', () => {
     });
 
     expect(registrations.at(-2)).toBe(token);
-    expect(registrations.slice(8, 10).map(route => route.path)).toEqual([
+    expect(registrations.filter(route => route.path.startsWith('/api/agent/pairing/')).map(route => route.path)).toEqual([
       '/api/agent/pairing/claim',
       '/api/agent/pairing/result',
     ]);

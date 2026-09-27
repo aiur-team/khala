@@ -193,6 +193,8 @@ describe('renderRouteManifest', () => {
       { path: '/api/agent/bootstrap/descriptor', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/bootstrap/token', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/bootstrap/redeem', methods: ['POST'], domain: 'agent' },
+      { path: '/api/agent/bootstrap/refresh/challenge', methods: ['GET'], domain: 'agent' },
+      { path: '/api/agent/bootstrap/refresh', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/device-attestation/challenge', methods: ['GET'], domain: 'agent' },
       { path: '/api/agent/device-attestation/register', methods: ['POST'], domain: 'agent' },
       { path: '/api/agent/owner-mailbox/poll', methods: ['GET'], domain: 'agent' },

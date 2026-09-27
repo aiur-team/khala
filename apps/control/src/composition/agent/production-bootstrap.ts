@@ -87,6 +87,7 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       admissionPolicy: dependencies.admissionPolicy,
       agents: dependencies.agents ?? matrixAgents.agents,
       agentDeviceSession: dependencies.agentDeviceSession ?? matrixAgents.deviceSession,
+      inspectOwnerMembership: active.matrix.inspectOwnerMembership,
       legacyMigrationWritesEnabled: false,
     });
     const attestation = createDeviceAttestationRoutes({

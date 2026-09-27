@@ -71,6 +71,14 @@ const unavailableBootstrapRoutes = Object.freeze([
     path: '/api/agent/bootstrap/redeem', methods: Object.freeze(['POST']),
     async handle() { return json(503, { code: 'feature_unavailable' }); },
   }),
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/bootstrap/refresh/challenge', methods: Object.freeze(['GET']),
+    async handle() { return json(503, { code: 'feature_unavailable' }); },
+  }),
+  Object.freeze<RouteRegistration>({
+    path: '/api/agent/bootstrap/refresh', methods: Object.freeze(['POST']),
+    async handle() { return json(503, { code: 'feature_unavailable' }); },
+  }),
 ]);
 
 const unavailableDeviceAttestationRoutes = Object.freeze([

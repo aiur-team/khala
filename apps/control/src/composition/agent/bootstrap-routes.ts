@@ -1,5 +1,5 @@
 import {
-  AUTHORIZE_PATH, DESCRIPTOR_PATH, REDEEM_PATH, TOKEN_PATH,
+  AUTHORIZE_PATH, DESCRIPTOR_PATH, REDEEM_PATH, TOKEN_PATH, REFRESH_CHALLENGE_PATH, REFRESH_PATH,
   type AgentBootstrapHandlers,
 } from '../../agent-bootstrap/handler';
 import type { RouteRegistration } from '../../runtime/handler';
@@ -34,6 +34,8 @@ export function createLazyBootstrapRoutes(load: LoadBootstrapHandlers): Readonly
       route('agent', DESCRIPTOR_PATH, ['GET']),
       route('agent', TOKEN_PATH, ['POST']),
       route('agent', REDEEM_PATH, ['POST']),
+      route('agent', REFRESH_CHALLENGE_PATH, ['GET']),
+      route('agent', REFRESH_PATH, ['POST']),
     ]),
   };
 }
