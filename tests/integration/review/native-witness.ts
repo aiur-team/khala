@@ -1,7 +1,7 @@
 // Test-only witness for one already-running Codex Sol TUI. The browser and
 // connector create the release; this reader never seeds a binding or inbox.
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
+import { lstatSync, readFileSync, type Stats } from 'node:fs';
 import { lstat, readFile, readlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -22,14 +22,14 @@ const digest = (value: string): string => createHash('sha256').update(value).dig
 /** The descriptor is metadata only, but private rollout paths remain owner-scoped. */
 export function readReviewNativeConfig(): NativeReviewConfig {
   const filename = process.env.KHALA_E2E_DISPOSABLE_ENV;
-  if (!absolute(filename)) fail('descriptor_path_required');
+  if (!absolute(filename)) return fail('descriptor_path_required');
   let raw: unknown;
   try {
     const info = lstatSync(filename);
     if (!privateFile(info, 64 * 1024)) fail('descriptor_unsafe');
     raw = JSON.parse(readFileSync(filename, 'utf8')) as unknown;
   } catch { return fail('descriptor_unavailable'); }
-  if (!object(raw) || !object(raw.reviewNative)) fail('descriptor_review_native_missing');
+  if (!object(raw) || !object(raw.reviewNative)) return fail('descriptor_review_native_missing');
   const native = raw.reviewNative;
   if (!Number.isSafeInteger(native.pid) || typeof native.startTicks !== 'string'
     || ![native.executable, native.workdir, native.cgroup, native.codexHome,
@@ -43,7 +43,7 @@ export function readReviewNativeConfig(): NativeReviewConfig {
     rolloutFile: native.rolloutFile as string };
 }
 
-function privateFile(file: Awaited<ReturnType<typeof lstat>>, maximum: number): boolean {
+function privateFile(file: Stats, maximum: number): boolean {
   return file.isFile() && !file.isSymbolicLink() && file.uid === process.getuid?.()
     && (file.mode & 0o077) === 0 && file.size <= maximum;
 }
@@ -53,10 +53,25 @@ function rows(raw: string): ObjectRow[] {
   return complete.split('\n').filter(Boolean).map(line => {
     try {
       const parsed: unknown = JSON.parse(line);
-      if (!object(parsed)) fail('jsonl_record_invalid');
+      if (!object(parsed)) return fail('jsonl_record_invalid');
       return parsed;
     } catch { return fail('jsonl_record_invalid'); }
   });
+}
+
+export function reviewRolloutIdentity(records: readonly Row[], sessionId: string, workdir: string): boolean {
+  let meta = false;
+  let latest: ObjectRow | null = null;
+  for (const item of records) {
+    if (!object(item.payload)) continue;
+    if (item.type === 'session_meta') {
+      if (item.payload.id !== sessionId || item.payload.cwd !== workdir
+        || item.payload.cli_version !== '0.157.1') return false;
+      meta = true;
+    }
+    if (item.type === 'turn_context') latest = item.payload;
+  }
+  return meta && latest?.model === 'gpt-6-sol' && latest.cwd === workdir;
 }
 
 /** Pins process, current model and private rollout to the protected binding's session. */
@@ -85,25 +100,14 @@ export async function nativeReviewBaseline(config: NativeReviewConfig, sessionId
     || source !== config.rolloutFile || !source.startsWith(path.join(config.codexHome, 'sessions') + path.sep)
     || !privateFile(sourceStat, 4 * 1024 * 1024)) fail('identity_mismatch');
   const raw = await readFile(config.rolloutFile, 'utf8');
-  let meta = false;
-  let latest: ObjectRow | null = null;
-  for (const item of rows(raw)) {
-    if (!object(item.payload)) continue;
-    if (item.type === 'session_meta') {
-      if (item.payload.id !== sessionId || item.payload.cwd !== config.workdir
-        || item.payload.cli_version !== '0.157.1') fail('session_mismatch');
-      meta = true;
-    }
-    if (item.type === 'turn_context') latest = item.payload;
-  }
-  if (!meta || latest?.model !== 'gpt-6-sol' || latest.cwd !== config.workdir) fail('model_mismatch');
+  if (!reviewRolloutIdentity(rows(raw), sessionId, config.workdir)) fail('model_or_session_mismatch');
   return { offset: raw.lastIndexOf('\n') + 1, sessionId, startTicks: config.startTicks,
     rolloutDevice: sourceStat.dev, rolloutInode: sourceStat.ino };
 }
 
 /** Source-only parser. A must be truly pending in the caller before this can count. */
 export function inspectSelectedOnlyInterval(input: Readonly<{
-  records: readonly Row[]; withheld: string; released: string; launcher: string;
+  records: readonly Row[]; withheld: string; released: string; launcher: string; workdir: string;
 }>): Readonly<{ visible: boolean; relayed: boolean; withheldAbsent: boolean; ackDigest: string | null }> {
   let visible = false;
   let relayed = false;
@@ -114,6 +118,9 @@ export function inspectSelectedOnlyInterval(input: Readonly<{
   for (const row of input.records) {
     const payload = row.payload;
     if (!object(payload)) continue;
+    // A switch away and back is still a mixed-model scenario, not Sol proof.
+    if (row.type === 'session_meta' || row.type === 'turn_context' &&
+      (payload.model !== 'gpt-6-sol' || payload.cwd !== input.workdir)) fail('interval_identity_mismatch');
     if (JSON.stringify(payload).includes(input.withheld)) withheldAbsent = false;
     if (row.type === 'response_item' && payload.type === 'message') {
       const content = JSON.stringify(payload.content ?? payload.message ?? '');
@@ -126,10 +133,15 @@ export function inspectSelectedOnlyInterval(input: Readonly<{
     }
     if (row.type !== 'response_item') continue;
     if (payload.type === 'custom_tool_call' && payload.name === 'exec'
-      && typeof payload.input === 'string' && payload.input.includes(input.launcher)
-      && typeof payload.call_id === 'string') {
-      const matched = /\bread\s+--ack\s+([A-Za-z0-9_-]{8,512})\b/u.exec(payload.input);
-      if (matched && token !== null && matched[1] === token) calls.set(payload.call_id, token);
+      && typeof payload.input === 'string' && typeof payload.call_id === 'string') {
+      // Inspect the actual exec_command cmd argument. A quoted instruction or an
+      // echo containing `read --ack` is not evidence that Khala was launched.
+      const argument = /\btools\.exec_command\(\s*\{\s*cmd\s*:\s*("(?:[^"\\]|\\.)*")/u.exec(payload.input);
+      let command: unknown;
+      try { command = argument ? JSON.parse(argument[1]!) : null; } catch { command = null; }
+      if (token !== null && command === `${input.launcher} read --ack ${token}`) {
+        calls.set(payload.call_id, token);
+      }
     }
     if (payload.type === 'custom_tool_call_output' && typeof payload.call_id === 'string'
       && typeof payload.output === 'string') {
@@ -170,7 +182,7 @@ export async function nativeSelectedOnlyProof(config: NativeReviewConfig, baseli
   const interval = rows(raw.slice(baseline.offset));
   const launcher = path.join(config.xdgDataHome, 'khala', 'bin', 'khala');
   const observed = inspectSelectedOnlyInterval({ records: interval, withheld: input.withheld,
-    released: input.released, launcher });
+    released: input.released, launcher, workdir: config.workdir });
   const bindingDirectory = digest(JSON.stringify([input.bindingId, input.generation]));
   // The CLI hashes this tuple using base64url, not hex.
   const encoded = Buffer.from(bindingDirectory, 'hex').toString('base64url');
