@@ -25,6 +25,12 @@ function success(result) {
   return result;
 }
 
+function refusalCode(result) {
+  assert.notEqual(result.code, 0, JSON.stringify(result));
+  const body = JSON.parse(result.out || result.err);
+  return body.code ?? body.error;
+}
+
 function readBodies(result) {
   success(result);
   return [...result.out.matchAll(/^canonicalReleaseJson:\n(.+)$/gm)]
@@ -63,7 +69,7 @@ test('packaged local quickstart connects two exact sessions with owner approval'
     const page = await browser.newPage();
     const externalRequests = [];
     await page.route('**/*', route => {
-      if (route.request().url().startsWith(report.origin)) return route.continue();
+      if (new URL(route.request().url()).origin === report.origin) return route.continue();
       externalRequests.push(route.request().url());
       return route.abort();
     });
@@ -86,6 +92,12 @@ test('packaged local quickstart connects two exact sessions with owner approval'
     const beaGrant = path.join(path.dirname(bea), 'grant.json');
     assert.equal(fs.existsSync(adaGrant), false);
     assert.equal(fs.existsSync(beaGrant), false);
+    for (const descriptor of [ada, bea]) {
+      const refusedSend = await command(bin, env, ['--internal-descriptor', descriptor, 'send'], 'before approval');
+      assert.equal(refusalCode(refusedSend), 'not_connected');
+      const refusedRead = await command(bin, env, ['--internal-descriptor', descriptor, 'read']);
+      assert.equal(refusalCode(refusedRead), 'not_connected');
+    }
     for (const name of ['Ada', 'Bea']) {
       await page.getByRole('link', { name: /Channel requests/ }).click();
       const row = page.getByRole('list', { name: 'Requests waiting for you' }).locator('.channel-requests__row', { hasText: name });
@@ -117,9 +129,11 @@ test('packaged local quickstart connects two exact sessions with owner approval'
     assert.deepEqual(externalRequests, [], 'the browser flow must need only localhost');
   } finally {
     await browser?.close();
-    if (launcher && launcher.exitCode === null) {
-      launcher.kill('SIGTERM');
-      await new Promise(resolve => launcher.once('close', resolve));
+    if (launcher && launcher.exitCode === null && launcher.signalCode === null) {
+      await new Promise(resolve => {
+        launcher.once('close', resolve);
+        launcher.kill('SIGTERM');
+      });
     }
     packageCleanup();
     removeScratch();
