@@ -1,6 +1,7 @@
 import { type KeyObject, createHash, createPublicKey, timingSafeEqual, verify } from 'node:crypto';
 import {
   type AccessRequestStatus, type ChannelAccessDecisionCommand, type ChannelAccessReadiness, type ChannelAccessDecisionRejection,
+  type ChannelAccessRevokeCommand, decodeChannelAccessRevokeCommand,
   type ChannelAccessMuteCommand, type ChannelAccessMuteResult, type ChannelAccessOwnerProjection, type ChannelAccessRequest,
   type ChannelAccessStatusQuery, type ChannelCreateIntent, type ChannelListingPage, type GrantExchangeRejection,
   type GrantExchangeRequest, type OperationResult, type RoomId, type SealedGrantEnvelope, decodeChannelAccessDecisionCommand,
@@ -88,6 +89,7 @@ export type DiscoveryActivationInput = Readonly<{
 export type DiscoveryActivation = Readonly<{ binding: SessionBinding; channelId: RoomId }>;
 
 export type SettingsMutationRejection = 'not_found' | 'stale_revision' | 'operation_mismatch' | 'unknown_principal' | 'wrong_generation';
+export type RequestRevokeRejection = 'forbidden' | 'not_found' | 'wrong_channel' | 'stale_revision' | 'connected' | 'operation_mismatch';
 
 /** Implemented by the internal composition; the server only authenticates, decodes and maps results. */
 export interface InternalDiscoveryPort {
@@ -120,6 +122,8 @@ export interface InternalDiscoveryPort {
   inbox(human: HumanAuthority): Promise<readonly ChannelAccessOwnerProjection[] | 'unavailable'>;
   decide(human: HumanAuthority, command: ChannelAccessDecisionCommand, kind: 'access' | 'create'):
     Promise<OperationResult<ChannelAccessOwnerProjection, ChannelAccessDecisionRejection>>;
+  revokeRequest(human: HumanAuthority, command: ChannelAccessRevokeCommand):
+    Promise<OperationResult<Readonly<{ v: 1; requestHandle: string; channelId: string; outcome: 'revoked'; revision: string; operationId: string }>, RequestRevokeRejection>>;
   mute(human: HumanAuthority, command: ChannelAccessMuteCommand):
     Promise<OperationResult<ChannelAccessMuteResult, 'forbidden' | 'not_found' | 'stale_revision' | 'operation_mismatch'>>;
   settings(human: HumanAuthority, channelId: string): Promise<DiscoverySettingsView | 'not_found' | 'unavailable'>;
@@ -159,6 +163,7 @@ export const DISCOVERY_ROUTES = {
   },
   inbox: { method: 'GET', path: '/api/human/channel-requests', admission: 'authenticated' },
   accessDecision: { method: 'POST', path: '/api/human/channel-access-requests/:requestHandle/decision', admission: 'authenticated' },
+  accessRevoke: { method: 'POST', path: '/api/human/channel-access-requests/:requestHandle/revoke', admission: 'authenticated' },
   createDecision: { method: 'POST', path: '/api/human/channel-create-requests/:requestHandle/decision', admission: 'authenticated' },
   mute: { method: 'POST', path: '/api/human/channel-requests/mute', admission: 'authenticated' },
   settings: { method: 'GET', path: '/api/human/channels/:channelId/discovery', admission: 'authenticated' },
@@ -179,6 +184,7 @@ const ROLES = new Map<RouteSpec, DiscoveryRole>([
   [DISCOVERY_ROUTES.ready, 'discovery'],
   [DISCOVERY_ROUTES.inbox, 'human'],
   [DISCOVERY_ROUTES.accessDecision, 'human'],
+  [DISCOVERY_ROUTES.accessRevoke, 'human'],
   [DISCOVERY_ROUTES.createDecision, 'human'],
   [DISCOVERY_ROUTES.mute, 'human'],
   [DISCOVERY_ROUTES.settings, 'human'],
@@ -505,6 +511,19 @@ export function createDiscoveryRoutes(deps: Readonly<{
     } else sendUnavailable(context, true);
   }
 
+  async function revokeRequest(context: RouteContext<Principal>): Promise<void> {
+    const decoded = decodeChannelAccessRevokeCommand(await readJsonObject(context, deps.maxBodyBytes));
+    if (!decoded.ok || decoded.value.requestHandle !== context.params.requestHandle) {
+      fail(context, 400, 'invalid_request');
+      return;
+    }
+    const result = await port.revokeRequest(humanOf(context), decoded.value);
+    if (result.kind === 'ok') sendJson(context.response, 200, result.value);
+    else if (result.kind === 'rejected') {
+      rejected(context, result.code === 'forbidden' ? 403 : result.code === 'not_found' ? 404 : 409, result.code);
+    } else sendUnavailable(context, true);
+  }
+
   async function mute(context: RouteContext<Principal>): Promise<void> {
     const decoded = decodeChannelAccessMuteCommand(await readJsonObject(context, deps.maxBodyBytes));
     if (!decoded.ok) {
@@ -560,6 +579,7 @@ export function createDiscoveryRoutes(deps: Readonly<{
         case DISCOVERY_ROUTES.ready: return ready(context);
         case DISCOVERY_ROUTES.inbox: return inbox(context);
         case DISCOVERY_ROUTES.accessDecision: return decide(context, 'access');
+        case DISCOVERY_ROUTES.accessRevoke: return revokeRequest(context);
         case DISCOVERY_ROUTES.createDecision: return decide(context, 'create');
         case DISCOVERY_ROUTES.mute: return mute(context);
         case DISCOVERY_ROUTES.settings: return settings(context);

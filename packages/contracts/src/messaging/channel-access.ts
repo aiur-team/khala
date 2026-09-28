@@ -107,6 +107,14 @@ export type ChannelAccessDecisionCommand = Readonly<{
   operationId: string;
 }>;
 
+export type ChannelAccessRevokeCommand = Readonly<{
+  v: 1;
+  requestHandle: ChannelAccessRequestHandle;
+  channelId: string;
+  expectedRevision: string;
+  operationId: string;
+}>;
+
 export type ChannelAccessMuteCommand = Readonly<{
   v: 1;
   requestHandle: ChannelAccessRequestHandle;
@@ -484,6 +492,19 @@ export function decodeChannelAccessDecisionCommand(input: unknown): Decoded<Chan
       requestHandle: readRequestHandle(r.field('requestHandle'), r.at('requestHandle')),
       expectedRevision: identifier(r.field('expectedRevision'), r.at('expectedRevision')),
       decision: literal(r.field('decision'), r.at('decision'), ['approve', 'deny']),
+      operationId: identifier(r.field('operationId'), r.at('operationId')),
+    };
+  });
+}
+
+export function decodeChannelAccessRevokeCommand(input: unknown): Decoded<ChannelAccessRevokeCommand> {
+  return decodeWith(() => {
+    const r = object(input, '', ['v', 'requestHandle', 'channelId', 'expectedRevision', 'operationId']);
+    return {
+      v: version(r.field('v'), r.at('v')),
+      requestHandle: readRequestHandle(r.field('requestHandle'), r.at('requestHandle')),
+      channelId: identifier(r.field('channelId'), r.at('channelId')),
+      expectedRevision: identifier(r.field('expectedRevision'), r.at('expectedRevision')),
       operationId: identifier(r.field('operationId'), r.at('operationId')),
     };
   });

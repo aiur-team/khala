@@ -90,6 +90,7 @@ export {
   type ChannelAccessRequesterProjection, type ChannelAccessRequestHandle, type ChannelAccessRequestJournalPort,
   type ChannelAccessResolutionPort, type ChannelAccessResolutionResult, type ChannelAccessResolvedTarget,
   type ChannelAccessRevalidationResult, type ChannelAccessStatusQuery, type ChannelCreateAuthorization,
+  type ChannelAccessRevokeCommand, decodeChannelAccessRevokeCommand,
   type ChannelCreateResolutionResult, type ChannelCreateResolvedTarget, type ChannelCreateRevalidationResult,
   CHANNEL_ACCESS_COOLDOWN_MS, CHANNEL_ACCESS_OWNER_OUTCOMES, CHANNEL_ACCESS_REQUEST_LIFETIME_MS,
   CHANNEL_ACCESS_SENSITIVE_RETENTION_MS, MAX_CHANNEL_ACCESS_LABEL_BYTES, MAX_CHANNEL_ACCESS_NOTIFICATIONS_PER_MINUTE,

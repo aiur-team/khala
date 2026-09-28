@@ -112,6 +112,15 @@ describe('an unjoined agent cannot admit itself through channel discovery', () =
           expect(decided.status, `${which} ${route.path}`).toBe(403);
         }
       }
+      const revoke = DISCOVERY_ROUTES.accessRevoke;
+      const refusedRevoke = add(id(revoke), await call(world.origin, {
+        method: 'POST', path: revoke.path.replace(':requestHandle', requests[0]!.requestHandle), headers,
+        body: {
+          v: 1, requestHandle: requests[0]!.requestHandle, channelId: world.own,
+          expectedRevision: requests[0]!.revision, operationId: `forged-revoke-${which}`,
+        },
+      }));
+      expect(refusedRevoke.status, `${which} ${revoke.path}`).toBe(403);
       const reads = [DISCOVERY_ROUTES.inbox, DISCOVERY_ROUTES.settings, DISCOVERY_ROUTES.agents];
       for (const route of reads) {
         const read = add(id(route), await call(world.origin, { path: route.path.replace(':channelId', world.other), headers }));

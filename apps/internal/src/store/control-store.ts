@@ -1,4 +1,5 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import type { DatabaseSync } from 'node:sqlite';
 import {
   type CompareAndSetInput, type ControlRecord, type ControlStore, type JsonValue, type TrustedClock, isRecordLive,
   sameJsonValue,
@@ -19,6 +20,37 @@ type RecordRow = Readonly<{
   expires_at: string | null;
 }>;
 
+type RevocableRequest = Readonly<{
+  outcome: string;
+  requester: string;
+  origin: string;
+  operationId: string;
+  sessionGeneration: number;
+}>;
+
+/** The journal and bindings share this SQLite transaction. A revoked request's exact binding
+ * loses authority at the same durable commit as its journal transition. */
+function fenceJournalRevocations(db: DatabaseSync, before: string | null, after: JsonValue): void {
+  const requests = (value: unknown): Record<string, RevocableRequest> => {
+    if (typeof value !== 'object' || value === null || !('requests' in value)
+      || typeof value.requests !== 'object' || value.requests === null) throw new Error('invalid journal');
+    return value.requests as Record<string, RevocableRequest>;
+  };
+  const previous = before === null ? {} : requests(JSON.parse(before));
+  for (const [key, row] of Object.entries(requests(after))) {
+    if (row.outcome !== 'revoked' || previous[key]?.outcome === 'revoked') continue;
+    if (typeof row.requester !== 'string' || typeof row.origin !== 'string'
+      || typeof row.operationId !== 'string' || !Number.isSafeInteger(row.sessionGeneration)) {
+      throw new Error('invalid revoked request');
+    }
+    const activationKey = createHash('sha256').update([
+      'khala.internal.activation.v1', row.requester, row.origin, row.operationId,
+    ].join('\0')).digest('base64url');
+    db.prepare("UPDATE bindings SET status = 'revoked' WHERE binding_id = ? AND generation = ?")
+      .run(`binding_${activationKey}`, row.sessionGeneration);
+  }
+}
+
 function toRecord<T extends JsonValue>(row: RecordRow): ControlRecord<T> {
   return {
     key: row.record_key,
@@ -30,6 +62,14 @@ function toRecord<T extends JsonValue>(row: RecordRow): ControlRecord<T> {
 }
 
 export function createSqliteControlStore(handle: InternalStoreHandle, clock: TrustedClock): ControlStore {
+  // A process can die after a late activation inserted a binding but before its
+  // post-activation journal check revoked it. Repair that exact binding before
+  // the resumed server can authenticate it.
+  handle.transaction(db => {
+    const row = db.prepare("SELECT value FROM control_records WHERE record_key = 'channel-access.journal.v1'")
+      .get() as { value: string } | undefined;
+    if (row) fenceJournalRevocations(db, null, JSON.parse(row.value) as JsonValue);
+  });
   const live = (row: RecordRow | undefined): RecordRow | undefined =>
     row && isRecordLive({ expiresAt: row.expires_at }, clock()) ? row : undefined;
 
@@ -81,6 +121,9 @@ export function createSqliteControlStore(handle: InternalStoreHandle, clock: Tru
           db.prepare(`
             INSERT INTO control_operations (operation_id, record_key, revision, value, expires_at) VALUES (?, ?, ?, ?, ?)
           `).run(row.operation_id, row.record_key, row.revision, row.value, row.expires_at);
+          if (input.key === 'channel-access.journal.v1') {
+            fenceJournalRevocations(db, current?.value ?? null, input.next.value);
+          }
           return { kind: 'applied' as const, record: toRecord<T>(row) };
         });
       } catch {
