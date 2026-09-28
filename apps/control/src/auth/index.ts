@@ -36,6 +36,7 @@ export type AuthServiceOptions = Readonly<{
   /** Configured session lifetime; the module has no default so the deployment records its policy. */
   sessionTtlMs: number;
   loginTtlMs: number;
+  allowInsecureLoopback?: boolean;
   log?: (entry: AuthDiagnostic) => void;
 }>;
 
@@ -77,7 +78,8 @@ export interface AuthService {
 
 export function createAuthService(options: AuthServiceOptions): AuthService {
   const origin = new URL(options.origin);
-  if (origin.protocol !== 'https:' || origin.origin !== options.origin) {
+  const loopback = origin.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+  if (!(origin.protocol === 'https:' || options.allowInsecureLoopback === true && loopback) || origin.origin !== options.origin) {
     throw new Error('auth origin must be an exact https origin');
   }
   for (const ttl of [options.sessionTtlMs, options.loginTtlMs]) {

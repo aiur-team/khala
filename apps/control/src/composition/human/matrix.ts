@@ -28,6 +28,7 @@ type Fetch = typeof globalThis.fetch;
 
 export type MatrixHumanOptions = Readonly<{
   homeserverOrigin: string;
+  allowInsecureLoopback?: boolean;
   serverName: string;
   registrationSharedSecret: string;
   registrationIngressToken?: string | null;
@@ -80,9 +81,10 @@ export type MatrixRoomSenderDevice = Readonly<{ matrixUserId: string; deviceId: 
 
 type MatrixLogin = Readonly<{ userId: string; accessToken: string; deviceId: DeviceId }>;
 
-function exactHttpsOrigin(value: string): string {
+function exactHttpsOrigin(value: string, allowInsecureLoopback = false): string {
   const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password || url.origin !== value
+  const loopback = allowInsecureLoopback && url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (!(url.protocol === 'https:' || loopback) || url.username || url.password || url.origin !== value
     || url.pathname !== '/' || url.search || url.hash) throw new Error('Matrix origin must be an exact https origin');
   return url.origin;
 }
@@ -112,7 +114,7 @@ function matrixRoom(roomId: RoomId, title: string | null): RoomSummary {
 }
 
 export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHumanServices {
-  const homeserverOrigin = exactHttpsOrigin(options.homeserverOrigin);
+  const homeserverOrigin = exactHttpsOrigin(options.homeserverOrigin, options.allowInsecureLoopback);
   const serverName = validateServerName(options.serverName);
   const registrationSecret = requireSecret(options.registrationSharedSecret, 'Matrix registration shared secret');
   const registrationIngressToken = options.registrationIngressToken

@@ -28,8 +28,9 @@ function exactHttpsOrigin(value: string): string {
   } catch {
     throw new Error('human route origin must be an exact https origin');
   }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.origin !== value || parsed.pathname !== '/' || parsed.search || parsed.hash) {
-    throw new Error(parsed.protocol !== 'https:' ? 'human route origin must be an https origin' : 'human route origin must be an exact origin');
+  const loopback = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  if (!(parsed.protocol === 'https:' || loopback) || parsed.username || parsed.password || parsed.origin !== value || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error(!loopback && parsed.protocol !== 'https:' ? 'human route origin must be an https origin' : 'human route origin must be an exact origin');
   }
   return parsed.origin;
 }

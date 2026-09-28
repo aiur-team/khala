@@ -92,7 +92,8 @@ export type HumanBrowserApi = Readonly<{
 
 function exactHttpsOrigin(value: string): string {
   const parsed = new URL(value);
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.origin !== value
+  const loopback = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  if (!(parsed.protocol === 'https:' || loopback) || parsed.username || parsed.password || parsed.origin !== value
     || parsed.pathname !== '/' || parsed.search || parsed.hash) {
     throw new Error('human browser API origin must be an exact https origin');
   }
