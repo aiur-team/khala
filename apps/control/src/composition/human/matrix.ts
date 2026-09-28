@@ -70,6 +70,8 @@ export type MatrixHumanServices = Readonly<{
   gateway: AdmissionGateway;
   /** Recheck a bound owner's live Matrix membership without accepting a caller-supplied principal. */
   inspectOwnerMembership(ownerId: OwnerId, roomId: RoomId): Promise<GatewayInspection>;
+  /** Read the durable creator authority for a room; null is never ownership proof. */
+  inspectRoomAuthority(roomId: RoomId): Promise<OwnerId | null>;
   /** Inventory only: callers must hold/fence adapter sends before trusting a rotation result. */
   inspectRoomSenderDevices(ownerId: OwnerId, roomId: RoomId, call?: CallOptions): Promise<
     Readonly<{ kind: 'ok'; senders: readonly MatrixRoomSenderDevice[] }> | Readonly<{ kind: 'unavailable' }>
@@ -565,5 +567,6 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     },
   };
 
-  return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner, inspectRoomSenderDevices };
+  return { directory, sessions, authority, gateway, inspectOwnerMembership: membershipForOwner,
+    inspectRoomAuthority: roomAuthority, inspectRoomSenderDevices };
 }
