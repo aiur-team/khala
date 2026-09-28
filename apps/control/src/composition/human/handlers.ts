@@ -408,7 +408,7 @@ const unavailableBootstrapRoutes = Object.freeze([
   unavailableRoute('/api/human/agent-bootstrap/authorize', ['GET', 'POST']),
 ]);
 
-const unavailableChannelAccessRoutes = Object.freeze([
+export const unavailableChannelAccessRoutes = Object.freeze([
   unavailableRoute('/api/human/channel-access/inbox', ['GET']),
   unavailableRoute('/api/human/channel-access/decision', ['POST']),
   unavailableRoute('/api/human/channel-access/mute', ['POST']),
