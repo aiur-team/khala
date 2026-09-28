@@ -61,7 +61,7 @@ describe('ChannelRequestsInbox', () => {
   it('shows one error when the inbox could not load', () => {
     const html = render(ready([], { phase: 'load_failed', status: { kind: 'refresh_failed' } }));
     expect(text(html)).toContain('Requests could not load.');
-    expect(text(html)).not.toContain('Could not refresh channel requests.');
+    expect(text(html)).not.toContain('Refresh failed.');
     expect(html).toContain('Reload requests');
   });
 
@@ -155,7 +155,7 @@ describe('ChannelRequestsInbox', () => {
       [{ kind: 'mute_failed', code: 'forbidden' }, 'You no longer own this channel'],
       [{ kind: 'mute_failed', code: 'unavailable' }, 'Could not reach the server. Nothing was changed'],
       [{ kind: 'mute_failed', code: 'unknown' }, 'Could not confirm whether that change was saved.'],
-      [{ kind: 'refresh_failed' }, 'Could not refresh channel requests.'],
+      [{ kind: 'refresh_failed' }, 'Refresh failed.'],
     ];
     for (const [status, message] of cases) {
       expect(render(ready([], { status }))).toMatch(new RegExp(`<p role="status" aria-live="polite"[^>]*>${message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));

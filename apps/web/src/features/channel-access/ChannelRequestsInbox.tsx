@@ -64,7 +64,7 @@ function statusMessage(status: InboxStatus): string {
     case 'authority_lost':
       return 'You can no longer decide these requests. Only the current channel owner can.';
     case 'refresh_failed':
-      return 'Could not refresh channel requests. Showing the last list.';
+      return 'Refresh failed. Showing the last list.';
   }
 }
 
