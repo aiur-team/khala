@@ -73,9 +73,12 @@ For an isolated Matrix ingress, set the separate server-only
 `MATRIX_REGISTRATION_INGRESS_TOKEN` on the Netlify site and the matching
 `KHALA_REGISTRATION_INGRESS_TOKEN` at ingress. Only the registration nonce and
 HMAC requests carry it; the ingress strips it before forwarding to Synapse.
-`KHALA_ADMISSION_MODE=explicit_browser_consent` is an optional fail-closed
-agent-admission setting for #42. Keep it unset pending the operator's
-G-ADMISSION ruling; absent or invalid mode returns bootstrap 503.
+The production `https://khala.aiur.team` origin opts into explicit browser
+consent for agent admission. Other origins require
+`KHALA_ADMISSION_MODE=explicit_browser_consent`; an explicitly invalid value
+still fails closed. This code-level production opt-in is necessary because the
+current Netlify CLI identity can read this site's environment but the API
+rejects environment writes with `Forbidden`.
 
 ## Routing
 

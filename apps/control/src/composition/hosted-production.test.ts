@@ -18,10 +18,10 @@ const stores = (): BlobsStoreLike => ({
   getWithMetadata: async () => null, setJSON: async () => ({ modified: true, etag: '1' }),
 });
 
-function gateway(mode?: string) {
+function gateway(mode?: string, appOrigin = origin) {
   return createGateway({
-    registrations: registerHostedProductionRoutes({ env: { ...env, KHALA_ADMISSION_MODE: mode }, stores }),
-    absentPrefixes: [], appOrigin: origin,
+    registrations: registerHostedProductionRoutes({ env: { ...env, PUBLIC_APP_ORIGIN: appOrigin, KHALA_ADMISSION_MODE: mode }, stores }),
+    absentPrefixes: [], appOrigin,
   });
 }
 
@@ -32,15 +32,15 @@ describe('generated hosted production composition', () => {
       expect(routes.filter(route => route.path === '/api/human/channel-closure')).toHaveLength(1);
     }
   });
-  it('keeps bootstrap and device attestation unavailable without the exact product mode', async () => {
-    for (const mode of [undefined, '', 'automatic_same_computer', 'explicit_browser_consant']) {
-      const route = gateway(mode);
-      const descriptor = await route(new Request(`${origin}/api/agent/bootstrap/descriptor?link=${encodeURIComponent(`${origin}/join/inv_abcdefgh`)}`));
-      const consent = await route(new Request(`${origin}/api/human/agent-bootstrap/authorize`));
+  it('keeps bootstrap and device attestation unavailable on other origins or with an invalid explicit mode', async () => {
+    for (const [mode, appOrigin] of [[undefined, 'https://preview.example.test'], ['', origin], ['automatic_same_computer', origin], ['explicit_browser_consant', origin]] as const) {
+      const route = gateway(mode, appOrigin);
+      const descriptor = await route(new Request(`${appOrigin}/api/agent/bootstrap/descriptor?link=${encodeURIComponent(`${appOrigin}/join/inv_abcdefgh`)}`));
+      const consent = await route(new Request(`${appOrigin}/api/human/agent-bootstrap/authorize`));
       expect(descriptor.status).toBe(503);
       expect(consent.status).toBe(503);
-      expect((await route(new Request(`${origin}/api/agent/device-attestation/challenge`))).status).toBe(503);
-      expect((await route(new Request(`${origin}/api/human/owner-device-proof/challenge?room_id=!room:matrix.example.test&device_id=OWNER`))).status).toBe(503);
+      expect((await route(new Request(`${appOrigin}/api/agent/device-attestation/challenge`))).status).toBe(503);
+      expect((await route(new Request(`${appOrigin}/api/human/owner-device-proof/challenge?room_id=!room:matrix.example.test&device_id=OWNER`))).status).toBe(503);
     }
   });
 
@@ -61,5 +61,14 @@ describe('generated hosted production composition', () => {
     expect(consent.headers.get('cache-control')).toBe('no-store');
     const ownerProof = await route(new Request(`${origin}/api/human/owner-device-proof/challenge?room_id=!room:matrix.example.test&device_id=OWNER`));
     expect(ownerProof.status).toBe(401);
+  });
+  it('enables explicit browser consent on the opted-in production origin when Netlify cannot set the flag', async () => {
+    const route = gateway();
+    const descriptor = await route(new Request(`${origin}/api/agent/bootstrap/descriptor?link=${encodeURIComponent(`${origin}/join/inv_abcdefgh`)}`));
+    expect(descriptor.status).toBe(200);
+    const revocation = await route(new Request(`${origin}/api/human/revocation/targets?roomId=!room:matrix.example.test`));
+    expect(revocation.status).toBe(401);
+    const send = await route(new Request(`${origin}/api/human/room-send/inspect`, { method: 'POST', headers: { origin } }));
+    expect(send.status).toBe(400);
   });
 });
