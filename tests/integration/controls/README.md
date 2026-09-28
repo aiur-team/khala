@@ -53,20 +53,106 @@ client. These are local checks, not a real-service acceptance run.
 
 ## Not yet proven, and why
 
-No `*.spec.ts` lives here yet. A skipped or fixture-backed spec must not count as a pass.
+`manual-owner-controls.spec.ts` is a fail-closed live driver. It has not been run
+and is not acceptance evidence. It uses the deployed HTTPS control routes, two
+real OAuth sessions and a real, pre-paired local connector process. It exercises
+the mounted owner panel, connector acknowledgment, wrong-owner refusal, two-tab
+version conflict, a browser reply lost *after* the actual submit, and a restart
+of the same process/session. Its final review-mode check is only the manual
+resume boundary; it does not prove a post-re-arm event was withheld from the
+model. No skipped or fixture-backed spec counts as a pass.
 
 - **Real protected-browser and process proof.** The owner mailbox route, production
   client, SQLite trust journal, initial policy and panel mount now exist, but the
   mounted browser fixture uses a scripted client. A disposable live run must prove
   wrong-owner/model refusal, exact connector acknowledgment, stale-version conflict,
-  transport loss, restart reconciliation and re-arm against the actual process.
+  transport loss, restart reconciliation and event-level re-arm against the actual
+  process. The new driver covers wrong-owner denial, acknowledgment, conflict,
+  transport loss and restart, but has no qualifying run. Model-surface refusal
+  and post-re-arm native model input remain unobserved.
 - **Live races.** U2 needs a disposable runtime with fault and barrier hooks between an
   incoming event, dispatch and a restrictive control. U3 is blocked by the gates above.
 
 ## Live run, once the prerequisites exist
 
 Follow `tests/integration/human/README.md` for disposable identities, deployment and an
-already-running harness session. Then:
+already-running harness session. The same secret-free JSON descriptor must also
+contain:
+
+```json
+{
+  "controls": {
+    "roomId": "!disposable-room:server",
+    "bindingId": "binding-from-real-pairing",
+    "agentParticipantId": "agent-from-real-pairing",
+    "connectorControl": {
+      "executable": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/tests/integration/controls/connector-control.mjs", "/absolute/path/to/private-control.json"],
+      "processExecutable": "/absolute/path/to/node",
+      "processCwd": "/absolute/path/to/disposable-agent-workspace",
+      "processCgroup": "/user.slice/user-1000.slice/.../khala-e2e-connector-aabbccddeeff.service"
+    }
+  }
+}
+```
+
+The operator must approve and provision a disposable hosted deployment with
+real OIDC, Matrix/Synapse, persistent control store and explicit browser
+admission, plus a pre-paired owner connector attached to an already-running
+supported native session. The descriptor's first OAuth user owns `roomId` and
+the binding; the second user has a separate real identity. The agent participant
+and binding IDs must come from the deployed binding, not a seeded stand-in.
+The local `connectorControl` executable is a process supervisor adapter, not an
+HTTP or mailbox substitute: `<args> status` reports JSON
+`{pid,bindingId,generation,sessionId}` for the live process, while `<args> restart`
+restarts that exact connector and reports the same fields with a new PID. It
+must refuse any other instance, preserve the native session and durable store,
+return within 30 seconds, and keep secrets out of stdout/stderr. The test also
+checks `/proc/<pid>` executable, working directory, exact cgroup, start time
+and that the old process has exited. This lifecycle adapter does not
+decide owner authority or policy; all commands still cross production routes.
+`connector-control.mjs` implements this contract for one systemd user unit. Its
+private config file (owned by the current user, mode 0600) has this shape:
+
+```json
+{
+  "v": 1,
+  "unit": "khala-e2e-connector-aabbccddeeff.service",
+  "unitFragment": "/absolute/path/to/user/unit/file",
+  "harness": "codex",
+  "sessionId": "the-existing-native-thread-id",
+  "bindingId": "binding-from-real-pairing",
+  "generation": 1,
+  "stateRoot": "/absolute/path/to/XDG_STATE_HOME/khala/hosted",
+  "workdir": "/absolute/path/to/the-native-session-workspace",
+  "processExecutable": "/absolute/path/to/node",
+  "processCwd": "/absolute/path/to/the-native-session-workspace",
+  "processCgroup": "/exact/user.slice/path/to/khala-e2e-connector-aabbccddeeff.service"
+}
+```
+
+The adapter accepts only a `khala-e2e-connector-<12 hex>.service` owned user
+unit. It compares systemd's MainPID, unit fragment and control group with the
+actual `/proc` process and the stored `current-binding.json` at the production
+session hash. It restarts only that exact unit and refuses changed session,
+binding, generation or process identity. The unit must launch or resume the
+*same* provider-named Codex session with the installed Khala MCP entry and
+already established binding; `khala mcp-serve` from an ordinary shell has no
+provider thread metadata and does not create an active owner connector by
+itself. This change does not provision a unit or start a native process.
+After restart, the test must still get a fresh connector status through the
+protected mailbox, so a PID-only restart cannot count as success.
+
+The driver also requires the deployed browser bundle to include the owner
+controls wiring and the connector to inspect a *tested* manual route. A disabled
+button or unavailable status is a failure. Full event-level re-arm proof needs
+an admitted disposable sender, a synthetic event after the effective review
+barrier, and an independent observation of the actual native session showing
+that event absent until exact owner approval. Do not claim that result from a
+policy status, queue receipt or scripted transport. The current descriptor has
+no native transcript witness for this check.
+
+Run only after these prerequisites are approved and available:
 
 ```sh
 KHALA_E2E_LIVE=1 \
@@ -76,3 +162,9 @@ pnpm test:integration tests/integration/controls
 
 Evidence joins command ID, requested and enforced policy versions, and UI state. Use
 `projectControls` for it, never raw status or message content.
+
+The older `docs/evidence/collaboration-acceptance.md` describes an Executor
+ruling for P02/G-AUTOMATION, while the current #44 plan and this README still
+hold P02/P08/G-AUTOMATION open for hosted controls. This source change records
+the conflict without treating either document as permission to enable `auto`,
+browser-closed delivery or a budget policy.
