@@ -168,6 +168,71 @@ describe('createBrowserRecoveryPort', () => {
     expect(await ports.ui.inspectClosure('close_1')).toMatchObject({ kind: 'ok', value: { state: 'partial' } });
   });
 
+  it('fences stale owner actions and targets after an account switch', async () => {
+    const device = fakeDevice(ready);
+    let current: IdentityState = { kind: 'signed_in', principal };
+    let identityUnavailable = false;
+    const ownerIdentity: IdentityPort = { ...identity(), current: async () => {
+      if (identityUnavailable) throw new Error('identity_unavailable');
+      return current;
+    } };
+    const progress = { operationId: 'revoke-1', targetKind: 'binding', targetId: 'bnd_1', generation: 4, state: 'partial' } as const;
+    const revocation: BrowserRevocation = {
+      targets: () => [{ targetKind: 'binding', targetId: 'bnd_1' as BindingId, expectedGeneration: 3 }],
+      revoke: vi.fn(async () => ok(progress as never)),
+      inspect: vi.fn(async () => ok(progress as never)),
+    };
+    const capability = { ownerId: principal.ownerId, roomId: 'room_1' as never, expectedRoomRevision: 0,
+      available: true, unavailableReason: null, consequences: CLOSURE_CONSEQUENCES } as const;
+    const closure: BrowserClosure = {
+      currentCapability: vi.fn(async () => capability),
+      closeRoom: vi.fn(async input => ok({ operationId: input.operationId, state: 'complete' as const, reason: null })),
+      inspectClosure: vi.fn(async operationId => ok({ operationId, state: 'complete' as const, reason: null })),
+    };
+    const ports = createBrowserRecoveryPort({ principal, identity: ownerIdentity, device: device.port, revocation, closure });
+    await settled();
+    expect(ports.ui.snapshot().revocationTargets).toHaveLength(1);
+    expect(ports.ui.snapshot().closure).toEqual(capability);
+
+    // Even before a pending view refresh, an action must recheck the provider subject.
+    current = { kind: 'signed_in', principal: { ...principal, providerSubject: 'other-subject' } };
+    const revoke = { operationId: 'revoke-1', targetKind: 'binding', targetId: 'bnd_1' as BindingId, expectedGeneration: 3 } as const;
+    const close = { operationId: 'close-1', ownerId: principal.ownerId, roomId: capability.roomId, expectedRoomRevision: 0 };
+    expect(await ports.ui.revoke(revoke)).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await ports.ui.inspectRevocation('revoke-1')).toEqual({ kind: 'rejected', code: 'not_found' });
+    expect(await ports.ui.closeRoom(close)).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await ports.ui.inspectClosure('close-1')).toEqual({ kind: 'rejected', code: 'not_found' });
+    await ports.refresh();
+    expect(ports.ui.snapshot().revocationTargets).toEqual([]);
+    expect(ports.ui.snapshot().closure).toBeNull();
+
+    current = { kind: 'signed_in', principal: { ...principal, ownerId: 'other-owner' as OwnerId } };
+    await ports.refresh();
+    expect(ports.ui.snapshot().revocationTargets).toEqual([]);
+    expect(ports.ui.snapshot().closure).toBeNull();
+    expect(await ports.ui.revoke(revoke)).toEqual({ kind: 'rejected', code: 'forbidden' });
+
+    current = { kind: 'signed_in', principal };
+    identityUnavailable = true;
+    expect(await ports.ui.revoke(revoke)).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(await ports.ui.closeRoom(close)).toEqual({ kind: 'rejected', code: 'forbidden' });
+    expect(revocation.revoke).not.toHaveBeenCalled();
+    expect(revocation.inspect).not.toHaveBeenCalled();
+    expect(closure.closeRoom).not.toHaveBeenCalled();
+    expect(closure.inspectClosure).not.toHaveBeenCalled();
+  });
+
+  it('keeps owner identity and closure usable when optional revocation target lookup fails', async () => {
+    const device = fakeDevice(ready);
+    const capability = { ownerId: principal.ownerId, roomId: 'room_1' as never, expectedRoomRevision: 0,
+      available: true, unavailableReason: null, consequences: CLOSURE_CONSEQUENCES } as const;
+    const revocation = { targets: () => { throw new Error('control_unavailable'); } } as unknown as BrowserRevocation;
+    const closure = { currentCapability: async () => capability } as unknown as BrowserClosure;
+    const ports = createBrowserRecoveryPort({ principal, identity: identity(), device: device.port, revocation, closure });
+    await ports.refresh();
+    expect(ports.ui.snapshot()).toMatchObject({ identity: { kind: 'signed_in' }, revocationTargets: [], closure: capability });
+  });
+
   it('ignores a device view from a replaced generation and publishes the current one', async () => {
     const device = fakeDevice(ready);
     const ports = createBrowserRecoveryPort({ principal, identity: identity(), device: device.port });

@@ -5,7 +5,7 @@
 
 import {
   type AuthPrincipal, type ClosureCapability, type ClosurePort, type DevicePort, type DeviceView, type IdentityPort, type IdentityState, type RecoveryCapabilities,
-  type RevocationPort, type RoomId, rejected, unavailable,
+  type RevocationPort, type RoomId, rejected, sameProviderIdentity, unavailable,
 } from '@khala/contracts/messaging/index';
 import { createRecoveryService } from '@khala/messaging/recovery/index';
 import type {
@@ -121,6 +121,11 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
   let disposed = false;
   let snapshot: RecoverySnapshot = build();
 
+  function matchesOwner(state: IdentityState): boolean {
+    return state.kind === 'signed_in' && state.principal.ownerId === deps.principal.ownerId
+      && sameProviderIdentity(state.principal, deps.principal);
+  }
+
   const service = createRecoveryService({
     ownerId: deps.principal.ownerId,
     identity: {
@@ -139,8 +144,8 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
       history: historyOf(device),
       connection: deps.connection?.() ?? 'unknown',
       recovery,
-      revocationTargets: identity.kind === 'signed_in' ? revocationTargets : [],
-      closure: identity.kind === 'signed_in' && identity.principal.ownerId === deps.principal.ownerId ? closure : null,
+      revocationTargets: matchesOwner(identity) ? revocationTargets : [],
+      closure: matchesOwner(identity) ? closure : null,
     };
   }
 
@@ -148,6 +153,16 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     if (disposed) return;
     snapshot = build();
     for (const listener of [...listeners]) listener();
+  }
+
+  async function ownerCurrent(): Promise<boolean> {
+    if (disposed) return false;
+    try {
+      const state = await deps.identity.current();
+      return !disposed && matchesOwner(state);
+    } catch {
+      return false;
+    }
   }
 
   async function refresh(): Promise<void> {
@@ -159,7 +174,7 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     try {
       [nextIdentity, nextRecovery, nextClosure, nextTargets] = await Promise.all([
         deps.identity.current(), service.capabilities(), deps.closure?.currentCapability().catch(() => null) ?? Promise.resolve(null),
-        deps.revocation?.targets() ?? Promise.resolve([]),
+        Promise.resolve().then(() => deps.revocation?.targets() ?? []).catch(() => []),
       ]);
     } catch {
       nextIdentity = { kind: 'unavailable', retryable: true };
@@ -196,24 +211,25 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     inspectRecovery: (operationId, options) => service.inspect(operationId, options),
     async revoke(input, options) {
       if (!deps.revocation || disposed) return unavailable();
+      if (!await ownerCurrent()) return rejected('forbidden');
       return deps.revocation.revoke(input, options);
     },
     async inspectRevocation(operationId, options) {
       if (!deps.revocation || disposed) return unavailable();
+      if (!await ownerCurrent()) return rejected('not_found');
       return deps.revocation.inspect(operationId, options);
     },
     async closeRoom(input, options) {
       if (!deps.closure || disposed) return unavailable();
-      if (identity.kind !== 'signed_in'
-        || input.ownerId !== deps.principal.ownerId || input.ownerId !== identity.principal.ownerId
+      if (!await ownerCurrent()
+        || input.ownerId !== deps.principal.ownerId
         || closure?.roomId !== input.roomId || closure.expectedRoomRevision !== input.expectedRoomRevision) {
         return rejected('forbidden');
       }
       return deps.closure.closeRoom(input, options);
     },
     async inspectClosure(operationId, options) {
-      if (!deps.closure || disposed || identity.kind !== 'signed_in'
-        || identity.principal.ownerId !== deps.principal.ownerId) return rejected('not_found');
+      if (!deps.closure || !await ownerCurrent()) return rejected('not_found');
       const result = await deps.closure.inspectClosure(operationId, options);
       if (result.kind === 'rejected') return rejected('not_found');
       if (result.kind === 'ok') return { kind: 'ok', value: result.value };
