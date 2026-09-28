@@ -86,6 +86,7 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
   const roles: MutableRole[] = [];
   const modeResults = new Map<ListeningMode, ModeRequest>();
   const cleanup: RunReport['cleanup'][number][] = [];
+  const requestCleanup: RunReport['requestCleanup'][number][] = [];
   let status: unknown = null;
   let stop: StopRecord | null = null;
   let timeline: readonly TimelineEvent[] = [];
@@ -103,7 +104,7 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
       role, ticket, target,
       session: session ? { harness: session.harness, provider: session.provider, model: session.model, cliVersion: session.cliVersion, pid: session.pid } : null,
     })),
-    stop, launcherClosed, cleanup, unexpectedPullRequests: pullRequests, errors, status,
+    stop, launcherClosed, cleanup, requestCleanup, unexpectedPullRequests: pullRequests, errors, status,
   });
 
   const lock = await deps.lock.acquire(profile.repository);
@@ -190,7 +191,7 @@ export async function runAcceptance(deps: RunnerDeps, options: RunOptions): Prom
         try { stop = await guardedStop(deps, owner, server, roles, markers, options.runId); } catch (error) { errors.push(`stop: ${(error as Error).message}`); }
       }
       if (owner && (errors.length > 0 || stop?.reply?.kind !== 'stopped')) {
-        await revokeUnfinishedRequests(owner, roles, options.runId, errors);
+        await revokeUnfinishedRequests(owner, roles, options.runId, errors, requestCleanup);
       }
       if (owner) {
         try { timeline = await owner.timeline(); } catch (error) { errors.push(`timeline: ${(error as Error).message}`); }
@@ -273,10 +274,11 @@ async function grantPair(
   });
 }
 
-/** A failed run only cancels requests tied to its captured fixtures. Connected
- * requests need a separate exact binding cleanup route; refusal is reported. */
+/** A failed run cancels only requests tied to its captured fixtures. The owner
+ * route fences a connected binding before reporting exact-request revocation. */
 async function revokeUnfinishedRequests(
   owner: OwnerSession, roles: readonly MutableRole[], runId: string, errors: string[],
+  outcomes: RunReport['requestCleanup'][number][],
 ): Promise<void> {
   for (const record of roles) {
     if (!record.request || !record.requestSession) continue;
@@ -288,9 +290,15 @@ async function revokeUnfinishedRequests(
         || !(Date.parse(current.createdAt) > Date.parse(record.requestSession.capturedAt))) {
         throw new Error('owned request could not be reverified');
       }
-      if (current.outcome !== 'revoked') await owner.revokeRequest(current, `acc-revoke-${runId}-${record.ticket}`);
+      if (current.outcome === 'revoked') {
+        outcomes.push({ ticket: record.ticket, outcome: 'already_revoked', detail: 'owner request already revoked' });
+      } else {
+        await owner.revokeRequest(current, `acc-revoke-${runId}-${record.ticket}`);
+        outcomes.push({ ticket: record.ticket, outcome: 'revoked', detail: 'exact owner request revoked' });
+      }
     } catch (error) {
       errors.push(`request cleanup #${record.ticket}: ${(error as Error).message}`);
+      outcomes.push({ ticket: record.ticket, outcome: 'failed', detail: (error as Error).message });
     }
   }
 }
