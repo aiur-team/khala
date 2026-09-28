@@ -75,6 +75,9 @@ importers:
         specifier: 3.8.8
         version: 3.8.8
     devDependencies:
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       tsx:
         specifier: 4.20.6
         version: 4.20.6

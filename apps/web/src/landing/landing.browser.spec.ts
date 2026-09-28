@@ -112,13 +112,11 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1);
     assert.equal(await page.getByRole('main').count(), 1);
 
-    // The prompt is not live yet: greyed out, copy disabled, "Coming soon" over it.
+    // The prompt is copyable and the hosted app is reachable from the hero.
     const copy = page.getByRole('button', { name: 'Copy the prompt' });
-    assert.equal(await copy.isDisabled(), true, 'copy is disabled while the prompt is not live');
-    assert.equal((await page.locator('#prompt-soon').innerText()).trim(), 'Coming soon.');
-    assert.match(await page.locator('.install-box').evaluate(node => getComputedStyle(node).filter), /blur/);
-    assert.equal(await page.locator('.install-box').getAttribute('aria-disabled'), 'true');
-    assert.ok(Number(await page.locator('.install-box').evaluate(node => getComputedStyle(node).opacity)) < 0.5, 'prompt is greyed out');
+    assert.equal(await copy.isEnabled(), true);
+    assert.equal(await page.getByRole('link', { name: 'Open Khala app' }).getAttribute('href'), '/new');
+    assert.equal(await page.locator('#prompt-soon').count(), 0);
 
     // Top-right controls exist and the Docs link points at the quick start.
     assert.equal(await page.getByRole('link', { name: 'Docs' }).getAttribute('href'), 'https://aiur.team/docs/khala/quick-start');
@@ -192,6 +190,16 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
         `${width}px: no horizontal overflow`,
       );
       assert.equal(await copy.isVisible(), true, `${width}px: copy button visible`);
+      assert.equal(await page.locator('#agentPrompt').evaluate(node => {
+        const text = node.firstChild;
+        if (!text) return 0;
+        const content = text.textContent ?? '';
+        const start = content.indexOf('https://khala.aiur.team');
+        const range = document.createRange();
+        range.setStart(text, start);
+        range.setEnd(text, start + 'https://khala.aiur.team'.length);
+        return range.getClientRects().length;
+      }), 1, `${width}px: the agent URL stays on one line`);
       assert.equal(await page.getByRole('link', { name: 'Docs' }).isVisible(), true, `${width}px: Docs visible`);
       if (width === 390) {
         assert.equal(
@@ -203,6 +211,12 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     }
 
     assert.deepEqual(failures, [], 'no page or console errors');
+    assert.equal(await copy.locator('[data-copy-label]').innerText(), 'Copy');
+    await copy.click();
+    await page.waitForFunction(() => document.querySelector('#copyBtn [data-copy-label]')?.textContent === 'Copied');
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), EXACT_PROMPT);
+    await page.getByRole('link', { name: 'Open Khala app' }).click();
+    assert.equal(new URL(page.url()).pathname, '/new', 'the hero link opens the canonical create route');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

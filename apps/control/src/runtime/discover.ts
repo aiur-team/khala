@@ -4,10 +4,11 @@
 // emits the generated Netlify function entrypoint. Never runs at request time.
 
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 import { HEALTH_PATH, RESERVED_PREFIXES, type RouteRegistration } from './handler';
 
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
@@ -180,13 +181,45 @@ export function renderRouteManifest(result: DiscoveryResult): string {
   ) + '\n';
 }
 
+export async function bundleGeneratedFunction(result: DiscoveryResult, repoRoot: string): Promise<Uint8Array> {
+  const outputDirectory = functionsOutputDirectory(repoRoot);
+  await mkdir(outputDirectory, { recursive: true });
+  const entry = path.join(outputDirectory, 'khala-control.mjs');
+  const bundled = await build({
+    stdin: {
+      contents: renderGeneratedFunction(result, repoRoot),
+      resolveDir: outputDirectory,
+      sourcefile: 'khala-control.ts',
+      loader: 'ts',
+    },
+    outfile: entry,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    metafile: true,
+    write: false,
+  });
+  const externalImports = Object.values(bundled.metafile!.outputs)
+    .flatMap(output => output.imports.filter(dependency => dependency.external).map(dependency => dependency.path));
+  const nonBuiltinImports = externalImports.filter(specifier => !specifier.startsWith('node:'));
+  if (nonBuiltinImports.length > 0) {
+    throw new DiscoverError(`generated function has unbundled dependencies: ${nonBuiltinImports.join(', ')}`);
+  }
+  const bundle = bundled.outputFiles?.find(file => file.path === entry);
+  if (!bundle) throw new DiscoverError('generated function bundle is missing');
+  return bundle.contents;
+}
+
 async function run(): Promise<void> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = repoRootFrom(here);
   const result = await discoverRoutes(repoRoot);
   const outputDirectory = functionsOutputDirectory(repoRoot);
+  const bundle = await bundleGeneratedFunction(result, repoRoot);
+  await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: true });
-  await writeFile(path.join(outputDirectory, 'khala-control.ts'), renderGeneratedFunction(result, repoRoot), 'utf8');
+  await writeFile(path.join(outputDirectory, 'khala-control.mjs'), bundle);
   await writeFile(path.join(outputDirectory, 'route-manifest.json'), renderRouteManifest(result), 'utf8');
   const domainSummary = result.presentDomains.map(domain => domain.key).join(', ') || 'none';
   console.log(`build:functions: ${result.routeManifest.length} route(s) from [${domainSummary}]; absent: ${result.absentPrefixes.join(', ') || 'none'}`);

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { AGENT_PROMPT, copyText } from './copy-prompt';
 import { THEME_STORAGE_KEY, effectiveTheme, readStoredTheme, storeTheme } from './theme';
 import { bannerWasDismissed } from './banner';
+import { createHumanRouteCodec } from '../composition/human/routes';
 
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const css = readFileSync(new URL('./landing.css', import.meta.url), 'utf8');
@@ -50,6 +51,14 @@ describe('splash page prompt', () => {
     expect(written).toEqual([EXACT_PROMPT]);
     expect(await copyText(AGENT_PROMPT, async () => Promise.reject(new Error('denied')))).toBe('denied');
     expect(await copyText(AGENT_PROMPT, null)).toBe('unavailable');
+  });
+
+  test('links the hero to the hosted app with an enabled prompt', () => {
+    expect(html).toContain('<a class="button cta app-cta" href="/new">Open Khala app</a>');
+    expect(createHumanRouteCodec({ origin: 'https://khala.aiur.team', basePath: '/' }).parse('/new').kind).toBe('create');
+    expect(html).toMatch(/<button class="button copy" id="copyBtn"[^>]*>/);
+    expect(html).not.toContain('Coming soon.');
+    expect(html).not.toContain('aria-disabled="true"');
   });
 });
 
