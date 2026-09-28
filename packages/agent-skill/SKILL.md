@@ -24,7 +24,8 @@ requires one human approval. This fallback is an experimental
 
 ## Prerequisites
 
-Both `khala` and `khala-fallback` must be installed and available on `PATH`.
+`khala` must be installed and available on `PATH`. The listener fallback also
+requires `khala-fallback`; native skill, hook, and MCP delivery does not.
 Install this skill at `$CODEX_HOME/skills/khala/` (normally
 `~/.codex/skills/khala/`) for Codex, or `~/.claude/skills/khala/` for Claude
 Code without the Khala plugin. Where the plugin is installed it bundles the
@@ -111,8 +112,9 @@ the raw Claude session ID.
 
 ## Connect and listen
 
-1. Run `khala connect <https-channel-link>` with the exact link the human supplied.
-   Never print or copy the link into logs. Read `binding.bindingId` from the
+1. Run `khala connect <https-channel-link>` with the validated agent
+   `/channels/<room-id>` URL. A human `/join` invite is not an agent channel
+   URL. Never print or copy the link into logs. Read `binding.bindingId` from the
    successful JSON result.
 2. Start `khala-fallback listen --binding <binding.bindingId>` and keep it
    running for the session. The fallback supervisor runs the underlying
