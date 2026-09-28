@@ -41,6 +41,14 @@ function processStartTicks(pid) {
   if (fields[0] === 'Z' || !fields[19]) fail();
   return fields[19];
 }
+/** Only absence or PID reuse proves the old exact process has ended. */
+export function oldProcessGone(before, readStartTicks = processStartTicks) {
+  try { return readStartTicks(before.pid) !== before.startTicks; }
+  catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ESRCH') return true;
+    throw error;
+  }
+}
 export function bindingFor(config) {
   const sessionHash = createHash('sha256').update(JSON.stringify([
     'khala.hosted.session.v1', config.harness, config.sessionId, config.workdir,
@@ -81,11 +89,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
       systemctl(['restart', config.unit]);
       const after = unitWitness(config);
       if (after.pid === before.pid || after.startTicks === before.startTicks) fail();
-      try {
-        if (processStartTicks(before.pid) === before.startTicks) fail();
-      } catch (error) {
-        if (error instanceof Error && error.message === 'live_connector_control_unavailable') throw error;
-      }
+      if (!oldProcessGone(before)) fail();
       process.stdout.write(JSON.stringify(after) + '\n');
     } else {
       process.stdout.write(JSON.stringify(before) + '\n');

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { bindingFor, configAt } from './connector-control.mjs';
+import { bindingFor, configAt, oldProcessGone } from './connector-control.mjs';
 
 const script = fileURLToPath(new URL('./connector-control.mjs', import.meta.url));
 
@@ -72,4 +72,18 @@ test('a live but foreign process cannot stand in for the disposable connector', 
       env: { ...process.env, PATH: `${root}:${process.env.PATH ?? ''}` },
     }), /Command failed/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('restart witness accepts only proven old-process exit or PID reuse', () => {
+  const before = { pid: 123, startTicks: '456' };
+  assert.equal(oldProcessGone(before, () => '456'), false);
+  assert.equal(oldProcessGone(before, () => '789'), true);
+  for (const code of ['ENOENT', 'ESRCH']) {
+    assert.equal(oldProcessGone(before, () => { throw Object.assign(new Error('gone'), { code }); }), true);
+  }
+  for (const code of ['EACCES', 'EIO']) {
+    assert.throws(() => oldProcessGone(before, () => { throw Object.assign(new Error('unreadable'), { code }); }),
+      error => error.code === code);
+  }
+  assert.throws(() => oldProcessGone(before, () => { throw new Error('malformed stat'); }), /malformed stat/u);
 });
