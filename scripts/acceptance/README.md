@@ -31,6 +31,20 @@ A profile is strict JSON, decoded by `decodeProfile` in `profile.ts`:
 - `timeoutMs`
 - `roles`: two entries, `a` and `b`. Each has native-fixture `harness`, `provider`, `model`, exact `cliVersion` and the route's `HarnessCapabilities`. These are expected evidence values, never driver dispatch labels.
 
+### OpenCode with DeepSeek and Claude (AC5)
+
+The [AC5 profile generator](profiles/opencode-deepseek-claude.ts) fixes role A to OpenCode 1.17.10 with DeepSeek and role B to Claude Code 2.1.283 with Anthropic. It reads the current route capability declarations, pins the package from `acceptance:pack`, and writes only JSON to stdout. The runner's native fixture capture checks each installed CLI version and selected model before accepting a live result. Check `opencode models deepseek` and choose an exact model it advertises; the example uses `deepseek/deepseek-flash`, which must be replaced if the installed catalog differs. Claude's `opus` is a native model alias.
+
+```sh
+opencode models deepseek
+pnpm --silent acceptance:pack --out /tmp/khala-acceptance-pack > /tmp/khala-acceptance-pack.json
+pnpm exec tsx --conditions=khala-source scripts/acceptance/profiles/opencode-deepseek-claude.ts \
+  /tmp/khala-acceptance-pack.json deepseek/deepseek-flash opus > /tmp/khala-ac5-profile.json
+pnpm acceptance:live --profile /tmp/khala-ac5-profile.json --confirm-live
+```
+
+The generator never starts a CLI or calls a provider. The live command is opt-in and creates issues in `aiur-team/khala`; it requires the `acceptance` label, installed Khala native routes, and the Executor's two interactive fixtures. For the pinned capabilities, `steer` and `async` are shared proven modes. Claude `sync` remains experimental without its own owner grant, so the profile records it as skipped. A requested mode that the server does not confirm stays non-passing `unproven`.
+
 ### Native CLI fixture capture
 
 For each new ticket, the normal Executor starts one interactive `claude`, `codex`, or `opencode` TUI in its own tmux pane under normal trust settings. Record the native CLI's own session ID, the observed provider/model and `--version` output from that fixture, and its exact launch argv and launch time in a private JSON observation file. The CLI must launch with an explicit `--model` or `-m` argument; the capture checks the native command and model flag against `/proc/<pid>/cmdline`. Record the actual TUI PID, executable, `/proc/<pid>/stat` start ticks (field 22), kernel boot ID, terminal from `/proc/<pid>/fd/0`, and tmux pane ID, rather than an app-server or SDK process. The capture verifies that tmux owns that terminal and runs `/proc/<pid>/exe --version` for an exact version match. A different ID, model, provider, version, or unavailable evidence leaves the native session unproven. The ticket's labels or worker prose cannot fill these fields.
