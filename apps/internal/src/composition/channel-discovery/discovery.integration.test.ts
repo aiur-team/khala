@@ -264,6 +264,14 @@ async function decide(w: World, handle: string, revision: string, decision: 'app
   });
 }
 
+function revokeRequest(w: World, handle: string, revision: string, operationId: string, target = channelId,
+  headers: Record<string, string> = w.human) {
+  return call(w.server.port, {
+    method: 'POST', path: `/api/human/channel-access-requests/${handle}/revoke`, headers,
+    body: { v: 1, requestHandle: handle, channelId: target, expectedRevision: revision, operationId },
+  });
+}
+
 function controlKeys(w: World): string[] {
   return w.handle.read(db => (db.prepare('SELECT record_key FROM control_records').all() as Array<{ record_key: string }>).map(row => row.record_key));
 }
@@ -622,6 +630,208 @@ describe('internal channel discovery', () => {
       .all(`participant_${agent.principal}`)) as Array<{ status: string }>;
     expect(rows).toEqual([{ status: 'revoked' }]);
     expect((await activateCall(w, agent, 'op-stop', { deviceId: body.deviceId, grant: null })).status).toBe(410);
+  });
+
+  it('revokes exactly one approved request with owner, channel, revision and replay checks', async () => {
+    const w = await world();
+    const first = await issue(w, 'request-revoke-first');
+    const second = await issue(w, 'request-revoke-second');
+    await approvedAccess(w, first, 'op-revoke-first');
+    await approvedAccess(w, second, 'op-revoke-second');
+    const requests = await inbox(w);
+    const one = requests[0]!;
+    const two = requests.find(entry => entry.requestHandle !== one.requestHandle)!;
+    const revision = one.revision;
+
+    expect((await revokeRequest(w, one.requestHandle, revision, 'revoke-one', channelId, {})).status).toBe(403);
+    expect((await revokeRequest(w, one.requestHandle, revision, 'revoke-one', otherChannelId)).json.code).toBe('wrong_channel');
+    expect((await revokeRequest(w, one.requestHandle, 'carev_1', 'revoke-one')).json.code).toBe('stale_revision');
+    expect((await accessStatus(w, first, 'op-revoke-first')).json.outcome).toBe('approved');
+
+    const revoked = await revokeRequest(w, one.requestHandle, revision, 'revoke-one');
+    expect(revoked.status).toBe(200);
+    expect(revoked.json).toMatchObject({ requestHandle: one.requestHandle, channelId, outcome: 'revoked', operationId: 'revoke-one' });
+    expect((await revokeRequest(w, one.requestHandle, revision, 'revoke-one')).json).toEqual(revoked.json);
+    expect((await revokeRequest(w, one.requestHandle, 'carev_1', 'revoke-one')).json.code).toBe('operation_mismatch');
+    expect((await revokeRequest(w, one.requestHandle, revision, 'revoke-one', otherChannelId)).json.code).toBe('wrong_channel');
+    expect((await revokeRequest(w, two.requestHandle, two.revision, 'revoke-one')).json.code).toBe('operation_mismatch');
+    expect((await accessStatus(w, first, 'op-revoke-first')).json.outcome).toBe('revoked');
+    expect((await accessStatus(w, second, 'op-revoke-second')).json.outcome).toBe('approved');
+    expect((await inbox(w)).find(entry => entry.requestHandle === two.requestHandle)?.outcome).toBe('approved');
+  });
+
+  it('atomically fences an already activated binding and recovers a failed revoke retry', async () => {
+    const w = await world();
+    const agent = await issue(w, 'request-revoke-active');
+    await approvedAccess(w, agent, 'op-revoke-active');
+    const recovery = await recoveryKey();
+    const exchange = await exchangeRequest(w, agent, 'op-revoke-active', 'device_revoke_active', recovery);
+    const route = `${w.server.origin}/api/connector/channel-access-requests/op-revoke-active/exchange`;
+    const envelope = await exchangeCall(w, agent, 'op-revoke-active', exchange, proof(w, agent, route));
+    expect(envelope.status).toBe(200);
+    const activated = await activateCall(w, agent, 'op-revoke-active', { deviceId: exchange.deviceId, grant: openGrant(envelope.json, recovery) });
+    expect(activated.status).toBe(200);
+    const other = await issue(w, 'request-revoke-unrelated');
+    await approvedAccess(w, other, 'op-revoke-unrelated');
+    const otherRecovery = await recoveryKey();
+    const otherExchange = await exchangeRequest(w, other, 'op-revoke-unrelated', 'device_revoke_unrelated', otherRecovery);
+    const otherRoute = `${w.server.origin}/api/connector/channel-access-requests/op-revoke-unrelated/exchange`;
+    const otherEnvelope = await exchangeCall(w, other, 'op-revoke-unrelated', otherExchange, proof(w, other, otherRoute));
+    const otherActivated = await activateCall(w, other, 'op-revoke-unrelated', {
+      deviceId: otherExchange.deviceId, grant: openGrant(otherEnvelope.json, otherRecovery),
+    });
+    expect(otherActivated.status).toBe(200);
+    const request = (await inbox(w))[0]!;
+    const timeline = () => call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) });
+    const otherTimeline = () => call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(otherActivated.json.capability) });
+    expect((await timeline()).status).toBe(200);
+    expect((await otherTimeline()).status).toBe(200);
+
+    // A failure inside the journal commit rolls back both journal and binding writes.
+    w.handle.read(db => db.exec("CREATE TEMP TRIGGER fail_exact_revoke BEFORE UPDATE OF status ON bindings BEGIN SELECT RAISE(ABORT, 'revoke fault'); END"));
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-active')).status).toBe(503);
+    expect((await timeline()).status).toBe(200);
+    expect((await accessStatus(w, agent, 'op-revoke-active')).json.outcome).toBe('connecting');
+    w.handle.read(db => db.exec('DROP TRIGGER fail_exact_revoke'));
+
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-active')).status).toBe(200);
+    expect((await timeline()).status).toBe(401);
+    expect((await otherTimeline()).status).toBe(200);
+    expect((await activateCall(w, agent, 'op-revoke-active', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
+    expect((await accessStatus(w, agent, 'op-revoke-active')).json.outcome).toBe('revoked');
+    await w.server.close();
+    w.handle.close();
+    const reopened = openChannelStore({ directory: path.join(w.fixture.root, 'state'), mode: 'existing' });
+    cleanups.push(() => reopened.close());
+    const resumed = await boot(w.fixture, reopened, w.clock, w.server.port);
+    expect((await revokeRequest(resumed, request.requestHandle, request.revision, 'revoke-active')).status).toBe(200);
+    expect((await activateCall(resumed, agent, 'op-revoke-active', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
+    expect((await activateCall(resumed, other, 'op-revoke-unrelated', { deviceId: otherExchange.deviceId, grant: null })).status).toBe(200);
+  });
+
+  it('keeps activation unavailable while the journal cannot be read, then rejects a revoked grant', async () => {
+    const w = await world();
+    const agent = await issue(w, 'request-revoke-outage');
+    await approvedAccess(w, agent, 'op-revoke-outage');
+    const recovery = await recoveryKey();
+    const exchange = await exchangeRequest(w, agent, 'op-revoke-outage', 'device_revoke_outage', recovery);
+    const route = `${w.server.origin}/api/connector/channel-access-requests/op-revoke-outage/exchange`;
+    const envelope = await exchangeCall(w, agent, 'op-revoke-outage', exchange, proof(w, agent, route));
+    const grant = openGrant(envelope.json, recovery);
+    const saved = w.handle.read(db => (db.prepare("SELECT value FROM control_records WHERE record_key = 'channel-access.journal.v1'")
+      .get() as { value: string }).value);
+    w.handle.transaction(db => db.prepare("UPDATE control_records SET value = ? WHERE record_key = 'channel-access.journal.v1'")
+      .run('{"invalid":true}'));
+    expect((await activateCall(w, agent, 'op-revoke-outage', { deviceId: exchange.deviceId, grant })).status).toBe(503);
+    w.handle.transaction(db => db.prepare("UPDATE control_records SET value = ? WHERE record_key = 'channel-access.journal.v1'")
+      .run(saved));
+    const request = (await inbox(w))[0]!;
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-outage')).status).toBe(200);
+    expect((await activateCall(w, agent, 'op-revoke-outage', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
+    const rows = w.handle.read(db => db.prepare('SELECT status FROM bindings WHERE participant_id = ?')
+      .all(`participant_${agent.principal}`)) as Array<{ status: string }>;
+    expect(rows).toEqual([{ status: 'revoked' }]);
+  });
+
+  it('repairs a late activation interrupted before its journal fence on restart', async () => {
+    const w = await world();
+    const agent = await issue(w, 'request-late-crash');
+    await approvedAccess(w, agent, 'op-late-crash');
+    const exchange = await exchangeRequest(w, agent, 'op-late-crash', 'device_late_crash');
+    const route = `${w.server.origin}/api/connector/channel-access-requests/op-late-crash/exchange`;
+    expect((await exchangeCall(w, agent, 'op-late-crash', exchange, proof(w, agent, route))).status).toBe(200);
+    const request = (await inbox(w))[0]!;
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-late-crash')).status).toBe(200);
+
+    // Simulate the exact crash window: activation has committed, but its async
+    // post-activation journal check has not run yet.
+    const operationKey = createHash('sha256').update([
+      'khala.internal.activation.v1', agent.principal, w.server.origin, 'op-late-crash',
+    ].join('\0')).digest('base64url');
+    const stored = createDiscoveryStore(w.handle).agent(agent.principal);
+    expect(stored.kind).toBe('found');
+    if (stored.kind !== 'found') throw new Error('missing agent');
+    expect(createDiscoveryStore(w.handle).activate({
+      operationKey, channelId, sessionGeneration: agent.generation, history: 'none',
+      binding: {
+        v: 1, bindingId: `binding_${operationKey}` as Parameters<DiscoveryStore['activate']>[0]['binding']['bindingId'],
+        ownerId: alice.ownerId, agentParticipantId: `participant_${agent.principal}` as Parameters<DiscoveryStore['activate']>[0]['binding']['agentParticipantId'],
+        deviceId: exchange.deviceId, harness: stored.agent.harness,
+        sessionId: stored.agent.sessionDigest, generation: agent.generation,
+      },
+    }).kind).toBe('activated');
+    await w.server.close();
+    w.handle.close();
+    const reopened = openChannelStore({ directory: path.join(w.fixture.root, 'state'), mode: 'existing' });
+    cleanups.push(() => reopened.close());
+    const resumed = await boot(w.fixture, reopened, w.clock, w.server.port);
+    expect(reopened.read(db => db.prepare('SELECT status FROM bindings WHERE binding_id = ?').get(`binding_${operationKey}`)))
+      .toEqual({ status: 'revoked' });
+    expect((await activateCall(resumed, agent, 'op-late-crash', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
+  });
+
+  it('refuses a connected request without implying its binding was stopped', async () => {
+    const w = await world();
+    const agent = await issue(w, 'request-revoke-connected');
+    await approvedAccess(w, agent, 'op-revoke-connected');
+    const recovery = await recoveryKey();
+    const exchange = await exchangeRequest(w, agent, 'op-revoke-connected', 'device_revoke_connected', recovery);
+    const route = `${w.server.origin}/api/connector/channel-access-requests/op-revoke-connected/exchange`;
+    const envelope = await exchangeCall(w, agent, 'op-revoke-connected', exchange, proof(w, agent, route));
+    const activated = await activateCall(w, agent, 'op-revoke-connected', { deviceId: exchange.deviceId, grant: openGrant(envelope.json, recovery) });
+    expect(activated.status).toBe(200);
+    const readyRoute = '/api/connector/channel-access-requests/op-revoke-connected/ready';
+    const ready = await call(w.server.port, {
+      method: 'POST', path: readyRoute,
+      headers: { ...bearer(agent), dpop: proof(w, agent, `${w.server.origin}${readyRoute}`) },
+      body: {
+        v: 1, operationId: 'op-revoke-connected', requester: agent.principal, origin: w.server.origin,
+        sessionGeneration: agent.generation, deviceId: exchange.deviceId,
+        proofKeyThumbprint: exchange.proofKey.thumbprint, recipientKeyThumbprint: exchange.encryptionKey.thumbprint,
+      },
+    });
+    expect(ready.status).toBe(200);
+    const request = (await inbox(w))[0]!;
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-connected')).json.code).toBe('connected');
+    expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(200);
+    // Retention replaces the full request with a connected tombstone. A normal
+    // grant-free replay still recovers this live binding after the purge.
+    w.clock.now += 31 * 24 * 60 * 60_000;
+    expect(await inbox(w)).toEqual([]);
+    expect((await activateCall(w, agent, 'op-revoke-connected', { deviceId: exchange.deviceId, grant: null })).status).toBe(200);
+  });
+
+  it('revokes an active binding whose unacknowledged request reached repair_required', async () => {
+    const w = await world();
+    const agent = await issue(w, 'request-revoke-repair');
+    await approvedAccess(w, agent, 'op-revoke-repair');
+    const recovery = await recoveryKey();
+    const exchange = await exchangeRequest(w, agent, 'op-revoke-repair', 'device_revoke_repair', recovery);
+    const route = `${w.server.origin}/api/connector/channel-access-requests/op-revoke-repair/exchange`;
+    const envelope = await exchangeCall(w, agent, 'op-revoke-repair', exchange, proof(w, agent, route));
+    const activated = await activateCall(w, agent, 'op-revoke-repair', { deviceId: exchange.deviceId, grant: openGrant(envelope.json, recovery) });
+    expect(activated.status).toBe(200);
+    w.clock.now += 8 * 24 * 60 * 60_000;
+    const request = (await inbox(w))[0]!;
+    expect(request.outcome).toBe('repair_required');
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-repair')).status).toBe(200);
+    expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(401);
+  });
+
+  it('recovers an active binding after its repair_required request is purged', async () => {
+    const w = await world();
+    const agent = await issue(w, 'request-repair-retention');
+    await approvedAccess(w, agent, 'op-repair-retention');
+    const recovery = await recoveryKey();
+    const exchange = await exchangeRequest(w, agent, 'op-repair-retention', 'device_repair_retention', recovery);
+    const route = `${w.server.origin}/api/connector/channel-access-requests/op-repair-retention/exchange`;
+    const envelope = await exchangeCall(w, agent, 'op-repair-retention', exchange, proof(w, agent, route));
+    expect((await activateCall(w, agent, 'op-repair-retention', {
+      deviceId: exchange.deviceId, grant: openGrant(envelope.json, recovery),
+    })).status).toBe(200);
+    w.clock.now += 38 * 24 * 60 * 60_000;
+    expect(await inbox(w)).toEqual([]);
+    expect((await activateCall(w, agent, 'op-repair-retention', { deviceId: exchange.deviceId, grant: null })).status).toBe(200);
   });
 
   it('keeps visibility, allowlists, pending decisions and exchange recovery across restart', async () => {

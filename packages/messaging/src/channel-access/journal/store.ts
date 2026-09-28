@@ -157,6 +157,10 @@ export interface ChannelAccessStore {
     | Readonly<{ kind: 'found'; status: ChannelAccessStatus; context: ChannelAccessStoredContext }>
     | Readonly<{ kind: 'unavailable' }>
   >;
+  inspectRequesterOperation(input: Omit<ChannelAccessRequesterLookup, 'kind'>, options?: CallOptions): Promise<
+    | Readonly<{ kind: 'found'; status: ChannelAccessStatus }>
+    | Readonly<{ kind: 'not_found' | 'unavailable' }>
+  >;
   listOwner(input: Readonly<{ ownerId: string }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'found'; requests: readonly ChannelAccessOwnerProjection[] }>
     | Readonly<{ kind: 'unavailable' }>
@@ -220,6 +224,17 @@ export interface ChannelAccessStore {
   }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'updated'; outcome: 'revoked'; revision: number }>
     | Readonly<{ kind: 'stale' | 'not_found' | 'unavailable' }>
+  >;
+  /** Owner-authorized, exact-request revocation. Connected requests need the separate Stop flow. */
+  revokeOwner(input: Readonly<{
+    ownerId: string;
+    requestHandle: string;
+    channelId: string;
+    expectedRevision: number;
+    operationId: string;
+  }>, options?: CallOptions): Promise<
+    | Readonly<{ kind: 'updated'; revision: number }>
+    | Readonly<{ kind: 'not_found' | 'wrong_channel' | 'stale' | 'connected' | 'conflict' | 'unavailable' }>
   >;
   listNotifications(input: Readonly<{ ownerId: string; limit?: number }>, options?: CallOptions): Promise<
     | Readonly<{ kind: 'found'; notifications: readonly ChannelAccessNotification[] }>
@@ -539,6 +554,29 @@ export function createChannelAccessStore(deps: Readonly<{
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
+  async function inspectRequesterOperation(input: Omit<ChannelAccessRequesterLookup, 'kind'>, options?: CallOptions): ReturnType<ChannelAccessStore['inspectRequesterOperation']> {
+    const operationKey = policy.digest('operation', [
+      ['requester', input.requester],
+      ['operationId', input.operationId],
+    ]);
+    const result = await mutate('requester-operation-inspect', operationKey, aggregate => {
+      const row = aggregate.requests[operationKey];
+      const matches = row
+        && row.requester === input.requester
+        && row.sessionFingerprint === input.sessionFingerprint
+        && row.sessionGeneration === input.sessionGeneration
+        && row.origin === input.origin;
+      return unchanged(matches
+        ? { kind: 'found' as const, status: status(row) }
+        : aggregate.tombstones[operationKey]?.outcome === 'connected'
+          || aggregate.tombstones[operationKey]?.outcome === 'repair_required'
+          || aggregate.tombstones[operationKey]?.outcome === 'revoked'
+          ? { kind: 'found' as const, status: { outcome: aggregate.tombstones[operationKey]!.outcome } }
+          : { kind: 'not_found' as const });
+    }, options);
+    return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
+  }
+
   async function listOwner(input: Readonly<{ ownerId: string }>, options?: CallOptions): ReturnType<ChannelAccessStore['listOwner']> {
     const result = await mutate('owner-list', input.ownerId, aggregate => unchanged({
       kind: 'found' as const,
@@ -741,6 +779,41 @@ export function createChannelAccessStore(deps: Readonly<{
     return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
   }
 
+  async function revokeOwner(input: Parameters<ChannelAccessStore['revokeOwner']>[0], options?: CallOptions): ReturnType<ChannelAccessStore['revokeOwner']> {
+    const result = await mutate<Awaited<ReturnType<ChannelAccessStore['revokeOwner']>>>('owner-revoke', input.operationId, (aggregate, now) => {
+      if (Object.values(aggregate.requests).some(request => request.lifecycle?.operationId === input.operationId
+        && request.requestHandle !== input.requestHandle)) return unchanged({ kind: 'conflict' as const });
+      const row = findHandle(aggregate, input.requestHandle);
+      if (!row || row.ownerId !== input.ownerId || row.detail.kind !== 'access') return unchanged({ kind: 'not_found' as const });
+      const ref = row.detail.authorizedChannelRef;
+      if ((ref.startsWith('listed:') ? ref.slice('listed:'.length) : ref) !== input.channelId) {
+        return unchanged({ kind: 'wrong_channel' as const });
+      }
+      if (row.lifecycle?.operationId === input.operationId && row.outcome === 'revoked') {
+        return unchanged(row.revision === input.expectedRevision + 1
+          ? { kind: 'updated' as const, revision: row.revision }
+          : { kind: 'conflict' as const });
+      }
+      if (row.revision !== input.expectedRevision) return unchanged({ kind: 'stale' as const });
+      if (row.outcome === 'connected') return unchanged({ kind: 'connected' as const });
+      if (row.outcome !== 'approved' && row.outcome !== 'connecting' && row.outcome !== 'repair_required') {
+        return unchanged({ kind: 'conflict' as const });
+      }
+      const value = cloneAggregate(aggregate);
+      const next: StoredRequest = {
+        ...row,
+        outcome: 'revoked',
+        revision: row.revision + 1,
+        terminalAt: iso(now),
+        lifecycle: { operationId: input.operationId, outcome: 'revoked' },
+      };
+      value.requests[row.operationKey] = next;
+      suppressNotification(value, row.operationKey);
+      return changed(value, { kind: 'updated' as const, revision: next.revision });
+    }, options);
+    return result === STORE_UNAVAILABLE ? { kind: 'unavailable' } : result;
+  }
+
   async function listNotifications(input: Parameters<ChannelAccessStore['listNotifications']>[0], options?: CallOptions): ReturnType<ChannelAccessStore['listNotifications']> {
     const limit = Number.isSafeInteger(input.limit) && input.limit! > 0 ? input.limit! : 10;
     const result = await mutate('notification-list', input.ownerId, aggregate => unchanged({
@@ -773,6 +846,7 @@ export function createChannelAccessStore(deps: Readonly<{
     create,
     inspect,
     inspectRequester,
+    inspectRequesterOperation,
     listOwner,
     readOwner,
     readContext,
@@ -783,6 +857,7 @@ export function createChannelAccessStore(deps: Readonly<{
     claimCreate: (input, options) => claim('create', input, options),
     updateLifecycle,
     revoke,
+    revokeOwner,
     listNotifications,
     ackNotification,
   };

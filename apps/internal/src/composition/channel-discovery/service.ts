@@ -363,26 +363,24 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
     operationId: string,
     value: Readonly<{ binding: SessionBinding; channelId: RoomId }>,
   ): Promise<OperationResult<Readonly<{ binding: SessionBinding; channelId: RoomId }>, GrantExchangeRejection>> {
-    if (!await requestRevoked(agent, stored, operationId)) return { kind: 'ok', value };
+    const revoked = await requestRevoked(agent, stored, operationId);
+    if (revoked === 'unavailable') return { kind: 'unavailable', retryable: true };
+    if (!revoked) return { kind: 'ok', value };
     return deps.bindings.revokeBinding(value.binding).kind === 'done'
       ? { kind: 'rejected', code: 'closed' }
       : { kind: 'unavailable', retryable: true };
   }
 
   /** True once this operation's request is closed as `revoked`; the journal keys it by operation alone. */
-  async function requestRevoked(agent: DiscoveryAgentContext, stored: DiscoveryAgent, operationId: string): Promise<boolean> {
-    for (const kind of ['access', 'create'] as const) {
-      const found = await journal.inspectRequester({
-        requester: agent.principal,
-        sessionFingerprint: stored.sessionDigest,
-        sessionGeneration: agent.generation,
-        origin: agent.origin,
-        kind,
-        operationId,
-      });
-      if (found.kind === 'found') return found.status.outcome === 'revoked';
-    }
-    return false;
+  async function requestRevoked(agent: DiscoveryAgentContext, stored: DiscoveryAgent, operationId: string): Promise<boolean | 'unavailable'> {
+    const found = await journal.inspectRequesterOperation({
+      requester: agent.principal,
+      sessionFingerprint: stored.sessionDigest,
+      sessionGeneration: agent.generation,
+      origin: agent.origin,
+      operationId,
+    });
+    return found.kind === 'found' ? found.status.outcome === 'revoked' : 'unavailable';
   }
 
   /** The channel an approved request admits into: the one it names, or the one its approval created. */
@@ -563,6 +561,30 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       // The route names the operation kind; a mismatched handle is simply not found there.
       if (request && request.operationKind !== kind) return { kind: 'rejected', code: 'not_found' };
       return decisions.decide(command, owner);
+    },
+
+    async revokeRequest(principal, command) {
+      if (!isOwner(principal)) return { kind: 'rejected', code: 'forbidden' };
+      const match = /^carev_([1-9][0-9]*)$/.exec(command.expectedRevision);
+      const expectedRevision = match ? Number(match[1]) : NaN;
+      if (!Number.isSafeInteger(expectedRevision)) return { kind: 'rejected', code: 'stale_revision' };
+      const result = await journal.revokeOwner({
+        ownerId: principal.ownerId,
+        requestHandle: command.requestHandle,
+        channelId: command.channelId,
+        expectedRevision,
+        operationId: command.operationId,
+      });
+      if (result.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
+      if (result.kind !== 'updated') {
+        const code = result.kind === 'stale' ? 'stale_revision'
+          : result.kind === 'conflict' ? 'operation_mismatch' : result.kind;
+        return { kind: 'rejected', code };
+      }
+      return { kind: 'ok', value: {
+        v: 1, requestHandle: command.requestHandle, channelId: command.channelId,
+        outcome: 'revoked', revision: `carev_${result.revision}`, operationId: command.operationId,
+      } };
     },
 
     async mute(principal, command) {
