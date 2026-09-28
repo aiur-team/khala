@@ -104,7 +104,11 @@ for (const theme of THEMES) {
       test('elements', async ({ page }) => {
         await open(page, theme, viewport);
         for (const [element, selector] of ELEMENTS) {
-          await expect(page.locator(selector)).toHaveScreenshot(`${name}-element-${element}.png`);
+          // CI and local pinned Chromium differ by 49 antialiased pixels in
+          // Copy's white label at 360px; its geometry and every other image
+          // remain pixel-exact. Keep this allowance below a one-pixel shift.
+          const maxDiffPixels = element === 'install-box' && viewport.width === 360 ? 60 : 0;
+          await expect(page.locator(selector)).toHaveScreenshot(`${name}-element-${element}.png`, { maxDiffPixels });
         }
       });
     });
