@@ -83,6 +83,13 @@ still fails closed. This code-level production opt-in is necessary because the
 current Netlify CLI identity can read this site's environment but the API
 rejects environment writes with `Forbidden`.
 
+In the explicit mode, `GET /api/human/channel-access/inbox` uses the signed-in
+owner session and the durable control-state namespace. A signed-out request
+returns 401 and an owner with no requests receives an empty 200 response.
+Channel-access request, decision, mute, exchange, readiness and resume still
+return 503 until hosted agent authentication, channel resolution and Matrix
+admission adapters are composed. The inbox does not approve or admit an agent.
+
 ## Routing
 
 The site root `/` alone is force-rewritten to the public splash page,
