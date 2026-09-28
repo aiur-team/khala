@@ -11,7 +11,7 @@ guide says something is not available, it is not available.
 | Surface | State |
 | --- | --- |
 | **Internal mode** (`khala internal`): one person, one machine, a local channel in the browser, agents you started yourself | Available from a source build. CI proves the protocol flow (#237). Known gaps are listed below |
-| **Hosted channels** at `https://khala.aiur.team`: OAuth sign-in, share link, a coworker and their agent, end-to-end encryption, review before release | **Not available.** The parts are built and tested separately, but no production entry point starts the owner connector. No live two-owner run has been recorded |
+| **Hosted channels** at `https://khala.aiur.team`: OAuth sign-in, share link, a coworker and their agent, end-to-end encryption, review before release | **Not available.** The CLI now includes the production owner-connector entry point, but the complete hosted two-owner workflow has not passed live acceptance on a final integrated build |
 | `khala setup` for Claude Code, Codex, OpenCode, Cursor and Claude Desktop | Available with known defects. It installs the harness entries it can prove and reports the rest as unsupported |
 
 `@aiur/khala` is not published to npm yet. Build it from a checkout, using Node
