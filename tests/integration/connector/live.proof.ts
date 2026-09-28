@@ -20,6 +20,7 @@ type Peer = {
   open(input: { baseUrl: string; userId: string; deviceId: string; accessToken: string }): Promise<{ ed25519: string }>;
   send(roomId: string, body: string): Promise<{ event_id: string }>;
   trust(userId: string, deviceId: string, fingerprint: string): Promise<boolean>;
+  deviceFingerprint(userId: string, deviceId: string): Promise<string | null>;
   rotate(roomId: string): Promise<void>;
 };
 
@@ -125,6 +126,77 @@ test('KHA-133 built peer bundle boots in Chromium through the fixture server', {
     if (browser) await browser.close();
     if (served) await new Promise<void>(resolve => served!.server.close(() => resolve()));
     await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('KHA-133 disposable peer waits only for the exact published connector device key', {
+  timeout: 120_000,
+  skip: process.env.KHALA_42_KEY_PROBE !== '1' ? 'opt-in disposable Matrix key probe' : undefined,
+}, async () => {
+  const recoveryFile = process.env.KHALA_42_KEY_RECOVERY_FILE;
+  if (!recoveryFile) throw new Error('key_probe_recovery_file_required');
+  const scratch = nativeScratchRoot(recoveryFile);
+  await mkdir(scratch, { mode: 0o700 });
+  let server: Awaited<ReturnType<typeof servePeer>> | null = null;
+  let synapse: Awaited<ReturnType<typeof startClosureSynapse>> | null = null;
+  let browser: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | null = null;
+  let substrate: Awaited<ReturnType<typeof openMatrixConnectorSubstrate>> | null = null;
+  try {
+    server = await servePeer();
+    synapse = await startClosureSynapse({ recoveryFile, limits: {
+      synapse: { memoryBytes: 1024 * 1024 * 1024, cpus: 1, pids: 256 },
+      postgres: { memoryBytes: 512 * 1024 * 1024, cpus: 0.5, pids: 128 },
+    } });
+    const alice = await synapse.provision(`@khala_probe_alice:${synapse.serverName}`, 'PROBE_ALICE');
+    const bob = await synapse.provision(`@khala_probe_bob:${synapse.serverName}`, 'PROBE_BOB');
+    const created = await synapse.api('/createRoom', alice.access_token, 'POST', {
+      visibility: 'private', invite: [bob.user_id],
+      initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }],
+    });
+    assert.equal(typeof created.room_id, 'string');
+    const roomId = created.room_id as string;
+    await synapse.api('/join/' + encodeURIComponent(roomId), bob.access_token, 'POST', {});
+    browser = await chromium.launchPersistentContext(path.join(scratch, 'peer'), {
+      executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox'],
+    });
+    const page = await browser.newPage();
+    await page.goto(server.origin);
+    await page.waitForFunction(() => !!(globalThis as unknown as { peer?: Peer }).peer);
+    await page.evaluate(input => (globalThis as unknown as { peer: Peer }).peer.open(input), {
+      baseUrl: synapse.baseUrl, userId: alice.user_id, deviceId: alice.device_id,
+      accessToken: alice.access_token,
+    });
+    substrate = await openMatrixConnectorSubstrate({
+      baseUrl: synapse.baseUrl, userId: bob.user_id, deviceId: bob.device_id,
+      accessToken: bob.access_token, roomId, profileDirectory: path.join(scratch, 'matrix'),
+      browserBundleDirectory: connectorBundle,
+      participantIdFor: () => null,
+    });
+    const observed = await page.evaluate(({ userId, deviceId }) =>
+      (globalThis as unknown as { peer: Peer }).peer.deviceFingerprint(userId, deviceId),
+    { userId: bob.user_id, deviceId: bob.device_id });
+    const initial = observed === null ? 'missing'
+      : observed === substrate.fingerprint ? 'equal' : 'different';
+    process.stdout.write(JSON.stringify({ keyProbeInitial: initial }) + '\n');
+    assert.notEqual(initial, 'different', 'published device key must match exact connector identity');
+    assert.equal(await page.evaluate(({ userId, deviceId, fingerprint }) =>
+      (globalThis as unknown as { peer: Peer }).peer.trust(userId, deviceId, fingerprint),
+    { userId: bob.user_id, deviceId: bob.device_id, fingerprint: substrate.fingerprint }), true);
+    assert.equal(await page.evaluate(({ userId, deviceId }) =>
+      (globalThis as unknown as { peer: Peer }).peer.deviceFingerprint(userId, deviceId),
+    { userId: bob.user_id, deviceId: bob.device_id }), substrate.fingerprint);
+    await assert.rejects(page.evaluate(({ userId, deviceId }) =>
+      (globalThis as unknown as { peer: Peer }).peer.trust(userId, deviceId, 'wrong-fingerprint'),
+    { userId: bob.user_id, deviceId: bob.device_id }), /out-of-band fingerprint mismatch/u);
+  } finally {
+    try { await substrate?.close(); } finally {
+      try { await browser?.close(); } finally {
+        try { synapse?.close(); } finally {
+          try { if (server) await new Promise<void>(resolve => server!.server.close(() => resolve())); }
+          finally { await rm(scratch, { recursive: true, force: true }); }
+        }
+      }
+    }
   }
 });
 

@@ -4,6 +4,8 @@ This is an opt-in integration test for the exact Codex native route and version 
 
 Default test discovery does not run the live proof. Direct execution without KHALA_42_LIVE=1 reports skipped/not run. Explicit opt-in with a missing or unproven native fixture fails as not_observed_native_gate; it never turns a fake harness or skipped case into acceptance.
 
+The separate opt-in `KHALA_42_KEY_PROBE=1` component test uses capped disposable Synapse, Chromium, and the real connector substrate without starting Codex. It requires a unique `KHALA_42_KEY_RECOVERY_FILE` under `~/.cache/khala-executor/relay-recovery-<12 hex>.json` and the bounded recovery cleanup hook. It reports only whether the browser initially sees Bob's exact device key as missing, equal, or different. Missing may wait briefly for publication; a different key fails immediately. Passing this probe does not satisfy the native crash assertions below.
+
 Prepare an isolated, disposable Codex 0.157.1 GPT-6-Sol session with the normally reviewed Khala hooks, following `native-sol-sync.README.md`. Do not use a personal or production thread. Its `bind` command writes a mode-0600 `state/crash-descriptor.json` with the exact live TUI process witness, session, workdir, private Codex home, and preflight binding. The crash runner checks that witness before any Matrix or Docker effect, then mints a distinct crash ledger binding. It never creates or replaces the native session. A missing or changed witness remains not observed.
 
 From the repository root, with Docker, Node, pnpm and Chromium installed, run these commands in order:

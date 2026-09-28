@@ -1,5 +1,6 @@
 import { createClient, MatrixEvent } from 'matrix-js-sdk';
 import { observeTimeline, type TimelineEntry } from './timeline';
+import { trustExactDeviceFingerprint } from './trust-readiness';
 let client: ReturnType<typeof createClient>;
 let observer: ReturnType<typeof observeTimeline> | undefined;
 let snapshot: readonly TimelineEntry[]=[];
@@ -18,10 +19,17 @@ Object.assign(window, { peer: {
     throw new Error('browser sync timeout');
   },
   async trust(user:string,device:string,fingerprint:string) {
+    const crypto=client.getCrypto()!;
+    const read=async () => {
+      const devices=await crypto.getUserDeviceInfo([user],true);
+      return devices.get(user)?.get(device)?.getFingerprint()??null;
+    };
+    await trustExactDeviceFingerprint(read, () => crypto.setDeviceVerified(user,device,true), fingerprint);
+    return (await crypto.getDeviceVerificationStatus(user,device))!.isVerified();
+  },
+  async deviceFingerprint(user:string,device:string) {
     const devices=await client.getCrypto()!.getUserDeviceInfo([user],true);
-    if(devices.get(user)?.get(device)?.getFingerprint()!==fingerprint) throw new Error('out-of-band fingerprint mismatch');
-    await client.getCrypto()!.setDeviceVerified(user,device,true);
-    return (await client.getCrypto()!.getDeviceVerificationStatus(user,device))!.isVerified();
+    return devices.get(user)?.get(device)?.getFingerprint()??null;
   },
   async status(user:string,device:string){return (await client.getCrypto()!.getDeviceVerificationStatus(user,device))?.isVerified()??false;},
   async send(room:string,body:string){return client.sendTextMessage(room,body);},
