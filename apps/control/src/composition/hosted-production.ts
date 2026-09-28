@@ -3,8 +3,9 @@ import { registerClosureHandlers } from '../channel-closure/production';
 import { createInviteEvidenceReader } from './agent/invite-evidence';
 import { createProductionBootstrapRoutes, type ProductionBootstrapDependencies } from './agent/production-bootstrap';
 import { registerAgentHandlers } from './agent/handlers';
-import { registerHumanHandlers } from './human/handlers';
+import { registerHumanHandlers, unavailableChannelAccessRoutes } from './human/handlers';
 import { createProductionHumanRuntimeLoader } from './human/production';
+import { createHostedChannelAccessInbox } from './human/hosted-channel-access';
 
 export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'admissionPolicy'>;
 
@@ -38,6 +39,7 @@ export function registerHostedProductionRoutes(
   });
   return Object.freeze([
     ...registerHumanHandlers({ bootstrap: () => bootstrap.human, ownerMailbox: () => bootstrap.ownerMailbox.human,
+      channelAccess: () => [createHostedChannelAccessInbox(options), ...unavailableChannelAccessRoutes.slice(1)],
       ownerDeviceProof: () => bootstrap.ownerDeviceProof.human, revocation: () => bootstrap.revocation,
       roomSend: () => bootstrap.roomSend.human, deviceAdmission: () => bootstrap.deviceAdmission }),
     ...registerClosureHandlers(),
