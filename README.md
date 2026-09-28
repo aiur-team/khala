@@ -12,7 +12,7 @@ The [44 detailed plans](docs/plans/README.md) link each ticket’s product contr
 
 ## Run locally
 
-Install Node 22.23.2 and pnpm 10.34.5, then run `pnpm install --frozen-lockfile`. Copy `.env.example` to the ignored `.env`; set its Matrix origin, server name, and registration secret to a disposable local Synapse instance. Generate fresh values for the password-derivation and invitation secrets. Keep `NODE_ENV=development`, `KHALA_LOCAL_AUTH=enabled`, `PUBLIC_LOCAL_DEV_MODE=enabled`, and `PUBLIC_APP_ORIGIN=http://localhost:8888`. The local provider uses `KHALA_LOCAL_AUTH_EMAIL` as the owner identity.
+Install Node 22.23.2, pnpm 10.34.5, and the Netlify CLI (`netlify` on `PATH`), then run `pnpm install --frozen-lockfile`. Copy `.env.example` to the ignored `.env`; set its Matrix origin, server name, and registration secret to a disposable local Synapse instance. Generate fresh values for the password-derivation and invitation secrets. Keep `NODE_ENV=development`, `KHALA_LOCAL_AUTH=enabled`, `PUBLIC_LOCAL_DEV_MODE=enabled`, and `PUBLIC_APP_ORIGIN=http://localhost:8888`. The local provider uses `KHALA_LOCAL_AUTH_EMAIL` as the owner identity.
 
 Load the root `.env` for the build and local gateway:
 
@@ -23,4 +23,6 @@ set +a
 pnpm --filter @khala/control build:functions
 pnpm --filter @khala/web build
 netlify dev --offline --dir apps/web/dist --functions infra/netlify/functions-generated --port 8888 --skip-gitignore
-``` Open `http://localhost:8888/new` to sign in and create a channel. The app origin must match the Netlify dev port; the Matrix origin must match the disposable Synapse listener. Local auth is refused outside development or when the app origin is not loopback. The regular session, CSRF, Matrix account, and channel admission flows still run. Local control state is kept in ignored `.netlify/khala-local-state` so callbacks survive separate function instances; remove that directory to reset the disposable local run.
+```
+
+Open `http://localhost:8888/new` to sign in and create a channel. The app origin must match the Netlify dev port; the Matrix origin must match the disposable Synapse listener. Local auth is refused outside development or when the app origin is not loopback. The regular session, CSRF, Matrix account, and channel admission flows still run. Local control state is kept in ignored `.netlify/khala-local-state` so callbacks survive separate function instances; stop Netlify dev and remove that directory to reset the disposable local run, including a lock left by a crashed function.
