@@ -67,6 +67,87 @@ function services(fetch: typeof globalThis.fetch, store = memoryStore()) {
 }
 
 describe('createMatrixHumanServices', () => {
+  it('reuses one server-only control login across concurrent and repeated membership checks', async () => {
+    const roomId = '!room:matrix.example.test' as RoomId;
+    let logins = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith('/login')) {
+        logins += 1;
+        const request = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        return json(200, { user_id: request.identifier.user, device_id: request.device_id, access_token: 'control-token' });
+      }
+      if (path.includes('/state/m.room.member/')) {
+        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer control-token');
+        return json(200, { membership: 'join' });
+      }
+      throw new Error(`unexpected request ${path}`);
+    });
+    const matrix = services(fetch);
+    const input = { principal, roomId, history: 'none' as const };
+    expect(await Promise.all([matrix.gateway.inspectMembership(input), matrix.gateway.inspectMembership(input)]))
+      .toEqual([{ kind: 'joined', historyReady: true }, { kind: 'joined', historyReady: true }]);
+    expect(await matrix.gateway.inspectMembership(input)).toEqual({ kind: 'joined', historyReady: true });
+    expect(logins).toBe(1);
+  });
+
+  it('discards a control token after Matrix rejects it, then logs in again', async () => {
+    const roomId = '!room:matrix.example.test' as RoomId;
+    let logins = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+      if (path.endsWith('/login')) {
+        logins += 1;
+        const request = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        return json(200, { user_id: request.identifier.user, device_id: request.device_id,
+          access_token: `control-token-${logins}` });
+      }
+      if (path.includes('/state/m.room.member/')) {
+        return new Headers(init?.headers).get('authorization') === 'Bearer control-token-1'
+          ? json(401, { errcode: 'M_UNKNOWN_TOKEN' }) : json(200, { membership: 'join' });
+      }
+      throw new Error(`unexpected request ${path}`);
+    });
+    const matrix = services(fetch);
+    expect((await matrix.gateway.inspectMembership({ principal, roomId, history: 'none' })).kind).toBe('unavailable');
+    expect((await matrix.gateway.inspectMembership({ principal, roomId, history: 'none' })).kind).toBe('joined');
+    expect(logins).toBe(2);
+  });
+
+  it('honors the Matrix 429 retry interval without blocking another owner', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-28T20:00:00Z'));
+    try {
+      let aliceLogins = 0;
+      let bobLogins = 0;
+      const bob = { ...principal, ownerId: 'owner_bob' as OwnerId, providerSubject: 'bob' };
+      const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const path = new URL(input instanceof Request ? input.url : input.toString()).pathname;
+        if (path.endsWith('/login')) {
+          const request = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+          if (request.identifier.user === ownerMatrixUserId(principal.ownerId, 'matrix.example.test')) {
+            aliceLogins += 1;
+            if (aliceLogins === 1) return json(429, { errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 500 });
+          } else bobLogins += 1;
+          return json(200, { user_id: request.identifier.user, device_id: request.device_id, access_token: 'device-token' });
+        }
+        if (path.endsWith('/keys/query')) return json(200, { device_keys: {} });
+        throw new Error(`unexpected request ${path}`);
+      });
+      const matrix = services(fetch);
+      const deviceId = 'WEB_OWNER' as DeviceId;
+      expect((await matrix.sessions.issue(principal, deviceId)).kind).toBe('unavailable');
+      expect((await matrix.sessions.issue(principal, deviceId)).kind).toBe('unavailable');
+      expect((await matrix.sessions.issue(bob, 'WEB_BOB' as DeviceId)).kind).toBe('ok');
+      expect([aliceLogins, bobLogins]).toEqual([1, 1]);
+      vi.setSystemTime(new Date('2026-09-28T20:00:00.501Z'));
+      expect((await matrix.sessions.issue(principal, deviceId)).kind).toBe('ok');
+      expect(aliceLogins).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('treats Synapse missing-profile M_UNKNOWN as absent, but refuses other unknown 404s', async () => {
     for (const [error, expected] of [
       ['No row found (profiles)', 'absent'],
