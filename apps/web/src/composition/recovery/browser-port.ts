@@ -5,7 +5,7 @@
 
 import {
   type AuthPrincipal, type ClosureCapability, type ClosurePort, type DevicePort, type DeviceView, type IdentityPort, type IdentityState, type RecoveryCapabilities,
-  type RevocationPort, type RoomId, rejected, unavailable,
+  type RevocationPort, type RoomId, outcomeUnknown, rejected, sameProviderIdentity, unavailable,
 } from '@khala/contracts/messaging/index';
 import { createRecoveryService } from '@khala/messaging/recovery/index';
 import type {
@@ -18,7 +18,11 @@ import type {
  * devices and bindings with their current control-plane generation.
  */
 export interface BrowserRevocation extends RevocationPort {
-  targets(): readonly RevocationCapability[] | Promise<readonly RevocationCapability[]>;
+  targets(): Promise<Readonly<Pick<AuthPrincipal, 'ownerId' | 'providerIssuer' | 'providerSubject'> & {
+    targets: readonly RevocationCapability[];
+  }> | null> | Readonly<Pick<AuthPrincipal, 'ownerId' | 'providerIssuer' | 'providerSubject'> & {
+    targets: readonly RevocationCapability[];
+  }> | null;
 }
 
 /** The currently selected owner's channel, resolved by the control plane. */
@@ -121,6 +125,11 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
   let disposed = false;
   let snapshot: RecoverySnapshot = build();
 
+  function matchesOwner(state: IdentityState): boolean {
+    return state.kind === 'signed_in' && state.principal.ownerId === deps.principal.ownerId
+      && sameProviderIdentity(state.principal, deps.principal);
+  }
+
   const service = createRecoveryService({
     ownerId: deps.principal.ownerId,
     identity: {
@@ -139,8 +148,8 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
       history: historyOf(device),
       connection: deps.connection?.() ?? 'unknown',
       recovery,
-      revocationTargets: identity.kind === 'signed_in' ? revocationTargets : [],
-      closure: identity.kind === 'signed_in' && identity.principal.ownerId === deps.principal.ownerId ? closure : null,
+      revocationTargets: matchesOwner(identity) ? revocationTargets : [],
+      closure: matchesOwner(identity) ? closure : null,
     };
   }
 
@@ -150,6 +159,17 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     for (const listener of [...listeners]) listener();
   }
 
+  async function ownerStatus(): Promise<'current' | 'different' | 'unknown'> {
+    if (disposed) return 'unknown';
+    try {
+      const state = await deps.identity.current();
+      if (disposed || state.kind === 'unavailable') return 'unknown';
+      return matchesOwner(state) ? 'current' : 'different';
+    } catch {
+      return 'unknown';
+    }
+  }
+
   async function refresh(): Promise<void> {
     const own = ++generation;
     let nextIdentity: IdentityState;
@@ -157,10 +177,23 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     let nextClosure: ClosureCapability | null = null;
     let nextTargets: readonly RevocationCapability[] = [];
     try {
-      [nextIdentity, nextRecovery, nextClosure, nextTargets] = await Promise.all([
-        deps.identity.current(), service.capabilities(), deps.closure?.currentCapability().catch(() => null) ?? Promise.resolve(null),
-        deps.revocation?.targets() ?? Promise.resolve([]),
+      const before = await deps.identity.current();
+      [nextRecovery, nextClosure, nextTargets] = await Promise.all([
+        service.capabilities(), matchesOwner(before) ? deps.closure?.currentCapability().catch(() => null) ?? Promise.resolve(null) : Promise.resolve(null),
+        matchesOwner(before) ? Promise.resolve().then(() => deps.revocation?.targets() ?? null)
+          .then(result => result && result.ownerId === deps.principal.ownerId
+            && result.providerIssuer === deps.principal.providerIssuer
+            && result.providerSubject === deps.principal.providerSubject ? result.targets : []).catch(() => []) : Promise.resolve([]),
       ]);
+      nextIdentity = await deps.identity.current();
+      if (!matchesOwner(before) || !matchesOwner(nextIdentity)) {
+        nextClosure = null;
+        nextTargets = [];
+      }
+      if (before.kind !== nextIdentity.kind
+        || before.kind === 'signed_in' && nextIdentity.kind === 'signed_in'
+          && (before.principal.ownerId !== nextIdentity.principal.ownerId
+            || !sameProviderIdentity(before.principal, nextIdentity.principal))) nextRecovery = PENDING;
     } catch {
       nextIdentity = { kind: 'unavailable', retryable: true };
       nextRecovery = PENDING;
@@ -196,24 +229,33 @@ export function createBrowserRecoveryPort(deps: BrowserRecoveryDeps): BrowserRec
     inspectRecovery: (operationId, options) => service.inspect(operationId, options),
     async revoke(input, options) {
       if (!deps.revocation || disposed) return unavailable();
+      const owner = await ownerStatus();
+      if (owner === 'unknown') return unavailable();
+      if (owner === 'different') return rejected('forbidden');
       return deps.revocation.revoke(input, options);
     },
     async inspectRevocation(operationId, options) {
-      if (!deps.revocation || disposed) return unavailable();
+      if (!deps.revocation || disposed) return outcomeUnknown(operationId);
+      const owner = await ownerStatus();
+      if (owner === 'unknown') return outcomeUnknown(operationId);
+      if (owner === 'different') return rejected('not_found');
       return deps.revocation.inspect(operationId, options);
     },
     async closeRoom(input, options) {
       if (!deps.closure || disposed) return unavailable();
-      if (identity.kind !== 'signed_in'
-        || input.ownerId !== deps.principal.ownerId || input.ownerId !== identity.principal.ownerId
+      const owner = await ownerStatus();
+      if (owner === 'unknown') return unavailable();
+      if (owner === 'different' || input.ownerId !== deps.principal.ownerId
         || closure?.roomId !== input.roomId || closure.expectedRoomRevision !== input.expectedRoomRevision) {
         return rejected('forbidden');
       }
       return deps.closure.closeRoom(input, options);
     },
     async inspectClosure(operationId, options) {
-      if (!deps.closure || disposed || identity.kind !== 'signed_in'
-        || identity.principal.ownerId !== deps.principal.ownerId) return rejected('not_found');
+      if (!deps.closure) return outcomeUnknown(operationId);
+      const owner = await ownerStatus();
+      if (owner === 'unknown') return outcomeUnknown(operationId);
+      if (owner === 'different') return rejected('not_found');
       const result = await deps.closure.inspectClosure(operationId, options);
       if (result.kind === 'rejected') return rejected('not_found');
       if (result.kind === 'ok') return { kind: 'ok', value: result.value };

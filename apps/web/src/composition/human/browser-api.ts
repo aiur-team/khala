@@ -483,19 +483,22 @@ export function createHumanBrowserApi(options: HumanBrowserApiOptions): HumanBro
           url.searchParams.set('roomId', roomId);
           const response = await request(url.href, { method: 'GET', credentials: 'same-origin',
             headers: { accept: 'application/json' }, signal: requestSignal() });
-          if (response.status !== 200) return [];
+          if (response.status !== 200) return null;
           const body = await jsonObject(response);
-          if (!body || !Array.isArray(body.targets) || body.targets.length > 128) return [];
+          if (!body || !Array.isArray(body.targets) || body.targets.length > 128
+            || typeof body.ownerId !== 'string' || typeof body.providerIssuer !== 'string'
+            || typeof body.providerSubject !== 'string') return null;
           const targets = [];
           for (const value of body.targets) {
             if (!isObject(value) || !hasExactKeys(value, ['targetKind', 'targetId', 'expectedGeneration'])
               || value.targetKind !== 'binding' || typeof value.targetId !== 'string'
-              || !Number.isSafeInteger(value.expectedGeneration) || (value.expectedGeneration as number) < 0) return [];
+              || !Number.isSafeInteger(value.expectedGeneration) || (value.expectedGeneration as number) < 0) return null;
             targets.push({ targetKind: 'binding' as const, targetId: value.targetId as never,
               expectedGeneration: value.expectedGeneration as number });
           }
-          return targets;
-        } catch { return []; }
+          return { ownerId: body.ownerId as OwnerId, providerIssuer: body.providerIssuer,
+            providerSubject: body.providerSubject, targets };
+        } catch { return null; }
       },
       async revoke(input, options) {
         const response = await mutation(REVOCATION_REVOKE_PATH, input, options?.signal);

@@ -15,7 +15,14 @@ KHA-129 recovery service to the KHA-127 panel's `RecoveryPorts`.
   its capability is unavailable. No local storage deletion is used as a substitute.
 - **Lifecycle.** Device views from a replaced generation are ignored. `dispose` closes only this
   port's observers and discards identity or capability reads still in flight. The shared device and
-  messaging lifecycle stay owned by KHA-132.
+  messaging lifecycle stay owned by KHA-132. Revocation targets and closure capability are shown
+  only for the exact owner and provider identity that created the route. Each effectful or inspection
+  command rechecks that identity, so a stale route cannot invoke its old owner's port after an account
+  switch. Revocation-target responses carry the authenticated owner and provider identity; the port
+  verifies that scope and reads identity again before publishing targets, including after an account
+  switches away and back while a lookup is in flight.
+  An indeterminate identity read during operation inspection keeps the operation ID unresolved for
+  later retry; a failed optional revocation-target lookup does not erase an otherwise valid closure view.
 
 `projectRecovery` builds the serialisable status view field by field from an allow-list: operation
 ID and kind, device state, history, the recovery refusal and allowed actions. No key, password,

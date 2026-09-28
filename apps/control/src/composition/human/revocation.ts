@@ -121,7 +121,9 @@ export function createOwnerRevocationRoutes(input: OwnerRevocationDependencies):
         if (membership.kind !== 'joined') return json(403, { code: 'forbidden' });
         const indexed = await rooms.inspect(principal.ownerId, room.value);
         if (indexed.kind !== 'ok') return json(503, { code: 'unavailable' });
-        if (!indexed.value) return json(200, { targets: [] });
+        const ownerScope = { ownerId: principal.ownerId, providerIssuer: principal.providerIssuer,
+          providerSubject: principal.providerSubject };
+        if (!indexed.value) return json(200, { ...ownerScope, targets: [] });
         const targets = [];
         for (const item of indexed.value.bindings) {
           const bindingId = decodeBindingId(item.bindingId);
@@ -133,7 +135,7 @@ export function createOwnerRevocationRoutes(input: OwnerRevocationDependencies):
             targets.push({ targetKind: 'binding', targetId: bindingId.value, expectedGeneration: item.generation });
           }
         }
-        return json(200, { targets });
+        return json(200, { ...ownerScope, targets });
       },
     },
     {
