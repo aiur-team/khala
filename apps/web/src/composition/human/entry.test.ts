@@ -7,6 +7,15 @@ describe('readHumanEntry', () => {
     expect(readHumanEntry({ pathname: '/join', search: '?invite=invite_1' })).toEqual({ mode: 'standalone', path: '/join?invite=invite_1' });
   });
 
+  test('removes stray OAuth query parameters from the create route before routing', () => {
+    expect(readHumanEntry({ pathname: '/new', search: '?state=opaque&code=secret&iss=https%3A%2F%2Faccounts.google.com' }))
+      .toEqual({ mode: 'standalone', path: '/new' });
+    expect(readHumanEntry({ pathname: '/new', search: '?unexpected=value' }))
+      .toEqual({ mode: 'standalone', path: '/new' });
+    expect(readHumanEntry({ pathname: '/join', search: '?invite=invite_1' }))
+      .toEqual({ mode: 'standalone', path: '/join?invite=invite_1' });
+  });
+
   test('honours hosted-content and strips the entry parameter before routing', () => {
     expect(readHumanEntry({ pathname: '/new', search: '?mount=hosted-content' })).toEqual({ mode: 'hosted-content', path: '/new' });
     expect(readHumanEntry({ pathname: '/join', search: '?mount=hosted-content&invite=invite_1' }))

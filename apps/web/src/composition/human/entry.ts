@@ -13,6 +13,8 @@ export type HumanEntry = Readonly<{
 /**
  * Reads the boot-time shell mode from `?mount=` and strips it from the path
  * handed to the router, so the parameter never makes a route unmatchable.
+ * The create route has no query parameters. Canonicalize it before routing and
+ * remove any OAuth response parameters that a browser or redirect carried there.
  * Anything other than an exact `hosted-content` value boots standalone.
  */
 export function readHumanEntry(location: EntryLocation): HumanEntry {
@@ -20,6 +22,6 @@ export function readHumanEntry(location: EntryLocation): HumanEntry {
   const requested = params.getAll(MOUNT_MODE_PARAM);
   const mode: ShellMode = requested.length === 1 && requested[0] === 'hosted-content' ? 'hosted-content' : 'standalone';
   params.delete(MOUNT_MODE_PARAM);
-  const search = params.toString();
+  const search = location.pathname === '/new' ? '' : params.toString();
   return { mode, path: `${location.pathname}${search ? `?${search}` : ''}` };
 }
