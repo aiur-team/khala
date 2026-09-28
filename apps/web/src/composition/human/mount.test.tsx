@@ -72,6 +72,35 @@ describe('HumanApplicationScreen', () => {
     expect(unavailable).not.toContain('Create a chat');
   });
 
+  it('shows retained-key guidance for signed-in loss without offering room access or replacement', async () => {
+    const channelAccess = await channelAccessController();
+    for (const reason of ['storage_cleared', 'key_material_missing']) {
+      renderRoom.mockClear();
+      const html = renderToStaticMarkup(
+        <HumanApplicationScreen
+          application={application({ phase: 'unavailable', source: 'device', reason, retryable: true,
+            path: '/channels/room_1', context: null })}
+          identity={identity} routes={routes} renderRoom={renderRoom} createChannelAccess={() => channelAccess}
+        />,
+      );
+      expect(html).toContain("This device&#x27;s keys are unavailable");
+      expect(html).toContain('earlier history cannot be recovered');
+      expect(html).toContain('fresh authorized admission');
+      expect(html).toContain('open Khala there');
+      expect(html).not.toContain('Check retained keys again');
+      expect(html).not.toContain('Use new device');
+      expect(html).not.toContain('live room');
+      expect(renderRoom).not.toHaveBeenCalled();
+    }
+    const revoked = renderToStaticMarkup(
+      <HumanApplicationScreen application={application({ phase: 'unavailable', source: 'device', reason: 'revoked_by_owner',
+        retryable: false, path: '/channels/room_1', context: null })} identity={identity} routes={routes}
+        renderRoom={renderRoom} createChannelAccess={() => channelAccess} />,
+    );
+    expect(revoked).not.toContain('original keys');
+    expect(revoked).toContain('revoked_by_owner');
+  });
+
   it('keeps standalone chrome out of a host-content mount', async () => {
     const channelAccess = await channelAccessController();
     const snapshot = { phase: 'signed_out', path: '/', context: null } as const;
