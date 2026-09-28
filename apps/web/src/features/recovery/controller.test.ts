@@ -456,6 +456,69 @@ describe('createRecoveryController', () => {
     expect(fake.stored()).toBeNull();
   });
 
+  it('waits for the initial identity read before inspecting a saved operation after reload', async () => {
+    const saved = operationReference('closure');
+    const fake = fakePorts({ initialSnapshot: snapshot({ identity: { kind: 'unavailable', retryable: true } }),
+      storedReference: saved });
+    vi.mocked(fake.ui.inspectClosure).mockResolvedValue(ok({ operationId: saved.operationId,
+      state: 'complete', reason: null }));
+    const controller = createRecoveryController(fake.ports, { roomId: ROOM_ID, roomRevision: 7 });
+    expect(fake.stored()).toEqual(saved);
+    expect(fake.ui.inspectClosure).not.toHaveBeenCalled();
+    await expect(controller.beginClosure()).resolves.toBeNull();
+    fake.emit(snapshot());
+    await vi.waitFor(() => expect(controller.getView().operation).toMatchObject({ state: 'complete' }));
+    expect(fake.ui.inspectClosure).toHaveBeenCalledWith(saved.operationId,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(fake.stored()).toBeNull();
+  });
+
+  it('resumes the same persisted device after its process-local generation resets', async () => {
+    const saved = { ...operationReference('closure'), deviceGeneration: 8 };
+    const fake = fakePorts({ initialSnapshot: snapshot({ device: { ...DEVICE, generation: 1 } }),
+      storedReference: saved });
+    vi.mocked(fake.ui.inspectClosure).mockResolvedValue(ok({ operationId: saved.operationId,
+      state: 'complete', reason: null }));
+    const controller = createRecoveryController(fake.ports, { roomId: ROOM_ID, roomRevision: 7 });
+    await vi.waitFor(() => expect(controller.getView().operation).toMatchObject({ state: 'complete' }));
+    expect(fake.ui.inspectClosure).toHaveBeenCalledWith(saved.operationId,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(fake.stored()).toBeNull();
+  });
+
+  it('keeps a saved operation while the device is still initializing', async () => {
+    const saved = operationReference('closure');
+    const fake = fakePorts({ initialSnapshot: snapshot({ device: { deviceId: null,
+      state: 'new', generation: 0, reason: null } }), storedReference: saved });
+    vi.mocked(fake.ui.inspectClosure).mockResolvedValue(ok({ operationId: saved.operationId,
+      state: 'complete', reason: null }));
+    const controller = createRecoveryController(fake.ports, { roomId: ROOM_ID, roomRevision: 7 });
+    expect(fake.stored()).toEqual(saved);
+    fake.emit(snapshot({ device: { ...DEVICE, generation: 1 } }));
+    await vi.waitFor(() => expect(controller.getView().operation).toMatchObject({ state: 'complete' }));
+    expect(fake.stored()).toBeNull();
+  });
+
+  it('discards a saved operation if the initial identity resolves to another owner', () => {
+    const fake = fakePorts({ initialSnapshot: snapshot({ identity: { kind: 'unavailable', retryable: true } }),
+      storedReference: operationReference('closure') });
+    const controller = createRecoveryController(fake.ports, { roomId: ROOM_ID, roomRevision: 7 });
+    fake.emit(snapshot({ identity: { ...SIGNED_IN, principal: { ...SIGNED_IN.principal,
+      ownerId: OTHER_OWNER_ID } } }));
+    expect(fake.stored()).toBeNull();
+    expect(fake.ui.inspectClosure).not.toHaveBeenCalled();
+    expect(controller.getView().operation.kind).toBe('idle');
+  });
+
+  it('never calls the owner when its write-ahead operation cannot be saved', async () => {
+    const fake = fakePorts();
+    fake.resumeStore.save.mockImplementation(() => { throw new Error('storage unavailable'); });
+    const controller = createRecoveryController(fake.ports, { roomId: ROOM_ID, roomRevision: 7 });
+    await expect(controller.beginClosure()).resolves.toBeNull();
+    expect(fake.ui.closeRoom).not.toHaveBeenCalled();
+    expect(controller.getView().operation.kind).toBe('idle');
+  });
+
   it('keeps a thrown effectful call inspectable as outcome unknown', async () => {
     const fake = fakePorts();
     vi.mocked(fake.ui.closeRoom).mockRejectedValue(new Error('synthetic transport failure'));

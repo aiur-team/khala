@@ -6,7 +6,7 @@ import { createTimelineController } from '../../features/timeline/controller';
 import { TimelineScreen } from '../../features/timeline/TimelineScreen';
 import { Panel } from '../../shell/Panel';
 import { RecoveryPanel } from '../../features/recovery/RecoveryPanel';
-import { createBrowserRecoveryPort } from '../recovery/browser-port';
+import { createBrowserRecoveryPort, sessionResumeStore } from '../recovery/browser-port';
 import type { HumanRoomRenderer } from './mount';
 import type { ReviewCapability } from '../review/register';
 import { createReviewController, type ReviewController } from '../../features/review/controller';
@@ -222,6 +222,7 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
   );
   const recovery = useMemo(() => createBrowserRecoveryPort({
     principal: context.principal, identity: context.identity, device: context.device,
+    resumeStore: sessionResumeStore(context.principal.ownerId, roomId),
     ...(context.closure ? { closure: context.closure(roomId) } : {}),
     ...(context.revocation ? { revocation: context.revocation(roomId) } : {}),
   }), [context, roomId]);

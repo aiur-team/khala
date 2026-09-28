@@ -5,7 +5,7 @@
 
 import {
   type AuthPrincipal, type ClosureCapability, type ClosurePort, type DevicePort, type DeviceView, type IdentityPort, type IdentityState, type RecoveryCapabilities,
-  type RevocationPort, rejected, unavailable,
+  type RevocationPort, type RoomId, rejected, unavailable,
 } from '@khala/contracts/messaging/index';
 import { createRecoveryService } from '@khala/messaging/recovery/index';
 import type {
@@ -62,6 +62,52 @@ export function memoryResumeStore(): RecoveryResumeStore {
     load: () => stored,
     save: reference => { stored = reference; },
     clear: () => { stored = null; },
+  };
+}
+
+/** Persist only the operation identity within this tab so reloads inspect rather than restart it. */
+export function sessionResumeStore(ownerId: AuthPrincipal['ownerId'], roomId: RoomId,
+  session: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null = null): RecoveryResumeStore {
+  const key = `khala.recovery.resume.v1:${JSON.stringify([ownerId, roomId])}`;
+  const storage = () => {
+    if (session) return session;
+    try { return globalThis.sessionStorage; } catch { return null; }
+  };
+  return {
+    load() {
+      let raw: string | null;
+      try { raw = storage()?.getItem(key) ?? null; } catch { return null; }
+      if (raw === null) return null;
+      try {
+        if (raw.length > 1024) throw new Error('oversized');
+        const value: unknown = JSON.parse(raw);
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('invalid');
+        const row = value as Record<string, unknown>;
+        if (Object.keys(row).sort().join(',') !== 'deviceGeneration,deviceId,kind,operationId,ownerId,roomId,roomRevision'
+          || !['recovery', 'revocation', 'closure'].includes(String(row.kind))
+          || typeof row.operationId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/u.test(row.operationId)
+          || row.ownerId !== ownerId || row.roomId !== roomId
+          || row.deviceId !== null && typeof row.deviceId !== 'string'
+          || !Number.isSafeInteger(row.deviceGeneration) || (row.deviceGeneration as number) < 0
+          || !Number.isSafeInteger(row.roomRevision) || (row.roomRevision as number) < 0) throw new Error('invalid');
+        return row as RecoveryOperationReference;
+      } catch {
+        try { storage()?.removeItem(key); } catch { /* unavailable storage stays fail closed */ }
+        return null;
+      }
+    },
+    save(reference) {
+      if (reference.ownerId !== ownerId || reference.roomId !== roomId) throw new Error('recovery_resume_scope_mismatch');
+      const target = storage();
+      if (!target) throw new Error('recovery_resume_storage_unavailable');
+      const safe: RecoveryOperationReference = {
+        kind: reference.kind, operationId: reference.operationId, ownerId: reference.ownerId,
+        deviceId: reference.deviceId, deviceGeneration: reference.deviceGeneration,
+        roomId: reference.roomId, roomRevision: reference.roomRevision,
+      };
+      target.setItem(key, JSON.stringify(safe));
+    },
+    clear() { try { storage()?.removeItem(key); } catch { /* inspection remains safe on reload */ } },
   };
 }
 

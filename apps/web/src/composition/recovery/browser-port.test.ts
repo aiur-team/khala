@@ -4,7 +4,7 @@ import {
 } from '@khala/contracts/messaging/index';
 import { describe, expect, it, vi } from 'vitest';
 import type { HumanRouteContext } from '../human/application';
-import { type BrowserClosure, type BrowserRevocation, createBrowserRecoveryPort } from './browser-port';
+import { type BrowserClosure, type BrowserRevocation, createBrowserRecoveryPort, sessionResumeStore } from './browser-port';
 import { projectRecovery } from './projection';
 import { registerRecovery } from './register';
 
@@ -51,6 +51,26 @@ async function settled() {
 }
 
 describe('createBrowserRecoveryPort', () => {
+  it('keeps only scoped operation identity across a tab reload and rejects an unavailable write-ahead store', () => {
+    const rows = new Map<string, string>();
+    const storage = { getItem: (key: string) => rows.get(key) ?? null,
+      setItem: (key: string, value: string) => { rows.set(key, value); },
+      removeItem: (key: string) => { rows.delete(key); } };
+    const roomId = '!room:example' as never;
+    const reference = { kind: 'closure', operationId: 'close-pending', ownerId: principal.ownerId,
+      deviceId: ready.deviceId, deviceGeneration: ready.generation, roomId, roomRevision: 0 } as const;
+    const first = sessionResumeStore(principal.ownerId, roomId, storage);
+    first.save({ ...reference, accidentalSecret: SECRET_CANARY } as never);
+    expect(sessionResumeStore(principal.ownerId, roomId, storage).load()).toEqual(reference);
+    expect(sessionResumeStore('other-owner' as OwnerId, roomId, storage).load()).toBeNull();
+    expect([...rows.values()]).toEqual([JSON.stringify(reference)]);
+    expect([...rows.values()].join('')).not.toContain(SECRET_CANARY);
+    const broken = sessionResumeStore(principal.ownerId, roomId, { ...storage,
+      setItem() { throw new Error('quota'); } });
+    expect(() => broken.save(reference)).toThrow('quota');
+    first.clear();
+    expect(first.load()).toBeNull();
+  });
   it('shows a signed-in device as partial history with recovery refused under P14', async () => {
     const device = fakeDevice(ready);
     const ports = createBrowserRecoveryPort({ principal, identity: identity(), device: device.port });

@@ -32,3 +32,11 @@ The generic capability slot remains unavailable until it has a separate render h
   (`lookupBinding`, `disableBinding`, `revokeAdapterCapability` in `@khala/control/agent-bootstrap`);
   a route also needs a Matrix `ProtocolRevocationPort` and a device-key lookup.
 - The protected connector stop mailbox must be bound before the production closure capability is offered.
+
+The mounted room panel uses a tab-scoped write-ahead operation reference. It stores only
+operation identity (kind, owner, room, device, generation and room revision) before a
+closure/revocation request, then inspects that same ID after reload. An initial
+unavailable identity read delays inspection until the owner is known; the store is
+owner/room scoped, and a different device clears its reference. If tab storage cannot commit the reference, the
+controller refuses to start the effectful request. This is UI continuity, not key or
+message-history recovery.
