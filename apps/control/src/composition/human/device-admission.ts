@@ -194,10 +194,16 @@ export function createDeviceAdmission(input: Readonly<{
       if (!Number.isSafeInteger(readRequest.position) || readRequest.position < 0) return false;
       const current = await read(readRequest.roomId);
       if (current.kind !== 'found') return false;
-      return current.value.devices.some(device => device.state === 'active'
+      if (!current.value.devices.some(device => device.state === 'active'
         && device.ownerId === readRequest.ownerId && device.deviceId === readRequest.deviceId
         && device.deviceKey === readRequest.deviceKey && device.generation === readRequest.generation
-        && readRequest.position > device.cutoff);
+        && readRequest.position > device.cutoff)) return false;
+      // An active admission is not enough during a later room-wide rotation or
+      // when the verified roster has acquired a sender that has not rotated.
+      const room = await fence.inspect(readRequest.roomId);
+      return room.kind === 'found' && room.value.rosterVerified && room.value.hold === null
+        && room.value.senders.length > 0
+        && room.value.senders.every(sender => sender.rotatedEpoch === room.value.epoch);
     },
     inspect: read,
   };

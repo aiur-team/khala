@@ -109,6 +109,30 @@ describe('replacement device admission boundary', () => {
     expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
   });
 
+  it('withholds active-device reads during a later hold and until a new sender is rotation-ready', async () => {
+    const h = await setup();
+    await h.ledger.reserve(replacement);
+    await h.fence.acknowledgeRotation(roomId, sender, replacement.operationId, 1);
+    await h.fence.acknowledgeRotation(roomId, other, replacement.operationId, 1);
+    h.setDistributed(true);
+    expect(await h.ledger.activate(replacement)).toBe('applied');
+    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
+
+    expect(await h.fence.beginHold(roomId, 'later_rotation', null)).toBe('held');
+    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(false);
+    await h.fence.acknowledgeRotation(roomId, sender, 'later_rotation', 2);
+    await h.fence.acknowledgeRotation(roomId, other, 'later_rotation', 2);
+    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.fence.releaseHold(roomId, 'later_rotation', 'rotated')).toBe('applied');
+    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
+
+    const added = { senderId: 'owner_C', deviceId: 'old_C', deviceKey: 'D'.repeat(43) };
+    expect(await h.fence.seedRoster(roomId, [sender, other, added])).toBe('applied');
+    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(false);
+    expect(await h.fence.readySender(roomId, added)).toBe('applied');
+    expect(await h.restart().allows({ ...replacement, position: 11 })).toBe(true);
+  });
+
   it('retries a failed pending-cancellation release after restart before reporting success', async () => {
     const h = await setup();
     expect(await h.ledger.reserve(replacement)).toBe('pending');
