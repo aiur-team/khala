@@ -86,11 +86,11 @@ contain:
     "bindingId": "binding-from-real-pairing",
     "agentParticipantId": "agent-from-real-pairing",
     "connectorControl": {
-      "executable": "/absolute/path/to/operator-owned-connector-control",
-      "args": ["--instance", "disposable-owner-connector"],
+      "executable": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/tests/integration/controls/connector-control.mjs", "/absolute/path/to/private-control.json"],
       "processExecutable": "/absolute/path/to/node",
       "processCwd": "/absolute/path/to/disposable-agent-workspace",
-      "processCgroup": "/user.slice/user-1000.slice/.../disposable-connector.scope"
+      "processCgroup": "/user.slice/user-1000.slice/.../khala-e2e-connector-aabbccddeeff.service"
     }
   }
 }
@@ -111,7 +111,37 @@ return within 30 seconds, and keep secrets out of stdout/stderr. The test also
 checks `/proc/<pid>` executable, working directory, exact cgroup, start time
 and that the old process has exited. This lifecycle adapter does not
 decide owner authority or policy; all commands still cross production routes.
-No adapter has been provisioned or run by this change.
+`connector-control.mjs` implements this contract for one systemd user unit. Its
+private config file (owned by the current user, mode 0600) has this shape:
+
+```json
+{
+  "v": 1,
+  "unit": "khala-e2e-connector-aabbccddeeff.service",
+  "unitFragment": "/absolute/path/to/user/unit/file",
+  "harness": "codex",
+  "sessionId": "the-existing-native-thread-id",
+  "bindingId": "binding-from-real-pairing",
+  "generation": 1,
+  "stateRoot": "/absolute/path/to/XDG_STATE_HOME/khala/hosted",
+  "workdir": "/absolute/path/to/the-native-session-workspace",
+  "processExecutable": "/absolute/path/to/node",
+  "processCwd": "/absolute/path/to/the-native-session-workspace",
+  "processCgroup": "/exact/user.slice/path/to/khala-e2e-connector-aabbccddeeff.service"
+}
+```
+
+The adapter accepts only a `khala-e2e-connector-<12 hex>.service` owned user
+unit. It compares systemd's MainPID, unit fragment and control group with the
+actual `/proc` process and the stored `current-binding.json` at the production
+session hash. It restarts only that exact unit and refuses changed session,
+binding, generation or process identity. The unit must launch or resume the
+*same* provider-named Codex session with the installed Khala MCP entry and
+already established binding; `khala mcp-serve` from an ordinary shell has no
+provider thread metadata and does not create an active owner connector by
+itself. This change does not provision a unit or start a native process.
+After restart, the test must still get a fresh connector status through the
+protected mailbox, so a PID-only restart cannot count as success.
 
 The driver also requires the deployed browser bundle to include the owner
 controls wiring and the connector to inspect a *tested* manual route. A disabled
