@@ -26,6 +26,8 @@ export type HumanScreenProps<Route> = Readonly<{
   renderRoute: (context: HumanRouteContext, route: Route) => ReactNode;
   /** What a signed-out snapshot shows; a composition without sign-in renders its own terminal state. */
   renderSignedOut: (path: string) => ReactNode;
+  /** Signed-in key loss stays outside every room route and owner-only capability. */
+  renderDeviceLoss?: (path: string) => ReactNode;
   /** Attaches optional capabilities to each ready route context. */
   attachCapabilities?: (context: HumanRouteContext) => Disposer;
   /** Replaces the default shell around a ready route, e.g. with owner-only navigation. */
@@ -72,6 +74,7 @@ export function HumanScreen<Route>({
   mode = 'hosted-content',
   renderRoute,
   renderSignedOut,
+  renderDeviceLoss,
   attachCapabilities,
   renderReadyShell,
 }: HumanScreenProps<Route>) {
@@ -88,6 +91,10 @@ export function HumanScreen<Route>({
     );
   } else if (snapshot.phase === 'signed_out') {
     content = renderSignedOut(snapshot.path);
+  } else if (snapshot.phase === 'unavailable' && snapshot.source === 'device'
+    && (snapshot.reason === 'storage_cleared' || snapshot.reason === 'key_material_missing')
+    && renderDeviceLoss !== undefined) {
+    content = renderDeviceLoss(snapshot.path);
   } else {
     content = (
       <KhalaPageFrame model={{ title: 'Khala', labelledBy: 'khala-status' }}>

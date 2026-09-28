@@ -90,6 +90,18 @@ function SignInPanel({ identity, path, navigateExternal }: {
   );
 }
 
+function LostDevicePanel() {
+  return (
+    <KhalaPageFrame model={{ title: 'Device keys unavailable', labelledBy: 'khala-device-loss' }}>
+      <Panel heading="This device's keys are unavailable">
+        <p role="alert">Khala cannot open this device's encrypted messages or channels with the keys available here.</p>
+        <p>If you still have a device or browser profile with its original keys, open Khala there to read its history. This browser profile cannot regain keys by retrying this page.</p>
+        <p>If every device's keys are gone, earlier history cannot be recovered. Access from a new device requires a fresh authorized admission; this screen cannot grant one.</p>
+      </Panel>
+    </KhalaPageFrame>
+  );
+}
+
 const ChannelAccessContext = createContext<ChannelAccessInboxController | null>(null);
 
 function ChannelRequestsRoute({ selectedHandle }: { selectedHandle: ChannelAccessRequestHandle | null }) {
@@ -195,6 +207,7 @@ export function HumanApplicationScreen({
       mode={mode}
       renderRoute={renderRoute}
       renderSignedOut={path => <SignInPanel identity={identity} path={path} navigateExternal={navigateExternal} />}
+      renderDeviceLoss={() => <LostDevicePanel />}
       attachCapabilities={attachCapabilities}
       renderReadyShell={renderReadyShell}
     />
