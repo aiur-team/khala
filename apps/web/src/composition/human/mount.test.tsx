@@ -151,6 +151,8 @@ describe('HumanApplicationScreen', () => {
     expect(html).toContain('Channel requests');
     expect(html).toContain('<h1 id="khala-channel-requests-title">Channel requests</h1>');
     expect(html).not.toContain('<h2>Channel requests</h2>');
+    expect(html).toContain('<h2 id="channel-requests-pending-heading"');
+    expect(html).toContain('<h2 id="channel-requests-recent-heading">Recent</h2>');
     expect(html).toContain('>50<');
     expect(html).toContain('50 pending');
     expect(html).toContain('Waiting for you (60)');

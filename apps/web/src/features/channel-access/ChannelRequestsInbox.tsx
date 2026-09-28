@@ -146,6 +146,7 @@ export function ChannelRequestsInbox({ controller, selectedHandle, embedded = fa
   }
 
   const dialog = view.dialog;
+  const SectionHeading = embedded ? 'h2' : 'h3';
   return (
     <Panel heading={embedded ? undefined : 'Channel requests'}>
       <div className="channel-requests" aria-busy={view.phase === 'loading'}>
@@ -177,9 +178,9 @@ export function ChannelRequestsInbox({ controller, selectedHandle, embedded = fa
         {view.phase === 'ready' ? (
           <>
             <section aria-labelledby="channel-requests-pending-heading">
-              <h3 id="channel-requests-pending-heading" ref={pendingHeadingRef} tabIndex={-1}>
+              <SectionHeading id="channel-requests-pending-heading" ref={pendingHeadingRef} tabIndex={-1}>
                 Waiting for you ({pending.length})
-              </h3>
+              </SectionHeading>
               {pending.length === 0 ? (
                 <p>No requests are waiting for you.</p>
               ) : (
@@ -190,7 +191,7 @@ export function ChannelRequestsInbox({ controller, selectedHandle, embedded = fa
             </section>
 
             <section aria-labelledby="channel-requests-recent-heading">
-              <h3 id="channel-requests-recent-heading">Recent</h3>
+              <SectionHeading id="channel-requests-recent-heading">Recent</SectionHeading>
               <p className="channel-requests__hint">Details of a finished request are removed 30 days after it ends.</p>
               {recent.length === 0 ? (
                 <p>No recent requests.</p>

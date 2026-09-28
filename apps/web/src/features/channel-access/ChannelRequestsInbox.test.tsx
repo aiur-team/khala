@@ -65,6 +65,16 @@ describe('ChannelRequestsInbox', () => {
     expect(html).toContain('Reload requests');
   });
 
+  it('nests subsection headings directly below the page title when embedded', () => {
+    const embedded = renderToStaticMarkup(<ChannelRequestsInbox controller={controllerFor(ready([]))} embedded />);
+    expect(embedded).not.toContain('<h2>Channel requests</h2>');
+    expect(embedded).toContain('<h2 id="channel-requests-pending-heading"');
+    expect(embedded).toContain('<h2 id="channel-requests-recent-heading">Recent</h2>');
+    const standalone = render(ready([]));
+    expect(standalone).toContain('<h2>Channel requests</h2>');
+    expect(standalone).toContain('<h3 id="channel-requests-pending-heading"');
+  });
+
   it('shows an empty inbox with a zero count', () => {
     const html = render(ready([]));
     expect(text(html)).toContain('Waiting for you (0)');
