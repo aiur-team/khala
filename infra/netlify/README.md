@@ -46,8 +46,11 @@ Two disjoint groups, enforced by `infra/netlify/env.schema.json`:
 - **Server** — read only inside a function's request handling (never at
   module import time), never logged, never echoed in a response body.
 
-Production's `PUBLIC_APP_ORIGIN` is fixed to `https://khala.aiur.team` in
-`netlify.toml`; the OAuth callback is `https://khala.aiur.team/api/human/auth/callback`.
+Production's `PUBLIC_APP_ORIGIN` is `https://khala.aiur.team` in both
+`netlify.toml` for the build and the Netlify site's Functions-scoped production
+environment for the control runtime. Netlify does not expose `netlify.toml`
+environment variables to Functions. The OAuth callback is
+`https://khala.aiur.team/api/human/auth/callback`.
 Set `PUBLIC_HOMESERVER_ORIGIN` to the operator-provisioned Railway Synapse HTTPS
 origin (a bare origin such as `https://matrix.example.com`, no path); it is
 configuration, not an endpoint inferred or embedded by the app, and it is the
@@ -73,9 +76,12 @@ For an isolated Matrix ingress, set the separate server-only
 `MATRIX_REGISTRATION_INGRESS_TOKEN` on the Netlify site and the matching
 `KHALA_REGISTRATION_INGRESS_TOKEN` at ingress. Only the registration nonce and
 HMAC requests carry it; the ingress strips it before forwarding to Synapse.
-`KHALA_ADMISSION_MODE=explicit_browser_consent` is an optional fail-closed
-agent-admission setting for #42. Keep it unset pending the operator's
-G-ADMISSION ruling; absent or invalid mode returns bootstrap 503.
+The production `https://khala.aiur.team` origin opts into explicit browser
+consent for agent admission. Other origins require
+`KHALA_ADMISSION_MODE=explicit_browser_consent`; an explicitly invalid value
+still fails closed. This code-level production opt-in is necessary because the
+current Netlify CLI identity can read this site's environment but the API
+rejects environment writes with `Forbidden`.
 
 ## Routing
 

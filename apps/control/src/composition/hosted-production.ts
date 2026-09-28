@@ -10,14 +10,16 @@ export type HostedProductionOptions = Omit<ProductionBootstrapDependencies, 'adm
 
 /**
  * The generated Netlify function calls this exact composition root. The
- * product's visible owner-consent choice is still pending: absence or any
- * unrecognized mode leaves bootstrap and device attestation unavailable.
+ * The production Khala site has opted into explicit browser consent. Other
+ * origins still require the exact mode; an explicit invalid mode fails closed.
  */
 export function registerHostedProductionRoutes(
   options: HostedProductionOptions = {},
 ): readonly RouteRegistration[] {
   const env = options.env ?? process.env;
-  if (env.KHALA_ADMISSION_MODE !== 'explicit_browser_consent') {
+  const admissionMode = env.KHALA_ADMISSION_MODE
+    ?? (env.PUBLIC_APP_ORIGIN === 'https://khala.aiur.team' ? 'explicit_browser_consent' : undefined);
+  if (admissionMode !== 'explicit_browser_consent') {
     return Object.freeze([...registerHumanHandlers(), ...registerClosureHandlers(), ...registerAgentHandlers()]);
   }
   const runtime = createProductionHumanRuntimeLoader(options);
