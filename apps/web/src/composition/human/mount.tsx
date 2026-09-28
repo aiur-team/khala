@@ -113,18 +113,15 @@ function ChannelRequestsRoute({ selectedHandle }: { selectedHandle: ChannelAcces
   );
 }
 
-function OwnerShell({ application, createController, routes, chrome, children }: {
+function LogoutAction({ application, routes, mode }: {
   application: HumanApplicationHandle;
-  createController: () => ChannelAccessInboxController;
   routes: HumanRouteCodec;
-  chrome: HumanShellChrome;
-  children: ReactNode;
+  mode: ShellMode;
 }) {
-  const [controller] = useState(createController);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const signOutInFlight = useRef(false);
-  const route = routes.parse(chrome.path);
+
   async function signOut() {
     if (signOutInFlight.current) return;
     signOutInFlight.current = true;
@@ -133,17 +130,14 @@ function OwnerShell({ application, createController, routes, chrome, children }:
     try {
       const result = await application.signOut();
       if (result.kind !== 'ok') setSignOutFailed(true);
-      else if (chrome.mode === 'standalone') globalThis.history?.replaceState(null, '', routes.createPath());
+      else if (mode === 'standalone') globalThis.history?.replaceState(null, '', routes.createPath());
     } finally {
       signOutInFlight.current = false;
       setSigningOut(false);
     }
   }
-  useEffect(() => {
-    controller.start();
-    return () => controller.dispose();
-  }, [controller]);
-  const actions = <>
+
+  return <>
     {signOutFailed ? <span role="alert">Log out failed. Try again.</span> : null}
     {signingOut ? <span role="status">Logging out…</span> : null}
     <button type="button" className="aiur-shell__icon-button" aria-label="Log out" title="Log out"
@@ -155,6 +149,22 @@ function OwnerShell({ application, createController, routes, chrome, children }:
       </svg>
     </button>
   </>;
+}
+
+function OwnerShell({ application, createController, routes, chrome, children }: {
+  application: HumanApplicationHandle;
+  createController: () => ChannelAccessInboxController;
+  routes: HumanRouteCodec;
+  chrome: HumanShellChrome;
+  children: ReactNode;
+}) {
+  const [controller] = useState(createController);
+  const route = routes.parse(chrome.path);
+  useEffect(() => {
+    controller.start();
+    return () => controller.dispose();
+  }, [controller]);
+  const actions = <LogoutAction application={application} routes={routes} mode={chrome.mode} />;
   return (
     <AiurShell
       mode={chrome.mode}
@@ -242,6 +252,7 @@ export function HumanApplicationScreen({
       renderDeviceLoss={() => <LostDevicePanel />}
       attachCapabilities={attachCapabilities}
       renderReadyShell={renderReadyShell}
+      renderSignedInAction={shellMode => <LogoutAction application={application} routes={routes} mode={shellMode} />}
     />
   );
 }

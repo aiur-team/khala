@@ -41,6 +41,7 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
     assert.equal(await page.getByTestId('live-room').count(), 0);
     assert.equal(await page.evaluate(() => window.__lossHarness.inboxCount()), 0);
     assert.equal(await page.getByRole('button', { name: 'Check retained keys again' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 1);
 
     // A retained profile is a fresh application lifecycle, not a retry of the
     // sticky lost service instance above.
@@ -113,6 +114,16 @@ test('standalone logout stays reachable on desktop and phone and clears the acti
     await page.getByRole('button', { name: 'Log out' }).waitFor();
     assert.equal(await page.locator('.aiur-shell__topbar').count(), 0);
     assert.equal(await page.locator('.khala-content-actions').count(), 1);
+
+    await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=lost&logout');
+    await page.getByRole('heading', { name: 'Device keys unavailable' }).waitFor();
+    const unavailableLogout = page.getByRole('button', { name: 'Log out' });
+    await unavailableLogout.click();
+    await page.getByRole('alert').getByText('Log out failed. Try again.').waitFor();
+    await unavailableLogout.click();
+    await page.getByRole('button', { name: 'Sign in' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
+    assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Khala').count(), 0);
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));

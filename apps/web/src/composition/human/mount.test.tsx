@@ -58,6 +58,7 @@ describe('HumanApplicationScreen', () => {
     );
     expect(signedOut).toContain('Sign in');
     expect(signedOut).not.toContain('aria-label="Log out"');
+    expect(signedOut).not.toContain('class="aiur-shell__nav-label">Khala</span>');
 
     const unavailable = renderToStaticMarkup(
       <HumanApplicationScreen
@@ -92,6 +93,7 @@ describe('HumanApplicationScreen', () => {
       expect(html).not.toContain('Check retained keys again');
       expect(html).not.toContain('Use new device');
       expect(html).not.toContain('live room');
+      expect(html).toContain('aria-label="Log out"');
       expect(renderRoom).not.toHaveBeenCalled();
     }
     const revoked = renderToStaticMarkup(
@@ -101,6 +103,7 @@ describe('HumanApplicationScreen', () => {
     );
     expect(revoked).not.toContain('original keys');
     expect(revoked).toContain('revoked_by_owner');
+    expect(revoked).toContain('aria-label="Log out"');
   });
 
   it('keeps standalone chrome out of a host-content mount', async () => {
