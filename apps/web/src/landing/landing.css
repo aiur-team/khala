@@ -623,7 +623,7 @@ a {
   .scrollcue .chev { animation: none; }
 }
 
-/* ---- Prompt: not live yet ---- */
+/* ---- Prompt ---- */
 
 /* The frame hugs the prompt box exactly, so the label centres on the box
    itself (the box's own top margin moves onto the frame). */
@@ -638,25 +638,7 @@ a {
   margin-top: 0;
 }
 
-.install-box.is-soon {
-  opacity: 0.3;
-  filter: grayscale(1) blur(2.5px);
-  pointer-events: none;
-  user-select: none;
-}
-
-.coming-soon {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
-  font-family: var(--font-body);
-  font-size: clamp(16px, 2vw, 19px);
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0.01em;
-  color: var(--fg);
-  pointer-events: none;
+.app-cta {
+  margin-top: 14px;
+  padding: 13px 22px;
 }

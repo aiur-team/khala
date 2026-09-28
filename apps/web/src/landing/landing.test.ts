@@ -51,6 +51,13 @@ describe('splash page prompt', () => {
     expect(await copyText(AGENT_PROMPT, async () => Promise.reject(new Error('denied')))).toBe('denied');
     expect(await copyText(AGENT_PROMPT, null)).toBe('unavailable');
   });
+
+  test('links the hero to the hosted app with an enabled prompt', () => {
+    expect(html).toContain('<a class="button cta app-cta" href="/app">Open Khala app</a>');
+    expect(html).toMatch(/<button class="button copy" id="copyBtn"[^>]*>/);
+    expect(html).not.toContain('Coming soon.');
+    expect(html).not.toContain('aria-disabled="true"');
+  });
 });
 
 describe('splash page constraints', () => {
