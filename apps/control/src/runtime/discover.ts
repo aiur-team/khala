@@ -183,6 +183,7 @@ export function renderRouteManifest(result: DiscoveryResult): string {
 
 export async function bundleGeneratedFunction(result: DiscoveryResult, repoRoot: string): Promise<Uint8Array> {
   const outputDirectory = functionsOutputDirectory(repoRoot);
+  await mkdir(outputDirectory, { recursive: true });
   const entry = path.join(outputDirectory, 'khala-control.mjs');
   const bundled = await build({
     stdin: {

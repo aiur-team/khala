@@ -96,9 +96,9 @@ for (const theme of THEMES) {
         await expect(page).toHaveScreenshot(`${name}-banner-dismissed.png`);
       });
 
-      test('coming-soon prompt box', async ({ page }) => {
+      test('active prompt box', async ({ page }) => {
         await open(page, theme, viewport);
-        await expect(page.locator('.prompt-frame')).toHaveScreenshot(`${name}-prompt-coming-soon.png`);
+        await expect(page.locator('.prompt-frame')).toHaveScreenshot(`${name}-prompt-active.png`);
       });
 
       test('elements', async ({ page }) => {
