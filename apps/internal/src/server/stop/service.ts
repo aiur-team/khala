@@ -67,7 +67,7 @@ export type BindingStopPorts = Readonly<{
 
 export type BindingStopService = Readonly<{
   /** `targets: null` stops every active binding of the channel. */
-  stop(channelId: string, targets: readonly StopTarget[] | null): Promise<StopResult>;
+  stop(channelId: string, targets: readonly StopTarget[] | null, options?: Readonly<{ closeRequests?: boolean }>): Promise<StopResult>;
 }>;
 
 function view(binding: SessionBinding): StopBindingView {
@@ -83,7 +83,10 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
   // Stops of one channel run one at a time; a retry never interleaves with the first attempt.
   const queues = new Map<string, Promise<unknown>>();
 
-  async function stopNow(channelId: string, targets: readonly StopTarget[] | null): Promise<StopResult> {
+  async function stopNow(
+    channelId: string, targets: readonly StopTarget[] | null, options?: Readonly<{ closeRequests?: boolean }>,
+  ): Promise<StopResult> {
+    if (targets === null && options?.closeRequests === false) return { kind: 'unavailable' };
     // A whole-channel Stop also closes approvals that have not reached a binding yet. It does so
     // before the channel's bindings are read: an activation racing this Stop is read below, or its
     // own recheck of the closed request revokes it.
@@ -121,13 +124,15 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
       selected = matched;
     }
     // A binding already barred by an earlier partial Stop is retried even when its row still reads active.
+    // A journal fence may have revoked the row before Stop reached this server. Its earlier
+    // effects still need draining, and its live capability and streams still need closing.
     const active = selected.filter(candidate => candidate.status === 'active');
 
-    for (const { binding } of active) {
+    for (const { binding } of selected) {
       ports.barrier.raise(binding);
       ports.dropCapability(binding);
     }
-    await Promise.all(active.map(({ binding }) => ports.barrier.drain(binding)));
+    await Promise.all(selected.map(({ binding }) => ports.barrier.drain(binding)));
 
     const stopped: StopBindingView[] = [];
     const remaining: (StopBindingView & Readonly<{ reason: StopRemainingReason }>)[] = [];
@@ -148,7 +153,7 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
 
     // The requests that activated them close as revoked, so none still reads as connected.
     let closed: 'closed' | 'unavailable' = 'closed';
-    if (ports.closeStopped) {
+    if (options?.closeRequests !== false && ports.closeStopped) {
       try {
         closed = await ports.closeStopped(cleared);
       } catch {
@@ -184,9 +189,9 @@ export function createBindingStopService(ports: BindingStopPorts): BindingStopSe
   }
 
   return {
-    stop(channelId, targets) {
+    stop(channelId, targets, options) {
       const previous = queues.get(channelId) ?? Promise.resolve();
-      const next = previous.then(() => stopNow(channelId, targets), () => stopNow(channelId, targets));
+      const next = previous.then(() => stopNow(channelId, targets, options), () => stopNow(channelId, targets, options));
       queues.set(channelId, next);
       void next.finally(() => {
         if (queues.get(channelId) === next) queues.delete(channelId);

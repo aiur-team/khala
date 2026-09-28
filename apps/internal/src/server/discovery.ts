@@ -90,6 +90,10 @@ export type DiscoveryActivation = Readonly<{ binding: SessionBinding; channelId:
 
 export type SettingsMutationRejection = 'not_found' | 'stale_revision' | 'operation_mismatch' | 'unknown_principal' | 'wrong_generation';
 export type RequestRevokeRejection = 'forbidden' | 'not_found' | 'wrong_channel' | 'stale_revision' | 'connected' | 'operation_mismatch';
+/** Server-owned Stop, applied only to the binding derived from an owner-verified request. */
+export type RequestBindingStop = (channelId: string, target: Readonly<{
+  bindingId: string; generation: number; agentParticipantId: string;
+}>, closeRequest: boolean) => Promise<'stopped' | 'unavailable'>;
 
 /** Implemented by the internal composition; the server only authenticates, decodes and maps results. */
 export interface InternalDiscoveryPort {
@@ -122,7 +126,7 @@ export interface InternalDiscoveryPort {
   inbox(human: HumanAuthority): Promise<readonly ChannelAccessOwnerProjection[] | 'unavailable'>;
   decide(human: HumanAuthority, command: ChannelAccessDecisionCommand, kind: 'access' | 'create'):
     Promise<OperationResult<ChannelAccessOwnerProjection, ChannelAccessDecisionRejection>>;
-  revokeRequest(human: HumanAuthority, command: ChannelAccessRevokeCommand):
+  revokeRequest(human: HumanAuthority, command: ChannelAccessRevokeCommand, stopBinding?: RequestBindingStop):
     Promise<OperationResult<Readonly<{ v: 1; requestHandle: string; channelId: string; outcome: 'revoked'; revision: string; operationId: string }>, RequestRevokeRejection>>;
   mute(human: HumanAuthority, command: ChannelAccessMuteCommand):
     Promise<OperationResult<ChannelAccessMuteResult, 'forbidden' | 'not_found' | 'stale_revision' | 'operation_mismatch'>>;

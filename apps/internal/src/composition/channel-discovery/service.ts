@@ -20,6 +20,7 @@ import type { HumanAuthority } from '../../server/credentials';
 import type { ChannelStore } from '../../store/channel-store';
 import {
   type DiscoveryAgentContext, type DiscoveryAgentView, type DiscoverySettingsView, type InternalDiscoveryPort,
+  type RequestBindingStop,
   ed25519Thumbprint,
 } from '../../server/discovery';
 import type { DiscoveryAgent, DiscoveryStore } from '../../store/discovery-store';
@@ -563,11 +564,32 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
       return decisions.decide(command, owner);
     },
 
-    async revokeRequest(principal, command) {
+    async revokeRequest(principal, command, stopBinding?: RequestBindingStop) {
       if (!isOwner(principal)) return { kind: 'rejected', code: 'forbidden' };
       const match = /^carev_([1-9][0-9]*)$/.exec(command.expectedRevision);
       const expectedRevision = match ? Number(match[1]) : NaN;
       if (!Number.isSafeInteger(expectedRevision)) return { kind: 'rejected', code: 'stale_revision' };
+      const before = await journal.readContext({ requestHandle: command.requestHandle });
+      if (before.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
+      const request = before.kind === 'found' ? before.context : null;
+      async function stopExact(closeRequest: boolean): Promise<boolean> {
+        if (!request) return false;
+        const key = activationKey({ principal: request.requester, origin: request.origin }, request.operationId);
+        const activation = store.activation(key);
+        if (activation.kind === 'unavailable') return false;
+        if (activation.kind === 'absent') return request.outcome !== 'connected';
+        const { binding, channelId, sessionGeneration } = activation.activation;
+        if (channelId !== command.channelId || binding.bindingId !== `binding_${key}`
+          || binding.ownerId !== principal.ownerId || binding.sessionId !== request.sessionFingerprint
+          || binding.harness !== request.harness || binding.generation !== request.sessionGeneration
+          || sessionGeneration !== request.sessionGeneration
+          || binding.agentParticipantId !== agentParticipant(request.requester)
+          || !stopBinding) return false;
+        return await stopBinding(command.channelId, {
+          bindingId: binding.bindingId, generation: binding.generation,
+          agentParticipantId: binding.agentParticipantId,
+        }, closeRequest) === 'stopped';
+      }
       const result = await journal.revokeOwner({
         ownerId: principal.ownerId,
         requestHandle: command.requestHandle,
@@ -576,14 +598,40 @@ export async function composeInternalChannelDiscovery(deps: InternalChannelDisco
         operationId: command.operationId,
       });
       if (result.kind === 'unavailable') return { kind: 'unavailable', retryable: true };
-      if (result.kind !== 'updated') {
+      let revision: number;
+      if (result.kind === 'connected') {
+        if (!stopBinding) return { kind: 'rejected', code: 'connected' };
+        // Stop the exact binding first. A crash before the journal transition leaves
+        // a revoked binding and a retryable connected request, never renewed delivery.
+        if (!await stopExact(false) || !request || request.detail.kind !== 'access') {
+          return { kind: 'unavailable', retryable: true };
+        }
+        const closed = await journal.revoke({
+          binding: {
+            requester: request.requester, sessionFingerprint: request.sessionFingerprint,
+            sessionGeneration: request.sessionGeneration, origin: request.origin,
+            kind: 'access', operationId: request.operationId, ownerId: request.ownerId,
+            targetFingerprint: request.targetFingerprint,
+          },
+          expectedRevision,
+          operationId: command.operationId,
+          connected: true,
+        });
+        if (closed.kind !== 'updated') return { kind: 'unavailable', retryable: true };
+        revision = closed.revision;
+      } else if (result.kind === 'updated') {
+        // Approved/connecting requests keep #504's atomic journal/binding fence.
+        // A retry of a connected Stop also reaches here and finishes any missed cleanup.
+        if (!await stopExact(true)) return { kind: 'unavailable', retryable: true };
+        revision = result.revision;
+      } else {
         const code = result.kind === 'stale' ? 'stale_revision'
           : result.kind === 'conflict' ? 'operation_mismatch' : result.kind;
         return { kind: 'rejected', code };
       }
       return { kind: 'ok', value: {
         v: 1, requestHandle: command.requestHandle, channelId: command.channelId,
-        outcome: 'revoked', revision: `carev_${result.revision}`, operationId: command.operationId,
+        outcome: 'revoked', revision: `carev_${revision}`, operationId: command.operationId,
       } };
     },
 

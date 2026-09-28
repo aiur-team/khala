@@ -225,7 +225,7 @@ export interface ChannelAccessStore {
     | Readonly<{ kind: 'updated'; outcome: 'revoked'; revision: number }>
     | Readonly<{ kind: 'stale' | 'not_found' | 'unavailable' }>
   >;
-  /** Owner-authorized, exact-request revocation. Connected requests need the separate Stop flow. */
+  /** Owner-authorized, exact-request revocation. Connected requests require the separate Stop flow. */
   revokeOwner(input: Readonly<{
     ownerId: string;
     requestHandle: string;

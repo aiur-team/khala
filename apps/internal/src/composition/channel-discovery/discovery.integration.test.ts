@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import { type IncomingMessage, request as httpRequest } from 'node:http';
 import path from 'node:path';
 import {
-  parseInternalConnectorKey, parseInternalDiscoveryDescriptor,
+  INTERNAL_GRANT_DESCRIPTOR_FILE, parseInternalConnectorKey, parseInternalDiscoveryDescriptor,
 } from '@khala/contracts/internal/discovery-descriptor';
+import { encodeInternalDescriptor, parseInternalDescriptor } from '@khala/contracts/internal/descriptor';
 import {
   type DeviceId, type GrantExchangeRequest, type RoomId, deriveOkpKeyThumbprint,
 } from '@khala/contracts/messaging/index';
@@ -18,9 +19,11 @@ import { sessionGrants } from '@aiur/khala/composition/session-grant';
 import sodium from 'libsodium-wrappers';
 import { afterEach, describe, expect, it } from 'vitest';
 import { writeActiveDescriptor } from '../../descriptor/write';
+import { writePrivateFile } from '../../descriptor/write';
 import { type ChannelServerOptions, startChannelServer } from '../../server/channel-server';
 import { mintCredential } from '../../server/credentials';
 import { createInternalReleaseFeed, internalReleaseId } from '../internal-delivery/release-feed';
+import { composeBindingControl } from '../binding-control';
 import { createSqliteListeningModeRepository } from '../../listening-mode-store/sqlite';
 import { aliceDevice, alice, channelId, createChannelFixture, otherChannelId, type ChannelFixture } from '../../server/fixtures/channel-fixture';
 import type { LoopbackServer } from '../../server/server';
@@ -104,6 +107,9 @@ async function boot(
     newChannelId: () => `ch_${randomBytes(8).toString('hex')}`,
   });
   const transportCapability = mintCredential();
+  const bindingControl = composeBindingControl({
+    handle, root: fixture.root, cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped,
+  });
   const bootstrap = { ...fixture.bootstrap, credential: mintCredential(), expiresAt: clock.now + 60_000 };
   let id = 0;
   const server = await startChannelServer({
@@ -116,7 +122,7 @@ async function boot(
     clock: () => clock.now,
     startPort,
     // Channel access's share of the owner's Stop, as the launcher wires it.
-    stop: { cancelApproved: discovery.cancelApproved, closeStopped: discovery.closeStopped },
+    stop: bindingControl,
     ...extra,
   });
   cleanups.push(() => server.close());
@@ -770,7 +776,7 @@ describe('internal channel discovery', () => {
     expect((await activateCall(resumed, agent, 'op-late-crash', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
   });
 
-  it('refuses a connected request without implying its binding was stopped', async () => {
+  it('stops only the connected request binding and keeps another participant live', async () => {
     const w = await world();
     const agent = await issue(w, 'request-revoke-connected');
     await approvedAccess(w, agent, 'op-revoke-connected');
@@ -792,13 +798,112 @@ describe('internal channel discovery', () => {
     });
     expect(ready.status).toBe(200);
     const request = (await inbox(w))[0]!;
-    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-connected')).json.code).toBe('connected');
-    expect((await call(w.server.port, { path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability) })).status).toBe(200);
-    // Retention replaces the full request with a connected tombstone. A normal
-    // grant-free replay still recovers this live binding after the purge.
-    w.clock.now += 31 * 24 * 60 * 60_000;
-    expect(await inbox(w)).toEqual([]);
-    expect((await activateCall(w, agent, 'op-revoke-connected', { deviceId: exchange.deviceId, grant: null })).status).toBe(200);
+    const other = await issue(w, 'request-revoke-connected-other');
+    await approvedAccess(w, other, 'op-revoke-connected-other');
+    const otherRecovery = await recoveryKey();
+    const otherExchange = await exchangeRequest(w, other, 'op-revoke-connected-other', 'device_revoke_connected_other', otherRecovery);
+    const otherRoute = `${w.server.origin}/api/connector/channel-access-requests/op-revoke-connected-other/exchange`;
+    const otherEnvelope = await exchangeCall(w, other, 'op-revoke-connected-other', otherExchange, proof(w, other, otherRoute));
+    const otherActivated = await activateCall(w, other, 'op-revoke-connected-other', {
+      deviceId: otherExchange.deviceId, grant: openGrant(otherEnvelope.json, otherRecovery),
+    });
+    expect(otherActivated.status).toBe(200);
+    const descriptorFile = path.join(path.dirname(agent.descriptorPath), INTERNAL_GRANT_DESCRIPTOR_FILE);
+    writePrivateFile(path.dirname(descriptorFile), path.basename(descriptorFile), encodeInternalDescriptor({
+      v: 1, channelId, origin: w.server.origin, transportCapability: w.transportCapability,
+      grantRef: 'grant-connected', bindingId: activated.json.binding.bindingId,
+      bindingCapability: activated.json.capability,
+    }));
+    const timeline = (capability: string) => call(w.server.port, {
+      path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(capability),
+    });
+    expect((await timeline(activated.json.capability)).status).toBe(200);
+    expect((await timeline(otherActivated.json.capability)).status).toBe(200);
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-connected', channelId, {})).status).toBe(403);
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-connected', otherChannelId)).json.code)
+      .toBe('wrong_channel');
+    expect((await revokeRequest(w, request.requestHandle, 'carev_1', 'revoke-connected')).json.code)
+      .toBe('stale_revision');
+    expect((await timeline(activated.json.capability)).status).toBe(200);
+    // A corrupted request-to-activation generation association must never make
+    // the route claim that the exact binding cleanup succeeded.
+    w.handle.transaction(db => db.prepare(`UPDATE discovery_activations SET session_generation = ? WHERE binding_id = ?`)
+      .run(agent.generation + 1, activated.json.binding.bindingId));
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-connected')).status).toBe(503);
+    expect((await timeline(activated.json.capability)).status).toBe(200);
+    expect((await timeline(otherActivated.json.capability)).status).toBe(200);
+    w.handle.transaction(db => db.prepare(`UPDATE discovery_activations SET session_generation = ? WHERE binding_id = ?`)
+      .run(agent.generation, activated.json.binding.bindingId));
+    // Exact Stop revokes the binding before the journal transition. A failed
+    // descriptor write must leave the request connected and the operation retryable.
+    fs.writeFileSync(descriptorFile, '{bad descriptor', { mode: 0o600 });
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-connected')).status).toBe(503);
+    expect((await accessStatus(w, agent, 'op-revoke-connected')).json.outcome).toBe('connected');
+    expect((await timeline(activated.json.capability)).status).toBe(401);
+    expect((await timeline(otherActivated.json.capability)).status).toBe(200);
+    // Simulate a crash before the descriptor was cleared. The resumed server must
+    // reconcile the same operation without restoring the revoked binding.
+    await w.server.close();
+    w.handle.close();
+    const reopened = openChannelStore({ directory: path.join(w.fixture.root, 'state'), mode: 'existing' });
+    cleanups.push(() => reopened.close());
+    const resumed = await boot(w.fixture, reopened, w.clock, w.server.port);
+    expect((await activateCall(resumed, agent, 'op-revoke-connected', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
+    writePrivateFile(path.dirname(descriptorFile), path.basename(descriptorFile), encodeInternalDescriptor({
+      v: 1, channelId, origin: resumed.server.origin, transportCapability: resumed.transportCapability,
+      grantRef: 'grant-connected', bindingId: activated.json.binding.bindingId,
+      bindingCapability: activated.json.capability,
+    }));
+    const revoked = await revokeRequest(resumed, request.requestHandle, request.revision, 'revoke-connected');
+    expect(revoked.status).toBe(200);
+    expect((await revokeRequest(resumed, request.requestHandle, request.revision, 'revoke-connected')).json).toEqual(revoked.json);
+    expect((await revokeRequest(resumed, request.requestHandle, 'carev_1', 'revoke-connected')).json.code).toBe('operation_mismatch');
+    const otherRequest = (await inbox(resumed)).find(entry => entry.requestHandle !== request.requestHandle)!;
+    expect((await revokeRequest(resumed, otherRequest.requestHandle, otherRequest.revision, 'revoke-connected')).json.code)
+      .toBe('operation_mismatch');
+    expect((await activateCall(resumed, agent, 'op-revoke-connected', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
+    expect((await activateCall(resumed, other, 'op-revoke-connected-other', { deviceId: otherExchange.deviceId, grant: null })).status).toBe(200);
+    expect(parseInternalDescriptor(fs.readFileSync(descriptorFile, 'utf8'))).toMatchObject({
+      ok: true, value: { v: 1, channelId, origin: resumed.server.origin, transportCapability: resumed.transportCapability },
+    });
+    expect((await accessStatus(resumed, agent, 'op-revoke-connected')).json.outcome).toBe('revoked');
+    // The existing 30-day terminal retention contract still removes the request's sensitive context.
+    w.clock.now += 40 * 24 * 60 * 60_000;
+    expect(await inbox(resumed)).toEqual([]);
+    expect((await revokeRequest(resumed, request.requestHandle, request.revision, 'revoke-connected')).status).toBe(404);
+    expect((await activateCall(resumed, agent, 'op-revoke-connected', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
+  });
+
+  it('refuses connected revoke when this server cannot clear grant descriptors', async () => {
+    const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-discovery-no-clear-'), now: NOW });
+    cleanups.push(() => fixture.dispose());
+    const w = await boot(fixture, fixture.handle, { now: NOW }, 0, { stop: {} });
+    const agent = await issue(w, 'connected-no-descriptor-stop');
+    await approvedAccess(w, agent, 'op-no-descriptor-stop');
+    const recovery = await recoveryKey();
+    const exchange = await exchangeRequest(w, agent, 'op-no-descriptor-stop', 'device_no_descriptor_stop', recovery);
+    const route = `${w.server.origin}/api/connector/channel-access-requests/op-no-descriptor-stop/exchange`;
+    const envelope = await exchangeCall(w, agent, 'op-no-descriptor-stop', exchange, proof(w, agent, route));
+    const activated = await activateCall(w, agent, 'op-no-descriptor-stop', {
+      deviceId: exchange.deviceId, grant: openGrant(envelope.json, recovery),
+    });
+    expect(activated.status).toBe(200);
+    const readyRoute = '/api/connector/channel-access-requests/op-no-descriptor-stop/ready';
+    expect((await call(w.server.port, {
+      method: 'POST', path: readyRoute,
+      headers: { ...bearer(agent), dpop: proof(w, agent, `${w.server.origin}${readyRoute}`) },
+      body: {
+        v: 1, operationId: 'op-no-descriptor-stop', requester: agent.principal, origin: w.server.origin,
+        sessionGeneration: agent.generation, deviceId: exchange.deviceId,
+        proofKeyThumbprint: exchange.proofKey.thumbprint, recipientKeyThumbprint: exchange.encryptionKey.thumbprint,
+      },
+    })).status).toBe(200);
+    const request = (await inbox(w))[0]!;
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'no-clear')).json.code).toBe('connected');
+    expect((await accessStatus(w, agent, 'op-no-descriptor-stop')).json.outcome).toBe('connected');
+    expect((await call(w.server.port, {
+      path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability),
+    })).status).toBe(200);
   });
 
   it('revokes an active binding whose unacknowledged request reached repair_required', async () => {
