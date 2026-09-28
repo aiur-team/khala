@@ -315,10 +315,11 @@ export async function startChannelServer(options: ChannelServerOptions): Promise
     ? createDiscoveryRoutes({
       port: {
         ...options.discovery,
-        revokeRequest: (human, command) => options.discovery!.revokeRequest(human, command, async (channelId, target) => {
-          const stopped = await stopService.stop(channelId, [target]);
-          return stopped.kind === 'stopped' ? 'stopped' : 'unavailable';
-        }),
+        revokeRequest: (human, command) => options.discovery!.revokeRequest(human, command,
+          options.stop?.clearGrant ? async (channelId, target, closeRequest) => {
+            const stopped = await stopService.stop(channelId, [target], { closeRequests: closeRequest });
+            return stopped.kind === 'stopped' ? 'stopped' : 'unavailable';
+          } : undefined),
       },
       origin: () => origin,
       clock: options.clock,

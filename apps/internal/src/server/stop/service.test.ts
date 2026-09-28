@@ -123,6 +123,20 @@ describe('binding Stop service', () => {
     expect(calls).not.toContain('cancel:channel-one');
   });
 
+  it('defers only an exact target request close to its owner operation', async () => {
+    const calls: Calls = [];
+    const service = createBindingStopService(ports({
+      candidates: [active(bobBinding), active(carolBinding)],
+      closeStopped: async ids => { calls.push(`close:${[...ids].join(',')}`); return 'closed'; },
+    }, calls));
+    expect((await service.stop('channel-one', [{
+      bindingId: 'binding-bob', generation: 1, agentParticipantId: 'participant-bob',
+    }], { closeRequests: false })).kind).toBe('stopped');
+    expect(calls).not.toContain('close:binding-bob');
+    expect(calls).not.toContain('raise:binding-carol');
+    expect(await service.stop('channel-one', null, { closeRequests: false })).toEqual({ kind: 'unavailable' });
+  });
+
   it('still revokes the bindings, but never reports stopped, when approvals could not be closed', async () => {
     const calls: Calls = [];
     for (const cancelApproved of [async () => 'unavailable' as const, async () => { throw new Error('journal down'); }]) {

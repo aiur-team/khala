@@ -93,7 +93,7 @@ export type RequestRevokeRejection = 'forbidden' | 'not_found' | 'wrong_channel'
 /** Server-owned Stop, applied only to the binding derived from an owner-verified request. */
 export type RequestBindingStop = (channelId: string, target: Readonly<{
   bindingId: string; generation: number; agentParticipantId: string;
-}>) => Promise<'stopped' | 'unavailable'>;
+}>, closeRequest: boolean) => Promise<'stopped' | 'unavailable'>;
 
 /** Implemented by the internal composition; the server only authenticates, decodes and maps results. */
 export interface InternalDiscoveryPort {

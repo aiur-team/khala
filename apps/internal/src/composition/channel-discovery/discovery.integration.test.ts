@@ -830,13 +830,15 @@ describe('internal channel discovery', () => {
     w.handle.transaction(db => db.prepare(`UPDATE discovery_activations SET session_generation = ? WHERE binding_id = ?`)
       .run(agent.generation + 1, activated.json.binding.bindingId));
     expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-connected')).status).toBe(503);
+    expect((await timeline(activated.json.capability)).status).toBe(200);
     expect((await timeline(otherActivated.json.capability)).status).toBe(200);
     w.handle.transaction(db => db.prepare(`UPDATE discovery_activations SET session_generation = ? WHERE binding_id = ?`)
       .run(agent.generation, activated.json.binding.bindingId));
-    // The durable fence can commit even if descriptor cleanup fails. The same operation
-    // must then finish cleanup before it may report success.
+    // Exact Stop revokes the binding before the journal transition. A failed
+    // descriptor write must leave the request connected and the operation retryable.
     fs.writeFileSync(descriptorFile, '{bad descriptor', { mode: 0o600 });
     expect((await revokeRequest(w, request.requestHandle, request.revision, 'revoke-connected')).status).toBe(503);
+    expect((await accessStatus(w, agent, 'op-revoke-connected')).json.outcome).toBe('connected');
     expect((await timeline(activated.json.capability)).status).toBe(401);
     expect((await timeline(otherActivated.json.capability)).status).toBe(200);
     // Simulate a crash before the descriptor was cleared. The resumed server must
@@ -846,6 +848,7 @@ describe('internal channel discovery', () => {
     const reopened = openChannelStore({ directory: path.join(w.fixture.root, 'state'), mode: 'existing' });
     cleanups.push(() => reopened.close());
     const resumed = await boot(w.fixture, reopened, w.clock, w.server.port);
+    expect((await activateCall(resumed, agent, 'op-revoke-connected', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
     writePrivateFile(path.dirname(descriptorFile), path.basename(descriptorFile), encodeInternalDescriptor({
       v: 1, channelId, origin: resumed.server.origin, transportCapability: resumed.transportCapability,
       grantRef: 'grant-connected', bindingId: activated.json.binding.bindingId,
@@ -869,6 +872,38 @@ describe('internal channel discovery', () => {
     expect(await inbox(resumed)).toEqual([]);
     expect((await revokeRequest(resumed, request.requestHandle, request.revision, 'revoke-connected')).status).toBe(404);
     expect((await activateCall(resumed, agent, 'op-revoke-connected', { deviceId: exchange.deviceId, grant: null })).status).toBe(410);
+  });
+
+  it('refuses connected revoke when this server cannot clear grant descriptors', async () => {
+    const fixture = createChannelFixture({ root: fs.mkdtempSync('/tmp/khala-discovery-no-clear-'), now: NOW });
+    cleanups.push(() => fixture.dispose());
+    const w = await boot(fixture, fixture.handle, { now: NOW }, 0, { stop: {} });
+    const agent = await issue(w, 'connected-no-descriptor-stop');
+    await approvedAccess(w, agent, 'op-no-descriptor-stop');
+    const recovery = await recoveryKey();
+    const exchange = await exchangeRequest(w, agent, 'op-no-descriptor-stop', 'device_no_descriptor_stop', recovery);
+    const route = `${w.server.origin}/api/connector/channel-access-requests/op-no-descriptor-stop/exchange`;
+    const envelope = await exchangeCall(w, agent, 'op-no-descriptor-stop', exchange, proof(w, agent, route));
+    const activated = await activateCall(w, agent, 'op-no-descriptor-stop', {
+      deviceId: exchange.deviceId, grant: openGrant(envelope.json, recovery),
+    });
+    expect(activated.status).toBe(200);
+    const readyRoute = '/api/connector/channel-access-requests/op-no-descriptor-stop/ready';
+    expect((await call(w.server.port, {
+      method: 'POST', path: readyRoute,
+      headers: { ...bearer(agent), dpop: proof(w, agent, `${w.server.origin}${readyRoute}`) },
+      body: {
+        v: 1, operationId: 'op-no-descriptor-stop', requester: agent.principal, origin: w.server.origin,
+        sessionGeneration: agent.generation, deviceId: exchange.deviceId,
+        proofKeyThumbprint: exchange.proofKey.thumbprint, recipientKeyThumbprint: exchange.encryptionKey.thumbprint,
+      },
+    })).status).toBe(200);
+    const request = (await inbox(w))[0]!;
+    expect((await revokeRequest(w, request.requestHandle, request.revision, 'no-clear')).json.code).toBe('connected');
+    expect((await accessStatus(w, agent, 'op-no-descriptor-stop')).json.outcome).toBe('connected');
+    expect((await call(w.server.port, {
+      path: `/api/v1/channels/${channelId}/timeline`, headers: bearer(activated.json.capability),
+    })).status).toBe(200);
   });
 
   it('revokes an active binding whose unacknowledged request reached repair_required', async () => {
