@@ -23,6 +23,25 @@ function emptyStore(): BlobsStoreLike {
 }
 
 describe('createProductionHumanServiceLoader', () => {
+  it('logs only a fixed callback stage when the production store cannot read the login', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const stores = () => ({
+        getWithMetadata: async () => { throw new Error('secret-cookie-value'); },
+        setJSON: async () => ({ modified: true, etag: '1' }),
+      });
+      const load = createProductionHumanServiceLoader({ env, stores });
+      const request = new Request('https://khala.aiur.team/api/human/auth/callback?code=secret-code&state=secret-state', {
+        headers: { cookie: `__Host-khala_login=${'a'.repeat(43)}` },
+      });
+      const services = await load(request);
+      expect(await services!.auth.completeSignIn(request)).toEqual({ kind: 'unavailable', cookies: [] });
+      expect(warn).toHaveBeenCalledExactlyOnceWith('Khala auth callback', '{"stage":"login_read"}');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('constructs no SDK/store resources until a request executes', async () => {
     const stores = vi.fn((name: string) => {
       void name;

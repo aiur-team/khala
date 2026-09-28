@@ -184,21 +184,27 @@ function defineRoutes(registrations: readonly RouteRegistration[]): readonly Rou
  * loader. Constructing registrations is pure: the loader is called only from
  * an exact route handler, once for that request.
  */
-export function createHumanHandlers(loadServices: LoadHumanServices): readonly RouteRegistration[] {
+export function createHumanHandlers(
+  loadServices: LoadHumanServices,
+  onCallbackFailure?: (stage: 'service_init' | 'handler_exception') => void,
+): readonly RouteRegistration[] {
   async function withServices(
     request: Request,
     handle: (services: HumanHandlerServices) => Promise<Response>,
+    callbackFailure?: typeof onCallbackFailure,
   ): Promise<Response> {
     let services: HumanHandlerServices | null;
     try {
       services = await loadServices(request);
     } catch {
+      try { callbackFailure?.('service_init'); } catch { /* Diagnostics cannot change the response. */ }
       return unavailable();
     }
     if (services === null) return unavailable('feature_unavailable');
     try {
       return await handle(services);
     } catch {
+      try { callbackFailure?.('handler_exception'); } catch { /* Diagnostics cannot change the response. */ }
       return unavailable();
     }
   }
@@ -230,7 +236,7 @@ export function createHumanHandlers(loadServices: LoadHumanServices): readonly R
           return withCookies(response, result.cookies);
         }
         return withCookies(json(400, { code: result.code }), result.cookies);
-      }),
+      }, onCallbackFailure),
     },
     {
       path: ME_PATH,
@@ -426,7 +432,7 @@ const unavailableChannelSettingsRoutes = Object.freeze([
 
 export function registerHumanHandlers(dependencies?: HumanHandlerDependencies): readonly RouteRegistration[] {
   return Object.freeze([
-    ...createHumanHandlers(loadProductionServices),
+    ...createHumanHandlers(loadProductionServices, stage => console.warn('Khala auth callback', JSON.stringify({ stage }))),
     ...(dependencies?.bootstrap?.() ?? unavailableBootstrapRoutes),
     ...(dependencies?.ownerMailbox?.() ?? unavailableOwnerMailboxRoutes().human),
     ...(dependencies?.ownerDeviceProof?.() ?? unavailableOwnerDeviceProofRoutes().human),

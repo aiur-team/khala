@@ -190,7 +190,11 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       const response = await request(`/_matrix/client/v3/profile/${encodeURIComponent(accountId(ownerId))}`, {}, call);
       if (response.status === 200) return 'found';
       const value = await body(response);
-      return response.status === 404 && value?.errcode === 'M_NOT_FOUND' ? 'absent' : 'unavailable';
+      // Synapse's profile endpoint returns M_UNKNOWN for an unregistered user,
+      // with this exact error. Other 404s still fail closed.
+      const missingProfile = value?.errcode === 'M_NOT_FOUND'
+        || (value?.errcode === 'M_UNKNOWN' && value.error === 'No row found (profiles)');
+      return response.status === 404 && missingProfile ? 'absent' : 'unavailable';
     } catch {
       return 'unavailable';
     }
