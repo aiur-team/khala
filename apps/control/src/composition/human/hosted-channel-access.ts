@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { decodeChannelAccessOwnerProjection } from '@khala/contracts/messaging/index';
+import { decodeChannelAccessOwnerProjection, decodeRoomId } from '@khala/contracts/messaging/index';
 import { createChannelAccessPolicy } from '@khala/messaging/channel-access/journal/policy';
 import { projectOwner } from '@khala/messaging/channel-access/journal/service';
 import { createChannelAccessStore } from '@khala/messaging/channel-access/journal/store';
@@ -32,6 +32,17 @@ export function createHostedChannelAccessInbox(dependencies: ProductionHumanDepe
         if (listed.kind !== 'found') return unavailable();
         const requests = [];
         for (const item of listed.requests) {
+          const context = await journal.readContext({ requestHandle: item.requestHandle });
+          if (context.kind !== 'found' || context.context.ownerId !== authentication.context.principal.ownerId) return unavailable();
+          // Hosted create authority has not been composed. Never display a row
+          // as actionable unless its exact room is still owned by this owner.
+          if (context.context.detail.kind !== 'access') return unavailable();
+          const room = decodeRoomId(context.context.detail.authorizedChannelRef);
+          if (!room.ok) return unavailable();
+          const authority = await active.matrix.inspectRoomAuthority(room.value);
+          if (authority !== authentication.context.principal.ownerId) return unavailable();
+          const membership = await active.matrix.inspectOwnerMembership(authority, room.value);
+          if (membership.kind !== 'joined') return unavailable();
           const decoded = decodeChannelAccessOwnerProjection(projectOwner(item));
           if (!decoded.ok) return unavailable();
           requests.push(decoded.value);

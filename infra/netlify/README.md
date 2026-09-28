@@ -86,6 +86,8 @@ rejects environment writes with `Forbidden`.
 In the explicit mode, `GET /api/human/channel-access/inbox` uses the signed-in
 owner session and the durable control-state namespace. A signed-out request
 returns 401 and an owner with no requests receives an empty 200 response.
+For stored requests, Control rechecks the recorded room owner and live Matrix
+membership before showing the row; unavailable or changed authority returns 503.
 Channel-access request, decision, mute, exchange, readiness and resume still
 return 503 until hosted agent authentication, channel resolution and Matrix
 admission adapters are composed. The inbox does not approve or admit an agent.

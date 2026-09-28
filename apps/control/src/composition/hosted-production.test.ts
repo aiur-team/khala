@@ -58,6 +58,19 @@ describe('generated hosted production composition', () => {
   it('authenticates the durable owner inbox across a composition restart without leaking another owner', async () => {
     const blobs = durableStores();
     const now = Date.parse('2026-09-28T12:00:00Z');
+    const roomId = '!room:matrix.example.test';
+    let membershipJoined = true;
+    const matrixFetch: typeof fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/_matrix/client/v3/login') {
+        const body = JSON.parse(String(init?.body)) as { identifier: { user: string }; device_id: string };
+        return Response.json({ user_id: body.identifier.user, device_id: body.device_id, access_token: 'test-token' });
+      }
+      if (path.includes('/state/m.room.member/')) return membershipJoined
+        ? Response.json({ membership: 'join' })
+        : Response.json({ errcode: 'M_FORBIDDEN' }, { status: 403 });
+      return Response.json({ errcode: 'M_NOT_FOUND' }, { status: 404 });
+    };
     const control = createControlStore({ records: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-records`),
       operations: blobs.storeFor(`${env.CONTROL_STATE_NAMESPACE}-operations`), clock: () => now });
     const session = await createSession(control, () => new Uint8Array(32).fill(7), {
@@ -70,9 +83,14 @@ describe('generated hosted production composition', () => {
     const policy = createChannelAccessPolicy({ key: createHash('sha256')
       .update('khala.hosted.channel-access.policy.v1\0').update(env.INVITATION_HMAC_SECRET).digest() });
     const journal = createChannelAccessStore({ store: control, policy, clock: () => now });
+    expect((await control.compareAndSet({
+      key: `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`,
+      expectedRevision: null, operationId: 'claim-room-owner',
+      next: { value: { v: 1, roomId, ownerId: 'owner_1' }, expiresAt: null },
+    })).kind).toBe('applied');
     expect((await journal.create({ requester: 'agent-one', sessionFingerprint: 'a'.repeat(43),
       sessionGeneration: 1, origin, operationId: 'request-one', ownerId: 'owner_1',
-      targetFingerprint: 'target-one', detail: { kind: 'access', authorizedChannelRef: 'room-one',
+      targetFingerprint: 'target-one', detail: { kind: 'access', authorizedChannelRef: roomId,
         targetRevision: 'revision-one', title: 'Owner one room' }, harness: 'codex',
       requesterLabel: 'Agent one', workspaceLabel: 'Workspace one' })).kind).toBe('accepted');
     const ownerRequests = await journal.listOwner({ ownerId: 'owner_1' });
@@ -83,7 +101,7 @@ describe('generated hosted production composition', () => {
     }
     const route = createGateway({ registrations: registerHostedProductionRoutes({
       env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
-      clock: () => now,
+      clock: () => now, fetch: matrixFetch,
     }), absentPrefixes: [], appOrigin: origin });
     const inbox = `${origin}/api/human/channel-access/inbox`;
     expect((await route(new Request(inbox))).status).toBe(401);
@@ -91,6 +109,18 @@ describe('generated hosted production composition', () => {
     const response = await route(new Request(inbox, { headers }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ kind: 'ok', requests: [{ detail: { title: 'Owner one room' } }] });
+    membershipJoined = false;
+    expect((await route(new Request(inbox, { headers }))).status).toBe(503);
+    membershipJoined = true;
+    const authorityKey = `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`;
+    const currentAuthority = await control.read(authorityKey);
+    expect(currentAuthority.kind).toBe('record');
+    if (currentAuthority.kind !== 'record') throw new Error('room authority missing');
+    expect((await control.compareAndSet({ key: authorityKey, expectedRevision: currentAuthority.record.revision,
+      operationId: 'move-room-owner',
+      next: { value: { v: 1, roomId, ownerId: 'owner_2' }, expiresAt: null },
+    })).kind).toBe('applied');
+    expect((await route(new Request(inbox, { headers }))).status).toBe(503);
     const other = await createSession(control, () => new Uint8Array(32).fill(8), {
       ownerId: 'owner_2' as never,
       identity: { issuer: env.OIDC_ISSUER, subject: 'owner-two', verifiedEmail: 'two@example.test' },
@@ -100,7 +130,7 @@ describe('generated hosted production composition', () => {
     if (other.kind !== 'created') throw new Error('session unavailable');
     const restarted = createGateway({ registrations: registerHostedProductionRoutes({
       env: { ...env, KHALA_ADMISSION_MODE: 'explicit_browser_consent' }, stores: blobs.storeFor,
-      clock: () => now,
+      clock: () => now, fetch: matrixFetch,
     }), absentPrefixes: [], appOrigin: origin });
     const second = await restarted(new Request(inbox, { headers: { cookie: `${SESSION_COOKIE}=${other.token}` } }));
     expect(second.status).toBe(200);
