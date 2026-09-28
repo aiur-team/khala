@@ -31,13 +31,83 @@
   gap: 0.75rem;
 }
 
+.aiur-shell__brand {
+  font-weight: 700;
+}
+
+/* Match the compact dashboard controls in Aiur's operator shell. */
+.aiur-shell__icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2.05rem;
+  height: 2.05rem;
+  padding: 0;
+  border: 1px solid var(--khala-line);
+  border-radius: 50%;
+  background: var(--khala-fill-control);
+  color: var(--khala-ink-muted);
+  cursor: pointer;
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.aiur-shell__icon-button:hover {
+  color: var(--khala-ink);
+  border-color: var(--khala-accent);
+  background: var(--khala-fill-raised);
+}
+
+.aiur-shell__theme-icon,
+.aiur-shell__nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.aiur-shell__theme-icon svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.aiur-shell__nav-icon svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+
+.aiur-shell__theme-icon .moon,
+.aiur-shell[data-theme='light'] .aiur-shell__theme-icon .sun {
+  display: none;
+}
+
+.aiur-shell[data-theme='light'] .aiur-shell__theme-icon .moon {
+  display: block;
+}
+
 .aiur-shell__nav {
+  position: relative;
   min-width: 0;
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
   border-right: 1px solid var(--khala-line);
+}
+
+.aiur-shell__nav-toggle {
+  position: absolute;
+  top: 1.28rem;
+  right: -1rem;
+  z-index: 5;
+  background: var(--khala-fill-raised);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
+}
+
+.aiur-shell--collapsed .aiur-shell__nav-toggle {
+  right: auto;
+  left: 0.28rem;
 }
 
 .aiur-shell__nav-list {
@@ -68,6 +138,10 @@
 
 .aiur-shell--collapsed .aiur-shell__nav {
   padding: 0.35rem;
+}
+
+.aiur-shell--collapsed .aiur-shell__nav-list {
+  margin-top: 2.4rem;
 }
 
 .aiur-shell--collapsed .aiur-shell__nav-label {
@@ -143,6 +217,28 @@
     flex-direction: row;
     align-items: center;
     overflow-x: auto;
+  }
+
+  .aiur-shell__nav-toggle {
+    display: none;
+  }
+
+  .aiur-shell--collapsed .aiur-shell__nav {
+    padding: 1rem;
+  }
+
+  .aiur-shell--collapsed .aiur-shell__nav-list {
+    margin-top: 0;
+  }
+
+  .aiur-shell--collapsed .aiur-shell__nav-label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
   }
 
   .aiur-shell__content {

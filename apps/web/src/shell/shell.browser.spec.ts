@@ -48,6 +48,11 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
     assert.equal(await page.getByRole('main').count(), 1);
     assert.equal(await page.getByText('2', { exact: true }).count(), 1);
     assert.equal(await page.getByRole('link', { name: /Conversations/ }).count(), 1);
+    assert.equal(await page.locator('.aiur-shell__brand').innerText(), 'Khala');
+    assert.equal(await page.locator('.aiur-shell__theme-toggle svg').count(), 2);
+    assert.equal(await page.locator('.aiur-shell__nav-toggle svg').count(), 1);
+    const themeWidth = await page.locator('.aiur-shell__theme-toggle').evaluate(node => node.getBoundingClientRect().width);
+    assert.ok(themeWidth > 32 && themeWidth < 34, `theme control should match Aiur's 2.05rem icon button; got ${themeWidth}px`);
 
     // Collapse: focus does not move to a hidden element, and every nav link
     // keeps an accessible name (the visible label text is hidden, not removed
@@ -55,9 +60,9 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
     const collapseToggle = page.locator('.aiur-shell__nav-toggle');
     const navWidthBefore = await page.locator('.aiur-shell__nav').evaluate(node => node.getBoundingClientRect().width);
     await collapseToggle.focus();
-    assert.equal(await collapseToggle.innerText(), 'Collapse navigation');
+    assert.equal(await collapseToggle.getAttribute('aria-label'), 'Collapse navigation');
     await collapseToggle.click();
-    assert.equal(await collapseToggle.innerText(), 'Expand navigation');
+    assert.equal(await collapseToggle.getAttribute('aria-label'), 'Expand navigation');
     assert.equal(await collapseToggle.evaluate(node => node === document.activeElement), true);
     assert.equal(await collapseToggle.isVisible(), true);
     const navWidthAfter = await page.locator('.aiur-shell__nav').evaluate(node => node.getBoundingClientRect().width);
@@ -68,14 +73,20 @@ test('AiurShell layout survives desktop, phone and breakpoint viewports', { time
       1,
       'long nav link keeps its accessible name while collapsed',
     );
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await collapseToggle.isVisible(), false, 'phone navigation has no collapse control');
+    const phoneLabelWidth = await page.locator('.aiur-shell__nav-label').first().evaluate(node => node.getBoundingClientRect().width);
+    assert.ok(phoneLabelWidth > 50, `collapsed desktop state must restore route labels on phone; got ${phoneLabelWidth}px`);
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await collapseToggle.click();
 
     // Theme swap changes tokens without breaking legibility or focus.
     const themeToggle = page.locator('.aiur-shell__theme-toggle');
     await themeToggle.focus();
-    assert.equal(await themeToggle.innerText(), 'Use light theme');
+    assert.equal(await themeToggle.getAttribute('aria-label'), 'Toggle color theme');
+    assert.equal(await page.locator('.aiur-shell__theme-icon .sun').isVisible(), true);
     await themeToggle.click();
-    assert.equal(await themeToggle.innerText(), 'Use dark theme');
+    assert.equal(await page.locator('.aiur-shell__theme-icon .moon').isVisible(), true);
     assert.equal(await page.evaluate(() => document.querySelector('.aiur-shell')!.getAttribute('data-theme')), 'light');
     await themeToggle.click();
 
