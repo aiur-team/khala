@@ -135,7 +135,9 @@ export async function ownerSessionFor(report: LaunchReport): Promise<OwnerSessio
       });
       const body = record(reply.json);
       if (reply.status !== 200 || body.requestHandle !== request.requestHandle
-        || body.channelId !== channelId || body.outcome !== 'revoked') {
+        || body.channelId !== channelId || body.outcome !== 'revoked'
+        || body.operationId !== operationId || typeof body.revision !== 'string'
+        || !/^carev_[1-9][0-9]*$/.test(body.revision) || body.revision === request.revision) {
         throw new Error(`request revoke unproven: ${reply.status} ${text(body.code) || text(record(body.error).code)}`.trim());
       }
     },
