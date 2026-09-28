@@ -52,7 +52,7 @@ function context(path: string): HumanRouteContext {
 }
 
 function application(snapshot: HumanApplicationSnapshot): HumanApplicationHandle {
-  return { getSnapshot: () => snapshot, subscribe: () => () => undefined, navigate: vi.fn(), dispose: vi.fn() };
+  return { getSnapshot: () => snapshot, subscribe: () => () => undefined, navigate: vi.fn(), signOut: vi.fn(), dispose: vi.fn() };
 }
 
 function render(path: string, state: LocalTransportState = { kind: 'live' }, phase: 'ready' | 'signed_out' = 'ready'): string {
