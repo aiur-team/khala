@@ -120,6 +120,10 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   const passwordSecret = requireSecret(options.passwordDerivationSecret, 'Matrix password derivation secret');
   const fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const timeoutMs = options.timeoutMs ?? 10_000;
+  const controlSessions = new Map<OwnerId, Readonly<{ session: MatrixLogin; expiresAt: number }>>();
+  const controlLogins = new Map<OwnerId, Promise<MatrixLogin | null>>();
+  const controlRetryAfter = new Map<OwnerId, number>();
+  const loginRetryAfter = new Map<string, number>();
 
   type RoomAuthorityRecord = Readonly<{ v: 1; roomId: string; ownerId: string }>;
   const authorityKey = (roomId: RoomId) => `matrix.room-authority.v1.${createHash('sha256').update(roomId).digest('hex')}`;
@@ -182,7 +186,14 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       AbortSignal.timeout(timeoutMs),
       ...(call?.signal ? [call.signal] : []),
     ]);
-    return fetch(`${homeserverOrigin}${path}`, { ...init, signal });
+    const response = await fetch(`${homeserverOrigin}${path}`, { ...init, signal });
+    if (response.status === 401) {
+      const authorization = new Headers(init.headers).get('authorization');
+      for (const [ownerId, cached] of controlSessions) {
+        if (authorization === `Bearer ${cached.session.accessToken}`) controlSessions.delete(ownerId);
+      }
+    }
+    return response;
   }
 
   async function exists(ownerId: OwnerId, call?: CallOptions): Promise<'found' | 'absent' | 'unavailable'> {
@@ -233,6 +244,8 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   }
 
   async function login(ownerId: OwnerId, deviceId: DeviceId, call?: CallOptions): Promise<MatrixLogin | null> {
+    const loginKey = `${ownerId}\0${deviceId}`;
+    if (Date.now() < (loginRetryAfter.get(loginKey) ?? 0)) return null;
     try {
       const userId = accountId(ownerId);
       const response = await request('/_matrix/client/v3/login', {
@@ -246,7 +259,17 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
           initial_device_display_name: 'Khala Web',
         }),
       }, call);
+      if (response.status === 429) {
+        const retry = await body(response);
+        const retryMs = typeof retry?.retry_after_ms === 'number' && Number.isFinite(retry.retry_after_ms)
+          ? Math.max(0, Math.min(300_000, retry.retry_after_ms)) : 5_000;
+        for (const [key, until] of loginRetryAfter) if (until <= Date.now()) loginRetryAfter.delete(key);
+        if (loginRetryAfter.size >= 256) loginRetryAfter.delete(loginRetryAfter.keys().next().value!);
+        loginRetryAfter.set(loginKey, Date.now() + retryMs);
+        return null;
+      }
       if (response.status !== 200) return null;
+      loginRetryAfter.delete(loginKey);
       const value = await body(response);
       if (value?.user_id !== userId || value.device_id !== deviceId || typeof value.access_token !== 'string') return null;
       return { userId, accessToken: value.access_token, deviceId };
@@ -314,8 +337,35 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   };
 
   const controlDevice = (ownerId: OwnerId) => `KHALA_CONTROL_${createHash('sha256').update(ownerId).digest('hex').slice(0, 24)}` as DeviceId;
+  async function controlLogin(ownerId: OwnerId, call?: CallOptions): Promise<MatrixLogin | null> {
+    if (call?.signal?.aborted) return null;
+    const cached = controlSessions.get(ownerId);
+    if (cached && cached.expiresAt > Date.now()) return cached.session;
+    controlSessions.delete(ownerId);
+    if (Date.now() < (controlRetryAfter.get(ownerId) ?? 0)) return null;
+    let pending = controlLogins.get(ownerId);
+    if (!pending) {
+      pending = login(ownerId, controlDevice(ownerId));
+      controlLogins.set(ownerId, pending);
+      void pending.then(session => {
+        if (session) {
+          controlRetryAfter.delete(ownerId);
+          // Keep one bounded control token per owner in this warm function. All
+          // callers still pass through their own human/agent authorization.
+          if (controlSessions.size >= 128) controlSessions.delete(controlSessions.keys().next().value!);
+          controlSessions.set(ownerId, { session, expiresAt: Date.now() + 10 * 60_000 });
+        } else {
+          for (const [key, until] of controlRetryAfter) if (until <= Date.now()) controlRetryAfter.delete(key);
+          if (controlRetryAfter.size >= 128) controlRetryAfter.delete(controlRetryAfter.keys().next().value!);
+          controlRetryAfter.set(ownerId, Date.now() + 60_000);
+        }
+      }).finally(() => { if (controlLogins.get(ownerId) === pending) controlLogins.delete(ownerId); });
+    }
+    const session = await pending;
+    return call?.signal?.aborted ? null : session;
+  }
   async function authenticated(principal: AuthPrincipal, call?: CallOptions): Promise<MatrixLogin | null> {
-    return login(principal.ownerId, controlDevice(principal.ownerId), call);
+    return controlLogin(principal.ownerId, call);
   }
 
   async function roomName(session: MatrixLogin, roomId: RoomId, call?: CallOptions): Promise<string | null> {
@@ -332,7 +382,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
   }
 
   async function membershipForOwner(ownerId: OwnerId, roomId: RoomId, call?: CallOptions): Promise<GatewayInspection> {
-    const session = await login(ownerId, controlDevice(ownerId), call);
+    const session = await controlLogin(ownerId, call);
     if (session === null) return { kind: 'unavailable' };
     try {
       const response = await request(
@@ -354,7 +404,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
     Readonly<{ kind: 'ok'; senders: readonly MatrixRoomSenderDevice[] }> | Readonly<{ kind: 'unavailable' }>
   > {
     const unavailable = { kind: 'unavailable' } as const;
-    const session = await login(ownerId, controlDevice(ownerId), call);
+    const session = await controlLogin(ownerId, call);
     if (!session) return unavailable;
     const headers = { authorization: `Bearer ${session.accessToken}` };
     async function joinedUsers(): Promise<readonly string[] | null> {
@@ -475,7 +525,7 @@ export function createMatrixHumanServices(options: MatrixHumanOptions): MatrixHu
       if (current.kind === 'unavailable' || current.kind === 'outcome_unknown') return current;
       const creatorOwnerId = await roomAuthority(input.roomId, call);
       if (creatorOwnerId === null) return { kind: 'unavailable' };
-      const creatorSession = await login(creatorOwnerId, controlDevice(creatorOwnerId), call);
+      const creatorSession = await controlLogin(creatorOwnerId, call);
       const session = await authenticated(input.principal, call);
       if (creatorSession === null || session === null) return { kind: 'unavailable' };
       try {
