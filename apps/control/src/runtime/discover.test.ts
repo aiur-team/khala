@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DiscoverError,
+  bundleGeneratedFunction,
   discoverRoutes,
   importSpecifier,
   renderGeneratedFunction,
@@ -146,6 +147,14 @@ describe('renderGeneratedFunction', () => {
     for (const specifier of specifiers) {
       expect(existsSync(`${resolve(outputDirectory, specifier)}.ts`), `${specifier} must resolve from ${outputDirectory}`).toBe(true);
     }
+  });
+
+  it('bundles the production function without workspace package imports', async () => {
+    const actualRoot = repoRootFrom(import.meta.dirname);
+    const bundled = await bundleGeneratedFunction(await discoverRoutes(actualRoot), actualRoot);
+    const source = new TextDecoder().decode(bundled);
+    expect(source).toContain('/api/health');
+    expect(source).not.toMatch(/(?:from\s+|import\s*\()['"]@khala\//u);
   });
 });
 

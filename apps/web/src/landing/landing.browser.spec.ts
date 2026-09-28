@@ -115,7 +115,7 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     // The prompt is copyable and the hosted app is reachable from the hero.
     const copy = page.getByRole('button', { name: 'Copy the prompt' });
     assert.equal(await copy.isEnabled(), true);
-    assert.equal(await page.getByRole('link', { name: 'Open Khala app' }).getAttribute('href'), '/app');
+    assert.equal(await page.getByRole('link', { name: 'Open Khala app' }).getAttribute('href'), '/new');
     assert.equal(await page.locator('#prompt-soon').count(), 0);
 
     // Top-right controls exist and the Docs link points at the quick start.
@@ -201,6 +201,8 @@ test('splash page: exact prompt, working copy, buttons, theme and phone layout',
     }
 
     assert.deepEqual(failures, [], 'no page or console errors');
+    await page.getByRole('link', { name: 'Open Khala app' }).click();
+    assert.equal(new URL(page.url()).pathname, '/new', 'the hero link opens the canonical create route');
   } finally {
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
