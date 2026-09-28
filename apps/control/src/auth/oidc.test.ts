@@ -59,10 +59,11 @@ async function fakeServer() {
       const form = new URLSearchParams(String(init.body));
       const grant = grants.get(form.get('code') ?? '');
       const verifier = form.get('code_verifier') ?? '';
-      // RFC 6749 §2.3.1: Basic credentials are form-encoded before base64.
-      const basic = (new Headers(init.headers).get('authorization') ?? '').replace(/^Basic /, '');
-      const [id, secret] = Buffer.from(basic, 'base64').toString().split(':').map(part => decodeURIComponent(part));
-      if (id !== CLIENT_ID || secret !== SECRET) return json({ error: 'invalid_client' }, 401);
+      // Google's documented token exchange sends both client credentials in the form body.
+      if (new Headers(init.headers).has('authorization')
+        || form.get('client_id') !== CLIENT_ID || form.get('client_secret') !== SECRET) {
+        return json({ error: 'invalid_client' }, 401);
+      }
       if (!grant || grant.used || form.get('redirect_uri') !== grant.redirectUri
         || createHash('sha256').update(verifier).digest('base64url') !== grant.challenge) {
         return json({ error: 'invalid_grant' }, 400);
