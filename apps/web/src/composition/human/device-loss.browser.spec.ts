@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser } from '@playwright/test';
@@ -11,11 +11,14 @@ declare global { interface Window {
     switchAccount(): void;
     activationCount(): number;
     inboxCount(): number;
+    signOutCount(): number;
+    stopCount(): number;
   };
 } }
 
 test('mounted owner screen fences lost keys and resets on account switch', { timeout: 90_000 }, async () => {
   const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-device-loss-'));
+  const browserProfile = await mkdtemp(join('/tmp', 'khala-device-loss-profile-'));
   let server: PreviewServer | null = null;
   let browser: Browser | null = null;
   try {
@@ -25,7 +28,7 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
     server = await preview({ root: join(import.meta.dirname, 'browser-harness'),
       build: { outDir: join(scratch, 'dist') }, preview: { host: '127.0.0.1', port: 0 } });
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-      headless: true, args: ['--no-sandbox'] });
+      headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
     const page = await browser.newPage();
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -57,5 +60,63 @@ test('mounted owner screen fences lost keys and resets on account switch', { tim
     await browser?.close();
     if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
     await rm(scratch, { recursive: true, force: true });
+    await rm(browserProfile, { recursive: true, force: true });
+  }
+});
+
+test('standalone logout stays reachable on desktop and phone and clears the active device', { timeout: 90_000 }, async () => {
+  const scratch = await mkdtemp(join(process.env.TMPDIR ?? '/tmp', 'khala-logout-'));
+  const browserProfile = await mkdtemp(join('/tmp', 'khala-logout-profile-'));
+  let server: PreviewServer | null = null;
+  let browser: Browser | null = null;
+  try {
+    await build({ root: join(import.meta.dirname, 'browser-harness'),
+      build: { outDir: join(scratch, 'dist'), emptyOutDir: true,
+        rollupOptions: { input: join(import.meta.dirname, 'browser-harness/device-loss.html') } }, logLevel: 'error' });
+    server = await preview({ root: join(import.meta.dirname, 'browser-harness'),
+      build: { outDir: join(scratch, 'dist') }, preview: { host: '127.0.0.1', port: 0 } });
+    browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      headless: true, args: ['--no-sandbox'], env: { ...process.env, TMPDIR: browserProfile } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout');
+    const button = page.getByRole('button', { name: 'Log out' });
+    await button.waitFor();
+    assert.equal(await button.isVisible(), true);
+    const brand = page.getByRole('link', { name: 'KHALA' });
+    assert.equal(await brand.getAttribute('href'), '/new');
+    assert.equal(await brand.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth > 0), true);
+    assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Khala').count(), 0);
+    const screenshotDir = process.env.KHALA_SCREENSHOT_DIR;
+    if (screenshotDir) {
+      await mkdir(screenshotDir, { recursive: true });
+      await page.screenshot({ path: join(screenshotDir, 'desktop.png'), fullPage: true });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await button.isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    if (screenshotDir) await page.screenshot({ path: join(screenshotDir, 'mobile.png'), fullPage: true });
+
+    await button.click();
+    await page.getByRole('status').getByText('Logging out…').waitFor();
+    assert.equal(await button.isDisabled(), true);
+    await page.getByRole('alert').getByText('Log out failed. Try again.').waitFor();
+    assert.equal(await page.evaluate(() => window.__lossHarness.signOutCount()), 1);
+    await button.click();
+    await page.getByRole('button', { name: 'Sign in' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Log out' }).count(), 0);
+    assert.equal(await page.getByTestId('live-room').count(), 0);
+    assert.equal(await page.evaluate(() => window.__lossHarness.signOutCount()), 2);
+    assert.equal(await page.evaluate(() => window.__lossHarness.stopCount()), 1);
+    assert.equal(new URL(page.url()).pathname, '/new');
+
+    await page.goto(server.resolvedUrls!.local[0]! + 'device-loss.html?state=ready&logout&hosted');
+    await page.getByRole('button', { name: 'Log out' }).waitFor();
+    assert.equal(await page.locator('.aiur-shell__topbar').count(), 0);
+    assert.equal(await page.locator('.khala-content-actions').count(), 1);
+  } finally {
+    await browser?.close();
+    if (server) await new Promise<void>(resolve => server!.httpServer!.close(() => resolve()));
+    await rm(scratch, { recursive: true, force: true });
+    await rm(browserProfile, { recursive: true, force: true });
   }
 });
