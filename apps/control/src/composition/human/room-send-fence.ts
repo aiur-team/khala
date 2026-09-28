@@ -7,7 +7,7 @@ const MAX_SENDERS = 128;
 const MAX_ACTIVE = 128;
 export type SenderIdentity = Readonly<{ senderId: string; deviceId: string; deviceKey: string }>;
 type Sender = SenderIdentity & Readonly<{ rotatedEpoch: number }>;
-type Hold = Readonly<{ operationId: string; excludedDeviceKey: string; epoch: number }>;
+type Hold = Readonly<{ operationId: string; excludedDeviceKey: string | null; epoch: number }>;
 type RoomFence = Readonly<{ v: 1; roomId: RoomId; revision: number; epoch: number; rosterVerified: boolean;
   hold: Hold | null; settled: Readonly<{ operationId: string; kind: 'rotated' | 'refused' }> | null;
   senders: readonly Sender[]; activePermits: readonly string[] }>;
@@ -46,8 +46,9 @@ function validRoom(value: JsonValue, roomId: RoomId): value is RoomFence & JsonV
     && (row.hold === null || typeof row.hold === 'object' && !Array.isArray(row.hold)
       && typeof (row.hold as Record<string, JsonValue>).operationId === 'string'
       && ID.test(String((row.hold as Record<string, JsonValue>).operationId))
-      && typeof (row.hold as Record<string, JsonValue>).excludedDeviceKey === 'string'
-      && /^[A-Za-z0-9+/]{43}=?$/u.test(String((row.hold as Record<string, JsonValue>).excludedDeviceKey))
+      && ((row.hold as Record<string, JsonValue>).excludedDeviceKey === null
+        || typeof (row.hold as Record<string, JsonValue>).excludedDeviceKey === 'string'
+          && /^[A-Za-z0-9+/]{43}=?$/u.test(String((row.hold as Record<string, JsonValue>).excludedDeviceKey)))
       && Number.isSafeInteger((row.hold as Record<string, JsonValue>).epoch));
 }
 function validPermit(value: JsonValue, id: string): value is Permit & JsonValue {
@@ -183,11 +184,14 @@ export function createRoomSendFence(store: ControlStore) {
       return saved.kind === 'applied' || saved.kind === 'conflict' && validPermit(saved.current!.value, id)
         && saved.current!.value.state === next.state && saved.current!.value.eventId === next.eventId ? 'applied' : 'unavailable';
     },
-    async beginHold(roomId: RoomId, operationId: string, excludedDeviceKey: string): Promise<'held' | 'unavailable'> {
-      if (!ID.test(operationId) || !/^[A-Za-z0-9+/]{43}=?$/u.test(excludedDeviceKey)) return 'unavailable';
+    /** A null exclusion means admission: every current sender must rotate. */
+    async beginHold(roomId: RoomId, operationId: string, excludedDeviceKey: string | null): Promise<'held' | 'unavailable'> {
+      if (!ID.test(operationId) || excludedDeviceKey !== null
+        && !/^[A-Za-z0-9+/]{43}=?$/u.test(excludedDeviceKey)) return 'unavailable';
       for (let attempt = 0; attempt < 8; attempt++) {
         const current = await readRoom(roomId);
-        if (current.kind !== 'found' || !current.value.rosterVerified) return 'unavailable';
+        if (current.kind !== 'found' || !current.value.rosterVerified
+          || excludedDeviceKey === null && current.value.senders.length === 0) return 'unavailable';
         if (current.value.hold) return current.value.hold.operationId === operationId
           && current.value.hold.excludedDeviceKey === excludedDeviceKey ? 'held' : 'unavailable';
         const next: RoomFence = { ...current.value, revision: current.value.revision + 1,
@@ -242,7 +246,8 @@ export function createRoomSendFence(store: ControlStore) {
       }
       if (current.value.settled?.operationId === operationId && current.value.settled.kind === 'rotated') return 'rotated';
       if (current.value.hold?.operationId !== operationId) return 'unavailable';
-      return current.value.senders.every(sender => sender.deviceKey === current.value.hold!.excludedDeviceKey
+      return current.value.senders.every(sender => current.value.hold!.excludedDeviceKey !== null
+        && sender.deviceKey === current.value.hold!.excludedDeviceKey
         || sender.rotatedEpoch === current.value.epoch) ? 'rotated' : 'pending';
     },
     async releaseHold(roomId: RoomId, operationId: string, kind: 'rotated' | 'refused'): Promise<'applied' | 'unavailable'> {
@@ -253,6 +258,11 @@ export function createRoomSendFence(store: ControlStore) {
           && current.value.settled.kind === kind ? 'applied' : 'unavailable';
         if (current.value.hold.operationId !== operationId) return 'unavailable';
         if (kind === 'rotated' && await this.rotationStatus(roomId, operationId) !== 'rotated') return 'unavailable';
+        // A refused replacement can resume the old sessions only before any
+        // sender has rotated toward the new device. The CAS below also closes
+        // a race with a concurrent rotation receipt.
+        if (kind === 'refused' && current.value.hold.excludedDeviceKey === null
+          && current.value.senders.some(sender => sender.rotatedEpoch === current.value.epoch)) return 'unavailable';
         const next: RoomFence = { ...current.value, revision: current.value.revision + 1,
           hold: null, settled: { operationId, kind },
           senders: kind === 'refused' ? current.value.senders.map(sender => ({ ...sender, rotatedEpoch: current.value.epoch }))
