@@ -1,19 +1,18 @@
-import type { AdmissionPolicy, ContentLimits, Disposer, MessageContent, OperationResult, RoomId } from '@khala/contracts/messaging/index';
+import type { AdmissionPolicy, ContentLimits, Disposer, OperationResult, RoomId } from '@khala/contracts/messaging/index';
 import { decodeWith, displayText } from '@khala/contracts/messaging/decode';
-import { INITIAL_VIEW, type AdmissionPolicyChoice, type CreateChannelView, type IntroDraft } from './model';
+import { INITIAL_VIEW, type AdmissionPolicyChoice, type CreateChannelView } from './model';
 import type { CreateChannelPorts } from './ports';
 
 type JournalPorts = Pick<CreateChannelPorts, 'room' | 'admission' | 'limits'>;
 
 /**
  * `shared` (hosted) ends by minting a share link through the admission port.
- * `private` omits admission entirely and completes once the channel and its
- * introductions exist.
+ * `private` omits admission entirely and completes once the channel exists.
  */
 export type CreateChannelMode = 'shared' | 'private';
 
 /** Which in-flight step `retry()` resumes; never exposed on the view. */
-type PendingStep = 'create' | 'intro' | 'share' | null;
+type PendingStep = 'create' | 'share' | null;
 
 export interface CreateChannelController {
   getView(): CreateChannelView;
@@ -21,10 +20,6 @@ export interface CreateChannelController {
   setTitle(title: string): void;
   setAdmissionPolicy(policy: AdmissionPolicyChoice): void;
   setNamedEmail(email: string): void;
-  addIntro(): void;
-  updateIntro(localId: string, body: string): void;
-  removeIntro(localId: string): void;
-  reorderIntro(localId: string, direction: 'up' | 'down'): void;
   submit(): void;
   retry(): void;
   dispose(): void;
@@ -38,10 +33,6 @@ const defaultCreateId = (): string =>
     ? globalThis.crypto.randomUUID()
     : `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 
-function byteLength(value: string): number {
-  return new TextEncoder().encode(value).length;
-}
-
 /**
  * Local pre-check using the contract's own channel-title rules (`displayText`):
  * byte limit, no control characters, and no bidi or invisible characters that
@@ -51,13 +42,6 @@ function validateTitle(title: string, limits: ContentLimits): string | null {
   const checked = decodeWith(() => displayText(title, 'title', limits.maxRoomTitleBytes));
   if (checked.ok) return null;
   return checked.error.code === 'too_long' ? 'title_too_long' : 'title_invalid';
-}
-
-/** An intro that is empty after trimming is never sent as a message. */
-function validateIntroBody(body: string, limits: ContentLimits): string | null {
-  if (body.trim().length === 0) return 'message_empty';
-  if (byteLength(body) > limits.maxBodyBytes) return 'message_too_long';
-  return null;
 }
 
 // Keep this local pre-check aligned with the authoritative normalization in
@@ -86,8 +70,6 @@ export function createCreateChannelController(
   // Operation identity persists across retries so a resumed step never resends
   // already-accepted work; only editing before the channel exists clears them.
   let operationId: string | null = null;
-  let batchId: string | null = null;
-  let frozenIntros: readonly MessageContent[] | null = null;
   let shareOperationId: string | null = null;
   let frozenPolicy: AdmissionPolicy | null = null;
   let pendingStep: PendingStep = null;
@@ -107,19 +89,6 @@ export function createCreateChannelController(
     notify();
   }
 
-  /**
-   * A rejection of the intro batch that reached the server is a rejection of that
-   * batch's exact content, not of the channel. The channel and title stay put; the intro
-   * drafts unlock so the human can fix them, and the next attempt starts a fresh
-   * batch (so edited content never collides with the old batch's journal entry).
-   */
-  function reopenIntroEditing(errorCode: string): void {
-    batchId = null;
-    frozenIntros = null;
-    view = { ...view, phase: 'editing', errorCode };
-    notify();
-  }
-
   function applyEdit(mutate: (current: CreateChannelView) => CreateChannelView): void {
     if (disposed) return;
     if (view.phase === 'failed' && view.roomId === null) {
@@ -136,9 +105,7 @@ export function createCreateChannelController(
   /**
    * Runs one journal step and dispatches its `OperationResult`: `ok` continues
    * into `onOk`, `outcome_unknown` moves to `resolving` for an explicit retry.
-   * A `rejected` intro batch that already reached the server (channel exists)
-   * reopens intro editing instead of dead-ending; every other rejection, and
-   * `unavailable`, fail the step. A thrown rejection (not an `OperationResult`)
+   * A rejection or `unavailable` fails the step. A thrown rejection (not an `OperationResult`)
    * is treated the same as `unavailable`, so a step never leaves the UI stuck busy.
    */
   async function runStep<T>(step: PendingStep, run: () => Promise<OperationResult<T, string>>, onOk: (value: T) => void | Promise<void>): Promise<void> {
@@ -148,8 +115,7 @@ export function createCreateChannelController(
       if (disposed) return;
       if (result.kind === 'ok') await onOk(result.value);
       else if (result.kind === 'rejected') {
-        if (step === 'intro' && view.roomId !== null) reopenIntroEditing(result.code);
-        else setFailed(result.code);
+        setFailed(result.code);
       } else if (result.kind === 'unavailable') setFailed('unavailable');
       else setPhase('resolving');
     } catch {
@@ -162,43 +128,12 @@ export function createCreateChannelController(
     const title = view.title === '' ? null : view.title;
     await runStep('create', () => ports.room.create({ operationId: operationId!, title }), async value => {
       view = { ...view, roomId: value.roomId };
-      if (view.intros.length === 0) await attemptShare();
-      else await attemptIntro();
+      await attemptShare();
     });
   }
 
-  /**
-   * Always prepares (never resumes) the batch: the channel command treats an
-   * identical `batchId` + identical message bytes as a resume of the same
-   * batch, so re-preparing is safe whether or not the prior attempt's intent
-   * ever reached the journal (a batch rejected before the journal write, for
-   * example on oversized content, has nothing for `resumeIntro` to find).
-   */
-  async function attemptIntro(): Promise<void> {
-    setPhase('preparing_intro');
-    const roomId = view.roomId as RoomId;
-    batchId ??= createId();
-    frozenIntros ??= view.intros.map((intro): MessageContent => ({ v: 1, kind: 'text', body: intro.body }));
-    const messages = frozenIntros;
-    await runStep(
-      'intro',
-      () => ports.room.prepareIntro({ roomId, batchId: batchId!, messages }),
-      async states => {
-        if (states.length !== messages.length || states.some(state => state.state === 'outcome_unknown' || state.state === 'pending')) {
-          setPhase('resolving');
-          return;
-        }
-        if (states.some(state => state.state === 'failed')) {
-          setFailed('intro_failed');
-          return;
-        }
-        await attemptShare();
-      },
-    );
-  }
-
   async function attemptShare(): Promise<void> {
-    // A private channel is complete once it and its introductions exist; the
+    // A private channel is complete once it exists; the
     // admission port is never called, so no share link can be minted.
     if (mode === 'private') {
       setPhase('ready');
@@ -237,36 +172,6 @@ export function createCreateChannelController(
       applyEdit(current => ({ ...current, namedEmail, namedEmailError: null }));
     },
 
-    addIntro() {
-      applyEdit(current => ({ ...current, intros: [...current.intros, { localId: createId(), body: '', error: null }] }));
-    },
-
-    updateIntro(localId, body) {
-      applyEdit(current => ({
-        ...current,
-        intros: current.intros.map(intro => (intro.localId === localId ? { ...intro, body, error: null } : intro)),
-      }));
-    },
-
-    removeIntro(localId) {
-      applyEdit(current => ({ ...current, intros: current.intros.filter(intro => intro.localId !== localId) }));
-    },
-
-    reorderIntro(localId, direction) {
-      applyEdit(current => {
-        const index = current.intros.findIndex(intro => intro.localId === localId);
-        if (index === -1) return current;
-        const swapWith = direction === 'up' ? index - 1 : index + 1;
-        if (swapWith < 0 || swapWith >= current.intros.length) return current;
-        const intros = [...current.intros];
-        const a = intros[index]!;
-        const b = intros[swapWith]!;
-        intros[index] = b;
-        intros[swapWith] = a;
-        return { ...current, intros };
-      });
-    },
-
     submit() {
       if (disposed || view.phase !== 'editing') return;
       const title = view.title.trim();
@@ -275,20 +180,14 @@ export function createCreateChannelController(
       const namedEmailError = mode === 'shared' && view.admissionPolicy === 'named_no_history' && !EMAIL.test(namedEmail)
         ? 'email_invalid'
         : null;
-      const intros: readonly IntroDraft[] = view.intros.map(intro => ({ ...intro, error: validateIntroBody(intro.body, ports.limits) }));
-      if (titleError !== null || namedEmailError !== null || intros.some(intro => intro.error !== null)) {
-        view = { ...view, title, titleError, namedEmail, namedEmailError, intros };
+      if (titleError !== null || namedEmailError !== null) {
+        view = { ...view, title, titleError, namedEmail, namedEmailError };
         notify();
         return;
       }
-      view = { ...view, title, titleError: null, namedEmail, namedEmailError: null, intros };
+      view = { ...view, title, titleError: null, namedEmail, namedEmailError: null };
       // Double submit is a no-op: phase leaves 'editing' before the first await,
       // and operationId is only ever assigned once per channel.
-      if (view.roomId !== null) {
-        // The channel and title already exist; only the intro batch is retried.
-        void attemptIntro();
-        return;
-      }
       operationId ??= createId();
       void attemptCreate();
     },
@@ -298,7 +197,6 @@ export function createCreateChannelController(
       if (view.phase !== 'failed' && view.phase !== 'resolving') return;
       view = { ...view, errorCode: null };
       if (pendingStep === 'create') void attemptCreate();
-      else if (pendingStep === 'intro') void attemptIntro();
       else if (pendingStep === 'share') void attemptShare();
     },
 
