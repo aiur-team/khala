@@ -139,10 +139,10 @@ export function createWorld(
     const expected = profile.roles.find(entry => entry.role === role)!;
     return {
       sessionId: `native-${role}-${ticket}`, pid: 40_000 + ticket, harness: expected.harness, provider: expected.provider,
-      model: expected.model, cliVersion: CODEX_VERSION, launchCommand: `${expected.harness} --model ${expected.model}`, startedAt: iso(),
+      model: expected.model, cliVersion: expected.cliVersion, launchCommand: `${expected.harness} --model ${expected.model}`, startedAt: iso(),
       capturedAt: new Date(now - 1_000).toISOString(),
       repository: profile.repository, runId: RUN_ID, ticket, role, processStartTicks: String(1000 + ticket),
-      bootId: 'boot-offline', executable: '/usr/bin/node', argv: ['codex', '--model', expected.model], tty: '/dev/pts/1',
+      bootId: 'boot-offline', executable: '/usr/bin/node', argv: [expected.harness, '--model', expected.model], tty: '/dev/pts/1',
       tmuxPane: role === 'a' ? '%1' : '%2',
     };
   };
