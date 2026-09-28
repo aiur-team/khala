@@ -1,7 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { HarnessCapabilities } from '../../../packages/contracts/src/delivery/index';
-import { NATIVE_CLI_CODEX_VERSIONS } from '../../../packages/harnesses/src/codex/capabilities';
+import { CODEX_NATIVE_SYNC_VERSION } from '../../../packages/harnesses/src/codex/interactive';
 import { inspectHostedCodexHooks } from '../../../packages/agent-cli/src/composition/local-harness-capabilities';
 import { readInstalledCodexVersion } from '../../../packages/agent-cli/src/composition/hosted-session-inspection';
 import { setupEnvironment } from '../../../packages/agent-cli/src/setup/environment';
@@ -19,12 +19,12 @@ type NativeSolFixture = Omit<NativeFixture, 'v'> & NativeSolHandoff & Readonly<{
 
 export type NativeGate =
   | Readonly<{ kind: 'ready'; fixture: NativeFixture; capabilities: HarnessCapabilities;
-      preflightBindingId: string | null }>
+      preflightBindingId: string }>
   | Readonly<{ kind: 'blocked'; code: string }>;
 
-/** Keep CLI queue evidence and hook evidence scoped to the same exact native version. */
+/** This Sol crash acceptance gate is narrower than production's older Codex routes. */
 export function nativeProofBlock(version: string | null, hooks: HarnessCapabilities | null): string | null {
-  if (version === null || !NATIVE_CLI_CODEX_VERSIONS.includes(version)) return 'native_version_unproven';
+  if (version !== CODEX_NATIVE_SYNC_VERSION) return 'native_version_unproven';
   if (!hooks || hooks.support !== 'tested' || hooks.harness !== 'codex' || hooks.version !== version
     || hooks.modes.sync.status !== 'proven') return 'native_hook_mode_unproven';
   return null;
@@ -63,16 +63,12 @@ export async function inspectNativeGate(descriptorPath: string | undefined): Pro
   const blocked = nativeProofBlock(version, hooks);
   if (blocked !== null) return { kind: 'blocked', code: blocked };
   if (hooks === null) throw new Error('native proof guard failed');
-  let preflightBindingId: string | null = null;
-  if (version === '0.157.1') {
-    if (descriptor.v !== 2 || (descriptorMode & 0o077) !== 0) {
-      return { kind: 'blocked', code: 'native_sol_handoff_unproven' };
-    }
-    const handoff = await inspectNativeSolHandoff(descriptor);
-    if (handoff.kind !== 'ready') return { kind: 'blocked', code: handoff.code };
-    preflightBindingId = handoff.bindingId;
-  } else if (descriptor.v !== 1) return { kind: 'blocked', code: 'native_fixture_invalid' };
+  if (descriptor.v !== 2 || (descriptorMode & 0o077) !== 0) {
+    return { kind: 'blocked', code: 'native_sol_handoff_unproven' };
+  }
+  const handoff = await inspectNativeSolHandoff(descriptor);
+  if (handoff.kind !== 'ready') return { kind: 'blocked', code: handoff.code };
   const fixture: NativeFixture = { v: 1, disposable: true, harness: 'codex',
     sessionId: descriptor.sessionId, workdir: descriptor.workdir, codexHome: descriptor.codexHome };
-  return { kind: 'ready', fixture, capabilities: hooks, preflightBindingId };
+  return { kind: 'ready', fixture, capabilities: hooks, preflightBindingId: handoff.bindingId };
 }

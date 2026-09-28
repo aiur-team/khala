@@ -18,6 +18,8 @@ describe('opt-in native acceptance gate', () => {
     const limits = decoded.value;
     const hooks = interactiveCodexCapabilities('0.157.1', limits, { state: 'trusted' });
     assert.equal(nativeProofBlock('0.157.1', hooks), null);
+    assert.equal(nativeProofBlock('0.154.0', interactiveCodexCapabilities('0.154.0', limits,
+      { state: 'trusted' })), 'native_version_unproven');
     assert.equal(nativeProofBlock('0.157.0', hooks), 'native_version_unproven');
     assert.equal(nativeProofBlock('0.157.1', interactiveCodexCapabilities('0.154.0', limits,
       { state: 'trusted' })), 'native_hook_mode_unproven');
@@ -65,6 +67,9 @@ describe('opt-in native acceptance gate', () => {
         sessionId, workdir: directory, codexHome }), { mode: 0o600 });
       assert.deepEqual(await inspectNativeGate(descriptor),
         { kind: 'blocked', code: 'native_sol_handoff_unproven' });
+      await writeFile(executable, '#!/bin/sh\nprintf "codex-cli 0.154.0\\n"\n');
+      assert.deepEqual(await inspectNativeGate(descriptor), { kind: 'blocked', code: 'native_version_unproven' });
+      await writeFile(executable, '#!/bin/sh\nprintf "codex-cli 0.157.1\\n"\n');
 
       // A shaped v2 descriptor with matching private records still cannot turn
       // this unrelated live Node process into the exact native Sol TUI.
