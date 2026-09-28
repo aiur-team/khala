@@ -35,6 +35,9 @@ protected human transport. `registerControls` replaces KHA-133's placeholder.
   `OwnerAuthority` and must own the ledger's binding. Another owner learns nothing
   beyond `forbidden`.
 
-`registerControls` is `ready` only with a protected transport and its control
-dependencies, including a durable `TrustStateStore`. Neither exists yet, so the
-runtime keeps controls unavailable. See `tests/integration/controls/README.md`.
+Production serves owner commands through the authenticated owner mailbox, keeps the
+trust journal in a private SQLite store, and seeds the initial dispatch policy for
+each binding generation. Status includes only the current bound harness inspection;
+an absent or failed inspection remains unknown. `registerControls` itself still
+reports unavailable without injected dependencies. See
+`tests/integration/controls/README.md` for the separate live proof still required.

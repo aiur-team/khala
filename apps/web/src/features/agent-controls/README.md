@@ -33,10 +33,10 @@ for build:
 - `controlsAvailable` is only ever `true` when the binding is active, the
   viewer is its owner, and both the approved policy and the adapter's
   inspected `HarnessCapabilities` permit it — it is never simulated for a
-  capability that was not observed. `support` must not be `'unsupported'`,
-  and `existingSession` must be exactly the one evidence-backed route,
-  `'khala_hosted_resume'` — `'unknown'` (not investigated) is treated the same
-  as `'unsupported'`, never assumed safe by default. The panel always renders
+  capability that was not observed. `support` must be `'tested'`, and
+  `existingSession` must identify an inspected existing-session route:
+  `'khala_hosted_resume'` or `'native_cli_queue'`. `'unknown'` (not investigated)
+  and experimental/unsupported support never enable a control. The panel always renders
   the exact inspected `support`/`existingSession` states (`capabilityDetail`),
   even when they are what disabled the control, so a human never has to guess
   why. A binding the viewer does not own, or one marked `revoked`, never gets

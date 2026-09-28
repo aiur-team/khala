@@ -13,6 +13,9 @@ import { createReviewController, type ReviewController } from '../../features/re
 import { ReviewScreen } from '../../features/review/ReviewScreen';
 import type { OwnerReviewBinding } from '../review/owner-mailbox-client';
 import { createOwnerMailboxReviewClient } from '../review/owner-mailbox-client';
+import type { ControlsCapability } from '../controls/register';
+import { AgentControlsPanel } from '../../features/agent-controls/AgentControlsPanel';
+import type { AgentControlsPorts } from '../../features/agent-controls/ports';
 
 type ReviewClient = ReturnType<typeof createOwnerMailboxReviewClient>;
 type ReviewRoomId = Parameters<HumanRoomRenderer>[1]['roomId'];
@@ -39,9 +42,72 @@ export const renderHumanRoom: HumanRoomRenderer = (context, route) => (
 /** Production room renderer with the authenticated owner mailbox attached. */
 export function createHumanRoomRenderer(review: ReviewClient, capability: ReviewCapability,
   trustBinding: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
-    binding: OwnerReviewBinding) => Promise<boolean>, refreshMs = 5_000): HumanRoomRenderer {
+    binding: OwnerReviewBinding) => Promise<boolean>, refreshMs = 5_000,
+  controls?: ControlsCapability): HumanRoomRenderer {
   return (context, route) => <HumanRoom context={context} roomId={route.roomId} review={review}
-    capability={capability} trustBinding={trustBinding} refreshMs={refreshMs} />;
+    capability={capability} trustBinding={trustBinding} refreshMs={refreshMs}
+    {...(controls ? { controls } : {})} />;
+}
+
+function ControlsForBinding({ context, roomId, capability, binding }: {
+  context: Parameters<HumanRoomRenderer>[0];
+  roomId: ReviewRoomId;
+  capability: ControlsCapability;
+  binding: OwnerReviewBinding;
+}) {
+  const [ports, setPorts] = useState<AgentControlsPorts | null>(null);
+  const identity = JSON.stringify([context.principal.ownerId, context.generation, roomId,
+    binding.bindingId, binding.generation, binding.agentParticipantId]);
+  useEffect(() => {
+    // HumanScreen attaches the route capability in its passive effect.
+    const timer = setTimeout(() => {
+      const port = capability.portFor(context, roomId, binding);
+      if (port) setPorts({ agentControls: port });
+    }, 0);
+    return () => { clearTimeout(timer); };
+  }, [identity, capability, context, roomId]);
+  if (!ports) return <Panel heading="Agent controls"><p role="status">Loading controls…</p></Panel>;
+  return <AgentControlsPanel ports={ports} config={{
+    bindingId: binding.bindingId, roomId, peerParticipantId: binding.agentParticipantId as never,
+    viewerOwnerId: context.principal.ownerId, agentLabel: binding.agentParticipantId, roomLabel: roomId,
+  }} />;
+}
+
+function HumanControls({ context, roomId, review, capability, refreshMs }: {
+  context: Parameters<HumanRoomRenderer>[0];
+  roomId: ReviewRoomId;
+  review: ReviewClient | undefined;
+  capability: ControlsCapability | undefined;
+  refreshMs: number;
+}) {
+  const scope = reviewScope(context, roomId);
+  const [discovery, setDiscovery] = useState<Readonly<{ scope: string; bindings: readonly OwnerReviewBinding[] }> | null>(null);
+  useEffect(() => {
+    if (!review || !capability || capability.state !== 'ready') return;
+    const abort = new AbortController();
+    let epoch = 0;
+    setDiscovery(null);
+    const refresh = () => {
+      const current = ++epoch;
+      void review.bindings(roomId, abort.signal).then(bindings => {
+        if (!abort.signal.aborted && current === epoch) {
+          setDiscovery(bindings === null ? null : { scope, bindings });
+        }
+      }).catch(() => { if (!abort.signal.aborted && current === epoch) setDiscovery(null); });
+    };
+    refresh();
+    const timer = setInterval(refresh, refreshMs);
+    return () => { abort.abort(); clearInterval(timer); };
+  }, [context, roomId, review, capability, refreshMs, scope]);
+  if (!capability || capability.state !== 'ready' || !review || discovery?.scope !== scope) {
+    return <Panel heading="Agent controls"><p role="status">Agent controls are unavailable or loading.</p></Panel>;
+  }
+  if (discovery.bindings.length === 0) {
+    return <Panel heading="Agent controls"><p role="status">No active agent connection in this channel.</p></Panel>;
+  }
+  return <>{discovery.bindings.map(binding => <ControlsForBinding
+    key={JSON.stringify([scope, binding.bindingId, binding.generation, binding.agentParticipantId])}
+    context={context} roomId={roomId} capability={capability} binding={binding} />)}</>;
 }
 
 function ReviewForBinding({ context, roomId, capability, binding }: {
@@ -136,11 +202,12 @@ function HumanReview({ context, roomId, review, capability, trustBinding, refres
     capability={capability} binding={binding} />)}</>;
 }
 
-function HumanRoom({ context, roomId, review, capability, trustBinding, refreshMs = 5_000 }: {
+function HumanRoom({ context, roomId, review, capability, trustBinding, refreshMs = 5_000, controls }: {
   context: Parameters<HumanRoomRenderer>[0];
   roomId: Parameters<HumanRoomRenderer>[1]['roomId'];
   review?: ReviewClient;
   capability?: ReviewCapability;
+  controls?: ControlsCapability;
   trustBinding?: (context: Parameters<HumanRoomRenderer>[0], roomId: ReviewRoomId,
     binding: OwnerReviewBinding) => Promise<boolean>;
   refreshMs?: number;
@@ -184,9 +251,7 @@ function HumanRoom({ context, roomId, review, capability, trustBinding, refreshM
         trustBinding={trustBinding} refreshMs={refreshMs} />}
       renderControls={() => (
         <>
-          <Panel heading="Agent controls">
-            <p role="status">Agent controls are not available for this channel yet.</p>
-          </Panel>
+          <HumanControls context={context} roomId={roomId} review={review} capability={controls} refreshMs={refreshMs} />
           <RecoveryPanel ports={recovery} config={{ roomId, roomRevision: 0 }} onClosureParticipationEnded={() => location.assign('/')} />
         </>
       )}
