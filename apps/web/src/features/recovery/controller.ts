@@ -75,6 +75,26 @@ function referenceMatches(
     && closureMatchesConfig(snapshot, config);
 }
 
+function resumeOnCurrentDevice(
+  reference: RecoveryOperationReference,
+  snapshot: RecoverySnapshot,
+  config: RecoveryControllerConfig,
+): RecoveryOperationReference | null {
+  // Browser-device generations are process-local and restart at one after a
+  // reload. The stable device ID and authenticated owner identify the pending
+  // operation; the server still authorizes inspection by its original ID.
+  if (snapshot.device.deviceId === null || snapshot.device.state === 'new'
+    || snapshot.device.state === 'initializing' || snapshot.device.state === 'failed') return null;
+  const rebound = { ...reference, deviceGeneration: snapshot.device.generation };
+  return referenceMatches(rebound, snapshot, config) ? rebound : null;
+}
+
+function resumeStillLoading(snapshot: RecoverySnapshot): boolean {
+  return snapshot.identity.kind === 'unavailable'
+    || snapshot.identity.kind === 'signed_in' && (snapshot.device.state === 'new'
+      || snapshot.device.state === 'initializing' || snapshot.device.state === 'failed');
+}
+
 function sameLifecycle(a: RecoverySnapshot, b: RecoverySnapshot, config: RecoveryControllerConfig): boolean {
   return ownerId(a) === ownerId(b)
     && a.device.deviceId === b.device.deviceId
@@ -128,6 +148,7 @@ export function createRecoveryController(
   let currentSnapshot = ports.ui.snapshot();
   let operation: RecoveryOperation = IDLE_RECOVERY_OPERATION;
   let activeReference: RecoveryOperationReference | null = null;
+  let pendingResume: RecoveryOperationReference | null = null;
   let operationAbort: AbortController | null = null;
   let operationGeneration = 0;
   let disposed = false;
@@ -149,6 +170,10 @@ export function createRecoveryController(
     operationAbort?.abort();
     operationAbort = null;
     if (activeReference !== null) clearActiveReference();
+    if (pendingResume !== null) {
+      pendingResume = null;
+      ports.resumeStore.clear();
+    }
     operation = IDLE_RECOVERY_OPERATION;
   }
 
@@ -184,7 +209,7 @@ export function createRecoveryController(
     token: number;
     signal: AbortSignal;
   } | null {
-    if (disposed || activeReference !== null) return null;
+    if (disposed || activeReference !== null || pendingResume !== null) return null;
     const operationId = createOperationId();
     if (operationId.length === 0) return null;
     const reference = referenceFor(kind, operationId, currentSnapshot, config);
@@ -197,7 +222,17 @@ export function createRecoveryController(
     operation = pendingOperation(reference);
     // Write-ahead is intentional: a crash immediately after dispatch must still
     // leave enough non-secret identity for the next controller to inspect.
-    ports.resumeStore.save(reference);
+    try {
+      ports.resumeStore.save(reference);
+    } catch {
+      // The write-ahead identity is required before an effectful owner call.
+      activeReference = null;
+      operationAbort.abort();
+      operationAbort = null;
+      operation = IDLE_RECOVERY_OPERATION;
+      notify();
+      return null;
+    }
     notify();
     return { reference, token, signal: operationAbort.signal };
   }
@@ -318,23 +353,42 @@ export function createRecoveryController(
   const disposePortSubscription = ports.ui.subscribe(() => {
     if (disposed) return;
     const nextSnapshot = ports.ui.snapshot();
-    if (!sameLifecycle(currentSnapshot, nextSnapshot, config)) invalidateOperation();
+    // An initial identity read may still be unavailable after a page reload. Keep the
+    // write-ahead operation until an authoritative signed-in/out view can match it.
+    if (pendingResume === null && !sameLifecycle(currentSnapshot, nextSnapshot, config)) invalidateOperation();
     currentSnapshot = nextSnapshot;
     if (activeReference !== null && !referenceMatches(activeReference, currentSnapshot, config)) {
       invalidateOperation();
+    }
+    if (pendingResume !== null && !resumeStillLoading(currentSnapshot)) {
+      const reference = pendingResume;
+      pendingResume = null;
+      const resumed = resumeOnCurrentDevice(reference, currentSnapshot, config);
+      if (resumed !== null) {
+        activeReference = resumed;
+        operation = pendingOperation(resumed);
+        void inspectReference(resumed);
+      } else {
+        ports.resumeStore.clear();
+      }
     }
     notify();
   }, lifecycleAbort.signal);
 
   const savedReference = ports.resumeStore.load();
   if (savedReference !== null) {
-    if (referenceMatches(savedReference, currentSnapshot, config)) {
-      activeReference = savedReference;
-      operation = pendingOperation(savedReference);
-      notify();
-      void inspectReference(savedReference);
+    if (resumeStillLoading(currentSnapshot)) {
+      pendingResume = savedReference;
     } else {
-      ports.resumeStore.clear();
+      const resumed = resumeOnCurrentDevice(savedReference, currentSnapshot, config);
+      if (resumed !== null) {
+        activeReference = resumed;
+        operation = pendingOperation(resumed);
+        notify();
+        void inspectReference(resumed);
+      } else {
+        ports.resumeStore.clear();
+      }
     }
   }
 
