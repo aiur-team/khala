@@ -27,8 +27,17 @@ function success(result) {
 
 function refusalCode(result) {
   assert.notEqual(result.code, 0, JSON.stringify(result));
-  const body = JSON.parse(result.out || result.err);
-  return body.code ?? body.error;
+  // Node 22 can also write its experimental SQLite warning to stderr.
+  const codes = [result.out, result.err]
+    .flatMap(output => output.split('\n'))
+    .filter(line => line.startsWith('{'))
+    .map(line => {
+      const body = JSON.parse(line);
+      return body.code ?? body.error;
+    })
+    .filter(Boolean);
+  assert.deepEqual(codes, ['not_connected'], JSON.stringify(result));
+  return codes[0];
 }
 
 function readBodies(result) {
