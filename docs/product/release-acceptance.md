@@ -1,20 +1,21 @@
 # Release acceptance (KHA-140)
 
-This record decides whether the root build order can close. It is based on the
-merged product and requires evidence for each requirement. Closing every leaf
-ticket does not change the verdict (AE1). A result is **pass** only when the
-evidence below shows it. `unknown` and `not observed` are never shown as pass.
+This is the 2026-09-26 candidate record, retained with its original results.
+It does not decide acceptance of the current source. Closing every leaf ticket
+does not change the verdict (AE1). A result is **pass** only when evidence from
+one exact candidate shows it; `unknown` and `not observed` are never pass.
 
 ## Verdict
 
-**Root not accepted.** Blocking evidence is missing, and one security row fails.
+**Root not accepted.** The security failure below belongs to the archived
+`a120b9e` candidate; it is not a fresh verdict on current main.
 
 | Field | Value |
 | --- | --- |
-| Release candidate | `a120b9eaa33f50e538e2f6376faca4805370e98d` (`origin/main`, 2026-09-26) |
+| Historical candidate | `a120b9eaa33f50e538e2f6376faca4805370e98d` (`origin/main` at the 2026-09-26 run, not current main) |
 | Recorded | 2026-09-26 by the KHA-140 agent. Linux 7.1.4-arch1-1 x86_64, Node 24.18.0 (CI pins 22.23.2), pnpm 10.34.5 |
 | Reviewer | None. A human reviewer signs this record only for a pass. For this verdict, review happens on the PR that lands this record |
-| Next decision point | Rerun this record once every blocker in [Findings](#findings) has evidence on one candidate |
+| Next decision point | Select a later immutable candidate and rerun all current requirements and live blockers on it; the historical [Findings](#findings) are not exhaustive |
 
 ```json
 {
@@ -41,6 +42,35 @@ evidence below shows it. `unknown` and `not observed` are never shown as pass.
   "root_acceptance": "not-accepted"
 }
 ```
+
+## Interim status on 2026-09-28
+
+On merged main `c181d67a`, **no final release candidate has been selected** and
+the root remains not accepted. The JSON verdict, checks, requirement passes and
+failure below are evidence only for `a120b9e`; they must be rerun together on
+one later immutable candidate before any current requirement is promoted.
+
+- The protected owner-mailbox and connector entry now exist. The merged
+  [selected-only browser/native driver](../../tests/integration/review/README.md)
+  and [manual owner-controls driver](../../tests/integration/controls/README.md)
+  are both unrun against a qualifying hosted deployment. Their presence does
+  not establish the U2 journey, model-visible review, P02 browser-closed
+  behavior or hosted control acceptance.
+- The [Codex 0.157.1 local preflight](../evidence/codex-0157-native-cli.md)
+  observed one native Sol sync exchange and model-origin ACK. It used an
+  injected local binding and no hosted Matrix. The merged
+  [connector crash runner](../../tests/integration/connector/README.md) has
+  not supplied its separate full live crash/restart proof. OpenCode, its
+  cross-harness pair and the other required native modes remain in scope.
+- [P12/P14](decisions.md) settle per-link admission and no escrow/backfill,
+  but the [replacement-device boundary](../evidence/p14-device-loss-gap.md)
+  and hosted recovery proof remain absent. G-ADMISSION consent, P02
+  browser-closed behavior, and hosted P08/G-AUTOMATION are unanswered operator
+  choices. Local bounded peer automation and the current refusal of hosted
+  `auto` do not resolve those choices.
+
+The tables from the archived candidate are preserved below so a later reviewer
+can compare exact build evidence rather than silently rewriting history.
 
 ## Checks run on the candidate
 
@@ -98,10 +128,11 @@ These are the IDs from [requirements coverage](requirements-coverage.md).
 
 ## Ordinary user journey (U2)
 
-**Not observed.** No production entry point starts the owner connector (the
-KHA-136 README; nothing outside tests calls `createConnectorRuntime`). The KHA-134
-and KHA-135 compositions still have no protected human control transport. As a
-result, none of these steps could run: OAuth, create/name/share link, the agent's
+**Not observed on the archived candidate.** On that build no production entry
+point started the owner connector (the KHA-136 README; nothing outside tests
+called `createConnectorRuntime`). The KHA-134 and KHA-135 compositions had no
+protected human control transport. As a result, none of these steps could run:
+OAuth, create/name/share link, the agent's
 automatic setup, the coworker joining, reviewed introductions, exact release, and
 third-owner admission. Nothing was simulated in their place.
 
@@ -122,8 +153,9 @@ It does not satisfy R01, R02 or R15, because those need two owners.
 
 ## Findings
 
-Findings are classified under U4. Component defects go back to their owners. This
-ticket does not fix them.
+These findings were classified under U4 for `a120b9e`. They are not an
+exhaustive current-main blocker list; the interim status above identifies
+subsequent code and remaining proof. This ticket did not fix them.
 
 ### Acceptance blockers
 
@@ -170,9 +202,11 @@ ticket does not fix them.
 
 - The desktop and cloud apps (#244, #245): parked. Codex is not deferred; see
   [Acceptance blockers](#acceptance-blockers).
-- Automatic release: closed by the G-AUTOMATION ruling.
-- Attachments (P07) and automatic conversation control (P08): never asked, and
-  not added here.
+- The archived evaluator treated automatic release as closed by an Executor
+  ruling. That is not an operator resolution of hosted G-AUTOMATION/P08; the
+  current product still refuses hosted `auto` pending authority.
+- Attachments (P07) were not added to this candidate. P08's hosted control and
+  budget choice remains unanswered.
 
 ## Documented non-guarantees
 
