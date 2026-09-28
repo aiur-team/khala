@@ -105,9 +105,9 @@ for (const theme of THEMES) {
         await open(page, theme, viewport);
         for (const [element, selector] of ELEMENTS) {
           // CI and local pinned Chromium differ by 49 antialiased pixels in
-          // Copy's white label at 360px; its geometry and every other image
-          // remain pixel-exact. Keep this allowance below a one-pixel shift.
-          const maxDiffPixels = element === 'install-box' && viewport.width === 360 ? 60 : 0;
+          // Copy's white label only for the light 360px install box. Its
+          // geometry and every other image remain pixel-exact.
+          const maxDiffPixels = theme === 'light' && element === 'install-box' && viewport.width === 360 ? 60 : 0;
           await expect(page.locator(selector)).toHaveScreenshot(`${name}-element-${element}.png`, { maxDiffPixels });
         }
       });
