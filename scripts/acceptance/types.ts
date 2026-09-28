@@ -174,6 +174,8 @@ export type OwnerSession = Readonly<{
   /** Authenticated owner's current active bindings; sessionDigest is the server's fingerprint. */
   bindings(): Promise<readonly OwnerBinding[]>;
   approve(request: AccessRequest, operationId: string): Promise<void>;
+  /** Revokes this owner's exact request on this channel; a connected request is refused. */
+  revokeRequest(request: AccessRequest, operationId: string): Promise<void>;
   /** Asks the binding's listening-mode control for `mode` and waits for its confirmed state. */
   requestMode(target: StopTarget, mode: ListeningMode): Promise<ModeRequest>;
   stop(targets: readonly StopTarget[]): Promise<StopReply>;

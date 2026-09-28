@@ -53,6 +53,9 @@ export function offlineProfile(overrides: Record<string, unknown> = {}): Profile
 export type WorldKnobs = {
   /** The Executor records native sessions for the tickets. */
   sessions: boolean;
+  missingSessionFor: RoleName | null;
+  connectedOnGrant: boolean;
+  revokeFails: boolean;
   /** Recipients acknowledge each handshake event through a batch-token receipt. */
   receipts: boolean;
   /** The agents perform the handshakes at all. */
@@ -76,7 +79,8 @@ export type WorldKnobs = {
 };
 
 const DEFAULT_KNOBS: WorldKnobs = {
-  sessions: true, receipts: true, handshake: true, reannounce: false, stopThrows: false, deliverAfterStop: false,
+  sessions: true, missingSessionFor: null, connectedOnGrant: false, revokeFails: false,
+  receipts: true, handshake: true, reannounce: false, stopThrows: false, deliverAfterStop: false,
   stopKillsSessions: false, closeFailsFor: null, confirmChannel: true, mode: { kind: 'effective' }, lockHeld: false,
 };
 
@@ -91,6 +95,8 @@ export type World = Readonly<{
   issues: Map<number, IssueRecord>;
   closed: number[];
   stopCalls: (readonly StopTarget[])[];
+  revokeCalls: string[];
+  bindingStatus(role: RoleName): 'active' | 'revoked' | null;
   /** Every mode request the runner made, in order. */
   modeCalls: Readonly<{ bindingId: string; mode: ListeningMode }>[];
   signalled: number[];
@@ -113,10 +119,12 @@ export function createWorld(
   const ran: string[] = [];
   const markers = markersFor(RUN_ID);
   let now = Date.parse('2026-09-26T10:00:00.000Z');
+  const fixtureCapturedAt = new Date(now - 1_000).toISOString();
   const iso = () => new Date(now).toISOString();
   const issues = new Map<number, IssueRecord>();
   const closed: number[] = [];
   const stopCalls: (readonly StopTarget[])[] = [];
+  const revokeCalls: string[] = [];
   const modeCalls: { bindingId: string; mode: ListeningMode }[] = [];
   const signalled: number[] = [];
   const events: StoredEvent[] = [];
@@ -135,12 +143,12 @@ export function createWorld(
   const ticketOf = new Map<RoleName, number>();
   const sessionOf = (role: RoleName): NativeSession | null => {
     const ticket = ticketOf.get(role);
-    if (ticket === undefined || !knobs.sessions) return null;
+    if (ticket === undefined || !knobs.sessions || knobs.missingSessionFor === role) return null;
     const expected = profile.roles.find(entry => entry.role === role)!;
     return {
       sessionId: `native-${role}-${ticket}`, pid: 40_000 + ticket, harness: expected.harness, provider: expected.provider,
       model: expected.model, cliVersion: expected.cliVersion, launchCommand: `${expected.harness} --model ${expected.model}`, startedAt: iso(),
-      capturedAt: new Date(now - 1_000).toISOString(),
+      capturedAt: fixtureCapturedAt,
       repository: profile.repository, runId: RUN_ID, ticket, role, processStartTicks: String(1000 + ticket),
       bootId: 'boot-offline', executable: '/usr/bin/node', argv: [expected.harness, '--model', expected.model], tty: '/dev/pts/1',
       tmuxPane: role === 'a' ? '%1' : '%2',
@@ -233,12 +241,24 @@ export function createWorld(
     async approve(request) {
       const role = request.requestHandle.endsWith('_a') ? 'a' : 'b';
       const expected = profile.roles.find(entry => entry.role === role)!;
-      requests.set(role, { ...request, outcome: 'approved' });
+      // The scripted binding represents activation before connector readiness.
+      requests.set(role, { ...request, outcome: knobs.connectedOnGrant ? 'connected' : 'connecting', revision: 'carev_2' });
       granted.add(role);
       bindings.push({
         bindingId: `binding_${role}`, generation: 1, participantId: `participant_${role}`, harness: expected.harness,
         sessionDigest: request.sessionFingerprint, status: 'active',
       });
+    },
+    async revokeRequest(request) {
+      revokeCalls.push(request.requestHandle);
+      if (knobs.revokeFails) throw new Error('request revoke unavailable');
+      const role = request.requestHandle.endsWith('_a') ? 'a' : 'b';
+      const current = requests.get(role);
+      if (!current || current.revision !== request.revision || current.outcome === 'connected') {
+        throw new Error('request revoke unproven: 409 connected_or_stale');
+      }
+      requests.set(role, { ...current, outcome: 'revoked', revision: 'carev_3' });
+      for (const binding of bindings) if (binding.participantId === `participant_${role}`) binding.status = 'revoked';
     },
     async requestMode(target, mode) {
       modeCalls.push({ bindingId: target.bindingId, mode });
@@ -350,7 +370,8 @@ export function createWorld(
   };
 
   return {
-    deps, profile, markers, knobs, issues, closed, stopCalls, modeCalls, signalled, ran,
+    deps, profile, markers, knobs, issues, closed, stopCalls, revokeCalls, modeCalls, signalled, ran,
+    bindingStatus: role => bindingOf(role)?.status ?? null,
     get launcherStarts() { return launcherStarts; },
     serverClosed: () => serverClosed,
     lockAcquired: () => lockAcquired,

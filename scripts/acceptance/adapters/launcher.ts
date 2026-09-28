@@ -128,6 +128,19 @@ export async function ownerSessionFor(report: LaunchReport): Promise<OwnerSessio
       });
       if (reply.status !== 200) throw new Error(`grant refused: ${reply.status}`);
     },
+    async revokeRequest(request, operationId) {
+      const reply = await call(`/api/human/channel-access-requests/${encodeURIComponent(request.requestHandle)}/revoke`, {
+        method: 'POST',
+        body: { v: 1, requestHandle: request.requestHandle, channelId, expectedRevision: request.revision, operationId },
+      });
+      const body = record(reply.json);
+      if (reply.status !== 200 || body.requestHandle !== request.requestHandle
+        || body.channelId !== channelId || body.outcome !== 'revoked'
+        || body.operationId !== operationId || typeof body.revision !== 'string'
+        || !/^carev_[1-9][0-9]*$/.test(body.revision) || body.revision === request.revision) {
+        throw new Error(`request revoke unproven: ${reply.status} ${text(body.code) || text(record(body.error).code)}`.trim());
+      }
+    },
     async requestMode(target, mode): Promise<ModeRequest> {
       // The owner's listening-mode route: read the binding's control, request `mode`
       // against the version read, then re-read and report `effective` only when the

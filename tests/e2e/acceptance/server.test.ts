@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ownerSessionFor, reachable } from '../../../scripts/acceptance/adapters/launcher';
 import { readChannelSnapshot } from '../../../scripts/acceptance/adapters/snapshot';
 import { type KhalaProfile, type RunningLauncher, freePort, privateDirectory, startLauncher } from '../harness/internal';
@@ -13,6 +13,7 @@ import { type KhalaProfile, type RunningLauncher, freePort, privateDirectory, st
 let launcher: RunningLauncher | null = null;
 const directories: string[] = [];
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await launcher?.close();
   launcher = null;
   for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
@@ -26,6 +27,38 @@ async function profile(): Promise<KhalaProfile> {
 }
 
 describe('runner server adapters over the real launcher', () => {
+  it('requires the exact revoke operation and a new revision in the owner reply', async () => {
+    const origin = 'http://127.0.0.1:4870';
+    const channelId = 'channel_offline';
+    const report = { origin, channelId, url: `${origin}/#credential=secret&channel=${channelId}` };
+    const request = { requestHandle: 'request_123', revision: 'carev_2', createdAt: new Date().toISOString(),
+      outcome: 'connecting', harness: 'codex', sessionFingerprint: 'digest' };
+    const operationId = 'acc-revoke-0123456789ab-1001';
+    let reply: Record<string, unknown> = { v: 1, requestHandle: request.requestHandle, channelId,
+      outcome: 'revoked', revision: 'carev_3', operationId };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/__khala/session')) {
+        return new Response(JSON.stringify({ requestSecret: 'csrf' }), {
+          status: 200, headers: { 'set-cookie': 'session=test; Path=/' },
+        });
+      }
+      return new Response(JSON.stringify(reply), { status: 200 });
+    }));
+    const owner = await ownerSessionFor(report);
+    await expect(owner.revokeRequest(request, operationId)).resolves.toBeUndefined();
+    for (const wrong of [
+      { operationId: 'a-different-revoke' },
+      { revision: request.revision },
+      { requestHandle: 'request_other' },
+      { channelId: 'channel_other' },
+    ]) {
+      reply = { ...reply, ...wrong };
+      await expect(owner.revokeRequest(request, operationId)).rejects.toThrow(/request revoke unproven/);
+      reply = { v: 1, requestHandle: request.requestHandle, channelId,
+        outcome: 'revoked', revision: 'carev_3', operationId };
+    }
+  });
+
   it('acts as the owner, refuses a stale Stop target, and snapshots only after the launcher closes', async () => {
     const khala = await profile();
     const internalRoot = path.join(khala.stateHome, 'khala', 'internal');
