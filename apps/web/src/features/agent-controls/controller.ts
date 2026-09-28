@@ -75,11 +75,11 @@ function unavailableReason(
   if (snapshot.bindingStatus === 'revoked') return 'This binding has been revoked.';
   if (snapshot.binding.ownerId !== viewerOwnerId) return "This binding belongs to another person's agent connection.";
   if (snapshot.capabilities === null) return 'Waiting for harness capabilities.';
-  if (snapshot.capabilities.support === 'unsupported') return 'This harness is not supported for delivery controls.';
-  // Enable delivery controls only for the one evidence-backed existing-session
-  // route (KTD3): `unknown` is "not investigated", not "safe to assume", so it
-  // is treated the same as `unsupported` rather than left enabled by default.
-  if (snapshot.capabilities.existingSession !== 'khala_hosted_resume') {
+  if (snapshot.capabilities.support !== 'tested') return 'This harness is not supported for delivery controls.';
+  // Only an inspected existing-session route may expose manual review controls.
+  // Unknown and unsupported routes never inherit a previous binding's proof.
+  if (snapshot.capabilities.existingSession !== 'khala_hosted_resume'
+    && snapshot.capabilities.existingSession !== 'native_cli_queue') {
     return 'This connector does not support the existing session for this binding.';
   }
   if (snapshot.policy.effectiveVersion === null) return 'Waiting for an authoritative policy snapshot.';
@@ -94,7 +94,7 @@ function unavailableReason(
 /** Honest connection display: a transport that is "connected" to a harness this build cannot use is not "online" in any actionable sense. */
 function connectionFrom(snapshot: AgentControlsSnapshot): AgentControlsView['connection'] {
   if (snapshot.capabilities === null) return 'unknown';
-  if (snapshot.capabilities.support === 'unsupported') return 'unknown';
+  if (snapshot.capabilities.support !== 'tested') return 'unknown';
   return snapshot.connection;
 }
 

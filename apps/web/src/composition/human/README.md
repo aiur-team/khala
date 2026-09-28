@@ -9,11 +9,10 @@ or create another messaging client.
 ## Capability seam
 
 `registerHumanCapabilities()` is deliberately a finite list of literal imports.
-It always returns the `review`, `controls`, and `recovery` slots. Until their
-follow-on composition tickets replace the matching `register.ts` modules, each
-slot reports `state: "unavailable"`, attaches no behavior, and exposes only an
-idempotent no-op disposer. Request URLs, route parameters, and host input never
-select a module to import.
+It always returns the `review`, `controls`, and `recovery` slots. Production supplies
+the authenticated review and manual-controls clients; a slot without its dependency
+reports `state: "unavailable"` and exposes an idempotent no-op disposer. Request URLs,
+route parameters, and host input never select a module to import.
 
 Each ready capability will receive a `HumanRouteContext`. That context is the
 only extension boundary: it contains approved, identity-scoped ports and the

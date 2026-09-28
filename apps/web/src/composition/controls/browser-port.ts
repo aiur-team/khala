@@ -27,12 +27,15 @@ export interface ControlsClient {
     | Readonly<{ kind: 'lost' }>
   >;
   /** Deliberately takes no signal: closing a browser wait is not cancellation. */
-  setPolicy(command: PolicySetCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }> | Readonly<{ kind: 'lost' }>>;
+  setPolicy(command: PolicySetCommand): Promise<Readonly<{ kind: 'answered'; body: unknown }>
+    | Readonly<{ kind: 'refused'; code: 'forbidden' }> | Readonly<{ kind: 'lost' }>>;
 }
 
 export type BrowserAgentControlsPortOptions = Readonly<{
   client: ControlsClient;
   bindingId: BindingId;
+  /** The generation returned by authenticated owner binding discovery. */
+  bindingGeneration?: number;
   /** Status refresh interval while observed. Defaults to 5 s; 0 disables polling. */
   refreshMs?: number;
   /** A status read unanswered after this long is treated as lost. Defaults to 10 s. */
@@ -60,6 +63,7 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
   let connection: AgentControlsSnapshot['connection'] = 'unknown';
   let request = 0;
   let inFlight: AbortController | null = null;
+  let replaced = false;
   let disposed = false;
 
   function publish(): AgentControlsSnapshot | null {
@@ -67,6 +71,15 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
     const snapshot = toAgentControlsSnapshot(status, connection);
     if (!disposed) for (const listener of [...listeners]) listener(snapshot);
     return snapshot;
+  }
+
+  function suspend(): void {
+    replaced = true;
+    connection = 'offline';
+    if (status !== null) {
+      status = { ...status, capabilities: null };
+      publish();
+    }
   }
 
   /** Reads the status. Only the newest read may publish; an older answer is dropped. */
@@ -98,7 +111,18 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
     }
     if (answer.kind === 'ok') {
       const decoded = decodeControlsStatus(answer.body, bindingId);
-      if (decoded === null) throw new ControlsUnavailableError('unavailable');
+      if (decoded === null) {
+        suspend();
+        throw new ControlsUnavailableError('unavailable');
+      }
+      if (options.bindingGeneration !== undefined && decoded.binding.generation !== options.bindingGeneration) {
+        suspend();
+        // Preserve only the last enforced values, with capability and connection
+        // unproven. The old panel must become inactionable until discovery replaces it.
+        if (status !== null) return toAgentControlsSnapshot(status, connection);
+        throw new ControlsUnavailableError('forbidden');
+      }
+      replaced = false;
       // A status for an older binding generation never replaces a newer one.
       if (status !== null && decoded.binding.generation < status.binding.generation) {
         return toAgentControlsSnapshot(status, connection);
@@ -111,7 +135,7 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
     // by guess, and subscribers stop showing the connection as live.
     connection = 'offline';
     if (answer.kind === 'refused') {
-      publish();
+      suspend();
       throw new ControlsUnavailableError(answer.code);
     }
     const kept = publish();
@@ -126,13 +150,15 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
   (timer as { unref?: () => void } | null)?.unref?.();
 
   async function submitPolicy(command: PolicySetCommand): Promise<PolicyAck> {
-    if (disposed || command.bindingId !== bindingId) throw new ControlsUnavailableError('unavailable');
+    if (disposed || replaced || command.bindingId !== bindingId
+      || (options.bindingGeneration !== undefined && command.expectedBindingGeneration !== options.bindingGeneration)) {
+      throw new ControlsUnavailableError('unavailable');
+    }
     const answer = await client.setPolicy(command).catch(() => ({ kind: 'lost' as const }));
     // A lost answer publishes nothing: a fresh snapshot would clear the panel's
     // same-command retry, which is the only safe next step for an unknown outcome.
     if (answer.kind === 'lost') throw new ControlsUnavailableError('lost');
-    // Answered commands refresh the authoritative status even if nobody waits for them.
-    void read().catch(() => undefined);
+    if (answer.kind === 'refused') throw new ControlsUnavailableError(answer.code);
     const decoded = decodePolicyAck(answer.body);
     // A malformed or mismatched answer may still follow a write: unknown, never success.
     if (!decoded.ok) throw new ControlsUnavailableError('lost');
@@ -140,6 +166,9 @@ export function createBrowserAgentControlsPort(options: BrowserAgentControlsPort
     if (ack.commandId !== command.commandId || ack.bindingId !== command.bindingId) {
       throw new ControlsUnavailableError('lost');
     }
+    // Only a correlated answer may trigger a refresh. An untrusted answer could
+    // otherwise clear the controller's same-command retry before it is shown.
+    void read().catch(() => undefined);
     return ack;
   }
 

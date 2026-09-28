@@ -22,11 +22,12 @@ Following the ticket's stop condition, nothing here guesses them:
 
 ## Proven locally
 
-These tests run in the normal package suites (`pnpm --filter @khala/connector-app test`,
-`pnpm --filter @khala/web test`). They use the on-disk KHA-115 SQLite ledger, the
-KHA-120 trust transitions, the KHA-121 dispatch precheck, the KHA-134 review handler
-and this ticket's handler, port and registrations. Only the protected transport and the
-durable trust store are stand-ins. The trust store is a serialized in-memory store.
+The focused package tests use the on-disk KHA-115 SQLite ledger, KHA-120 trust
+transitions, KHA-121 dispatch precheck, KHA-134 review handler and this ticket's
+handler, port and registrations. Handler tests use an in-memory trust store;
+production instead opens a private SQLite trust journal. Browser tests verify the
+protected mailbox client and mount the controls panel against a scripted status
+client. These are local checks, not a real-service acceptance run.
 
 | Claim | Test |
 | --- | --- |
@@ -46,25 +47,19 @@ durable trust store are stand-ins. The trust store is a serialized in-memory sto
 | A malformed, mismatched or lost acknowledgment is unknown, never success | `browser-port.test.ts` |
 | Through the real KHA-126 controller, a pause reads `offline` while the connector is unreachable and becomes effective only from the reconnected status | `browser-port.test.ts` |
 | Route teardown disposes every port, observer and poll | `browser-port.test.ts` |
+| The authenticated browser client sends owner-scoped status and review-only policy commands with CSRF, pins the exact retry body, and does not treat a later denial as proof an earlier lost write failed | `apps/web/src/composition/controls/owner-mailbox-client.test.ts` |
+| The mounted room discovers the current binding, renders the actual controls panel, sends a versioned pause, and discards an old binding/account status response | `apps/web/src/composition/human/review-room.browser.spec.ts` |
+| A delayed harness inspection cannot pair a tested capability with a replacement binding generation | `apps/connector/src/composition/controls/control-handler.test.ts` |
 
 ## Not yet proven, and why
 
 No `*.spec.ts` lives here yet. A skipped or fixture-backed spec must not count as a pass.
 
-- **Protected controls transport.** No route authenticates the human and forwards
-  `OwnerAuthority` to `PolicyControlHandler`. `ControlsProtectedTransportPort`
-  (connector) and `ControlsClient` (browser) are the seams. Until the transport exists,
-  both registrations stay `unavailable`.
-- **Durable trust store.** `TrustStateStore` has no durable implementation. It must
-  keep KHA-120's command journal across restarts, or a retried command could be
-  refused `stale_policy` after it was actually enforced. The connector capability
-  stays `unavailable` until one is injected.
-- **Policy for a new generation.** Nothing in production applies the first dispatch
-  policy for a binding generation, including its listening projection. Until that owner
-  does, controls for that generation answer `unavailable`.
-- **Route mount and binding lookup.** Same gaps as review (`tests/integration/review/README.md`):
-  no render slot for `AgentControlsPanel`, and no contract gives the browser its
-  binding ID or peer participant for a room.
+- **Real protected-browser and process proof.** The owner mailbox route, production
+  client, SQLite trust journal, initial policy and panel mount now exist, but the
+  mounted browser fixture uses a scripted client. A disposable live run must prove
+  wrong-owner/model refusal, exact connector acknowledgment, stale-version conflict,
+  transport loss, restart reconciliation and re-arm against the actual process.
 - **Live races.** U2 needs a disposable runtime with fault and barrier hooks between an
   incoming event, dispatch and a restrictive control. U3 is blocked by the gates above.
 

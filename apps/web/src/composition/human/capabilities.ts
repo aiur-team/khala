@@ -1,4 +1,4 @@
-import { registerControls } from '../controls/register';
+import { registerControls, type ControlsCapability } from '../controls/register';
 import { registerRecovery } from '../recovery/register';
 import { registerReview, type ReviewCapability } from '../review/register';
 import type { HumanRouteContext } from './application';
@@ -16,8 +16,9 @@ export type HumanCapability = {
  * Keep this list literal: URLs and other request data must never select code
  * to load. Follow-on owners replace their registration module in place.
  */
-export function registerHumanCapabilities(review: ReviewCapability = registerReview()): readonly HumanCapability[] {
-  return [review, registerControls(), registerRecovery()];
+export function registerHumanCapabilities(review: ReviewCapability = registerReview(),
+  controls: ControlsCapability = registerControls()): readonly HumanCapability[] {
+  return [review, controls, registerRecovery()];
 }
 
 /** Attaches only compiled, ready capabilities to one route-scoped context. */

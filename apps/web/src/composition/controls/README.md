@@ -22,5 +22,8 @@ out of band; nothing here carries it.
 mode, pause, requested command state, busy and receipt kind. No session ID, owner or
 content can reach it.
 
-Without a `ControlsClient`, `registerControls()` stays `unavailable`, which is how
-`registerHumanCapabilities` uses it today. See `tests/integration/controls/README.md`.
+Production registers a same-origin, cookie/CSRF-authenticated owner mailbox client and
+discovers active bindings through its owner-scoped room listing. The room mounts one
+panel per discovered binding generation; account or route teardown disposes each port.
+Without that client, `registerControls()` stays `unavailable`. Hosted automation and
+owner listening-mode grants remain gated. See `tests/integration/controls/README.md`.

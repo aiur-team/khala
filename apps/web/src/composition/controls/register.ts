@@ -17,7 +17,8 @@ export type ControlsCapability = HumanCapability & Readonly<{
    * A controls port scoped to the attached route. Null while unavailable, before
    * attachment, after the route ended, or when the human has no agent in the room.
    */
-  portFor(context: HumanRouteContext, roomId: RoomId): BrowserAgentControlsPort | null;
+  portFor(context: HumanRouteContext, roomId: RoomId,
+    bindingOverride?: Readonly<{ bindingId: BindingId; generation: number }>): BrowserAgentControlsPort | null;
 }>;
 
 const UNAVAILABLE: ControlsCapability = Object.freeze({
@@ -58,17 +59,18 @@ export function registerControls(dependencies?: BrowserControlsDependencies): Co
       };
     },
 
-    portFor(context: HumanRouteContext, roomId: RoomId) {
+    portFor(context: HumanRouteContext, roomId: RoomId, bindingOverride) {
       const ports = attached.get(context);
       if (!ports) return null;
-      const bindingId = dependencies.bindingFor(context, roomId);
+      const bindingId = bindingOverride?.bindingId ?? dependencies.bindingFor(context, roomId);
       if (bindingId === null) return null;
-      const key = JSON.stringify([roomId, bindingId]);
+      const key = JSON.stringify([roomId, bindingId, bindingOverride?.generation]);
       const existing = ports.get(key);
       if (existing) return existing;
       const port = createBrowserAgentControlsPort({
         client: dependencies.client,
         bindingId,
+        ...(bindingOverride ? { bindingGeneration: bindingOverride.generation } : {}),
         ...(dependencies.refreshMs === undefined ? {} : { refreshMs: dependencies.refreshMs }),
       });
       ports.set(key, port);

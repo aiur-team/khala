@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build, preview, type PreviewServer } from 'vite';
 import { chromium, type Browser, type Page } from '@playwright/test';
-import type { ApprovalCommand } from '@khala/contracts/delivery/index';
+import type { ApprovalCommand, PolicySetCommand } from '@khala/contracts/delivery/index';
 
 declare global { interface Window {
   __roomReviewCommand: () => ApprovalCommand | null;
@@ -18,6 +18,9 @@ declare global { interface Window {
   __releaseReplacementTrust: () => void;
   __switchReviewAccount: () => void;
   __releaseAccountTrust: () => void;
+  __controlCommands: () => readonly PolicySetCommand[];
+  __releaseOldStatus: () => void;
+  __oldStatusReturned: () => boolean;
 } }
 
 async function withRoomPage(path: string, run: (page: Page) => Promise<void>): Promise<void> {
@@ -95,5 +98,43 @@ test('an older binding lookup cannot restore its recipient after a newer lookup'
     await page.waitForFunction(() => window.__oldLookupReturned());
     assert.equal(await page.getByText('To: Old agent').count(), 0);
     assert.equal(await page.getByText('To: New agent').count(), 1);
+  });
+});
+
+test('mounted owner controls use the discovered binding and show the connector acknowledgement', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?controls=1', async page => {
+    await page.getByRole('button', { name: 'Request pause' }).waitFor();
+    await page.getByRole('button', { name: 'Request pause' }).click();
+    await page.getByText('review, pause requested (v4) — confirmed').waitFor();
+    const commands = await page.evaluate(() => window.__controlCommands());
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]?.bindingId, 'binding_1');
+    assert.equal(commands[0]?.expectedBindingGeneration, 0);
+    assert.equal(commands[0]?.expectedPolicyVersion, 3);
+    assert.equal(commands[0]?.mode, 'review');
+    assert.equal(commands[0]?.paused, true);
+  });
+});
+
+test('mounted controls discard an old generation and account while their status answer is delayed', { timeout: 90_000 }, async () => {
+  await withRoomPage('review-room.html?controls=1&race=1&status-race=1', async page => {
+    await page.getByRole('heading', { name: 'Agent delivery controls' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Request pause' }).isDisabled(), true);
+    await page.evaluate(() => window.__setReviewBinding('new'));
+    await page.getByText('New agent', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Request pause' }).waitFor();
+    await page.evaluate(() => window.__releaseOldStatus());
+    await page.waitForFunction(() => window.__oldStatusReturned());
+    assert.equal(await page.getByText('Old agent').count(), 0);
+    await page.getByRole('button', { name: 'Request pause' }).click();
+    const first = await page.evaluate(() => window.__controlCommands());
+    assert.equal(first[0]?.expectedBindingGeneration, 1);
+    await page.evaluate(() => window.__switchReviewAccount());
+    await page.getByText('Other account agent').waitFor();
+    await page.getByRole('button', { name: 'Request pause' }).waitFor();
+    await page.getByRole('button', { name: 'Request pause' }).click();
+    const all = await page.evaluate(() => window.__controlCommands());
+    assert.equal(all[1]?.expectedBindingGeneration, 1);
+    assert.equal(all[1]?.expectedPolicyVersion, 3);
   });
 });

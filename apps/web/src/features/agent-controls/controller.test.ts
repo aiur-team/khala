@@ -188,7 +188,7 @@ describe('createAgentControlsController — initial state', () => {
     controller.dispose();
   });
 
-  it('never enables controls when existingSession is merely "unknown" (not investigated), only for the evidenced khala_hosted_resume route', () => {
+  it('never enables controls when existingSession is merely "unknown" (not investigated)', () => {
     const { ports, emit } = fakePorts();
     const controller = createAgentControlsController(ports, CONFIG);
     emit(snapshot({
@@ -201,6 +201,21 @@ describe('createAgentControlsController — initial state', () => {
     const view = controller.getView();
     expect(view.controlsAvailable).toBe(false);
     expect(view.capabilityDetail).toBe('Harness support: tested · Existing session: unknown');
+    controller.dispose();
+  });
+
+  it('enables manual controls for an inspected, tested native queue route only', () => {
+    const { ports, emit } = fakePorts();
+    const controller = createAgentControlsController(ports, CONFIG);
+    const native = { ...snapshot().capabilities!, existingSession: 'native_cli_queue' as const,
+      immediateNotification: 'native_cli_queue' as const };
+    emit(snapshot({ capabilities: native }));
+    expect(controller.getView().controlsAvailable).toBe(true);
+    emit(snapshot({ capabilities: { ...native, support: 'experimental' } }));
+    expect(controller.getView().controlsAvailable).toBe(false);
+    expect(controller.getView().connection).toBe('unknown');
+    emit(snapshot({ capabilities: { ...native, existingSession: 'unknown' } }));
+    expect(controller.getView().controlsAvailable).toBe(false);
     controller.dispose();
   });
 

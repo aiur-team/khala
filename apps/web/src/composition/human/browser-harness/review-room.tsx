@@ -1,15 +1,20 @@
 import { createRoot } from 'react-dom/client';
-import { decodeDeliveryLimits, type ApprovalCommand } from '@khala/contracts/delivery/index';
+import { decodeDeliveryLimits, unknownModeSupportMap, type ApprovalCommand,
+  type PolicySetCommand } from '@khala/contracts/delivery/index';
 import type { ChannelSnapshot, RoomPort, TimelineItem } from '@khala/contracts/messaging/index';
 import type { HumanRouteContext } from '../application';
 import { createHumanRoomRenderer } from '../room';
 import { registerReview } from '../../review/register';
+import { registerControls } from '../../controls/register';
 import '../../../features/review/review.css';
+import '../../../features/agent-controls/agent-controls.css';
 
 const roomId = 'room_1' as never;
 const bindingId = 'binding_1' as never;
 const race = new URLSearchParams(location.search).has('race');
 const lookupRace = new URLSearchParams(location.search).has('lookup');
+const controlsEnabled = new URLSearchParams(location.search).has('controls');
+const statusRace = new URLSearchParams(location.search).has('status-race');
 const oldBinding = { bindingId, generation: 0, agentParticipantId: race ? 'Old agent' : 'My agent',
   device: { userId: '@agent:example', deviceId: 'AGENT_OLD', fingerprint: 'A'.repeat(43) } };
 const newBinding = { bindingId, generation: 1, agentParticipantId: 'New agent',
@@ -32,6 +37,12 @@ const items = [item('event_a', 'Withheld A', 'a'), item('event_b', 'Approved B',
 const snapshot: ChannelSnapshot = { generation: 1, snapshotRevision: 'snapshot_1',
   room: { roomId, title: 'Test channel', membership: 'joined', revision: 'room_1' }, items };
 let command: ApprovalCommand | null = null;
+let controlVersion = 3;
+let controlPaused = false;
+const controlCommands: PolicySetCommand[] = [];
+let allowOldStatus: (() => void) | null = null;
+const oldStatus = new Promise<void>(resolve => { allowOldStatus = resolve; });
+let oldStatusReturned = false;
 const room = {
   observe(_roomId: unknown, listener: (value: ChannelSnapshot) => void) { queueMicrotask(() => listener(snapshot)); return () => undefined; },
   async timeline() { return { kind: 'ok', value: { items, nextCursor: null, generation: 1 } }; },
@@ -79,6 +90,9 @@ declare global { interface Window {
   __releaseReplacementTrust: () => void;
   __switchReviewAccount: () => void;
   __releaseAccountTrust: () => void;
+  __controlCommands: () => readonly PolicySetCommand[];
+  __releaseOldStatus: () => void;
+  __oldStatusReturned: () => boolean;
 } }
 window.__roomReviewCommand = () => command;
 window.__allowReviewTrust = () => allowTrust?.();
@@ -90,25 +104,68 @@ window.__releaseOldTrust = () => allowOld?.();
 window.__oldTrustReturned = () => oldTrustReturned;
 window.__releaseReplacementTrust = () => allowReplacement?.();
 window.__releaseAccountTrust = () => allowAccount?.();
+window.__controlCommands = () => controlCommands;
+window.__releaseOldStatus = () => allowOldStatus?.();
+window.__oldStatusReturned = () => oldStatusReturned;
 const limits = decodeDeliveryLimits({ maxSelectionEvents: 20, maxPayloadBytes: 64 * 1024 });
 if (!limits.ok) throw new Error('invalid review limits');
 const capability = registerReview({ client: review.review, limits: limits.value, bindingFor: () => null });
+const controls = registerControls({ client: {
+  async status(requested) {
+    const selected = activeBinding;
+    const ownerId = selected === accountBinding ? 'owner_2' : 'owner_1';
+    if (statusRace && selected === oldBinding) { await oldStatus; oldStatusReturned = true; }
+    if (requested !== selected.bindingId) return { kind: 'refused' as const, code: 'forbidden' as const };
+    return { kind: 'ok' as const, body: {
+      v: 1, binding: { v: 1, bindingId: selected.bindingId, ownerId,
+        agentParticipantId: selected.agentParticipantId, deviceId: 'device_agent',
+        harness: 'codex', sessionId: `session_${selected.generation}`, generation: selected.generation },
+      bindingStatus: 'active', capabilities: { v: 3, harness: 'codex', version: '0.157.1',
+        adapterVersion: '0.157.1', support: 'tested', existingSession: 'native_cli_queue',
+        immediateNotification: 'native_cli_queue', busy: 'queue', receiptEvidence: [],
+        reconcileByReleaseId: 'while_queued', limits: limits.value, evidenceRef: 'native-proof',
+        modes: unknownModeSupportMap('test', 'no primary mode proof', '0.157.1'), acknowledgement: 'unknown' },
+      policy: { bindingId: selected.bindingId, generation: selected.generation,
+        effectiveVersion: controlVersion, effectiveMode: 'review', paused: controlPaused },
+      requested: null, busy: false, latestReceipt: null,
+    } };
+  },
+  async setPolicy(next) {
+    controlCommands.push(next);
+    if (next.expectedBindingGeneration !== activeBinding.generation
+      || next.expectedPolicyVersion !== controlVersion) return { kind: 'answered' as const, body: {
+        v: 1, commandId: next.commandId, bindingId: next.bindingId, generation: activeBinding.generation,
+        requestedVersion: null, effectiveVersion: controlVersion, connectorState: 'rejected', errorCode: 'stale_policy',
+      } };
+    controlVersion += 1;
+    controlPaused = next.paused;
+    return { kind: 'answered' as const, body: {
+      v: 1, commandId: next.commandId, bindingId: next.bindingId, generation: next.expectedBindingGeneration,
+      requestedVersion: controlVersion, effectiveVersion: controlVersion, connectorState: 'effective', errorCode: null,
+    } };
+  },
+}, bindingFor: () => null, refreshMs: 75 });
 let attachment = capability.attach(context);
+let controlsAttachment = controls.attach(context);
 const renderer = createHumanRoomRenderer(review, capability, async (_context, _roomId, binding) => {
   if (!race) { await trustReady; return true; }
   if (binding.agentParticipantId === oldBinding.agentParticipantId) { await oldTrust; oldTrustReturned = true; }
   if (binding.agentParticipantId === replacedIdentity.agentParticipantId) await replacementTrust;
   if (binding.agentParticipantId === accountBinding.agentParticipantId) await accountTrust;
   return true;
-}, race ? 75 : 5_000);
+}, race || controlsEnabled ? 75 : 5_000, controlsEnabled ? controls : undefined);
 const route = { kind: 'channel' as const, path: '/channels/room_1', roomId };
 const root = createRoot(document.getElementById('app')!);
 root.render(renderer(context, route));
 window.__switchReviewAccount = () => {
   activeBinding = accountBinding;
+  controlVersion = 3;
+  controlPaused = false;
   attachment.dispose();
+  controlsAttachment.dispose();
   const nextContext = { ...context, generation: 2, principal: { ownerId: 'owner_2' },
     participant: () => ({ participantId: 'human_2', ownerId: 'owner_2', kind: 'human', displayName: 'Other owner', deviceIds: [] }) } as unknown as HumanRouteContext;
   attachment = capability.attach(nextContext);
+  controlsAttachment = controls.attach(nextContext);
   root.render(renderer(nextContext, route));
 };

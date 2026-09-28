@@ -3,9 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
-  type BindingId, type CommandId, type DeliveryLimits, type DeviceId, type EventId, type EventRef,
+  type BindingId, type CommandId, type DeliveryLimits, type DeviceId, type EventId, type EventRef, type HarnessCapabilities,
   type OwnerAuthority, type OwnerId, type ParticipantId, type PolicySetCommand, type RoomId, type SessionBinding,
-  type UnverifiedReleasedJob, decodeDeliveryLimits,
+  type UnverifiedReleasedJob, decodeDeliveryLimits, unknownModeSupportMap,
 } from '@khala/contracts/delivery/index';
 import { encodeMessageContent } from '@khala/contracts/messaging/events';
 import { precheck, queuedRecord } from '@khala/connector/dispatch/claim';
@@ -392,5 +392,54 @@ describe('policy control handler', () => {
     const status = await handler.status(authority, { bindingId });
     expect(status).toMatchObject({ ok: true, status: { busy: false, latestReceipt: null } });
     expect(JSON.stringify(status)).not.toContain(canary);
+  });
+
+  it('waits for the bound capability inspection before reading current ledger state', async () => {
+    let releaseInspection: () => void = () => undefined;
+    const inspected = new Promise<void>(resolve => { releaseInspection = resolve; });
+    let inspectionStarted: () => void = () => undefined;
+    const started = new Promise<void>(resolve => { inspectionStarted = resolve; });
+    const capabilities: HarnessCapabilities = {
+      v: 3 as const, harness: 'codex' as const, version: '0.157.1', adapterVersion: '0.157.1',
+      support: 'tested' as const, existingSession: 'native_cli_queue' as const,
+      immediateNotification: 'native_cli_queue' as const, busy: 'queue' as const,
+      receiptEvidence: [], reconcileByReleaseId: 'while_queued' as const, limits,
+      evidenceRef: 'native-proof', modes: unknownModeSupportMap('test', 'not proven', '0.157.1'),
+      acknowledgement: 'unknown' as const,
+    };
+    const { storage, handler } = await harness({ capabilities: async () => {
+      inspectionStarted();
+      await inspected;
+      return capabilities;
+    } });
+    const pending = handler.status(authority, { bindingId });
+    await started;
+    await storage.ledger.transaction(tx => tx.putRevocation({ targetKind: 'binding', targetId: bindingId,
+      generation: 0, operationId: 'op_revoke_during_inspection', revokedAt: '2026-09-25T12:01:00Z' }));
+    releaseInspection();
+    expect(await pending).toMatchObject({ ok: true, status: {
+      bindingStatus: 'revoked', capabilities: { support: 'tested', existingSession: 'native_cli_queue' },
+    } });
+  });
+
+  it('never pairs a delayed old-session capability with a replacement binding generation', async () => {
+    let releaseInspection: () => void = () => undefined;
+    const inspected = new Promise<void>(resolve => { releaseInspection = resolve; });
+    let inspectionStarted: () => void = () => undefined;
+    const started = new Promise<void>(resolve => { inspectionStarted = resolve; });
+    const { storage, handler } = await harness({ capabilities: async () => {
+      inspectionStarted();
+      await inspected;
+      return { v: 3, harness: 'codex', version: '0.157.1', adapterVersion: '0.157.1',
+        support: 'tested', existingSession: 'native_cli_queue', immediateNotification: 'native_cli_queue',
+        busy: 'queue', receiptEvidence: [], reconcileByReleaseId: 'while_queued', limits,
+        evidenceRef: 'old-session-proof', modes: unknownModeSupportMap('test', 'not proven', '0.157.1'),
+        acknowledgement: 'unknown' } satisfies HarnessCapabilities;
+    } });
+    const pending = handler.status(authority, { bindingId });
+    await started;
+    await storage.ledger.transaction(tx => tx.putBinding(binding(1)));
+    releaseInspection();
+    expect(await pending).toEqual({ ok: false, code: 'unavailable' });
   });
 });
