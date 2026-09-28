@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { inspectInboxSelection, inspectSelectedOnlyInterval, reviewRolloutIdentity } from './native-witness';
+import { inspectInboxSelection, inspectSelectedOnlyInterval, reviewRolloutIdentity,
+  selectedOnlyWitnessMatches } from './native-witness';
 
 const launcher = '/private/data/khala/bin/khala';
 const token = 'boundedToken12345';
@@ -88,4 +89,18 @@ test('durable inbox release is exact B and rejects an enqueued pending A', () =>
   assert.equal(inspectInboxSelection([record, record], selected), false);
   assert.equal(inspectInboxSelection([record], { ...selected, releaseId: 'wrong_release' }), false);
   assert.equal(inspectInboxSelection([record], { ...selected, generation: 4 }), false);
+});
+
+test('final witness requires the exact advanced cursor and complete model evidence', () => {
+  const observed = inspect(rows);
+  const cursor = { v: 1, offset: 256, releaseId: selected.releaseId };
+  assert.equal(selectedOnlyWitnessMatches(cursor, selected.releaseId, observed), true);
+  assert.equal(selectedOnlyWitnessMatches(null, selected.releaseId, observed), false);
+  assert.equal(selectedOnlyWitnessMatches({ ...cursor, releaseId: 'older_release' }, selected.releaseId, observed), false);
+  assert.equal(selectedOnlyWitnessMatches({ ...cursor, releaseId: 'wrong_release' }, selected.releaseId, observed), false);
+  assert.equal(selectedOnlyWitnessMatches({ v: 1, offset: 256 }, selected.releaseId, observed), false);
+  assert.equal(selectedOnlyWitnessMatches({ ...cursor, offset: 0 }, selected.releaseId, observed), false);
+  assert.equal(selectedOnlyWitnessMatches(cursor, selected.releaseId, { ...observed, ackDigest: null }), false);
+  assert.equal(selectedOnlyWitnessMatches(cursor, selected.releaseId, { ...observed, visible: false }), false);
+  assert.equal(selectedOnlyWitnessMatches(cursor, selected.releaseId, { ...observed, withheldAbsent: false }), false);
 });

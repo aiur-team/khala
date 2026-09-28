@@ -172,6 +172,15 @@ export function inspectInboxSelection(inbox: readonly ObjectRow[], input: Readon
     && payload.toString('utf8').includes(input.released);
 }
 
+/** The live reader and focused tests share the final cursor/model decision. */
+export function selectedOnlyWitnessMatches(cursor: unknown, releaseId: string,
+  observed: ReturnType<typeof inspectSelectedOnlyInterval>): boolean {
+  return object(cursor) && cursor.v === 1 && cursor.releaseId === releaseId
+    && Number.isSafeInteger(cursor.offset) && (cursor.offset as number) > 0
+    && observed.visible && observed.relayed && observed.withheldAbsent
+    && observed.ackDigest !== null;
+}
+
 export async function nativeSelectedOnlyProof(config: NativeReviewConfig, baseline: NativeReviewBaseline,
   input: Readonly<{ withheld: string; released: string; withheldEventId: string; releasedEventId: string;
     bindingId: string; generation: number; releaseId: string }>) {
@@ -197,8 +206,7 @@ export async function nativeSelectedOnlyProof(config: NativeReviewConfig, baseli
   if (!privateFile(cursorStat, 64 * 1024)) fail('cursor_unsafe');
   let cursor: unknown;
   try { cursor = JSON.parse(await readFile(cursorPath, 'utf8')); } catch { fail('cursor_invalid'); }
-  if (!object(cursor) || cursor.v !== 1 || cursor.releaseId !== input.releaseId || !observed.visible
-    || !observed.relayed || !observed.withheldAbsent || observed.ackDigest === null) fail('selected_only_unproven');
+  if (!selectedOnlyWitnessMatches(cursor, input.releaseId, observed)) fail('selected_only_unproven');
   return { modelVisible: true, modelRelayed: true, withheldAbsent: true, nativeAck: true,
     cursorReleaseId: input.releaseId } as const;
 }
