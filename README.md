@@ -23,4 +23,4 @@ set +a
 pnpm --filter @khala/control build:functions
 pnpm --filter @khala/web build
 netlify dev --offline --dir apps/web/dist --functions infra/netlify/functions-generated --port 8888 --skip-gitignore
-``` Open `http://localhost:8888/new` to sign in and create a channel. The app origin must match the Netlify dev port; the Matrix origin must match the disposable Synapse listener. Local auth is refused outside development or when the app origin is not loopback. The regular session, CSRF, Matrix account, and channel admission flows still run.
+``` Open `http://localhost:8888/new` to sign in and create a channel. The app origin must match the Netlify dev port; the Matrix origin must match the disposable Synapse listener. Local auth is refused outside development or when the app origin is not loopback. The regular session, CSRF, Matrix account, and channel admission flows still run. Local control state is kept in ignored `.netlify/khala-local-state` so callbacks survive separate function instances; remove that directory to reset the disposable local run.

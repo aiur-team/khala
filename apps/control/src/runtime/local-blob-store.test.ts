@@ -19,6 +19,9 @@ describe('filesystem local blob stores', () => {
       expect((await first.setJSON('key', { value: 4 }, { onlyIfMatch: created.etag! })).modified).toBe(true);
       expect((await otherInstance.getWithMetadata('key'))?.data).toEqual({ value: 4 });
       expect(await second.getWithMetadata('key')).toBeNull();
+      const competing = await Promise.all(Array.from({ length: 8 }, (_, index) =>
+        createLocalBlobStores(directory)('first').setJSON('race', { index }, { onlyIfNew: true })));
+      expect(competing.filter(result => result.modified)).toHaveLength(1);
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 });

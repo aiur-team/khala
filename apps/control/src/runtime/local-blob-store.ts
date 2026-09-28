@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BlobsStoreLike } from './control-store';
 
@@ -32,6 +32,13 @@ export function createLocalBlobStores(directory: string): (name: string) => Blob
           try { await mkdir(lock); acquired = true; break; }
           catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+            // A crashed local function may leave its lock behind. A normal write
+            // completes well within this bound; stale locks can be reclaimed.
+            try {
+              if (Date.now() - (await stat(lock)).mtimeMs > 30_000) await rm(lock, { recursive: true, force: true });
+            } catch (staleError) {
+              if ((staleError as NodeJS.ErrnoException).code !== 'ENOENT') throw staleError;
+            }
             await new Promise(resolve => setTimeout(resolve, 10));
           }
         }
