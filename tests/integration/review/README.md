@@ -68,13 +68,73 @@ selection, and every success is still journalled once.
 
 ## Live run, once the prerequisites exist
 
+`selected-only.spec.ts` is a fail-closed **unrun** live driver for one exact
+Codex 0.157.1/Linux x64/GPT-6-Sol native sync route. It exercises a mounted
+browser release through the deployed protected owner mailbox and an already
+paired, already-running connector/TUI. A and B are sent by the second real
+OAuth human into the real encrypted channel. Both must appear in the owner's
+production pending review list; the owner selects B alone. The driver reads
+the real browser command/result, the production CLI inbox record and cursor,
+and only the new interval of the same TUI's private native rollout. It requires
+B's exact event/release, hook-visible content, assistant relay, successful
+model-origin `read --ack` tool call, and cursor advancement, while A remains
+pending and is absent from both native context and the CLI inbox. The process,
+model, workdir, cgroup, private home and current rollout session are pinned.
+No test harness writes a fake approval, native ACK, inbox item or rollout.
+
+The descriptor includes the `controls` object documented in
+`tests/integration/controls/README.md` solely for its exact connector process
+witness, plus this private metadata. The descriptor file must be owned by the
+current user with mode 0600; the rollout file must be a private regular file
+under the native session's `CODEX_HOME/sessions` directory:
+
+```json
+{
+  "reviewNative": {
+    "pid": 12345,
+    "startTicks": "123456789",
+    "executable": "/absolute/path/to/codex",
+    "workdir": "/absolute/path/to/the-existing-session-workspace",
+    "cgroup": "/exact/user.slice/path/to/native-session.scope",
+    "codexHome": "/absolute/private/CODEX_HOME",
+    "xdgStateHome": "/absolute/private/XDG_STATE_HOME",
+    "xdgDataHome": "/absolute/private/XDG_DATA_HOME",
+    "rolloutFile": "/absolute/private/CODEX_HOME/sessions/.../rollout.jsonl"
+  }
+}
+```
+
+The connector's protected status must name the same binding generation and
+session ID as its systemd unit and this native TUI. The second OAuth user must
+already be admitted to that channel under approved policy. The private Codex
+home must contain the production-installed Khala launcher and trusted sync
+hooks; the TUI remains open and consumes the synthetic approved B without
+test-initiated model commands. Do not reuse #42's transient preflight binding
+as if it were the deployed owner binding. This case does not prove AE1's crash
+after a harness write, unknown-result reconciliation or other native versions,
+models and modes. Those remain separate acceptance obligations.
+
+After the hosted environment, owner pairing, process and rollout witness are
+actually provisioned, its exact command is:
+
+```sh
+KHALA_E2E_LIVE=1 \
+KHALA_E2E_DISPOSABLE_ENV=/absolute/path/to/khala-live.json \
+pnpm test:integration tests/integration/review/selected-only.spec.ts
+```
+
+The private descriptor, provider credentials and rollout are not CI artifacts.
+The driver reports only sanitized assertions; preserve no raw token, message
+body, private key, rollout or browser storage in evidence. A missing fixture or
+skipped case cannot count as acceptance.
+
 Follow `tests/integration/human/README.md`: disposable identities, a disposable
 deployment and an already-running harness session, with synthetic canaries A and B:
 
 ```sh
 KHALA_E2E_LIVE=1 \
 KHALA_E2E_DISPOSABLE_ENV=/absolute/path/to/khala-live.json \
-pnpm test:integration tests/integration/review
+pnpm test:integration tests/integration/review/selected-only.spec.ts
 ```
 
 Evidence must not include passwords, access tokens, OAuth cookies, invitation
