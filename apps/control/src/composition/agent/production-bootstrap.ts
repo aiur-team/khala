@@ -16,6 +16,7 @@ import { createLazyOwnerDeviceProofRoutes, createMatrixBrowserDeviceVerifier, cr
 import { createOwnerRevocationRoutes, createLazyOwnerRevocationRoutes } from '../human/revocation';
 import { createAgentRevocationCleanupRoutes, createCleanupProtocolPort, createLazyAgentRevocationCleanupRoutes } from '../human/revocation-cleanup';
 import { createLazyRoomSendRoutes, createMatrixBrowserSenderVerifier, createRoomSendRoutes } from '../human/room-send-routes';
+import { createDeviceAdmissionRoutes, createLazyDeviceAdmissionRoutes } from '../human/device-admission-routes';
 import { senderIdFor } from '../human/room-send-fence';
 import { createAgentBindingStore } from '../../agent-bootstrap/store';
 
@@ -176,7 +177,20 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
           active.env.matrixServerName).userId, deviceKey } : null;
       },
     });
-    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof, revocation, revocationCleanup, roomSend };
+    const deviceAdmission = createDeviceAdmissionRoutes({
+      store: active.store, auth: active.auth,
+      verifyBrowserSender: createMatrixBrowserSenderVerifier({
+        homeserverOrigin: active.env.publicHomeserverOrigin, serverName: active.env.matrixServerName,
+        ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
+      }),
+      // G-ADMISSION, a trusted replacement binding/generation, room event position,
+      // and verified key distribution are not yet composed. Keep this route closed.
+      bindingFor: async () => null,
+      authorize: async () => 'refused',
+      currentPosition: async () => null,
+      distributionReady: async () => false,
+    });
+    return { bootstrap, attestation, ownerMailbox, ownerDeviceProof, revocation, revocationCleanup, roomSend, deviceAdmission };
   };
   const bootstrap = createLazyBootstrapRoutes(() => compose().bootstrap);
   return {
@@ -190,5 +204,6 @@ export function createProductionBootstrapRoutes(dependencies: ProductionBootstra
       human: createLazyRoomSendRoutes(() => compose().roomSend).filter(route => route.path.startsWith('/api/human/')),
       agent: createLazyRoomSendRoutes(() => compose().roomSend).filter(route => route.path.startsWith('/api/agent/')),
     },
+    deviceAdmission: createLazyDeviceAdmissionRoutes(() => compose().deviceAdmission),
   };
 }

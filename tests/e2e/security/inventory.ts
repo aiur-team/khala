@@ -189,6 +189,9 @@ export const SURFACE_INVENTORY: Readonly<Record<string, Coverage>> = {
     'POST /api/human/room-send/finish', 'POST /api/human/room-send/rotation',
     'POST /api/human/room-send/inspect',
   ].map(route => [`http-control:${route}`, humanOnly('owner-authenticated hosted control route')])),
+  'http-control:POST /api/human/devices/replacement': notObserved(
+    'owner-authenticated replacement command; hosted binding, consent, cutoff, and distribution adapters deny every operation, and no device-readable content path is composed',
+  ),
   ...Object.fromEntries([
     'GET /api/agent/status', 'POST /api/agent/pairing/claim', 'POST /api/agent/pairing/result',
     'POST /api/agent/channel-access/request', 'POST /api/agent/channel-access/create', 'GET /api/agent/channel-access/status',

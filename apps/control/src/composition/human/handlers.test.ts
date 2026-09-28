@@ -338,6 +338,7 @@ describe('registerHumanHandlers feature routes', () => {
       { path: '/api/human/revocation/status', methods: ['GET'] },
       ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action =>
         ({ path: `/api/human/room-send/${action}`, methods: ['POST'] })),
+      { path: '/api/human/devices/replacement', methods: ['POST'] },
       { path: '/api/human/pairing/request', methods: ['POST', 'GET'] },
       { path: '/api/human/pairing/decision', methods: ['POST'] },
       { path: '/api/human/channel-access/inbox', methods: ['GET'] },
@@ -356,6 +357,8 @@ describe('registerHumanHandlers feature routes', () => {
       expect(await response.json()).toEqual(registration.path.includes('owner-mailbox') || registration.path.includes('owner-device-proof')
         || registration.path.includes('/room-send/')
         ? { code: 'unavailable' }
+        : registration.path === '/api/human/devices/replacement'
+        ? { code: 'feature_unavailable' }
         : registration.path.includes('channel-discovery/bootstrap')
         ? { error: 'feature_unavailable' }
         : { v: 1, kind: 'rejected', code: 'feature_unavailable' });
@@ -381,6 +384,7 @@ describe('registerHumanHandlers feature routes', () => {
       '/api/human/owner-device-proof/challenge', '/api/human/owner-device-proof/register',
       '/api/human/revocation/targets', '/api/human/revocation/revoke', '/api/human/revocation/status',
       ...['ready', 'acquire', 'finish', 'rotation', 'inspect'].map(action => `/api/human/room-send/${action}`),
+      '/api/human/devices/replacement',
       '/api/human/pairing/request', '/api/human/pairing/decision',
     ]);
   });
