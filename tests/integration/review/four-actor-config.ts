@@ -8,6 +8,15 @@ function nonempty(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+export type AuthenticatedOwner = Readonly<{ status: number; ownerId: unknown }>;
+
+/** Two credential sets count as two humans only when the server names two owners. */
+export function distinctAuthenticatedOwners(first: AuthenticatedOwner, second: AuthenticatedOwner): boolean {
+  return first.status === 200 && second.status === 200
+    && nonempty(first.ownerId) && nonempty(second.ownerId)
+    && first.ownerId !== second.ownerId;
+}
+
 /**
  * The second owner has a separate real connector/binding in the same room.
  * The native reader independently checks its process, rollout, inbox and cursor.

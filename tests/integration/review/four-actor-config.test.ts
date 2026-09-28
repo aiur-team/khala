@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { distinctNativeAgents } from './four-actor-config';
+import { distinctAuthenticatedOwners, distinctNativeAgents } from './four-actor-config';
 import type { NativeReviewConfig } from './native-witness';
+
+test('four-actor proof requires two distinct authenticated owner IDs', () => {
+  const first = { status: 200, ownerId: 'owner_one' };
+  const second = { status: 200, ownerId: 'owner_two' };
+  assert.equal(distinctAuthenticatedOwners(first, second), true);
+  assert.equal(distinctAuthenticatedOwners(first, { status: 200, ownerId: first.ownerId }), false);
+  assert.equal(distinctAuthenticatedOwners(first, { status: 200, ownerId: null }), false);
+  assert.equal(distinctAuthenticatedOwners({ status: 401, ownerId: first.ownerId }, second), false);
+  assert.equal(distinctAuthenticatedOwners(first, { status: 503, ownerId: second.ownerId }), false);
+});
 
 const first: NativeReviewConfig = {
   pid: 1001, startTicks: '123', executable: '/bin/codex', workdir: '/private/first',

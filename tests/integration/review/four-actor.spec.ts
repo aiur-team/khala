@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { readLiveControlsEnvironment } from '../controls/fixtures';
-import { distinctNativeAgents, readReviewPeerControls } from './four-actor-config';
+import { distinctAuthenticatedOwners, distinctNativeAgents, readReviewPeerControls } from './four-actor-config';
 import { readReviewNativeConfig } from './native-witness';
 import { assertForeignWithheld, prepareRoute, releaseOnlyB, signedIn } from './selected-only-flow';
 
@@ -14,6 +14,16 @@ test('two owners independently release B to their own existing native Sol agents
   const first = await signedIn(browser, human, 0);
   const second = await signedIn(browser, human, 1);
   try {
+    const owners = await Promise.all([first.page, second.page].map(page => page.evaluate(async () => {
+      const response = await fetch('/api/human/me', { credentials: 'same-origin' });
+      if (!response.ok) return { status: response.status, ownerId: null };
+      const body: unknown = await response.json();
+      const principal = body && typeof body === 'object' && 'principal' in body ? body.principal : null;
+      const ownerId = principal && typeof principal === 'object' && 'ownerId' in principal
+        ? principal.ownerId : null;
+      return { status: response.status, ownerId };
+    })));
+    expect(distinctAuthenticatedOwners(owners[0]!, owners[1]!)).toBe(true);
     // Both baselines predate either owner's messages. A later event for the
     // other agent therefore cannot hide outside that agent's observed interval.
     const firstRoute = await prepareRoute(first.page, controls, native);
