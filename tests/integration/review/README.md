@@ -85,6 +85,9 @@ No test harness writes a fake approval, native ACK, inbox item or rollout.
 
 `four-actor.spec.ts` is the separate fail-closed **unrun** four-actor driver.
 Both OAuth humans own independently paired agents in the same encrypted room.
+Before any messages are sent, the driver requires two distinct authenticated
+owner IDs from the protected `/api/human/me` route; two credential sets for one
+account cannot count as two human actors.
 Before either sends, it pins both real connector processes and native rollout
 baselines. Each human sends distinct A/B canaries; the other human approves
 only B for their own agent through the mounted browser. The driver requires
