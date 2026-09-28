@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
-    "test": "node --import tsx --test tests/persistence.test.mjs tests/seams.test.mjs",
+    "test": "node --import tsx --test tests/persistence.test.mjs tests/seams.test.mjs tests/trust-readiness.test.mjs",
     "test:live": "node --import tsx --test tests/live.test.mjs"
   },
   "dependencies": {
