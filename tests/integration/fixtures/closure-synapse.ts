@@ -5,23 +5,76 @@ import os from 'node:os';
 import path from 'node:path';
 
 const SERVER_NAME = 'khala-closure.invalid';
+export type ServiceLimit = Readonly<{ memoryBytes: number; cpus: number; pids: number }>;
+export type ClosureSynapseLimits = Readonly<{ synapse: ServiceLimit; postgres: ServiceLimit }>;
+
+function checkedLimit(value: ServiceLimit): ServiceLimit {
+  if (!Number.isSafeInteger(value.memoryBytes) || value.memoryBytes <= 0
+    || !Number.isFinite(value.cpus) || value.cpus <= 0
+    || !Number.isSafeInteger(value.pids) || value.pids <= 0) throw new Error('closure_container_limits_invalid');
+  return value;
+}
+
+/** Compose's per-container hard limits; memory swap equals memory (no swap). */
+export function closureSynapseLimitOverride(limits: ClosureSynapseLimits) {
+  const service = (input: ServiceLimit) => {
+    const limit = checkedLimit(input);
+    return { mem_limit: String(limit.memoryBytes), memswap_limit: String(limit.memoryBytes),
+      cpus: limit.cpus, pids_limit: limit.pids };
+  };
+  return { services: { synapse: service(limits.synapse), postgres: service(limits.postgres) } };
+}
+
 function docker(args: string[], env: NodeJS.ProcessEnv): string {
   try { return execFileSync('docker', args, { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 180_000 }).trim(); }
   catch { throw new Error(`docker_${args[0]}_failed`); }
 }
 
 /** A unique, disposable Synapse/Postgres project, including its own registration secret. */
-export async function startClosureSynapse() {
+export async function startClosureSynapse(options: Readonly<{ limits?: ClosureSynapseLimits; recoveryFile?: string }> = {}) {
+  const override = options.limits ? closureSynapseLimitOverride(options.limits) : null;
   const project = `khala-closure-${randomBytes(8).toString('hex')}`;
   const configDir = mkdtempSync(path.join(os.homedir(), '.cache', 'khala-345-synapse-'));
   const databasePassword = randomBytes(32).toString('hex');
   const registrationSecret = randomBytes(32).toString('hex');
   const env = { ...process.env, EXPERIMENT_CONFIG_DIR: configDir, EXPERIMENT_DB_PASSWORD: databasePassword };
   const composeFile = path.resolve('experiments/backend/compose.yaml');
-  const compose = (...args: string[]) => docker(['compose', '-p', project, '-f', composeFile, ...args], env);
-  const close = () => { try { compose('down', '--volumes', '--remove-orphans'); }
-    finally { rmSync(configDir, { recursive: true, force: true }); } };
+  const overrideFile = path.join(configDir, 'limits.yaml');
+  const compose = (...args: string[]) => docker(['compose', '-p', project, '-f', composeFile,
+    ...(override ? ['-f', overrideFile] : []), ...args], env);
+  let recoveryWritten = false;
+  const verifyLimits = (containers: Readonly<{ synapse: string; postgres: string }>) => {
+    if (!options.limits) return;
+    for (const service of ['synapse', 'postgres'] as const) {
+      const host = JSON.parse(docker(['inspect', '--format', '{{json .HostConfig}}', containers[service]], env)) as {
+        Memory?: number; MemorySwap?: number; NanoCpus?: number; CpuQuota?: number; CpuPeriod?: number; PidsLimit?: number;
+      };
+      const expected = options.limits[service];
+      const cpus = host.NanoCpus ? host.NanoCpus / 1e9
+        : host.CpuQuota && host.CpuPeriod ? host.CpuQuota / host.CpuPeriod : 0;
+      if (host.Memory !== expected.memoryBytes || host.MemorySwap !== expected.memoryBytes
+        || cpus <= 0 || cpus > expected.cpus || host.PidsLimit !== expected.pids) {
+        throw new Error('closure_container_limits_not_effective');
+      }
+    }
+  };
+  const close = () => {
+    compose('down', '--volumes', '--remove-orphans');
+    const label = `label=com.docker.compose.project=${project}`;
+    if (docker(['ps', '-aq', '--filter', label], env)
+      || docker(['volume', 'ls', '-q', '--filter', label], env)
+      || docker(['network', 'ls', '-q', '--filter', label], env)) throw new Error('closure_docker_resources_remain');
+    rmSync(configDir, { recursive: true, force: true });
+    if (recoveryWritten && options.recoveryFile) rmSync(options.recoveryFile, { force: true });
+  };
   try {
+    if (override) writeFileSync(overrideFile, JSON.stringify(override), { mode: 0o600 });
+    if (options.recoveryFile) {
+      writeFileSync(options.recoveryFile, JSON.stringify({
+        v: 1, project, configDir, composeFile, overrideFile: override ? overrideFile : null,
+      }), { flag: 'wx', mode: 0o600 });
+      recoveryWritten = true;
+    }
     writeFileSync(path.join(configDir, 'homeserver.yaml'), JSON.stringify({
       server_name: SERVER_NAME, report_stats: false, signing_key_path: '/data/server.signing.key',
       media_store_path: '/data/media', pid_file: '/data/homeserver.pid',
@@ -35,6 +88,15 @@ export async function startClosureSynapse() {
       rc_login: { address: { per_second: 100, burst_count: 100 }, account: { per_second: 100, burst_count: 100 } },
     }), { mode: 0o600 });
     compose('up', '-d', '--wait', '--wait-timeout', '120');
+    const containers = { synapse: compose('ps', '-q', 'synapse'), postgres: compose('ps', '-q', 'postgres') };
+    if (!containers.synapse || !containers.postgres) throw new Error('closure_owned_containers_missing');
+    for (const service of ['synapse', 'postgres'] as const) {
+      const labels = JSON.parse(docker(['inspect', '--format', '{{json .Config.Labels}}', containers[service]], env)) as Record<string, string>;
+      if (labels['com.docker.compose.project'] !== project || labels['com.docker.compose.service'] !== service) {
+        throw new Error('closure_owned_container_mismatch');
+      }
+    }
+    verifyLimits(containers);
     const baseUrl = `http://${compose('port', 'synapse', '8008')}`;
     const versionResponse = await fetch(`${baseUrl}/_synapse/admin/v1/server_version`);
     const versionBody = await versionResponse.json() as { server_version?: string };
@@ -93,7 +155,7 @@ export async function startClosureSynapse() {
       if (!response.ok) throw new Error(`matrix_http_${response.status}`);
       return response.json() as Promise<Record<string, unknown>>;
     }
-    return { baseUrl, serverName: SERVER_NAME, version: versionBody.server_version ?? 'unknown',
+    return { baseUrl, serverName: SERVER_NAME, version: versionBody.server_version ?? 'unknown', project, containers,
       probeSharedSecretRegistration, provision, loginDevice, api, close };
   } catch (error) { close(); throw error; }
 }
