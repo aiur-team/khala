@@ -30,7 +30,7 @@ export function configAt(configPath) {
   return value;
 }
 function systemctl(args) {
-  return execFileSync('systemctl', ['--user', ...args], {
+  return execFileSync('/usr/bin/systemctl', ['--user', ...args], {
     encoding: 'utf8', timeout: 30_000, maxBuffer: 4096,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
@@ -58,8 +58,8 @@ export function bindingFor(config) {
     || binding.harness !== config.harness || binding.sessionId !== config.sessionId) fail();
   return binding;
 }
-function unitWitness(config) {
-  const pairs = Object.fromEntries(systemctl(['show', config.unit, '--no-pager',
+export function unitWitness(config, inspectUnit = systemctl) {
+  const pairs = Object.fromEntries(inspectUnit(['show', config.unit, '--no-pager',
     '--property=Id,ActiveState,MainPID,ControlGroup,FragmentPath']).split('\n').map(line => {
     const at = line.indexOf('=');
     return [line.slice(0, at), line.slice(at + 1)];

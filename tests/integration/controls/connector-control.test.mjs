@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { bindingFor, configAt, oldProcessGone } from './connector-control.mjs';
+import { bindingFor, configAt, oldProcessGone, unitWitness } from './connector-control.mjs';
 
 const script = fileURLToPath(new URL('./connector-control.mjs', import.meta.url));
 
@@ -57,20 +57,15 @@ test('a live but foreign process cannot stand in for the disposable connector', 
   const root = mkdtempSync(path.join(os.tmpdir(), 'khala-44-control-'));
   const unit = 'khala-e2e-connector-aabbccddeeff.service';
   const fragment = path.join(root, unit);
-  const fakeSystemctl = path.join(root, 'systemctl');
-  const configPath = path.join(root, 'control.json');
   const workdir = realpathSync(process.cwd());
   const config = { v: 1, unit, harness: 'codex', sessionId: 'session_a', bindingId: 'binding_a',
     generation: 1, stateRoot: root, workdir, processExecutable: realpathSync(process.execPath),
     processCwd: workdir, processCgroup: `/user.slice/${unit}`, unitFragment: fragment };
   try {
     writeFileSync(fragment, '[Unit]\n');
-    writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
-    writeFileSync(fakeSystemctl, `#!/bin/sh\nprintf 'Id=${unit}\\nActiveState=active\\nMainPID=${process.pid}\\nControlGroup=${config.processCgroup}\\nFragmentPath=${fragment}\\n'\n`, { mode: 0o700 });
-    assert.throws(() => execFileSync(process.execPath, [script, configPath, 'status'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 3_000,
-      env: { ...process.env, PATH: `${root}:${process.env.PATH ?? ''}` },
-    }), /Command failed/u);
+    assert.throws(() => unitWitness(config, () =>
+      `Id=${unit}\nActiveState=active\nMainPID=${process.pid}\nControlGroup=${config.processCgroup}\nFragmentPath=${fragment}`),
+    /live_connector_control_unavailable/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
