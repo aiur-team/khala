@@ -341,6 +341,13 @@ describe('owner binding list and the agent\'s harness report', () => {
     expect(await view()).toMatchObject({ requested: 'sync', effective: 'sync', support: { sync: { status: 'proven' }, async: { status: 'unknown' } } });
     // The owner's list labels the agent with the version it reported.
     expect((await call(h, `/api/v1/channels/${channelId}/bindings`, { headers: owner })).json.bindings[0].harnessVersion).toBe('0.156.1');
+    // The agent-authenticated runtime, never the owner server's runtime, scopes the new native proof.
+    expect((await report({ v: 1, version: '0.157.1', hookReview: 'trusted' })).status).toBe(200);
+    expect(await view()).toMatchObject({ effective: null, support: { sync: { status: 'unknown' } } });
+    expect((await report({ v: 2, version: '0.157.1', hookReview: 'trusted', platform: 'linux', arch: 'arm64' })).status).toBe(200);
+    expect(await view()).toMatchObject({ effective: null, support: { sync: { status: 'unknown' } } });
+    expect((await report({ v: 2, version: '0.157.1', hookReview: 'trusted', platform: 'linux', arch: 'x64' })).status).toBe(200);
+    expect(await view()).toMatchObject({ requested: 'sync', effective: 'sync', support: { sync: { status: 'proven' } } });
     // Untrusted hooks or an unproven version claim nothing, whatever mode was requested.
     await report({ v: 1, version: '0.156.1', hookReview: 'awaiting_hook_review' });
     expect(await view()).toMatchObject({ effective: null, effectiveReason: 'support_unknown' });
@@ -351,8 +358,12 @@ describe('owner binding list and the agent\'s harness report', () => {
       { v: 1, version: '0.156.1', hookReview: 'yes' },
       { v: 1, version: 'bad version', hookReview: 'trusted' },
       { v: 1, version: '0.156.1', hookReview: 'trusted', bindingId: carolBinding.bindingId },
+      { v: 2, version: '0.157.1', hookReview: 'trusted', platform: 'linux' },
+      { v: 2, version: '0.157.1', hookReview: 'trusted', platform: 'Linux', arch: 'x64' },
+      { v: 1, version: '0.157.1', hookReview: 'trusted', platform: 'linux', arch: 'x64' },
     ]) expect((await report(body)).status).toBe(400);
     expect((await report({ v: 1, version: '0.156.1', hookReview: 'trusted' }, owner)).status).toBe(403);
+    expect((await report({ v: 2, version: '0.157.1', hookReview: 'trusted', platform: 'linux', arch: 'x64' }, owner)).status).toBe(403);
   });
 });
 

@@ -23,7 +23,9 @@ export async function acquireListenerWithin(
   const deadline = Date.now() + (options.waitMs ?? CALL_LISTENER_WAIT_MS);
   while (true) {
     try {
-      return await inbox.acquireListener();
+      // Native tool sandboxes can prohibit Unix-socket bind. A call only needs
+      // the exclusive batch lease, not the listener's wake socket.
+      return await (inbox.acquireCallConsumer?.() ?? inbox.acquireListener());
     } catch (error) {
       if (!(error instanceof CliError) || error.code !== 'listener_busy'
         || options.signal?.aborted || Date.now() + RETRY_MS > deadline) throw error;

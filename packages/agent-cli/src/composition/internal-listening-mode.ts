@@ -25,6 +25,7 @@ export type LocalHarnessCapabilities = (binding: SessionBinding) => Promise<Harn
 /** What the harness running this binding shows about itself (version and hook trust); null when nothing applies. */
 export type LocalHarnessObservation = (binding: SessionBinding) => Promise<Readonly<{
   version: string; hookReview: 'trusted' | 'awaiting_hook_review' | 'unknown';
+  platform?: string; arch?: string;
 }> | null>;
 
 export const AGENT_HARNESS_PATH = '/api/v1/agent/harness';
@@ -82,7 +83,8 @@ export function createInternalListeningMode(options: InternalListeningModeOption
     try {
       const observation = await options.observation(binding);
       if (observation !== null) {
-        await options.call(descriptor, AGENT_HARNESS_PATH, { method: 'POST', body: { v: 1, ...observation } }, signal);
+        const v = observation.platform !== undefined && observation.arch !== undefined ? 2 : 1;
+        await options.call(descriptor, AGENT_HARNESS_PATH, { method: 'POST', body: { v, ...observation } }, signal);
       }
     } catch { /* The owner's view stays at what the server last knew. */ }
   }

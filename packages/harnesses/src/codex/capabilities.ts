@@ -16,11 +16,11 @@ export const CODEX_EVIDENCE_REF = 'docs/evidence/codex.md';
 export const CODEX_NATIVE_CLI_ADAPTER_VERSION = 'native-cli-notification-1';
 export const CODEX_NATIVE_CLI_EVIDENCE_REF = 'docs/evidence/codex-native-cli.md#queue-idle';
 
-/**
- * Exact versions with same-session evidence. A newer or older version is not promoted
- * by semver; it needs its own proof run.
- */
+/** KHA-104 app-server proof. Native CLI evidence must not promote this hosted route. */
 export const TESTED_CODEX_VERSIONS: readonly string[] = ['0.154.0'];
+/** Exact versions whose user-owned CLI queue route has its own evidence. */
+export const NATIVE_CLI_CODEX_VERSIONS: readonly string[] = ['0.154.0', '0.157.1'];
+export const CODEX_NATIVE_CLI_0157_EVIDENCE_REF = 'docs/evidence/codex-0157-native-cli.md#queue-idle';
 
 /**
  * Receipt kinds this adapter can report. The KHA-106 fixture lists what the KHA-104
@@ -183,10 +183,12 @@ export function nativeCliCapabilities(version: string, limits: DeliveryLimits): 
     receiptEvidence: [...CODEX_NATIVE_CLI_RECEIPT_EVIDENCE],
     reconcileByReleaseId: 'unsupported',
     limits,
-    evidenceRef: CODEX_NATIVE_CLI_EVIDENCE_REF,
+    evidenceRef: version === '0.157.1' ? CODEX_NATIVE_CLI_0157_EVIDENCE_REF : CODEX_NATIVE_CLI_EVIDENCE_REF,
     modes: unknownModeSupportMap(
       'codex-interactive-native',
-      'The native queue proves notification only; idle agents receive messages only at their next turn until payload delivery is proved.',
+      version === '0.157.1'
+        ? 'This native queue route proves a content-free idle wake. Payload and next-call receipt require the separately trusted sync hook; this route alone claims neither.'
+        : 'The native queue proves notification only; idle agents receive messages only at their next turn until payload delivery is proved.',
       version,
     ),
     acknowledgement: 'unknown',

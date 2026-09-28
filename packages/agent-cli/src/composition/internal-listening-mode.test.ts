@@ -101,6 +101,22 @@ describe('internal listening mode', () => {
     expect(reports).toEqual([{ v: 1, version: '0.156.1', hookReview: 'trusted' }]);
   });
 
+  it('reports agent runtime with the exact 0.157.1 binding observation', async () => {
+    const reports: unknown[] = [];
+    const control = { ...initialListeningModeControl(binding, null), requested: 'sync' as const, version: 2 };
+    const client = createInternalListeningMode({
+      descriptor: () => descriptor,
+      capabilities: async () => TRUSTED,
+      observation: async () => ({ version: '0.157.1', hookReview: 'trusted', platform: 'linux', arch: 'x64' }),
+      async call(_descriptor, target, init) {
+        if (target === AGENT_HARNESS_PATH) { reports.push(init.body); return { status: 200, body: { v: 1 } }; }
+        return { status: 200, body: { v: 1, binding, view: listeningModeView(control, null) } };
+      },
+    });
+    await client.status();
+    expect(reports).toEqual([{ v: 2, version: '0.157.1', hookReview: 'trusted', platform: 'linux', arch: 'x64' }]);
+  });
+
   it('sets only its own binding and re-projects the written record', async () => {
     const state = server({ requested: 'sync' });
     const result = await modes(state, async () => TRUSTED).set({

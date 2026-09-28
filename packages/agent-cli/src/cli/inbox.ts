@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
+import type { DatabaseSync } from 'node:sqlite';
 import {
   type BindingId, type EventRef, OPENCODE_HINT_MAX_BYTES, type OpenCodeInboxHint, decodeOpenCodeInboxHint,
   encodeOpenCodeInboxHint,
@@ -17,6 +18,8 @@ const CURSOR_FILE = 'cursor.json';
 const BATCH_FILE = 'batch.json';
 const SOCKET_FILE = 'listener.sock';
 const LISTENER_LOCK_FILE = 'listener.lock';
+const CONSUMER_LOCK_DB_FILE = 'consumer-lock.sqlite';
+const LEGACY_LOCK_FENCE = { v: 1, pid: 1, token: 'sqlite-consumer-lock-v1' } as const;
 const RECORD_OVERHEAD_BYTES = 1024 * 1024;
 const MAX_BATCH_RECORDS = 8;
 const NOTIFY_DEADLINE_MS = 1000;
@@ -93,6 +96,8 @@ export interface Inbox {
 
 export interface BatchInbox extends Inbox {
   acquireListener(): Promise<WakeableInboxConsumer>;
+  /** Short-lived read/ACK selection without opening a wake socket. */
+  acquireCallConsumer?(): Promise<InboxConsumer>;
   /** Wakes only this binding generation's listener; the socket path never leaves the inbox. */
   notifyListener(reason: ListenerHintReason): Promise<ListenerNotification>;
 }
@@ -168,6 +173,7 @@ class FileInbox implements BatchInbox {
   readonly #batchPath: string;
   readonly #socketPath: string;
   readonly #listenerLockPath: string;
+  readonly #consumerLockPath: string;
   // TODO(KHA-153): compact acknowledged records once live composition defines retention.
   #known: Map<string, string> | null = null;
   #writes: Promise<void> = Promise.resolve();
@@ -183,6 +189,7 @@ class FileInbox implements BatchInbox {
     this.#batchPath = paths.batchPath;
     this.#socketPath = paths.socketPath;
     this.#listenerLockPath = paths.listenerLockPath;
+    this.#consumerLockPath = path.join(paths.bindingDirectory, CONSUMER_LOCK_DB_FILE);
   }
 
   async enqueue(delivery: InboxDelivery): Promise<'appended' | 'duplicate'> {
@@ -217,7 +224,7 @@ class FileInbox implements BatchInbox {
   }
 
   async acquireListener(): Promise<WakeableInboxConsumer> {
-    const lock = await acquireProcessLock(this.#listenerLockPath);
+    const lock = await this.#acquireConsumerLock();
     // Starting is itself a catch-up wake: a release may have become durable while no
     // listener ran, or its hint may have been lost between append and notification.
     let pending = true;
@@ -283,6 +290,28 @@ class FileInbox implements BatchInbox {
         if (failed) throw new CliError('storage_failed');
       },
     };
+  }
+
+  async acquireCallConsumer(): Promise<InboxConsumer> {
+    const lock = await this.#acquireConsumerLock();
+    let released = false;
+    return {
+      readBatch: input => this.#readBatch(input, () => !released),
+      release: async () => {
+        if (released) return;
+        released = true;
+        await lock.release();
+      },
+    };
+  }
+
+  async #acquireConsumerLock(): Promise<Readonly<{ release(): Promise<void> }>> {
+    // Old clients use O_EXCL plus PID liveness at this filename. An exact,
+    // permanent PID-1 marker fences them in every PID namespace. A pre-existing
+    // old lock is deliberately not reclaimed: its PID may name another process
+    // when viewed from this namespace.
+    await ensureLegacyListenerFence(this.#listenerLockPath);
+    return acquireSqliteConsumerLock(this.#consumerLockPath);
   }
 
   async notifyListener(reason: ListenerHintReason): Promise<ListenerNotification> {
@@ -812,6 +841,43 @@ function decodeUtf8(bytes: Uint8Array): string {
 }
 
 type ListenerLockRecord = Readonly<{ v: 1; pid: number; token: string }>;
+
+async function ensureLegacyListenerFence(filename: string): Promise<void> {
+  if (createListenerLock(filename, LEGACY_LOCK_FENCE)) return;
+  const existing = await readListenerLock(filename);
+  if (existing.pid !== LEGACY_LOCK_FENCE.pid || existing.token !== LEGACY_LOCK_FENCE.token) {
+    throw new CliError('listener_busy');
+  }
+}
+
+async function acquireSqliteConsumerLock(filename: string): Promise<Readonly<{ release(): Promise<void> }>> {
+  await ensurePrivateFile(filename);
+  let database: DatabaseSync | null = null;
+  try {
+    const { DatabaseSync } = await import('node:sqlite');
+    database = new DatabaseSync(filename, { timeout: 0 });
+    database.exec('BEGIN IMMEDIATE');
+  } catch (error) {
+    database?.close();
+    if ((error as { errcode?: number }).errcode === 5) throw new CliError('listener_busy');
+    throw new CliError('storage_failed');
+  }
+  const held = database;
+  let released = false;
+  return {
+    async release() {
+      if (released) return;
+      released = true;
+      try {
+        held.exec('ROLLBACK');
+      } catch {
+        throw new CliError('storage_failed');
+      } finally {
+        held.close();
+      }
+    },
+  };
+}
 
 /**
  * An exclusive lock file held by one live process. A lock left by a dead process is

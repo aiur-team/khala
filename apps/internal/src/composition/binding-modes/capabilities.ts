@@ -39,10 +39,14 @@ export type ServerHarnessCapabilities = Readonly<{
 }>;
 
 type PersistedObservation = Readonly<{
-  v: 1; harness: 'codex'; ownerId: string; agentParticipantId: string; deviceId: string;
+  v: 1 | 2; harness: 'codex'; ownerId: string; agentParticipantId: string; deviceId: string;
   sessionId: string; version: string; hookReview: HarnessObservation['hookReview'];
+  platform?: string; arch?: string;
 }>;
 type ObservationRow = Readonly<{ value: string }>;
+const agentRuntime = (observation: HarnessObservation) => ({
+  platform: observation.platform ?? 'unobserved', arch: observation.arch ?? 'unobserved',
+});
 
 /** The agent's exact binding observation survives an owner restart, but is never a live capability by itself. */
 export function createServerHarnessCapabilities(
@@ -67,13 +71,17 @@ export function createServerHarnessCapabilities(
       if (binding.harness === 'opencode') return installedOpenCodeCapabilities(observation.version, LIMITS);
       return interactiveCodexCapabilities(observation.version, LIMITS, observation.hookReview === 'trusted'
         ? { state: 'trusted' }
-        : { state: observation.hookReview, reason: REVIEW_REASONS[observation.hookReview] });
+        : { state: observation.hookReview, reason: REVIEW_REASONS[observation.hookReview] },
+      undefined, undefined, agentRuntime(observation));
     },
     observe(binding, observation) {
       if (binding.harness === 'codex' && options.handle) {
-        const value: PersistedObservation = { v: 1, harness: 'codex', ownerId: binding.ownerId,
+        const value: PersistedObservation = { v: observation.platform && observation.arch ? 2 : 1,
+          harness: 'codex', ownerId: binding.ownerId,
           agentParticipantId: binding.agentParticipantId, deviceId: binding.deviceId, sessionId: binding.sessionId,
-          version: observation.version, hookReview: observation.hookReview };
+          version: observation.version, hookReview: observation.hookReview,
+          ...(observation.platform && observation.arch
+            ? { platform: observation.platform, arch: observation.arch } : {}) };
         options.handle.transaction(db => db.prepare(`
           INSERT INTO control_records (record_key, revision, operation_id, value, expires_at) VALUES (?, ?, ?, ?, NULL)
           ON CONFLICT (record_key) DO UPDATE SET revision = excluded.revision,
@@ -94,15 +102,20 @@ export function createServerHarnessCapabilities(
         const value: unknown = JSON.parse(row.value);
         if (!value || typeof value !== 'object') return false;
         record = value as PersistedObservation;
-        if (record.v !== 1 || record.harness !== 'codex' || record.ownerId !== binding.ownerId
+        if ((record.v !== 1 && record.v !== 2) || record.harness !== 'codex' || record.ownerId !== binding.ownerId
           || record.agentParticipantId !== binding.agentParticipantId || record.deviceId !== binding.deviceId
           || record.sessionId !== binding.sessionId
-          || typeof record.version !== 'string' || record.hookReview !== 'trusted') return false;
+          || typeof record.version !== 'string' || record.hookReview !== 'trusted'
+          || (record.v === 1 && (record.platform !== undefined || record.arch !== undefined))
+          || (record.v === 2 && (typeof record.platform !== 'string' || typeof record.arch !== 'string'))) return false;
       } catch { return false; }
       const current = await inspectCodex(binding).catch(() => null);
-      if (current?.version !== record.version || current.hookReview !== 'trusted') return false;
-      if (interactiveCodexCapabilities(record.version, LIMITS, { state: 'trusted' }).support !== 'tested') return false;
-      observed.set(key(binding), { version: record.version, hookReview: 'trusted' });
+      if (current?.version !== record.version || current.hookReview !== 'trusted'
+        || current.platform !== record.platform || current.arch !== record.arch) return false;
+      if (interactiveCodexCapabilities(record.version, LIMITS, { state: 'trusted' }, undefined, undefined,
+        agentRuntime(record)).support !== 'tested') return false;
+      observed.set(key(binding), { version: record.version, hookReview: 'trusted',
+        ...(record.v === 2 ? { platform: record.platform, arch: record.arch } : {}) });
       return true;
     },
   };

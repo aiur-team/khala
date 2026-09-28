@@ -1,6 +1,6 @@
 import { type DeliveryLimits, type HarnessCapabilities, decodeDeliveryLimits } from '@khala/contracts/delivery/index';
 import { installedClaudeCapabilities } from '@khala/harnesses/claude/interactive';
-import { interactiveCodexCapabilities } from '@khala/harnesses/codex/interactive';
+import { CODEX_NATIVE_SYNC_VERSION, interactiveCodexCapabilities } from '@khala/harnesses/codex/interactive';
 import { MAX_SEND_BYTES } from '../cli/send.js';
 import { codexHookReviewState } from '../codex/hooks-config.js';
 import { parseClaudeVersion } from '../setup/adapters/claude.js';
@@ -48,7 +48,9 @@ async function inspectCodex(environment: SetupEnvironment): Promise<Inspection> 
   });
   return {
     capabilities: interactiveCodexCapabilities(version, LOCAL_DELIVERY_LIMITS, review),
-    observation: { version, hookReview: review.state },
+    observation: version === CODEX_NATIVE_SYNC_VERSION
+      ? { version, hookReview: review.state, platform: process.platform, arch: process.arch }
+      : { version, hookReview: review.state },
   };
 }
 
@@ -56,7 +58,8 @@ async function inspectCodex(environment: SetupEnvironment): Promise<Inspection> 
 export async function inspectHostedCodexHooks(environment: SetupEnvironment): Promise<HarnessCapabilities | null> {
   try {
     const inspected = await inspectCodex(environment);
-    return inspected.capabilities?.support === 'tested' && inspected.observation?.version === '0.154.0'
+    return inspected.capabilities?.support === 'tested'
+      && (inspected.observation?.version === '0.154.0' || inspected.observation?.version === '0.157.1')
       && inspected.observation.hookReview === 'trusted' ? inspected.capabilities : null;
   } catch {
     return null;

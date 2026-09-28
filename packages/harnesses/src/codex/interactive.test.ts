@@ -4,7 +4,8 @@ import { initialListeningModeControl, listeningModeView } from '../../../policy/
 import { limits } from './fakes';
 import { type CodexReceiptProof } from './receipt-conformance';
 import {
-  CODEX_INTERACTIVE_EVIDENCE_REVISION, CODEX_INTERACTIVE_VERSIONS, interactiveCodexCapabilities,
+  CODEX_INTERACTIVE_EVIDENCE_REVISION, CODEX_INTERACTIVE_0157_EVIDENCE_REVISION,
+  CODEX_INTERACTIVE_VERSIONS, interactiveCodexCapabilities,
 } from './interactive';
 
 describe('interactive Codex capabilities', () => {
@@ -20,7 +21,9 @@ describe('interactive Codex capabilities', () => {
     });
     for (const mode of ['steer', 'sync', 'async'] as const) {
       expect(capabilities.modes[mode]).toMatchObject({
-        status: 'proven', testedVersion: version, evidenceRevision: CODEX_INTERACTIVE_EVIDENCE_REVISION,
+        status: 'proven', testedVersion: version,
+        evidenceRevision: version === '0.157.1' ? CODEX_INTERACTIVE_0157_EVIDENCE_REVISION
+          : CODEX_INTERACTIVE_EVIDENCE_REVISION,
       });
     }
     expect(capabilities.modes.steer.reason).toContain('next tool boundary');
@@ -78,6 +81,49 @@ describe('interactive Codex capabilities', () => {
       { proven: true, route: 'hook', version: '0.156.1' }).acknowledgement).toBe('unknown');
     expect(interactiveCodexCapabilities('0.155.0', limits, { state: 'trusted' },
       { proven: true, route: 'hook', version: '0.155.0' }).acknowledgement).toBe('unknown');
+  });
+
+  it('does not carry the old-version receipt proof into the new native session', () => {
+    const capabilities = interactiveCodexCapabilities('0.157.1', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.156.1' });
+    expect(capabilities.acknowledgement).toBe('unknown');
+    expect(capabilities.modes.steer.status).toBe('unknown');
+    expect(capabilities.modes.async.status).toBe('unknown');
+    expect(capabilities.modes.sync).toMatchObject({
+      status: 'proven', evidenceRevision: CODEX_INTERACTIVE_0157_EVIDENCE_REVISION,
+    });
+  });
+
+  it('limits 0.157.1 to trusted sync with the observed queue wake and exact receipt proof', () => {
+    const capabilities = interactiveCodexCapabilities('0.157.1', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.157.1' }, 'available');
+    expect(capabilities).toMatchObject({
+      support: 'tested', acknowledgement: 'batch_token_next_call', immediateNotification: 'native_cli_queue',
+      evidenceRef: 'docs/evidence/codex-0157-native-cli.md#sync-hook',
+    });
+    expect(capabilities.modes.steer.status).toBe('unknown');
+    expect(capabilities.modes.sync.status).toBe('proven');
+    expect(capabilities.modes.async.status).toBe('unknown');
+    expect(capabilities.modes.sync.reason).toContain('content-free queue notice');
+    expect(interactiveCodexCapabilities('0.157.1', limits, { state: 'trusted' }, undefined, 'unavailable')
+      .immediateNotification).toBe('unknown');
+    expect(interactiveCodexCapabilities('0.157.1', limits, { state: 'unknown', reason: 'hook review absent' },
+      undefined, 'available').immediateNotification).toBe('unknown');
+  });
+
+  it.each([
+    { platform: 'darwin', arch: 'x64' },
+    { platform: 'linux', arch: 'arm64' },
+    { platform: 'win32', arch: 'x64' },
+  ])('keeps 0.157.1 unproven on $platform/$arch', runtime => {
+    const capabilities = interactiveCodexCapabilities('0.157.1', limits, { state: 'trusted' },
+      { proven: true, route: 'hook', version: '0.157.1' }, 'available', runtime);
+    expect(capabilities.support).toBe('unsupported');
+    expect(capabilities.immediateNotification).toBe('unknown');
+    expect(Object.values(capabilities.modes).map(mode => mode.status)).toEqual(['unknown', 'unknown', 'unknown']);
+    expect(capabilities.modes.sync.reason).toContain('Linux x64 only');
+    expect(interactiveCodexCapabilities('0.156.1', limits, { state: 'trusted' },
+      undefined, 'unavailable', runtime).modes.sync.status).toBe('proven');
   });
 
   it('claims nothing for an unproven version even with trusted hooks', () => {

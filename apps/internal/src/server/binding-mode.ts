@@ -78,6 +78,8 @@ export const HOOK_REVIEW_STATES = ['trusted', 'awaiting_hook_review', 'unknown']
 export type HarnessObservation = Readonly<{
   version: string;
   hookReview: (typeof HOOK_REVIEW_STATES)[number];
+  platform?: string;
+  arch?: string;
 }>;
 
 /** Composition-supplied parts of binding mode control. */
@@ -369,13 +371,19 @@ async function agentRoute(context: RouteContext<Principal>, deps: BindingModeDep
     return;
   }
   if (route === AGENT_MODE_ROUTES.harness) {
-    if (!exactKeys(body, ['v', 'version', 'hookReview']) || body.v !== 1
+    const legacy = body.v === 1 && exactKeys(body, ['v', 'version', 'hookReview']);
+    const withRuntime = body.v === 2 && exactKeys(body, ['v', 'version', 'hookReview', 'platform', 'arch']);
+    if ((!legacy && !withRuntime)
       || typeof body.version !== 'string' || !HARNESS_VERSION.test(body.version)
-      || !(HOOK_REVIEW_STATES as readonly unknown[]).includes(body.hookReview)) {
+      || !(HOOK_REVIEW_STATES as readonly unknown[]).includes(body.hookReview)
+      || (withRuntime && (typeof body.platform !== 'string' || !/^[a-z0-9_]{2,16}$/.test(body.platform)
+        || typeof body.arch !== 'string' || !/^[a-z0-9_]{2,16}$/.test(body.arch)))) {
       fail(response, 400, 'invalid_request');
       return;
     }
-    const observation = { version: body.version, hookReview: body.hookReview as HarnessObservation['hookReview'] };
+    const observation: HarnessObservation = { version: body.version,
+      hookReview: body.hookReview as HarnessObservation['hookReview'],
+      ...(withRuntime ? { platform: body.platform as string, arch: body.arch as string } : {}) };
     if (deps.commitAgent(context, () => deps.options.observe(binding, observation)) === null) return;
     sendJson(response, 200, { v: 1 });
     return;

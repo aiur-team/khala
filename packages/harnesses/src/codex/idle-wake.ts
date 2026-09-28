@@ -6,7 +6,7 @@
 
 import type { ListeningMode, SessionBinding } from '@khala/contracts/delivery/index';
 import { sameSessionBinding } from '@khala/contracts/delivery/index';
-import { CODEX_INTERACTIVE_VERSIONS, type CodexIdleWakeState } from './interactive';
+import { CODEX_INTERACTIVE_VERSIONS, CODEX_NATIVE_SYNC_VERSION, type CodexIdleWakeState } from './interactive';
 
 /** The only message text a wake ever queues. */
 export const CODEX_IDLE_WAKE_NOTICE = 'Khala: channel messages are waiting. Continue.';
@@ -92,7 +92,10 @@ export function createCodexIdleWake(deps: CodexIdleWakeDeps): CodexIdleWake {
     wake(binding, mode, version) {
       // `async` is never woken; an unproven version keeps the next-turn-only claim.
       if (mode === 'async') return Promise.resolve('not_idle_mode');
-      if (!CODEX_INTERACTIVE_VERSIONS.includes(version)) return Promise.resolve('unsupported_version');
+      if (version === CODEX_NATIVE_SYNC_VERSION && mode !== 'sync') return Promise.resolve('not_idle_mode');
+      if (!CODEX_INTERACTIVE_VERSIONS.includes(version) && version !== CODEX_NATIVE_SYNC_VERSION) {
+        return Promise.resolve('unsupported_version');
+      }
       const existing = inFlight.get(binding.bindingId);
       if (existing && sameSessionBinding(existing.binding, binding)) return existing.result;
       const result = run(binding).then(outcome => {

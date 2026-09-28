@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { HarnessCapabilities } from '../../../packages/contracts/src/delivery/index';
+import { NATIVE_CLI_CODEX_VERSIONS } from '../../../packages/harnesses/src/codex/capabilities';
 import { inspectHostedCodexHooks } from '../../../packages/agent-cli/src/composition/local-harness-capabilities';
 import { readInstalledCodexVersion } from '../../../packages/agent-cli/src/composition/hosted-session-inspection';
 import { setupEnvironment } from '../../../packages/agent-cli/src/setup/environment';
@@ -17,6 +18,14 @@ export type NativeFixture = Readonly<{
 export type NativeGate =
   | Readonly<{ kind: 'ready'; fixture: NativeFixture; capabilities: HarnessCapabilities }>
   | Readonly<{ kind: 'blocked'; code: string }>;
+
+/** Keep CLI queue evidence and hook evidence scoped to the same exact native version. */
+export function nativeProofBlock(version: string | null, hooks: HarnessCapabilities | null): string | null {
+  if (version === null || !NATIVE_CLI_CODEX_VERSIONS.includes(version)) return 'native_version_unproven';
+  if (!hooks || hooks.support !== 'tested' || hooks.harness !== 'codex' || hooks.version !== version
+    || hooks.modes.sync.status !== 'proven') return 'native_hook_mode_unproven';
+  return null;
+}
 
 const absoluteDirectory = (value: unknown) => typeof value === 'string' && path.isAbsolute(value)
   && path.normalize(value) === value && !value.includes('\0');
@@ -42,10 +51,8 @@ export async function inspectNativeGate(descriptorPath: string | undefined): Pro
     readInstalledCodexVersion(environment),
     inspectHostedCodexHooks(environment),
   ]);
-  if (version !== '0.154.0') return { kind: 'blocked', code: 'native_version_unproven' };
-  if (!hooks || hooks.support !== 'tested' || hooks.harness !== 'codex' || hooks.version !== version
-    || hooks.modes.sync.status !== 'proven') {
-    return { kind: 'blocked', code: 'native_hook_mode_unproven' };
-  }
+  const blocked = nativeProofBlock(version, hooks);
+  if (blocked !== null) return { kind: 'blocked', code: blocked };
+  if (hooks === null) throw new Error('native proof guard failed');
   return { kind: 'ready', fixture, capabilities: hooks };
 }

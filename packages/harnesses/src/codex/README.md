@@ -10,7 +10,9 @@ with `existingSession: native_hooks` and every mode `proven`, only when both of 
 
 - the exact version is in `CODEX_INTERACTIVE_VERSIONS` (`0.154.0`, `0.156.1`), the
   versions whose TUI passed every cell under normal trust settings in
-  [`interactive-codex.md`](../../../../docs/product/internal-mode/interactive-codex.md#mode-matrix);
+  [`interactive-codex.md`](../../../../docs/product/internal-mode/interactive-codex.md#mode-matrix),
+  or is `0.157.1`, whose separate [native Sol preflight](../../../../docs/evidence/codex-0157-native-cli.md#sync-hook)
+  proves only the `sync` hook and one idle queue wake; `steer` and `async` remain unknown;
 - the user has trusted every installed Khala hook in Codex's **Hooks need review**
   dialog.
 
@@ -55,7 +57,7 @@ from `@khala/contracts/delivery/index`.
 | Field | Value |
 | --- | --- |
 | Harness | `codex` (codex-cli) |
-| Exact version | `0.154.0`, Linux x64. Any other version is reported `unsupported` until it has its own proof run; semver does not promote it. |
+| Exact version | Hosted app-server: `0.154.0`. Native CLI notification: `0.154.0` or separately proven `0.157.1` on Linux x64. Other versions remain unsupported; semver does not promote them. |
 | Provider restrictions | None observed. The proof used the fixture's own model, which was left unchanged. |
 | Route A: native CLI | For a thread Khala did not start, approved bytes are appended to the KHA-148 local inbox and `codex queue --thread <sessionId> --message <opaque release notification>` wakes the existing thread. [KHA-146](../../../../docs/evidence/codex-native-cli.md#queue-idle) proved the notification route. `--message -` and `@-` are literals, so payload bytes never go to the CLI. |
 | Route B: hosted app-server | Khala starts `codex app-server --listen unix://<owner-only dir>/…sock` in the thread's workdir and resumes a dormant thread there (`thread/resume`, no overrides). Delivery calls `thread/queue/add` with `clientUserMessageId = releaseId`. The thread's native `cwd` must equal the host's workdir. [KHA-104](../../../../docs/evidence/codex.md) proves this route. |

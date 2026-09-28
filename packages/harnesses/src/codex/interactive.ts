@@ -9,11 +9,20 @@ import { type CodexReceiptProof, NO_CODEX_RECEIPT_PROOF } from './receipt-confor
 
 export const CODEX_INTERACTIVE_ADAPTER_VERSION = 'native-hooks-1';
 export const CODEX_INTERACTIVE_EVIDENCE_REF = 'docs/product/internal-mode/interactive-codex.md#mode-matrix';
+export const CODEX_INTERACTIVE_0157_EVIDENCE_REF = 'docs/evidence/codex-0157-native-cli.md#sync-hook';
 /** Changes whenever the proof is re-run, so consent derived from an older proof lapses. */
 export const CODEX_INTERACTIVE_EVIDENCE_REVISION = 'interactive-codex-2026-09-25';
+export const CODEX_INTERACTIVE_0157_EVIDENCE_REVISION = 'interactive-codex-0157-2026-09-27';
 
 /** Exact versions whose TUI passed every mode cell under normal trust settings. */
 export const CODEX_INTERACTIVE_VERSIONS: readonly string[] = ['0.154.0', '0.156.1'];
+/** The newer Sol-capable CLI is promoted only for a separately observed sync hook. */
+export const CODEX_NATIVE_SYNC_VERSION = '0.157.1';
+
+/** A new native version must receive a new consent revision, without invalidating old sessions. */
+export function codexInteractiveEvidenceRevision(version: string): string {
+  return version === '0.157.1' ? CODEX_INTERACTIVE_0157_EVIDENCE_REVISION : CODEX_INTERACTIVE_EVIDENCE_REVISION;
+}
 
 const IDLE = 'Idle agents receive messages only at their next turn.';
 const IDLE_WOKEN = 'An idle agent is woken by a content-free queue notice, and the hook then pulls the batch.';
@@ -28,7 +37,7 @@ export type CodexInteractiveHookReview =
 
 /**
  * Declares the hook route for one Codex version. Nothing is claimed unless the
- * version is in the proven matrix and the user has trusted every Khala hook; an
+ * version has route-specific proof and the user has trusted every Khala hook; an
  * installation that is untrusted or unverified reports `unknown` with its reason.
  */
 export function interactiveCodexCapabilities(
@@ -37,11 +46,17 @@ export function interactiveCodexCapabilities(
   review: CodexInteractiveHookReview,
   receiptProof: CodexReceiptProof = NO_CODEX_RECEIPT_PROOF,
   idleWake: CodexIdleWakeState = 'unavailable',
+  runtime: Readonly<{ platform: string; arch: string }> = process,
 ): HarnessCapabilities {
-  const idle = idleWake === 'available' ? IDLE_WOKEN : IDLE;
-  if (!CODEX_INTERACTIVE_VERSIONS.includes(version)) {
+  const fullModeProof = CODEX_INTERACTIVE_VERSIONS.includes(version);
+  const syncOnlyProof = version === CODEX_NATIVE_SYNC_VERSION;
+  const idle = (fullModeProof || syncOnlyProof) && idleWake === 'available' ? IDLE_WOKEN : IDLE;
+  if (syncOnlyProof && (runtime.platform !== 'linux' || runtime.arch !== 'x64')) {
+    return closed(version, limits, 'Codex 0.157.1 native sync proof covers Linux x64 only.');
+  }
+  if (!fullModeProof && !syncOnlyProof) {
     return closed(version, limits, `Codex ${version} has no interactive hook proof; proven versions are `
-      + `${CODEX_INTERACTIVE_VERSIONS.join(' and ')}. ${IDLE}`);
+      + `${[...CODEX_INTERACTIVE_VERSIONS, CODEX_NATIVE_SYNC_VERSION].join(', ')}. ${IDLE}`);
   }
   if (review.state !== 'trusted') {
     const prefix = review.state === 'awaiting_hook_review' ? 'Awaiting hook review' : 'Hook trust unknown';
@@ -51,8 +66,8 @@ export function interactiveCodexCapabilities(
     status: 'proven',
     route,
     testedVersion: version,
-    evidenceRef: CODEX_INTERACTIVE_EVIDENCE_REF,
-    evidenceRevision: CODEX_INTERACTIVE_EVIDENCE_REVISION,
+    evidenceRef: syncOnlyProof ? CODEX_INTERACTIVE_0157_EVIDENCE_REF : CODEX_INTERACTIVE_EVIDENCE_REF,
+    evidenceRevision: codexInteractiveEvidenceRevision(version),
     reason,
   });
   // `async` delivers only through khala_read and is unusable without a returned token, so it is
@@ -71,22 +86,28 @@ export function interactiveCodexCapabilities(
     receiptEvidence: [],
     reconcileByReleaseId: 'unsupported',
     limits,
-    evidenceRef: CODEX_INTERACTIVE_EVIDENCE_REF,
+    evidenceRef: syncOnlyProof ? CODEX_INTERACTIVE_0157_EVIDENCE_REF : CODEX_INTERACTIVE_EVIDENCE_REF,
     modes: {
-      steer: proven('codex-hooks-next-tool-boundary', 'steer means the next tool boundary: PreToolUse blocks the '
+      steer: syncOnlyProof ? {
+        status: 'unknown', route: 'codex-hooks-next-tool-boundary', testedVersion: version,
+        evidenceRef: CODEX_INTERACTIVE_0157_EVIDENCE_REF,
+        evidenceRevision: CODEX_INTERACTIVE_0157_EVIDENCE_REVISION,
+        reason: 'Codex 0.157.1 steer tool-boundary behavior has no native proof.',
+      } : proven('codex-hooks-next-tool-boundary', 'steer means the next tool boundary: PreToolUse blocks the '
         + 'next tool, PostToolUse adds a batch that arrived during a tool, and Stop continues once. '
         + `Hard abort is disabled. ${idle}`),
       sync: proven('codex-hooks-stop-or-prompt', 'Delivered after the turn at Stop, or with the next prompt; '
         + `tool boundaries stay silent. ${idle}`),
-      async: acknowledged
+      async: acknowledged && fullModeProof
         ? proven('codex-khala-read', 'Delivered only when the agent calls khala_read; hooks inject nothing.')
         : {
           status: 'unknown',
           route: 'codex-khala-read',
           testedVersion: version,
-          evidenceRef: CODEX_INTERACTIVE_EVIDENCE_REF,
-          evidenceRevision: CODEX_INTERACTIVE_EVIDENCE_REVISION,
-          reason: `Awaiting a receipt proof: async is not offered until the batch token is proven to come back. ${idle}`,
+          evidenceRef: syncOnlyProof ? CODEX_INTERACTIVE_0157_EVIDENCE_REF : CODEX_INTERACTIVE_EVIDENCE_REF,
+          evidenceRevision: codexInteractiveEvidenceRevision(version),
+          reason: syncOnlyProof ? `Codex 0.157.1 async has no native proof. ${idle}`
+            : `Awaiting a receipt proof: async is not offered until the batch token is proven to come back. ${idle}`,
         },
     },
     // Only the exact hook route and version a conformance run proved; delivery alone is not
@@ -108,7 +129,8 @@ function closed(version: string, limits: DeliveryLimits, reason: string): Harnes
     receiptEvidence: [],
     reconcileByReleaseId: 'unknown',
     limits,
-    evidenceRef: CODEX_INTERACTIVE_EVIDENCE_REF,
+    evidenceRef: version === CODEX_NATIVE_SYNC_VERSION ? CODEX_INTERACTIVE_0157_EVIDENCE_REF
+      : CODEX_INTERACTIVE_EVIDENCE_REF,
     modes: unknownModeSupportMap('codex-interactive-hooks', reason, version),
     acknowledgement: 'unknown',
   };
